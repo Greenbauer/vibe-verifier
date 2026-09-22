@@ -1,0 +1,22 @@
+name: Vibe Verifier gates
+description: Run the gates this repository subscribes to in its .vibe-verifier manifest.
+inputs:
+  manifest:
+    description: Path to the manifest, relative to the workspace.
+    default: .vibe-verifier
+  base-ref:
+    description: Ref to diff against. Default lets the gates resolve it (GITHUB_BASE_REF, main, master).
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Run subscribed gates
+      shell: bash
+      env:
+        VV_MANIFEST: ${{ inputs.manifest }}
+        VV_BASE_REF: ${{ inputs.base-ref }}
+      run: |
+        set -euo pipefail
+        args=(run --manifest "$VV_MANIFEST" --format github)
+        if [ -n "$VV_BASE_REF" ]; then args+=(--base-ref "$VV_BASE_REF"); fi
+        python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}"

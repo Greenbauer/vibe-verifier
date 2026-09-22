@@ -1,0 +1,4 @@
+# Gates the review verify job runs. Copy to the consumer as .vibe-verifier-review. One per line: <gate> [args]
+# The three input files are written by the verify job before the gate runs.
+# --threads makes unresolved review threads block; drop it to gate on the receipt alone.
+review-receipt --receipt review-inputs/receipt.md --head review-inputs/head.txt --threads review-inputs/threads.json

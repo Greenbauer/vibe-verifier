@@ -1,0 +1,35 @@
+name: CI
+
+# Tests every gate and the runner, then runs this repository's own manifest through
+# the composite action, which is the only place that action executes before a
+# consumer exists.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Gate and runner tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Dogfood the composite action
+        # zizmor wants GitHub's July-2026 self-repository form (`uses: $/actions/gates`), which actionlint
+        # 1.7.12, the latest release, rejects as an invalid ref. Until actionlint learns it, the
+        # workspace-relative form stays and zizmor's finding is ignored here with this reason.
+        uses: ./actions/gates # zizmor: ignore[self-repository]

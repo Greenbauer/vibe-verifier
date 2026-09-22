@@ -1,0 +1,20 @@
+name: Vibe Verifier QAE browser
+description: Install the browser toolchain the QAE harness drives, playwright-mcp and the Playwright build it pins, from the catalog's lockfile, then the chromium that build wants.
+outputs:
+  mcp:
+    description: The playwright-mcp entry point, for the explorer's --mcp-config.
+    value: ${{ steps.install.outputs.mcp }}
+runs:
+  using: composite
+  steps:
+    - name: Install the browser toolchain from the lockfile
+      id: install
+      shell: bash
+      run: |
+        set -euo pipefail
+        # tools/qae-browser/package-lock.json fixes every tarball's integrity; npx -y would resolve
+        # them from the registry on each run, in the job that holds the account-level token.
+        dir=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" tool qae-browser)
+        echo "mcp=$dir/node_modules/@playwright/mcp/cli.js" >> "$GITHUB_OUTPUT"
+        # chromium comes from the Playwright build the lockfile pins, so the browser matches the mcp.
+        "$dir/node_modules/.bin/playwright" install --with-deps chromium

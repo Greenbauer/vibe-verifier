@@ -1,0 +1,7 @@
+# Gates this repository subscribes to. One per line: <gate> [args]
+branch-name-length --max 60
+gitleaks
+actionlint
+zizmor
+cognitive-complexity
+max-file-lines

@@ -1,0 +1,28 @@
+name: Vibe Verifier
+
+# Runs the gates this repository subscribes to in .vibe-verifier.
+# The gates ship with the pinned action, so nothing is installed.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vibe-verifier-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Keep this job free of `if:` conditions. GitHub reports an if-false job as
+  # skipped, and counts a skipped required check as satisfied.
+  vibe-verifier-ok:
+    name: vibe-verifier-ok
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: Greenbauer/vibe-verifier/actions/gates@0000000000000000000000000000000000000000 # main YYYY-MM-DD

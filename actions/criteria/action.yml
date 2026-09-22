@@ -1,0 +1,30 @@
+name: Vibe Verifier criteria
+description: Read a pull request body's acceptance criteria, so a harness can skip work the PR declares it has none of.
+inputs:
+  path:
+    description: The PR body, or any criteria document, relative to the workspace.
+    required: true
+outputs:
+  count:
+    description: How many criteria the document lists. 0 when it declares none, and 0 when it lists none.
+    value: ${{ steps.read.outputs.count }}
+  declared-none:
+    description: The reason the document gives for having no criteria; empty otherwise.
+    value: ${{ steps.read.outputs.declared-none }}
+runs:
+  using: composite
+  steps:
+    - name: Read the criteria
+      id: read
+      shell: bash
+      env:
+        VV_PATH: ${{ inputs.path }}
+      run: |
+        set -euo pipefail
+        out=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" criteria "$VV_PATH")
+        echo "$out"
+        case "$out" in
+          none:*)     echo "count=0" >> "$GITHUB_OUTPUT"; echo "declared-none=${out#none: }" >> "$GITHUB_OUTPUT" ;;
+          criteria:*) echo "count=${out#criteria: }" >> "$GITHUB_OUTPUT"; echo "declared-none=" >> "$GITHUB_OUTPUT" ;;
+          *) echo "::error::unexpected output from vibe-verifier criteria: $out"; exit 2 ;;
+        esac
