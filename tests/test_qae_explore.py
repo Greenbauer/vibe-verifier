@@ -87,6 +87,14 @@ class Steps(unittest.TestCase):
         self.assertIn("uses: Greenbauer/vibe-verifier/actions/criteria@", text[read:explore])
         self.assertIn("if: steps.criteria.outputs.count != '0'", text[explore:explore + 400])
 
+    def test_the_only_comment_the_explorer_may_post_is_the_verdict_file(self):
+        # gh opens --body-file itself, so a wildcard rule would let a hostile PR body post any file.
+        text = TEMPLATE.read_text()
+        tools = re.search(r'--allowed-tools "([^"]+)"', text).group(1).split(",")
+        comment_rules = [rule for rule in tools if "gh pr comment" in rule]
+        self.assertEqual(comment_rules, ["Bash(gh pr comment ${{ github.event.pull_request.number }} --body-file qae-artifacts/verdict.md)"])
+        self.assertIn("gh pr comment ${{ github.event.pull_request.number }} --body-file qae-artifacts/verdict.md\n", text)
+
     def test_a_consumer_can_tell_the_explorer_how_to_sign_in(self):
         # The file is written by the consumer's build step, which runs before the model, and the
         # explorer may read qae-inputs/ and nothing else outside its artifacts.

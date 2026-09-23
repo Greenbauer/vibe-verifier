@@ -107,7 +107,7 @@ jobs:
                  acceptance-check: ACn -- FAIL -- <what happened> (qae/ACn.md::<the step line text>)
                Never write PASS for anything you did not see in the browser. The text after :: must be
                copied verbatim from the step log line, because a gate checks that it is there.
-            4. Post the verdict as a pull request comment:
+            4. Post the verdict as a pull request comment, with exactly this command (no other form is allowed):
                  gh pr comment ${{ github.event.pull_request.number }} --body-file qae-artifacts/verdict.md
 
             Write only under qae-artifacts/. Do not change any other file.
@@ -115,12 +115,14 @@ jobs:
             --model claude-opus-4-7
             --max-turns 80
             --mcp-config '{"mcpServers":{"playwright":{"command":"node","args":["${{ steps.browser.outputs.mcp }}","--headless","--isolated","--output-dir","qae-artifacts","--save-session","--viewport-size","1280x800"]}}}'
-            --allowed-tools "mcp__playwright,Read(qae-inputs/**),Read(qae-artifacts/**),Edit(qae-artifacts/**),Bash(mkdir:*),Bash(gh pr comment:*)"
+            --allowed-tools "mcp__playwright,Read(qae-inputs/**),Read(qae-artifacts/**),Edit(qae-artifacts/**),Bash(mkdir:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --body-file qae-artifacts/verdict.md)"
             # Read and Edit rules are the only file rules Claude Code consults (a Write(path) rule is
             # accepted and ignored), and an allow rule anchors at the working directory, so the model
             # can read its inputs and artifacts and write artifacts, and nothing else: not the runner's
             # environment, not the checkout. The PR body it reads is untrusted; without this a body
             # could ask it to read /proc/self/environ and post the tokens with the allowed gh pr comment.
+            # The comment rule is the exact command, not gh pr comment:*: gh opens --body-file itself, so
+            # the Read rules never see that read, and any other path would post whatever file it names.
       - name: Enforce the write scope
         # The prompt says "write only under qae-artifacts/", and a prompt is a suggestion. Anything
         # else that changed on the runner, tracked or untracked, fails the job here so it can never

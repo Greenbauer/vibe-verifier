@@ -23,7 +23,7 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
      acceptance-check: ACn -- FAIL -- <what happened> (qae/ACn.md::<the step line text>)
    Never write PASS for anything you did not see in the browser. The text after :: must be
    copied verbatim from the step log line, because a gate checks that it is there.
-4. Post the verdict as a pull request comment:
+4. Post the verdict as a pull request comment, with exactly this command (no other form is allowed):
      gh pr comment PR_NUMBER --body-file qae-artifacts/verdict.md
 
 Write only under qae-artifacts/. Do not change any other file.
