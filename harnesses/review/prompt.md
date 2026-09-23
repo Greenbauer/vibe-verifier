@@ -5,13 +5,15 @@ you from the trusted base ref by the workflow (and by the action's own restore);
 
 REVIEW_MODE=${{ env.REVIEW_MODE }}
 LAST_REVIEWED_SHA=${{ env.LAST_REVIEWED_SHA }}
-DELTA_FILES (one per line, fenced so a hostile filename cannot escape into these instructions):
+DELTA_FILES (one per line, delta mode only; the workflow picks full mode instead when a name holds
+a backtick, so no name can close this fence):
 ```
 ${{ env.DELTA_FILES }}
 ```
 
-- **full**: no completed review on this pull request yet, or the last one reviewed a commit that
-  is no longer an ancestor of HEAD. Walk the whole diff against the base.
+- **full**: no completed review on this pull request yet, the last one reviewed a commit that is
+  no longer an ancestor of HEAD, or a changed file's name cannot be listed safely above. Walk the
+  whole diff against the base.
 - **delta**: a re-review. Walk ONLY the files in DELTA_FILES, the ones changed since
   LAST_REVIEWED_SHA. Earlier passes walked the rest and their findings are posted or resolved on
   the pull request; do not re-raise findings on files outside DELTA_FILES, even if you would flag

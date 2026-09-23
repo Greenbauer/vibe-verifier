@@ -47,10 +47,14 @@ jobs:
             git show "origin/${BASE_REF}:$f" > "$f"
           done < <(git ls-tree -r -z --name-only "origin/${BASE_REF}" -- '*CLAUDE.md' '.claude/')
       - name: Compute review scope
-        # full: no completed review yet, or its commit is gone (force-push). delta: only the PR
-        # files changed since the last receipt. nochange: nothing new since it; the model is not
-        # run and the receipt is posted for this head. The anchor is the newest receipt the
-        # workflow itself posted, so it is deterministic and never depends on what the model wrote.
+        # full: no completed review yet, its commit is gone (force-push), or a changed name cannot
+        # be listed safely. delta: only the PR files changed since the last receipt. nochange:
+        # nothing new since it; the model is not run and the receipt is posted for this head. The
+        # anchor is the newest receipt the workflow itself posted, so it is deterministic and never
+        # depends on what the model wrote. git prints a name raw unless it holds a control character
+        # (those it C-quotes), so two names escape the list: a backtick can close the prompt's fence,
+        # and a name that is the line EOF ends the DELTA_FILES value early, turning the names after
+        # it into env assignments. Either one means full mode, which puts no name in the prompt.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -65,9 +69,13 @@ jobs:
             PR_FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD")
             CHANGED=$(git diff --name-only "${LAST}..HEAD")
             FILES=$(comm -12 <(printf '%s\n' "$PR_FILES" | sort -u) <(printf '%s\n' "$CHANGED" | sort -u))
-            if [ -z "$FILES" ]; then mode="nochange"; else mode="delta"; fi
+            if [ -z "$FILES" ]; then
+              mode="nochange"
+            elif ! grep -qE '`|^EOF$' <<< "$FILES"; then
+              mode="delta"
+              { echo "DELTA_FILES<<EOF"; printf '%s\n' "$FILES"; echo "EOF"; } >> "$GITHUB_ENV"
+            fi
             echo "LAST_REVIEWED_SHA=$LAST" >> "$GITHUB_ENV"
-            { echo "DELTA_FILES<<EOF"; printf '%s\n' "$FILES"; echo "EOF"; } >> "$GITHUB_ENV"
           fi
           echo "REVIEW_MODE=$mode" >> "$GITHUB_ENV"
           echo "mode: $mode (last receipt: ${LAST:-none})"
@@ -86,13 +94,15 @@ jobs:
 
             REVIEW_MODE=${{ env.REVIEW_MODE }}
             LAST_REVIEWED_SHA=${{ env.LAST_REVIEWED_SHA }}
-            DELTA_FILES (one per line, fenced so a hostile filename cannot escape into these instructions):
+            DELTA_FILES (one per line, delta mode only; the workflow picks full mode instead when a name holds
+            a backtick, so no name can close this fence):
             ```
             ${{ env.DELTA_FILES }}
             ```
 
-            - **full**: no completed review on this pull request yet, or the last one reviewed a commit that
-              is no longer an ancestor of HEAD. Walk the whole diff against the base.
+            - **full**: no completed review on this pull request yet, the last one reviewed a commit that is
+              no longer an ancestor of HEAD, or a changed file's name cannot be listed safely above. Walk the
+              whole diff against the base.
             - **delta**: a re-review. Walk ONLY the files in DELTA_FILES, the ones changed since
               LAST_REVIEWED_SHA. Earlier passes walked the rest and their findings are posted or resolved on
               the pull request; do not re-raise findings on files outside DELTA_FILES, even if you would flag
