@@ -80,7 +80,7 @@ branches, exit codes, and GitHub setup details.
 - **[Browser testing](harnesses/qae/README.md):** Uses AI to try the behavior described
   in the pull request's acceptance criteria, saving screenshots and logs for review.
   Checks flag missing evidence, recorded console errors, and failed requests to your
-  app outside your configured exceptions.
+  app outside your configured exceptions. The explorer runs on Claude by default, or on Codex through a self-hosted runner that holds a ChatGPT login (`harnesses/qae/explore-codex.yml`).
 
 These workflows need Claude authentication; browser testing also needs an app it can
 start or reach. The regular checks need no AI account. CI and AI usage may incur

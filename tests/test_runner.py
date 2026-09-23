@@ -131,6 +131,12 @@ class Tool(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(where, "node_modules", "@playwright", "mcp", "cli.js")), where)
         self.assertTrue(os.path.isfile(os.path.join(where, "node_modules", ".bin", "playwright")), where)
 
+    def test_the_codex_toolchain_installs_from_its_lockfile(self):
+        result = runner("tool", "codex")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        where = result.stdout.strip()
+        self.assertTrue(os.path.isfile(os.path.join(where, "node_modules", ".bin", "codex")), where)
+
     def test_an_unknown_toolchain_is_exit_2(self):
         result = runner("tool", "nope")
         self.assertEqual(result.returncode, 2)

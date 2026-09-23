@@ -1,0 +1,206 @@
+name: QAE explore
+
+# Vibe Verifier QAE harness, explorer on Codex: copy to .github/workflows/qae-explore.yml, with
+# harnesses/qae/manifest copied to .vibe-verifier-qae. The same harness as explore.yml with one
+# difference: the model runs through the Codex CLI on a self-hosted runner that holds a ChatGPT-managed
+# Codex login, so the account is the OpenAI subscription and no model token is a repository secret.
+# Consumer-owned parts, marked CONSUMER below: runs-on (a runner with the login), how the site is
+# built and started (or a reachable preview URL passed in instead), the action pins. Two jobs:
+#   explore: builds and starts this PR's site on the runner, then Codex with a real browser
+#            (playwright-mcp) walks the PR's acceptance criteria, writes one step log per criterion
+#            plus screenshots into qae-artifacts/, and the workflow posts its verdict as a comment.
+#   verify:  deterministic. Feeds the PR body, the newest verdict comment and the artifacts to the
+#            acceptance-verdict gate, which refuses any PASS not anchored to a step line that exists.
+# The LLM explores and produces artifacts; the gate decides. Its prose is never the verdict.
+# What the runner needs, and how its login is seeded and kept fresh: harnesses/qae/README.md.
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qae-explore-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  explore:
+    name: qae-explore
+    runs-on: [self-hosted, qae-codex]   # CONSUMER: a runner that holds the Codex login (harnesses/qae/README.md)
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Build and start the site under test   # CONSUMER: your build and start; leave the URL answering
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          set -euo pipefail
+          npm run build
+          mkdir -p qae-artifacts/qae qae-inputs
+          (npm start > qae-artifacts/server.log 2>&1 &)
+          for i in $(seq 1 60); do
+            curl -fsS http://localhost:3000/ > /dev/null 2>&1 && { echo "site up after ${i} tries"; exit 0; }
+            sleep 2
+          done
+          echo "::error::site did not answer on http://localhost:3000 within 120s"; tail -50 qae-artifacts/server.log; exit 1
+      - name: Install the browser toolchain from the catalog's lockfile
+        # playwright-mcp, the Playwright build it pins and that build's chromium, every tarball's
+        # integrity fixed by tools/qae-browser/package-lock.json in the catalog. Nothing here is
+        # resolved from the registry at run time: this job holds the account-level token.
+        id: browser
+        uses: Greenbauer/vibe-verifier/actions/qae-browser@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
+      - name: Write the criteria input
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
+      - name: Read the criteria
+        # A PR that declares `- None: <why>` has nothing for a browser to check, and one that lists
+        # no criteria fails the verdict gate whatever the explorer does, so neither spends a model
+        # session: the explorer runs only when there is a criterion to walk. Decided by the same
+        # code that judges the verdict later. Before this, three pin bumps and a CI-only PR each
+        # paid for a full explore of nothing, and on 2026-09-21 one of them turned the job red on
+        # the account's usage cap for it.
+        id: criteria
+        uses: Greenbauer/vibe-verifier/actions/criteria@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
+        with:
+          path: qae-inputs/pr-body.md
+      - name: Write the explorer's prompt
+        # The harness prompt (harnesses/qae/prompt.md) with this pull request filled in. Step 4
+        # differs from the Claude lane: the model posts nothing, the workflow posts the verdict file.
+        run: |
+          cat > qae-inputs/prompt.md <<'PROMPT'
+            You are the QAE for pull request #${{ github.event.pull_request.number }} of ${{ github.repository }}.
+            The site built from this PR is running at http://localhost:3000.
+            If qae-inputs/site.md exists, read it before anything else. This repository's workflow wrote it
+            (not the pull request): it says how to sign in and what state the site starts in.
+
+            1. Read qae-inputs/pr-body.md. The list items under the "## Acceptance criteria" heading are
+               the criteria, numbered AC1, AC2, ... in order. If the only item reads "None: <reason>",
+               this pull request declares it has nothing for a browser to check: write nothing, post
+               nothing, and stop.
+            2. For each criterion, use the playwright browser tools to do what a user would do to check
+               it: navigate, click, read the page. A step is one action that changes what is on screen.
+               For every step, first save a screenshot to qae-artifacts/qae/ACn-step-k.png, then append
+               one line to qae-artifacts/qae/ACn.md of the form
+                 - step k: <what you did> -> <what you saw>
+               Never write a step line without its screenshot: a gate fails the run on any step line
+               whose qae/ACn-step-k.png is missing. Reading the console or the network is not a step;
+               note what you found on the step it belongs to. On every page you visit, read the browser
+               console messages. When you finish a criterion, call browser_network_requests and
+               browser_console_messages once more, so the record of what the site did is saved with the run.
+            3. Write qae-artifacts/verdict.md with exactly one line per criterion, nothing else:
+                 acceptance-check: ACn -- PASS -- <one sentence> (qae/ACn.md::<the step line text that showed it, exactly as written after "- ">)
+               or, when the criterion did not hold or you could not check it:
+                 acceptance-check: ACn -- FAIL -- <what happened> (qae/ACn.md::<the step line text>)
+               Never write PASS for anything you did not see in the browser. The text after :: must be
+               copied verbatim from the step log line, because a gate checks that it is there.
+            4. Do not post anything: this repository's workflow posts qae-artifacts/verdict.md as the pull
+               request comment after you finish.
+
+            Write only under qae-artifacts/. Do not change any other file.
+          PROMPT
+      - name: Explore the acceptance criteria in a real browser
+        if: steps.criteria.outputs.count != '0'
+        # No secret reaches this step and the checkout holds no token, so the model, which runs
+        # without a sandbox here, cannot post, push, or read a credential it was never given.
+        uses: Greenbauer/vibe-verifier/actions/qae-codex@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
+        with:
+          prompt-file: qae-inputs/prompt.md
+          mcp: ${{ steps.browser.outputs.mcp }}
+      - name: Post the verdict the explorer wrote
+        # The one comment this job posts, by the workflow, from the one file: the verify job filters
+        # verdicts by this job's identity, and the explorer itself never holds the token.
+        if: steps.criteria.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ ! -s qae-artifacts/verdict.md ]; then echo "::error::the explorer wrote no qae-artifacts/verdict.md"; exit 1; fi
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file qae-artifacts/verdict.md
+      - name: Enforce the write scope
+        # The prompt says "write only under qae-artifacts/", and a prompt is a suggestion. Anything
+        # else that changed on the runner, tracked or untracked, fails the job here so it can never
+        # reach the artifact or the gate. Build output and node_modules are gitignored, so they
+        # do not appear; qae-inputs/ is written by the workflow itself before the model runs, and
+        # .claude-pr/ is claude-code-action's own scaffolding (seen on the pilot's second run).
+        # The action also resets CLAUDE.md, .claude/, .mcp.json and a few more config paths to the
+        # base branch before the model runs (src/github/operations/restore-config.ts at the pinned
+        # action), so a PR that touches one of them leaves it changed here without the explorer
+        # having written it (seen on a consumer's first pull request). Those paths are excused only while they
+        # match the base exactly; anything the explorer writes to them differs and still fails.
+        if: always()
+        env:
+          BASE: origin/${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          restored='^(\.claude|\.claude\.json|\.mcp\.json|\.gitmodules|\.ripgreprc|CLAUDE\.md|CLAUDE\.local\.md|\.husky)(/|$)'
+          out=""
+          while IFS= read -r line; do
+            path=${line:3}
+            case "$path" in qae-artifacts/*|qae-inputs/*|.claude-pr/*) continue ;; esac
+            if [[ "$path" =~ $restored ]] && git diff --quiet "$BASE" -- "$path" 2>/dev/null; then continue; fi
+            out+="$line"$'\n'
+          done < <(git status --porcelain --untracked-files=all)
+          if [ -n "$out" ]; then
+            echo "::error::the explorer wrote outside qae-artifacts/:"; printf '%s' "$out"; exit 1
+          fi
+          echo "write scope held"
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qae-artifacts
+          path: qae-artifacts
+          if-no-files-found: warn
+
+  verify:
+    name: qae-verify
+    needs: explore
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: qae-artifacts
+          path: qae-artifacts
+      - name: Write the two declared inputs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p qae-inputs
+          gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
+          # Only the identity the explore job posts as may supply a verdict. Without this filter any
+          # commenter could paste a PASS anchored to a real step line and the gate would accept it.
+          gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
+            --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("acceptance-check:"))] | last | .body // ""' > qae-inputs/verdict.md
+          echo "verdict lines: $(grep -c 'acceptance-check:' qae-inputs/verdict.md || true)"
+      - uses: Greenbauer/vibe-verifier/actions/gates@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
+        with:
+          manifest: .vibe-verifier-qae
