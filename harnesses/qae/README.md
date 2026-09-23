@@ -12,7 +12,9 @@ and a second site rendered from a WordPress API on the runner (since 2026-09-21;
 ## The shape
 
 Two jobs on every pull request, in the consumer's own workflow. [`explore.yml`](explore.yml) is
-the template; the consumer owns `runs-on` and how the site is built and started. Its three catalog
+the template; the consumer owns `runs-on` and how the site is built and started, and, for a site
+behind a login, writes `qae-inputs/site.md` in that same step to tell the explorer how to sign in and
+what state the site starts in (a throwaway account on a throwaway backend, never production). Its three catalog
 pins (`criteria@` and `qae-browser@` in explore, `gates@` in verify) are inventoried and bumped by
 `consumers` and `apply-down` exactly like the stub's.
 

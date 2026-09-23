@@ -87,6 +87,15 @@ class Steps(unittest.TestCase):
         self.assertIn("uses: Greenbauer/vibe-verifier/actions/criteria@", text[read:explore])
         self.assertIn("if: steps.criteria.outputs.count != '0'", text[explore:explore + 400])
 
+    def test_a_consumer_can_tell_the_explorer_how_to_sign_in(self):
+        # The file is written by the consumer's build step, which runs before the model, and the
+        # explorer may read qae-inputs/ and nothing else outside its artifacts.
+        text = TEMPLATE.read_text()
+        self.assertIn("If qae-inputs/site.md exists, read it before anything else.", text)
+        self.assertIn("Read(qae-inputs/**)", text)
+        self.assertLess(text.index("- name: Build and start the site under test"),
+                        text.index("- name: Explore the acceptance criteria in a real browser"))
+
     def test_the_browser_toolchain_is_installed_from_the_lockfile_not_resolved_at_run_time(self):
         text = TEMPLATE.read_text()
         self.assertNotIn("npx -y", text)
