@@ -38,11 +38,15 @@ With `--wrapper PATH` (a checkout of an organization's CI repository that subscr
 repositories to the catalog) the inventory has three more kinds of pin. The wrapper gets a row of
 kind `wrapper`: no stub is expected, every catalog pin in its workflows is judged like a
 consumer's, and a review.yml copy is compared under `jobs:` only, with the token secret named
-alike (the wrapper owns its header and its secret). Every ruleset of the wrapper's organization
-whose `workflows` rule requires a wrapper workflow gets a row: each pinned commit is current or
-stale against the wrapper's --wrapper-ref (stale when a commit since it touched that workflow), a
-bare ref is unpinned, and a ruleset that is not active needs action. The repositories it targets
-by name are subscribers with no stub (`stub: ruleset`) whose manifest must exist. A `uses:` of a
+alike and its verify step's gate list left out (the wrapper owns its header, its secret and that
+list). Every ruleset of the wrapper's organization whose `workflows` rule requires a wrapper
+workflow gets a row: each pinned commit is current or stale against the wrapper's --wrapper-ref
+(stale when a commit since it touched that workflow), a bare ref is unpinned, and a ruleset that is
+not active needs action. The repositories it targets by name are subscribers with no stub
+(`stub: ruleset`) and no manifest of their own: their gate list is the wrapper's entry for them,
+repos/<name>/vibe-verifier in the wrapper at --wrapper-ref, which must exist, and a .vibe-verifier
+or .vibe-verifier-review left in such a repository is stray, since nothing reads it. The wrapper's
+own row is judged the same way: its own pull requests run its gate workflow. A `uses:` of a
 wrapper workflow in any repository's workflows is judged the same way, so a caller of a legacy
 reusable workflow is listed even with no manifest.
 
@@ -210,6 +214,13 @@ def gh_file(repo, path):
 REVIEW_HARNESS = os.path.join(ROOT, "harnesses", "review", "review.yml")
 # The token line of a review harness copy; a wrapper names its own secret.
 TOKEN_SECRET = re.compile(r"(claude_code_oauth_token: \$\{\{ secrets\.)[A-Za-z0-9_]+( \}\})")
+# The one input a gates step takes its gate list from; a wrapper passes the list itself (`entries:`),
+# because the repositories it runs in carry no manifest.
+GATE_LIST_INPUT = re.compile(r"(vibe-verifier/actions/gates@[^\n]*\n\s+with:\n\s+)(?:manifest|entries): [^\n]*")
+# A wrapper's gate list for one repository of its organization, by name, in the wrapper's checkout.
+ENTRY = "repos/%s/vibe-verifier"
+# What a repository subscribed through a wrapper must not carry: nothing reads it there.
+MANIFESTS = (".vibe-verifier", ".vibe-verifier-review")
 SOURCE = "source"  # this repository's own row: it carries no stub and its manifest is its own
 WRAPPER = "wrapper"  # the wrapper's own row: it pins catalog actions for an organization and carries no stub
 RULESET = "ruleset"  # a repository an organization ruleset subscribes through the wrapper: no stub expected
@@ -251,18 +262,21 @@ def harness_drift(path, text, wrapper=False):
     line of it is the catalog's, so a copy that differs is running a review nobody released
     (qae-explore.yml has a consumer-owned build block and is not compared). A wrapper's copy owns its
     header (an organization ruleset requires it, and GitHub forbids a ruleset workflow
-    cancel-in-progress, so it has no concurrency group) and the name of its token secret: only its
-    jobs are compared, with the secret named alike."""
+    cancel-in-progress, so it has no concurrency group), the name of its token secret, and the one
+    line its verify step takes its gate list from (its repositories carry no .vibe-verifier-review,
+    so it passes `entries:`): only its jobs are compared, with the secret named alike and that line
+    left out."""
     if os.path.basename(path) != "review.yml":
         return None
     with open(REVIEW_HARNESS, encoding="utf-8") as handle:
         template = handle.read()
     if wrapper:
-        text, template = (TOKEN_SECRET.sub(r"\1TOKEN\2", jobs_of(body)) for body in (text, template))
+        text, template = (GATE_LIST_INPUT.sub(r"\1GATE-LIST", TOKEN_SECRET.sub(r"\1TOKEN\2", jobs_of(body)))
+                          for body in (text, template))
     if PIN_LINE.sub(r"\1SHA", text) == PIN_LINE.sub(r"\1SHA", template):
         return None
     return "drifts from harnesses/review/review.yml %s" % (
-        "under jobs: outside the pin and token lines" if wrapper else "outside the pin line")
+        "under jobs: outside the pin, token and gate-list lines" if wrapper else "outside the pin line")
 
 
 def owner_repos(owner):
@@ -332,6 +346,12 @@ class Wrapper:
         """(commit, date) of the ref every wrapper pin is judged against and bumped to."""
         sha = git_in(self.checkout, "rev-parse", "--verify", "--quiet", self.ref).stdout.strip()
         return sha, git_in(self.checkout, "log", "-1", "--date=short", "--format=%cd", sha).stdout.strip()
+
+    def entry(self, repo):
+        """(path, text or None): the gate list the wrapper carries for OWNER/NAME at its ref."""
+        path = ENTRY % repo.split("/", 1)[1]
+        shown = git_in(self.checkout, "show", "%s:%s" % (self.ref, path))
+        return path, shown.stdout if shown.returncode == 0 else None
 
 
 def load_wrapper(args):
@@ -436,6 +456,19 @@ def manifest_status(manifest):
     return ("unknown gate %s" % ", ".join(unknown)) if unknown else "ok", gates
 
 
+def wrapped_status(wrapper, repo, manifest):
+    """(state, gates) for a repository the wrapper subscribes, the wrapper included: its gate list is
+    the wrapper's entry for it. A manifest left in the repository (`manifest` is its .vibe-verifier)
+    is read by nothing, so it is reported as stray rather than trusted."""
+    path, text = wrapper.entry(repo)
+    state, gates = manifest_status(text)
+    problems = [] if state == "ok" else ["no %s in %s" % (path, wrapper.repo) if text is None else state]
+    stray = [name for name in MANIFESTS if (manifest if name == ".vibe-verifier" else gh_file(repo, name)) is not None]
+    if stray:
+        problems.append("stray %s (the entry in %s is what runs)" % (" ".join(stray), wrapper.repo))
+    return "; ".join(problems) or "ok", gates
+
+
 def worst_status(args, shas):
     """One status for a file that may pin the same commit twice or two different ones."""
     statuses = [pin_status(args, sha) for sha in sorted(set(shas))]
@@ -491,8 +524,8 @@ def repo_row(args, repo, source, wrapper, targeted):
              for path, called, ref in wrapper_calls(wrapper, texts)] if wrapper else []
     if wrapper and repo == wrapper.repo:
         # The wrapper pins catalog actions in its own workflows, the gate workflow included, and
-        # carries no stub; a manifest is optional (its own pull requests may run its workflows).
-        manifest_state, gates = manifest_status(manifest) if manifest is not None else ("", [])
+        # carries no stub. Its own pull requests run its gate workflow, so it needs an entry too.
+        manifest_state, gates = wrapped_status(wrapper, repo, manifest)
         return (repo, "", WRAPPER, manifest_state, gates, catalog_rows(args, texts, wrapper=True), native_status(repo))
     if not subscribed:
         if calls:  # a caller of a wrapper workflow that subscribes to nothing itself: its pins are the row
@@ -500,7 +533,10 @@ def repo_row(args, repo, source, wrapper, targeted):
         if args.owner and repo not in (args.repo or []):
             return None  # discovery: an owner's repo that never subscribed is not a finding
         return (repo, "not subscribed", "missing", "missing", [], [], ("", []))
-    stub_state, sha = (RULESET, None) if stub is None and repo in targeted else stub_status(stub)
+    if stub is None and repo in targeted:
+        manifest_state, gates = wrapped_status(wrapper, repo, manifest)
+        return (repo, "", RULESET, manifest_state, gates, catalog_rows(args, texts) + calls, native_status(repo))
+    stub_state, sha = stub_status(stub)
     manifest_state, gates = manifest_status(manifest)
     return (repo, pin_status(args, sha) if sha else "", stub_state, manifest_state, gates,
             catalog_rows(args, texts) + calls, native_status(repo))

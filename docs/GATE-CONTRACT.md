@@ -201,9 +201,10 @@ An organization can subscribe its repositories through one CI repository of its 
 **wrapper**, instead of a stub in each (first done 2026-09-23).
 
 - The wrapper's workflows trigger on `pull_request` and pin the catalog's actions by commit, like a
-  stub: a gate workflow whose job is named `vibe-verifier-ok` and runs `actions/gates` against the
-  repository's own `.vibe-verifier`, and optionally a copy of the review harness whose `jobs:` are
-  the catalog's, byte for byte, apart from the pin and the name of its token secret.
+  stub: a gate workflow whose job is named `vibe-verifier-ok` and runs `actions/gates`, and
+  optionally a copy of the review harness whose `jobs:` are the catalog's, byte for byte, apart
+  from the pin, the name of its token secret and the one line its verify step takes its gate list
+  from.
 - An **organization ruleset** with the rule "Require workflows to pass before merging"
   (`workflows`) requires them, each pinned by `sha`, on the default branch of the repositories it
   targets. GitHub runs the pinned file in each targeted repository on each pull request, so the
@@ -213,6 +214,20 @@ An organization can subscribe its repositories through one CI repository of its 
   the Team plan accepted and enforced it: probed on 2026-09-23, a pull request read `BLOCKED` while
   the required run was queued and `CLEAN` once it passed, although its own tree did not contain the
   workflow.
+- **The wrapper carries every gate list; its repositories carry none.** A repository's list is its
+  entry in the wrapper, `repos/<name>/vibe-verifier` (the manifest format above), and the repository
+  has no `.vibe-verifier` or `.vibe-verifier-review` of its own. A required workflow cannot read
+  those files at run time: its job's `GITHUB_TOKEN` belongs to the repository it runs in, so a
+  checkout or `gh api` read of a private wrapper answers 404 (probed 2026-09-23 through a
+  ruleset-required run). A composite action of the wrapper downloads with no credential, but the
+  workflow would have to pin a commit of the wrapper itself, so a change to a list would take two
+  pull requests and the first would not run it. So the wrapper writes the lists into its workflows:
+  the gate workflow picks the entry for `${{ github.repository }}` and passes it as a manifest file
+  outside the repository, and a repository with no entry fails that step, red, rather than running
+  nothing; the review copy passes its gate list as `entries:`. How the wrapper keeps those copies
+  equal to its entries is its own business (one way: generate them from the entry files, and test
+  that they agree). A list that comes from the workflow is never judged from the base: a pull
+  request of the target cannot edit it at all.
 - GitHub's constraints on ruleset workflows (its troubleshooting guide for rules): only the default
   activity types trigger them (`opened`, `synchronize`, `reopened`), whatever `types:` says; they
   must not use `cancel-in-progress`, which is why a wrapper's review copy has no concurrency group
@@ -221,14 +236,17 @@ An organization can subscribe its repositories through one CI repository of its 
   the targeted branch are blocked; a private wrapper can be required only in private repositories,
   and its Actions access setting must admit the organization.
 - There are two pins: the wrapper's pins of the catalog, and each ruleset's pin of the wrapper.
-  `bin/vibe-verifier consumers --wrapper <a checkout of the wrapper>` judges both, and every
-  `uses:` of a wrapper workflow still left in a repository (a legacy reusable workflow); a ruleset
-  pin is stale when a commit since it touched the workflow it names. `apply-down --wrapper` moves
-  them: the wrapper's catalog pins in a pull request to the wrapper, whose own runs are the proof,
-  a caller's `uses:` pins in a pull request of its own, and a ruleset's pins with a `PUT` of that
-  ruleset's rules once the new commit is on the wrapper's default branch. So a catalog release
-  reaches a wrapper's repositories in two runs: one that opens the wrapper's bump, and one after it
-  merges.
+  `bin/vibe-verifier consumers --wrapper <a checkout of the wrapper>` judges both, and every `uses:`
+  of a wrapper workflow still left in a repository (a legacy reusable workflow); a ruleset pin is
+  stale when a commit since it touched the workflow it names. It reads each subscribed repository's
+  gate list from the wrapper's entry at `--wrapper-ref` (the wrapper's own row too, since its own
+  pull requests run its gate workflow): a repository with no entry needs action, and so does a
+  `.vibe-verifier` or `.vibe-verifier-review` left in the repository, which nothing reads.
+  `apply-down --wrapper` moves them: the wrapper's catalog pins in a pull request to the wrapper,
+  whose own runs are the proof, a caller's `uses:` pins in a pull request of its own, and a
+  ruleset's pins with a `PUT` of that ruleset's rules once the new commit is on the wrapper's
+  default branch. So a catalog release reaches a wrapper's repositories in two runs: one that opens
+  the wrapper's bump, and one after it merges.
 - Moving a repository from its stub to a wrapper deletes the stub, a workflow that invoked the
   catalog, so the merge guard leaves that pull request to the operator.
 
