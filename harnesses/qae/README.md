@@ -59,6 +59,11 @@ pins (`criteria@` and `qae-browser@` in explore, `gates@` in verify) are invento
   `Read(qae-inputs/**)`, `Read(qae-artifacts/**)` and `Edit(qae-artifacts/**)` (the rule Claude
   Code consults for Write too; a `Write(path)` rule is accepted and ignored). Found by review on
   the second consumer's first pull request.
+  The comment rule is the exact command the prompt gives (`gh pr comment <n> --body-file
+  qae-artifacts/verdict.md`), not `gh pr comment:*`: `gh` opens `--body-file` itself, so the `Read`
+  rules never see that read, and `--body-file /proc/self/environ` would post the environment. Found
+  by review on corral's first pull request (2026-09-23). The browser needs no rule for this:
+  playwright-mcp blocks `file://` navigation by default.
 - **Declared inputs, never operated infrastructure.** The harness needs a URL it can reach. The
   pilot starts the site on the runner because the repo's Vercel previews sit behind Vercel SSO with
   no automation bypass configured; a repo with a reachable preview passes its URL in instead.
