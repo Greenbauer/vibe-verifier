@@ -1,6 +1,6 @@
 # Vibe Verifier
 
-Checks for AI-written pull requests, so you can catch problems before merging.
+Catch problems in any pull request before merging.
 
 Vibe Verifier checks for leaked secrets, missing tests, risky GitHub Actions workflows,
 and code that is getting harder to maintain. Choose the checks your project needs and
