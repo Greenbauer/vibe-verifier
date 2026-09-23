@@ -1,0 +1,8 @@
+{
+  "name": "vibe-verifier-codex",
+  "private": true,
+  "description": "The Codex CLI the QAE explorer runs on when a consumer routes it to the OpenAI subscription. Installed with npm ci from the lockfile, so the CLI and its platform binary are fixed here, not resolved by the registry on each run.",
+  "dependencies": {
+    "@openai/codex": "0.144.1"
+  }
+}

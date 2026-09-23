@@ -1,0 +1,33 @@
+name: Keep the Codex login fresh
+
+# Vibe Verifier QAE harness, Codex lane: copy to .github/workflows/qae-codex-keepalive.yml and pin
+# the action to the commit you subscribe to. Codex refreshes a ChatGPT-managed login in place once
+# it is about eight days old, during any normal run. A repository whose pull requests go quiet for
+# longer would let the store go stale, so this runs one trivial exec a week on the same runner.
+# Nothing here is a secret: the login lives on the runner, seeded once (harnesses/qae/README.md).
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  keep-fresh:
+    name: codex-keepalive
+    runs-on: [self-hosted, qae-codex]   # CONSUMER: the same runner the explorer uses
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+      - run: printf 'Reply with the single word OK.\n' > keepalive-prompt.md
+      - uses: Greenbauer/vibe-verifier/actions/qae-codex@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
+        with:
+          prompt-file: keepalive-prompt.md
+          artifacts: keepalive

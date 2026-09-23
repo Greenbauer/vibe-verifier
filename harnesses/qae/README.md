@@ -73,6 +73,40 @@ pins (`criteria@` and `qae-browser@` in explore, `gates@` in verify) are invento
   that, the explorer stops without writing, and a bare `- None` or an absent section still fails.
   Found the first time apply-down opened a pin-bump PR and the gate refused it, correctly.
 
+## The explorer on Codex: the OpenAI subscription, with the login on the runner
+
+[`explore-codex.yml`](explore-codex.yml) is the same harness with the model run through the Codex
+CLI instead of `claude-code-action`, for a repository whose explorer should spend a ChatGPT
+subscription. Everything outside the explorer block is byte-identical to `explore.yml` (a test holds
+that), the prompt is [`prompt.md`](prompt.md) with one lane-specific step, and the verify job is the
+same. What differs, and why:
+
+- **No model token is a repository secret.** OpenAI's own action takes API keys only; a ChatGPT-managed
+  login is a `~/.codex/auth.json` that Codex refreshes in place, which OpenAI documents for CI as
+  "seed it once on a trusted private runner, keep it between jobs, one job stream per copy, never on
+  a public repository". So the lane runs on a self-hosted runner (`runs-on: [self-hosted,
+  qae-codex]`, consumer-owned) whose runner user holds `$HOME/.codex-qae`, seeded once with
+  `CODEX_HOME=$HOME/.codex-qae codex login --device-auth` and `cli_auth_credentials_store = "file"` in
+  its `config.toml`. One runner is one store is one job at a time. `actions/qae-codex` checks the
+  store is a ChatGPT login with a refresh token and never writes it. A repository whose pull requests
+  go quiet copies [`codex-keepalive.yml`](codex-keepalive.yml) too: Codex refreshes a store that is
+  about eight days old during any run, and the weekly exec keeps that happening.
+- **The model holds no GitHub token either.** The explorer step is given no secret and the checkout
+  has none, so the model cannot post, push, or read a credential. The workflow posts
+  `qae-artifacts/verdict.md` itself after the model finishes, which is why step 4 of the prompt
+  reads "do not post anything" in this lane, and why the verify job's author filter still holds.
+- **Three settings a non-interactive Codex run needs**, each found on the first spike (2026-09-23,
+  zack.land on a laptop): `--sandbox danger-full-access`, because under `workspace-write` Codex
+  cancels the browser's navigate and run-code calls client-side while screenshots and snapshots still
+  answer, so a run looks alive and never loads a page; `approval_policy = "never"`, because nobody can
+  answer a prompt; and stdin closed, because `codex exec` otherwise waits on it. The sandbox is not
+  the guard here: the write-scope step is, exactly as in the Claude lane, and the runner user is
+  dedicated to this work.
+- **What the runner needs.** Linux x64 with a dedicated unprivileged runner user, the Playwright
+  system packages (`playwright install-deps chromium`, once, as root), node for `actions/setup-node`,
+  and the label `qae-codex`. Register one runner per repository; a personal account has no shared
+  runner pool. Keep it off any box that must stay credential-free.
+
 ## The adjudicator: the artifacts decide, not the prose
 
 On the pilot's first run the explorer PASSed a criterion that said "loads without console errors"

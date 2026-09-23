@@ -1,0 +1,73 @@
+name: Vibe Verifier QAE explorer on Codex
+description: Run the QAE explorer prompt with the Codex CLI from the catalog's lockfile, on a runner that holds a ChatGPT-managed Codex login. The model holds no GitHub token; the workflow posts the verdict it writes.
+inputs:
+  prompt-file:
+    description: The prompt to run, written by the workflow (the harness prompt with this pull request's numbers filled in).
+    required: true
+  mcp:
+    description: The playwright-mcp entry point, from actions/qae-browser. Empty runs the prompt with no browser (the keepalive).
+    default: ""
+  artifacts:
+    description: The directory the explorer writes under; playwright-mcp saves its records there too.
+    default: qae-artifacts
+  codex-home:
+    description: The Codex home on this runner, holding the auth.json seeded once with `codex login --device-auth`. It persists between jobs and is never a secret. Empty means $HOME/.codex-qae.
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Install the Codex CLI from the lockfile
+      # tools/codex/package-lock.json fixes the CLI version and its platform binary; nothing is
+      # resolved from the registry at run time.
+      id: install
+      shell: bash
+      run: |
+        set -euo pipefail
+        dir=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" tool codex)
+        echo "codex=$dir/node_modules/.bin/codex" >> "$GITHUB_OUTPUT"
+    - name: Check the runner's Codex login
+      # The store is seeded once on the runner and refreshed in place by Codex itself (OpenAI's
+      # documented pattern for subscription auth on trusted private runners). Nothing is written
+      # here: a missing or foreign store fails with the seeding instruction.
+      shell: bash
+      env:
+        CODEX_HOME_INPUT: ${{ inputs.codex-home }}
+      run: |
+        set -euo pipefail
+        home="${CODEX_HOME_INPUT:-$HOME/.codex-qae}"
+        file="$home/auth.json"
+        if [ ! -s "$file" ]; then
+          echo "::error::no Codex login at $file. Seed it once on this runner, as the runner user: CODEX_HOME=$home codex login --device-auth, with cli_auth_credentials_store = \"file\" in $home/config.toml (harnesses/qae/README.md)."
+          exit 2
+        fi
+        state=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("auth_mode",""), bool((d.get("tokens") or {}).get("refresh_token")))' "$file")
+        if [ "$state" != "chatgpt True" ]; then
+          echo "::error::$file is not a ChatGPT-managed login with a refresh token (auth_mode, refresh token present: $state)"
+          exit 2
+        fi
+        echo "CODEX_HOME=$home" >> "$GITHUB_ENV"
+    - name: Explore the acceptance criteria in a real browser
+      # The three settings a non-interactive Codex run needs, each found on the first spike:
+      # --sandbox danger-full-access, because under workspace-write Codex cancels the browser's
+      # navigate calls client-side (screenshots still work, so the run looks alive and never loads
+      # a page); approval_policy never, because nobody can answer a prompt; stdin closed, because
+      # exec otherwise waits on it. The write scope is enforced by the workflow's own step after
+      # this one, not by the sandbox, and the model holds no token: the checkout has none and
+      # this step is given none.
+      shell: bash
+      env:
+        CODEX: ${{ steps.install.outputs.codex }}
+        PROMPT_FILE: ${{ inputs.prompt-file }}
+        MCP: ${{ inputs.mcp }}
+        ARTIFACTS: ${{ inputs.artifacts }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$ARTIFACTS/qae"
+        browser=()
+        if [ -n "$MCP" ]; then
+          browser=(-c 'mcp_servers.playwright.command="node"'
+                   -c "mcp_servers.playwright.args=[\"$MCP\",\"--headless\",\"--isolated\",\"--output-dir\",\"$ARTIFACTS\",\"--save-session\",\"--viewport-size\",\"1280x800\"]")
+        fi
+        "$CODEX" exec --skip-git-repo-check --sandbox danger-full-access \
+          -c 'approval_policy="never"' "${browser[@]}" \
+          -o "$ARTIFACTS/final.md" "$(cat "$PROMPT_FILE")" < /dev/null
