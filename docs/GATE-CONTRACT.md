@@ -343,7 +343,11 @@ nobody touched never blocks, and a refactor that removes one over-limit function
 by the count. A file the pull request moved is compared with itself at its old path (git's
 rename detection), so moving a long or tangled file without changing it never blocks either. That is the lesson of a predecessor's observe stage, which reported main's own nine
 findings on every pull request and could not be promoted. `--all` measures everything, for an
-audit or to decide a first subscription.
+audit or to decide a first subscription. `cognitive-complexity` runs eslint on its own config and
+an empty suppressions file, so a repository's `eslint.config.*` and `eslint-suppressions.json`
+(eslint's bulk suppressions) are for its own lint and never reach the gate: a suppressed count is
+not the base the ratchet compares with, and entries for rules the gate does not run would
+otherwise fail every run as unused.
 
 ## Harnesses
 

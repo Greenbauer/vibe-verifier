@@ -78,6 +78,28 @@ class CognitiveComplexity(unittest.TestCase):
         self.assertIn("needs node and npm", result.stderr)
 
 
+class ConsumerSuppressions(unittest.TestCase):
+    """ESLint reads eslint-suppressions.json (bulk suppressions) from the working directory. The consumer's
+    entries are for its own config: against the gate's one rule they all looked unused, and eslint exits 2."""
+
+    # One entry per file for a rule the gate never runs, and one for the gate's own rule on the tangled file:
+    # a consumer's count is not the ratchet's, so it must not hide the finding either.
+    SUPPRESSIONS = json.dumps({
+        "src/bad.ts": {"no-console": {"count": 1}, "sonarjs/cognitive-complexity": {"count": 1}},
+        "src/good.ts": {"no-console": {"count": 1}},
+    })
+
+    def test_the_gate_runs_and_judges_as_if_the_file_were_absent(self):
+        repo = branch_with(self, {"eslint-suppressions.json": self.SUPPRESSIONS}, {"src/good.ts": SIMPLE})
+        result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commit(repo, {"src/bad.ts": TANGLED}, "tangled")
+        for scope in (("--base-ref", "HEAD~1"), ("--all",)):
+            result = gate("cognitive-complexity", repo, *scope, "--format", "json")
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertEqual([(f["path"], f["line"]) for f in json.loads(result.stdout)["findings"]], [("src/bad.ts", 1)])
+
+
 class MaxFileLines(unittest.TestCase):
     def long(self, n):
         return "".join("export const v%d = %d;\n" % (i, i) for i in range(n))

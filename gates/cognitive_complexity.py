@@ -19,12 +19,16 @@ import subprocess
 import tempfile
 
 from _contract import CannotRun, Finding, changed_files, git, matches, renamed, resolve_base, run_gate, tracked_files
-from _tools import ensure_node_tool
+from _tools import NODE_TOOLS, ensure_node_tool
 
 GATE = "cognitive-complexity"
 RULE = "sonarjs/cognitive-complexity"
 DEFAULT_SOURCE = ["**/*." + ext for ext in ("ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts")]
 ALWAYS_EXCLUDED = ["**/*.d.ts", "**/node_modules/**", "**/*.test.*", "**/*.spec.*", "**/__tests__/**"]
+# eslint applies the eslint-suppressions.json in its working directory (bulk suppressions). The consumer's is
+# for its own config: against this one rule its other entries look unused (eslint exits 2), and its count
+# for this rule would hide what the ratchet counts. Read from the catalog, not the cache, whose key is the lockfile.
+NO_SUPPRESSIONS = os.path.join(NODE_TOOLS, "cognitive-complexity", "no-suppressions.json")
 
 
 def measure(tool, root, files, limit):
@@ -32,7 +36,8 @@ def measure(tool, root, files, limit):
     if not files:
         return {}
     result = subprocess.run([os.path.join(tool, "node_modules", ".bin", "eslint"), "--no-config-lookup", "--config",
-                             os.path.join(tool, "eslint.config.mjs"), "--format", "json", *files],
+                             os.path.join(tool, "eslint.config.mjs"), "--format", "json",
+                             "--suppressions-location", NO_SUPPRESSIONS, *files],
                             cwd=root, capture_output=True, text=True, env=dict(os.environ, VV_COMPLEXITY_MAX=str(limit)))
     if result.returncode not in (0, 1):
         raise CannotRun("eslint exited %d: %s" % (result.returncode, (result.stderr.strip() or "no output").splitlines()[-1]))
