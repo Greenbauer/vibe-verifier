@@ -91,7 +91,8 @@ by SHA, no secrets, `contents: read`) would close all three natively and was con
 the one it introduces, a setup or gate-adding pull request would run only after merging, and the
 stub itself would trip the catalog's own `zizmor` (`dangerous-triggers`) and ship with a permanent
 ignore. The merge guard on the operator's machine refuses an agent merge of any pull request that
-modifies an existing stub or manifest, which is where that decision is enforced.
+modifies an existing stub or manifest, which is where that decision is enforced. For the workflow
+file, an organization can close the gap natively: see [Wrappers](#wrappers).
 
 ## Subscribing in CI
 
@@ -193,6 +194,43 @@ lives in a subdirectory. Verified 2026-09-23 on the first organization consumer:
 patterns above the stub's run ended in `startup_failure` (no job, no log, no check run), and the
 rerun passed the moment the third pattern was added. Turn the policy on only after the pattern is
 in the list, or every pull request in that repository loses its gate at setup.
+
+## Wrappers
+
+An organization can subscribe its repositories through one CI repository of its own, a
+**wrapper**, instead of a stub in each (first done 2026-09-23).
+
+- The wrapper's workflows trigger on `pull_request` and pin the catalog's actions by commit, like a
+  stub: a gate workflow whose job is named `vibe-verifier-ok` and runs `actions/gates` against the
+  repository's own `.vibe-verifier`, and optionally a copy of the review harness whose `jobs:` are
+  the catalog's, byte for byte, apart from the pin and the name of its token secret.
+- An **organization ruleset** with the rule "Require workflows to pass before merging"
+  (`workflows`) requires them, each pinned by `sha`, on the default branch of the repositories it
+  targets. GitHub runs the pinned file in each targeted repository on each pull request, so the
+  check name stays `vibe-verifier-ok` (a reusable workflow would report
+  `<caller job> / vibe-verifier-ok`) and a pull request cannot edit or remove its own gate, which
+  closes the gap above. GitHub documents the rule for Enterprise Cloud only, but an organization on
+  the Team plan accepted and enforced it: probed on 2026-09-23, a pull request read `BLOCKED` while
+  the required run was queued and `CLEAN` once it passed, although its own tree did not contain the
+  workflow.
+- GitHub's constraints on ruleset workflows (its troubleshooting guide for rules): only the default
+  activity types trigger them (`opened`, `synchronize`, `reopened`), whatever `types:` says; they
+  must not use `cancel-in-progress`, which is why a wrapper's review copy has no concurrency group
+  and its header is its own; they do not run for events caused by `GITHUB_TOKEN`; a pull request
+  already open when its repository joins the ruleset gets its run on the next push; direct pushes to
+  the targeted branch are blocked; a private wrapper can be required only in private repositories,
+  and its Actions access setting must admit the organization.
+- There are two pins: the wrapper's pins of the catalog, and each ruleset's pin of the wrapper.
+  `bin/vibe-verifier consumers --wrapper <a checkout of the wrapper>` judges both, and every
+  `uses:` of a wrapper workflow still left in a repository (a legacy reusable workflow); a ruleset
+  pin is stale when a commit since it touched the workflow it names. `apply-down --wrapper` moves
+  them: the wrapper's catalog pins in a pull request to the wrapper, whose own runs are the proof,
+  a caller's `uses:` pins in a pull request of its own, and a ruleset's pins with a `PUT` of that
+  ruleset's rules once the new commit is on the wrapper's default branch. So a catalog release
+  reaches a wrapper's repositories in two runs: one that opens the wrapper's bump, and one after it
+  merges.
+- Moving a repository from its stub to a wrapper deletes the stub, a workflow that invoked the
+  catalog, so the merge guard leaves that pull request to the operator.
 
 ## Adding a gate
 
