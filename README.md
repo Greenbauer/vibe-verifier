@@ -2,9 +2,8 @@
 
 Catch problems in any pull request before merging.
 
-Vibe Verifier checks for leaked secrets, missing tests, risky GitHub Actions workflows,
-and code that is getting harder to maintain. Choose the checks your project needs and
-run them locally or in CI. Optional AI workflows review code and test your app in a browser.
+Vibe Verifier helps you verify that vibe-coded changes do what you intended before
+you merge them.
 
 ## What it checks
 
