@@ -185,10 +185,14 @@ it nests, decide whether it belongs in the job at all, then add the pattern
 endpoint replaces it) and record it in the bullet above in the same change. A pattern is added per
 repository, so one consumer carrying `supabase/setup-cli@*` gives the other three nothing.
 
-**Untested:** the `OWNER/REPO/*` pattern shape, the one GitHub documents for an action that lives
-in a subdirectory. Every subdirectory action in use here is same-owner and passes by rule, so the
-shape has never been exercised. The first cross-owner consumer verifies it against a real job
-before relying on it.
+**Cross-owner consumers need a third pattern.** The same-owner rule covers only repositories
+under the catalog's own account. A repository under another owner or an organization that runs
+`allowed_actions: selected` cannot use `Greenbauer/vibe-verifier/actions/gates` until its list
+carries `Greenbauer/vibe-verifier/*`, the `OWNER/REPO/*` shape GitHub documents for an action that
+lives in a subdirectory. Verified 2026-09-23 on the first organization consumer: with the two
+patterns above the stub's run ended in `startup_failure` (no job, no log, no check run), and the
+rerun passed the moment the third pattern was added. Turn the policy on only after the pattern is
+in the list, or every pull request in that repository loses its gate at setup.
 
 ## Adding a gate
 
