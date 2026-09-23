@@ -91,7 +91,8 @@ charges under your providers' plans.
 Run `git fetch origin` in your Vibe Verifier clone before checking for updates.
 For multiple projects, see [how to check versions and open update pull requests](docs/GATE-CONTRACT.md#subscribing-in-ci).
 An organization can instead subscribe every repository through one CI repository of its own, which
-its rulesets require on each pull request; see [wrappers](docs/GATE-CONTRACT.md#wrappers).
+its rulesets require on each pull request and which holds every repository's gate list; see
+[wrappers](docs/GATE-CONTRACT.md#wrappers).
 
 ## Contribute
 

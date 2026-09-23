@@ -2,7 +2,9 @@
 
 A wrapper is an organization's CI repository: its own workflows pin catalog actions, the
 organization's rulesets require its workflows pinned by commit, and a caller may still name one of
-its workflows in a `uses:` line. Each of those pins is judged and bumped where it lives."""
+its workflows in a `uses:` line. Each of those pins is judged and bumped where it lives. The gate
+list of each repository it subscribes is its entry in the wrapper, repos/<name>/vibe-verifier; the
+repository itself carries no manifest."""
 import copy
 import json
 import os
@@ -32,9 +34,11 @@ def legacy_caller(ref):
 
 def wrapper_review(sha, token="CLAUDE_CODE_OAUTH_TOKEN_ORG"):
     """The review harness as a wrapper carries it: its own header (no concurrency group), its own
-    token secret, the catalog's jobs."""
+    token secret, its verify step's gate list passed as `entries:`, the catalog's jobs."""
     jobs = REVIEW[REVIEW.index("\njobs:\n"):]
     jobs = jobs.replace("secrets.CLAUDE_CODE_OAUTH_TOKEN }}", "secrets.%s }}" % token)
+    jobs = jobs.replace("manifest: .vibe-verifier-review", "entries: review-receipt --receipt review-inputs/receipt.md "
+                        "--head review-inputs/head.txt --threads review-inputs/threads.json")
     jobs = re.sub(r"(vibe-verifier/actions/gates@)0{40}[^\n]*", r"\g<1>%s # main 2026-09-23" % sha, jobs)
     return "name: Review\n# required by an organization ruleset\non:\n  pull_request:\npermissions:\n  contents: read\n" + jobs
 
@@ -54,8 +58,10 @@ class Wrapper(unittest.TestCase):
         self.old = self.head(self.source)
         commit(self.source, {"gates/a.py": "2"}, "gate change")
         self.new = self.head(self.source)
-        # The wrapper's history: each workflow changes once, then the README alone.
-        self.wrapper = make_repo(self, {GATE: "1", LEGACY: "1", "README.md": "1"})
+        # The wrapper's history: each workflow changes once, then the README alone. It carries a gate
+        # list for itself and for acme/app.
+        self.wrapper = make_repo(self, {GATE: "1", LEGACY: "1", "README.md": "1",
+                                        "repos/ci/vibe-verifier": "gitleaks\n", "repos/app/vibe-verifier": "gitleaks\nzizmor\n"})
         self.w1 = self.head(self.wrapper)
         commit(self.wrapper, {GATE: "2"}, "gate workflow change")
         self.w2 = self.head(self.wrapper)
@@ -110,6 +116,7 @@ class Wrapper(unittest.TestCase):
         result = self.check("--repo", "acme/ci")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("stub: wrapper", result.stdout)
+        self.assertIn("manifest: ok  [gitleaks]", result.stdout)
         self.assertIn("workflows: vibe-verifier.yml current", result.stdout)
         self.repo("acme/ci", workflows={"vibe-verifier.yml": gate_workflow(self.old)})
         stale = self.check("--repo", "acme/ci")
@@ -122,14 +129,21 @@ class Wrapper(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("review.yml current", result.stdout)
         self.assertNotIn("drifts", result.stdout)
-        self.repo("acme/ci", workflows={"review.yml": wrapper_review(self.new).replace("--max-turns 50", "--max-turns 5")})
-        drift = self.check("--repo", "acme/ci")
-        self.assertEqual(drift.returncode, 1, drift.stdout)
-        self.assertIn("review.yml current drifts from harnesses/review/review.yml under jobs: outside the pin and token lines",
-                      drift.stdout)
+        # The catalog's own gate-list line is as good as `entries:`; the line is the wrapper's either way.
+        self.repo("acme/ci", workflows={"review.yml": wrapper_review(self.new).replace(
+            "entries: review-receipt --receipt review-inputs/receipt.md --head review-inputs/head.txt --threads review-inputs/threads.json",
+            "manifest: .vibe-verifier-review")})
+        self.assertEqual(self.check("--repo", "acme/ci").returncode, 0)
+        for changed in (wrapper_review(self.new).replace("--max-turns 50", "--max-turns 5"),
+                        wrapper_review(self.new).replace("          entries: ", "          base-ref: main\n          entries: ")):
+            self.repo("acme/ci", workflows={"review.yml": changed})
+            drift = self.check("--repo", "acme/ci")
+            self.assertEqual(drift.returncode, 1, drift.stdout)
+            self.assertIn("review.yml current drifts from harnesses/review/review.yml under jobs: outside the pin, token and "
+                          "gate-list lines", drift.stdout)
 
     def test_a_ruleset_pin_is_judged_by_commits_to_the_workflow_it_names(self):
-        self.repo("acme/app", manifest="gitleaks\n")
+        self.repo("acme/app")
         self.ruleset([(GATE, self.w2)])  # since w2 only the legacy workflow and the README changed
         result = self.check("--repo", "acme/ci")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -150,16 +164,30 @@ class Wrapper(unittest.TestCase):
         self.assertEqual(off.returncode, 1, off.stdout)
         self.assertIn("ruleset acme/vibe-verifier-gates: enforcement is disabled, not active", off.stdout)
 
-    def test_a_repository_a_ruleset_targets_needs_its_manifest_and_no_stub(self):
-        self.repo("acme/app", manifest="gitleaks\n")
+    def test_a_repository_a_ruleset_targets_takes_its_gate_list_from_the_wrapper_and_carries_none(self):
+        self.repo("acme/app")
         self.ruleset([(GATE, self.w4)])
         result = self.check("--repo", "acme/ci")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertRegex(result.stdout, r"acme/app +pin: - +stub: ruleset +manifest: ok")
+        self.assertRegex(result.stdout, r"acme/app +pin: - +stub: ruleset +manifest: ok  \[gitleaks zizmor\]")
+        # A manifest left in the repository is read by nothing: stray, and never shown as its gate list.
+        self.repo("acme/app", manifest="max-file-lines\n")
+        (Path(self.fixtures) / "acme" / "app" / ".vibe-verifier-review").write_text("review-receipt\n")
+        stray = self.check("--repo", "acme/ci")
+        self.assertEqual(stray.returncode, 1, stray.stdout)
+        self.assertRegex(stray.stdout, r"acme/app +pin: - +stub: ruleset +manifest: stray \.vibe-verifier \.vibe-verifier-review "
+                                       r"\(the entry in acme/ci is what runs\)  \[gitleaks zizmor\]")
+
+    def test_a_subscribed_repository_or_the_wrapper_with_no_entry_needs_action(self):
         self.repo("acme/app")
-        missing = self.check("--repo", "acme/ci")
+        self.ruleset([(GATE, self.w4)])
+        git(self.wrapper, "rm", "-q", "repos/app/vibe-verifier", "repos/ci/vibe-verifier")
+        git(self.wrapper, "commit", "-q", "-m", "drop both entries")
+        missing = self.check("--repo", "acme/ci", "--format", "github")
         self.assertEqual(missing.returncode, 1, missing.stdout)
-        self.assertRegex(missing.stdout, r"acme/app +pin: - +stub: ruleset +manifest: missing")
+        self.assertRegex(missing.stdout, r"acme/app +pin: - +stub: ruleset +manifest: no repos/app/vibe-verifier in acme/ci")
+        self.assertRegex(missing.stdout, r"acme/ci +pin: - +stub: wrapper +manifest: no repos/ci/vibe-verifier in acme/ci")
+        self.assertIn("::error title=vibe-verifier consumers::acme/app: no repos/app/vibe-verifier in acme/ci", missing.stdout)
 
     def test_callers_of_a_wrapper_workflow_are_judged_against_it(self):
         self.repo("acme/legacy", workflows={"claude-review.yml": legacy_caller("v1")})
@@ -178,7 +206,7 @@ class Wrapper(unittest.TestCase):
     def test_apply_down_plans_every_level_and_writes_nothing(self):
         self.repo("acme/ci", workflows={"vibe-verifier.yml": gate_workflow(self.old)})
         self.repo("acme/legacy", workflows={"claude-review.yml": legacy_caller("v1")})
-        self.repo("acme/app", manifest="gitleaks\n")
+        self.repo("acme/app")
         self.ruleset([(GATE, self.w1)])
         plan = self.apply_down("--owner", "acme")
         self.assertEqual(plan.returncode, 1, plan.stdout + plan.stderr)
@@ -191,7 +219,7 @@ class Wrapper(unittest.TestCase):
     def test_apply_down_confirm_moves_each_pin_where_it_lives(self):
         self.repo("acme/ci", workflows={"vibe-verifier.yml": gate_workflow(self.old)})
         self.repo("acme/legacy", workflows={"claude-review.yml": legacy_caller("v1")})
-        self.repo("acme/app", manifest="gitleaks\n")
+        self.repo("acme/app")
         ruleset = self.ruleset([(GATE, self.w1)])
         digest = re.search(r"--confirm (\w+)", self.apply_down("--owner", "acme").stdout).group(1)
         result = self.apply_down("--owner", "acme", "--confirm", digest)
