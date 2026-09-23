@@ -7,14 +7,17 @@ directory instead of GitHub and records every call, so a test can assert what wa
     FAKE_GH_ROOT/<owner>/<name>/.open-pr an already-open pin-bump PR, served to the head query
     FAKE_GH_ROOT/<owner>/<name>/.native  JSON overriding that repository's native enforcement:
                                          {"allowed_actions", "sha_pinning_required", "patterns_allowed", "alerts"}
-    FAKE_GH_ROOT/calls.log               one JSON object per call: {method, endpoint, content?}
+    FAKE_GH_ROOT/<owner>/<name>/.id      the repository id `gh api repos/<owner>/<name>` answers (default 1)
+    FAKE_GH_ROOT/<owner>/.rulesets.json  the organization's rulesets, a JSON list of full ruleset objects;
+                                         absent, `orgs/<owner>/rulesets` answers 404, as for a user account
+    FAKE_GH_ROOT/calls.log               one JSON object per call: {method, endpoint, content?, body?}
 
 A repository with no `.native` file answers as a fully enforced one (SHA pinning on, the actions
 allowlist `selected`, Dependabot alerts on), so a test says only what it is actually about.
 
 `gh repo list <owner>` answers with every <owner>/<name> directory present; writes (POST/PUT) are
 recorded and acknowledged without changing the fixture, because what the tests check is the bytes
-the tool sends.
+the tool sends. A JSON body sent with `--input -` is recorded as `body`.
 """
 import base64
 import json
@@ -50,7 +53,8 @@ def native(repo):
 
 if argv[:2] == ["repo", "list"]:
     owner = argv[2]
-    names = sorted(os.listdir(os.path.join(root, owner))) if os.path.isdir(os.path.join(root, owner)) else []
+    base = os.path.join(root, owner)
+    names = sorted(n for n in os.listdir(base) if os.path.isdir(os.path.join(base, n))) if os.path.isdir(base) else []
     print("\n".join("%s/%s" % (owner, name) for name in names))
     sys.exit(0)
 
@@ -64,7 +68,24 @@ if argv[:1] == ["api"]:
     endpoint = argv[1]
     method = argv[argv.index("-X") + 1] if "-X" in argv else "GET"
     given = fields()
-    record(method, endpoint, **({"content": base64.b64decode(given["content"]).decode()} if "content" in given else {}))
+    extra = {"content": base64.b64decode(given["content"]).decode()} if "content" in given else {}
+    if "--input" in argv and argv[argv.index("--input") + 1] == "-":
+        extra["body"] = json.load(sys.stdin)
+    record(method, endpoint, **extra)
+    if endpoint.startswith("orgs/"):
+        owner, rest = endpoint.split("/")[1], endpoint.split("?")[0].split("/")[2:]
+        path = os.path.join(root, owner, ".rulesets.json")
+        if rest[:1] != ["rulesets"] or not os.path.exists(path):
+            print("gh: Not Found (HTTP 404)", file=sys.stderr)
+            sys.exit(1)
+        rulesets = json.load(open(path))
+        if method != "GET":
+            print(json.dumps({}))
+        elif len(rest) == 1:
+            print(json.dumps([{"id": r["id"], "name": r["name"], "enforcement": r["enforcement"]} for r in rulesets]))
+        else:
+            print(json.dumps(next(r for r in rulesets if str(r["id"]) == rest[1])))
+        sys.exit(0)
     repo = endpoint[len("repos/"):].split("/contents/")[0].split("/git/")[0].split("/pulls")[0].split("?")[0].rstrip("/")
     repo = "/".join(repo.split("/")[:2])
     if broken(repo):
@@ -111,7 +132,8 @@ if argv[:1] == ["api"]:
         print(json.dumps([{"html_url": open(open_pr).read().strip()}] if os.path.exists(open_pr) else []))
         sys.exit(0)
     if endpoint.startswith("repos/") and endpoint.count("/") == 2:
-        print(json.dumps({"default_branch": "main"}))
+        id_file = os.path.join(root, repo, ".id")
+        print(json.dumps({"default_branch": "main", "id": int(open(id_file).read()) if os.path.exists(id_file) else 1}))
         sys.exit(0)
 
 print("fake gh: unsupported invocation %r" % argv, file=sys.stderr)

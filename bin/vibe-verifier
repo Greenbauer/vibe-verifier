@@ -34,13 +34,29 @@ repository gets a row too, with its stub and manifest checks skipped: it carries
 design, and its native state is watched like any consumer's. Exit 2 if any repository could
 not be read, 1 if anything needs action, else 0.
 
+With `--wrapper PATH` (a checkout of an organization's CI repository that subscribes its
+repositories to the catalog) the inventory has three more kinds of pin. The wrapper gets a row of
+kind `wrapper`: no stub is expected, every catalog pin in its workflows is judged like a
+consumer's, and a review.yml copy is compared under `jobs:` only, with the token secret named
+alike (the wrapper owns its header and its secret). Every ruleset of the wrapper's organization
+whose `workflows` rule requires a wrapper workflow gets a row: each pinned commit is current or
+stale against the wrapper's --wrapper-ref (stale when a commit since it touched that workflow), a
+bare ref is unpinned, and a ruleset that is not active needs action. The repositories it targets
+by name are subscribers with no stub (`stub: ruleset`) whose manifest must exist. A `uses:` of a
+wrapper workflow in any repository's workflows is judged the same way, so a caller of a legacy
+reusable workflow is listed even with no manifest.
+
 `apply-down` bumps stale pins, and nothing else. It is two-stage on purpose: with no
 `--confirm` it reads the same inventory and prints a plan plus a digest of exactly what
 it would write; `--confirm <digest>` opens one pull request per repository, changing only
 pin lines (one commit per workflow file). It never merges, never touches a repository whose
 stub has drifted, and never opens a second pull request for a bump that is already open. A
 plan whose digest no longer matches is refused rather than applied, so a bump is reviewed as
-the thing it was.
+the thing it was. With `--wrapper PATH` it bumps both levels in the same plan: the wrapper's
+catalog pins in a pull request to the wrapper, each caller's pins of wrapper workflows in a pull
+request of its own, and each ruleset's pins with a PUT of that ruleset's rules, where only the
+stale entries' `sha` moves to the wrapper's head. A ruleset moves to what is on the wrapper's
+--wrapper-ref, so run it again once the wrapper's own bump has merged.
 
 `tool <name>` prints the directory where the node toolchain pinned by tools/<name>/package-lock.json
 is installed (installing it first when the cache does not have that lockfile's digest), so a
@@ -55,6 +71,8 @@ the file cannot be read.
 """
 import argparse
 import base64
+import copy
+import fnmatch
 import hashlib
 import json
 import os
@@ -190,40 +208,61 @@ def gh_file(repo, path):
 
 
 REVIEW_HARNESS = os.path.join(ROOT, "harnesses", "review", "review.yml")
+# The token line of a review harness copy; a wrapper names its own secret.
+TOKEN_SECRET = re.compile(r"(claude_code_oauth_token: \$\{\{ secrets\.)[A-Za-z0-9_]+( \}\})")
+SOURCE = "source"  # this repository's own row: it carries no stub and its manifest is its own
+WRAPPER = "wrapper"  # the wrapper's own row: it pins catalog actions for an organization and carries no stub
+RULESET = "ruleset"  # a repository an organization ruleset subscribes through the wrapper: no stub expected
+SETTLED = ("current", "ok", SOURCE, WRAPPER, RULESET)
 
 
-def workflow_pins(repo):
-    """{workflow path: ([pinned SHAs], text)} for every workflow under .github/workflows/ other than
-    the stub that pins a catalog action. A harness copy (qae-explore.yml) pins gates@ and criteria@."""
+def workflow_texts(repo):
+    """{path: text} for every workflow file under .github/workflows/, the stub included."""
     try:
         entries = gh_json("repos/%s/contents/%s" % (repo, WORKFLOWS_DIR))
     except CannotRead as error:
         if "HTTP 404" in str(error):
             return {}
         raise
+    return {entry["path"]: gh_file(repo, entry["path"]) or "" for entry in entries
+            if entry.get("type") == "file" and entry.get("path", "").endswith((".yml", ".yaml"))}
+
+
+def workflow_pins(texts, with_stub=False):
+    """{workflow path: ([pinned SHAs], text)} for every workflow that pins a catalog action. A harness
+    copy (qae-explore.yml) pins gates@ and criteria@. The stub is left out unless asked for: a
+    consumer's stub is judged on its own line of the row, and a wrapper's gate workflow is not a stub."""
     pins = {}
-    for entry in entries:
-        path = entry.get("path", "")
-        if entry.get("type") != "file" or path == STUB_PATH or not path.endswith((".yml", ".yaml")):
-            continue
-        text = gh_file(repo, path) or ""
+    for path, text in texts.items():
         found = [match.group(2) for match in PIN_LINE.finditer(text)]
-        if found:
+        if found and (with_stub or path != STUB_PATH):
             pins[path] = (found, text)
     return pins
 
 
-def harness_drift(path, text):
+def jobs_of(text):
+    """The workflow from its `jobs:` key on."""
+    at = text.find("\njobs:\n")
+    return text[at:] if at >= 0 else text
+
+
+def harness_drift(path, text, wrapper=False):
     """What a harness copy changed outside its pin lines, or None. Only review.yml is compared: every
     line of it is the catalog's, so a copy that differs is running a review nobody released
-    (qae-explore.yml has a consumer-owned build block and is not compared)."""
+    (qae-explore.yml has a consumer-owned build block and is not compared). A wrapper's copy owns its
+    header (an organization ruleset requires it, and GitHub forbids a ruleset workflow
+    cancel-in-progress, so it has no concurrency group) and the name of its token secret: only its
+    jobs are compared, with the secret named alike."""
     if os.path.basename(path) != "review.yml":
         return None
     with open(REVIEW_HARNESS, encoding="utf-8") as handle:
         template = handle.read()
+    if wrapper:
+        text, template = (TOKEN_SECRET.sub(r"\1TOKEN\2", jobs_of(body)) for body in (text, template))
     if PIN_LINE.sub(r"\1SHA", text) == PIN_LINE.sub(r"\1SHA", template):
         return None
-    return "drifts from harnesses/review/review.yml outside the pin line"
+    return "drifts from harnesses/review/review.yml %s" % (
+        "under jobs: outside the pin and token lines" if wrapper else "outside the pin line")
 
 
 def owner_repos(owner):
@@ -234,26 +273,142 @@ def owner_repos(owner):
     return sorted(result.stdout.split())
 
 
+def git_in(checkout, *git_args):
+    return subprocess.run(["git", "-C", checkout, *git_args], capture_output=True, text=True)
+
+
 def source_git(args, *git_args):
-    return subprocess.run(["git", "-C", args.source, *git_args], capture_output=True, text=True)
+    return git_in(args.source, *git_args)
+
+
+def origin_repo(checkout):
+    """OWNER/NAME of a checkout's origin remote, or None."""
+    url = git_in(checkout, "remote", "get-url", "origin").stdout.strip()
+    match = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$", url)
+    return match.group(1) if match else None
 
 
 def source_repo(args):
     """OWNER/NAME of the source checkout's origin, or None. Discovery skips it: the source
     repository dogfoods through its own ci.yml and never carries the consumer stub."""
-    url = source_git(args, "remote", "get-url", "origin").stdout.strip()
-    match = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$", url)
-    return match.group(1) if match else None
+    return origin_repo(args.source)
+
+
+def commit_status(checkout, ref, sha, paths, noun):
+    """current | stale (N <noun>s behind) | unknown | unpinned: a pin of `sha` judged against `ref`
+    in `checkout`, stale when a commit since it touched `paths`."""
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        return "unpinned (%s is not a commit SHA)" % sha
+    if git_in(checkout, "merge-base", "--is-ancestor", sha, ref).returncode != 0:
+        return "unknown (not in %s)" % ref
+    behind = git_in(checkout, "rev-list", "--count", "%s..%s" % (sha, ref), "--", *paths).stdout.strip()
+    return "current" if behind == "0" else "stale (%s %s%s behind)" % (behind, noun, "" if behind == "1" else "s")
 
 
 def pin_status(args, sha):
-    """current | stale (N release commits behind) | unknown, judged against the source history."""
-    if not re.fullmatch(r"[0-9a-f]{40}", sha):
-        return "unpinned (%s is not a commit SHA)" % sha
-    if source_git(args, "merge-base", "--is-ancestor", sha, args.source_ref).returncode != 0:
-        return "unknown (not in %s)" % args.source_ref
-    behind = source_git(args, "rev-list", "--count", "%s..%s" % (sha, args.source_ref), "--", *RELEASE_PATHS).stdout.strip()
-    return "current" if behind == "0" else "stale (%s release commit%s behind)" % (behind, "" if behind == "1" else "s")
+    """A catalog pin, judged against the source history: stale when a release commit came since."""
+    return commit_status(args.source, args.source_ref, sha, RELEASE_PATHS, "release commit")
+
+
+class Wrapper:
+    """A repository that subscribes an organization's repositories to the catalog on their behalf.
+    Its own workflows pin catalog actions; the organization's rulesets require its workflows, pinned
+    by commit, and a caller may still name one in a `uses:` line. `checkout` is a local clone judged
+    at `ref`, the way --source is for the catalog."""
+
+    def __init__(self, checkout, ref):
+        self.checkout, self.ref = checkout, ref
+        self.repo = origin_repo(checkout)
+        self.owner = (self.repo or "/").split("/")[0]
+        # A caller's pin of one of its workflows: OWNER/NAME/.github/workflows/<file>@<ref>
+        self.call = re.compile(r"(?<![\w.-])(%s/(\.github/workflows/[^@\s]+)@)([^\s#]+)([^\n]*)"
+                               % re.escape(self.repo or "-"), re.IGNORECASE)
+
+    def status(self, sha, path):
+        """A pin of one wrapper workflow: stale when a commit since it touched that workflow."""
+        return commit_status(self.checkout, self.ref, sha, [path], "commit")
+
+    def head(self):
+        """(commit, date) of the ref every wrapper pin is judged against and bumped to."""
+        sha = git_in(self.checkout, "rev-parse", "--verify", "--quiet", self.ref).stdout.strip()
+        return sha, git_in(self.checkout, "log", "-1", "--date=short", "--format=%cd", sha).stdout.strip()
+
+
+def load_wrapper(args):
+    """(Wrapper, None), (None, why) when --wrapper is not a usable checkout, or (None, None) without it."""
+    if not args.wrapper:
+        return None, None
+    wrapper = Wrapper(args.wrapper, args.wrapper_ref)
+    if not wrapper.repo:
+        return None, "--wrapper %s is not a checkout with an origin remote" % args.wrapper
+    if not re.fullmatch(r"[0-9a-f]{40}", wrapper.head()[0]):
+        return None, "ref %s not found in %s" % (args.wrapper_ref, args.wrapper)
+    return wrapper, None
+
+
+def wrapper_calls(wrapper, texts):
+    """[(workflow path, called wrapper workflow path, ref)] for every `uses:` of a wrapper workflow."""
+    return [(path, match.group(2), match.group(3)) for path, text in sorted(texts.items())
+            for match in wrapper.call.finditer(text)]
+
+
+def required_workflows(rules):
+    """Every workflow entry of the `workflows` rules in `rules` (the live objects, so a bump edits them)."""
+    return [entry for rule in rules if rule.get("type") == "workflows"
+            for entry in (rule.get("parameters") or {}).get("workflows") or []]
+
+
+def wrapper_rulesets(wrapper):
+    """(the wrapper's repository id, [(ruleset, [(workflow path, pinned sha or ref)])]) for every ruleset
+    of the wrapper's organization whose `workflows` rule requires a wrapper workflow. A user account
+    has no organization rulesets (HTTP 404): an empty list, not an error."""
+    wrapper_id = gh_json("repos/%s" % wrapper.repo).get("id")
+    try:
+        listed = gh_json("orgs/%s/rulesets?per_page=100" % wrapper.owner)
+    except CannotRead as error:
+        if "HTTP 404" in str(error):
+            return wrapper_id, []
+        raise
+    found = []
+    for summary in listed:
+        ruleset = gh_json("orgs/%s/rulesets/%s" % (wrapper.owner, summary["id"]))
+        pins = [(entry.get("path", ""), entry.get("sha") or entry.get("ref") or "")
+                for entry in required_workflows(ruleset.get("rules") or []) if entry.get("repository_id") == wrapper_id]
+        if pins:
+            found.append((ruleset, pins))
+    return wrapper_id, found
+
+
+def ruleset_targets(ruleset, repos):
+    """The OWNER/NAME repositories among `repos` a ruleset targets by name, or None when its
+    conditions target another way (a repository id list, a custom property), which is not resolved."""
+    conditions = ruleset.get("conditions") or {}
+    by_name = conditions.get("repository_name")
+    if by_name is None or set(conditions) - {"ref_name", "repository_name"}:
+        return None
+
+    def hit(name, patterns):
+        return any(pattern == "~ALL" or fnmatch.fnmatchcase(name.lower(), pattern.lower()) for pattern in patterns)
+    return sorted(repo for repo in repos if hit(repo.split("/", 1)[1], by_name.get("include") or [])
+                  and not hit(repo.split("/", 1)[1], by_name.get("exclude") or []))
+
+
+def ruleset_rows(args, wrapper, discovered):
+    """([(ruleset name, enforcement, targets or None, [(workflow, status)])], {target: [ruleset names]})."""
+    _, found = wrapper_rulesets(wrapper)
+    if not found:
+        return [], {}
+    same_owner = args.owner and args.owner.lower() == wrapper.owner.lower()
+    repos = discovered if same_owner else set(owner_repos(wrapper.owner))
+    rows, targeted = [], {}
+    for ruleset, pins in found:
+        name = "%s/%s" % (wrapper.owner, ruleset.get("name"))
+        targets = ruleset_targets(ruleset, repos)
+        for repo in targets or []:
+            targeted.setdefault(repo, []).append(name)
+        rows.append((name, ruleset.get("enforcement") or "unset", targets,
+                     [(os.path.basename(path), wrapper.status(sha, path)) for path, sha in pins]))
+    return rows, targeted
 
 
 def stub_status(stub):
@@ -287,6 +442,12 @@ def worst_status(args, shas):
     return "current" if all(s == "current" for s in statuses) else next(s for s in statuses if s != "current")
 
 
+def catalog_rows(args, texts, wrapper=False):
+    """[(workflow, status)] for every workflow pinning a catalog action, a review copy's drift included."""
+    return [(os.path.basename(path), " ".join(filter(None, (worst_status(args, shas), harness_drift(path, text, wrapper)))))
+            for path, (shas, text) in sorted(workflow_pins(texts, with_stub=wrapper).items())]
+
+
 def native_status(repo):
     """(text, [problems]) for the enforcement GitHub itself holds: `sha_pinning_required`, the
     actions allowlist, and Dependabot alerts. Reading them needs an admin token, which a workflow's
@@ -317,16 +478,45 @@ def native_status(repo):
     return ", ".join(parts), problems
 
 
-SOURCE = "source"  # this repository's own row: it carries no stub and its manifest is its own
+def repo_row(args, repo, source, wrapper, targeted):
+    """One inventory row, or None for a discovered repository that subscribes to nothing."""
+    if repo == source:
+        # The source repository subscribes through its own ci.yml, so only its native state
+        # is judged; it is listed so every repository the catalog governs is watched.
+        return (repo, "", SOURCE, SOURCE, [], [], native_status(repo))
+    manifest, stub = gh_file(repo, ".vibe-verifier"), gh_file(repo, STUB_PATH)
+    subscribed = manifest is not None or stub is not None or repo in targeted
+    texts = workflow_texts(repo) if subscribed or wrapper else {}
+    calls = [("%s (%s)" % (os.path.basename(path), wrapper.repo), wrapper.status(ref, called))
+             for path, called, ref in wrapper_calls(wrapper, texts)] if wrapper else []
+    if wrapper and repo == wrapper.repo:
+        # The wrapper pins catalog actions in its own workflows, the gate workflow included, and
+        # carries no stub; a manifest is optional (its own pull requests may run its workflows).
+        manifest_state, gates = manifest_status(manifest) if manifest is not None else ("", [])
+        return (repo, "", WRAPPER, manifest_state, gates, catalog_rows(args, texts, wrapper=True), native_status(repo))
+    if not subscribed:
+        if calls:  # a caller of a wrapper workflow that subscribes to nothing itself: its pins are the row
+            return (repo, "", "", "", [], calls, ("", []))
+        if args.owner and repo not in (args.repo or []):
+            return None  # discovery: an owner's repo that never subscribed is not a finding
+        return (repo, "not subscribed", "missing", "missing", [], [], ("", []))
+    stub_state, sha = (RULESET, None) if stub is None and repo in targeted else stub_status(stub)
+    manifest_state, gates = manifest_status(manifest)
+    return (repo, pin_status(args, sha) if sha else "", stub_state, manifest_state, gates,
+            catalog_rows(args, texts) + calls, native_status(repo))
 
 
 def consumers(args):
     source = source_repo(args)
+    wrapper, error = load_wrapper(args)
+    if error:
+        return fail(error)
     try:
         discovered = set(owner_repos(args.owner)) if args.owner else set()
+        rulesets, targeted = ruleset_rows(args, wrapper, discovered) if wrapper else ([], {})
     except CannotRead as error:
         return fail(str(error))
-    repos = sorted(set(args.repo or []) | discovered)
+    repos = sorted(set(args.repo or []) | discovered | set(targeted) | ({wrapper.repo} if wrapper else set()))
     if not repos:
         return fail("no repositories given (use --repo OWNER/NAME or --owner OWNER)")
     if source_git(args, "rev-parse", "--verify", "--quiet", args.source_ref).returncode != 0:
@@ -334,54 +524,59 @@ def consumers(args):
     rows, unreadable = [], 0
     for repo in repos:
         try:
-            if repo == source:
-                # The source repository subscribes through its own ci.yml, so only its native state
-                # is judged; it is listed so every repository the catalog governs is watched.
-                rows.append((repo, "", SOURCE, SOURCE, [], [], native_status(repo)))
-                continue
-            manifest, stub = gh_file(repo, ".vibe-verifier"), gh_file(repo, STUB_PATH)
-            if manifest is None and stub is None:
-                if args.owner and repo not in (args.repo or []):
-                    continue  # discovery: an owner's repo that never subscribed is not a finding
-                rows.append((repo, "not subscribed", "missing", "missing", [], [], ("", [])))
-                continue
-            stub_state, sha = stub_status(stub)
-            pin = pin_status(args, sha) if sha else ""
-            manifest_state, gates = manifest_status(manifest)
-            workflows = [(os.path.basename(path), " ".join(filter(None, (worst_status(args, shas), harness_drift(path, text)))))
-                         for path, (shas, text) in sorted(workflow_pins(repo).items())]
-            rows.append((repo, pin, stub_state, manifest_state, gates, workflows, native_status(repo)))
+            row = repo_row(args, repo, source, wrapper, targeted)
         except CannotRead as error:
-            rows.append((repo, "could not read: %s" % error, "", "", [], [], ("", [])))
+            row = (repo, "could not read: %s" % error, "", "", [], [], ("", []))
             unreadable += 1
+        if row:
+            rows.append(row)
     needs_action = 0
     for repo, pin, stub_state, manifest_state, gates, workflows, (native, native_problems) in rows:
-        problems = [text for text in (pin, stub_state, manifest_state) if text and text not in ("current", "ok", SOURCE)]
+        problems = [text for text in (pin, stub_state, manifest_state) if text and text not in SETTLED]
         problems += ["%s %s" % (name, status) for name, status in workflows if status != "current"]
         problems += native_problems
-        needs_action += bool(problems)
-        if args.format == "github":
-            for problem in problems:
-                print("::error title=vibe-verifier consumers::%s: %s" % (repo, problem))
+        needs_action += report(args, repo, problems)
         print("%-32s pin: %-44s stub: %-12s manifest: %s%s%s%s" % (
             repo, pin or "-", stub_state or "-", manifest_state or "-",
             "  [%s]" % " ".join(gates) if gates else "",
             "  workflows: %s" % ", ".join("%s %s" % pair for pair in workflows) if workflows else "",
             "  native: %s" % native if native else ""))
-    print("\n%d repositor%s: %d current, %d need action, %d could not be read" % (
+    for name, enforcement, targets, pins in rulesets:
+        # A ruleset is where an organization pins the wrapper: one row, however many repositories it targets.
+        problems = ["%s %s" % pair for pair in pins if pair[1] != "current"]
+        problems += [] if enforcement == "active" else ["enforcement is %s, not active" % enforcement]
+        problems += [] if targets is not None else ["targets repositories by something other than their names"]
+        needs_action += report(args, "ruleset " + name, problems)
+        print("%-32s enforcement: %s  targets: %s  pins: %s" % (
+            "ruleset " + name, enforcement,
+            "[%s]" % " ".join(repo.split("/", 1)[1] for repo in targets) if targets is not None else "not by name",
+            ", ".join("%s %s" % pair for pair in pins)))
+    print("\n%d repositor%s%s: %d current, %d need action, %d could not be read" % (
         len(rows), "y" if len(rows) == 1 else "ies",
-        len(rows) - needs_action - unreadable, needs_action - unreadable, unreadable))
+        " and %d ruleset%s" % (len(rulesets), "" if len(rulesets) == 1 else "s") if rulesets else "",
+        len(rows) + len(rulesets) - needs_action, needs_action - unreadable, unreadable))
     return 2 if unreadable else (1 if needs_action else 0)
 
 
-def gh_json(*api_args, method=None, fields=None):
-    """A gh api call returning parsed JSON. Raises CannotRead with gh's own last line."""
+def report(args, name, problems):
+    """Annotate each problem in GitHub format when asked; True when there is any."""
+    if args.format == "github":
+        for problem in problems:
+            print("::error title=vibe-verifier consumers::%s: %s" % (name, problem))
+    return bool(problems)
+
+
+def gh_json(*api_args, method=None, fields=None, body=None):
+    """A gh api call returning parsed JSON, with an optional JSON request body. Raises CannotRead with
+    gh's own last line."""
     command = ["gh", "api", *api_args]
     if method:
         command += ["-X", method]
     for name, value in (fields or {}).items():
         command += ["-f", "%s=%s" % (name, value)]
-    result = subprocess.run(command, capture_output=True, text=True)
+    if body is not None:
+        command += ["--input", "-"]
+    result = subprocess.run(command, capture_output=True, text=True, input=None if body is None else json.dumps(body))
     if result.returncode != 0:
         raise CannotRead((result.stderr.strip() or "gh api failed").splitlines()[-1])
     return json.loads(result.stdout) if result.stdout.strip() else {}
@@ -399,57 +594,95 @@ def gh_ok(endpoint):
     raise CannotRead(last)
 
 
-def bump_plan(args, target):
-    """(repo, [(path, [old SHAs], new text)]) per repository with a pin to move, and why the rest are skipped."""
+def bump_plan(args, target, wrapper=None):
+    """([(repo, wrapper or None, new pin, [(path, [old pins], new text)])], [(repo, why skipped)]).
+
+    Per repository, two levels: the catalog pins (a consumer's stub must match its template; a wrapper
+    has no stub), moved to `target`; and the pins of the wrapper's workflows a caller names in a
+    `uses:` line, moved to the wrapper's head (its repository names that level). Each level becomes
+    its own pull request."""
     planned, skipped = [], []
+    wrapper_head, wrapper_date = wrapper.head() if wrapper else (None, None)
     for repo in args._repos:
+        is_wrapper = wrapper is not None and repo == wrapper.repo
         try:
             stub = gh_file(repo, STUB_PATH)
             state, sha = stub_status(stub)
-            if state != "ok":
-                if stub is None and repo not in (args.repo or []):
-                    continue  # discovery: a repository that never subscribed is not a finding
-                skipped.append((repo, "stub %s" % state))
-                continue
-            files = [(STUB_PATH, stub)] + [(path, gh_file(repo, path)) for path in sorted(workflow_pins(repo))]
+            texts = workflow_texts(repo) if state == "ok" or wrapper else {}
         except CannotRead as error:
             skipped.append((repo, "could not read: %s" % error))
             continue
-        changes = []
-        for path, text in files:
-            moving = sorted({m.group(2) for m in PIN_LINE.finditer(text)
-                             if m.group(2) != target and not pin_status(args, m.group(2)).startswith("current")})
+        calls = wrapper_calls(wrapper, texts) if wrapper and not is_wrapper else []
+        catalog, wrapped = [], []
+        if state == "ok" or is_wrapper:
+            for path, text in sorted(texts.items()):
+                moving = sorted({m.group(2) for m in PIN_LINE.finditer(text)
+                                 if m.group(2) != target and not pin_status(args, m.group(2)).startswith("current")})
+                if moving:
+                    catalog.append((path, moving, PIN_LINE.sub(
+                        lambda m: "%s%s # main %s" % (m.group(1), target, args._target_date) if m.group(2) in moving else m.group(0), text)))
+        elif stub is not None or repo in (args.repo or []):
+            skipped.append((repo, "stub %s" % state))
+        elif not calls:
+            continue  # discovery: a repository that never subscribed is not a finding
+        for path in sorted({path for path, _, _ in calls}):
+            moving = sorted({ref for called_from, called, ref in calls if called_from == path and ref != wrapper_head
+                             and not wrapper.status(ref, called).startswith("current")})
             if moving:
-                changes.append((path, moving, PIN_LINE.sub(
-                    lambda m: "%s%s # main %s" % (m.group(1), target, args._target_date) if m.group(2) in moving else m.group(0), text)))
-        if changes:
-            planned.append((repo, changes))
-        else:
+                wrapped.append((path, moving, wrapper.call.sub(
+                    lambda m: "%s%s # main %s" % (m.group(1), wrapper_head, wrapper_date) if m.group(3) in moving else m.group(0), texts[path])))
+        if catalog:
+            planned.append((repo, None, target, catalog))
+        if wrapped:
+            planned.append((repo, wrapper.repo, wrapper_head, wrapped))
+        if not catalog and not wrapped and (state == "ok" or is_wrapper or calls):
             skipped.append((repo, "already pinned to %s" % target[:10] if sha == target else "pins are current"))
     return planned, skipped
 
 
-def open_bump(repo, changes, target, branch, default_branch):
-    """One pull request changing only pin lines, one commit per workflow file. Returns its URL."""
+def ruleset_plan(wrapper):
+    """[(ruleset, [(workflow path, old pin)], new rules)] for every ruleset that pins a wrapper workflow
+    anywhere but a current commit. Only those entries' `sha` changes, to the wrapper's head."""
+    head, _ = wrapper.head()
+    wrapper_id, found = wrapper_rulesets(wrapper)
+    moves = []
+    for ruleset, pins in found:
+        moving = sorted({(path, old) for path, old in pins if old != head and wrapper.status(old, path) != "current"})
+        if not moving:
+            continue
+        rules = copy.deepcopy(ruleset.get("rules") or [])
+        for entry in required_workflows(rules):
+            if entry.get("repository_id") == wrapper_id and (entry.get("path", ""), entry.get("sha") or entry.get("ref") or "") in moving:
+                entry["sha"] = head
+        moves.append((ruleset, moving, rules))
+    return moves
+
+
+def open_bump(repo, changes, target, branch, default_branch, wrapper=None):
+    """One pull request changing only pin lines, one commit per workflow file. Returns its URL. With
+    `wrapper` (OWNER/NAME) the pins are of that wrapper's workflows, not of catalog actions."""
     head = gh_json("repos/%s/git/ref/heads/%s" % (repo, default_branch))["object"]["sha"]
     gh_json("repos/%s/git/refs" % repo, method="POST", fields={"ref": "refs/heads/" + branch, "sha": head})
+    what = "the %s workflow" % wrapper if wrapper else "the Vibe Verifier action"
+    why = ("The workflow a caller runs comes from the pinned commit, so this is how a repository takes up the wrapper's changes."
+           if wrapper else "The gates and actions a workflow runs come from the pinned commit, so this is how a repository takes up catalog changes.")
     for path, shas, text in changes:
         blob = gh_json("repos/%s/contents/%s?ref=%s" % (repo, path, default_branch))["sha"]
-        message = ("ci: bump the Vibe Verifier action pin to %s in %s\n\nPin lines only. The gates and actions a workflow "
-                   "runs come from the pinned commit, so this is how a repository takes up catalog changes.\n" % (target[:10], path))
+        message = "ci: bump %s pin to %s in %s\n\nPin lines only. %s\n" % (what, target[:10], path, why)
         gh_json("repos/%s/contents/%s" % (repo, path), method="PUT", fields={
             "message": message, "branch": branch, "sha": blob,
             "content": base64.b64encode(text.encode()).decode()})
     moved = "\n".join("- `%s`: %s -> `%s`" % (path, ", ".join("`%s`" % s[:10] for s in shas), target[:10]) for path, shas, _ in changes)
+    proof = ("This PR's own run of the called workflow is the proof that it works here." if wrapper
+             else "This PR's own `vibe-verifier-ok` run is the proof that the new catalog passes here.")
     result = subprocess.run(["gh", "pr", "create", "--repo", repo, "--base", default_branch, "--head", branch,
-                             "--title", "ci: bump the Vibe Verifier action pin to %s" % target[:10],
-                             "--body", "Moves catalog pins to `%s`, and changes nothing else:\n\n%s\n\n"
-                                       "The gates and actions a workflow runs come from the pinned commit, so this is how a "
-                                       "repository takes up catalog changes. This PR's own `vibe-verifier-ok` run is the proof "
-                                       "that the new catalog passes here.\n\n## Acceptance criteria\n\n- None: this changes "
+                             "--title", "ci: bump %s pin to %s" % (what, target[:10]),
+                             "--body", "Moves %s pins to `%s`, and changes nothing else:\n\n%s\n\n%s %s\n\n"
+                                       "## Acceptance criteria\n\n- None: this changes "
                                        "pinned commit SHAs in workflow files. No application code, route, or rendered surface "
                                        "changes, so there is nothing for a browser to check.\n\n"
-                                       "🤖 Generated with [Claude Code](https://claude.com/claude-code)" % (target[:10], moved)],
+                                       "🤖 Generated with [Claude Code](https://claude.com/claude-code)" % (
+                                           "`%s` workflow" % wrapper if wrapper else "catalog", target[:10], moved, why, proof)],
                             capture_output=True, text=True)
     if result.returncode != 0:
         raise CannotRead((result.stderr.strip() or "gh pr create failed").splitlines()[-1])
@@ -457,11 +690,14 @@ def open_bump(repo, changes, target, branch, default_branch):
 
 
 def apply_down(args):
+    wrapper, error = load_wrapper(args)
+    if error:
+        return fail(error)
     try:
         discovered = set(owner_repos(args.owner)) - {source_repo(args)} if args.owner else set()
     except CannotRead as error:
         return fail(str(error))
-    args._repos = sorted(set(args.repo or []) | discovered)
+    args._repos = sorted(set(args.repo or []) | discovered | ({wrapper.repo} if wrapper else set()))
     if not args._repos:
         return fail("no repositories given (use --repo OWNER/NAME or --owner OWNER)")
     resolved = source_git(args, "rev-parse", "--verify", "--quiet", args.to or args.source_ref)
@@ -473,31 +709,46 @@ def apply_down(args):
     args._target_date = source_git(args, "log", "-1", "--date=short", "--format=%cd", target).stdout.strip()
     if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", args._target_date):
         return fail("could not read the date of %s in %s" % (target[:10], args.source))
-    planned, skipped = bump_plan(args, target)
+    planned, skipped = bump_plan(args, target, wrapper)
+    moves = []
+    if wrapper:
+        try:
+            moves = ruleset_plan(wrapper)
+        except CannotRead as error:
+            skipped.append(("rulesets of %s" % wrapper.owner, "could not read: %s" % error))
     for repo, reason in skipped:
         print("%-32s skipped: %s" % (repo, reason))
-    if not planned:
+    if not planned and not moves:
         print("\nnothing to bump")
         return 2 if any("could not read" in reason for _, reason in skipped) else 0
-    digest = hashlib.sha256("\n".join("%s %s %s %s" % (repo, path, sha, target) for repo, changes in planned
-                                     for path, shas, _ in changes for sha in shas).encode()).hexdigest()[:12]
-    for repo, changes in planned:
-        for path, shas, _ in changes:
-            print("%-32s %-40s %s -> %s" % (repo, path, ",".join(s[:10] for s in shas), target[:10]))
+    lines = [(repo, path, sha, to) for repo, _, to, changes in planned for path, shas, _ in changes for sha in shas]
+    lines += [("ruleset %s/%s" % (wrapper.owner, ruleset.get("name")), path, old, wrapper.head()[0])
+              for ruleset, moving, _ in moves for path, old in moving]
+    digest = hashlib.sha256("\n".join("%s %s %s %s" % line for line in lines).encode()).hexdigest()[:12]
+    for repo, path, sha, to in lines:
+        print("%-32s %-40s %s -> %s" % (repo, path, sha[:10], to[:10]))
     if not args.confirm:
-        print("\n%d pull request(s) to open. Re-run with --confirm %s" % (len(planned), digest))
+        print("\n%d pull request(s) and %d ruleset update(s) to make. Re-run with --confirm %s" % (len(planned), len(moves), digest))
         return 1
     if args.confirm != digest:
         return fail("plan digest is %s, not %s: the repositories moved since the plan, so read it again" % (digest, args.confirm))
-    branch = "ci/vibe-verifier-pin-%s" % target[:10]
     failed = False
-    for repo, changes in planned:
+    for repo, level, to, changes in planned:
+        branch = "ci/%s-pin-%s" % ("wrapper" if level else "vibe-verifier", to[:10])
         try:
             default_branch = gh_json("repos/%s" % repo)["default_branch"]
             existing = gh_json("repos/%s/pulls?head=%s:%s&state=open" % (repo, repo.split("/")[0], branch))
-            print("%-32s %s" % (repo, existing[0]["html_url"] if existing else open_bump(repo, changes, target, branch, default_branch)))
+            print("%-32s %s" % (repo, existing[0]["html_url"] if existing else open_bump(repo, changes, to, branch, default_branch, level)))
         except CannotRead as error:
             print("%-32s could not open: %s" % (repo, error))
+            failed = True
+    for ruleset, moving, rules in moves:
+        name = "ruleset %s/%s" % (wrapper.owner, ruleset.get("name"))
+        try:
+            gh_json("orgs/%s/rulesets/%s" % (wrapper.owner, ruleset["id"]), method="PUT", body={"rules": rules})
+            print("%-32s updated: %s" % (name, ", ".join(os.path.basename(path) for path, _ in moving)))
+        except CannotRead as error:
+            print("%-32s could not update: %s" % (name, error))
             failed = True
     return 2 if failed else 0
 
@@ -539,6 +790,9 @@ def main():
     inventory.add_argument("--source", default=ROOT, help="a checkout of this repository, for pin ancestry (default: this one)")
     inventory.add_argument("--source-ref", default="origin/main", help="the ref pins are judged against (default: origin/main)")
     inventory.add_argument("--format", choices=["text", "github"], default="text")
+    inventory.add_argument("--wrapper", metavar="PATH", help="a checkout of a wrapper repository (an organization's CI "
+                           "repository whose workflows its rulesets require): inventory it, its rulesets and its callers")
+    inventory.add_argument("--wrapper-ref", default="origin/main", help="the ref wrapper pins are judged against (default: origin/main)")
     bump = commands.add_parser("apply-down", help="open one pull request per consumer bumping a stale action pin")
     bump.add_argument("--repo", action="append", metavar="OWNER/NAME", help="a repository to bump (repeatable)")
     bump.add_argument("--owner", metavar="OWNER", help="bump every subscribed repository of this owner")
@@ -546,6 +800,9 @@ def main():
     bump.add_argument("--source-ref", default="origin/main", help="the ref pins are judged against (default: origin/main)")
     bump.add_argument("--to", metavar="REF", default=None, help="pin to this ref instead of --source-ref")
     bump.add_argument("--confirm", metavar="DIGEST", default=None, help="the digest the plan printed; without it nothing is written")
+    bump.add_argument("--wrapper", metavar="PATH", help="a checkout of a wrapper repository: bump its catalog pins, its "
+                      "callers' pins of its workflows and its organization's ruleset pins")
+    bump.add_argument("--wrapper-ref", default="origin/main", help="the wrapper ref pins move to (default: origin/main)")
     toolchain = commands.add_parser("tool", help="install (once per lockfile digest) and print the directory of a node toolchain under tools/")
     toolchain.add_argument("name", help="the toolchain: a directory under tools/ with a package-lock.json")
     reader = commands.add_parser("criteria", help="read a criteria document: prints `none: <reason>` or `criteria: <n>`")
