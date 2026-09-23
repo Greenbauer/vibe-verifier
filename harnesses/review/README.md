@@ -24,8 +24,11 @@ template; the consumer owns `runs-on`, the token secret, and the two catalog pin
    [`review-receipt`](../../gates/review_receipt.py) gate through the composite action with the
    manifest [`manifest`](manifest) (`.vibe-verifier-review` in the consumer).
 
-Scope has three modes, decided from the newest receipt: **full** (no completed review yet, or its
-commit is no longer an ancestor of HEAD), **delta** (only the PR files changed since the last
+Scope has three modes, decided from the newest receipt: **full** (no completed review yet, its
+commit is no longer an ancestor of HEAD, or a changed name holds a backtick or is the line `EOF`,
+either of which could escape the file list: the first out of the prompt's fence, the second out of
+the `DELTA_FILES` value in `$GITHUB_ENV`; git C-quotes control characters, so no other name
+can), **delta** (only the PR files changed since the last
 receipt, so the loop converges: each push shrinks what needs review, and earlier findings stand),
 **nochange** (nothing new since the last receipt: the model is not run and the receipt is posted
 for this head, which is how a re-run after resolving threads turns the gate green).
