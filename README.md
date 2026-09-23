@@ -1,9 +1,7 @@
 # Vibe Verifier
 
-Catch problems in any pull request before merging.
-
 Vibe Verifier helps you verify that vibe-coded changes do what you intended before
-you merge them.
+you merge them. You can use it on any pull request.
 
 ## What it checks
 
@@ -12,23 +10,24 @@ Each check is called a **gate**. You choose which ones run.
 | Check | What it catches |
 |---|---|
 | `gitleaks` | Secrets added in a pull request's commits |
-| `new-source-has-test` | New source files without a matching test file or test import |
+| `new-source-has-test` | New source files without a matching test filename or relative import from a test |
 | `actionlint` | Errors in changed GitHub Actions workflows |
 | `zizmor` | Security risks in changed workflows, such as unpinned actions and excessive permissions |
-| `cognitive-complexity` | Changed files with more functions over the complexity limit |
+| `cognitive-complexity` | New files with functions over the complexity limit, or changed files with more of them |
 | `max-file-lines` | New files over the line limit, or existing files over it that grew |
-| `no-duplicate-package-json-keys` | Duplicate keys in `package.json` |
-| `build-tools-in-devdependencies` | Build tools listed as runtime dependencies |
+| `no-duplicate-package-json-keys` | Duplicate keys or invalid JSON in `package.json` |
+| `build-tools-in-devdependencies` | Known development packages listed as runtime dependencies |
 | `branch-name-length` | Branch names longer than your configured limit |
 
 The source-file checks focus on JavaScript and TypeScript by default. The test-file
-check looks for a naming or import match; it does not run tests or measure coverage.
-Keep your existing build and test suite.
+check looks for a matching test filename or relative import; it does not run tests
+or measure coverage. Keep your existing build and test suite.
 
 ## Get started
 
-You need Git and Python 3. Some checks download pinned tools on first use;
-the complexity check also needs Node.js and npm.
+You need Git and Python 3. Some checks download tools on first use; automatic
+downloads support macOS (Intel or Apple silicon) and Linux x86-64.
+For the complexity check, use Node.js 24 and npm.
 
 1. Create a `.vibe-verifier` file at the root of your project, with one check per line.
    For example, a JavaScript or TypeScript project could start with:
@@ -40,18 +39,28 @@ the complexity check also needs Node.js and npm.
    max-file-lines --max 500
    ```
 
-2. Clone this repository and run the checks against your project.
-   Replace `/path/to/your/project` with its location:
+2. In your project, check out the branch you want to verify and commit the changes
+   you want checked. The checks use Git history, so uncommitted edits are not fully
+   checked. Make sure the branch you plan to merge into is available locally.
+
+   Clone Vibe Verifier separately and run it against your project.
+   Replace `/path/to/your/project` with its location and `main` with the branch
+   you plan to merge into:
 
    ```bash
    git clone https://github.com/Greenbauer/vibe-verifier.git
    cd vibe-verifier
-   bin/vibe-verifier run --repo /path/to/your/project --manifest /path/to/your/project/.vibe-verifier
+   bin/vibe-verifier run \
+     --repo "/path/to/your/project" \
+     --manifest "/path/to/your/project/.vibe-verifier" \
+     --base-ref main
    ```
 
    Results show which checks passed, found problems, or could not run.
-   Add `--soak` to a check's line to try it without failing the run on findings.
-   Errors that prevent a check from running still fail.
+   When first adding a check, put `--soak` on its line to report problems without
+   blocking on them. Errors that prevent a check from running still fail.
+   An existing check keeps the settings from the base branch until a settings
+   change is merged.
 
 3. To run on GitHub pull requests, copy
    [`consumer/vibe-verifier.yml`](consumer/vibe-verifier.yml) into your project's
@@ -68,20 +77,19 @@ branches, exit codes, and GitHub setup details.
 - **[Code review](harnesses/review/README.md):** Reviews a pull request against your
   repository's `CLAUDE.md` rules. The check requires a completed review of the current
   commit and no unresolved review threads.
-- **[Browser testing](harnesses/qae/README.md):** Walks the pull request's acceptance
-  criteria in a real browser and saves screenshots and logs. Checks flag missing
-  evidence, console errors, and failed requests outside your configured exceptions.
+- **[Browser testing](harnesses/qae/README.md):** Uses AI to try the behavior described
+  in the pull request's acceptance criteria, saving screenshots and logs for review.
+  Checks flag missing evidence, recorded console errors, and failed requests to your
+  app outside your configured exceptions.
 
 These workflows need Claude authentication; browser testing also needs an app it can
-start or reach. The regular gates need no AI account. Runner and AI usage are subject
-to your providers' plans.
+start or reach. The regular checks need no AI account. CI and AI usage may incur
+charges under your providers' plans.
 
 ## Keep checks up to date
 
-For multiple repositories, `bin/vibe-verifier consumers --owner OWNER` reports outdated
-pins and configuration differences using an admin `gh` login.
-`bin/vibe-verifier apply-down --owner OWNER` previews version updates; after confirmation,
-it opens pull requests for stale pins. It does not merge them.
+Run `git fetch origin` in your Vibe Verifier clone before checking for updates.
+For multiple projects, see [how to check versions and open update pull requests](docs/GATE-CONTRACT.md#subscribing-in-ci).
 
 ## Contribute
 
