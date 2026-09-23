@@ -1,7 +1,7 @@
 # Vibe Verifier
 
-Vibe Verifier helps you verify that vibe-coded changes do what you intended before
-you merge them. You can use it on any pull request.
+Vibe Verifier helps you assess whether vibe-coded changes are ready to merge.
+You can use it on any pull request.
 
 ## What it checks
 
