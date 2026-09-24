@@ -64,7 +64,7 @@ class Consumers(unittest.TestCase):
         result = self.check("--repo", "acme/app")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("review.yml current", result.stdout)
-        self.consumer("acme/app", workflows={"review.yml": pinned.replace("--max-turns 50", "--max-turns 5")})
+        self.consumer("acme/app", workflows={"review.yml": pinned.replace("--max-turns ${{ env.REVIEW_MAX_TURNS }}", "--max-turns 5")})
         result = self.check("--repo", "acme/app")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("review.yml current drifts from harnesses/review/review.yml outside the pin line", result.stdout)

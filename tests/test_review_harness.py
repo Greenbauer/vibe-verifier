@@ -67,6 +67,22 @@ class ReviewScope(unittest.TestCase):
         self.assertNotIn("DELTA_FILES", env)
         self.assertIn("LAST_REVIEWED_SHA=%s\n" % self.receipt, env)
 
+    def test_a_small_review_keeps_the_fifty_turn_floor(self):
+        self.assertIn("REVIEW_MAX_TURNS=50\n", self.run_step({"app.js": "3\n"}))
+
+    def test_the_turn_cap_grows_with_the_files_a_delta_walks(self):
+        # Two turns per file plus 30: a fixed 50 ran out on an 87-file PR in a consumer.
+        env = self.run_step({"f%02d.py" % i: "x\n" for i in range(40)})
+        self.assertIn("REVIEW_MODE=delta\n", env)
+        self.assertIn("REVIEW_MAX_TURNS=110\n", env)
+
+    def test_a_full_review_sizes_the_cap_by_every_file_in_the_pull_request(self):
+        with open(os.path.join(self.bin, "gh"), "w") as handle:
+            handle.write("#!/bin/sh\necho\n")  # no receipt yet: full mode
+        env = self.run_step({"f%02d.py" % i: "x\n" for i in range(60)})
+        self.assertIn("REVIEW_MODE=full\n", env)
+        self.assertIn("REVIEW_MAX_TURNS=152\n", env)  # app.js plus 60 new files
+
     def test_a_name_that_is_the_env_delimiter_cannot_set_env(self):
         env = self.run_step({"EOF": "x\n", "PATH=.": "x\n"})
         self.assertIn("REVIEW_MODE=full\n", env)
