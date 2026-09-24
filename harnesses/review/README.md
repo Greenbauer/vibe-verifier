@@ -44,6 +44,11 @@ for this head, which is how a re-run after resolving threads turns the gate gree
   review thread a finding, which is the operator's merge rule enforced by a machine on a plan with
   no branch protection. Resolve each thread (reply, then resolve), then re-run the workflow; with
   no new commits it runs in `nochange` mode and costs no model session.
+- **The turn cap is sized to the scope.** The scope step sets `--max-turns` to two turns per file
+  in scope plus 30, never below 50: reading a file is a turn and commenting on it another. A fixed
+  50 ran out at 51 turns on an 87-file pull request in a consumer repository (2026-09-24),
+  which left no receipt, and a re-run failed identically, so a large pull request could never
+  pass. Hitting the cap still means no receipt and a red gate.
 - **The model's tools are the read tools and the inline comment, nothing else.** No Bash. All
   pull-request content is untrusted data to it.
 - **House rules live in the consumer's CLAUDE.md**, pinned to the base. The prompt is the same in
