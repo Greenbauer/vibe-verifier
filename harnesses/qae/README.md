@@ -77,7 +77,66 @@ and its current state (checked against a Vercel preview, 2026-09-23). A branch a
 lookup does as well: the rest of the harness reads only the `url` output. A preview behind an app
 login writes `qae-inputs/site.md` in this same step, exactly as above. The URL travels in the clear
 (the prompt, the job's outputs, the logs), so it must not carry a credential such as a protection
-bypass token.
+bypass token; a preview behind Vercel SSO hands its bypass to the browser as a cookie instead
+([below](#a-preview-behind-vercel-sso)).
+
+## A preview behind Vercel SSO
+
+A preview under Vercel's Deployment Protection answers a request with no Vercel session with a
+redirect to Vercel's login. Vercel's
+[Protection Bypass for Automation](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation)
+is a per-project secret: a request carrying it in the `x-vercel-protection-bypass` header passes,
+and adding `x-vercel-set-bypass-cookie: true` makes Vercel answer with a redirect whose `Set-Cookie`
+holds the bypass as a cookie, so the browser's later requests pass too. The secret stays with the
+workflow. The consumer's site step, which is given it as a repository secret, trades it for that
+cookie with curl, writes the cookie as a Playwright storage state (cookies only) outside the
+workspace, and declares the file as its `storage-state` output next to `url`. On the Codex lane,
+`actions/qae-codex` takes it as `storage-state`: it refuses a file that is not a cookies-only storage
+state before the model runs, starts playwright-mcp with `--storage-state`, and passes every cookie
+value to playwright-mcp's `--secrets`, which replaces it with `<secret>NAME</secret>` in each tool
+result, saved file and session log. Without that, `browser_run_code_unsafe` (a default tool) returns
+the cookie to the model and the session log uploaded with the artifacts keeps it.
+
+After the preview resolves ([above](#a-reachable-preview-instead-of-a-site-on-the-runner)), with the
+secret in the step's env as `BYPASS`:
+
+```yaml
+          # The headers go in on stdin, so the secret is in no process's argv.
+          jar="$RUNNER_TEMP/vercel-bypass.jar"
+          printf 'x-vercel-protection-bypass: %s\nx-vercel-set-bypass-cookie: true\n' "$BYPASS" \
+            | curl -fsS -o /dev/null -c "$jar" -H @- "$url/"
+          python3 - "$jar" "$RUNNER_TEMP/storage-state.json" <<'PY'
+          import json, sys
+          cookies = []
+          for line in open(sys.argv[1]):
+              http_only = line.startswith("#HttpOnly_")   # curl's jar marks HttpOnly cookies this way
+              if http_only:
+                  line = line[len("#HttpOnly_"):]
+              elif line.startswith("#") or not line.strip():
+                  continue
+              domain, _, path, secure, expires, name, value = line.rstrip("\n").split("\t")
+              if name == "_vercel_jwt":
+                  cookies.append({"name": name, "value": value, "domain": domain, "path": path,
+                                  "expires": int(expires), "httpOnly": http_only,
+                                  "secure": secure == "TRUE", "sameSite": "Lax"})
+          if len(cookies) != 1:
+              sys.exit("Vercel set no bypass cookie for this preview")
+          json.dump({"cookies": cookies, "origins": []}, open(sys.argv[2], "w"))
+          PY
+          echo "storage-state=$RUNNER_TEMP/storage-state.json" >> "$GITHUB_OUTPUT"
+```
+
+Checked against a protected preview with playwright-mcp 0.0.81 (2026-09-24): with no storage state
+the browser lands on Vercel's login; with it, on the app. The cookie Vercel sets is `_vercel_jwt`,
+HttpOnly, Secure, `SameSite=Lax`, host-only and seven days long (`Max-Age=604800`), and a copy sent
+to another preview of the same project gets the login redirect, so what the browser holds opens one
+deployment for a week. `$RUNNER_TEMP` is emptied at the start and end of every job, where a
+self-hosted runner's workspace is not. The Codex explorer runs unsandboxed and can read any file the
+runner user can, the storage state included: redaction keeps the cookie out of what the browser
+tools return, not out of a determined model's reach, which is one more reason the secret itself
+never goes near it. The Claude lane takes no storage state yet: its browser is configured inline in
+the template, with no released step to check the file and redact its values, so a Claude-lane
+repository behind SSO starts its site on the runner, as the pilot does.
 
 ## Rules the harness obeys, each from a real run
 
@@ -115,7 +174,8 @@ bypass token.
   and not a file in the artifact because the explorer writes under `qae-artifacts/`, and it must not
   choose which site the gate judges. The pilot starts the site on the runner because the repo's
   Vercel previews sit behind Vercel SSO with no automation bypass configured; a repo with a reachable
-  preview resolves its URL instead ([above](#a-reachable-preview-instead-of-a-site-on-the-runner)).
+  preview resolves its URL instead ([above](#a-reachable-preview-instead-of-a-site-on-the-runner)),
+  and on the Codex lane one behind SSO adds the bypass cookie ([above](#a-preview-behind-vercel-sso)).
 - **A pull request with nothing to check says so.** The harness runs on every pull request, and the
   job carries no `if:`, because GitHub counts a skipped required check as satisfied. So a change
   with no rendered surface declares it: one criterion reading `- None: <why>`. Both gates pass on

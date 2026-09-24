@@ -131,11 +131,15 @@ jobs:
       - name: Explore the acceptance criteria in a real browser
         if: steps.criteria.outputs.count != '0'
         # No secret reaches this step and the checkout holds no token, so the model, which runs
-        # without a sandbox here, cannot post, push, or read a credential it was never given.
+        # without a sandbox here, cannot post, push, or read a credential it was never given. A site
+        # step that fetched a preview's bypass cookie declares the file as its `storage-state` output
+        # and the browser starts with it; the template's site step declares none, so this is empty
+        # (harnesses/qae/README.md, "A preview behind Vercel SSO").
         uses: Greenbauer/vibe-verifier/actions/qae-codex@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
         with:
           prompt-file: qae-inputs/prompt.md
           mcp: ${{ steps.browser.outputs.mcp }}
+          storage-state: ${{ steps.site.outputs.storage-state }}
       - name: Post the verdict the explorer wrote
         # The one comment this job posts, by the workflow, from the one file: the verify job filters
         # verdicts by this job's identity, and the explorer itself never holds the token.

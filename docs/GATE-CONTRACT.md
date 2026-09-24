@@ -373,7 +373,8 @@ A harness is a parameterised workflow that produces the declared inputs a wired 
 first is the QAE harness in [`harnesses/qae/`](../harnesses/qae/README.md): an explore job whose
 model drives a real browser and writes step logs, screenshots and a verdict comment; a verify job
 that feeds those to `acceptance-verdict`. The consumer owns `runs-on`, how its site is started (or
-which reachable preview it uses) and the action pins; the harness owns the prompt, the grammar and
+which reachable preview it uses, and on the Codex lane the cookies the browser starts with when that
+preview is behind Vercel SSO) and the action pins; the harness owns the prompt, the grammar and
 the rules.
 
 The harness's second gate, `qae-artifacts`, is the adjudicator: it reads the run's artifact
