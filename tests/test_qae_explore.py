@@ -132,7 +132,7 @@ class SiteUrl(unittest.TestCase):
         preview = "https://site-git-feat-team.vercel.app"
         bin_dir = stub_bin(self, {"gh": 'case "$1" in\n'
                                         '  pr) printf "## Acceptance criteria\\n\\n- The quote page loads\\n" ;;\n'
-                                        '  api) printf "acceptance-check: AC1 -- PASS -- loaded (qae/AC1.md::step 1: x)\\n" ;;\n'
+                                        '  api) printf %s "[{\\"user\\":{\\"login\\":\\"github-actions[bot]\\"},\\"body\\":\\"acceptance-check: AC1 -- PASS -- loaded (qae/AC1.md::step 1: x)\\"}]" ;;\n'
                                         'esac\n'})
         script = step_script("- name: Write the three declared inputs", "- uses: Greenbauer/vibe-verifier/actions/gates@")
         result = subprocess.run(["bash", "-e", "-c", script], cwd=self.work, capture_output=True, text=True,

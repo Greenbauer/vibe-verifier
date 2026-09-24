@@ -214,8 +214,11 @@ jobs:
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
           # Only the identity the explore job posts as may supply a verdict. Without this filter any
           # commenter could paste a PASS anchored to a real step line and the gate would accept it.
+          # Slurped, not filtered per page: with --paginate, --jq runs on each page and would emit one
+          # "last" per page once the pull request passes 100 comments, so a verdict from an earlier push
+          # could win (review finding on knowngroup/ci #13, 2026-09-24).
           gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
-            --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("acceptance-check:"))] | last | .body // ""' > qae-inputs/verdict.md
+            | jq -r -s '[.[][] | select(.user.login == "github-actions[bot]") | select(.body | contains("acceptance-check:"))] | last | .body // ""' > qae-inputs/verdict.md
           echo "verdict lines: $(grep -c 'acceptance-check:' qae-inputs/verdict.md || true)"
           # The URL the explore job's site step declared, for the gate's --site-file. Empty when that
           # step never declared one, and the gate refuses an empty file.

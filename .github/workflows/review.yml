@@ -67,8 +67,11 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
+          # Slurped, not filtered per page: with --paginate, --jq runs on each page and would print one
+          # "last" per page once the pull request passes 100 comments; a two-line LAST is no commit,
+          # and the receipt below could be a stale one (harnesses/review/review.yml has the same fix).
           LAST=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
-            --jq '[.[] | select(.user.login == "github-actions[bot]") | .body | capture("review-receipt: (?<sha>[0-9a-f]{40})") | .sha] | last // ""')
+            | jq -r -s '[.[][] | select(.user.login == "github-actions[bot]") | .body | capture("review-receipt: (?<sha>[0-9a-f]{40})") | .sha] | last // ""')
           mode="full"
           if [ -n "$LAST" ] && git cat-file -e "${LAST}^{commit}" 2>/dev/null && git merge-base --is-ancestor "$LAST" HEAD 2>/dev/null; then
             PR_FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD")
@@ -189,7 +192,7 @@ jobs:
           printf '%s\n' "$HEAD_SHA" > review-inputs/head.txt
           # Only the identity the review job posts as may supply a receipt.
           gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
-            --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("review-receipt:"))] | last | .body // ""' > review-inputs/receipt.md
+            | jq -r -s '[.[][] | select(.user.login == "github-actions[bot]") | select(.body | contains("review-receipt:"))] | last | .body // ""' > review-inputs/receipt.md
           gh api graphql -f query="query { repository(owner: \"${REPO%/*}\", name: \"${REPO#*/}\") { pullRequest(number: ${PR_NUMBER}) { reviewThreads(first: 100) { nodes { isResolved } } } } }" \
             --jq '{unresolved: [.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)] | length}' > review-inputs/threads.json
           cat review-inputs/threads.json
