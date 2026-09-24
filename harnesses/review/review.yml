@@ -55,6 +55,11 @@ jobs:
         # (those it C-quotes), so two names escape the list: a backtick can close the prompt's fence,
         # and a name that is the line EOF ends the DELTA_FILES value early, turning the names after
         # it into env assignments. Either one means full mode, which puts no name in the prompt.
+        # The turn cap scales with the files in scope: reading a file is one turn and commenting on
+        # it another, so a fixed cap failed every large PR. A fixed 50 ran out at 51 turns on an
+        # 87-file PR in a consumer repository (2026-09-24): no findings, no receipt, and a
+        # re-run failed the same way. Two turns per file plus 30 for the diff, the file list and
+        # headroom, never below the old 50.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -77,8 +82,16 @@ jobs:
             fi
             echo "LAST_REVIEWED_SHA=$LAST" >> "$GITHUB_ENV"
           fi
+          if [ "$mode" = "delta" ]; then
+            count=$(printf '%s\n' "$FILES" | grep -c .)
+          else
+            count=$(git diff --name-only "origin/${BASE_REF}...HEAD" | grep -c . || true)
+          fi
+          turns=$(( 2 * count + 30 ))
+          [ "$turns" -lt 50 ] && turns=50
           echo "REVIEW_MODE=$mode" >> "$GITHUB_ENV"
-          echo "mode: $mode (last receipt: ${LAST:-none})"
+          echo "REVIEW_MAX_TURNS=$turns" >> "$GITHUB_ENV"
+          echo "mode: $mode (last receipt: ${LAST:-none}), ${count} file(s) in scope, max turns ${turns}"
       - name: Review
         if: env.REVIEW_MODE != 'nochange'
         uses: anthropics/claude-code-action@e58dfa55559035499a4982426bb73605e8b5ad8e # v1.0.105
@@ -135,7 +148,7 @@ jobs:
             and post the findings you already have; partial output beats a silent timeout.
           claude_args: >-
             --model claude-opus-4-7
-            --max-turns 50
+            --max-turns ${{ env.REVIEW_MAX_TURNS }}
             --allowed-tools "mcp__github_inline_comment__create_inline_comment,mcp__github__get_pull_request_diff,mcp__github__get_pull_request_files,mcp__github__get_file_contents"
       - name: Post the receipt
         # Reached only when every step above succeeded, so a quota failure, a model error or a

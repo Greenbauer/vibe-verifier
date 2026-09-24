@@ -134,7 +134,7 @@ class Wrapper(unittest.TestCase):
             "entries: review-receipt --receipt review-inputs/receipt.md --head review-inputs/head.txt --threads review-inputs/threads.json",
             "manifest: .vibe-verifier-review")})
         self.assertEqual(self.check("--repo", "acme/ci").returncode, 0)
-        for changed in (wrapper_review(self.new).replace("--max-turns 50", "--max-turns 5"),
+        for changed in (wrapper_review(self.new).replace("--max-turns ${{ env.REVIEW_MAX_TURNS }}", "--max-turns 5"),
                         wrapper_review(self.new).replace("          entries: ", "          base-ref: main\n          entries: ")):
             self.repo("acme/ci", workflows={"review.yml": changed})
             drift = self.check("--repo", "acme/ci")
