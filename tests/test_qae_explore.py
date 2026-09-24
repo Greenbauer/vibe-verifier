@@ -1,23 +1,46 @@
-"""The explore template: its write-scope step run as the shell it is, and the order of its steps.
-Both read harnesses/qae/explore.yml itself, so the test judges what a consumer copies."""
+"""The explore template: its write-scope, site and verify-input steps run as the shell they are, the
+one site URL it carries from the site step to the prompt and the gate, and the order of its steps.
+All read harnesses/qae/explore.yml itself, so the test judges what a consumer copies."""
 import os
 import re
+import shlex
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from helpers import ROOT, clean_env, commit, git, write
+from test_qae_artifacts import CLEAN_REQUESTS, session_with
+from test_review_harness import prompt_block
 
 TEMPLATE = ROOT / "harnesses" / "qae" / "explore.yml"
+PROMPT = ROOT / "harnesses" / "qae" / "prompt.md"
+MANIFEST = ROOT / "harnesses" / "qae" / "manifest"
+
+
+def step_script(start, end):
+    text = TEMPLATE.read_text()
+    step = text[text.index(start):text.index(end)]
+    match = re.search(r"^( +)run: \|\n((?:\1 .*\n|\n)+)", step, re.MULTILINE)
+    indent = len(match.group(1)) + 2
+    return "".join(line[indent:] if line.strip() else "\n" for line in match.group(2).splitlines(True))
 
 
 def scope_script():
-    text = TEMPLATE.read_text()
-    step = text[text.index("- name: Enforce the write scope"):text.index("- name: Keep the evidence")]
-    match = re.search(r"^( +)run: \|\n((?:\1 .*\n|\n)+)", step, re.MULTILINE)
-    indent = len(match.group(1)) + 2
-    return "".join(line[indent:] for line in match.group(2).splitlines(True))
+    return step_script("- name: Enforce the write scope", "- name: Keep the evidence")
+
+
+def stub_bin(test, commands):
+    """A PATH directory holding one shell script per command name."""
+    path = tempfile.mkdtemp(prefix="vv-bin-")
+    test.addCleanup(shutil.rmtree, path, True)
+    for name, body in commands.items():
+        with open(os.path.join(path, name), "w") as handle:
+            handle.write("#!/bin/sh\n" + body)
+        os.chmod(os.path.join(path, name), 0o755)
+    return path
 
 
 class WriteScope(unittest.TestCase):
@@ -75,6 +98,63 @@ class WriteScope(unittest.TestCase):
                                 env=clean_env({"BASE": "origin/nope"}))
         self.assertEqual(result.returncode, 1)
         self.assertIn("CLAUDE.md", result.stdout)
+
+
+class SiteUrl(unittest.TestCase):
+    """One URL, declared by the site step's `url` output: the prompt names it, the job output carries
+    it to the verify job, which writes qae-inputs/site-url, which the manifest's gate line reads."""
+
+    def setUp(self):
+        self.work = tempfile.mkdtemp(prefix="vv-work-")
+        self.addCleanup(shutil.rmtree, self.work, True)
+
+    def test_the_default_site_step_declares_the_local_site(self):
+        bin_dir = stub_bin(self, {"npm": "exit 0\n", "curl": "exit 0\n"})
+        output = Path(self.work) / "github_output"
+        output.write_text("")
+        script = step_script("- name: Build and start the site under test", "- name: Install the browser toolchain")
+        result = subprocess.run(["bash", "-e", "-c", script], cwd=self.work, capture_output=True, text=True,
+                                env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GITHUB_OUTPUT": str(output)}))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(output.read_text(), "url=http://localhost:3000\n")
+        self.assertIn("        id: site\n", TEMPLATE.read_text())
+
+    def test_the_prompt_is_the_harness_prompt_naming_the_declared_url(self):
+        expected = (PROMPT.read_text().replace("PR_NUMBER", "${{ github.event.pull_request.number }}")
+                    .replace("REPOSITORY", "${{ github.repository }}")
+                    .replace("SITE_URL", "${{ steps.site.outputs.url }}"))
+        self.assertEqual(prompt_block(TEMPLATE.read_text()), expected)
+
+    def test_the_declared_url_reaches_the_gate_through_the_verify_job(self):
+        text = TEMPLATE.read_text()
+        self.assertIn("    outputs:\n      site-url: ${{ steps.site.outputs.url }}\n    steps:\n", text)
+        self.assertIn("          SITE_URL: ${{ needs.explore.outputs.site-url }}\n", text)
+        preview = "https://site-git-feat-team.vercel.app"
+        bin_dir = stub_bin(self, {"gh": 'case "$1" in\n'
+                                        '  pr) printf "## Acceptance criteria\\n\\n- The quote page loads\\n" ;;\n'
+                                        '  api) printf "acceptance-check: AC1 -- PASS -- loaded (qae/AC1.md::step 1: x)\\n" ;;\n'
+                                        'esac\n'})
+        script = step_script("- name: Write the three declared inputs", "- uses: Greenbauer/vibe-verifier/actions/gates@")
+        result = subprocess.run(["bash", "-e", "-c", script], cwd=self.work, capture_output=True, text=True,
+                                env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
+                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": preview}))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(Path(self.work, "qae-inputs", "site-url").read_text(), preview + "\n")
+        # The run's artifacts: the preview answered 500, the local default 404; only the declared site counts.
+        write(self.work, {
+            "qae-artifacts/qae/AC1.md": "- step 1: x\n", "qae-artifacts/qae/AC1-step-1.png": "png",
+            "qae-artifacts/session-1/session.md": session_with(CLEAN_REQUESTS + [
+                "[GET] %s/api/quote => [500] Internal Server Error" % preview,
+                "[GET] http://localhost:3000/gone => [404] Not Found"]),
+        })
+        line = [entry for entry in MANIFEST.read_text().splitlines() if entry.startswith("qae-artifacts ")]
+        self.assertEqual(len(line), 1)
+        self.assertIn("--site-file qae-inputs/site-url", line[0])
+        gate = subprocess.run([sys.executable, str(ROOT / "gates" / "qae_artifacts.py"), *shlex.split(line[0])[1:]],
+                              cwd=self.work, capture_output=True, text=True, env=clean_env())
+        self.assertEqual(gate.returncode, 1, gate.stdout + gate.stderr)
+        self.assertIn("[GET] %s/api/quote" % preview, gate.stdout)
+        self.assertNotIn("localhost:3000/gone", gate.stdout)
 
 
 class Steps(unittest.TestCase):

@@ -1,6 +1,7 @@
 # Gates the QAE verify job runs. Copy to the consumer as .vibe-verifier-qae. One per line: <gate> [args]
-# The two input files are written by the verify job before the gate runs; the artifacts come from the explore job.
+# The three input files are written by the verify job before the gate runs; the artifacts come from the explore job.
 acceptance-verdict --criteria qae-inputs/pr-body.md --verdict qae-inputs/verdict.md --artifacts qae-artifacts
 # The adjudicator: screenshots per step, console and network clean outside what this repo declares expected.
 # Declare only what is environmental (for example an analytics script that only exists on the host platform).
-qae-artifacts --artifacts qae-artifacts --criteria qae-inputs/pr-body.md --site http://localhost:3000
+# --site-file is the URL the explore job's site step declared, local or a preview; --site <URL> fixes one instead.
+qae-artifacts --artifacts qae-artifacts --criteria qae-inputs/pr-body.md --site-file qae-inputs/site-url

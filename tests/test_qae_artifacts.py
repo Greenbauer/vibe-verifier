@@ -93,6 +93,38 @@ class QaeArtifacts(unittest.TestCase):
         self.assertEqual(self.run_gate().returncode, 1)
         self.assertEqual(self.run_gate("--site", "http://localhost:3000").returncode, 0)
 
+    def test_site_file_judges_the_url_the_workflow_declared(self):
+        # A preview's URL reaches the gate in the file the verify job writes: requests to it are
+        # judged, and requests to anywhere else, the local default included, are not.
+        preview = "https://site-git-feat-team.vercel.app"
+        write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + [
+            "[GET] %s/api/quote => [500] Internal Server Error" % preview,
+            "[GET] http://localhost:3000/gone => [404] Not Found"])})
+        inputs = tempfile.mkdtemp(prefix="vv-site-")
+        self.addCleanup(shutil.rmtree, inputs, True)
+        write(inputs, {"site-url": preview + "\n"})
+        result = self.run_gate("--site-file", os.path.join(inputs, "site-url"))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("request answered 500 outside the allowlist: [GET] %s/api/quote" % preview, result.stdout)
+        self.assertNotIn("localhost:3000/gone", result.stdout)
+
+    def test_a_missing_empty_or_malformed_site_file_cannot_run_even_under_soak(self):
+        # Judging every request instead would pass a run against the wrong site.
+        inputs = tempfile.mkdtemp(prefix="vv-site-")
+        self.addCleanup(shutil.rmtree, inputs, True)
+        malformed = {"empty": "\n", "words": "the preview\n", "path": "/bid-study\n", "bare": "localhost:3000\n",
+                     "scheme": "ftp://example.com\n", "two": "http://localhost:3000\nhttps://elsewhere.example\n"}
+        write(inputs, malformed)
+        for name in ["absent", *malformed]:
+            result = self.run_gate("--site-file", os.path.join(inputs, name), "--soak")
+            self.assertEqual(result.returncode, 2, name)
+            self.assertIn("site file", result.stderr, name)
+
+    def test_site_and_site_file_are_one_or_the_other(self):
+        result = self.run_gate("--site", "http://localhost:3000", "--site-file", "qae-inputs/site-url")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("not allowed with", result.stderr)
+
     def test_network_log_files_are_read_too(self):
         write(self.root, {"network-1.log": "1. [GET] http://localhost:3000/missing => [404] Not Found\n"})
         result = self.run_gate()
@@ -125,6 +157,20 @@ class QaeArtifacts(unittest.TestCase):
         real = self.run_gate("--criteria", os.path.join(inputs, "real.md"))
         self.assertEqual(real.returncode, 1)
         self.assertIn("no step logs", real.stdout)
+
+    def test_a_declared_none_needs_no_site_file(self):
+        # A pull request that declares None runs no explorer, so its site step may never have
+        # written a URL. The site is resolved only when something is judged: the None run passes
+        # with an absent site file, and real criteria with the same absent file still cannot run.
+        inputs = tempfile.mkdtemp(prefix="vv-crit-")
+        self.addCleanup(shutil.rmtree, inputs, True)
+        write(inputs, {"none.md": "## Acceptance criteria\n\n- None: docs only\n",
+                       "real.md": "## Acceptance criteria\n\n- The home page shows the heading\n"})
+        absent = os.path.join(inputs, "site-url")
+        self.assertEqual(self.run_gate("--criteria", os.path.join(inputs, "none.md"), "--site-file", absent).returncode, 0)
+        real = self.run_gate("--criteria", os.path.join(inputs, "real.md"), "--site-file", absent)
+        self.assertEqual(real.returncode, 2)
+        self.assertIn("site file not found", real.stderr)
 
     def test_a_missing_criteria_file_cannot_run(self):
         self.assertEqual(self.run_gate("--criteria", "/nonexistent/pr-body.md", "--soak").returncode, 2)

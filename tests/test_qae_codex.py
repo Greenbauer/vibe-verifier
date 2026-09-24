@@ -2,10 +2,15 @@
 the harness prompt inlined with one lane-specific step, and the composite action carrying the
 settings a non-interactive Codex run needs. All read the shipped files, so the test judges what a
 consumer copies."""
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
-from helpers import ROOT
+from helpers import ROOT, clean_env
 
 CLAUDE = ROOT / "harnesses" / "qae" / "explore.yml"
 CODEX = ROOT / "harnesses" / "qae" / "explore-codex.yml"
@@ -25,15 +30,37 @@ def inlined_prompt():
     return "".join(line[12:] if line.strip() else "\n" for line in match.group(1).splitlines(True)) + "\n"
 
 
+def prompt_script():
+    text = CODEX.read_text()
+    step = text[text.index("- name: Write the explorer's prompt"):text.index("- name: Explore the acceptance criteria in a real browser")]
+    match = re.search(r"^( +)run: \|\n((?:\1 .*\n|\n)+)", step, re.MULTILINE)
+    indent = len(match.group(1)) + 2
+    return "".join(line[indent:] if line.strip() else "\n" for line in match.group(2).splitlines(True))
+
+
 class Prompt(unittest.TestCase):
     def test_the_prompt_is_the_harness_prompt_with_step_4_for_a_model_that_holds_no_token(self):
         expected = PROMPT.read_text()
         self.assertIn(CLAUDE_STEP_4, expected)
         expected = expected.replace(CLAUDE_STEP_4, CODEX_STEP_4)
         expected = (expected.replace("#PR_NUMBER", "#${{ github.event.pull_request.number }}")
-                    .replace("REPOSITORY", "${{ github.repository }}")
-                    .replace("SITE_URL", "http://localhost:3000"))
+                    .replace("REPOSITORY", "${{ github.repository }}"))
         self.assertEqual(inlined_prompt(), expected)
+
+    def test_the_prompt_names_the_url_the_site_step_declared_and_the_shell_never_parses_it(self):
+        # Run as the shell it is: the URL arrives through env, so `&` and `$(...)` in it stay text.
+        work = tempfile.mkdtemp(prefix="vv-prompt-")
+        self.addCleanup(shutil.rmtree, work, True)
+        os.mkdir(os.path.join(work, "qae-inputs"))
+        url = "https://site-git-feat-team.vercel.app/?a=1&b=$(id)"
+        self.assertIn("SITE_URL: ${{ steps.site.outputs.url }}", CODEX.read_text())
+        result = subprocess.run(["bash", "-e", "-c", prompt_script()], cwd=work, capture_output=True, text=True,
+                                env=clean_env({"SITE_URL": url}))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        written = Path(work, "qae-inputs", "prompt.md").read_text()
+        self.assertEqual("".join(line[2:] if line.strip() else "\n" for line in written.splitlines(True)),
+                         inlined_prompt().replace("SITE_URL", url))
+        self.assertIn("The site built from this PR is running at %s.\n" % url, written)
 
 
 class Template(unittest.TestCase):
