@@ -41,8 +41,11 @@ class ReviewScope(unittest.TestCase):
                                       check=True).stdout.strip()
         self.bin = tempfile.mkdtemp(prefix="vv-bin-")
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", self.bin]))
+        # gh answers the paginated comments call with one JSON page, as the real gh prints it
+        # without --jq; the step slurps the pages and extracts the receipt itself.
         with open(os.path.join(self.bin, "gh"), "w") as handle:
-            handle.write("#!/bin/sh\necho %s\n" % self.receipt)
+            handle.write("#!/bin/sh\necho '[{\"user\":{\"login\":\"github-actions[bot]\"},\"body\":\"review-receipt: %s -- full -- run 1\"}]'\n"
+                         % self.receipt)
         os.chmod(os.path.join(self.bin, "gh"), 0o755)
 
     def run_step(self, files):
@@ -78,7 +81,7 @@ class ReviewScope(unittest.TestCase):
 
     def test_a_full_review_sizes_the_cap_by_every_file_in_the_pull_request(self):
         with open(os.path.join(self.bin, "gh"), "w") as handle:
-            handle.write("#!/bin/sh\necho\n")  # no receipt yet: full mode
+            handle.write("#!/bin/sh\necho '[]'\n")  # no receipt yet: full mode
         env = self.run_step({"f%02d.py" % i: "x\n" for i in range(60)})
         self.assertIn("REVIEW_MODE=full\n", env)
         self.assertIn("REVIEW_MAX_TURNS=152\n", env)  # app.js plus 60 new files
