@@ -17,4 +17,12 @@ runs:
         dir=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" tool qae-browser)
         echo "mcp=$dir/node_modules/@playwright/mcp/cli.js" >> "$GITHUB_OUTPUT"
         # chromium comes from the Playwright build the lockfile pins, so the browser matches the mcp.
-        "$dir/node_modules/.bin/playwright" install --with-deps chromium
+        # Its system packages are installed here only where this job can install them: as root, or
+        # through passwordless sudo, as on GitHub's hosted runners. A self-hosted runner whose user
+        # cannot sudo carries them already (harnesses/qae/README.md, "What the runner needs"), and
+        # asking would stop the job at a password prompt.
+        if [ "$(id -u)" = 0 ] || sudo -n true 2>/dev/null; then
+          "$dir/node_modules/.bin/playwright" install --with-deps chromium
+        else
+          "$dir/node_modules/.bin/playwright" install chromium
+        fi
