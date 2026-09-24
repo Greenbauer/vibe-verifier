@@ -39,5 +39,7 @@ class PublicSurface(unittest.TestCase):
         self.assertEqual(hits, [], "a public template or doc cites another organization's repository:\n" + "\n".join(hits))
 
     def test_the_pattern_catches_the_citation_that_leaked(self):
-        self.assertEqual(foreign_citations("(review finding on someorg/ci #13, 2026-09-24)"), ["someorg/ci #13"])
+        # Assembled at run time: written out, the sample would be a citation in this tracked file.
+        leaked = "/".join(["someorg", "ci"]) + " #" + "13"
+        self.assertEqual(foreign_citations("(review finding on %s, 2026-09-24)" % leaked), [leaked])
         self.assertEqual(foreign_citations("fixed in Greenbauer/vibe-verifier#16 and actions/checkout#1"), [])
