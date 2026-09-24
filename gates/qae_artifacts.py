@@ -10,6 +10,9 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
     --allow-console REGEX    console errors matching this are expected (repeatable)
     --allow-request REGEX    requests whose URL matches this are not judged (repeatable)
     --site URL-PREFIX        judge only requests to this origin (default: every request)
+    --site-file FILE         the same, read from a file the workflow wrote: one http(s) URL, the
+                             one the explore job declared, so a preview's URL reaches the gate
+                             without a manifest edit; a missing, empty or malformed file cannot run
 
 1. Every step in every step log has its screenshot: `qae/ACn.md` line `- step k:` needs a
    non-empty `qae/ACn-step-k.png`. A step without a picture is a claim, not evidence.
@@ -22,11 +25,13 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    allowlist. This encodes the recorded false-PASS lesson: a PASS obtained while the real
    endpoint failed is refused here whatever the verdict says.
 
-Exit 2 when the artifact directory is missing: nothing was adjudicated.
+Exit 2 when the artifact directory is missing, or a --site-file is missing or holds anything but
+one http(s) URL: nothing was adjudicated.
 """
 import glob
 import os
 import re
+import urllib.parse
 
 from _acceptance import declares_none
 from _contract import CannotRun, Finding, run_gate
@@ -112,10 +117,23 @@ def session_and_network(root, allowed, site):
     return findings
 
 
+def declared_site(path):
+    """The one http(s) URL the workflow wrote to `path`. Anything else means the declared input is
+    wrong, and judging every request instead would pass a run against the wrong site."""
+    if not os.path.isfile(path):
+        raise CannotRun("site file not found: %s" % path)
+    words = read(path).split()
+    parts = urllib.parse.urlsplit(words[0]) if len(words) == 1 else None
+    if not parts or parts.scheme not in ("http", "https") or not parts.netloc:
+        raise CannotRun("site file %s does not hold one http(s) URL: %r" % (path, " ".join(words)[:200]))
+    return words[0]
+
+
 def check(args):
     root = args.artifacts
     if not root or not os.path.isdir(root):
         raise CannotRun("artifact directory not found: %s" % (root or "(none given)"))
+    site = declared_site(args.site_file) if args.site_file else args.site
     if args.criteria:
         if not os.path.isfile(args.criteria):
             raise CannotRun("criteria file not found: %s" % args.criteria)
@@ -128,7 +146,7 @@ def check(args):
     request_allow = [re.compile(pattern) for pattern in (args.allow_request or [])]
     return (steps_have_screenshots(root)
             + console_is_clean(root, console_allow)
-            + session_and_network(root, request_allow, args.site))
+            + session_and_network(root, request_allow, site))
 
 
 def add_arguments(parser):
@@ -136,7 +154,9 @@ def add_arguments(parser):
     parser.add_argument("--criteria", metavar="FILE", default=None)
     parser.add_argument("--allow-console", action="append", metavar="REGEX")
     parser.add_argument("--allow-request", action="append", metavar="REGEX")
-    parser.add_argument("--site", metavar="URL-PREFIX", default=None)
+    site = parser.add_mutually_exclusive_group()
+    site.add_argument("--site", metavar="URL-PREFIX", default=None)
+    site.add_argument("--site-file", metavar="FILE", default=None)
 
 
 if __name__ == "__main__":

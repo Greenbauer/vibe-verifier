@@ -372,14 +372,17 @@ otherwise fail every run as unused.
 A harness is a parameterised workflow that produces the declared inputs a wired gate grades. The
 first is the QAE harness in [`harnesses/qae/`](../harnesses/qae/README.md): an explore job whose
 model drives a real browser and writes step logs, screenshots and a verdict comment; a verify job
-that feeds those to `acceptance-verdict`. The consumer owns `runs-on`, how its site is started and
-the action pins; the harness owns the prompt, the grammar and the rules.
+that feeds those to `acceptance-verdict`. The consumer owns `runs-on`, how its site is started (or
+which reachable preview it uses) and the action pins; the harness owns the prompt, the grammar and
+the rules.
 
 The harness's second gate, `qae-artifacts`, is the adjudicator: it reads the run's artifact
 directory (`--artifacts`) and refuses on structural facts, never on the model's prose: a step
 without its screenshot, a console error outside `--allow-console`, a missing session or network
-record, a request to `--site` that answered 400 or worse or failed outside `--allow-request`. The
-consumer declares only what is environmental.
+record, a request to the site under test that answered 400 or worse or failed outside
+`--allow-request`. The site is `--site <URL>`, or `--site-file <FILE>`: the URL the explore job
+declared, written by the verify job, where a missing or malformed file is exit 2. The consumer
+declares only what is environmental.
 
 The second harness is the review harness in [`harnesses/review/`](../harnesses/review/README.md).
 Its wired gate, `review-receipt`, reads three declared files: the newest

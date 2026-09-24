@@ -6,9 +6,10 @@ name: QAE explore
 # Codex login, so the account is the OpenAI subscription and no model token is a repository secret.
 # Consumer-owned parts, marked CONSUMER below: runs-on (a runner with the login), how the site is
 # built and started (or a reachable preview URL passed in instead), the action pins. Two jobs:
-#   explore: builds and starts this PR's site on the runner, then Codex with a real browser
-#            (playwright-mcp) walks the PR's acceptance criteria, writes one step log per criterion
-#            plus screenshots into qae-artifacts/, and the workflow posts its verdict as a comment.
+#   explore: builds and starts this PR's site on the runner (or resolves its preview), then Codex
+#            with a real browser (playwright-mcp) walks the PR's acceptance criteria, writes one step
+#            log per criterion plus screenshots into qae-artifacts/, and the workflow posts its
+#            verdict as a comment.
 #   verify:  deterministic. Feeds the PR body, the newest verdict comment and the artifacts to the
 #            acceptance-verdict gate, which refuses any PASS not anchored to a step line that exists.
 # The LLM explores and produces artifacts; the gate decides. Its prose is never the verdict.
@@ -33,6 +34,10 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+    # The URL under test, as the site step declared it, for the verify job's gate. A step output:
+    # the explorer runs later and cannot change it, and nothing reads it from the pull request.
+    outputs:
+      site-url: ${{ steps.site.outputs.url }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -43,6 +48,10 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Build and start the site under test   # CONSUMER: your build and start; leave the URL answering
+        # Ends by declaring the URL under test as this step's `url` output: the explorer's prompt names
+        # it and the verify job's gate judges requests to it. A repository with a reachable preview
+        # builds nothing here and resolves that preview's URL instead (harnesses/qae/README.md).
+        id: site
         env:
           NEXT_TELEMETRY_DISABLED: '1'
         run: |
@@ -51,7 +60,7 @@ jobs:
           mkdir -p qae-artifacts/qae qae-inputs
           (npm start > qae-artifacts/server.log 2>&1 &)
           for i in $(seq 1 60); do
-            curl -fsS http://localhost:3000/ > /dev/null 2>&1 && { echo "site up after ${i} tries"; exit 0; }
+            curl -fsS http://localhost:3000/ > /dev/null 2>&1 && { echo "site up after ${i} tries"; echo "url=http://localhost:3000" >> "$GITHUB_OUTPUT"; exit 0; }
             sleep 2
           done
           echo "::error::site did not answer on http://localhost:3000 within 120s"; tail -50 qae-artifacts/server.log; exit 1
@@ -81,10 +90,14 @@ jobs:
       - name: Write the explorer's prompt
         # The harness prompt (harnesses/qae/prompt.md) with this pull request filled in. Step 4
         # differs from the Claude lane: the model posts nothing, the workflow posts the verdict file.
+        # The site's URL comes in through env and replaces SITE_URL after the quoted heredoc is
+        # written, so the shell never parses it.
+        env:
+          SITE_URL: ${{ steps.site.outputs.url }}
         run: |
           cat > qae-inputs/prompt.md <<'PROMPT'
             You are the QAE for pull request #${{ github.event.pull_request.number }} of ${{ github.repository }}.
-            The site built from this PR is running at http://localhost:3000.
+            The site built from this PR is running at SITE_URL.
             If qae-inputs/site.md exists, read it before anything else. This repository's workflow wrote it
             (not the pull request): it says how to sign in and what state the site starts in.
 
@@ -113,6 +126,8 @@ jobs:
 
             Write only under qae-artifacts/. Do not change any other file.
           PROMPT
+          prompt=$(cat qae-inputs/prompt.md)
+          printf '%s\n' "${prompt//SITE_URL/"$SITE_URL"}" > qae-inputs/prompt.md
       - name: Explore the acceptance criteria in a real browser
         if: steps.criteria.outputs.count != '0'
         # No secret reaches this step and the checkout holds no token, so the model, which runs
@@ -187,11 +202,12 @@ jobs:
         with:
           name: qae-artifacts
           path: qae-artifacts
-      - name: Write the two declared inputs
+      - name: Write the three declared inputs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          SITE_URL: ${{ needs.explore.outputs.site-url }}
         run: |
           set -euo pipefail
           mkdir -p qae-inputs
@@ -201,6 +217,9 @@ jobs:
           gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
             --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("acceptance-check:"))] | last | .body // ""' > qae-inputs/verdict.md
           echo "verdict lines: $(grep -c 'acceptance-check:' qae-inputs/verdict.md || true)"
+          # The URL the explore job's site step declared, for the gate's --site-file. Empty when that
+          # step never declared one, and the gate refuses an empty file.
+          printf '%s\n' "$SITE_URL" > qae-inputs/site-url
       - uses: Greenbauer/vibe-verifier/actions/gates@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
         with:
           manifest: .vibe-verifier-qae
