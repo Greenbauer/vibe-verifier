@@ -68,8 +68,8 @@ jobs:
         run: |
           set -euo pipefail
           # Slurped, not filtered per page: with --paginate, --jq runs on each page and would print one
-          # "last" per page once the pull request passes 100 comments (review finding on knowngroup/ci
-          # #13, 2026-09-24); a two-line LAST is no commit, and the receipt below could be a stale one.
+          # "last" per page once the pull request passes 100 comments; a two-line LAST is no commit,
+          # and the receipt below could be a stale one (found by review on a wrapper's copy, 2026-09-24).
           LAST=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
             | jq -r -s '[.[][] | select(.user.login == "github-actions[bot]") | .body | capture("review-receipt: (?<sha>[0-9a-f]{40})") | .sha] | last // ""')
           mode="full"
