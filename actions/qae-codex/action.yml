@@ -1,5 +1,5 @@
 name: Vibe Verifier QAE explorer on Codex
-description: Run the QAE explorer prompt with the Codex CLI from the catalog's lockfile, on a runner that holds a ChatGPT-managed Codex login. The model holds no GitHub token; the workflow posts the verdict it writes.
+description: Run the QAE explorer prompt with the Codex CLI from the catalog's lockfile, on a runner that holds a ChatGPT-managed Codex login. The model holds no GitHub token; the workflow posts the verdict it writes. An optional storage state starts the browser with cookies the workflow obtained, such as a preview host's protection-bypass cookie.
 inputs:
   prompt-file:
     description: The prompt to run, written by the workflow (the harness prompt with this pull request's numbers filled in).
@@ -12,6 +12,9 @@ inputs:
     default: qae-artifacts
   codex-home:
     description: The Codex home on this runner, holding the auth.json seeded once with `codex login --device-auth`. It persists between jobs and is never a secret. Empty means $HOME/.codex-qae.
+    default: ""
+  storage-state:
+    description: A Playwright storage-state file the workflow wrote before this step, holding cookies only (an `origins` list must be empty), for example the bypass cookie of a preview behind Vercel SSO. The browser starts with it, every cookie value is redacted from what the explorer sees and saves, and a file that is not a cookies-only storage state fails the step before the model runs. Write it outside the workspace ($RUNNER_TEMP). Empty (the default) starts the browser with no state.
     default: ""
 runs:
   using: composite
@@ -60,13 +63,56 @@ runs:
         PROMPT_FILE: ${{ inputs.prompt-file }}
         MCP: ${{ inputs.mcp }}
         ARTIFACTS: ${{ inputs.artifacts }}
+        STORAGE_STATE: ${{ inputs.storage-state }}
       run: |
         set -euo pipefail
         mkdir -p "$ARTIFACTS/qae"
         browser=()
         if [ -n "$MCP" ]; then
-          browser=(-c 'mcp_servers.playwright.command="node"'
-                   -c "mcp_servers.playwright.args=[\"$MCP\",\"--headless\",\"--isolated\",\"--output-dir\",\"$ARTIFACTS\",\"--save-session\",\"--viewport-size\",\"1280x800\"]")
+          args="\"$MCP\",\"--headless\",\"--isolated\",\"--output-dir\",\"$ARTIFACTS\",\"--save-session\",\"--viewport-size\",\"1280x800\""
+          if [ -n "$STORAGE_STATE" ]; then
+            # playwright-mcp's --storage-state loads the file into the isolated browser context, and
+            # --secrets (dotenv) replaces each listed value with <secret>NAME</secret> in every tool
+            # result, saved file and session log, so the cookie never reaches the model through the
+            # browser or the uploaded artifacts. Checked here first, never printed: a file that is not
+            # a cookies-only storage state stops the run before a model session is spent on it.
+            secrets="$RUNNER_TEMP/qae-codex-cookies.env"
+            if ! state=$(python3 - "$STORAGE_STATE" "$secrets" <<'PY'
+        import json, os, re, sys
+        path, secrets = sys.argv[1], sys.argv[2]
+        def refuse(why):
+            print("::error::the storage state %s %s (harnesses/qae/README.md)" % (path, why))
+            sys.exit(2)
+        try:
+            with open(path) as handle:
+                state = json.load(handle)
+        except (OSError, ValueError) as error:
+            refuse("is not a readable JSON file: %s" % error)
+        if not isinstance(state, dict) or set(state) - {"cookies", "origins"}:
+            refuse("is not a Playwright storage state (an object with cookies and origins only)")
+        if state.get("origins") not in (None, []):
+            refuse("carries origins (local storage); it may hold cookies only")
+        cookies = state.get("cookies")
+        if not isinstance(cookies, list) or not cookies:
+            refuse("holds no cookies")
+        octets = re.compile(r"^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$")  # RFC 6265 cookie-octet
+        for number, cookie in enumerate(cookies, 1):
+            fields = cookie if isinstance(cookie, dict) else {}
+            if not all(isinstance(fields.get(key), str) and fields.get(key) for key in ("name", "domain", "path")):
+                refuse("cookie %d lacks a name, a domain or a path" % number)
+            if not isinstance(fields.get("value"), str) or not octets.match(fields["value"]):
+                refuse("cookie %d has a value that is not a cookie value" % number)
+        with open(os.open(secrets, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as handle:
+            handle.writelines('VV_COOKIE_%d="%s"\n' % (number, cookie["value"]) for number, cookie in enumerate(cookies, 1))
+        print(os.path.abspath(path))
+        PY
+            ); then
+              echo "$state"
+              exit 2
+            fi
+            args+=",\"--storage-state\",\"$state\",\"--secrets\",\"$secrets\""
+          fi
+          browser=(-c 'mcp_servers.playwright.command="node"' -c "mcp_servers.playwright.args=[$args]")
         fi
         "$CODEX" exec --skip-git-repo-check --sandbox danger-full-access \
           -c 'approval_policy="never"' "${browser[@]}" \
