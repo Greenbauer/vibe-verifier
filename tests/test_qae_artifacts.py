@@ -158,6 +158,20 @@ class QaeArtifacts(unittest.TestCase):
         self.assertEqual(real.returncode, 1)
         self.assertIn("no step logs", real.stdout)
 
+    def test_a_declared_none_needs_no_site_file(self):
+        # A pull request that declares None runs no explorer, so its site step may never have
+        # written a URL. The site is resolved only when something is judged: the None run passes
+        # with an absent site file, and real criteria with the same absent file still cannot run.
+        inputs = tempfile.mkdtemp(prefix="vv-crit-")
+        self.addCleanup(shutil.rmtree, inputs, True)
+        write(inputs, {"none.md": "## Acceptance criteria\n\n- None: docs only\n",
+                       "real.md": "## Acceptance criteria\n\n- The home page shows the heading\n"})
+        absent = os.path.join(inputs, "site-url")
+        self.assertEqual(self.run_gate("--criteria", os.path.join(inputs, "none.md"), "--site-file", absent).returncode, 0)
+        real = self.run_gate("--criteria", os.path.join(inputs, "real.md"), "--site-file", absent)
+        self.assertEqual(real.returncode, 2)
+        self.assertIn("site file not found", real.stderr)
+
     def test_a_missing_criteria_file_cannot_run(self):
         self.assertEqual(self.run_gate("--criteria", "/nonexistent/pr-body.md", "--soak").returncode, 2)
 

@@ -133,7 +133,6 @@ def check(args):
     root = args.artifacts
     if not root or not os.path.isdir(root):
         raise CannotRun("artifact directory not found: %s" % (root or "(none given)"))
-    site = declared_site(args.site_file) if args.site_file else args.site
     if args.criteria:
         if not os.path.isfile(args.criteria):
             raise CannotRun("criteria file not found: %s" % args.criteria)
@@ -142,6 +141,9 @@ def check(args):
         if reason:
             print("%s: nothing was required, declared: %s" % (GATE, reason))
             return []
+    # Resolved only once something is being judged: a pull request that declares None runs no
+    # explorer, so its site step may never have declared a URL, and that must not fail it.
+    site = declared_site(args.site_file) if args.site_file else args.site
     console_allow = [re.compile(pattern) for pattern in (args.allow_console or [])]
     request_allow = [re.compile(pattern) for pattern in (args.allow_request or [])]
     return (steps_have_screenshots(root)
