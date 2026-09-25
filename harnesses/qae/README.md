@@ -212,8 +212,9 @@ same. What differs, and why:
   the guard here: the write-scope step is, exactly as in the Claude lane, and the runner user is
   dedicated to this work.
 - **What the runner needs.** Linux x64 with a dedicated unprivileged runner user, the Playwright
-  system packages (`playwright install-deps chromium`, once, as root), node for `actions/setup-node`,
-  and the label `qae-codex`. Register one runner per repository; a personal account has no shared
+  system packages (`playwright install-deps chromium`, once, as root: `actions/qae-browser` installs
+  them itself only as root or through passwordless sudo, and otherwise installs the browser alone),
+  node for `actions/setup-node`, and the label `qae-codex`. Register one runner per repository; a personal account has no shared
   runner pool. Keep it off any box that must stay credential-free. Pointed at a
   [reachable preview](#a-reachable-preview-instead-of-a-site-on-the-runner), the runner installs and
   builds nothing of the app: it drives the browser against the preview's URL.
