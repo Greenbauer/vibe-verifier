@@ -132,6 +132,28 @@ class ApplyDown(unittest.TestCase):
         self.assertIn("nothing to bump", result.stdout)
         self.assertEqual(result.returncode, 0)
 
+    def test_a_bump_keeps_every_runs_on_value_the_consumer_chose(self):
+        # runs-on is the consumer's choice: a stub that differs only there is not drift, and the bump
+        # moves the pins and leaves every runner where the consumer put it.
+        stub = stub_pinned_to(self.old).replace("runs-on: ubuntu-latest", "runs-on: [self-hosted, example-lane]")
+        review = PIN.sub(r"\g<1>%s # main 2026-09-17" % self.old, (ROOT / "harnesses" / "review" / "review.yml").read_text())
+        review = review.replace("runs-on: ubuntu-latest", "runs-on: example-lane", 1).replace("runs-on: ubuntu-latest", "runs-on: [self-hosted]")
+        self.consumer("acme/app", stub, workflows={"review.yml": review})
+        plan = self.apply_down("--repo", "acme/app")
+        self.assertNotIn("skipped", plan.stdout)
+        digest = re.search(r"--confirm (\w+)", plan.stdout).group(1)
+        result = self.apply_down("--repo", "acme/app", "--confirm", digest)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        written = {c["endpoint"].split("/contents/")[1]: c["content"] for c in self.calls() if c["method"] == "PUT"}
+        self.assertEqual(sorted(written), [".github/workflows/review.yml", ".github/workflows/vibe-verifier.yml"])
+        for path, before in ((".github/workflows/vibe-verifier.yml", stub), (".github/workflows/review.yml", review)):
+            old_lines, new_lines = before.splitlines(), written[path].splitlines()
+            self.assertEqual([line for line in new_lines if "runs-on:" in line], [line for line in old_lines if "runs-on:" in line])
+            self.assertEqual(len(old_lines), len(new_lines))
+            differing = [b for a, b in zip(old_lines, new_lines) if a != b]
+            self.assertEqual(len(differing), 1, path)
+            self.assertIn("gates@%s # main " % self.new, differing[0])
+
     def test_a_current_pin_is_left_alone(self):
         self.consumer("acme/app", stub_pinned_to(self.new))
         result = self.apply_down("--repo", "acme/app")

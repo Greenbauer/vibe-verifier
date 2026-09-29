@@ -69,6 +69,18 @@ class Consumers(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("review.yml current drifts from harnesses/review/review.yml outside the pin line", result.stdout)
 
+    def test_a_review_copy_that_differs_only_in_its_runs_on_values_is_not_drift(self):
+        review = (ROOT / "harnesses" / "review" / "review.yml").read_text()
+        pinned = re.sub(r"(vibe-verifier/actions/gates@)[0-9a-f]{40}[^\n]*", r"\g<1>%s # main 2026-09-22" % self.new, review)
+        self.assertEqual(pinned.count("runs-on: ubuntu-latest"), 2)
+        own = pinned.replace("runs-on: ubuntu-latest", "runs-on: [self-hosted, example-lane]", 1).replace(
+            "runs-on: ubuntu-latest", "runs-on: example-lane")
+        self.consumer("acme/app", stub=stub_pinned_to(self.new), workflows={"review.yml": own})
+        result = self.check("--repo", "acme/app")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("review.yml current", result.stdout)
+        self.assertNotIn("drifts", result.stdout)
+
     def test_current_consumer_passes(self):
         self.consumer("acme/app", stub=stub_pinned_to(self.new))
         result = self.check("--repo", "acme/app")
@@ -116,6 +128,25 @@ class Consumers(unittest.TestCase):
         result = self.check("--repo", "acme/app")
         self.assertEqual(result.returncode, 1)
         self.assertIn("stub: drift", result.stdout)
+
+    def test_a_stub_that_differs_only_in_its_runs_on_value_is_not_drift(self):
+        # Each job's runner is the consumer's choice: a label, or a flow list of labels.
+        for runner in ("example-lane", "[self-hosted, example-lane]", "[self-hosted]  # the consumer's own runners"):
+            self.consumer("acme/app", stub=stub_pinned_to(self.new).replace("runs-on: ubuntu-latest", "runs-on: " + runner))
+            result = self.check("--repo", "acme/app")
+            self.assertEqual(result.returncode, 0, runner + "\n" + result.stdout + result.stderr)
+            self.assertIn("stub: ok", result.stdout)
+
+    def test_a_stub_with_its_own_runner_that_differs_anywhere_else_is_still_drift(self):
+        own = stub_pinned_to(self.new).replace("runs-on: ubuntu-latest", "runs-on: [self-hosted, example-lane]")
+        for changed in (own.replace("timeout-minutes: 5", "timeout-minutes: 50"),
+                        own.replace("    runs-on: [self-hosted, example-lane]\n", ""),  # one runs-on line fewer
+                        # YAML reads a bare carriage return as a line break, so this is a second key, not a runner
+                        own.replace("runs-on: [self-hosted, example-lane]", "runs-on: example-lane\r    if: false")):
+            self.consumer("acme/app", stub=changed)
+            result = self.check("--repo", "acme/app")
+            self.assertEqual(result.returncode, 1, result.stdout)
+            self.assertIn("stub: drift", result.stdout)
 
     def test_unknown_gate_in_manifest(self):
         self.consumer("acme/app", manifest="no-duplicate-package-json-keys\nnot-a-gate\n", stub=stub_pinned_to(self.new))

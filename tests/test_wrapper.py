@@ -142,6 +142,14 @@ class Wrapper(unittest.TestCase):
             self.assertIn("review.yml current drifts from harnesses/review/review.yml under jobs: outside the pin, token and "
                           "gate-list lines", drift.stdout)
 
+    def test_a_wrapper_review_copy_owns_its_runs_on_values(self):
+        own = wrapper_review(self.new).replace("runs-on: ubuntu-latest", "runs-on: [self-hosted, example-lane]")
+        self.assertEqual(own.count("runs-on: [self-hosted, example-lane]"), 2)
+        self.repo("acme/ci", workflows={"review.yml": own})
+        result = self.check("--repo", "acme/ci")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("drifts", result.stdout)
+
     def test_a_ruleset_pin_is_judged_by_commits_to_the_workflow_it_names(self):
         self.repo("acme/app")
         self.ruleset([(GATE, self.w2)])  # since w2 only the legacy workflow and the README changed

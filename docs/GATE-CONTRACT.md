@@ -100,7 +100,10 @@ The consumer's workflow calls the composite action directly. The workflow owns `
 runs on whatever runner the repository chooses. The canonical stub is
 [`consumer/vibe-verifier.yml`](../consumer/vibe-verifier.yml): copy it to
 `.github/workflows/vibe-verifier.yml` and replace the placeholder on the last line with the commit
-SHA of this repository to pin. That line is the only line a consumer edits.
+SHA of this repository to pin. That line and each job's `runs-on:` value are the only lines a
+consumer edits: the runner (a label or a flow list, such as `[self-hosted, example-lane]`) is the
+consumer's choice, so `consumers` does not count it as drift and `apply-down` keeps it through every
+pin bump.
 
 Keep that job free of `if:` conditions. GitHub reports an `if`-false job as `skipped`, and counts a
 skipped required check as satisfied.
@@ -127,9 +130,10 @@ only by being edited; when the review harness is next changed for real, it becom
 inventory and drift check. Through `gh api` it reads each repository's manifest, its stub, and every
 other workflow under `.github/workflows/` that pins a catalog action, and reports whether each pin is
 current, stale (a commit since it touched `gates/`, `bin/`, `actions/`, `consumer/` or `tools/`) or
-unknown to this history; whether the stub matches the canonical one outside the pin line; whether a
-`review.yml` copy matches `harnesses/review/review.yml` outside its pin line (every line of that
-harness is the catalog's, so a copy that differs is running a review nobody released; the QAE
+unknown to this history; whether the stub matches the canonical one outside the pin line and the
+`runs-on:` values; whether a `review.yml` copy matches `harnesses/review/review.yml` outside the
+same lines (every other line of that harness is the catalog's, so a copy that differs is running a
+review nobody released; the QAE
 template has a consumer-owned build block and is not compared); whether every gate in the
 manifest exists; and the native enforcement below. Exit 2 if any repository could not be read, 1
 if anything needs action, else 0. It needs an **admin** `gh` login (the native settings are not
@@ -203,8 +207,8 @@ An organization can subscribe its repositories through one CI repository of its 
 - The wrapper's workflows trigger on `pull_request` and pin the catalog's actions by commit, like a
   stub: a gate workflow whose job is named `vibe-verifier-ok` and runs `actions/gates`, and
   optionally a copy of the review harness whose `jobs:` are the catalog's, byte for byte, apart
-  from the pin, the name of its token secret and the one line its verify step takes its gate list
-  from.
+  from the pin, the `runs-on:` values, the name of its token secret and the one line its verify
+  step takes its gate list from.
 - An **organization ruleset** with the rule "Require workflows to pass before merging"
   (`workflows`) requires them, each pinned by `sha`, on the default branch of the repositories it
   targets. GitHub runs the pinned file in each targeted repository on each pull request, so the
