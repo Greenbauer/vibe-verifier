@@ -27,7 +27,8 @@ each repository's manifest, its workflow stub, and every other workflow under
 through `gh api` (read-only) and reports, per repository: whether each pinned commit is
 current, stale (a commit since it touched gates/, bin/, actions/, consumer/ or tools/), or unknown
 to this repository's history; whether the stub matches consumer/vibe-verifier.yml outside
-the pin line; whether every gate in the manifest exists; and the native enforcement GitHub
+the pin line and the `runs-on:` values (each job's runner is the consumer's choice, and a pin bump
+keeps it); whether every gate in the manifest exists; and the native enforcement GitHub
 holds for the repository (SHA pinning, the actions allowlist, Dependabot alerts), which no
 workflow token can read, so this inventory is where a revert to `all` surfaces. The source
 repository gets a row too, with its stub and manifest checks skipped: it carries neither by
@@ -97,6 +98,9 @@ STUB_TEMPLATE = os.path.join(ROOT, "consumer", "vibe-verifier.yml")
 WORKFLOWS_DIR = ".github/workflows"
 # Any catalog action pinned in a workflow: the stub's gates@, a harness copy's gates@ and criteria@.
 PIN_LINE = re.compile(r"(vibe-verifier/actions/[A-Za-z0-9_-]+@)([^\s#]+)([^\n]*)")
+# The value of a job's `runs-on:` line (a label or a flow list) is the consumer's choice of runner.
+# It stops at any character YAML reads as a line break, so nothing after it hides on the same line.
+RUNS_ON = re.compile("^([ \t]*runs-on:)[^\n\r\x85\u2028\u2029]*", re.MULTILINE)
 RELEASE_PATHS = ["gates", "bin", "actions", "consumer", "tools"]  # a commit under these makes every older pin stale
 
 
@@ -257,15 +261,22 @@ def jobs_of(text):
     return text[at:] if at >= 0 else text
 
 
+def comparable(text):
+    """A copy of a catalog workflow with what its consumer owns blanked: each catalog pin and each
+    `runs-on:` value. The `runs-on:` lines themselves still count, so a copy with more or fewer of
+    them differs; `apply-down` rewrites only pin lines, so a bump keeps every runner."""
+    return RUNS_ON.sub(r"\1 RUNNER", PIN_LINE.sub(r"\1SHA", text))
+
+
 def harness_drift(path, text, wrapper=False):
-    """What a harness copy changed outside its pin lines, or None. Only review.yml is compared: every
-    line of it is the catalog's, so a copy that differs is running a review nobody released
-    (qae-explore.yml has a consumer-owned build block and is not compared). A wrapper's copy owns its
-    header (an organization ruleset requires it, and GitHub forbids a ruleset workflow
-    cancel-in-progress, so it has no concurrency group), the name of its token secret, and the one
-    line its verify step takes its gate list from (its repositories carry no .vibe-verifier-review,
-    so it passes `entries:`): only its jobs are compared, with the secret named alike and that line
-    left out."""
+    """What a harness copy changed outside its pin lines and `runs-on:` values, or None. Only review.yml
+    is compared: every other line of it is the catalog's, so a copy that differs is running a review
+    nobody released (qae-explore.yml has a consumer-owned build block and is not compared). A
+    wrapper's copy owns its header (an organization ruleset requires it, and GitHub forbids a ruleset
+    workflow cancel-in-progress, so it has no concurrency group), the name of its token secret, and
+    the one line its verify step takes its gate list from (its repositories carry no
+    .vibe-verifier-review, so it passes `entries:`): only its jobs are compared, with the secret named
+    alike and that line left out."""
     if os.path.basename(path) != "review.yml":
         return None
     with open(REVIEW_HARNESS, encoding="utf-8") as handle:
@@ -273,7 +284,7 @@ def harness_drift(path, text, wrapper=False):
     if wrapper:
         text, template = (GATE_LIST_INPUT.sub(r"\1GATE-LIST", TOKEN_SECRET.sub(r"\1TOKEN\2", jobs_of(body)))
                           for body in (text, template))
-    if PIN_LINE.sub(r"\1SHA", text) == PIN_LINE.sub(r"\1SHA", template):
+    if comparable(text) == comparable(template):
         return None
     return "drifts from harnesses/review/review.yml %s" % (
         "under jobs: outside the pin, token and gate-list lines" if wrapper else "outside the pin line")
@@ -432,7 +443,7 @@ def ruleset_rows(args, wrapper, discovered):
 
 
 def stub_status(stub):
-    """ok when the stub equals the template outside the pin line; otherwise what differs."""
+    """ok when the stub equals the template outside the pin line and `runs-on:` values; otherwise what differs."""
     if stub is None:
         return "missing", None
     pins = PIN_LINE.findall(stub)
@@ -440,7 +451,7 @@ def stub_status(stub):
         return "drift (%d pin lines, expected 1)" % len(pins), None
     with open(STUB_TEMPLATE, encoding="utf-8") as handle:
         template = handle.read()
-    if PIN_LINE.sub(r"\1SHA", stub) != PIN_LINE.sub(r"\1SHA", template):
+    if comparable(stub) != comparable(template):
         return "drift (differs from consumer/vibe-verifier.yml outside the pin line)", pins[0][1]
     return "ok", pins[0][1]
 
