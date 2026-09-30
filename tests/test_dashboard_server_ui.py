@@ -1,0 +1,139 @@
+"""Loopback server boundaries and dependency-free browser helper behavior."""
+
+import io
+import json
+import subprocess
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from dashboard.config import BotDefinition, Config
+from dashboard.server import DashboardHandler, make_server
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def config():
+    bots = {name: BotDefinition(name + ".yml", (name,)) for name in ("reviewer", "explorer", "verifier")}
+    return Config("octocat", ("octocat/example",), bots, None)
+
+
+class FakeService:
+    def snapshot(self):
+        return {"version": 1, "owner": "octocat", "github": {"sampled_at": None, "repositories": [],
+                "bots": {"roles": {}}, "coverage": {"selected": 1, "readable": 0},
+                "title": "<img src=x onerror=alert(1)>"}, "telemetry": {"available": False}}
+
+
+class FakeSocket:
+    def __init__(self, request):
+        self.request = io.BytesIO(request)
+        self.response = bytearray()
+
+    def makefile(self, mode, buffering=None):
+        return self.request
+
+    def sendall(self, data):
+        self.response.extend(data)
+
+    def close(self):
+        pass
+
+
+class FakeServer:
+    server_port = 8765
+    service = FakeService()
+
+
+class ServerSecurity(unittest.TestCase):
+    def request(self, method, path, headers=None):
+        headers = {"Host": "127.0.0.1:8765", **(headers or {})}
+        raw = "%s %s HTTP/1.1\r\n%s\r\n\r\n" % (
+            method, path, "\r\n".join("%s: %s" % item for item in headers.items()))
+        connection = FakeSocket(raw.encode("ascii"))
+        DashboardHandler(connection, ("127.0.0.1", 12345), FakeServer())
+        head, body = bytes(connection.response).split(b"\r\n\r\n", 1)
+        lines = head.decode("ascii").split("\r\n")
+        values = {name.lower(): value.strip() for name, value in
+                  (line.split(":", 1) for line in lines[1:] if ":" in line)}
+        return int(lines[0].split()[1]), values, body
+
+    def test_server_binds_only_loopback_and_serves_json_without_literal_html(self):
+        with mock.patch("dashboard.server.DashboardServer") as server:
+            make_server(config(), 8765, FakeService())
+            self.assertEqual(server.call_args.args[0], ("127.0.0.1", 8765))
+        status, headers, body = self.request("GET", "/api/dashboard")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["content-type"], "application/json; charset=utf-8")
+        self.assertNotIn(b"<img", body)
+        self.assertEqual(json.loads(body)["owner"], "octocat")
+        self.assertNotIn("access-control-allow-origin", headers)
+
+    def test_untrusted_host_and_origin_are_rejected(self):
+        self.assertEqual(self.request("GET", "/", {"Host": "example.invalid"})[0], 421)
+        self.assertEqual(self.request("GET", "/", {"Origin": "https://example.invalid"})[0], 403)
+
+    def test_path_traversal_is_rejected_before_static_lookup(self):
+        self.assertEqual(self.request("GET", "/%2e%2e/secret")[0], 400)
+        self.assertEqual(self.request("GET", "/assets/unknown.js")[0], 404)
+
+    def test_every_mutating_method_is_denied(self):
+        for method in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS"):
+            with self.subTest(method=method):
+                self.assertEqual(self.request(method, "/api/dashboard")[0], 405)
+
+    def test_static_response_has_no_remote_script_permission(self):
+        status, headers, body = self.request("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertIn("script-src 'self'", headers["content-security-policy"])
+        self.assertNotIn(b"https://", body)
+
+
+class BrowserHelpers(unittest.TestCase):
+    def node(self, source):
+        result = subprocess.run(["node", "-e", source], cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return json.loads(result.stdout)
+
+    def test_filters_step_unknowns_buckets_and_pace_are_pure(self):
+        source = r'''
+const h=require('./dashboard/static/helpers.js');
+const c=require('./dashboard/static/charts.js');
+const pulls=[{repository:'octocat/example',number:1,title:'Safe',author:'octocat',subscription:'subscribed',attention:true},
+             {repository:'octocat/other',number:2,title:'Quiet',author:'octocat',subscription:'unknown',attention:false}];
+const filtered=h.filterPulls(pulls,{query:'safe',repository:'all',subscribed:true,attention:true});
+const unknown=h.stepTotals({runs:[{step_summary:{known:false}}]});
+const now=Date.UTC(2026,8,30,15,0,0);
+const buckets=c.bucketSamples([{timestamp:'2026-09-30T14:30:00Z',bot:'reviewer',input_tokens:10,output_tokens:5}], '24h', now);
+console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,bucket:buckets.reduce((n,x)=>n+x.total,0),
+ paceMissing:c.pacePerBucket({allowance_tokens:null,pace_tokens_per_second:null},'24h'),
+ pace:c.pacePerBucket({allowance_tokens:1000,pace_tokens_per_second:2},'24h'),
+ safe:h.safeUrl('https://github.com/octocat/example/pull/1','octocat'),
+ unsafe:h.safeUrl('https://github.com/example/foreign/pull/1','octocat')}));
+'''
+        result = self.node(source)
+        self.assertEqual(result["filtered"], [1])
+        self.assertFalse(result["unknown"]["known"])
+        self.assertIsNone(result["unknown"]["total"])
+        self.assertEqual(result["bucket"], 15)
+        self.assertIsNone(result["paceMissing"])
+        self.assertEqual(result["pace"], 7200)
+        self.assertTrue(result["safe"].startswith("https://github.com/octocat/"))
+        self.assertIsNone(result["unsafe"])
+
+    def test_ui_uses_text_nodes_and_the_approved_local_palette(self):
+        app = (ROOT / "dashboard/static/app.js").read_text()
+        helpers = (ROOT / "dashboard/static/helpers.js").read_text()
+        css = (ROOT / "dashboard/static/styles.css").read_text()
+        html = (ROOT / "dashboard/static/index.html").read_text()
+        self.assertNotIn("innerHTML", app + helpers)
+        for color in ("#090909", "#111111", "#282828"):
+            self.assertIn(color, css)
+        for color in ("#809cff", "#50d6e8", "#ed83d5"):
+            self.assertIn(color, helpers)
+        self.assertEqual(html.count('data-view="'), 3)
+        self.assertNotIn("footer", html.lower())
+
+
+if __name__ == "__main__":
+    unittest.main()

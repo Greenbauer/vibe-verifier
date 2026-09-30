@@ -72,6 +72,11 @@ For the complexity check, use Node.js 24 and npm.
 See the [configuration guide](docs/GATE-CONTRACT.md) for check options, comparison
 branches, exit codes, and GitHub setup details.
 
+For a private, local, read-only view of selected repositories, current-head checks,
+bot activity, and optional capacity/usage telemetry, see the opt-in
+[dashboard pilot](docs/dashboard.md). It binds only to loopback and does not change
+the gate runner.
+
 ## Optional AI checks
 
 - **[Code review](harnesses/review/README.md):** Reviews a pull request against your

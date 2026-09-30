@@ -1,0 +1,300 @@
+(function () {
+  "use strict";
+  const { BOT_META, element: el, link, duration, since, formatTime, bytes, badge,
+    flattenPulls, filterPulls, stepTotals, combinedCategory, currentWork } = VV;
+  const content = document.querySelector("#content");
+  const announcement = document.querySelector("#announcement");
+  const state = { view: "prs", selected: null, query: "", repository: "all", subscribed: false,
+    attention: false, usageRange: "24h", failureBot: "verifier" };
+  let snapshot = null;
+
+  function announce(message) { announcement.textContent = message; }
+  function heading(title, subtitle) {
+    return el("div", { class: "section-heading" }, el("div", {}, el("h1", {}, title), el("p", { class: "muted" }, subtitle)));
+  }
+  function empty(title, detail) {
+    return el("section", { class: "panel empty" }, el("h2", {}, title), el("p", { class: "muted" }, detail));
+  }
+  function sourceBanner(text, tone) {
+    return el("div", { class: `source-banner ${tone || ""}`, role: "status" }, text);
+  }
+
+  function renderChrome() {
+    document.querySelector("#owner").textContent = snapshot.owner;
+    const sampled = snapshot.github.sampled_at;
+    document.querySelector("#source-stamp").textContent = sampled ? `GitHub sampled ${formatTime(sampled)}` : "GitHub unavailable";
+    document.querySelectorAll(".sidebar button").forEach(button => {
+      if (button.dataset.view === state.view) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    });
+    renderBots();
+  }
+
+  function renderBots() {
+    const strip = document.querySelector("#bot-strip");
+    strip.replaceChildren(el("span", { class: "bot-strip-title" }, "BOTS", el("small", {}, "Last 2h · newest first")));
+    for (const role of ["reviewer", "explorer", "verifier"]) {
+      const value = snapshot.github.bots.roles[role] || {};
+      const meta = BOT_META[role];
+      const recent = value.recent_2h || [];
+      const button = el("button", {
+        class: `bot-pill${value.latest_failure ? " has-failure" : ""}`,
+        "aria-label": `${meta.name}: ${value.state || "unknown"}. Open usage and recent outcomes`,
+        onclick: () => { state.view = "usage"; state.failureBot = role; render(); content.focus(); }
+      });
+      button.style.setProperty("--bot", meta.color);
+      const dots = el("span", { class: "run-dots", "aria-label": recent.length ? "Newest first completed outcomes" : "No completed outcomes in two hours" });
+      recent.forEach(run => dots.append(el("i", { class: `dot dot-${run.category}`, title: `${run.category}: ${formatTime(run.completed_at)}` })));
+      button.append(el("span", { class: "bot-name" }, meta.name), badge(value.state || "unknown"), dots,
+        el("span", { class: value.latest_failure ? "failure-note" : "quiet-note" }, value.latest_failure ? "Failure recorded" : recent.length ? "Last 2h" : "No runs in 2h"));
+      strip.append(button);
+    }
+  }
+
+  function coverage() {
+    const value = snapshot.github.coverage;
+    const errors = snapshot.github.errors || [];
+    const text = `${value.label}: ${value.selected}. ${value.readable} read successfully in this sample.`;
+    return sourceBanner(text + (errors.length ? " Some GitHub data is unavailable or stale." : ""), errors.length ? "warning" : "");
+  }
+
+  function prFilters(pulls) {
+    const repositories = [...new Set(pulls.map(pull => pull.repository))].sort();
+    const search = el("input", { type: "search", id: "pr-search", placeholder: "Search PRs", value: state.query,
+      "aria-label": "Search pull requests", oninput: event => { state.query = event.target.value; renderPrRows(); } });
+    const select = el("select", { id: "repo-filter", "aria-label": "Repository filter", onchange: event => {
+      state.repository = event.target.value; renderPrRows();
+    } }, el("option", { value: "all" }, "All selected repositories"));
+    repositories.forEach(repository => select.append(el("option", { value: repository, selected: state.repository === repository }, repository.split("/")[1])));
+    const check = (label, key) => el("label", { class: "check-filter" },
+      el("input", { type: "checkbox", checked: state[key], onchange: event => { state[key] = event.target.checked; renderPrRows(); } }), label);
+    return el("div", { class: "toolbar" }, search, select, check("Subscribed only", "subscribed"), check("Needs attention", "attention"));
+  }
+
+  function progress(pull) {
+    const totals = stepTotals(pull);
+    if (!totals.known) return el("div", { class: "progress-copy" }, el("b", {}, "Step total unavailable"), el("span", {}, "Progress is not shown as complete"));
+    const meter = el("div", { class: "step-meter", role: "progressbar", "aria-valuemin": 0,
+      "aria-valuemax": totals.total, "aria-valuenow": totals.completed });
+    meter.append(el("span", { style: `width:${totals.total ? totals.completed / totals.total * 100 : 0}%` }));
+    return el("div", { class: "progress-copy" }, el("b", {}, `${totals.completed}/${totals.total} steps`),
+      meter, el("span", {}, `${totals.remaining} remaining`));
+  }
+
+  function renderPrRows() {
+    const all = flattenPulls(snapshot);
+    const pulls = filterPulls(all, state);
+    const rows = document.querySelector("#pr-rows");
+    const count = document.querySelector("#pr-count");
+    if (!rows || !count) return;
+    count.textContent = `${pulls.length} pull request${pulls.length === 1 ? "" : "s"}`;
+    rows.replaceChildren();
+    if (!pulls.length) {
+      rows.append(empty("No matching pull requests", "Change a filter or wait for the next successful GitHub sample."));
+      return;
+    }
+    pulls.forEach(pull => {
+      const category = combinedCategory(pull);
+      const work = currentWork(pull);
+      const button = el("button", { class: "pr-row", onclick: () => {
+        state.selected = `${pull.repository}#${pull.number}`; render(); content.focus();
+      }, "aria-label": `Open ${pull.repository} pull request ${pull.number}: ${pull.title}` },
+      el("span", { class: "pr-identity" }, el("b", {}, pull.title),
+        el("small", {}, `${pull.repository.split("/")[1]} #${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
+      el("span", { class: "pr-work" }, badge(category), el("small", {}, pull.attention_reason)),
+      progress(pull),
+      el("span", { class: "pr-age" }, el("b", {}, since(pull.created_at, Date.now())), el("small", {}, work ? `${work.name} · ${duration(work.elapsed)}` : "PR age")),
+      el("span", { class: "chevron", "aria-hidden": "true" }, "›"));
+      if (pull.stale) button.classList.add("stale-row");
+      rows.append(button);
+    });
+  }
+
+  function renderPulls() {
+    state.selected = null;
+    const pulls = flattenPulls(snapshot);
+    content.replaceChildren(heading("Pull requests", "Open pull requests and current-head evidence from selected repositories."),
+      coverage(), prFilters(pulls), el("div", { class: "list-heading" }, el("span", { id: "pr-count" }),
+        el("span", {}, "Current work"), el("span", {}, "Steps"), el("span", {}, "Age")),
+      el("div", { id: "pr-rows", class: "pr-list" }));
+    renderPrRows();
+  }
+
+  function checkRow(row) {
+    return el("div", { class: "check-row" }, el("span", {}, el("b", {}, row.name), el("small", {}, row.provider)),
+      badge(row.category), el("span", { class: "mono" }, duration(row.elapsed_seconds)),
+      link("Original evidence", row.details_url, snapshot.owner));
+  }
+
+  function timeline(pull) {
+    const jobs = (pull.runs || []).flatMap(run => (run.jobs || []).map(job => ({ ...job, run })));
+    if (!jobs.length) return empty("Actions timing unavailable", "Third-party checks remain listed above. No joined Actions jobs were returned.");
+    const starts = jobs.map(job => Date.parse(job.started_at || job.created_at)).filter(Number.isFinite);
+    const ends = jobs.map(job => Date.parse(job.completed_at) || Date.now()).filter(Number.isFinite);
+    const start = Math.min(...starts), end = Math.max(...ends), span = Math.max(1, end - start);
+    const panel = el("section", { class: "panel" }, el("h2", {}, "Parallel job timeline"),
+      el("p", { class: "muted" }, "Bars share wall-clock time. Job durations are not summed."));
+    jobs.forEach(job => {
+      const began = Date.parse(job.started_at || job.created_at), finished = Date.parse(job.completed_at) || Date.now();
+      const bar = el("span", { class: `timeline-bar status-${job.category}` });
+      bar.style.left = `${Math.max(0, (began - start) / span * 100)}%`;
+      bar.style.width = `${Math.max(1, (finished - began) / span * 100)}%`;
+      const details = el("details", { class: "job-detail" },
+        el("summary", {}, el("span", {}, job.name), badge(job.category), el("span", { class: "mono" }, duration(job.elapsed_seconds))),
+        el("div", { class: "timeline-track" }, bar),
+        el("p", { class: "muted" }, `Created-to-start: ${duration(job.queue_seconds)} · run attempt ${job.run.attempt}`));
+      (job.steps || []).forEach(step => details.append(el("div", { class: "step-row" }, badge(step.category),
+        el("span", {}, step.name), el("span", { class: "mono" }, duration(step.elapsed_seconds)))));
+      const evidence = link("Open job on GitHub", job.html_url, snapshot.owner);
+      if (evidence) details.append(evidence);
+      panel.append(details);
+    });
+    return panel;
+  }
+
+  function renderDetail() {
+    const pull = flattenPulls(snapshot).find(item => `${item.repository}#${item.number}` === state.selected);
+    if (!pull) { state.selected = null; renderPulls(); return; }
+    const back = el("button", { class: "back", onclick: () => { state.selected = null; render(); content.focus(); } }, "‹ Pull requests");
+    const header = el("div", { class: "detail-heading" }, el("div", {}, el("h1", {}, pull.title),
+      el("p", { class: "muted" }, `${pull.repository} #${pull.number} · current head ${pull.head_sha ? pull.head_sha.slice(0, 12) : "changed"}`)),
+      link("Open pull request on GitHub", pull.html_url, snapshot.owner, "primary-link"));
+    const evidence = [...(pull.checks || []), ...(pull.statuses || [])];
+    const checks = el("section", { class: "panel" }, el("h2", {}, "Current-head checks"), progress(pull));
+    evidence.forEach(row => checks.append(checkRow(row)));
+    if (!evidence.length) checks.append(el("p", { class: "muted" }, "No current-head check evidence is available."));
+    content.replaceChildren(back, header, sourceBanner(pull.attention_reason, pull.attention ? "warning" : ""), checks, timeline(pull));
+  }
+
+  function quota(account) {
+    const panel = el("div", { class: "quota-row" });
+    if (!account.quota_windows.length) return panel.appendChild(el("span", { class: "muted" }, "Quota window unavailable"));
+    account.quota_windows.forEach(window => panel.append(el("div", { class: "quota" },
+      el("b", {}, window.name), el("span", {}, `${window.used_percent}% used`),
+      el("small", {}, `Resets ${formatTime(window.resets_at)}`),
+      window.allowance_tokens === null ? el("small", { class: "muted" }, "Provider percentage; no token allowance inferred") :
+        el("small", {}, `${window.allowance_tokens.toLocaleString()} token allowance reported`))));
+    return panel;
+  }
+
+  function failurePanel() {
+    const roles = snapshot.github.bots.roles;
+    const panel = el("section", { class: "panel failures" }, el("h2", {}, "Recent bot failures"),
+      el("p", { class: "muted" }, "Last five completed runs per bot in seven days. Select a bot for detail."));
+    const buttons = el("div", { class: "failure-buttons" });
+    Object.keys(BOT_META).forEach(role => {
+      const runs = roles[role].recent_7d || [];
+      const button = el("button", { "aria-pressed": state.failureBot === role, onclick: () => { state.failureBot = role; render(); } },
+        el("span", { style: `color:${BOT_META[role].color}` }, BOT_META[role].name));
+      const dots = el("span", { class: "run-dots" });
+      runs.forEach(run => dots.append(el("i", { class: `dot dot-${run.category}` })));
+      button.append(dots); buttons.append(button);
+    });
+    panel.append(buttons);
+    const failure = (roles[state.failureBot].recent_7d || []).find(run => run.category === "failed");
+    panel.append(failure ? el("div", { class: "failure-detail" }, badge("failed"), el("b", {}, failure.name),
+      el("span", {}, `${failure.repository} · ${formatTime(failure.completed_at)} · ${duration(failure.elapsed_seconds)}`),
+      link("Open original job", failure.html_url, snapshot.owner)) : el("p", { class: "muted" }, "No failed completed run in the available seven-day history."));
+    return panel;
+  }
+
+  function accountUsage(account, usage) {
+    const samples = usage.samples.filter(sample => sample.account === account.id);
+    const section = el("section", { class: "panel usage-account" },
+      el("div", { class: "account-heading" }, el("div", {}, el("h2", {}, account.label), el("p", { class: "muted" }, account.provider)), quota(account)));
+    const window = account.quota_windows.find(item => item.allowance_tokens !== null);
+    const pace = VVCharts.pacePerBucket(window, state.usageRange);
+    const chartRows = [{ id: "total", name: "All bots", color: "#f2f2f2" },
+      ...Object.entries(BOT_META).map(([id, meta]) => ({ id, ...meta }))];
+    chartRows.forEach(row => {
+      const points = VVCharts.seriesFor(samples, state.usageRange, Date.now(), row.id);
+      const total = points.reduce((sum, point) => sum + point.y, 0);
+      const chart = el("div", { class: `usage-chart${row.id === "total" ? " combined" : ""}` },
+        el("div", { class: "chart-heading" }, el("b", { style: `color:${row.color}` }, row.name),
+          el("span", {}, `${total.toLocaleString()} tokens`)), el("div", { class: "chart-canvas" }));
+      section.append(chart);
+      requestAnimationFrame(() => VVCharts.draw(chart.querySelector(".chart-canvas"), points, {
+        color: row.color, pace: row.id === "total" ? pace : null, range: state.usageRange,
+        compact: row.id !== "total", label: `${row.name} ${state.usageRange} token usage`
+      }));
+    });
+    if (pace === null) section.append(el("p", { class: "muted pace-note" }, "No dotted pace line: this account did not report a comparable token allowance."));
+    else section.append(el("p", { class: "muted pace-note" }, "Dotted line: remaining reported token allowance divided by time until reset."));
+    return section;
+  }
+
+  function renderUsage() {
+    const usage = snapshot.telemetry.available ? snapshot.telemetry.usage : null;
+    const select = el("select", { "aria-label": "Usage period", onchange: event => { state.usageRange = event.target.value; render(); } },
+      el("option", { value: "24h", selected: state.usageRange === "24h" }, "Last 24 hours"),
+      el("option", { value: "7d", selected: state.usageRange === "7d" }, "Last 7 days"));
+    const head = heading("Bot usage", "Observed input and output token samples, separated by account.");
+    head.append(select);
+    content.replaceChildren(head, failurePanel());
+    if (!usage || !usage.available) { content.append(empty("Usage telemetry unavailable", "No valid current-owner usage snapshot was provided.")); return; }
+    if (usage.stale) content.append(sourceBanner(`Usage telemetry is stale. Last sample: ${formatTime(usage.sampled_at)}.`, "warning"));
+    content.append(sourceBanner(usage.completeness));
+    if (!usage.accounts.length) content.append(empty("No usage accounts", "The telemetry source reported no account metadata."));
+    usage.accounts.forEach(account => content.append(accountUsage(account, usage)));
+  }
+
+  function metric(label, value, percent) {
+    const row = el("div", { class: "host-metric" }, el("span", {}, label), el("b", {}, value));
+    if (Number.isFinite(percent)) row.append(el("div", { class: "metric-meter", role: "meter", "aria-valuenow": percent,
+      "aria-valuemin": 0, "aria-valuemax": 100 }, el("span", { style: `width:${percent}%` })));
+    return row;
+  }
+
+  function renderCapacity() {
+    const capacity = snapshot.telemetry.available ? snapshot.telemetry.capacity : null;
+    content.replaceChildren(heading("Capacity", "Current-owner lanes and approved shared-host aggregate metrics."));
+    if (!capacity || !capacity.available) { content.append(empty("Capacity telemetry unavailable", "No valid current-owner capacity snapshot was provided.")); return; }
+    if (capacity.stale) content.append(sourceBanner(`Capacity telemetry is stale. Last sample: ${formatTime(capacity.sampled_at)}.`, "warning"));
+    const host = capacity.host || {};
+    const memoryPercent = Number.isFinite(host.memory_used_bytes) && host.memory_total_bytes ? host.memory_used_bytes / host.memory_total_bytes * 100 : null;
+    const diskPercent = Number.isFinite(host.workspace_disk_free_bytes) && host.workspace_disk_total_bytes ? host.workspace_disk_free_bytes / host.workspace_disk_total_bytes * 100 : null;
+    content.append(el("section", { class: "panel host-panel" }, el("div", { class: "panel-title" }, el("h2", {}, "SHARED HOST"),
+      el("span", { class: "muted" }, `Sampled ${formatTime(capacity.sampled_at)}`)), el("div", { class: "host-grid" },
+      metric("CPU sampled", Number.isFinite(host.cpu_percent) ? `${host.cpu_percent}%` : "Unavailable", host.cpu_percent),
+      metric("Memory", Number.isFinite(host.memory_used_bytes) ? `${bytes(host.memory_used_bytes)} / ${bytes(host.memory_total_bytes)}` : "Unavailable", memoryPercent),
+      metric("Workspace disk free", Number.isFinite(host.workspace_disk_free_bytes) ? bytes(host.workspace_disk_free_bytes) : "Unavailable", diskPercent))));
+    const lanes = el("section", { class: "panel" }, el("div", { class: "panel-title" }, el("h2", {}, `Owner lanes (${capacity.lanes.length})`),
+      el("span", { class: "muted" }, "Allocated lanes and runner registration are separate")), el("div", { class: "lane-grid" }));
+    const grid = lanes.querySelector(".lane-grid");
+    capacity.lanes.forEach(lane => {
+      const card = el("article", { class: `lane status-${lane.state}` }, el("div", { class: "lane-heading" }, el("b", { class: "mono" }, lane.id), badge(lane.state)),
+        el("p", { class: "muted" }, lane.registered === true ? "Runner registered" : lane.registered === false ? "No runner registered" : "Registration unknown"));
+      if (lane.job) card.append(el("p", {}, lane.job.name), el("p", { class: "muted" }, lane.job.repository), link("Open job", lane.job.url, snapshot.owner));
+      else card.append(el("p", { class: "muted" }, lane.state === "provisionable" ? "Provisionable when work arrives" : "No current same-owner job"));
+      grid.append(card);
+    });
+    content.append(lanes);
+  }
+
+  function render() {
+    if (!snapshot) return;
+    renderChrome();
+    if (state.selected) renderDetail();
+    else if (state.view === "usage") renderUsage();
+    else if (state.view === "capacity") renderCapacity();
+    else renderPulls();
+    announce(`Showing ${state.selected ? "pull request detail" : state.view}`);
+  }
+
+  async function load() {
+    try {
+      const response = await fetch("/api/dashboard", { credentials: "same-origin", headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("source unavailable");
+      snapshot = await response.json();
+      render();
+    } catch (_) {
+      content.replaceChildren(empty("Dashboard unavailable", "The local read-only source could not be loaded."));
+    }
+  }
+
+  document.querySelectorAll(".sidebar button").forEach(button => button.addEventListener("click", () => {
+    state.view = button.dataset.view; state.selected = null; render(); content.focus();
+  }));
+  load();
+  window.setInterval(load, 30000);
+})();
