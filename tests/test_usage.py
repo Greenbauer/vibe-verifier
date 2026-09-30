@@ -273,10 +273,24 @@ class WorkflowWiring(unittest.TestCase):
         self.assertIn("uses: ./actions/usage", OWN_REVIEW.read_text())
         self.assertIn('source="$RUNNER_TEMP/claude-execution-output.json"', ACTION.read_text())
 
+    def test_review_receipt_precedes_usage_without_ignoring_capture_failures(self):
+        for path in (OWN_REVIEW, REVIEW):
+            text = path.read_text()
+            receipt = text.index("- name: Post the receipt")
+            collect = text.index("- name: Collect numeric usage")
+            upload = text.index("- name: Keep numeric usage")
+            self.assertLess(text.index("- name: Review\n"), receipt)
+            self.assertLess(receipt, collect)
+            self.assertLess(collect, upload)
+            self.assertEqual(text[collect:text.index("\n\n  verify:")].count("if: always()"), 2)
+            self.assertIn("if-no-files-found: error", text[upload:])
+            self.assertNotIn("continue-on-error", text)
+            self.assertNotIn("if: always()", text[receipt:collect])
+
     def test_source_review_usage_block_matches_the_consumer_template(self):
         def block(path):
             text = path.read_text()
-            section = text[text.index("- name: Collect numeric usage"):text.index("- name: Post the receipt")]
+            section = text[text.index("- name: Collect numeric usage"):text.index("\n\n  verify:")]
             return section.replace(
                 "uses: Greenbauer/vibe-verifier/actions/usage@" + "0" * 40 +
                 " # CONSUMER: pin the commit you subscribe to",

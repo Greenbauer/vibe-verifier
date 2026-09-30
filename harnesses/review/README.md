@@ -16,11 +16,12 @@ template; the consumer owns `runs-on`, the token secret, and the two catalog pin
 1. **review** checks out the head with `persist-credentials: false`, pins every `CLAUDE.md` and
    `.claude/**` to the base ref (a hostile head could add one as an injection foothold), computes
    the scope, runs `claude-code-action` with [`prompt.md`](prompt.md) when there is something new
-   to review, writes and uploads the numeric usage record, and then posts
+   to review, and then posts
    `review-receipt: <head sha> -- <mode> -- run <id>` as a PR comment. The receipt step is reached
    only when every step before it succeeded, so a provider failure, a model error or a broken step
    leaves no receipt for this head. Usage collection and upload run under `always()` so a failed
-   review can retain partial statistics without making the review green.
+   review can retain partial statistics without making the review green. These steps follow the receipt:
+   a capture failure does not suppress evidence of a completed review, but still fails the review job.
 2. **verify** writes the declared inputs (the head SHA, the newest receipt posted by the workflow's
    own identity, the count of unresolved review threads) and runs the
    [`review-receipt`](../../gates/review_receipt.py) gate through the composite action with the
