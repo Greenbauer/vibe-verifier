@@ -12,6 +12,7 @@ from helpers import ROOT, commit, git, make_repo, runner
 
 TEMPLATE = (ROOT / "consumer" / "vibe-verifier.yml").read_text()
 PIN = re.compile(r"(vibe-verifier/actions/gates@)[0-9a-f]{40}[^\n]*")
+CATALOG_PIN = re.compile(r"(vibe-verifier/actions/[A-Za-z0-9_-]+@)[0-9a-f]{40}[^\n]*")
 
 
 def stub_pinned_to(sha):
@@ -59,7 +60,7 @@ class Consumers(unittest.TestCase):
 
     def test_a_review_harness_copy_is_current_only_when_it_matches_the_template_outside_the_pin(self):
         review = (ROOT / "harnesses" / "review" / "review.yml").read_text()
-        pinned = re.sub(r"(vibe-verifier/actions/gates@)[0-9a-f]{40}[^\n]*", r"\g<1>%s # main 2026-09-22" % self.new, review)
+        pinned = CATALOG_PIN.sub(r"\g<1>%s # main 2026-09-22" % self.new, review)
         self.consumer("acme/app", stub=stub_pinned_to(self.new), workflows={"review.yml": pinned})
         result = self.check("--repo", "acme/app")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -71,7 +72,7 @@ class Consumers(unittest.TestCase):
 
     def test_a_review_copy_that_differs_only_in_its_runs_on_values_is_not_drift(self):
         review = (ROOT / "harnesses" / "review" / "review.yml").read_text()
-        pinned = re.sub(r"(vibe-verifier/actions/gates@)[0-9a-f]{40}[^\n]*", r"\g<1>%s # main 2026-09-22" % self.new, review)
+        pinned = CATALOG_PIN.sub(r"\g<1>%s # main 2026-09-22" % self.new, review)
         self.assertEqual(pinned.count("runs-on: ubuntu-latest"), 2)
         own = pinned.replace("runs-on: ubuntu-latest", "runs-on: [self-hosted, example-lane]", 1).replace(
             "runs-on: ubuntu-latest", "runs-on: example-lane")

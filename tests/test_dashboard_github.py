@@ -51,7 +51,7 @@ class FakeAPI:
 def endpoints():
     return {
         "suites": f"repos/{REPO}/commits/{SHA}/check-suites?per_page=100",
-        "checks": f"repos/{REPO}/check-suites/7/check-runs?per_page=100&filter=all",
+        "checks": f"repos/{REPO}/check-suites/7/check-runs?per_page=100&filter=latest",
         "status": f"repos/{REPO}/commits/{SHA}/status",
         "runs": f"repos/{REPO}/actions/runs?head_sha={SHA}&per_page=100",
         "jobs2": f"repos/{REPO}/actions/runs/11/attempts/2/jobs?per_page=100",
@@ -71,7 +71,7 @@ def joined_api(current_sha=SHA):
         paths["checks"]: [{"id": 91, "name": "External analysis", "status": "completed", "conclusion": "failure",
                             "started_at": "2026-09-30T14:52:00Z", "completed_at": "2026-09-30T14:53:00Z",
                             "details_url": f"https://github.com/{REPO}/checks/91", "check_suite": {"id": 7},
-                            "app": {"name": "Example checks"}}],
+                            "app": {"id": 40, "name": "Example checks"}}],
         paths["runs"]: [{**run, "run_attempt": 1}, run],
         paths["jobs2"]: [{"id": 21, "run_id": 11, "head_sha": SHA, "name": "test", "status": "in_progress",
                            "conclusion": None, "created_at": "2026-09-30T14:50:00Z",
@@ -136,6 +136,27 @@ class CurrentHeadJoin(unittest.TestCase):
         result = GitHubCollector(config(), api, clock=lambda: NOW)._pull(REPO, pull_row(), {"subscription": "subscribed"})
         self.assertIsNone(result["checks"][0]["details_url"])
 
+    def test_passing_rerun_replaces_prior_failure_for_the_same_provider(self):
+        api = joined_api()
+        failed = api.item_values[endpoints()["checks"]][0]
+        api.item_values[endpoints()["checks"]].append({**failed, "id": 92, "conclusion": "success",
+                                                        "started_at": "2026-09-30T14:54:00Z",
+                                                        "completed_at": "2026-09-30T14:55:00Z"})
+        result = GitHubCollector(config(), api, clock=lambda: NOW)._pull(
+            REPO, pull_row(), {"subscription": "subscribed"})
+        self.assertEqual([(row["id"], row["category"]) for row in result["checks"]], [(92, "success")])
+        self.assertFalse(result["attention"])
+
+    def test_same_check_name_from_two_providers_is_not_deduplicated(self):
+        api = joined_api()
+        original = api.item_values[endpoints()["checks"]][0]
+        api.item_values[endpoints()["checks"]].append({**original, "id": 93,
+                                                        "app": {"id": 41, "name": "Another provider"}})
+        result = GitHubCollector(config(), api, clock=lambda: NOW)._pull(
+            REPO, pull_row(), {"subscription": "subscribed"})
+        self.assertEqual({row["provider"] for row in result["checks"]},
+                         {"Example checks", "Another provider"})
+
 
 class BotHistory(unittest.TestCase):
     def test_two_hour_boundary_is_inclusive_newest_first_and_capped_at_five(self):
@@ -163,14 +184,33 @@ class SubscriptionEvidence(unittest.TestCase):
         self.assertEqual(result, {"subscription": "unknown", "evidence": "wrapper_or_ruleset_not_resolved"})
 
 
+class RepositoryCoverage(unittest.TestCase):
+    def test_known_open_pull_survives_current_head_detail_failure(self):
+        pulls = f"repos/{REPO}/pulls?state=open&per_page=100"
+        suites = endpoints()["suites"]
+        api = FakeAPI(items={pulls: [pull_row()], suites: ApiError("unavailable")})
+        result = GitHubCollector(config(), api, clock=lambda: NOW)._repository(
+            REPO, {"subscription": "subscribed"})
+        self.assertEqual([row["number"] for row in result["pulls"]], [3])
+        self.assertFalse(result["pulls"][0]["evidence_available"])
+        self.assertEqual(result["pulls"][0]["source_error"], "unavailable")
+        self.assertEqual(result["errors"], [{"pull": 3, "code": "unavailable"}])
+
+
 class ApiTransport(unittest.TestCase):
-    def test_paginated_slurp_pages_are_flattened(self):
+    def test_each_explicit_page_consumes_one_request_budget_unit(self):
+        commands = []
+
         def runner(command, **kwargs):
-            self.assertEqual(command[:4], ["gh", "api", "--paginate", "--slurp"])
-            return subprocess.CompletedProcess(command, 0, json.dumps([[{"id": 1}], [{"id": 2}]]), "")
+            commands.append(command)
+            page = 2 if "page=2" in command[2] else 1
+            rows = [{"id": number} for number in range(100)] if page == 1 else [{"id": 100}]
+            return subprocess.CompletedProcess(command, 0, json.dumps(rows), "")
         api = GitHubAPI(runner=runner)
-        self.assertEqual([row["id"] for row in api.items("repos/octocat/example/pulls")], [1, 2])
-        self.assertEqual(api.calls, 1)
+        self.assertEqual(len(api.items("repos/octocat/example/pulls")), 101)
+        self.assertEqual(api.calls, 2)
+        self.assertEqual(commands[0], ["gh", "api", "repos/octocat/example/pulls?per_page=100&page=1"])
+        self.assertEqual(commands[1], ["gh", "api", "repos/octocat/example/pulls?per_page=100&page=2"])
 
     def test_rate_limit_errors_are_sanitized_and_back_off(self):
         def runner(command, **kwargs):
@@ -185,6 +225,15 @@ class ApiTransport(unittest.TestCase):
         api = GitHubAPI(max_calls=0)
         with self.assertRaisesRegex(ApiError, "request_budget_exhausted"):
             api.items("anything")
+
+    def test_authentication_failure_is_sanitized_and_does_not_retry_pages(self):
+        def runner(command, **kwargs):
+            return subprocess.CompletedProcess(command, 1, "", "secret value: HTTP 401 authentication required")
+        api = GitHubAPI(runner=runner)
+        with self.assertRaisesRegex(ApiError, "authentication_failed") as caught:
+            api.items("repos/octocat/example/pulls")
+        self.assertNotIn("secret", str(caught.exception))
+        self.assertEqual(api.calls, 1)
 
 
 class FakeCollector:

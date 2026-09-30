@@ -16,8 +16,8 @@ the template; the consumer owns `runs-on` and how the site is built and started 
 [reachable preview](#a-reachable-preview-instead-of-a-site-on-the-runner) is used instead), and that
 step declares the site's URL as its `url` output. For a site behind a login, it writes
 `qae-inputs/site.md` in that same step to tell the explorer how to sign in and what state the site
-starts in (a throwaway account on a throwaway backend, never production). Its three catalog
-pins (`criteria@` and `qae-browser@` in explore, `gates@` in verify) are inventoried and bumped by
+starts in (a throwaway account on a throwaway backend, never production). Its four catalog
+pins (`criteria@`, `qae-browser@`, and `usage@` in explore, `gates@` in verify) are inventoried and bumped by
 `consumers` and `apply-down` exactly like the stub's.
 
 1. **explore** builds and starts the PR's site on the runner (or resolves its preview), reads the PR body with
@@ -31,7 +31,9 @@ pins (`criteria@` and `qae-browser@` in explore, `gates@` in verify) are invento
    outside `qae-artifacts/` and `qae-inputs/` changed on the runner; the config paths
    `claude-code-action` itself resets to the base branch before the model runs (`CLAUDE.md`,
    `.claude/`, `.mcp.json` and a few more) are excused only while they still match the base.
-   Everything under `qae-artifacts/` is uploaded, always.
+   Everything under `qae-artifacts/` is uploaded, always. A separate 7-day artifact named
+   `vv-usage-qae-explorer-<run_attempt>` contains only the numeric `usage.json`; a skipped or failed
+   explorer is recorded as unavailable or partial, never as zero.
 2. **verify** downloads the artifacts, writes the three declared inputs (the PR body; the newest
    `acceptance-check:` comment posted by the explore job's own identity; the site URL the explore
    job declared, in `qae-inputs/site-url`), and runs the
@@ -218,6 +220,12 @@ same. What differs, and why:
   runner pool. Keep it off any box that must stay credential-free. Pointed at a
   [reachable preview](#a-reachable-preview-instead-of-a-site-on-the-runner), the runner installs and
   builds nothing of the app: it drives the browser against the preview's URL.
+- **Usage stays numeric.** `actions/qae-codex` consumes `codex exec --json` without printing or
+  retaining the JSONL stream, sums only validated `turn.completed.usage` integers, and uploads the
+  same dedicated 7-day artifact as the Claude lane. It still writes `qae-artifacts/final.md` for
+  the existing flow and returns the Codex process status after preserving partial usage. The
+  weekly keepalive has no browser MCP and does not upload an explorer usage artifact. See
+  [`docs/USAGE-CONTRACT.md`](../../docs/USAGE-CONTRACT.md) for the shared schema and privacy rules.
 
 ## The adjudicator: the artifacts decide, not the prose
 

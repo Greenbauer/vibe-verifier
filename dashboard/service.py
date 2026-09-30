@@ -1,4 +1,4 @@
-"""Memory-only polling cache that keeps stale source timestamps honest."""
+"""Memory-only polling cache with honest source age and coalesced refreshes."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from .config import BOT_KEYS, Config
 from .gh_api import ApiError
-from .github import GitHubCollector
+from .github import GitHubCollector, recent_bot_runs
 from .telemetry import read_telemetry
 from .util import parse_time
 
@@ -17,6 +17,7 @@ ACTIVE_TTL_SECONDS = 60
 INVENTORY_TTL_SECONDS = 300
 STALE_GRACE_SECONDS = 180
 TRANSIENT = {"rate_limited", "unavailable", "request_budget_exhausted", "invalid_response"}
+PRIVATE_FAILURES = {"authentication_failed", "forbidden", "not_found"}
 
 
 class DashboardService:
@@ -30,26 +31,35 @@ class DashboardService:
         self._github_at = 0.0
         self._inventory: dict[str, dict] = {}
         self._inventory_at = 0.0
-        self._lock = threading.Lock()
+        self._condition = threading.Condition()
+        self._refreshing = False
 
     def _empty_github(self, code: str) -> dict:
-        return {"owner": self.config.owner, "sampled_at": None, "repositories": [],
+        repositories = [self._unavailable_repository(repository, code)
+                        for repository in self.config.repositories]
+        return {"owner": self.config.owner, "sampled_at": None, "repositories": repositories,
                 "coverage": {"selected": len(self.config.repositories), "readable": 0,
                              "label": "Selected repositories", "inventory": {}},
-                "bots": {"partial": True, "roles": {}}, "errors": [{"code": code}],
-                "partial": True, "api": {"calls": 0, "max_calls": self.collector.api.max_calls}}
+                "bots": {"partial": True, "roles": {}, "errors": [{"code": code}]},
+                "errors": [{"code": code}], "partial": True,
+                "api": {"calls": 0, "max_calls": self.collector.api.max_calls}}
+
+    @staticmethod
+    def _within_grace(sampled_at: object, now: datetime) -> bool:
+        sampled = parse_time(sampled_at)
+        return sampled is not None and now - sampled <= timedelta(seconds=STALE_GRACE_SECONDS)
 
     def _stale_allowed(self, row: dict, code: str, now: datetime) -> bool:
-        sampled = parse_time(row.get("sampled_at"))
-        return code in TRANSIENT and sampled is not None and now - sampled <= timedelta(seconds=STALE_GRACE_SECONDS)
+        return code in TRANSIENT and self._within_grace(row.get("sampled_at"), now)
 
     def _merge(self, fresh: dict, previous: dict | None, now: datetime) -> dict:
         current = {row["repository"]: row for row in fresh["repositories"]}
         old = {row["repository"]: row for row in (previous or {}).get("repositories", [])}
         errors = {row.get("repository"): row.get("code", "unavailable") for row in fresh.get("errors", [])}
         sampled_at = fresh.get("sampled_at")
-        for repository, row in current.items():
-            row["sampled_at"], row["stale"] = sampled_at, False
+        for row in current.values():
+            row.setdefault("sampled_at", sampled_at)
+            row["stale"] = False
         for repository in self.config.repositories:
             if repository in current:
                 continue
@@ -59,43 +69,124 @@ class DashboardService:
                 row["stale"], row["source_error"] = True, code
                 current[repository] = row
             else:
-                current[repository] = {"repository": repository, "subscription":
-                                       fresh.get("coverage", {}).get("inventory", {}).get(repository, {}).get("subscription", "unknown"),
-                                       "pulls": [], "errors": [{"code": code}], "sampled_at": None,
-                                       "stale": False, "unavailable": True}
+                current[repository] = self._unavailable_repository(repository, code, fresh)
         fresh["repositories"] = [current[name] for name in self.config.repositories]
-        successes = [row for row in fresh["repositories"] if row.get("sampled_at") == sampled_at]
-        if not successes:
-            fresh["sampled_at"] = (previous or {}).get("sampled_at")
-        fresh["coverage"]["readable"] = len(successes)
+        fresh["coverage"]["readable"] = sum(not row.get("unavailable") for row in fresh["repositories"])
         return fresh
 
-    def _refresh(self, now_mono: float, now: datetime) -> None:
-        inventory = self._inventory if now_mono - self._inventory_at < INVENTORY_TTL_SECONDS else None
+    @staticmethod
+    def _unavailable_repository(repository: str, code: str, source: dict | None = None) -> dict:
+        inventory = (source or {}).get("coverage", {}).get("inventory", {})
+        return {"repository": repository,
+                "subscription": inventory.get(repository, {}).get("subscription", "unknown"),
+                "pulls": [], "errors": [{"code": code}], "sampled_at": None,
+                "stale": False, "unavailable": True}
+
+    def _mark_transient(self, previous: dict, code: str, now: datetime) -> dict:
+        github = copy.deepcopy(previous)
+        github["partial"], github["errors"] = True, [{"code": code}]
+        for index, row in enumerate(github.get("repositories", [])):
+            if self._stale_allowed(row, code, now):
+                row["stale"], row["source_error"] = True, code
+            else:
+                github["repositories"][index] = self._unavailable_repository(row.get("repository"), code)
+        for role in github.get("bots", {}).get("roles", {}).values():
+            role["stale"], role["source_error"] = True, code
+        github.setdefault("bots", {})["partial"] = True
+        return github
+
+    @staticmethod
+    def _source_error_codes(fresh: dict) -> set[str]:
+        rows = list(fresh.get("errors", [])) + list(fresh.get("bots", {}).get("errors", []))
+        for repository in fresh.get("repositories", []):
+            rows.extend(repository.get("errors", []))
+        return {row.get("code") for row in rows if isinstance(row, dict) and isinstance(row.get("code"), str)}
+
+    def _clear_collector_cache(self) -> None:
+        clear = getattr(self.collector, "clear_private_cache", None)
+        if clear:
+            clear()
+
+    def _perform_refresh(self, requested_mono: float, requested_wall: datetime) -> None:
+        with self._condition:
+            previous = copy.deepcopy(self._github)
+            inventory_fresh = (bool(self._inventory)
+                               and requested_mono - self._inventory_at < INVENTORY_TTL_SECONDS)
+            inventory = copy.deepcopy(self._inventory) if inventory_fresh else None
+        new_inventory = None
+        inventory_refreshed = inventory is None
         try:
             fresh = self.collector.collect(inventory)
-            fresh = self._merge(fresh, self._github, now)
-            new_inventory = fresh.get("coverage", {}).get("inventory") or {}
+            codes = self._source_error_codes(fresh)
+            if codes & PRIVATE_FAILURES:
+                self._clear_collector_cache()
+                with self._condition:
+                    self._inventory, self._inventory_at = {}, 0.0
+            result = self._merge(fresh, previous, requested_wall)
+            if inventory_refreshed:
+                new_inventory = fresh.get("coverage", {}).get("inventory") or None
+        except ApiError as error:
+            if error.code in PRIVATE_FAILURES or previous is None:
+                result = self._empty_github(error.code)
+                if error.code in PRIVATE_FAILURES:
+                    self._clear_collector_cache()
+                    with self._condition:
+                        self._inventory, self._inventory_at = {}, 0.0
+            elif error.code in TRANSIENT:
+                result = self._mark_transient(previous, error.code, requested_wall)
+            else:
+                result = self._empty_github(error.code)
+        except Exception:
+            result = self._mark_transient(previous, "unavailable", requested_wall) if previous else self._empty_github("unavailable")
+        completed_mono = self.monotonic()
+        with self._condition:
+            self._github = result
+            self._github_at = completed_mono
             if new_inventory:
                 self._inventory = {**self._inventory, **new_inventory}
-                self._inventory_at = now_mono
-            self._github = fresh
-        except ApiError as error:
-            if self._github is None:
-                self._github = self._empty_github(error.code)
+                self._inventory_at = completed_mono
+            self._refreshing = False
+            self._condition.notify_all()
+
+    def _background_refresh(self, now_mono: float, now: datetime) -> None:
+        self._perform_refresh(now_mono, now)
+
+    def _expire(self, github: dict, now: datetime) -> dict:
+        expired_repository = False
+        for index, row in enumerate(github.get("repositories", [])):
+            if row.get("sampled_at") and not self._within_grace(row.get("sampled_at"), now):
+                github["repositories"][index] = self._unavailable_repository(
+                    row.get("repository"), row.get("source_error", "stale"))
+                expired_repository = True
+        if expired_repository:
+            github.get("coverage", {})["inventory"] = {}
+            github["partial"] = True
+        github.get("coverage", {})["readable"] = sum(
+            not row.get("unavailable") for row in github.get("repositories", []))
+        for role in github.get("bots", {}).get("roles", {}).values():
+            source_current = not role.get("stale") and self._within_grace(role.get("sampled_at"), now)
+            history_current = self._within_grace(role.get("history_sampled_at", role.get("sampled_at")), now)
+            role["active"] = ([row for row in role.get("active", []) if row.get("status") == "in_progress"]
+                              if source_current else [])
+            if history_current:
+                role["recent_2h"] = recent_bot_runs(role.get("recent_2h", []), now, 2)
+                role["recent_7d"] = recent_bot_runs(role.get("recent_7d", []), now, 168)
             else:
-                self._github["partial"] = True
-                self._github["errors"] = [{"code": error.code}]
-                for row in self._github.get("repositories", []):
-                    if self._stale_allowed(row, error.code, now):
-                        row["stale"], row["source_error"] = True, error.code
-                    else:
-                        repository = row.get("repository")
-                        row.clear()
-                        row.update({"repository": repository, "subscription": "unknown",
-                                    "pulls": [], "errors": [{"code": error.code}], "sampled_at": None,
-                                    "stale": False, "unavailable": True})
-        self._github_at = now_mono
+                role["recent_2h"], role["recent_7d"] = [], []
+            history = role["recent_7d"]
+            role["latest_failure"] = history[0] if history and history[0].get("category") == "failed" else None
+            if role["active"]:
+                role["state"] = "working"
+            elif not source_current:
+                role["state"], role["state_source"] = "unknown", "unavailable"
+                role.setdefault("coverage", {})["active"] = "unavailable"
+                github.setdefault("bots", {})["partial"] = True
+                github["partial"] = True
+            if not history_current:
+                role.setdefault("coverage", {})["history"] = "unavailable"
+                github.setdefault("bots", {})["partial"] = True
+                github["partial"] = True
+        return github
 
     def _merge_bot_states(self, github: dict, telemetry: dict) -> None:
         roles = github.setdefault("bots", {}).setdefault("roles", {})
@@ -103,21 +194,46 @@ class DashboardService:
         states = {row["bot"]: row for row in telemetry_bots.get("states", [])}
         telemetry_current = telemetry_bots.get("available") and not telemetry_bots.get("stale")
         for role in BOT_KEYS:
-            result = roles.setdefault(role, {"active": [], "recent_2h": [], "recent_7d": [], "latest_failure": None})
+            result = roles.setdefault(role, {"active": [], "recent_2h": [], "recent_7d": [],
+                                             "latest_failure": None, "state": "unknown"})
             if result.get("active"):
                 result["state"], result["state_source"] = "working", "github_actions"
             elif telemetry_current and role in states:
                 result["state"], result["state_source"] = states[role]["state"], "telemetry"
                 result["state_detail"] = states[role].get("detail")
+            elif result.get("state") == "idle":
+                result["state_source"] = "github_actions"
             else:
                 result["state"], result["state_source"] = "unknown", "unavailable"
 
-    def snapshot(self, *, force: bool = False) -> dict:
-        with self._lock:
-            now_mono, now = self.monotonic(), self.wall_clock().astimezone(timezone.utc)
-            if force or self._github is None or now_mono - self._github_at >= ACTIVE_TTL_SECONDS:
-                self._refresh(now_mono, now)
-            github = copy.deepcopy(self._github)
-            telemetry = read_telemetry(self.config, now)
-            self._merge_bot_states(github, telemetry)
-            return {"version": 1, "owner": self.config.owner, "github": github, "telemetry": telemetry}
+    def snapshot(self, *, force: bool = False, nonblocking: bool = False) -> dict:
+        now_mono, now = self.monotonic(), self.wall_clock().astimezone(timezone.utc)
+        run_refresh = False
+        thread = None
+        with self._condition:
+            waited = False
+            while self._refreshing and not nonblocking:
+                waited = True
+                self._condition.wait()
+            due = force or self._github is None or now_mono - self._github_at >= ACTIVE_TTL_SECONDS
+            if due and not self._refreshing and not waited:
+                self._refreshing = True
+                if nonblocking:
+                    thread = threading.Thread(target=self._background_refresh, args=(now_mono, now),
+                                              name="dashboard-github-refresh", daemon=True)
+                else:
+                    run_refresh = True
+            if not run_refresh:
+                github = copy.deepcopy(self._github or self._empty_github("loading"))
+                github["refreshing"] = self._refreshing
+        if thread:
+            thread.start()
+        if run_refresh:
+            self._perform_refresh(now_mono, now)
+            with self._condition:
+                github = copy.deepcopy(self._github)
+                github["refreshing"] = False
+        github = self._expire(github, self.wall_clock().astimezone(timezone.utc))
+        telemetry = read_telemetry(self.config, self.wall_clock().astimezone(timezone.utc))
+        self._merge_bot_states(github, telemetry)
+        return {"version": 1, "owner": self.config.owner, "github": github, "telemetry": telemetry}

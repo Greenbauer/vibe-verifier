@@ -16,6 +16,9 @@ inputs:
   storage-state:
     description: A Playwright storage-state file the workflow wrote before this step, holding cookies only (an `origins` list must be empty), for example the bypass cookie of a preview behind Vercel SSO. The browser starts with it, every cookie value is redacted from what the explorer sees and saves, and a file that is not a cookies-only storage state fails the step before the model runs. Write it outside the workspace ($RUNNER_TEMP). Empty (the default) starts the browser with no state.
     default: ""
+  usage-account-alias:
+    description: Optional caller-owned logical alias for the Codex subscription. Empty stays unmapped.
+    default: ""
 runs:
   using: composite
   steps:
@@ -64,6 +67,8 @@ runs:
         MCP: ${{ inputs.mcp }}
         ARTIFACTS: ${{ inputs.artifacts }}
         STORAGE_STATE: ${{ inputs.storage-state }}
+        USAGE_ACCOUNT_ALIAS: ${{ inputs.usage-account-alias }}
+        VV_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
         set -euo pipefail
         mkdir -p "$ARTIFACTS/qae"
@@ -114,6 +119,17 @@ runs:
           fi
           browser=(-c 'mcp_servers.playwright.command="node"' -c "mcp_servers.playwright.args=[$args]")
         fi
-        "$CODEX" exec --skip-git-repo-check --sandbox danger-full-access \
+        python3 "$GITHUB_ACTION_PATH/../usage/collect.py" \
+          --output "$RUNNER_TEMP/vv-usage/usage.json" \
+          --role qae-explorer --job-key explore --account-alias "$USAGE_ACCOUNT_ALIAS" \
+          codex -- "$CODEX" exec --json --skip-git-repo-check --sandbox danger-full-access \
           -c 'approval_policy="never"' "${browser[@]}" \
           -o "$ARTIFACTS/final.md" "$(cat "$PROMPT_FILE")" < /dev/null
+    - name: Keep numeric usage
+      if: always() && inputs.mcp != ''
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: vv-usage-qae-explorer-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/vv-usage/usage.json
+        if-no-files-found: error
+        retention-days: 7

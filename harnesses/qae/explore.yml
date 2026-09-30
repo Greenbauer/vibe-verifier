@@ -84,6 +84,7 @@ jobs:
         with:
           path: qae-inputs/pr-body.md
       - name: Explore the acceptance criteria in a real browser
+        id: explorer
         if: steps.criteria.outputs.count != '0'
         uses: anthropics/claude-code-action@e58dfa55559035499a4982426bb73605e8b5ad8e # v1.0.105
         with:
@@ -131,6 +132,22 @@ jobs:
             # could ask it to read /proc/self/environ and post the tokens with the allowed gh pr comment.
             # The comment rule is the exact command, not gh pr comment:*: gh opens --body-file itself, so
             # the Read rules never see that read, and any other path would post whatever file it names.
+      - name: Collect numeric usage
+        if: always()
+        uses: Greenbauer/vibe-verifier/actions/usage@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
+        with:
+          source-file: ${{ steps.explorer.outputs.execution_file }}
+          source-ran: ${{ steps.criteria.outputs.count != '0' }}
+          role: qae-explorer
+          job-key: explore
+      - name: Keep numeric usage
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vv-usage-qae-explorer-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/vv-usage/usage.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Enforce the write scope
         # The prompt says "write only under qae-artifacts/", and a prompt is a suggestion. Anything
         # else that changed on the runner, tracked or untracked, fails the job here so it can never

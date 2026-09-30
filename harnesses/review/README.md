@@ -16,9 +16,11 @@ template; the consumer owns `runs-on`, the token secret, and the two catalog pin
 1. **review** checks out the head with `persist-credentials: false`, pins every `CLAUDE.md` and
    `.claude/**` to the base ref (a hostile head could add one as an injection foothold), computes
    the scope, runs `claude-code-action` with [`prompt.md`](prompt.md) when there is something new
-   to review, and then posts `review-receipt: <head sha> -- <mode> -- run <id>` as a PR comment.
-   The receipt step is reached only when every step before it succeeded, so a quota failure, a
-   model error or a broken step leaves no receipt for this head.
+   to review, writes and uploads the numeric usage record, and then posts
+   `review-receipt: <head sha> -- <mode> -- run <id>` as a PR comment. The receipt step is reached
+   only when every step before it succeeded, so a provider failure, a model error or a broken step
+   leaves no receipt for this head. Usage collection and upload run under `always()` so a failed
+   review can retain partial statistics without making the review green.
 2. **verify** writes the declared inputs (the head SHA, the newest receipt posted by the workflow's
    own identity, the count of unresolved review threads) and runs the
    [`review-receipt`](../../gates/review_receipt.py) gate through the composite action with the
@@ -54,10 +56,15 @@ for this head, which is how a re-run after resolving threads turns the gate gree
 - **House rules live in the consumer's CLAUDE.md**, pinned to the base. The prompt is the same in
   every consumer, byte for byte (a test holds `review.yml` to `prompt.md`); what differs between
   repositories is what their CLAUDE.md says a reviewer should look for.
+- **Usage is numbers, not model output.** The review job uploads
+  `vv-usage-swe-reviewer-<run_attempt>` for 7 days. It contains only `usage.json`, built from the
+  pinned action's final aggregate usage. A `nochange` run records `not_run`; it never invents zero
+  usage. The schema and provider counting rules are in
+  [`docs/USAGE-CONTRACT.md`](../../docs/USAGE-CONTRACT.md).
 
 ## Subscribing
 
 Copy `review.yml` to `.github/workflows/review.yml` and `manifest` to `.vibe-verifier-review`,
-pin the catalog action, set `CLAUDE_CODE_OAUTH_TOKEN`, remove the old `claude-review.yml`, and
+pin the catalog actions, set `CLAUDE_CODE_OAUTH_TOKEN`, remove the old `claude-review.yml`, and
 put any repository-specific review focus under a heading in CLAUDE.md. The subscription PR's own
 run is the first review.

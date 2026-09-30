@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import stat
@@ -32,7 +33,7 @@ def _number(value: object, low: float = 0, high: float | None = None) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TelemetryError("metric is not numeric")
     number = float(value)
-    if number < low or (high is not None and number > high):
+    if not math.isfinite(number) or number < low or (high is not None and number > high):
         raise TelemetryError("metric is outside its valid range")
     return number
 
@@ -127,8 +128,13 @@ def _capacity(value: object, config: Config, now: datetime) -> dict:
     if not isinstance(value, dict) or set(value) - {"sampled_at", "host", "lanes"}:
         raise TelemetryError("capacity section is invalid")
     sampled_at, stale = _section_time(value, now)
+    lanes = _lanes(value.get("lanes", []), config)
+    if stale:
+        for lane in lanes:
+            lane.update(state="unknown", registered=None)
+            lane.pop("job", None)
     return {"available": True, "sampled_at": sampled_at, "stale": stale,
-            "host": _host(value.get("host")), "lanes": _lanes(value.get("lanes", []), config)}
+            "host": _host(value.get("host")), "lanes": lanes}
 
 
 def _window(row: object, now: datetime) -> dict:
@@ -233,6 +239,12 @@ def read_telemetry(config: Config, now: datetime | None = None) -> dict:
         return {"available": False, "reason": "not_configured"}
     try:
         value = _read(config.telemetry_file)
+        if isinstance(value, dict) and "hosts" in value:
+            from .collector_view import collector_view
+            try:
+                return collector_view(value, config, now)
+            except (ValueError, TypeError, KeyError, OverflowError):
+                raise TelemetryError("invalid collector snapshot") from None
         if not isinstance(value, dict) or set(value) - {"version", "owner", "capacity", "usage", "bots"}:
             raise TelemetryError("telemetry root is invalid")
         if value.get("version") != 1:

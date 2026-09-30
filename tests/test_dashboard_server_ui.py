@@ -121,6 +121,20 @@ console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,bucket:bu
         self.assertTrue(result["safe"].startswith("https://github.com/octocat/"))
         self.assertIsNone(result["unsafe"])
 
+    def test_usage_history_leaves_missing_buckets_as_gaps_and_preserves_measured_zero(self):
+        result = self.node(r"""
+const c=require('./dashboard/static/charts.js');
+const now=Date.UTC(2026,8,30,15,0,0);
+const samples=[{timestamp:'2026-09-30T14:30:00Z',bot:'reviewer',input_tokens:0,output_tokens:0}];
+const points=c.seriesFor(samples,'24h',now,'reviewer');
+const other=c.seriesFor(samples,'24h',now,'explorer');
+const path=c.linePath([{y:2},{y:null},{y:0},{y:4}],x=>x,y=>y);
+console.log(JSON.stringify({points,other,path}));
+""")
+        self.assertEqual([point['y'] for point in result['points']], [None] * 23 + [0])
+        self.assertTrue(all(point['y'] is None for point in result['other']))
+        self.assertEqual(result['path'], 'M0,2 M2,0 L3,4')
+
     def test_ui_uses_text_nodes_and_the_approved_local_palette(self):
         app = (ROOT / "dashboard/static/app.js").read_text()
         helpers = (ROOT / "dashboard/static/helpers.js").read_text()

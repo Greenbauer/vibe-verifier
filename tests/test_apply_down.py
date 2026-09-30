@@ -13,6 +13,7 @@ from helpers import ROOT, commit, git, make_repo, runner
 
 TEMPLATE = (ROOT / "consumer" / "vibe-verifier.yml").read_text()
 PIN = re.compile(r"(vibe-verifier/actions/gates@)[0-9a-f]{40}[^\n]*")
+CATALOG_PIN = re.compile(r"(vibe-verifier/actions/[A-Za-z0-9_-]+@)[0-9a-f]{40}[^\n]*")
 
 
 def stub_pinned_to(sha):
@@ -136,7 +137,8 @@ class ApplyDown(unittest.TestCase):
         # runs-on is the consumer's choice: a stub that differs only there is not drift, and the bump
         # moves the pins and leaves every runner where the consumer put it.
         stub = stub_pinned_to(self.old).replace("runs-on: ubuntu-latest", "runs-on: [self-hosted, example-lane]")
-        review = PIN.sub(r"\g<1>%s # main 2026-09-17" % self.old, (ROOT / "harnesses" / "review" / "review.yml").read_text())
+        review = CATALOG_PIN.sub(r"\g<1>%s # main 2026-09-17" % self.old,
+                                 (ROOT / "harnesses" / "review" / "review.yml").read_text())
         review = review.replace("runs-on: ubuntu-latest", "runs-on: example-lane", 1).replace("runs-on: ubuntu-latest", "runs-on: [self-hosted]")
         self.consumer("acme/app", stub, workflows={"review.yml": review})
         plan = self.apply_down("--repo", "acme/app")
@@ -151,8 +153,9 @@ class ApplyDown(unittest.TestCase):
             self.assertEqual([line for line in new_lines if "runs-on:" in line], [line for line in old_lines if "runs-on:" in line])
             self.assertEqual(len(old_lines), len(new_lines))
             differing = [b for a, b in zip(old_lines, new_lines) if a != b]
-            self.assertEqual(len(differing), 1, path)
-            self.assertIn("gates@%s # main " % self.new, differing[0])
+            expected = 1 if path.endswith("vibe-verifier.yml") else 2
+            self.assertEqual(len(differing), expected, path)
+            self.assertTrue(all("@%s # main " % self.new in line for line in differing), differing)
 
     def test_a_current_pin_is_left_alone(self):
         self.consumer("acme/app", stub_pinned_to(self.new))

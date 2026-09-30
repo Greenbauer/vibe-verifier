@@ -9,6 +9,7 @@ from urllib.parse import unquote, urlsplit
 
 from .config import Config
 from .service import DashboardService
+from .live_service import LiveService
 
 STATIC = Path(__file__).with_name("static")
 FILES = {
@@ -117,4 +118,4 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def make_server(config: Config, port: int, service: DashboardService | None = None) -> DashboardServer:
-    return DashboardServer(("127.0.0.1", port), service or DashboardService(config))
+    return DashboardServer(("127.0.0.1", port), service or LiveService(config))

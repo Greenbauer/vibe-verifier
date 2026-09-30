@@ -48,8 +48,11 @@ whole account or organization.
 
 ## Optional telemetry contract
 
-No collector ships in this pilot. A same-owner collector may atomically replace the optional file.
-The dashboard never writes it. The complete version 1 shape is:
+The [optional Linux collector](dashboard-collector.md) atomically replaces the telemetry file.
+Its native host/account format is validated and adapted by `dashboard/collector_view.py`, retaining
+source timestamps, combined CI/QAE slot limits, and separate lane caps. It reads only the configured
+owner’s assignments and aggregate host resources. The dashboard never writes telemetry.
+Other collectors can use this version 1 shape:
 
 ```json
 {
@@ -122,23 +125,25 @@ separate `true`, `false`, or `null` fact because an allocated on-demand lane can
 A busy lane must include a same-owner job. The host panel is always labeled `SHARED HOST`; its values
 are aggregate CPU sampled percent, memory bytes, and usable workspace-filesystem bytes.
 
-Bot `state` is `working`, `idle`, `down`, or `unknown`. GitHub activity can prove `working`. Only a
-fresh optional source can report `idle` or `down`; source absence remains `unknown`. Bot history is
+Bot `state` is `working`, `idle`, `down`, or `unknown`. GitHub activity can prove `working`. A complete GitHub active scan can report `idle`; a fresh collector can report listener-backed
+QAE `idle` or `down`. Missing coverage remains `unknown`. Bot history is
 derived from the configured GitHub workflow and exact job names, not free-form text.
 
 Quota windows can omit `allowance_tokens`. A used percentage alone is displayed as a provider
 percentage and never converted into a token quota. The dotted pace line appears only when the source
-provides an actual comparable token allowance. Accounts are charted separately. No price is inferred.
+provides an actual comparable token allowance. The charts combine observed token counts and show each bot separately. An allowance is used only
+when all plotted samples belong to that same account; account-wide quota percentages remain separate.
+No price is inferred.
 
 Every token sample repeats the owner, account, bot, timestamp, input count, and output count. Any
 cross-owner row rejects the whole file. Samples older than seven days are discarded. The file is
 limited to 2 MiB, 1,024 lanes, 64 accounts, and 20,000 token samples. Sections older than five
-minutes are visibly stale. Invalid, missing, unsafe-permission, or mixed-owner files are unavailable,
+minutes are visibly stale, and stale runner assignments/readiness become unknown. Invalid, missing, unsafe-permission, or mixed-owner files are unavailable,
 not zero.
 
 ## GitHub behavior and limits
 
-The server uses `gh api --paginate --slurp` and JSON fields, never formatted table output. It reads
+The server uses bounded `gh api` pages and JSON fields, never formatted table output. It reads
 PR check suites and check runs for the current head, joins Actions runs by exact head SHA plus check
 suite ID, selects the greatest run attempt for each run ID, and loads jobs from that exact attempt.
 It re-reads the PR head after collection; a race drops the collected evidence instead of attaching
@@ -146,8 +151,9 @@ it to the new revision. Commit statuses and third-party checks remain separate e
 
 Direct manifest or workflow evidence reports `subscribed`. An installation subscribed only through
 an organization wrapper or ruleset reports `unknown` in this pilot, not `false`; wrapper/ruleset
-resolution is not duplicated here. GitHub history inspection is bounded to 20 candidate workflow
-runs per repository and bot. A refresh is capped at 200 REST calls. Active data is cached for 60
+resolution is not duplicated here. Bot roles sharing a workflow share collection. Active runs are collected independently of history;
+history is inspected until the newest five outcomes are known or coverage is explicitly partial.
+A refresh is capped at 200 actual REST page requests. Active data is cached for 60
 seconds and direct subscription inventory for 300 seconds. The response includes calls used and the
 reported REST limit/remaining/reset values. Rate limits and source errors return partial or briefly
 stale data without advancing its successful sample timestamp. Authentication or access revocation
@@ -173,13 +179,27 @@ coordinates for parallel jobs and does not sum their durations. Unknown step tot
 
 `tests/test_dashboard_config_telemetry.py` covers owner isolation, two instances, mixed telemetry,
 quota pace, stale sections, and 16-lane on-demand capacity. `tests/test_dashboard_github.py` covers
-current-head suite/run/attempt joins, race handling, status/step categories, bot history boundaries,
-pagination, rate limits, subscription uncertainty, and cache timestamps/revocation.
+current-head suite/run/attempt joins, race handling, status/step categories, pagination, rate limits,
+and subscription uncertainty. `test_dashboard_bot_history.py` covers bounded history and workflow
+discovery; `test_dashboard_service.py` covers source timestamps and refresh caching.
+`test_dashboard_live_service.py` covers independently aging quota/history and revocation during
+an in-flight refresh. The collector and usage-artifact test files cover the native source contracts.
 `tests/test_dashboard_server_ui.py` covers loopback HTTP, read-only methods, Host/Origin/traversal,
 XSS-safe JSON and DOM construction, filters, account usage math, local assets, and the approved
 palette. The repository's existing unittest command runs all of them.
 
-Live acceptance still requires the operator to supply private configuration and the host telemetry
-collector, run the complete suite on the Ubuntu CI target, reconcile the displayed rows with the
-actual private GitHub owner, and walk the rendered desktop/mobile UI with browser console and network
-inspection. This public repository contains no private configuration, captured telemetry, or fixture.
+Live acceptance uses private configuration outside this repository, reconciles displayed PRs and
+capacity with actual source records, and walks desktop/mobile views with browser console and network
+inspection. CI runs the complete suite on Ubuntu. This public repository contains no private
+configuration or captured telemetry. See [collection/cache behavior](dashboard-data.md) and the
+[numeric usage artifact contract](USAGE-CONTRACT.md).
+
+The server refreshes GitHub and usage sources in the background. Numeric usage artifacts are read
+every five minutes through the current GitHub credentials, verified against their run/attempt/head
+and configured workflow, and parsed without extracting files or copying model content. Each scan
+reads at most the first 100 artifacts per selected repository and reports partial coverage when
+more exist. Captured token records expire after seven days and disappear when source artifacts
+are removed. Missing captures remain unavailable. Old runs cannot be backfilled. The deterministic
+QAE verifier has no model-token usage. No quota is inferred from those token counts.
+
+Usage charts leave unobserved time buckets blank. A measured zero is drawn at zero; one captured run never fills earlier history with invented zeros.

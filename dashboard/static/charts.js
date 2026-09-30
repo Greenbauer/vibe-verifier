@@ -8,12 +8,12 @@
   function bucketSamples(samples, range, nowMs) {
     const count = range === "24h" ? 24 : 7;
     const width = range === "24h" ? 3600000 : 86400000;
-    const end = range === "24h" ? Math.floor(nowMs / width) * width : nowMs;
+    const end = nowMs;
     const start = end - count * width;
     const buckets = Array.from({ length: count }, (_, index) => ({
       start: start + index * width,
       end: start + (index + 1) * width,
-      reviewer: 0, explorer: 0, verifier: 0, total: 0
+      reviewer: null, explorer: null, verifier: null, total: null
     }));
     for (const sample of samples || []) {
       const time = Date.parse(sample.timestamp);
@@ -28,7 +28,17 @@
   }
 
   function seriesFor(samples, range, nowMs, bot) {
-    return bucketSamples(samples, range, nowMs).map(bucket => ({ x: bucket.start, y: bucket[bot] || 0 }));
+    return bucketSamples(samples, range, nowMs).map(bucket => ({ x: bucket.start, y: bucket[bot] }));
+  }
+
+  function linePath(points, x, y) {
+    let connected = false;
+    return points.map((point, index) => {
+      if (!Number.isFinite(point.y)) { connected = false; return ""; }
+      const segment = `${connected ? "L" : "M"}${x(index)},${y(point.y)}`;
+      connected = true;
+      return segment;
+    }).filter(Boolean).join(" ");
   }
 
   function pacePerBucket(window, range) {
@@ -45,7 +55,7 @@
 
   function draw(container, points, options) {
     const width = Math.max(260, container.clientWidth || 500);
-    const height = options.compact ? 92 : 128;
+    const height = options.compact ? 64 : 84;
     const left = 38, right = 8, top = 12, bottom = 24;
     const pace = Number.isFinite(options.pace) ? options.pace : null;
     const maximum = Math.max(1, pace || 0, ...points.map(point => point.y));
@@ -62,8 +72,11 @@
       chart.append(line);
     }
     if (points.length) {
-      const path = points.map((point, index) => `${index ? "L" : "M"}${x(index)},${y(point.y)}`).join(" ");
-      chart.append(svg("path", { d: path, class: "chart-line", style: `stroke:${options.color}` }));
+      const path = linePath(points, x, y);
+      chart.append(svg("path", { d: path, class: "chart-line", stroke: options.color }));
+      points.forEach((point, index) => {
+        if (Number.isFinite(point.y)) chart.append(svg("circle", { cx: x(index), cy: y(point.y), r: 2.5, fill: options.color }));
+      });
       chart.append(svg("text", { x: left, y: height - 5, class: "chart-label" }, new Date(points[0].x).toLocaleDateString([], { month: "short", day: "numeric" })));
       chart.append(svg("text", { x: width - right, y: height - 5, class: "chart-label", "text-anchor": "end" }, "Now"));
     }
@@ -76,5 +89,5 @@
     return String(Math.round(value));
   }
 
-  return { bucketSamples, seriesFor, pacePerBucket, draw, short };
+  return { bucketSamples, seriesFor, linePath, pacePerBucket, draw, short };
 });

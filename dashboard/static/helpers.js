@@ -14,7 +14,7 @@
     success: "Succeeded", failed: "Failed", skipped: "Skipped", cancelled: "Cancelled",
     pending: "Pending", unknown: "Unknown", working: "Working", idle: "Idle",
     down: "Down", ready: "Ready", busy: "Busy", provisionable: "On demand",
-    offline: "Offline"
+    offline: "Offline", allocated: "Allocated"
   };
 
   function element(tag, attrs, ...children) {
@@ -23,6 +23,10 @@
       if (value === null || value === undefined || value === false) return;
       if (key === "class") item.className = value;
       else if (key === "text") item.textContent = value;
+      else if (key === "style") value.split(";").forEach(rule => {
+        const split = rule.indexOf(":");
+        if (split > 0) item.style.setProperty(rule.slice(0, split).trim(), rule.slice(split + 1).trim());
+      });
       else if (key.startsWith("on") && typeof value === "function") item.addEventListener(key.slice(2), value);
       else item.setAttribute(key, value === true ? "" : String(value));
     });
