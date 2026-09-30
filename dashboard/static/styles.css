@@ -226,7 +226,7 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 }
 
 /* Compact usage keeps the combined chart and bot comparisons together. */
-.usage-charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 12px; }
+.usage-charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 10px; }
 .usage-charts .combined, .usage-charts .pace-note { grid-column: 1 / -1; }
 .usage-charts .usage-chart { margin: 0; padding-top: 6px; min-width: 0; }
 .usage-charts .combined { padding: 10px; }
