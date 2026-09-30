@@ -19,9 +19,9 @@ bin/vibe-dashboard --config /absolute/path/dashboard.json --port 8765
 ```
 
 Open the printed `http://127.0.0.1:8765` URL. The address is fixed to IPv4 loopback. There is no
-public listener, browser credential, hosted authentication, reverse proxy support, or CORS access.
-The server accepts `GET` only, rejects untrusted `Host` and `Origin` values, and serves a fixed path
-allowlist with no remote scripts, fonts, or icons.
+public listener, browser credential, built-in authentication, or CORS access. Without
+`proxy_origin`, forwarded headers are rejected. The server accepts `GET` only, rejects untrusted or
+duplicate routing headers, and serves a fixed path allowlist with no remote scripts, fonts, or icons.
 
 ## Configuration contract
 
@@ -38,13 +38,33 @@ one configured owner. Bot types come only from these explicit workflow file and 
     "explorer": {"workflow": "explore.yml", "jobs": ["explore"]},
     "verifier": {"workflow": "verify.yml", "jobs": ["verify"]}
   },
-  "telemetry_file": "/absolute/path/telemetry.json"
+  "telemetry_file": "/absolute/path/telemetry.json",
+  "proxy_origin": "https://dashboard.example.test"
 }
 ```
 
 `telemetry_file` is optional and must be absolute. Deleting it makes telemetry unavailable without
-affecting GitHub data. Selected repository coverage is labeled as selected coverage, never as the
-whole account or organization.
+affecting GitHub data. `proxy_origin` is optional; omit it for local-only mode. It must be one exact
+HTTPS origin with a hostname and optional valid port, with no trailing slash, credentials, path,
+query, fragment, wildcard, or control character. Configuration is immutable after startup. Selected
+repository coverage is labeled as selected coverage, never as the whole account or organization.
+
+## Optional private HTTPS proxy
+
+Hosted access requires a trusted private upstream that authenticates every user and blocks public
+access. Headers do not authenticate a request. The machine must also prevent untrusted local
+processes from reaching the dashboard's loopback port because direct loopback reads remain allowed.
+
+Configure the upstream at the origin root, not a subpath. It must remove client-supplied forwarded
+headers, connect only to this loopback backend, and send exactly one `X-Forwarded-Host` containing
+the configured origin authority plus exactly one `X-Forwarded-Proto: https`. Its upstream `Host`
+must be `localhost` for a Unix-socket proxy, or `localhost:<actual-port>` or
+`127.0.0.1:<actual-port>` for TCP. Any browser `Origin` must equal `proxy_origin` exactly. Missing,
+mismatched, or duplicate routing headers are denied.
+
+This option does not add a public listener, authentication, CORS, or write methods. The backend
+still binds only to `127.0.0.1`; the existing assets, CSP, root paths, and read-only API are
+unchanged. Direct local reads use no forwarded headers and retain the local HTTP origin.
 
 ## Optional telemetry contract
 
@@ -128,7 +148,9 @@ are aggregate CPU sampled percent, memory bytes, and usable workspace-filesystem
 
 Bot `state` is `working`, `idle`, `down`, or `unknown`. GitHub activity can prove `working`. A complete GitHub active scan can report `idle`; a fresh collector can report listener-backed
 QAE `idle` or `down`. Missing coverage remains `unknown`. Bot history is
-derived from the configured GitHub workflow and exact job names, not free-form text.
+derived from the configured GitHub workflow and exact job names, not free-form text. The failure
+panel says bot history is unavailable when the selected role has no returned history record; an
+available role with no failed completed run is reported separately as having no recent failure.
 
 Quota windows can omit `allowance_tokens`. A used percentage alone is displayed as a provider
 percentage and never converted into a token quota. The dotted pace line appears only when the source
@@ -167,8 +189,9 @@ coordinates for parallel jobs and does not sum their durations. Unknown step tot
 
 ## Data lifecycle and uninstall
 
-- Configuration: create the owned local file, read it once at startup, restart to update it, and
-  delete it after stopping the process to remove the installation.
+- Configuration: create the owned local file, read it once at startup, restart to update its owner,
+  repository selection, telemetry path, or proxy origin, and delete it after stopping the process
+  to remove the installation.
 - GitHub cache: created from server-side reads, replaced by scoped source identity, held only in
   memory, expired on source failure, and deleted when the process stops.
 - Telemetry: created and atomically replaced by an optional collector, read only by this process,
@@ -185,9 +208,10 @@ and subscription uncertainty. `test_dashboard_bot_history.py` covers bounded his
 discovery; `test_dashboard_service.py` covers source timestamps and refresh caching.
 `test_dashboard_live_service.py` covers independently aging quota/history and revocation during
 an in-flight refresh. The collector and usage-artifact test files cover the native source contracts.
-`tests/test_dashboard_server_ui.py` covers loopback HTTP, read-only methods, Host/Origin/traversal,
-XSS-safe JSON and DOM construction, filters, account usage math, local assets, and the approved
-palette. The repository's existing unittest command runs all of them.
+`tests/test_dashboard_server_ui.py` covers loopback HTTP, proxy and direct routing headers,
+read-only methods, Host/Origin/traversal, XSS-safe JSON and DOM construction, filters, account usage
+math, local assets, and the approved palette. The repository's existing unittest command runs all
+of them. Configuration tests cover the strict optional proxy origin and its immutable default.
 
 Live acceptance uses private configuration outside this repository, reconciles displayed PRs and
 capacity with actual source records, and walks desktop/mobile views with browser console and network

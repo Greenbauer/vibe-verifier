@@ -74,8 +74,8 @@ branches, exit codes, and GitHub setup details.
 
 For a private, local, read-only view of selected repositories, current-head checks,
 bot activity, and optional capacity/usage telemetry, see the opt-in
-[dashboard pilot](docs/dashboard.md). It binds only to loopback and does not change
-the gate runner.
+[dashboard pilot](docs/dashboard.md). It binds only to loopback and can optionally sit behind a
+trusted private HTTPS proxy. It does not change the gate runner.
 
 ## Optional AI checks
 

@@ -8,10 +8,14 @@ import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\Z")
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]{1,100}\Z")
 WORKFLOW = re.compile(r"[A-Za-z0-9_.-]{1,100}\Z")
+HOSTNAME = re.compile(
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\Z")
 BOT_KEYS = ("reviewer", "explorer", "verifier")
 MAX_CONFIG_BYTES = 128 * 1024
 
@@ -32,6 +36,7 @@ class Config:
     repositories: tuple[str, ...]
     bots: dict[str, BotDefinition]
     telemetry_file: Path | None
+    proxy_origin: str | None = None
 
 
 def _owned_regular_file(path: Path, *, may_be_missing: bool = False) -> None:
@@ -86,13 +91,35 @@ def _parse_bots(value: object) -> dict[str, BotDefinition]:
     return result
 
 
+def _parse_proxy_origin(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or "*" in value or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ConfigError("proxy_origin must be a valid HTTPS origin")
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as error:
+        raise ConfigError("proxy_origin must be a valid HTTPS origin") from error
+    hostname = parsed.hostname
+    authority = hostname if port is None else "%s:%s" % (hostname, port)
+    if (parsed.scheme != "https" or not parsed.netloc or parsed.username is not None
+            or parsed.password is not None or parsed.path or parsed.query or parsed.fragment
+            or value != "https://" + authority or hostname is None
+            or len(hostname) > 253 or not HOSTNAME.fullmatch(hostname)
+            or port is not None and not 1 <= port <= 65535):
+        raise ConfigError("proxy_origin must be a valid HTTPS origin")
+    return value
+
+
 def load_config(filename: str | os.PathLike[str]) -> Config:
     """Load once at process startup; callers retain the returned frozen value."""
     path = Path(filename).expanduser()
     value = _read_json(path)
     if not isinstance(value, dict):
         raise ConfigError("configuration must be a JSON object")
-    _only_keys(value, {"version", "owner", "repositories", "bots", "telemetry_file"}, "configuration")
+    _only_keys(value, {"version", "owner", "repositories", "bots", "telemetry_file", "proxy_origin"},
+               "configuration")
     if value.get("version") != 1:
         raise ConfigError("configuration version must be 1")
     owner = value.get("owner")
@@ -118,4 +145,5 @@ def load_config(filename: str | os.PathLike[str]) -> Config:
             raise ConfigError("telemetry_file must be an absolute path")
         telemetry_path = Path(telemetry)
         _owned_regular_file(telemetry_path, may_be_missing=True)
-    return Config(owner, tuple(canonical), _parse_bots(value.get("bots")), telemetry_path)
+    return Config(owner, tuple(canonical), _parse_bots(value.get("bots")), telemetry_path,
+                  _parse_proxy_origin(value.get("proxy_origin")))
