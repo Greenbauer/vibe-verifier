@@ -11,7 +11,7 @@ The source for U1 through U6 is the approved dashboard usage scope dated 2026-09
 | U3 | Claude collection reads only the final top-level result usage from the bounded execution file. It does not add assistant-message usage or `modelUsage`. Skipped, missing, failed, and malformed sources remain explicit without changing review receipt rules. | Claude execution-file fixtures and workflow ordering tests. |
 | U4 | Each applicable source job uploads only `usage.json` as `vv-usage-<role>-<run_attempt>` for 7 days through the repository's established pinned upload action. No new permission or secret is added. | Harness and action structure tests. |
 | U5 | Tests cover normal and multi-event use, partial failure, real zero use, absent use, duplicate-source avoidance, cache fields, invalid numbers and types, arbitrary secret-shaped content, path and size bounds, and exit preservation. Files remain at most 500 lines. | Focused unit tests, existing harness tests, workflow lint, and the file-length gate. |
-| U6 | Public docs define the schema, privacy boundary, provider counting rules, applicability, retention and deletion, the 7-day dashboard window, lack of backfill, and parent integration work. | This document plus the review and QAE harness docs. |
+| U6 | Public docs define the schema, privacy boundary, provider counting rules, applicability, retention and deletion, the 7-day dashboard window, lack of backfill, and dashboard ingestion. | This document plus the review and QAE harness docs. |
 
 The deterministic verifier jobs do not run a model, so token usage is not applicable to them and no usage artifact is created for them. Existing runs have no structured usage and cannot be backfilled.
 

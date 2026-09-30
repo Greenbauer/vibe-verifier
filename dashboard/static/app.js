@@ -146,7 +146,7 @@
       const bar = el("span", { class: `timeline-bar status-${job.category}` });
       bar.style.left = `${Math.max(0, (began - start) / span * 100)}%`;
       bar.style.width = `${Math.max(1, (finished - began) / span * 100)}%`;
-      const details = el("details", { class: "job-detail" },
+      const details = el("details", { class: "job-detail", "data-job-id": job.id },
         el("summary", {}, el("span", {}, job.name), badge(job.category), el("span", { class: "mono" }, duration(job.elapsed_seconds))),
         el("div", { class: "timeline-track" }, bar),
         el("p", { class: "muted" }, `Created-to-start: ${duration(job.queue_seconds)} · run attempt ${job.run.attempt}`));
@@ -218,12 +218,13 @@
       const measured = samples.filter(sample => row.id === "total" || sample.bot === row.id);
       const points = VVCharts.seriesFor(measured, state.usageRange, Date.now(), row.id);
       const total = points.reduce((sum, point) => sum + point.y, 0);
+      const observed = points.some(point => Number.isFinite(point.y));
       const chart = el("div", { class: `usage-chart${row.id === "total" ? " combined" : ""}` },
         el("div", { class: "chart-heading" }, el("b", { style: `color:${row.color}` }, row.name),
-          el("span", {}, row.id === "verifier" && !measured.length ? "No model calls" : measured.length ? `${total.toLocaleString()} tokens observed` : "Not yet observed")),
+          el("span", {}, row.id === "verifier" && !observed ? "No model calls" : observed ? `${total.toLocaleString()} tokens observed` : "Not yet observed")),
         el("div", { class: "chart-canvas" }));
       section.append(chart);
-      if (measured.length) requestAnimationFrame(() => VVCharts.draw(chart.querySelector(".chart-canvas"), points, {
+      if (observed || (row.id === "total" && pace !== null)) requestAnimationFrame(() => VVCharts.draw(chart.querySelector(".chart-canvas"), points, {
         color: row.color, pace: row.id === "total" ? pace : null, range: state.usageRange,
         compact: row.id !== "total", label: `${row.name} ${state.usageRange} token usage`
       }));
@@ -311,7 +312,17 @@
       const response = await fetch("/api/dashboard", { credentials: "same-origin", headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error("source unavailable");
       snapshot = await response.json();
+      const openedJobs = [...content.querySelectorAll("details[open]")].map(item => item.dataset.jobId);
+      const focused = document.activeElement;
+      const filterId = ["pr-search", "repo-filter"].includes(focused?.id) ? focused.id : null;
+      const selection = filterId === "pr-search" ? [focused.selectionStart, focused.selectionEnd] : null;
       render();
+      content.querySelectorAll("details[data-job-id]").forEach(item => { item.open = openedJobs.includes(item.dataset.jobId); });
+      const replacement = filterId && document.getElementById(filterId);
+      if (replacement) {
+        replacement.focus({ preventScroll: true });
+        if (selection) replacement.setSelectionRange(...selection);
+      }
     } catch (_) {
       content.replaceChildren(empty("Dashboard unavailable", "The local read-only source could not be loaded."));
       document.querySelector("#bot-strip").replaceChildren(el("span", { class: "muted" }, "Bot status unavailable"));

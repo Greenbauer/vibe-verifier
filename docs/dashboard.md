@@ -194,7 +194,8 @@ inspection. CI runs the complete suite on Ubuntu. This public repository contain
 configuration or captured telemetry. See [collection/cache behavior](dashboard-data.md) and the
 [numeric usage artifact contract](USAGE-CONTRACT.md).
 
-The server refreshes GitHub and usage sources in the background. Numeric usage artifacts are read
+The server refreshes GitHub and usage sources in the background; the page retains search focus
+and expanded job details during refresh. Numeric usage artifacts are read
 every five minutes through the current GitHub credentials, verified against their run/attempt/head
 and configured workflow, and parsed without extracting files or copying model content. Each scan
 reads at most the first 100 artifacts per selected repository and reports partial coverage when

@@ -129,11 +129,13 @@ const samples=[{timestamp:'2026-09-30T14:30:00Z',bot:'reviewer',input_tokens:0,o
 const points=c.seriesFor(samples,'24h',now,'reviewer');
 const other=c.seriesFor(samples,'24h',now,'explorer');
 const path=c.linePath([{y:2},{y:null},{y:0},{y:4}],x=>x,y=>y);
-console.log(JSON.stringify({points,other,path}));
+const expired=c.seriesFor(samples,'24h',now+86400000,'reviewer');
+console.log(JSON.stringify({points,other,path,expired}));
 """)
         self.assertEqual([point['y'] for point in result['points']], [None] * 23 + [0])
         self.assertTrue(all(point['y'] is None for point in result['other']))
         self.assertEqual(result['path'], 'M0,2 M2,0 L3,4')
+        self.assertFalse(any(point['y'] is not None for point in result['expired']))
 
     def test_ui_uses_text_nodes_and_the_approved_local_palette(self):
         app = (ROOT / "dashboard/static/app.js").read_text()

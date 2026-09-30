@@ -6,7 +6,9 @@ import unittest
 import zipfile
 from datetime import datetime, timezone
 
-from dashboard.usage_artifacts import decode_archive, normalize
+from dashboard.config import Config, BotDefinition
+from dashboard.gh_api import ApiError
+from dashboard.usage_artifacts import UsageArtifacts, decode_archive, normalize
 
 NOW = datetime(2026, 9, 30, 12, tzinfo=timezone.utc)
 REPO = 'example/site'
@@ -100,6 +102,64 @@ class ArtifactValidation(unittest.TestCase):
             else:
                 with self.assertRaises(ValueError):
                     decode_archive(stream.getvalue())
+
+
+class ArtifactCollection(unittest.TestCase):
+    def setUp(self):
+        self.record, self.artifact, self.run = fixture()
+        self.artifact.update(id=9, size_in_bytes=500, expired=False, created_at='2026-09-30T11:00:00Z')
+        self.run['path'] = '.github/workflows/explore.yml'
+        self.listing = {'total_count': 1, 'artifacts': [self.artifact]}
+        self.elapsed, self.downloads, self.revoked = 0, 0, False
+        config = Config('example', (REPO,), {'explorer': BotDefinition('explore.yml', ('explore',))}, None)
+        self.reader = UsageArtifacts(config, api=self, downloader=self.download, clock=lambda: self.elapsed)
+
+    def begin(self):
+        pass
+
+    def one(self, endpoint):
+        if self.revoked:
+            raise ApiError('not_found')
+        if endpoint.endswith('actions/artifacts?per_page=100&page=1'):
+            return self.listing
+        self.assertEqual(endpoint, 'repos/example/site/actions/runs/42/attempts/1')
+        return self.run
+
+    def download(self, repository, artifact_id):
+        self.assertEqual((repository, artifact_id), (REPO, 9))
+        self.downloads += 1
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, 'w') as archive:
+            archive.writestr('usage.json', json.dumps(self.record))
+        return stream.getvalue()
+
+    def test_real_archive_is_imported_once_then_removed_when_source_disappears(self):
+        result = self.reader.collect(NOW)
+        self.assertEqual(result['samples'][0]['input_tokens'], 100)
+        self.assertFalse(result['partial'])
+        self.elapsed = 301
+        self.reader.collect(NOW)
+        self.assertEqual(self.downloads, 1)
+        self.elapsed = 602
+        self.listing = {'total_count': 0, 'artifacts': []}
+        self.assertEqual(self.reader.collect(NOW)['samples'], [])
+        self.assertEqual(self.reader.cache, {})
+
+    def test_wrong_workflow_never_downloads_or_imports_usage(self):
+        self.run['path'] = '.github/workflows/unrelated.yml'
+        result = self.reader.collect(NOW)
+        self.assertTrue(result['partial'])
+        self.assertEqual(result['samples'], [])
+        self.assertEqual(self.downloads, 0)
+
+    def test_revocation_removes_private_cache_and_reports_partial_without_fake_zero(self):
+        self.reader.collect(NOW)
+        self.elapsed, self.revoked = 301, True
+        result = self.reader.collect(NOW)
+        self.assertTrue(result['partial'])
+        self.assertEqual(result['samples'], [])
+        self.assertEqual(result['accounts'], [])
+        self.assertEqual(self.reader.cache, {})
 
 
 if __name__ == '__main__':
