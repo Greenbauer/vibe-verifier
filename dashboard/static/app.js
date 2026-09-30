@@ -190,7 +190,7 @@
       el("p", { class: "muted" }, "Last five completed runs per bot in seven days. Select a bot for detail."));
     const buttons = el("div", { class: "failure-buttons" });
     Object.keys(BOT_META).forEach(role => {
-      const runs = roles[role].recent_7d || [];
+      const runs = roles[role]?.recent_7d || [];
       const button = el("button", { "aria-pressed": state.failureBot === role, onclick: () => { state.failureBot = role; render(); } },
         el("span", { style: `color:${BOT_META[role].color}` }, BOT_META[role].name));
       const dots = el("span", { class: "run-dots" });
@@ -198,8 +198,10 @@
       button.append(dots); buttons.append(button);
     });
     panel.append(buttons);
-    const failure = (roles[state.failureBot].recent_7d || []).find(run => run.category === "failed");
-    panel.append(failure ? el("div", { class: "failure-detail" }, badge("failed"), el("b", {}, failure.name),
+    const selectedRole = roles[state.failureBot];
+    const failure = (selectedRole?.recent_7d || []).find(run => run.category === "failed");
+    panel.append(!selectedRole ? el("p", { class: "muted" }, "Bot history is unavailable.") :
+      failure ? el("div", { class: "failure-detail" }, badge("failed"), el("b", {}, failure.name),
       el("span", {}, `${failure.repository} · ${formatTime(failure.completed_at)} · ${duration(failure.elapsed_seconds)}`),
       link("Open original job", failure.html_url, snapshot.owner)) : el("p", { class: "muted" }, "No failed completed run in the available seven-day history."));
     return panel;

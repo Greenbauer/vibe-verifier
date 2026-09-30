@@ -31,8 +31,9 @@ def safe_json(value: object) -> bytes:
 class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], service: DashboardService):
+    def __init__(self, address: tuple[str, int], service: DashboardService, proxy_origin: str | None):
         self.service = service
+        self.proxy_origin = proxy_origin
         super().__init__(address, DashboardHandler)
 
 
@@ -63,12 +64,41 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _trusted_request(self) -> bool:
         port = self.server.server_port
         allowed_hosts = {"127.0.0.1:%s" % port, "localhost:%s" % port}
-        host = self.headers.get("Host", "").lower()
+        hosts = self.headers.get_all("Host", [])
+        origins = self.headers.get_all("Origin", [])
+        forwarded_hosts = self.headers.get_all("X-Forwarded-Host", [])
+        forwarded_protocols = self.headers.get_all("X-Forwarded-Proto", [])
+        if len(hosts) > 1 or len(origins) > 1 or len(forwarded_hosts) > 1 or len(forwarded_protocols) > 1:
+            self._deny(400, "duplicate routing header")
+            return False
+        if not hosts:
+            self._deny(421, "untrusted host")
+            return False
+        host = hosts[0].lower()
+        proxy_origin = self.server.proxy_origin
+        has_forwarded = bool(forwarded_hosts or forwarded_protocols)
+        if proxy_origin is None and has_forwarded:
+            self._deny(403, "forwarded headers are not accepted")
+            return False
+        if proxy_origin is not None and has_forwarded:
+            authority = urlsplit(proxy_origin).netloc
+            if len(forwarded_hosts) != 1 or len(forwarded_protocols) != 1:
+                self._deny(403, "incomplete forwarded origin")
+                return False
+            if host not in allowed_hosts | {"localhost"}:
+                self._deny(421, "untrusted host")
+                return False
+            if forwarded_hosts[0] != authority or forwarded_protocols[0] != "https":
+                self._deny(403, "untrusted forwarded origin")
+                return False
+            if origins and origins[0] != proxy_origin:
+                self._deny(403, "untrusted origin")
+                return False
+            return True
         if host not in allowed_hosts:
             self._deny(421, "untrusted host")
             return False
-        origin = self.headers.get("Origin")
-        if origin is not None and origin.lower() not in {"http://" + item for item in allowed_hosts}:
+        if origins and origins[0].lower() not in {"http://" + item for item in allowed_hosts}:
             self._deny(403, "untrusted origin")
             return False
         return True
@@ -118,4 +148,4 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def make_server(config: Config, port: int, service: DashboardService | None = None) -> DashboardServer:
-    return DashboardServer(("127.0.0.1", port), service or LiveService(config))
+    return DashboardServer(("127.0.0.1", port), service or LiveService(config), config.proxy_origin)

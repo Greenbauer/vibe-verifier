@@ -17,7 +17,7 @@ def iso(value):
     return value.isoformat().replace("+00:00", "Z")
 
 
-def config_value(owner="octocat", telemetry=None):
+def config_value(owner="octocat", telemetry=None, proxy_origin=None):
     value = {
         "version": 1,
         "owner": owner,
@@ -30,6 +30,8 @@ def config_value(owner="octocat", telemetry=None):
     }
     if telemetry:
         value["telemetry_file"] = str(telemetry)
+    if proxy_origin is not None:
+        value["proxy_origin"] = proxy_origin
     return value
 
 
@@ -92,8 +94,36 @@ class ConfigIsolation(unittest.TestCase):
         self.assertEqual(first.repositories, ("octocat/example",))
         self.assertEqual(second.repositories, ("example/example",))
         self.assertNotEqual(first.owner, second.owner)
+        self.assertIsNone(first.proxy_origin)
         with self.assertRaises(Exception):
             first.repositories += ("example/example",)
+        with self.assertRaises(Exception):
+            first.proxy_origin = "https://dashboard.example.test"
+
+    def test_proxy_origin_accepts_only_a_strict_https_origin(self):
+        loaded = load_config(self.write(
+            "proxy.json", config_value(proxy_origin="https://dashboard.example.test:8443")))
+        self.assertEqual(loaded.proxy_origin, "https://dashboard.example.test:8443")
+        invalid = (
+            "http://dashboard.example.test",
+            "https://dashboard.example.test/",
+            "https://dashboard.example.test/path",
+            "https://dashboard.example.test?view=all",
+            "https://dashboard.example.test#top",
+            "https://user@dashboard.example.test",
+            "https://*.example.test",
+            "https://dashboard.example.test\n",
+            "https://dashboard.example.test:0",
+            "https://dashboard.example.test:",
+            "https://dashboard.example.test:65536",
+            "https://dashboard.example.test:port",
+            "https://",
+        )
+        for index, origin in enumerate(invalid):
+            with self.subTest(origin=origin):
+                with self.assertRaisesRegex(ConfigError, "proxy_origin"):
+                    load_config(self.write("invalid-proxy-%s.json" % index,
+                                           config_value(proxy_origin=origin)))
 
     def test_config_requires_all_explicit_bot_identifiers(self):
         value = config_value()
