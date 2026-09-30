@@ -285,7 +285,7 @@
     capacity.lanes.forEach(lane => {
       const card = el("article", { class: `lane status-${lane.state}` }, el("div", { class: "lane-heading" }, el("b", { class: "mono" }, lane.id), badge(lane.state)),
         el("p", { class: "muted" }, lane.registered === true ? "Runner registered" : lane.registered === false ? "No runner registered" : "Registration unknown"));
-      if (lane.job) card.append(el("p", {}, lane.job.name), el("p", { class: "muted" }, lane.job.repository), link("Open job", lane.job.url, snapshot.owner));
+      if (lane.job) card.append(el("div", {}, el("p", {}, lane.job.name), el("p", { class: "muted" }, lane.job.repository), link("Open job", lane.job.url, snapshot.owner)));
       else card.append(el("p", { class: "muted" }, lane.state === "provisionable" ? "Provisionable when work arrives" : "No current same-owner job"));
       grid.append(card);
     });
