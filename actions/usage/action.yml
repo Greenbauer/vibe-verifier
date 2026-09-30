@@ -1,0 +1,42 @@
+name: Vibe Verifier numeric usage
+description: Write one bounded numeric usage.json from a Claude action execution file without copying model content.
+inputs:
+  source-file:
+    description: The execution_file output from the pinned Claude action. Empty is valid when the source did not run or produced no file.
+    default: ""
+  source-ran:
+    description: Whether the model action was expected to run. False records not_run instead of treating an empty source as a missing artifact.
+    default: "true"
+  role:
+    description: The model role represented by this record.
+    required: true
+  job-key:
+    description: The stable source workflow job key.
+    required: true
+  account-alias:
+    description: Optional caller-owned logical account alias. Empty stays unmapped and is never treated as a shared subscription.
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Read final numeric usage
+      shell: bash
+      env:
+        SOURCE_FILE: ${{ inputs.source-file }}
+        SOURCE_RAN: ${{ inputs.source-ran }}
+        ROLE: ${{ inputs.role }}
+        JOB_KEY: ${{ inputs.job-key }}
+        ACCOUNT_ALIAS: ${{ inputs.account-alias }}
+        VV_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: |
+        set -euo pipefail
+        source=$SOURCE_FILE
+        if [ -z "$source" ] && [ "$SOURCE_RAN" = true ]; then
+          # The pinned Claude action writes this file before it throws for a result-level failure,
+          # so partial usage remains available even when the failed step publishes no output value.
+          source="$RUNNER_TEMP/claude-execution-output.json"
+        fi
+        python3 "$GITHUB_ACTION_PATH/collect.py" \
+          --output "$RUNNER_TEMP/vv-usage/usage.json" \
+          --role "$ROLE" --job-key "$JOB_KEY" --account-alias "$ACCOUNT_ALIAS" \
+          claude --source-file "$source" --source-ran "$SOURCE_RAN"

@@ -19,6 +19,7 @@ from pathlib import Path
 from helpers import ROOT, commit, git, make_repo, runner
 
 REVIEW = (ROOT / "harnesses" / "review" / "review.yml").read_text()
+CATALOG_PIN = re.compile(r"(vibe-verifier/actions/[A-Za-z0-9_-]+@)0{40}[^\n]*")
 GATE = ".github/workflows/vibe-verifier.yml"
 LEGACY = ".github/workflows/claude-review.yml"
 
@@ -39,7 +40,7 @@ def wrapper_review(sha, token="CLAUDE_CODE_OAUTH_TOKEN_ORG"):
     jobs = jobs.replace("secrets.CLAUDE_CODE_OAUTH_TOKEN }}", "secrets.%s }}" % token)
     jobs = jobs.replace("manifest: .vibe-verifier-review", "entries: review-receipt --receipt review-inputs/receipt.md "
                         "--head review-inputs/head.txt --threads review-inputs/threads.json")
-    jobs = re.sub(r"(vibe-verifier/actions/gates@)0{40}[^\n]*", r"\g<1>%s # main 2026-09-23" % sha, jobs)
+    jobs = CATALOG_PIN.sub(r"\g<1>%s # main 2026-09-23" % sha, jobs)
     return "name: Review\n# required by an organization ruleset\non:\n  pull_request:\npermissions:\n  contents: read\n" + jobs
 
 

@@ -128,7 +128,8 @@ class Template(unittest.TestCase):
 class Action(unittest.TestCase):
     def test_the_exec_carries_the_three_settings_a_headless_run_needs(self):
         text = ACTION.read_text()
-        exec_line = text[text.index('"$CODEX" exec'):text.index("< /dev/null") + len("< /dev/null")]
+        exec_line = text[text.index('codex -- "$CODEX" exec'):text.index("< /dev/null") + len("< /dev/null")]
+        self.assertIn("exec --json", exec_line)
         self.assertIn("--sandbox danger-full-access", exec_line)
         self.assertIn("""-c 'approval_policy="never"'""", exec_line)
         self.assertIn("--skip-git-repo-check", exec_line)
@@ -182,7 +183,10 @@ class StorageState(unittest.TestCase):
         return subprocess.run(["bash", "-c", script], cwd=self.work, capture_output=True, text=True,
                               env=clean_env({"CODEX": self.codex, "PROMPT_FILE": "prompt.md", "MCP": "/opt/mcp/cli.js",
                                              "ARTIFACTS": "qae-artifacts", "STORAGE_STATE": path,
-                                             "RUNNER_TEMP": self.temp}))
+                                             "RUNNER_TEMP": self.temp, "GITHUB_ACTION_PATH": str(ACTION.parent),
+                                             "GITHUB_REPOSITORY": "octo/demo", "GITHUB_RUN_ID": "1",
+                                             "GITHUB_RUN_ATTEMPT": "1", "VV_HEAD_SHA": "0" * 40,
+                                             "USAGE_ACCOUNT_ALIAS": ""}))
 
     def browser_args(self):
         return json.loads(Path(self.work, "args").read_text())
@@ -192,7 +196,8 @@ class StorageState(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.browser_args(), ["/opt/mcp/cli.js", "--headless", "--isolated", "--output-dir", "qae-artifacts",
                                                "--save-session", "--viewport-size", "1280x800"])
-        self.assertEqual(os.listdir(self.temp), [])
+        usage = json.loads(Path(self.temp, "vv-usage", "usage.json").read_text())
+        self.assertEqual((usage["status"], usage["status_reason"]), ("unavailable", "no_final_usage"))
 
     def test_the_storage_state_reaches_the_browser_and_every_cookie_value_is_redacted(self):
         other = dict(COOKIE, name="consent", value="all", httpOnly=False)
@@ -230,7 +235,10 @@ class StorageState(unittest.TestCase):
         result = subprocess.run(["bash", "-c", script], cwd=self.work, capture_output=True, text=True,
                                 env=clean_env({"CODEX": self.codex, "PROMPT_FILE": "prompt.md", "MCP": "/opt/mcp/cli.js",
                                                "ARTIFACTS": "qae-artifacts", "STORAGE_STATE": "gone.json",
-                                               "RUNNER_TEMP": self.temp}))
+                                               "RUNNER_TEMP": self.temp, "GITHUB_ACTION_PATH": str(ACTION.parent),
+                                               "GITHUB_REPOSITORY": "octo/demo", "GITHUB_RUN_ID": "1",
+                                               "GITHUB_RUN_ATTEMPT": "1", "VV_HEAD_SHA": "0" * 40,
+                                               "USAGE_ACCOUNT_ALIAS": ""}))
         self.assertEqual(result.returncode, 2)
         self.assertIn("::error::the storage state gone.json is not a readable JSON file", result.stdout)
         self.assertFalse(os.path.exists(os.path.join(self.work, "args")))

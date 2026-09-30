@@ -1,0 +1,45 @@
+# Dashboard GitHub data
+
+The dashboard reads GitHub through the locally authenticated `gh api` command. It makes no GitHub writes. Repository and workflow identifiers come from the validated startup configuration, and links in the response are limited to the configured GitHub owner.
+
+## Collection flow
+
+Each refresh checks the REST core rate limit, then scans configured repositories with at most four workers. A repository scan:
+
+1. Refreshes direct subscription evidence when the five-minute inventory cache expires.
+2. Lists open pull requests.
+3. Joins each pull request to check suites and latest check runs for its exact head SHA.
+4. Joins Actions runs by head SHA and check-suite ID, selecting the latest run attempt and its matching jobs.
+5. Reads commit statuses and then re-reads the pull request head. Evidence is discarded if the head changed during collection.
+
+Check reruns are resolved by check suite, GitHub App identity, and check name. A newer rerun replaces an older attempt from the same provider. Providers that use the same check name remain separate.
+
+If a listed pull request's detail requests fail, its identity remains in the response with `evidence_available: false`. The dashboard may claim that a readable repository has no open pull requests only when the open-pull list itself completed successfully.
+
+## Request and history bounds
+
+The default refresh budget is 200 actual REST requests. Paginated endpoints use explicit 100-item pages. Every `gh api` process requests one page and increments the budget once. A hidden `--paginate` call is not used.
+
+Bot collection first lists the workflows on each readable repository and caches successful listings for five minutes. A configured filename absent from that successful listing needs no run calls; an API failure remains unknown. Roles sharing a present workflow share its scan. Active runs are fetched before history. Seven days of lightweight run metadata are collected across pages and sorted by update time before fetching jobs, so a recently rerun workflow on a later page is not skipped. Job reads stop once every role has five completed results and the next run was updated more than two hours ago and no later than each role’s fifth result. This bounds expensive job reads without assuming pages are ordered by completion time. The history query covers runs created in the last seven days; a rerun of an older run is outside this query. A budget or API failure marks history coverage `partial`.
+
+The output keeps the latest five completed jobs per role within seven days and the latest five within two hours. `latest_failure` is set only when the most recent completed outcome failed. A newer success clears it.
+
+Only a job whose GitHub status is `in_progress` makes a bot `working`. A queued job is not working. A complete active scan with no in-progress job yields `idle`. Missing active coverage yields `unknown`. Only telemetry can supply `down`.
+
+## Cache and timestamp contracts
+
+- `github.sampled_at` is the collection start time. Each repository retains its own observation timestamp after its current-head reads finish, so later bot scans do not prematurely age freshly read PR evidence. A failed refresh does not advance source timestamps.
+- Repository `sampled_at` records when that repository was read successfully.
+- Bot `sampled_at` records an active observation or a complete active scan. `history_sampled_at` records observed history; separate coverage fields identify partial results.
+- Successful GitHub snapshots are reused for 60 seconds.
+- Subscription inventory is reused for five minutes. Reusing it does not reset its age.
+- Fully completed job lists are cached by repository, run ID, and run attempt until the run is seven days old. Active or partly completed jobs are never placed in that cache.
+- Transient failures may reuse source rows for at most 180 seconds from their source timestamp. Cached rows, coverage counts, and bot histories are expired using the current clock on every snapshot read.
+- Authentication, permission, and missing-resource failures do not reuse private cached rows. Completed-job and inventory caches are cleared when those failures are observed. Usage readers are replaced on the same errors, including nested repository or bot-source errors; an in-flight reader from before revocation cannot publish its result.
+- Numeric usage history retains its own `history_sampled_at` and `history_stale` fields alongside independently sampled quota. It becomes stale after five minutes on every snapshot read, including while a refresh is running. Fresh quota does not refresh the history timestamp, and a stale-history notice remains visible in source coverage.
+
+The response sets repository, bot, and top-level partial or unavailable fields instead of turning missing evidence into healthy status.
+
+## Blocking and nonblocking snapshots
+
+`snapshot()` remains blocking and is used by tests and direct measurements. `snapshot(nonblocking=True)` returns the current cached snapshot, or an initial loading response, while one daemon refresh runs. Concurrent callers share that refresh. Collection does not hold the cache read lock, and a failed background refresh releases the refresh slot so a later request can retry.

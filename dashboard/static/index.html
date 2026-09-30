@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vibe Verifier dashboard</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">✓</span>vibe verifier</div>
+      <div id="owner" class="owner"></div>
+      <div id="source-stamp" class="source-stamp">Loading GitHub…</div>
+    </header>
+    <section id="bot-strip" class="bot-strip" aria-label="Bot status"></section>
+    <div class="shell">
+      <nav class="sidebar" aria-label="Dashboard views">
+        <span class="nav-label">WORKSPACE</span>
+        <button data-view="prs" aria-current="page">Pull requests</button>
+        <button data-view="usage">Bot usage</button>
+        <button data-view="capacity">Capacity</button>
+      </nav>
+      <main id="content" tabindex="-1"><p class="empty">Loading dashboard…</p></main>
+    </div>
+    <div id="announcement" class="sr-only" aria-live="polite"></div>
+  </div>
+  <script src="/assets/helpers.js"></script>
+  <script src="/assets/charts.js"></script>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

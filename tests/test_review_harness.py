@@ -113,7 +113,7 @@ class ReviewHarness(unittest.TestCase):
         text = TEMPLATE.read_text()
         self.assertIn("manifest: .vibe-verifier-review", text)
         pins = re.findall(r"vibe-verifier/actions/\w+@(\S+)", text)
-        self.assertEqual(pins, ["0" * 40])
+        self.assertEqual(pins, ["0" * 40, "0" * 40])
         manifest = (ROOT / "harnesses" / "review" / "manifest").read_text()
         self.assertIn("review-receipt --receipt review-inputs/receipt.md --head review-inputs/head.txt --threads review-inputs/threads.json", manifest)
 
