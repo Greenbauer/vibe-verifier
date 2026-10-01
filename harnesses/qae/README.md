@@ -251,5 +251,23 @@ declares what is environmental on the manifest line, and nothing else:
 qae-artifacts --artifacts qae-artifacts --site-file qae-inputs/site-url --allow-console '/_vercel/insights/script\.js' --allow-request '/_vercel/insights/script\.js'
 ```
 
+Those flags are for the environment, and they hold for every pull request. A refusal that is the
+correct outcome of one pull request's criterion (an auth gate answering 401 to a signed-out
+browser) is declared in that criterion instead, on its own line in `## Acceptance criteria`:
+
+```
+- Signed out, opening `/api/quotes` shows no data (expected-refusal: 401 /api/quotes)
+```
+
+The gate reads the declaration from the criteria file the verify job fetched, never from the
+explorer's artifacts, and it excuses exactly that status (401 or 403 only) at exactly that URL for
+that run: the request in the network record and Chromium's `Failed to load resource: ... status of
+401` console line for it. A path resolves against the site under test; an `http(s)` URL is taken as
+written; the match is exact, query included. A 5xx at the same URL, the same 401 at any other URL,
+and every other console error still fail, and a declaration of another status, or a path with no
+site, is itself a finding. Because the declaration is a criterion, the explorer must still show the
+refusal happens, and a reviewer reads the allowance as part of the spec. An HTML comment does not
+declare anything.
+
 A manifest copied before the site URL was declared reads `--site http://localhost:3000`, and keeps
 working: `--site` judges a fixed URL, `--site-file` the declared one, and a line takes one or the other.
