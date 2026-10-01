@@ -4,10 +4,20 @@
     flattenPulls, filterPulls, stepTotals, combinedCategory, currentWork } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
-  const state = { view: "prs", selected: null, query: "", repository: "all", subscribed: false,
-    attention: false, usageRange: "24h", failureBot: null };
+  const state = VV.restoreViewState(null);
   let snapshot = null;
   let loading = false;
+
+  function restoreView(owner) {
+    try { Object.assign(state, VV.restoreViewState(sessionStorage.getItem(`vv-dashboard-view:${owner}`))); }
+    catch (_) { /* Storage can be disabled by the browser. */ }
+  }
+
+  function rememberView() {
+    if (!snapshot) return;
+    try { sessionStorage.setItem(`vv-dashboard-view:${snapshot.owner}`, JSON.stringify(state)); }
+    catch (_) { /* Navigation still works when storage is unavailable. */ }
+  }
 
   function announce(message) { announcement.textContent = message; }
   function heading(title, subtitle) {
@@ -28,7 +38,8 @@
       if (button.dataset.view === state.view) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     });
-    if (!(snapshot.agents?.rows || []).some(agent => agent.id === state.failureBot)) state.failureBot = snapshot.agents?.rows[0]?.id || null;
+    const agents = snapshot.agents?.rows || [];
+    if (agents.length && !agents.some(agent => agent.id === state.failureBot)) state.failureBot = agents[0].id;
     renderBots();
   }
 
@@ -93,6 +104,7 @@
   }
 
   function renderPrRows() {
+    rememberView();
     const all = flattenPulls(snapshot);
     const pulls = filterPulls(all, state);
     const rows = document.querySelector("#pr-rows");
@@ -165,8 +177,12 @@
 
   function renderDetail() {
     const pull = flattenPulls(snapshot).find(item => `${item.repository}#${item.number}` === state.selected);
-    if (!pull) { state.selected = null; renderPulls(); return; }
     const back = el("button", { class: "back", onclick: () => { state.selected = null; render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0); } }, "‹ Pull requests");
+    if (!pull) {
+      content.replaceChildren(back, empty(snapshot.github.refreshing ? "Loading pull request" : "Pull request unavailable",
+        "The selected pull request is not in the current sample. It will appear when available, or you can return to the list."));
+      return;
+    }
     const header = el("div", { class: "detail-heading" }, el("div", {}, el("h1", {}, pull.title),
       el("p", { class: "muted" }, `${pull.repository} #${pull.number} · current head ${pull.head_sha ? pull.head_sha.slice(0, 12) : "changed"}`)),
       link("Open pull request on GitHub", pull.html_url, snapshot.owner, "primary-link"));
@@ -313,6 +329,7 @@
     else if (state.view === "usage") renderUsage();
     else if (state.view === "capacity") renderCapacity();
     else renderPulls();
+    rememberView();
     announce(`Showing ${state.selected ? "pull request detail" : state.view}`);
   }
 
@@ -322,7 +339,9 @@
     try {
       const response = await fetch("/api/dashboard", { credentials: "same-origin", headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error("source unavailable");
-      snapshot = await response.json();
+      const next = await response.json();
+      if (!snapshot) restoreView(next.owner);
+      snapshot = next;
       const openedJobs = [...content.querySelectorAll("details[open]")].map(item => item.dataset.jobId);
       const focused = document.activeElement;
       const filterId = ["pr-search", "repo-filter"].includes(focused?.id) ? focused.id : null;
@@ -343,6 +362,7 @@
   document.querySelectorAll(".sidebar button").forEach(button => button.addEventListener("click", () => {
     state.view = button.dataset.view; state.selected = null; render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0);
   }));
+  window.addEventListener("pagehide", rememberView);
   load();
   window.setInterval(load, 30000);
 })();

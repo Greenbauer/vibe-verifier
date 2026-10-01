@@ -8,6 +8,18 @@ The static view adapts the compact layout, CSS structure, and pure interaction p
 operator-approved local dashboard prototype dated 2026-09-30. Its synthetic preview records were not
 copied into the live dashboard. Live mode has no built-in data.
 
+## Refresh behavior
+
+Refreshing restores the current view, selected pull request, search and repository filters,
+subscription/attention filters, usage period, and selected bot. A saved PR stays selected while
+GitHub data loads; an unavailable PR shows an explanation and a way back instead of silently
+switching views. Verify these behaviors with populated browser refreshes and the view-state tests.
+
+These navigation preferences are created and updated in the current tab's session storage,
+scoped to the configured owner. They contain no API data or credentials, are read only by that
+dashboard origin, and disappear when the browser ends the tab session. If storage is unavailable
+or a saved value is invalid, the dashboard remains usable with defaults. No server write is added.
+
 ## Start it
 
 Requirements are Python 3, `gh`, and an existing `gh` login that can read every selected repository.

@@ -16,6 +16,24 @@
     offline: "Offline", allocated: "Allocated"
   };
 
+  function restoreViewState(raw) {
+    const state = { view: "prs", selected: null, query: "", repository: "all", subscribed: false,
+      attention: false, usageRange: "24h", failureBot: null };
+    let saved;
+    try { saved = JSON.parse(raw); } catch (_) { return state; }
+    if (!saved || typeof saved !== "object") return state;
+    if (["prs", "usage", "capacity"].includes(saved.view)) state.view = saved.view;
+    if (["24h", "7d"].includes(saved.usageRange)) state.usageRange = saved.usageRange;
+    for (const key of ["selected", "query", "repository", "failureBot"]) {
+      if (typeof saved[key] === "string") state[key] = saved[key];
+    }
+    for (const key of ["subscribed", "attention"]) {
+      if (typeof saved[key] === "boolean") state[key] = saved[key];
+    }
+    if (state.view !== "prs") state.selected = null;
+    return state;
+  }
+
   function element(tag, attrs, ...children) {
     const item = document.createElement(tag);
     Object.entries(attrs || {}).forEach(([key, value]) => {
@@ -132,5 +150,5 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, formatTime, bytes,
-    badge, flattenPulls, filterPulls, stepTotals, combinedCategory, currentWork };
+    badge, flattenPulls, filterPulls, stepTotals, combinedCategory, currentWork, restoreViewState };
 });
