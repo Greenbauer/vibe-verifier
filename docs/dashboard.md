@@ -26,7 +26,11 @@ duplicate routing headers, and serves a fixed path allowlist with no remote scri
 ## Configuration contract
 
 Configuration is read once at startup. Restart to change it. Every repository must belong to the
-one configured owner. Bot types come only from these explicit workflow file and exact job names.
+one configured owner. `bots` maps CI workflow stages; `agents` declares the SWE/QAE identities
+shown in the UI. Names retain configured numbers. A workflow mapping describes aggregate CI activity
+and is allowed only for unnumbered SWE or QAE. Omit `workflow_role` for a persistent agent whose
+ID is supplied by the runtime collector. An omitted roster shows no invented agents. See
+[agent identities](dashboard-agents.md) for the runtime contract.
 
 ```json
 {
@@ -38,6 +42,10 @@ one configured owner. Bot types come only from these explicit workflow file and 
     "explorer": {"workflow": "explore.yml", "jobs": ["explore"]},
     "verifier": {"workflow": "verify.yml", "jobs": ["verify"]}
   },
+  "agents": [
+    {"id": "ci-swe", "name": "SWE", "role": "swe", "workflow_role": "reviewer"},
+    {"id": "ci-qae", "name": "QAE", "role": "qae", "workflow_role": "explorer"}
+  ],
   "telemetry_file": "/absolute/path/telemetry.json",
   "proxy_origin": "https://dashboard.example.test"
 }
@@ -146,11 +154,12 @@ A busy lane must include a same-owner job. An allocated lane without a matched j
 and pending-match message without a job link. The host panel is always labeled `SHARED HOST`; its values
 are aggregate CPU sampled percent, memory bytes, and usable workspace-filesystem bytes.
 
-Bot `state` is `working`, `idle`, `down`, or `unknown`. GitHub activity can prove `working`. A complete GitHub active scan can report `idle`; a fresh collector can report listener-backed
-QAE `idle` or `down`. Missing coverage remains `unknown`. Bot history is
-derived from the configured GitHub workflow and exact job names, not free-form text. The failure
-panel says bot history is unavailable when the selected role has no returned history record; an
-available role with no failed completed run is reported separately as having no recent failure.
+Displayed agent state comes from an explicit identity mapping. Aggregate CI mappings use GitHub
+activity: active jobs prove working, and a complete active scan permits idle. Runner listener
+health never establishes agent health. Persistent SWE/QAE identities use their own runtime state
+and history, including paused; missing or stale runtime state is unknown. Numbered identities cannot
+be mapped to aggregate CI job roles. Recent history uses structural run outcomes and timestamps.
+Unavailable or incomplete history is labeled separately from a complete history with no failures.
 
 Quota windows can omit `allowance_tokens`. A used percentage alone is displayed as a provider
 percentage and never converted into a token quota. The dotted pace line appears only when the source
@@ -226,6 +235,6 @@ and configured workflow, and parsed without extracting files or copying model co
 reads at most the first 100 artifacts per selected repository and reports partial coverage when
 more exist. Captured token records expire after seven days and disappear when source artifacts
 are removed. Missing captures remain unavailable. Old runs cannot be backfilled. The deterministic
-QAE verifier has no model-token usage. No quota is inferred from those token counts.
+QAE verification gate has no model-token usage and is shown only in PR progress. No quota is inferred from those token counts.
 
 Usage charts leave unobserved time buckets blank. A measured zero is drawn at zero; one captured run never fills earlier history with invented zeros.

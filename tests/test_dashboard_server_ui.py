@@ -232,12 +232,12 @@ const run={category:'failed',name:'Verify dashboard',repository:'octocat/example
   html_url:'https://github.com/octocat/example/actions/runs/1/job/2'};
 
 function render(roles) {
-  const snapshot={owner:'octocat',github:{bots:{roles}}};
-  const state={failureBot:'verifier'};
+  const snapshot={owner:'octocat',agents:{rows:Object.entries(roles).map(([id,value])=>({id,name:'QAE1',role:'qae',coverage:{history:'complete'},...value}))}};
+  const state={failureBot:'qae-1'};
   return failurePanel(el,BOT_META,snapshot,state,()=>{},badge,link,value=>value,value=>`${value}s`);
 }
-console.log(JSON.stringify({unavailable:render({}),empty:render({verifier:{recent_7d:[]}}),
-  failed:render({verifier:{recent_7d:[run]}})}));
+console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent_7d:[]}}),
+  failed:render({'qae-1':{recent_7d:[run]}})}));
 """)
 
         def text(node):
@@ -270,7 +270,7 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({verifier:{recen
         self.assertNotIn("innerHTML", app + helpers)
         for color in ("#090909", "#111111", "#282828"):
             self.assertIn(color, css)
-        for color in ("#809cff", "#50d6e8", "#ed83d5"):
+        for color in ("#809cff", "#50d6e8"):
             self.assertIn(color, helpers)
         self.assertEqual(html.count('data-view="'), 3)
         self.assertNotIn("footer", html.lower())

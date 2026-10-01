@@ -5,7 +5,7 @@
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
   const state = { view: "prs", selected: null, query: "", repository: "all", subscribed: false,
-    attention: false, usageRange: "24h", failureBot: "verifier" };
+    attention: false, usageRange: "24h", failureBot: null };
   let snapshot = null;
   let loading = false;
 
@@ -28,6 +28,7 @@
       if (button.dataset.view === state.view) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     });
+    if (!(snapshot.agents?.rows || []).some(agent => agent.id === state.failureBot)) state.failureBot = snapshot.agents?.rows[0]?.id || null;
     renderBots();
   }
 
@@ -40,12 +41,15 @@
   function renderBots() {
     const strip = document.querySelector("#bot-strip");
     strip.replaceChildren(el("span", { class: "bot-strip-title" }, "BOTS", el("small", {}, "Last 2h · newest first")));
-    for (const role of ["reviewer", "explorer", "verifier"]) {
-      const value = snapshot.github.bots.roles[role] || {};
-      const meta = BOT_META[role];
+    const agents = snapshot.agents?.rows || [];
+    if (!agents.length) strip.append(el("span", { class: "muted" }, "Agent roster not configured"));
+    for (const value of agents) {
+      const role = value.id;
+      const meta = { name: value.name, ...BOT_META[value.role] };
       const recent = value.recent_2h || [];
       const button = el("button", {
         class: `bot-pill${recent[0]?.category === "failed" ? " has-failure" : ""}`,
+        title: value.source || "Agent data unavailable",
         "aria-label": `${meta.name}: ${value.state || "unknown"}. Open usage and recent outcomes`,
         onclick: () => { state.view = "usage"; state.selected = null; state.failureBot = role; render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0); }
       });
@@ -185,14 +189,16 @@
   }
 
   function failurePanel() {
-    const roles = snapshot.github.bots.roles;
+    const agents = snapshot.agents?.rows || [];
+    const roles = Object.fromEntries(agents.map(agent => [agent.id, agent]));
     const panel = el("section", { class: "panel failures" }, el("h2", {}, "Recent bot failures"),
       el("p", { class: "muted" }, "Last five completed runs per bot in seven days. Select a bot for detail."));
     const buttons = el("div", { class: "failure-buttons" });
-    Object.keys(BOT_META).forEach(role => {
+    agents.forEach(agent => {
+      const role = agent.id;
       const runs = roles[role]?.recent_7d || [];
       const button = el("button", { "aria-pressed": state.failureBot === role, onclick: () => { state.failureBot = role; render(); } },
-        el("span", { style: `color:${BOT_META[role].color}` }, BOT_META[role].name));
+        el("span", { style: `color:${BOT_META[agent.role].color}` }, agent.name));
       const dots = el("span", { class: "run-dots" });
       runs.forEach(run => dots.append(el("i", { class: `dot dot-${run.category}` })));
       button.append(dots); buttons.append(button);
@@ -200,9 +206,9 @@
     panel.append(buttons);
     const selectedRole = roles[state.failureBot];
     const failure = (selectedRole?.recent_7d || []).find(run => run.category === "failed");
-    panel.append(!selectedRole ? el("p", { class: "muted" }, "Bot history is unavailable.") :
+    panel.append(!selectedRole || (!failure && selectedRole.coverage?.history !== "complete") ? el("p", { class: "muted" }, "Bot history is unavailable.") :
       failure ? el("div", { class: "failure-detail" }, badge("failed"), el("b", {}, failure.name),
-      el("span", {}, `${failure.repository} · ${formatTime(failure.completed_at)} · ${duration(failure.elapsed_seconds)}`),
+      el("span", {}, `${failure.repository ? failure.repository + " · " : ""}${formatTime(failure.completed_at)} · ${duration(failure.elapsed_seconds)}`),
       link("Open original job", failure.html_url, snapshot.owner)) : el("p", { class: "muted" }, "No failed completed run in the available seven-day history."));
     return panel;
   }
@@ -210,12 +216,13 @@
   function usageCharts(usage) {
     const samples = usage.samples || [];
     const section = el("section", { class: "panel usage-charts" });
+    section.style.setProperty("--agent-columns", Math.max(1, Math.min(4, snapshot.agents?.rows.length || 0)));
     const sampleAccounts = new Set(samples.map(sample => sample.account));
     const account = sampleAccounts.size === 1 ? usage.accounts.find(item => sampleAccounts.has(item.id)) : null;
     const window = account?.quota_windows.find(item => item.allowance_tokens !== null);
     const pace = VVCharts.pacePerBucket(window, state.usageRange);
     const chartRows = [{ id: "total", name: "All bots combined", color: "#f2f2f2" },
-      ...Object.entries(BOT_META).map(([id, meta]) => ({ id, ...meta }))];
+      ...(snapshot.agents?.rows || []).map(agent => ({ id: agent.id, name: agent.name, ...BOT_META[agent.role] }))];
     chartRows.forEach(row => {
       const measured = samples.filter(sample => row.id === "total" || sample.bot === row.id);
       const points = VVCharts.seriesFor(measured, state.usageRange, Date.now(), row.id);
@@ -223,7 +230,7 @@
       const observed = points.some(point => Number.isFinite(point.y));
       const chart = el("div", { class: `usage-chart${row.id === "total" ? " combined" : ""}` },
         el("div", { class: "chart-heading" }, el("b", { style: `color:${row.color}` }, row.name),
-          el("span", {}, row.id === "verifier" && !observed ? "No model calls" : observed ? `${total.toLocaleString()} tokens observed` : "Not yet observed")),
+          el("span", {}, observed ? `${total.toLocaleString()} tokens observed` : "Not yet observed")),
         el("div", { class: "chart-canvas" }));
       section.append(chart);
       if (observed || (row.id === "total" && pace !== null)) requestAnimationFrame(() => VVCharts.draw(chart.querySelector(".chart-canvas"), points, {
@@ -231,7 +238,7 @@
         compact: row.id !== "total", label: `${row.name} ${state.usageRange} token usage`
       }));
       else chart.querySelector(".chart-canvas").append(el("p", { class: "chart-empty muted" },
-        row.id === "verifier" ? "Verification runs deterministic checks." : "Chart fills as instrumented runs complete."));
+        "Chart fills as instrumented runs complete."));
     });
     section.append(el("p", { class: "muted pace-note" }, pace === null ?
       "A dotted pace line needs a reported token allowance for the same account. Subscription percentages alone cannot provide it." :
@@ -240,7 +247,7 @@
   }
 
   function renderUsage() {
-    const usage = snapshot.telemetry.available ? snapshot.telemetry.usage : null;
+    const usage = snapshot.agents?.usage;
     const select = el("select", { "aria-label": "Usage period", onchange: event => { state.usageRange = event.target.value; render(); } },
       el("option", { value: "24h", selected: state.usageRange === "24h" }, "Last 24 hours"),
       el("option", { value: "7d", selected: state.usageRange === "7d" }, "Last 7 days"));

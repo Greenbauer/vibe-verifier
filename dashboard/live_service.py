@@ -8,6 +8,7 @@ from .gh_api import ApiError
 from .service import DashboardService, PRIVATE_FAILURES
 from .usage_artifacts import UsageArtifacts
 from .util import parse_time
+from .agents import agent_view
 
 
 class LiveService(DashboardService):
@@ -51,7 +52,8 @@ class LiveService(DashboardService):
                 self.usage_reader = UsageArtifacts(self.config)
                 self._usage_next = 0
             self._usage_revoked = revoked
-            if not revoked and not self._usage_running and self.monotonic() >= self._usage_next:
+            capture_ci_usage = not self.config.agents or any(agent.workflow_role for agent in self.config.agents)
+            if capture_ci_usage and not revoked and not self._usage_running and self.monotonic() >= self._usage_next:
                 self._usage_running = True
                 threading.Thread(target=self._refresh_usage,
                                  args=(self.usage_reader, self._usage_generation), daemon=True).start()
@@ -79,4 +81,5 @@ class LiveService(DashboardService):
             else:
                 telemetry.update(available=True, usage=usage)
         join_runner_jobs(value['telemetry'], value['github'])
+        value['agents'] = agent_view(self.config, value['github'], value['telemetry'], self.wall_clock())
         return value

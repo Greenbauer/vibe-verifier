@@ -28,7 +28,9 @@
   }
 
   function seriesFor(samples, range, nowMs, bot) {
-    return bucketSamples(samples, range, nowMs).map(bucket => ({ x: bucket.start, y: bucket[bot] }));
+    const selected = (samples || []).filter(sample => bot === "total" || sample.bot === bot)
+      .map(sample => ({ ...sample, bot: "reviewer" }));
+    return bucketSamples(selected, range, nowMs).map(bucket => ({ x: bucket.start, y: bucket.total }));
   }
 
   function linePath(points, x, y) {

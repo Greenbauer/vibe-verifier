@@ -55,7 +55,10 @@ a { color: var(--ink); text-underline-offset: 3px; }
   z-index: 19;
   min-height: 66px;
   display: grid;
-  grid-template-columns: 130px repeat(3, minmax(180px, 1fr));
+  grid-template-columns: 130px;
+  grid-auto-columns: minmax(180px, 1fr);
+  grid-auto-flow: column;
+  overflow-x: auto;
   gap: 1px;
   padding: 1px 18px;
   background: var(--line);
@@ -187,7 +190,7 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 .lane p { margin-top: 2px; font-size: 11px; overflow-wrap: anywhere; }
 
 @media (max-width: 920px) {
-  .bot-strip { grid-template-columns: repeat(3, 1fr); padding: 1px 10px; }
+  .bot-strip { grid-template-columns: none; padding: 1px 10px; }
   .bot-strip-title { display: none; }
   .shell { grid-template-columns: 1fr; }
   .sidebar { position: sticky; top: 116px; z-index: 18; flex-direction: row; padding: 6px 10px; border-right: 0; border-bottom: 1px solid var(--line); }
@@ -199,7 +202,7 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 @media (max-width: 650px) {
   .topbar { flex-wrap: wrap; gap: 8px 12px; padding: 8px 12px; }
   .source-stamp { width: 100%; margin-left: 35px; }
-  .bot-strip { top: 75px; grid-template-columns: 1fr; padding: 1px; }
+  .bot-strip { top: 75px; grid-template-columns: 1fr; grid-auto-flow: row; padding: 1px; }
   .bot-pill { grid-template-columns: 1fr auto auto auto; }
   .shell { min-height: auto; }
   .sidebar { position: static; overflow-x: auto; }
@@ -226,7 +229,7 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 }
 
 /* Compact usage keeps the combined chart and bot comparisons together. */
-.usage-charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 10px; }
+.usage-charts { display: grid; grid-template-columns: repeat(var(--agent-columns, 2), minmax(0, 1fr)); gap: 6px; padding: 10px; }
 .usage-charts .combined, .usage-charts .pace-note { grid-column: 1 / -1; }
 .usage-charts .usage-chart { margin: 0; padding-top: 6px; min-width: 0; }
 .usage-charts .combined { padding: 10px; }

@@ -6,14 +6,13 @@
   "use strict";
 
   const BOT_META = {
-    reviewer: { name: "SWE reviewer", color: "#809cff" },
-    explorer: { name: "QAE explorer", color: "#50d6e8" },
-    verifier: { name: "QAE verifier", color: "#ed83d5" }
+    swe: { color: "#809cff" },
+    qae: { color: "#50d6e8" }
   };
   const STATUS_LABELS = {
     success: "Succeeded", failed: "Failed", skipped: "Skipped", cancelled: "Cancelled",
     pending: "Pending", unknown: "Unknown", working: "Working", idle: "Idle",
-    down: "Down", ready: "Ready", busy: "Busy", provisionable: "On demand",
+    paused: "Paused", down: "Down", ready: "Ready", busy: "Busy", provisionable: "On demand",
     offline: "Offline", allocated: "Allocated"
   };
 
