@@ -120,3 +120,12 @@ class ReviewHarness(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewTarget(unittest.TestCase):
+    """The reviewer's GitHub tools take an owner, repository and number, and nothing else tells the
+    model which pull request it is on. Without them in the prompt it guessed, and a consumer's fallback
+    review read a different open pull request and passed this one with no findings."""
+
+    def test_the_prompt_names_the_pull_request_and_the_repository(self):
+        self.assertIn("#${{ github.event.pull_request.number }} of ${{ github.repository }}", PROMPT.read_text())
