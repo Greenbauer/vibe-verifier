@@ -85,7 +85,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if len(forwarded_hosts) != 1 or len(forwarded_protocols) != 1:
                 self._deny(403, "incomplete forwarded origin")
                 return False
-            if host not in allowed_hosts | {"localhost"}:
+            # A Host-preserving proxy (Tailscale serve, a default nginx proxy_pass) sends the
+            # public authority as Host; a rewriting proxy sends a loopback Host. Accept both.
+            if host not in allowed_hosts | {"localhost", authority}:
                 self._deny(421, "untrusted host")
                 return False
             if forwarded_hosts[0] != authority or forwarded_protocols[0] != "https":
