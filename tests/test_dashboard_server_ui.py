@@ -95,6 +95,27 @@ class ServerSecurity(unittest.TestCase):
                 self.assertIn("script-src 'self'", headers["content-security-policy"])
                 self.assertNotIn("access-control-allow-origin", headers)
 
+    def test_host_preserving_proxy_may_send_the_configured_authority_as_host(self):
+        origin = "https://dashboard.example.test:8443"
+        forwarded = {"X-Forwarded-Host": "dashboard.example.test:8443", "X-Forwarded-Proto": "https"}
+        for path in ("/", "/api/dashboard"):
+            with self.subTest(path=path):
+                self.assertEqual(self.request("GET", path, {
+                    "Host": "dashboard.example.test:8443", "Origin": origin, **forwarded,
+                }, proxy_origin=origin)[0], 200)
+        for host in ("other.example.test:8443", "dashboard.example.test", "dashboard.example.test:9999"):
+            with self.subTest(host=host):
+                self.assertEqual(self.request("GET", "/", {"Host": host, **forwarded},
+                                              proxy_origin=origin)[0], 421)
+        # The public authority is only trusted alongside complete, matching forwarded headers.
+        self.assertEqual(self.request("GET", "/", {"Host": "dashboard.example.test:8443"},
+                                      proxy_origin=origin)[0], 421)
+        self.assertEqual(self.request("GET", "/", {
+            "Host": "dashboard.example.test:8443", "X-Forwarded-Host": "other.example.test:8443",
+            "X-Forwarded-Proto": "https"}, proxy_origin=origin)[0], 403)
+        self.assertEqual(self.request("GET", "/", {
+            "Host": "dashboard.example.test:8443", **forwarded}, proxy_origin=None)[0], 403)
+
     def test_default_mode_rejects_forwarded_headers(self):
         self.assertEqual(self.request("GET", "/", {
             "X-Forwarded-Host": "dashboard.example.test",
