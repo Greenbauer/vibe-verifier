@@ -118,9 +118,6 @@ class ReviewHarness(unittest.TestCase):
         self.assertIn("review-receipt --receipt review-inputs/receipt.md --head review-inputs/head.txt --threads review-inputs/threads.json", manifest)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class ReviewTarget(unittest.TestCase):
     """The reviewer's GitHub tools take an owner, repository and number, and nothing else tells the
@@ -129,3 +126,7 @@ class ReviewTarget(unittest.TestCase):
 
     def test_the_prompt_names_the_pull_request_and_the_repository(self):
         self.assertIn("#${{ github.event.pull_request.number }} of ${{ github.repository }}", PROMPT.read_text())
+
+
+if __name__ == "__main__":
+    unittest.main()
