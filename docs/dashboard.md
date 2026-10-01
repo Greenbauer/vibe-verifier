@@ -78,8 +78,11 @@ processes from reaching the dashboard's loopback port because direct loopback re
 Configure the upstream at the origin root, not a subpath. It must remove client-supplied forwarded
 headers, connect only to this loopback backend, and send exactly one `X-Forwarded-Host` containing
 the configured origin authority plus exactly one `X-Forwarded-Proto: https`. Its upstream `Host`
-must be `localhost` for a Unix-socket proxy, or `localhost:<actual-port>` or
-`127.0.0.1:<actual-port>` for TCP. Any browser `Origin` must equal `proxy_origin` exactly. Missing,
+must be `localhost` for a Unix-socket proxy, `localhost:<actual-port>` or
+`127.0.0.1:<actual-port>` for TCP, or the configured origin authority itself for a proxy that
+preserves the client's `Host` (Tailscale serve does). Any other `Host` is refused with 421, and the
+origin authority is accepted as `Host` only with those forwarded headers present. Any browser
+`Origin` must equal `proxy_origin` exactly. Missing,
 mismatched, or duplicate routing headers are denied.
 
 This option does not add a public listener, authentication, CORS, or write methods. The backend
