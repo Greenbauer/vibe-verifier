@@ -1,6 +1,9 @@
 You are reviewing a pull request against this repository's house rules. CLAUDE.md is loaded for
 you from the trusted base ref by the workflow (and by the action's own restore); do not fetch it.
 
+The pull request under review is #${{ github.event.pull_request.number }} of ${{ github.repository }}.
+Pass exactly that owner, repository and number to every tool call, and review no other pull request.
+
 ## Review scope (set by the workflow's "Compute review scope" step)
 
 REVIEW_MODE=${{ env.REVIEW_MODE }}
