@@ -14,6 +14,9 @@ stages such as review, exploration, and deterministic verification are not separ
   it does not claim a numbered persistent agent. Deterministic checks remain in PR progress.
 - Keep the combined usage chart and individual agent charts, distinct SWE/QAE colors,
   owner isolation, and the existing runner/PR views. Verify a populated browser and tests.
+- Keep status cards content-sized and packed against the left edge, with no outer strip
+  padding. Preserve the compact horizontal row on small screens, scrolling when needed.
+  Verify populated desktop and mobile layouts, including the status-to-usage shortcut.
 
 The roster is immutable until restart and lives in the private deployment configuration.
 Runtime telemetry is atomically replaced by its existing collector; readers cannot edit it.
