@@ -6,7 +6,9 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
 
     --artifacts DIR          the run's artifact directory (required)
     --criteria FILE          the PR body; when it declares `- None: <why>` there was nothing to
-                             explore, so an empty run is correct and this gate passes
+                             explore, so an empty run is correct and this gate passes. A criterion
+                             whose line carries `expected-refusal: <401|403> <path-or-URL>` makes
+                             exactly that status at exactly that URL expected for this run (see 5)
     --allow-console REGEX    console errors matching this are expected (repeatable)
     --allow-request REGEX    requests whose URL matches this are not judged (repeatable)
     --site URL-PREFIX        judge only requests to this origin (default: every request)
@@ -24,6 +26,15 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    such result, or in a `network-*.log` file, answered 400 or worse or failed, outside the
    allowlist. This encodes the recorded false-PASS lesson: a PASS obtained while the real
    endpoint failed is refused here whatever the verdict says.
+5. A refusal is the correct outcome of some criteria (an auth gate answering 401 signed out), so a
+   criterion declares it: `- Signed out, the quotes API refuses (expected-refusal: 401 /api/quotes)`.
+   The declaration is read from the criteria file the workflow fetched, never from the explorer,
+   and only from a criterion's own line (an HTML comment does not count). It excuses that status at
+   that URL and nothing else: the request in the network record, and Chromium's `Failed to load
+   resource: ... status of 401` console line for it. A path resolves against the site, a URL is
+   taken as written, and either must match the request's URL exactly (query included, fragment
+   dropped). A 5xx, another status, another URL, and any other console error still fail, and a
+   declaration of any status but 401 or 403, or a path with no site to resolve it, is a finding.
 
 Exit 2 when the artifact directory is missing, or a --site-file is missing or holds anything but
 one http(s) URL: nothing was adjudicated.
@@ -33,7 +44,7 @@ import os
 import re
 import urllib.parse
 
-from _acceptance import declares_none
+from _acceptance import criteria, declares_none
 from _contract import CannotRun, Finding, run_gate
 
 GATE = "qae-artifacts"
@@ -43,6 +54,11 @@ TOOL_CALL = re.compile(r"^### Tool call: (?P<name>\S+)\s*$", re.MULTILINE)
 # `3. [GET] http://host/path => [404] Not Found` or `=> [FAILED] net::ERR_...`, as the tool renders it;
 # inside a JSON result the newline is escaped, so the line is matched without anchors.
 REQUEST = re.compile(r"[0-9]+\. \[(?P<method>[A-Z]+)\] (?P<url>\S+) => \[(?P<status>[0-9]{3}|FAILED)\]")
+REFUSAL = re.compile(r"expected-refusal:[ \t]*(?P<status>[^\s`]+)[ \t]+(?P<target>[^\s`)]+)", re.IGNORECASE)
+REFUSABLE = ("401", "403")
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+# Chromium's line for a response it refused to load, as playwright-mcp saves it: `<text> @ <url>:<line>`.
+RESOURCE_ERROR = re.compile(r"^Failed to load resource: the server responded with a status of (?P<status>[0-9]{3})\b.* @ (?P<url>\S+):[0-9]+$")
 
 
 def read(path):
@@ -71,7 +87,30 @@ def steps_have_screenshots(root):
     return findings
 
 
-def console_is_clean(root, allowed):
+def exact(url):
+    return urllib.parse.urldefrag(url)[0]
+
+
+def expected_refusals(text, site):
+    """The (status, URL) pairs the criteria in `text` declare expected, and findings for any
+    declaration that cannot be honoured as written."""
+    expected, findings = set(), []
+    for ac, wording in criteria(HTML_COMMENT.sub("", text)):
+        for match in REFUSAL.finditer(wording):
+            status, target = match.group("status"), match.group("target").rstrip(".,;:")
+            if status not in REFUSABLE:
+                findings.append(Finding("%s declares expected-refusal %s: only 401 or 403 can be expected" % (ac, status)))
+            elif urllib.parse.urlsplit(target).scheme in ("http", "https"):
+                expected.add((status, exact(target)))
+            elif target.startswith("/") and site:
+                expected.add((status, exact(urllib.parse.urljoin(site, target))))
+            else:
+                findings.append(Finding("%s declares expected-refusal at %s: write a path starting with / (resolved against "
+                                        "the site under test, which needs --site or --site-file) or an http(s) URL" % (ac, target)))
+    return expected, findings
+
+
+def console_is_clean(root, allowed, expected):
     findings, seen = [], set()
     for log in sorted(glob.glob(os.path.join(root, "console-*.log"))):
         for number, line in enumerate(read(log).splitlines(), 1):
@@ -81,12 +120,15 @@ def console_is_clean(root, allowed):
             message = match.group("message")
             if any(pattern.search(message) for pattern in allowed) or message in seen:
                 continue
+            refused = RESOURCE_ERROR.match(message)
+            if refused and (refused.group("status"), exact(refused.group("url"))) in expected:
+                continue
             seen.add(message)
             findings.append(Finding("console error outside the allowlist: %s" % message[:200], relative(log, root), number))
     return findings
 
 
-def session_and_network(root, allowed, site):
+def session_and_network(root, allowed, site, expected):
     sessions = sorted(glob.glob(os.path.join(root, "session-*", "session.md")))
     if not sessions:
         return [Finding("no session log (run playwright-mcp with --save-session so every tool call is on record)")]
@@ -108,6 +150,8 @@ def session_and_network(root, allowed, site):
             if any(pattern.search(url) for pattern in allowed):
                 continue
             if status != "FAILED" and int(status) < 400:
+                continue
+            if (status, exact(url)) in expected:
                 continue
             key = (match.group("method"), url, status)
             if key in seen:
@@ -133,11 +177,12 @@ def check(args):
     root = args.artifacts
     if not root or not os.path.isdir(root):
         raise CannotRun("artifact directory not found: %s" % (root or "(none given)"))
+    body = ""
     if args.criteria:
         if not os.path.isfile(args.criteria):
             raise CannotRun("criteria file not found: %s" % args.criteria)
-        with open(args.criteria, encoding="utf-8", errors="replace") as handle:
-            reason = declares_none(handle.read())
+        body = read(args.criteria)
+        reason = declares_none(body)
         if reason:
             print("%s: nothing was required, declared: %s" % (GATE, reason))
             return []
@@ -146,9 +191,11 @@ def check(args):
     site = declared_site(args.site_file) if args.site_file else args.site
     console_allow = [re.compile(pattern) for pattern in (args.allow_console or [])]
     request_allow = [re.compile(pattern) for pattern in (args.allow_request or [])]
-    return (steps_have_screenshots(root)
-            + console_is_clean(root, console_allow)
-            + session_and_network(root, request_allow, site))
+    expected, declared = expected_refusals(body, site)
+    return (declared
+            + steps_have_screenshots(root)
+            + console_is_clean(root, console_allow, expected)
+            + session_and_network(root, request_allow, site, expected))
 
 
 def add_arguments(parser):

@@ -3,5 +3,6 @@
 acceptance-verdict --criteria qae-inputs/pr-body.md --verdict qae-inputs/verdict.md --artifacts qae-artifacts
 # The adjudicator: screenshots per step, console and network clean outside what this repo declares expected.
 # Declare only what is environmental (for example an analytics script that only exists on the host platform).
+# A refusal one pull request expects (an auth gate's 401) is declared in its criterion, `expected-refusal: 401 /path`, not here.
 # --site-file is the URL the explore job's site step declared, local or a preview; --site <URL> fixes one instead.
 qae-artifacts --artifacts qae-artifacts --criteria qae-inputs/pr-body.md --site-file qae-inputs/site-url

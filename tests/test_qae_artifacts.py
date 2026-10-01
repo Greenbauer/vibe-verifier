@@ -172,6 +172,60 @@ class QaeArtifacts(unittest.TestCase):
         self.assertEqual(real.returncode, 2)
         self.assertIn("site file not found", real.stderr)
 
+    def refusal_run(self, criterion, *requests):
+        # The shape of a consumer's real failing run: a signed-out navigation to an API route on a
+        # preview, which Chromium logs as a console error and the network record shows as a 401.
+        preview = "https://site-git-fix-auth-gate.vercel.app"
+        write(self.root, {
+            "console-1.log": "".join("[  9%02dms] [ERROR] Failed to load resource: the server responded with a status of %s () @ %s%s:0\n"
+                                     % (n, status, preview, path) for n, (status, path) in enumerate(requests)),
+            "session-1/session.md": session_with(CLEAN_REQUESTS + ["[GET] %s%s => [%s] Error" % (preview, path, status)
+                                                                   for status, path in requests])})
+        inputs = tempfile.mkdtemp(prefix="vv-refusal-")
+        self.addCleanup(shutil.rmtree, inputs, True)
+        write(inputs, {"site-url": preview + "\n", "body.md": "## Acceptance criteria\n\n- %s\n" % criterion})
+        return self.run_gate("--criteria", os.path.join(inputs, "body.md"), "--site-file", os.path.join(inputs, "site-url"))
+
+    def test_an_expected_401_at_the_declared_url_passes(self):
+        result = self.refusal_run("Signed out, the quotes API refuses (expected-refusal: 401 /api/quotes)", ("401", "/api/quotes"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        full = self.refusal_run("Signed out, the API refuses (`expected-refusal: 403 https://site-git-fix-auth-gate.vercel.app/api/quotes`)",
+                                ("403", "/api/quotes"))
+        self.assertEqual(full.returncode, 0, full.stdout + full.stderr)
+
+    def test_the_same_401_at_an_undeclared_url_fails(self):
+        result = self.refusal_run("Signed out, the quotes API refuses (expected-refusal: 401 /api/quotes)",
+                                  ("401", "/api/quotes"), ("401", "/api/customers"), ("401", "/api/quotes?id=1"))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("status of 401 () @ https://site-git-fix-auth-gate.vercel.app/api/customers:0", result.stdout)
+        self.assertIn("request answered 401 outside the allowlist: [GET] https://site-git-fix-auth-gate.vercel.app/api/customers", result.stdout)
+        self.assertIn("api/quotes?id=1", result.stdout)
+        self.assertNotIn("vercel.app/api/quotes:0", result.stdout)
+
+    def test_a_500_or_another_status_at_the_declared_url_fails(self):
+        for status in ("500", "403"):
+            result = self.refusal_run("Signed out, the quotes API refuses (expected-refusal: 401 /api/quotes)", (status, "/api/quotes"))
+            self.assertEqual(result.returncode, 1, status)
+            self.assertIn("request answered %s outside the allowlist" % status, result.stdout)
+            self.assertIn("status of %s () @" % status, result.stdout)
+
+    def test_only_401_or_403_can_be_declared_and_a_path_needs_a_site(self):
+        result = self.refusal_run("The import endpoint fails (expected-refusal: 500 /api/import)", ("500", "/api/import"))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("AC1 declares expected-refusal 500: only 401 or 403 can be expected", result.stdout)
+        inputs = tempfile.mkdtemp(prefix="vv-refusal-")
+        self.addCleanup(shutil.rmtree, inputs, True)
+        write(inputs, {"body.md": "## Acceptance criteria\n\n- Signed out refused (expected-refusal: 401 /api/quotes)\n"})
+        siteless = self.run_gate("--criteria", os.path.join(inputs, "body.md"))
+        self.assertEqual(siteless.returncode, 1)
+        self.assertIn("AC1 declares expected-refusal at /api/quotes", siteless.stdout)
+
+    def test_a_declaration_outside_a_criterion_line_does_not_count(self):
+        hidden = "Signed out, the quotes page redirects <!-- expected-refusal: 401 /api/quotes -->"
+        self.assertEqual(self.refusal_run(hidden, ("401", "/api/quotes")).returncode, 1)
+        elsewhere = "Signed out, the quotes page redirects\n\n## Notes\n\n- expected-refusal: 401 /api/quotes"
+        self.assertEqual(self.refusal_run(elsewhere, ("401", "/api/quotes")).returncode, 1)
+
     def test_a_missing_criteria_file_cannot_run(self):
         self.assertEqual(self.run_gate("--criteria", "/nonexistent/pr-body.md", "--soak").returncode, 2)
 
