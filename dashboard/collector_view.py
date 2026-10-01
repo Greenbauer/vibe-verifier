@@ -91,9 +91,11 @@ def join_runner_jobs(telemetry, github):
                 for job in run.get("jobs", []):
                     if job.get("runner_id") and job.get("status") == "in_progress":
                         jobs[(repository["repository"], job["runner_id"])] = job
+                        jobs[(None, job["runner_id"])] = {**job, "repository": repository["repository"]}
     for lane in capacity.get("lanes", []):
         assignment = lane.get("job")
-        job = jobs.get((assignment["repository"], lane.get("runner_id"))) if assignment else None
-        if job:
+        job = jobs.get((assignment["repository"] if assignment else None, lane.get("runner_id")))
+        if job and lane["state"] in ("allocated", "busy"):
             lane["state"] = "busy"
-            lane["job"] = {"repository": assignment["repository"], "name": job["name"], "url": job.get("html_url")}
+            lane["job"] = {"repository": assignment["repository"] if assignment else job["repository"],
+                           "name": job["name"], "url": job.get("html_url")}

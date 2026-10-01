@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 from dashboard.agents import agent_view
 from dashboard.config import AgentDefinition, Config, ConfigError, _parse_agents
-from dashboard.telemetry import _agents, TelemetryError
+from dashboard.telemetry import _agents, _lanes, TelemetryError
+from dashboard.collector_view import join_runner_jobs
 
 NOW = datetime(2026, 9, 30, 15, tzinfo=timezone.utc)
 
@@ -68,6 +69,20 @@ class AgentIdentities(unittest.TestCase):
         github["bots"]["roles"]["reviewer"]["active"] = [{"id": 1}]
         self.assertEqual(agent_view(config, github, {}, NOW)["rows"][0]["state"], "working")
         self.assertEqual(agent_view(Config("octocat", (), {}, None), github, {}, NOW)["rows"], [])
+
+    def test_registered_busy_runner_keeps_unknown_job_until_owner_evidence_matches(self):
+        config = self.config()
+        lanes = _lanes([{"id": "org-runner", "state": "busy", "registered": True,
+                         "runner_id": 7}], config)
+        self.assertNotIn("job", lanes[0])
+        telemetry = {"capacity": {"available": True, "stale": False, "lanes": lanes}}
+        github = {"repositories": [{"repository": "octocat/example", "pulls": [{"runs": [{"jobs": [
+            {"runner_id": 7, "status": "in_progress", "name": "test", "html_url": None}]}]}]}]}
+        join_runner_jobs(telemetry, github)
+        self.assertEqual(lanes[0]["job"]["repository"], "octocat/example")
+        self.assertEqual(lanes[0]["job"]["name"], "test")
+        with self.assertRaises(TelemetryError):
+            _lanes([{"id": "unknown", "state": "busy", "registered": False}], config)
 
     def test_run_snapshot_rejects_raw_logs_and_more_than_five_outcomes(self):
         raw = self.runtime()

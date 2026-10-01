@@ -21,7 +21,7 @@ HISTORY = timedelta(days=7)
 FUTURE_SKEW = timedelta(minutes=5)
 STALE_AFTER = timedelta(minutes=5)
 ID = re.compile(r"[A-Za-z0-9_.:-]{1,80}\Z")
-LANE_STATES = {"busy", "ready", "provisionable", "offline", "unknown"}
+LANE_STATES = {"busy", "allocated", "ready", "provisionable", "offline", "unknown"}
 BOT_STATES = {"working", "idle", "down", "unknown"}
 
 
@@ -95,7 +95,7 @@ def _lanes(value: object, config: Config) -> list[dict]:
         raise TelemetryError("capacity.lanes is invalid")
     lanes, seen = [], set()
     for row in value:
-        if not isinstance(row, dict) or set(row) - {"id", "state", "registered", "labels", "job"}:
+        if not isinstance(row, dict) or set(row) - {"id", "state", "registered", "labels", "job", "runner_id"}:
             raise TelemetryError("lane row is invalid")
         lane_id, state = row.get("id"), row.get("state")
         if not isinstance(lane_id, str) or not ID.fullmatch(lane_id) or lane_id in seen or state not in LANE_STATES:
@@ -109,6 +109,11 @@ def _lanes(value: object, config: Config) -> list[dict]:
             raise TelemetryError("lane labels are invalid")
         lane = {"id": lane_id, "state": state, "registered": registered,
                 "labels": [_text(label, 60) for label in labels]}
+        if row.get("runner_id") is not None:
+            runner_id = row["runner_id"]
+            if isinstance(runner_id, bool) or not isinstance(runner_id, int) or runner_id <= 0:
+                raise TelemetryError("runner id must be a positive integer")
+            lane["runner_id"] = runner_id
         job = row.get("job")
         if job is not None:
             if not isinstance(job, dict) or set(job) - {"repository", "name", "url"}:
@@ -116,7 +121,7 @@ def _lanes(value: object, config: Config) -> list[dict]:
             lane["job"] = {"repository": _repository(job.get("repository"), config),
                            "name": _text(job.get("name")),
                            "url": github_url(job.get("url"), config.owner)}
-        elif state == "busy":
+        elif state == "busy" and not (registered is True and lane.get("runner_id")):
             raise TelemetryError("a busy lane must identify its same-owner job")
         lanes.append(lane)
     return lanes

@@ -150,7 +150,9 @@ Other collectors can use this version 1 shape:
 
 Lane `state` is one of `busy`, `allocated`, `ready`, `provisionable`, `offline`, or `unknown`. `registered` is a
 separate `true`, `false`, or `null` fact because an allocated on-demand lane can have no idle runner.
-A busy lane must include a same-owner job. An allocated lane without a matched job shows its repository
+A busy lane must include a same-owner job or a positive GitHub `runner_id` with confirmed
+registration. The latter shows busy with unmatched job details until a current owner-scoped
+PR job matches the runner ID. Registration alone never implies ready or busy. An allocated lane without a matched job shows its repository
 and pending-match message without a job link. The host panel is always labeled `SHARED HOST`; its values
 are aggregate CPU sampled percent, memory bytes, and usable workspace-filesystem bytes.
 
