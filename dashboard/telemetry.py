@@ -21,7 +21,7 @@ HISTORY = timedelta(days=7)
 FUTURE_SKEW = timedelta(minutes=5)
 STALE_AFTER = timedelta(minutes=5)
 ID = re.compile(r"[A-Za-z0-9_.:-]{1,80}\Z")
-LANE_STATES = {"busy", "ready", "provisionable", "offline", "unknown"}
+LANE_STATES = {"busy", "allocated", "ready", "provisionable", "offline", "unknown"}
 BOT_STATES = {"working", "idle", "down", "unknown"}
 
 
@@ -95,7 +95,7 @@ def _lanes(value: object, config: Config) -> list[dict]:
         raise TelemetryError("capacity.lanes is invalid")
     lanes, seen = [], set()
     for row in value:
-        if not isinstance(row, dict) or set(row) - {"id", "state", "registered", "labels", "job"}:
+        if not isinstance(row, dict) or set(row) - {"id", "state", "registered", "labels", "job", "runner_id"}:
             raise TelemetryError("lane row is invalid")
         lane_id, state = row.get("id"), row.get("state")
         if not isinstance(lane_id, str) or not ID.fullmatch(lane_id) or lane_id in seen or state not in LANE_STATES:
@@ -109,6 +109,11 @@ def _lanes(value: object, config: Config) -> list[dict]:
             raise TelemetryError("lane labels are invalid")
         lane = {"id": lane_id, "state": state, "registered": registered,
                 "labels": [_text(label, 60) for label in labels]}
+        if row.get("runner_id") is not None:
+            runner_id = row["runner_id"]
+            if isinstance(runner_id, bool) or not isinstance(runner_id, int) or runner_id <= 0:
+                raise TelemetryError("runner id must be a positive integer")
+            lane["runner_id"] = runner_id
         job = row.get("job")
         if job is not None:
             if not isinstance(job, dict) or set(job) - {"repository", "name", "url"}:
@@ -116,7 +121,7 @@ def _lanes(value: object, config: Config) -> list[dict]:
             lane["job"] = {"repository": _repository(job.get("repository"), config),
                            "name": _text(job.get("name")),
                            "url": github_url(job.get("url"), config.owner)}
-        elif state == "busy":
+        elif state == "busy" and not (registered is True and lane.get("runner_id")):
             raise TelemetryError("a busy lane must identify its same-owner job")
         lanes.append(lane)
     return lanes
@@ -182,7 +187,7 @@ def _usage(value: object, config: Config, now: datetime) -> dict:
         if not isinstance(sample, dict) or set(sample) != {"owner", "account", "bot", "timestamp", "input_tokens", "output_tokens"}:
             raise TelemetryError("token sample is invalid")
         _same_owner(sample["owner"], config)
-        if sample["account"] not in account_ids or sample["bot"] not in BOT_KEYS:
+        if sample["account"] not in account_ids or sample["bot"] not in (*BOT_KEYS, *(agent.id for agent in config.agents)):
             raise TelemetryError("token sample references an unknown account or bot")
         timestamp = _timestamp(sample["timestamp"], now)
         if now - parse_time(timestamp) > HISTORY:
@@ -217,6 +222,39 @@ def _bots(value: object, config: Config, now: datetime) -> dict:
     return {"available": True, "sampled_at": sampled_at, "stale": stale, "states": states}
 
 
+def _agents(value: object, config: Config, now: datetime) -> dict:
+    if value is None:
+        return {"available": False}
+    if not isinstance(value, dict) or set(value) != {"sampled_at", "rows"}:
+        raise TelemetryError("agent snapshot is invalid")
+    sampled, stale = _section_time(value, now)
+    if not isinstance(value["rows"], list) or len(value["rows"]) > 64:
+        raise TelemetryError("agent roster is invalid")
+    allowed = {agent.id: agent for agent in config.agents if not agent.workflow_role}
+    clean, seen = [], set()
+    for row in value["rows"]:
+        if (not isinstance(row, dict) or set(row) != {"id", "state", "runs"}
+                or row.get("id") not in allowed or row["id"] in seen
+                or row.get("state") not in {"working", "idle", "down", "paused", "unknown"}
+                or not isinstance(row.get("runs"), list) or len(row["runs"]) > 5):
+            raise TelemetryError("agent identity or state is invalid")
+        seen.add(row["id"])
+        runs = []
+        for run in row["runs"]:
+            if (not isinstance(run, dict) or set(run) != {"id", "completed_at", "category", "elapsed_seconds"}
+                    or not isinstance(run["id"], str) or not ID.fullmatch(run["id"])
+                    or run["category"] not in {"success", "failed", "cancelled"}):
+                raise TelemetryError("agent run is invalid")
+            completed = _timestamp(run["completed_at"], now)
+            if now - parse_time(completed) > HISTORY:
+                continue
+            runs.append({"id": run["id"], "completed_at": completed, "category": run["category"],
+                         "elapsed_seconds": _number(run["elapsed_seconds"]),
+                         "name": allowed[row["id"]].name + " run", "repository": None, "html_url": None})
+        clean.append({"id": row["id"], "state": row["state"], "runs": runs})
+    return {"available": True, "sampled_at": sampled, "stale": stale, "rows": clean}
+
+
 def _read(path: Path) -> object:
     try:
         info = path.stat(follow_symlinks=False)
@@ -245,13 +283,14 @@ def read_telemetry(config: Config, now: datetime | None = None) -> dict:
                 return collector_view(value, config, now)
             except (ValueError, TypeError, KeyError, OverflowError):
                 raise TelemetryError("invalid collector snapshot") from None
-        if not isinstance(value, dict) or set(value) - {"version", "owner", "capacity", "usage", "bots"}:
+        if not isinstance(value, dict) or set(value) - {"version", "owner", "capacity", "usage", "bots", "agents"}:
             raise TelemetryError("telemetry root is invalid")
         if value.get("version") != 1:
             raise TelemetryError("telemetry version must be 1")
         _same_owner(value.get("owner"), config)
         return {"available": True, "capacity": _capacity(value.get("capacity"), config, now),
                 "usage": _usage(value.get("usage"), config, now),
-                "bots": _bots(value.get("bots"), config, now)}
+                "bots": _bots(value.get("bots"), config, now),
+                "agents": _agents(value.get("agents"), config, now)}
     except TelemetryError:
         return {"available": False, "reason": "invalid_or_unavailable"}

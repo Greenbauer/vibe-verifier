@@ -31,12 +31,47 @@ class BotDefinition:
 
 
 @dataclass(frozen=True)
+class AgentDefinition:
+    id: str
+    name: str
+    role: str
+    workflow_role: str | None = None
+
+
+def _parse_agents(value: object) -> tuple[AgentDefinition, ...]:
+    if not isinstance(value, list) or len(value) > 64:
+        raise ConfigError("agents must be a roster of at most 64 identities")
+    result, ids, names, workflows = [], set(), set(), set()
+    for row in value:
+        if not isinstance(row, dict):
+            raise ConfigError("agent must be an object")
+        _only_keys(row, {"id", "name", "role", "workflow_role"}, "agent")
+        identity, name, role = row.get("id"), row.get("name"), row.get("role")
+        workflow = row.get("workflow_role")
+        if (not isinstance(identity, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", identity)
+                or role not in ("swe", "qae") or not isinstance(name, str)
+                or not re.fullmatch(role.upper() + r"[0-9]*", name)
+                or identity in (*BOT_KEYS, "total") or identity in ids or name in names):
+            raise ConfigError("agent identity must uniquely name an SWE or QAE")
+        if workflow is not None and (workflow != {"swe": "reviewer", "qae": "explorer"}[role]
+                                      or workflow in workflows or name != role.upper()):
+            raise ConfigError("aggregate CI activity cannot identify a numbered agent or a verification gate")
+        ids.add(identity)
+        names.add(name)
+        if workflow:
+            workflows.add(workflow)
+        result.append(AgentDefinition(identity, name, role, workflow))
+    return tuple(result)
+
+
+@dataclass(frozen=True)
 class Config:
     owner: str
     repositories: tuple[str, ...]
     bots: dict[str, BotDefinition]
     telemetry_file: Path | None
     proxy_origin: str | None = None
+    agents: tuple[AgentDefinition, ...] = ()
 
 
 def _owned_regular_file(path: Path, *, may_be_missing: bool = False) -> None:
@@ -118,7 +153,7 @@ def load_config(filename: str | os.PathLike[str]) -> Config:
     value = _read_json(path)
     if not isinstance(value, dict):
         raise ConfigError("configuration must be a JSON object")
-    _only_keys(value, {"version", "owner", "repositories", "bots", "telemetry_file", "proxy_origin"},
+    _only_keys(value, {"version", "owner", "repositories", "bots", "telemetry_file", "proxy_origin", "agents"},
                "configuration")
     if value.get("version") != 1:
         raise ConfigError("configuration version must be 1")
@@ -146,4 +181,4 @@ def load_config(filename: str | os.PathLike[str]) -> Config:
         telemetry_path = Path(telemetry)
         _owned_regular_file(telemetry_path, may_be_missing=True)
     return Config(owner, tuple(canonical), _parse_bots(value.get("bots")), telemetry_path,
-                  _parse_proxy_origin(value.get("proxy_origin")))
+                  _parse_proxy_origin(value.get("proxy_origin")), _parse_agents(value.get("agents", [])))
