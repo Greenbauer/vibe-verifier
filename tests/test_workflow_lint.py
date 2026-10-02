@@ -62,6 +62,12 @@ class Actionlint(unittest.TestCase):
         self.assertEqual(gate("actionlint", repo, "--base-ref", "HEAD~1").returncode, 0)
         self.assertEqual(gate("actionlint", repo, "--all").returncode, 1)
 
+    def test_a_non_ascii_workflow_the_pr_adds_is_judged(self):
+        # Without -z git quotes the path ("caf\303\251.yml"), whose extension then reads as `yml"`.
+        result = gate("actionlint", repo_with(self, {".github/workflows/café.yml": BAD}), "--base-ref", "HEAD~1", "--format", "json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(".github/workflows/café.yml", {f["path"] for f in json.loads(result.stdout)["findings"]})
+
     def test_an_unresolvable_base_cannot_run(self):
         self.assertEqual(gate("actionlint", repo_with(self, {"README.md": "y\n"}), "--base-ref", "no-such-branch").returncode, 2)
 
@@ -80,6 +86,13 @@ class Zizmor(unittest.TestCase):
     def test_a_clean_change_passes(self):
         result = gate("zizmor", repo_with(self, {".github/workflows/ok.yml": OK.replace("echo ok", "echo fine")}), "--base-ref", "HEAD~1")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_non_ascii_workflow_the_pr_changes_is_judged(self):
+        repo = make_repo(self, {".github/workflows/café.yml": OK})
+        commit(repo, {".github/workflows/café.yml": BAD}, "change")
+        result = gate("zizmor", repo, "--base-ref", "HEAD~1", "--format", "json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(".github/workflows/café.yml", {f["path"] for f in json.loads(result.stdout)["findings"]})
 
     def test_min_severity_is_passed_through(self):
         loose = json.loads(gate("zizmor", repo_with(self, {".github/workflows/bad.yml": BAD}), "--base-ref", "HEAD~1", "--format", "json").stdout)
