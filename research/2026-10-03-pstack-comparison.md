@@ -86,16 +86,24 @@ which is the "new behavior works" half.
 - The existing deterministic gates judge both runs.
 - A feature that passes on the base and fails on the head is a regression finding.
 
-**Test before shipping:** run an offline replay on one consumer.
-1. Write a feature map for its top five features, each with the path globs it depends on.
-2. Take its last 20 merged PRs.
+**Test before shipping:** an offline replay of past PRs on the three busiest consumers, never on
+new ones.
+1. Write a feature map for each consumer's top five features, each with the path globs it depends on.
+2. Take each consumer's last 20 merged PRs.
 3. Run the explorer on head and base for every feature whose globs the diff touches.
 4. Compare each regression it reports with the follow-up fixes `pr_outcomes.py` finds for the same PRs.
 
 | Outcome | Bar |
 |---|---|
 | Promote | At least one regression that a later fix PR actually repaired, and that the PR's own criteria never named, with no more than one false alarm per five PRs. |
-| Kill | Zero real catches across the 20 PRs. |
+| Kill | Zero real catches across the 60 PRs. |
+
+**Production data is off limits.** The replay drives running apps, so:
+- The explorer drives only a local instance or a preview whose database is local, a branch, or a
+  copy, never production.
+- A preflight resolves the database URL the app will use, and refuses to start unless it is
+  local or a declared non-production host.
+- Any feature that writes (a form, an import, a payment) is driven only against that database.
 
 **Implement:**
 - `harnesses/qae/` gets a second site start at the base SHA, plus a prompt section for map-driven
@@ -140,8 +148,15 @@ exists.
 **Verdict: adopt, in two pieces.**
 
 **Piece 1: a tree-only check for test cases with no value assertion.** It fits the gate contract.
-- **Test:** prototype it as a research script and run it over every subscribed repository's
-  history. Hand-label 50 of its flags, and backtest it against the follow-up fixes.
+- **Prototype:** `test_oracles.py` grades every test case a past PR touched as strong, weak, or
+  none, and writes the flags to a CSV for hand-labeling.
+- **Calibration so far:**
+  - On this repository it graded 211 touched cases. Its one flag was a false positive: an
+    `assertFalse` on a real value. That rule is fixed.
+  - zack.land touched only 10 test cases, too few to judge.
+  - The busy consumers are where precision gets measured.
+- **Test:** run it over every subscribed repository's history. Hand-label 50 of its flags, and
+  backtest it against the follow-up fixes.
 
 | Outcome | Bar |
 |---|---|
@@ -205,12 +220,12 @@ catalog's job:
   judged against the base) once three repositories carry a rules file, per the catalog's rule.
 
 **Test before shipping:**
-- **For PR size:** track it prospectively for a month on every subscribed repository.
+- **For PR size:** run `size_backtest.py` on every subscribed repository's history.
 
 | Outcome | Bar |
 |---|---|
-| Propose a soak gate | Flagged PRs keep needing fixes at twice the base rate or more. |
-| Count as a failure | Splitting raises total rework per feature. |
+| Propose a soak gate | Flagged PRs needed fixes at twice the base rate or more, in every busy repository. |
+| Kill | The rate is close to the base rate anywhere it holds a real sample. |
 
 - **For the rules runner:** write rules for two or three consumers, then count violations that
   historical PRs introduced.
@@ -267,13 +282,13 @@ It allows at most two CI rounds before a human takes over
 **Verdict:** add a documented pre-push profile that runs the same manifest locally. The gate
 contract already guarantees the same result on a laptop as in CI.
 
-**Test before shipping:**
-- Measure pushes per PR and failed CI rounds per PR on one fleet repository, for two weeks before
-  and two weeks after the hook.
+**Test before shipping:** use history.
+1. From each busy consumer's Actions history, count the PR heads whose gate job failed.
+2. Count how many of those a local run of the same manifest would have caught before the push.
 
 | Outcome | Bar |
 |---|---|
-| Keep | Fewer CI rounds with no rise in rework. |
+| Ship | A meaningful share of CI rounds would have been caught locally. |
 
 **Implement:** a short section in `docs/GATE-CONTRACT.md` and a hook script under `bin/`.
 
@@ -328,26 +343,37 @@ measures agent self-merge outcomes.
 
 ## The plan
 
-Each step ships as its own PR, with its experiment run before the change it would justify.
+Every test runs on past changes, never on future ones. Each step ships as its own PR, with its
+experiment run before the change it would justify.
 
 | Step | What | Depends on | Catalog change | Ships when |
 |---|---|---|---|---|
-| 1 | Run `pr_outcomes.py` monthly on every subscribed repository. Add a `Fixes: #N` line to fix PR bodies so links can be verified. | nothing | none | now |
+| 1 | Run `backtest_repos.sh` once on every subscribed repository: rework, size, test strength, and every gate replayed against past PRs. | read access to each repository | none | now |
 | 2 | Rewrite the ratchet gates' failure messages to name the fix. | nothing | message text only | now |
-| 3 | Prototype the test-oracle check as a research script; hand-label its flags. | step 1 for the backtest | none | precision of at least 80% |
-| 4 | Offline regression-lane replay on one consumer (difference 1). | a feature map written for that consumer; review capacity | none | at least one real catch in 20 PRs |
+| 3 | Hand-label the test-oracle flags step 1 writes. | step 1 | none | precision of at least 80% |
+| 4 | Offline regression-lane replay of past PRs on the three busiest consumers (difference 1). | feature maps for each; a non-production database for each | none | at least one real catch in 60 PRs |
 | 5 | Regression lane in the QAE harness. | step 4 passing | `harnesses/qae/`, a new declared input, a regression check | after step 4 |
-| 6 | Pre-push profile, with pushes per PR measured before and after. | nothing | `bin/`, docs | fewer CI rounds |
-| 7 | Second reviewer on large PRs, replayed offline first. | a second model account; review capacity | `harnesses/review/` | one valid, unique finding per five large PRs |
+| 6 | Pre-push profile, judged on how many past CI failures it would have caught locally. | step 1's Actions history | `bin/`, docs | a meaningful share of CI rounds caught |
+| 7 | Second reviewer on large PRs, replayed offline on past PRs. | a second model account | `harnesses/review/` | one valid, unique finding per five large PRs |
 | 8 | Promote PR size and test-oracle to soak gates, and add a rules runner. | three repositories that want each one | new gates | the catalog rule |
 
-### Choices for the operator
+### Running steps 1 and 4 on private repositories
 
-- **Which consumer pilots step 4.** zack.land is public and already runs the QAE harness, but it has
-  had almost no product PRs since it subscribed. The busiest private consumer gives a real signal,
-  but its history has to be read from the operator's machine, because this agent's GitHub access
-  reaches public repositories only.
-- **Model capacity.** The review account's limit blocks steps 4 and 7 until there is more of it.
+Run them from a machine whose `gh` login can read those repositories. Keep the output outside this
+public repository; the script refuses an output directory inside it.
+
+```bash
+SINCE=2026-01-01 research/backtest_repos.sh ~/vv-research OWNER/NAME OWNER/NAME OWNER/NAME
+```
+
+- **Results stay with their owner.** Each repository's results are written to its own directory and
+  stay with that organization. None of them is committed here.
+- **Wrapper-subscribed repositories** keep their gate list in the wrapper. Pass that entry as
+  `OWNER/NAME=path/to/entry`.
+
+**Model capacity:** the review harness signs in with the repository secret `CLAUDE_CODE_OAUTH_TOKEN`.
+When that account hits its limit, every review goes red until it resets. Replacing the secret with
+another account's token brings reviews back sooner.
 
 ## How the numbers here were produced
 
