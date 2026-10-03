@@ -62,6 +62,12 @@ class QaeArtifacts(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("step 2 has no screenshot (expected qae/AC1-step-2.png)", result.stdout)
 
+    def test_an_empty_screenshot_counts_as_missing(self):
+        write(self.root, {"qae/AC1-step-2.png": ""})
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("step 2 has no screenshot (expected qae/AC1-step-2.png)", result.stdout)
+
     def test_no_step_logs_fails(self):
         shutil.rmtree(os.path.join(self.root, "qae"))
         result = self.run_gate()
@@ -81,6 +87,15 @@ class QaeArtifacts(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("request answered 500 outside the allowlist: [GET] http://localhost:3000/api/quote", result.stdout)
         self.assertEqual(self.run_gate("--allow-request", "/api/quote").returncode, 0)
+
+    def test_a_400_is_the_first_error_status(self):
+        write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + [
+            "[GET] http://localhost:3000/api/quote => [400] Bad Request",
+            "[GET] http://localhost:3000/moved => [399] Unassigned"])})
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("request answered 400 outside the allowlist: [GET] http://localhost:3000/api/quote", result.stdout)
+        self.assertNotIn("answered 399", result.stdout)
 
     def test_a_network_failure_counts_like_an_error_status(self):
         write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + ["[POST] http://localhost:3000/api/contact => [FAILED] net::ERR_CONNECTION_RESET"])})
