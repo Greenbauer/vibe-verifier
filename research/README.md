@@ -1,8 +1,9 @@
 # Research tools
 
-Scripts the [research skill](../.cursor/skills/research/SKILL.md) uses to measure whether a gate
-or practice changes outcomes. Python standard library only. Nothing here is a gate: none of it is
-under a release path, so changing it never makes a consumer's pin stale.
+Scripts that measure whether a gate or practice changes outcomes, used by the
+[pstack comparison](2026-10-03-pstack-comparison.md) to test each proposed change before it ships.
+Python standard library only. Nothing here is a gate: none of it is under a release path, so
+changing it never makes a consumer's pin stale.
 
 | Script | Answers |
 |---|---|
@@ -29,4 +30,5 @@ Limits worth knowing before trusting a number:
   flag whose absence ends in the same exit 2). Read each one before calling it a gap.
 - **Small histories give directional numbers.** Report n with every rate.
 
-Findings from the first pass are in [2026-10-03-findings.md](2026-10-03-findings.md).
+The comparison, its evidence, and the test-and-implement plan are in
+[2026-10-03-pstack-comparison.md](2026-10-03-pstack-comparison.md).
