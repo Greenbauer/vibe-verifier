@@ -11,6 +11,9 @@ changing it never makes a consumer's pin stale.
 | `pr_outcomes.py --repo CLONE --prs prs.jsonl` | Which merged PRs had lines rewritten by a later fix within `--window-days` (SZZ), the rework share, and the escape rate. |
 | `gate_backtest.py --repo CLONE --outcomes out.json --manifest FILE` | Replays each merged PR through today's gates and scores every manifest line against those escapes: hits, misses, false alarms. |
 | `mutation_score.py --target gates/x.py --tests test_x.py` | How many single-operator mutants of one gate its test module kills, and which survive. |
+| `size_backtest.py --outcomes out.json` | Whether a PR-size threshold would have flagged the PRs a later fix rewrote, and at what precision. |
+| `test_oracles.py --repo CLONE --outcomes out.json` | Which test cases each PR touched, graded strong, weak, or none, with `--labels` writing the flags to a CSV for hand-labeling. |
+| `backtest_repos.sh OUT_DIR OWNER/NAME...` | All of the above, minus mutation scoring, for each repository, read-only, into a directory outside this repository. |
 
 A typical pass, on this repository:
 

@@ -2,6 +2,7 @@
 import ast
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,7 @@ class PrOutcomes(unittest.TestCase):
                     pr(3, "fix: the bug", fix, 4, ["app.js"]),
                     pr(4, "fix: add a missing line", addition, 5, ["other.js"])]
         self.inputs = tempfile.mkdtemp(prefix="vv-prs-")
+        self.addCleanup(shutil.rmtree, self.inputs, True)
         write(self.inputs, {"prs.jsonl": "".join(json.dumps(p) + "\n" for p in self.prs)})
 
     def outcomes(self, *args):
@@ -63,6 +65,82 @@ class PrOutcomes(unittest.TestCase):
         rows = self.outcomes()
         self.assertEqual(rows[4]["unattributed_fix_hunks"], 1)
         self.assertEqual(rows[2]["fixed_by"], [])
+
+
+JS_TESTS = """import { expect, it } from 'vitest'
+it('formats a total', () => {
+  expect(total([1, 2])).toBe(3)
+})
+it('returns something', () => {
+  expect(total([])).toBeDefined()
+})
+it('runs', () => {
+  total([1])
+})
+"""
+PY_TESTS = """import unittest
+
+
+class Totals(unittest.TestCase):
+    def test_sum(self):
+        self.assertEqual(total([1, 2]), 3)
+
+    def test_present(self):
+        self.assertIsNotNone(total([]))
+
+    def test_runs(self):
+        total([1])
+"""
+
+
+def run_script(name, *args):
+    done = subprocess.run([sys.executable, str(ROOT / "research" / name), *args],
+                          capture_output=True, text=True, env=clean_env())
+    return done
+
+
+def outcomes_file(test, prs):
+    directory = tempfile.mkdtemp(prefix="vv-out-")
+    test.addCleanup(shutil.rmtree, directory, True)
+    write(directory, {"outcomes.json": json.dumps({"prs": prs})})
+    return os.path.join(directory, "outcomes.json")
+
+
+class TestOracles(unittest.TestCase):
+    def test_each_touched_case_is_graded_strong_weak_or_none(self):
+        repo = make_repo(self, {"src/total.ts": "export const total = (xs) => xs.length\n",
+                                "tests/test_old.py": "def test_untouched():\n    pass\n"})
+        commit(repo, {"tests/total.test.ts": JS_TESTS, "tests/test_total.py": PY_TESTS}, "add tests")
+        sha = head(repo)
+        path = outcomes_file(self, [{"number": 7, "kind": "change", "merge_commit": sha, "fixed_by": []}])
+        done = run_script("test_oracles.py", "--repo", repo, "--outcomes", path, "--format", "json")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        graded = {c["name"]: c["strength"] for c in json.loads(done.stdout)["prs"][0]["cases"]}
+        self.assertEqual(graded, {"formats a total": "strong", "returns something": "weak", "runs": "none",
+                                  "test_sum": "strong", "test_present": "weak", "test_runs": "none"})
+
+
+class SizeBacktest(unittest.TestCase):
+    def test_a_threshold_reports_what_it_flags_and_catches(self):
+        def sized(number, lines, fixed):
+            return {"number": number, "kind": "change", "additions": lines, "deletions": 0, "files": 1,
+                    "fixed_by": [99] if fixed else []}
+        path = outcomes_file(self, [sized(1, 50, True), sized(2, 150, True), sized(3, 300, False)])
+        done = run_script("size_backtest.py", "--outcomes", path)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        line = next(l for l in done.stdout.splitlines() if l.startswith("lines > 100"))
+        self.assertEqual(line.split()[3:], ["flagged=2", "later", "fixed", "among", "flagged=1", "(0.50)",
+                                            "caught", "1", "of", "2"])
+
+
+class BacktestDriver(unittest.TestCase):
+    def test_output_inside_the_public_repository_is_refused_before_anything_is_written(self):
+        inside = ROOT / "research-output-should-not-exist"
+        done = subprocess.run(["bash", str(ROOT / "research" / "backtest_repos.sh"), str(inside), "Greenbauer/vibe-verifier"],
+                              capture_output=True, text=True, env=clean_env())
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("outside this public repository", done.stderr)
+        self.assertFalse(inside.exists())
 
 
 class MutationOperators(unittest.TestCase):
