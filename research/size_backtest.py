@@ -24,13 +24,13 @@ def main():
     prs = [pr for path in args.outcomes for pr in json.load(open(path))["prs"]
            if pr["kind"] in ("change", "fix") and pr["has_full_window"]]
     fixed = [pr for pr in prs if pr["fixed_by"]]
-    print(f"n={len(prs)} later fixed={len(fixed)} base rate={len(fixed) / len(prs):.2f}" if prs else "no PRs")
+    print(f"n={len(prs)} later-fix-touched={len(fixed)} touch share={len(fixed) / len(prs):.2f}" if prs else "no PRs")
     for measure, limit in THRESHOLDS:
         flagged = [pr for pr in prs if size(pr, measure) > limit]
         hits = [pr for pr in flagged if pr["fixed_by"]]
         share = f"{len(hits) / len(flagged):.2f}" if flagged else "-"
-        print(f"{measure} > {limit:<4} flagged={len(flagged):<4} later fixed among flagged={len(hits):<4} "
-              f"({share})  caught {len(hits)} of {len(fixed)}")
+        print(f"{measure} > {limit:<4} flagged={len(flagged):<4} linked among flagged={len(hits):<4} "
+              f"({share})  selected {len(hits)} of {len(fixed)} linked sources")
 
 
 if __name__ == "__main__":

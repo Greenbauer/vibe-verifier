@@ -8,7 +8,7 @@ macOS and Linux; repository CI runs on Ubuntu.
 
 | Script | Output and limits |
 |---|---|
-| `fetch_prs.sh OWNER NAME > prs.jsonl` | PR metadata including target branch, changed-file and commit counts. PRs are paginated; nested files/commits are capped at 100. Truncated commit metadata is refused by the analyzer and must be completed with pagination before use. |
+| `fetch_prs.sh OWNER NAME > prs.jsonl` | PR metadata including target branch, changed-file and commit counts. PRs, nested files and commits are independently paginated. Incomplete saved commit metadata is refused by the analyzer; rerun the fetcher to replace it. |
 | `pr_outcomes.py --repo CLONE --prs prs.jsonl --base-branch main --observed-at ISO_TIMESTAMP --format json` | Later title-classified fix touches within `--window-days` (default 14). Only mature changes enter touch rates. Counts commits, not pushes. Supply the actual default branch. |
 | `gate_backtest.py --repo CLONE --outcomes out.json --manifest FILE --format json` | Today's gate code against historical merged heads and first parents. Preserves pass/violation/cannot-run and full diagnostics. Association tables are not precision or false-alarm scores. |
 | `mutation_score.py --target gates/x.py --tests test_x.py` | Single-operator mutants in a scratch worktree of committed HEAD. Source and tests use that same snapshot. Reports survivors and unmeasured runs; the score excludes timeouts and empty test selections. |

@@ -48,7 +48,7 @@ for spec in "$@"; do
   manifest="$dir/replayed-gates"
 
   echo "== $repo (manifest: $manifest)"
-  "$here/fetch_prs.sh" "${repo%%/*}" "${repo#*/}" > "$dir/prs.jsonl"
+  (cd "$dir/clone" && "$here/fetch_prs.sh" "${repo%%/*}" "${repo#*/}") > "$dir/prs.jsonl"
   observed_at="${OBSERVED_AT:-$(python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat())')}"
   python3 "$here/pr_outcomes.py" --repo "$dir/clone" --prs "$dir/prs.jsonl" --base-branch "$default_branch" --since "${SINCE:-}" --observed-at "$observed_at" --format json > "$dir/outcomes.json"
   python3 "$here/gate_backtest.py" --repo "$dir/clone" --outcomes "$dir/outcomes.json" --manifest "$manifest" --format json > "$dir/gates.json"

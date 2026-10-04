@@ -17,6 +17,7 @@ import mutation_score  # noqa: E402
 import pr_outcomes  # noqa: E402
 import gate_backtest  # noqa: E402
 import test_oracles  # noqa: E402
+import fetch_prs  # noqa: E402
 
 
 def head(repo):
@@ -30,6 +31,32 @@ def pr(number, title, sha, day, files):
             "prCommits": {"nodes": [{"commit": {"oid": sha}}]}, "files": {"nodes": [{"path": f} for f in files]},
             "additions": 1, "deletions": 1, "changedFiles": len(files), "commits": {"totalCount": 1},
             "reviewThreads": {"totalCount": 0}}
+
+
+class FetchMetadata(unittest.TestCase):
+    def test_nested_commit_and_file_connections_are_completed(self):
+        record = pr(1, "feat", "a", 1, ["one.py"])
+        record["changedFiles"] = record["commits"]["totalCount"] = 2
+        files = [{"path": "one.py"}, {"path": "two.py"}]
+        commits = [{"commit": {"oid": "a"}}, {"commit": {"oid": "b"}}]
+        with patch.object(fetch_prs, "query", side_effect=[files, commits]) as fetch:
+            completed = fetch_prs.complete_node("owner", "repo", record)
+        self.assertEqual(completed["files"]["nodes"], files)
+        self.assertEqual(completed["prCommits"]["nodes"], commits)
+        self.assertEqual(fetch.call_count, 2)
+        self.assertIn("after:$endCursor", fetch.call_args.args[2])
+
+    def test_complete_metadata_needs_no_extra_requests(self):
+        with patch.object(fetch_prs, "query") as fetch:
+            fetch_prs.complete_node("owner", "repo", pr(1, "feat", "a", 1, ["one.py"]))
+        fetch.assert_not_called()
+
+    def test_incomplete_nested_response_refuses_a_partial_snapshot(self):
+        record = pr(1, "feat", "a", 1, ["one.py"])
+        record["commits"]["totalCount"] = 2
+        with patch.object(fetch_prs, "query", return_value=[]):
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                fetch_prs.complete_node("owner", "repo", record)
 
 
 class PrOutcomes(unittest.TestCase):
@@ -189,8 +216,8 @@ class SizeBacktest(unittest.TestCase):
         done = run_script("size_backtest.py", "--outcomes", path)
         self.assertEqual(done.returncode, 0, done.stderr)
         line = next(l for l in done.stdout.splitlines() if l.startswith("lines > 100"))
-        self.assertEqual(line.split()[3:], ["flagged=2", "later", "fixed", "among", "flagged=1", "(0.50)",
-                                            "caught", "1", "of", "2"])
+        self.assertEqual(line.split()[3:], ["flagged=2", "linked", "among", "flagged=1", "(0.50)",
+                                            "selected", "1", "of", "2", "linked", "sources"])
 
     def test_size_comparison_excludes_immature_prs(self):
         path = outcomes_file(self, [{"number": 1, "kind": "change", "additions": 999,
@@ -229,6 +256,64 @@ class GateBacktest(unittest.TestCase):
 
 
 class BacktestDriver(unittest.TestCase):
+    def test_batch_completes_with_more_than_one_page_of_commits(self):
+        repo = make_repo(self, {"package.json": '{"name":"fixture"}\n'})
+        parent = head(repo)
+        stream = []
+        for number in range(1, 102):
+            body = json.dumps({"name": "fixture", "version": str(number)}) + "\n"
+            stream.append(f"commit refs/heads/main\nmark :{number}\n"
+                          f"committer Test <test@example.com> {number} +0000\n"
+                          f"data 7\nchange\nfrom {parent if number == 1 else ':' + str(number - 1)}\n"
+                          f"M 100644 inline package.json\ndata {len(body)}\n{body}\n")
+        subprocess.run(["git", "-C", repo, "fast-import", "--quiet"], input="".join(stream),
+                       text=True, capture_output=True, check=True)
+        shas = subprocess.run(["git", "-C", repo, "rev-list", "--reverse", f"{parent}..HEAD"],
+                              text=True, capture_output=True, check=True).stdout.splitlines()
+        self.assertEqual(len(shas), 101)
+        record = pr(1, "feat: fixture", shas[-1], 2, ["package.json"])
+        record["baseRefName"] = "main"
+        record["commits"]["totalCount"] = 101
+        nodes = [{"commit": {"oid": sha}} for sha in shas]
+        record["prCommits"]["nodes"] = nodes[:100]
+        with tempfile.TemporaryDirectory() as directory:
+            write(directory, {"record.json": json.dumps(record), "commits.json": json.dumps(nodes),
+                              "manifest": "no-duplicate-package-json-keys\n"})
+            fake = Path(directory) / "gh"
+            fake.write_text(f"#!{sys.executable}\n" + '''import json, os, pathlib, subprocess, sys
+root = pathlib.Path(__file__).parent
+if sys.argv[1:3] == ['repo', 'clone']:
+    subprocess.run(['git', 'clone', '-q', os.environ['RESEARCH_FIXTURE_REPO'], sys.argv[4]], check=True)
+elif sys.argv[1:3] == ['api', 'graphql']:
+    selector = sys.argv[sys.argv.index('--jq') + 1]
+    if 'pullRequests' in selector:
+        print((root / 'record.json').read_text())
+    else:
+        assert selector == '.data.repository.pullRequest.commits.nodes[]'
+        assert '--paginate' in sys.argv
+        assert any('after:$endCursor' in arg for arg in sys.argv)
+        for node in json.loads((root / 'commits.json').read_text()):
+            print(json.dumps(node))
+else:
+    assert sys.argv[1:3] == ['api', 'repos/example/project']
+    print('main')
+''')
+            fake.chmod(0o755)
+            env = clean_env({"PATH": directory + os.pathsep + os.environ["PATH"],
+                             "RESEARCH_FIXTURE_REPO": repo, "OBSERVED_AT": "2026-10-04T00:00:00Z"})
+            output = Path(directory) / "output"
+            done = subprocess.run(["bash", str(ROOT / "research/backtest_repos.sh"), str(output),
+                                   "example/project=" + str(Path(directory) / "manifest")],
+                                  capture_output=True, text=True, env=env)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            result = output / "example__project"
+            outcomes = json.loads((result / "outcomes.json").read_text())
+            self.assertEqual(outcomes["prs"][0]["commits"], 101)
+            self.assertTrue(outcomes["prs"][0]["has_full_window"])
+            gates = json.loads((result / "gates.json").read_text())
+            self.assertEqual(gates["per_pr"]["1"]["no-duplicate-package-json-keys"]["status"], "pass")
+            self.assertTrue((result / "oracles.json").is_file())
+
     def test_output_inside_the_public_repository_is_refused_before_anything_is_written(self):
         inside = ROOT / "research-output-should-not-exist"
         done = subprocess.run(["bash", str(ROOT / "research" / "backtest_repos.sh"), str(inside), "Greenbauer/vibe-verifier"],
