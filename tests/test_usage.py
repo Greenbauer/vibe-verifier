@@ -265,7 +265,9 @@ class WorkflowWiring(unittest.TestCase):
             self.assertIn("path: ${{ runner.temp }}/vv-usage/usage.json", block)
             self.assertIn("name: vv-usage-%s-${{ github.run_attempt }}" % role, block)
             self.assertIn(UPLOAD, block)
-            self.assertNotIn("continue-on-error", text)
+            # Only the review's model step tolerates a failure, so its gate step can classify it.
+            self.assertNotIn("continue-on-error", block)
+            self.assertEqual(text.count("continue-on-error: true"), 1 if path == REVIEW else 0)
 
     def test_consumer_templates_pin_usage_and_source_review_uses_the_local_action(self):
         self.assertIn("uses: Greenbauer/vibe-verifier/actions/usage@" + "0" * 40, REVIEW.read_text())
@@ -284,7 +286,7 @@ class WorkflowWiring(unittest.TestCase):
             self.assertLess(collect, upload)
             self.assertEqual(text[collect:text.index("\n\n  verify:")].count("if: always()"), 2)
             self.assertIn("if-no-files-found: error", text[upload:])
-            self.assertNotIn("continue-on-error", text)
+            self.assertNotIn("continue-on-error", text[receipt:])
             self.assertNotIn("if: always()", text[receipt:collect])
 
     def test_source_review_usage_block_matches_the_consumer_template(self):

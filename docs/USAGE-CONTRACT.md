@@ -56,7 +56,7 @@ The only model-process values admitted to the artifact are non-negative integer 
 
 For Codex, the source is each numeric `turn.completed.usage` object from `codex exec --json`. `input_tokens` already includes cached input, so consumers must not add `cached_input_tokens` to it. `cache_creation_input_tokens` is `null` because that source does not report it.
 
-For Claude, the source is only `usage` on the final top-level `type: "result"` entry in the pinned action's execution file. The action writes its SDK message array to that file and locks `@anthropic-ai/claude-agent-sdk` 0.2.119. Its result usage fields are mapped as follows:
+For Claude, the source is only `usage` on the final top-level `type: "result"` entry in the pinned action's execution file. The action writes its SDK message array to that file. The review harness pins v1.0.171, which locks `@anthropic-ai/claude-agent-sdk` 0.3.207; the QAE explorer pins v1.0.105, which locks 0.2.119. Its result usage fields are mapped as follows:
 
 | Claude result field | Version 1 field |
 | --- | --- |
@@ -68,7 +68,7 @@ For Claude, the source is only `usage` on the final top-level `type: "result"` e
 
 Claude's input, cache-read, and cache-creation fields are distinct. Consumers may add those three only when they need a provider-specific total input count. The collector does not sum assistant messages, the final result, and `modelUsage`, because those are overlapping representations.
 
-Primary source references: the [pinned action output and dependency lock](https://github.com/anthropics/claude-code-action/tree/e58dfa55559035499a4982426bb73605e8b5ad8e/base-action) and the [pinned execution-file writer](https://github.com/anthropics/claude-code-action/blob/e58dfa55559035499a4982426bb73605e8b5ad8e/base-action/src/run-claude-sdk.ts).
+Primary source references: for the review harness, the [pinned action output and dependency lock](https://github.com/anthropics/claude-code-action/tree/e90deca47693f9457b72f2b53c17d7c445a87342/base-action) and the [pinned execution-file writer](https://github.com/anthropics/claude-code-action/blob/e90deca47693f9457b72f2b53c17d7c445a87342/base-action/src/execution-file.ts); for the QAE explorer, the [pinned action output and dependency lock](https://github.com/anthropics/claude-code-action/tree/e58dfa55559035499a4982426bb73605e8b5ad8e/base-action) and the [pinned execution-file writer](https://github.com/anthropics/claude-code-action/blob/e58dfa55559035499a4982426bb73605e8b5ad8e/base-action/src/run-claude-sdk.ts).
 
 ## Storage and lifecycle
 
