@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Which test cases each merged PR added or changed, and which of them can barely fail.
+"""Lexical candidate flags for changed JS/Python test cases, not test-quality judgments.
 
-A touched test case is `none` when its body holds no assertion at all, `weak` when every assertion
-it holds is one that passes for almost any value (toBeDefined, toBeTruthy, toHaveBeenCalled,
-assertIsNotNone, ...), and `strong` otherwise. Assertions made inside a helper the case calls are
-not seen, so every flag is a lead to label, not a verdict. Read-only: it reads git history only.
+Legacy labels describe regex matches only: `none` means no assertion pattern was detected,
+`weak` means only matchers on the heuristic list were detected, and `strong` means another
+recognized pattern was found. Multiline/helper/SQL assertions and copied implementations can
+all be misclassified. Every flag needs manual inspection. Read-only: reads git history only.
 
 usage: test_oracles.py --repo CLONE --outcomes OUTCOMES.json [--labels FILE.csv] [--format text|json]
 
@@ -35,13 +35,17 @@ def git(repo, *args):
 
 def changed_lines(repo, parent, commit):
     """{path: set of line numbers in `commit`} for the test files the commit added or changed."""
-    lines, path = {}, None
+    lines, path, in_hunk = {}, None, False
     for line in git(repo, "diff", "-U0", "--no-renames", parent, commit).splitlines():
-        if line.startswith("+++ "):
+        if line.startswith("diff --git "):
+            path, in_hunk = None, False
+        if not in_hunk and line.startswith("+++ "):
             path = None if line == "+++ /dev/null" else line[6:]
             if path and not TEST_FILE.search(path):
                 path = None
         match = HUNK.match(line)
+        if match:
+            in_hunk = True
         if match and path:
             first, count = int(match.group(1)), int(match.group(2) or 1)
             lines.setdefault(path, set()).update(range(first, first + count))
@@ -91,17 +95,11 @@ def main():
     args = parser.parse_args()
     prs = [pr for pr in json.load(open(args.outcomes))["prs"] if pr["kind"] in ("change", "fix")]
     rows = [dict(pr, cases=touched_cases(args.repo, pr["merge_commit"], pr["merge_commit"] + "^1")) for pr in prs]
-    groups = {"no test changes": [], "a weak or empty case": [], "only strong cases": []}
-    for row in rows:
-        kinds = {case["strength"] for case in row["cases"]}
-        key = "no test changes" if not kinds else "a weak or empty case" if kinds - {"strong"} else "only strong cases"
-        groups[key].append(row)
     all_cases = [case for row in rows for case in row["cases"]]
     summary = {
         "prs": len(rows),
         "touched_cases": len(all_cases),
         "by_strength": {k: sum(c["strength"] == k for c in all_cases) for k in ("strong", "weak", "none")},
-        "later_fixed_by_group": {k: f"{sum(bool(r['fixed_by']) for r in v)}/{len(v)}" for k, v in groups.items()},
     }
     if args.labels:
         with open(args.labels, "w", newline="") as handle:

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Would a PR-size gate have flagged the PRs that later needed a fix? Read-only.
+"""Exploratory PR size versus later-fix touches. No causal or gate-quality verdict.
 
 For each threshold, counts the feature and fix PRs it flags, how many of those a later fix rewrote
 (pr_outcomes.py's `fixed_by`), and how many of the later-fixed PRs it caught. Compare the flagged
-share that was later fixed with the base rate: a useful threshold is well above it.
+share that was later fixed with the base rate: this is association, not evidence of a useful gate.
 
 usage: size_backtest.py --outcomes OUTCOMES.json [OUTCOMES.json ...]
 """
@@ -21,7 +21,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--outcomes", nargs="+", required=True)
     args = parser.parse_args()
-    prs = [pr for path in args.outcomes for pr in json.load(open(path))["prs"] if pr["kind"] in ("change", "fix")]
+    prs = [pr for path in args.outcomes for pr in json.load(open(path))["prs"]
+           if pr["kind"] in ("change", "fix") and pr["has_full_window"]]
     fixed = [pr for pr in prs if pr["fixed_by"]]
     print(f"n={len(prs)} later fixed={len(fixed)} base rate={len(fixed) / len(prs):.2f}" if prs else "no PRs")
     for measure, limit in THRESHOLDS:

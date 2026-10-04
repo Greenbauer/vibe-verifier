@@ -2,16 +2,21 @@
 import ast
 import json
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from helpers import ROOT, clean_env, commit, make_repo, write
 
 sys.path.insert(0, str(ROOT / "research"))
 import mutation_score  # noqa: E402
+import pr_outcomes  # noqa: E402
+import gate_backtest  # noqa: E402
+import test_oracles  # noqa: E402
 
 
 def head(repo):
@@ -66,6 +71,54 @@ class PrOutcomes(unittest.TestCase):
         self.assertEqual(rows[4]["unattributed_fix_hunks"], 1)
         self.assertEqual(rows[2]["fixed_by"], [])
 
+    def test_new_file_in_a_fix_is_counted_as_unattributed(self):
+        commit(self.repo, {"missing.js": "export const missing = 1\n"}, "fix: missing module")
+        hunks, count = pr_outcomes.changed_old_lines(self.repo, "HEAD^", "HEAD")
+        self.assertEqual(hunks, [])
+        self.assertEqual(count, 1)
+
+    def test_removed_sql_comments_do_not_replace_the_diff_path(self):
+        commit(self.repo, {"query.sql": "-- old comment\nSELECT 1;\n"}, "query")
+        commit(self.repo, {"query.sql": "-- new comment\nSELECT 2;\n"}, "fix: query")
+        hunks, _ = pr_outcomes.changed_old_lines(self.repo, "HEAD^", "HEAD")
+        self.assertEqual(hunks, [("query.sql", 1, 2)])
+        self.assertTrue(pr_outcomes.blamed_commits(self.repo, "HEAD^", hunks))
+
+    def test_observation_cutoff_excludes_future_fixes(self):
+        rows = self.outcomes("--observed-at", "2026-09-03T00:00:00Z")
+        self.assertEqual(set(rows), {1, 2})
+        self.assertEqual(rows[1]["fixed_by"], [])
+
+    def test_incomplete_followup_is_not_counted_as_clean(self):
+        rows = list(self.outcomes("--observed-at", "2026-09-16T00:00:00Z").values())
+        report = pr_outcomes.summary(rows)
+        self.assertEqual(report["eligible_changes"], 1)
+        self.assertEqual(report["right_censored_changes"], 3)
+        self.assertEqual(report["later_fix_touch_rate"], 1.0)
+        self.assertEqual(report["median_commits"], 1)
+
+    def test_no_mature_changes_has_no_touch_rate(self):
+        rows = list(self.outcomes("--observed-at", "2026-09-06T00:00:00Z").values())
+        self.assertIsNone(pr_outcomes.summary(rows)["later_fix_touch_rate"])
+
+    def test_partial_file_list_is_not_proof_of_docs_only(self):
+        record = pr(5, "docs: also change code", "unused", 5, ["README.md"])
+        record["changedFiles"] = 101
+        self.assertEqual(pr_outcomes.kind_of(record), "change")
+
+    def test_truncated_commit_list_refuses_a_biased_score(self):
+        self.prs[0]["commits"]["totalCount"] = 101
+        with self.assertRaisesRegex(ValueError, "truncated commit metadata"):
+            pr_outcomes.outcomes(self.repo, self.prs, 14)
+
+    def test_other_target_branches_do_not_own_mainline_changes(self):
+        for record in self.prs:
+            record["baseRefName"] = "main"
+        self.prs[0]["baseRefName"] = "feature"
+        rows = pr_outcomes.outcomes(self.repo, self.prs, 14, base_branch="main")
+        self.assertNotIn(1, [r["number"] for r in rows])
+        self.assertEqual(next(r for r in rows if r["number"] == 3)["fixed_by"], [])
+
 
 JS_TESTS = """import { expect, it } from 'vitest'
 it('formats a total', () => {
@@ -107,6 +160,12 @@ def outcomes_file(test, prs):
 
 
 class TestOracles(unittest.TestCase):
+    def test_added_header_like_text_does_not_change_test_path(self):
+        repo = make_repo(self, {"tests/test_value.py": "def test_value():\n    assert 1\n"})
+        commit(repo, {"tests/test_value.py": 'def test_value():\n    """\n++ b/fake.py\n    """\n    assert 2\n'})
+        lines = test_oracles.changed_lines(repo, "HEAD^", "HEAD")
+        self.assertEqual(set(lines), {"tests/test_value.py"})
+
     def test_each_touched_case_is_graded_strong_weak_or_none(self):
         repo = make_repo(self, {"src/total.ts": "export const total = (xs) => xs.length\n",
                                 "tests/test_old.py": "def test_untouched():\n    pass\n"})
@@ -116,6 +175,7 @@ class TestOracles(unittest.TestCase):
         done = run_script("test_oracles.py", "--repo", repo, "--outcomes", path, "--format", "json")
         self.assertEqual(done.returncode, 0, done.stderr)
         graded = {c["name"]: c["strength"] for c in json.loads(done.stdout)["prs"][0]["cases"]}
+        self.assertNotIn("later_fixed_by_group", json.loads(done.stdout)["summary"])
         self.assertEqual(graded, {"formats a total": "strong", "returns something": "weak", "runs": "none",
                                   "test_sum": "strong", "test_present": "weak", "test_runs": "none"})
 
@@ -124,13 +184,48 @@ class SizeBacktest(unittest.TestCase):
     def test_a_threshold_reports_what_it_flags_and_catches(self):
         def sized(number, lines, fixed):
             return {"number": number, "kind": "change", "additions": lines, "deletions": 0, "files": 1,
-                    "fixed_by": [99] if fixed else []}
+                    "fixed_by": [99] if fixed else [], "has_full_window": True}
         path = outcomes_file(self, [sized(1, 50, True), sized(2, 150, True), sized(3, 300, False)])
         done = run_script("size_backtest.py", "--outcomes", path)
         self.assertEqual(done.returncode, 0, done.stderr)
         line = next(l for l in done.stdout.splitlines() if l.startswith("lines > 100"))
         self.assertEqual(line.split()[3:], ["flagged=2", "later", "fixed", "among", "flagged=1", "(0.50)",
                                             "caught", "1", "of", "2"])
+
+    def test_size_comparison_excludes_immature_prs(self):
+        path = outcomes_file(self, [{"number": 1, "kind": "change", "additions": 999,
+                                     "deletions": 0, "files": 4, "fixed_by": [], "has_full_window": False}])
+        done = run_script("size_backtest.py", "--outcomes", path)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("no PRs", done.stdout)
+        self.assertNotIn("flagged=1", done.stdout)
+
+
+class GateBacktest(unittest.TestCase):
+    def test_real_gate_retains_violation_evidence(self):
+        repo = make_repo(self, {"package.json": '{"name":"a"}\n'})
+        commit(repo, {"package.json": '{"name":"a","name":"b"}\n'})
+        result = gate_backtest.run_gate("no-duplicate-package-json-keys", [], repo, "HEAD^")
+        self.assertEqual(result["status"], "violations")
+        self.assertEqual(result["returncode"], 1)
+        self.assertIn("duplicate", result["stdout"].lower())
+
+    def test_missing_gate_is_not_a_pass_and_keeps_diagnostic(self):
+        result = gate_backtest.run_gate("no-such-gate", [], ".", "HEAD^")
+        self.assertEqual(result["status"], "cannot-run")
+        self.assertIn("no_such_gate.py", result["stderr"])
+
+    def test_timeout_is_unmeasured_instead_of_losing_the_run(self):
+        with patch.object(gate_backtest.subprocess, "run", side_effect=subprocess.TimeoutExpired("gate", 600)):
+            result = gate_backtest.run_gate("gitleaks", [], ".", "HEAD^")
+        self.assertEqual(result["status"], "cannot-run")
+        self.assertIn("timed out", result["stderr"])
+
+    def test_violation_without_later_fix_is_not_labeled_false_alarm(self):
+        table = gate_backtest.confusion([{"number": 1, "fixed_by": []}],
+                                      {1: {"gate": {"status": "violations"}}}, "gate")
+        self.assertEqual(table["flagged_without_link"], 1)
+        self.assertNotIn("false_alarm", table)
 
 
 class BacktestDriver(unittest.TestCase):
@@ -142,8 +237,65 @@ class BacktestDriver(unittest.TestCase):
         self.assertIn("outside this public repository", done.stderr)
         self.assertFalse(inside.exists())
 
+    def test_symlink_into_public_repository_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            link = os.path.join(directory, "linked-output")
+            os.symlink(ROOT, link)
+            done = subprocess.run(["bash", str(ROOT / "research" / "backtest_repos.sh"), link,
+                                   "example/project"], capture_output=True, text=True, env=clean_env())
+            self.assertEqual(done.returncode, 2)
+            self.assertIn("outside this public repository", done.stderr)
+
 
 class MutationOperators(unittest.TestCase):
+    def test_absolute_and_parent_targets_never_touch_external_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outside = Path(directory) / "outside.py"
+            outside.write_text("VALUE = 1\n")
+            for target in (str(outside), "../outside.py"):
+                with self.assertRaisesRegex(ValueError, "repository-relative"):
+                    mutation_score.score(target, "test_value.py", 1)
+            self.assertEqual(outside.read_text(), "VALUE = 1\n")
+
+    def test_tracked_symlink_cannot_escape_scratch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outside = Path(directory) / "outside.py"
+            outside.write_text("VALUE = 1\n")
+            repo = make_repo(self, {"README.md": "fixture\n"})
+            os.symlink(outside, Path(repo) / "linked.py")
+            subprocess.run(["git", "-C", repo, "add", "linked.py"], check=True)
+            subprocess.run(["git", "-C", repo, "commit", "-qm", "link fixture"], check=True, env=clean_env())
+            with patch.object(mutation_score, "ROOT", Path(repo)):
+                with self.assertRaisesRegex(ValueError, "inside the scratch"):
+                    mutation_score.score("linked.py", "test_value.py", 1)
+            self.assertEqual(outside.read_text(), "VALUE = 1\n")
+
+    def test_source_and_tests_use_head_and_leave_dirty_work_unchanged(self):
+        repo = make_repo(self, {"value.py": "VALUE = 1\n",
+                               "tests/test_value.py": "import unittest\nfrom value import VALUE\nclass Value(unittest.TestCase):\n    def test_value(self):\n        self.assertEqual(VALUE, 1)\n"})
+        write(repo, {"value.py": "VALUE = 99\n"})
+        with patch.object(mutation_score, "ROOT", Path(repo)):
+            result = mutation_score.score("value.py", "test_value.py", 1)
+        self.assertEqual(result["killed"], 1)
+        self.assertEqual(result["score"], 1.0)
+        self.assertEqual(Path(repo, "value.py").read_text(), "VALUE = 99\n")
+
+    def test_empty_test_selection_is_unmeasured(self):
+        with tempfile.TemporaryDirectory() as directory:
+            os.mkdir(os.path.join(directory, "tests"))
+            self.assertEqual(mutation_score.run_tests(directory, "missing.py"), "cannot-run")
+
+    def test_test_timeout_is_not_a_killed_mutant(self):
+        with patch.object(mutation_score.subprocess, "run", side_effect=subprocess.TimeoutExpired("test", 300)):
+            self.assertEqual(mutation_score.run_tests(".", "test_x.py"), "cannot-run")
+
+    def test_real_passing_and_failing_assertions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            write(directory, {"tests/test_value.py": "import unittest\nclass Value(unittest.TestCase):\n    def test_value(self):\n        self.assertEqual(1, 1)\n"})
+            self.assertEqual(mutation_score.run_tests(directory, "test_value.py"), "survived")
+            write(directory, {"tests/test_value.py": "import unittest\nclass Value(unittest.TestCase):\n    def test_value(self):\n        self.assertEqual(1, 2)\n"})
+            self.assertEqual(mutation_score.run_tests(directory, "test_value.py"), "killed")
+
     def mutants(self, source):
         tree = ast.parse(source)
         return {description: ast.unparse(mutation_score.Mutate(index).apply(ast.parse(source)))

@@ -8,7 +8,7 @@ query($owner:String!,$name:String!,$endCursor:String){
       pageInfo{hasNextPage endCursor}
       nodes{
         number title state createdAt mergedAt closedAt author{login}
-        headRefName additions deletions changedFiles
+        headRefName baseRefName additions deletions changedFiles
         mergeCommit{oid}
         commits{totalCount}
         reviewThreads(first:100){totalCount nodes{isResolved comments(first:1){nodes{author{login}}}}}

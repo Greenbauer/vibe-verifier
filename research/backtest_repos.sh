@@ -9,11 +9,12 @@
 # MANIFEST is the gate list to replay (a wrapper's entry for that repository, say); without it the
 # repository's own .vibe-verifier is used, else the catalog's diff-scoped gates.
 # SINCE=YYYY-MM-DD limits the analysis to PRs merged on or after that date.
+# OBSERVED_AT is the metadata snapshot timestamp; only mature PRs enter comparisons.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 catalog="$(cd "$here/.." && pwd)"
-out="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "${1:?usage: $0 OUT_DIR OWNER/NAME[=MANIFEST] ...}")"
+out="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${1:?usage: $0 OUT_DIR OWNER/NAME[=MANIFEST] ...}")"
 shift
 [ "$#" -gt 0 ] || { echo "name at least one OWNER/NAME" >&2; exit 2; }
 case "$out/" in
@@ -48,15 +49,18 @@ for spec in "$@"; do
 
   echo "== $repo (manifest: $manifest)"
   "$here/fetch_prs.sh" "${repo%%/*}" "${repo#*/}" > "$dir/prs.jsonl"
-  python3 "$here/pr_outcomes.py" --repo "$dir/clone" --prs "$dir/prs.jsonl" --since "${SINCE:-}" --format json > "$dir/outcomes.json"
+  observed_at="${OBSERVED_AT:-$(python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat())')}"
+  python3 "$here/pr_outcomes.py" --repo "$dir/clone" --prs "$dir/prs.jsonl" --base-branch "$default_branch" --since "${SINCE:-}" --observed-at "$observed_at" --format json > "$dir/outcomes.json"
+  python3 "$here/gate_backtest.py" --repo "$dir/clone" --outcomes "$dir/outcomes.json" --manifest "$manifest" --format json > "$dir/gates.json"
+  python3 "$here/test_oracles.py" --repo "$dir/clone" --outcomes "$dir/outcomes.json" --labels "$dir/oracle-labels.csv" --format json > "$dir/oracles.json"
   {
     echo "# $repo, PRs merged since ${SINCE:-the start}"
     python3 -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1]))['summary'], indent=2))" "$dir/outcomes.json"
     echo "## PR size as a predictor"
     python3 "$here/size_backtest.py" --outcomes "$dir/outcomes.json"
     echo "## Test cases each PR touched"
-    python3 "$here/test_oracles.py" --repo "$dir/clone" --outcomes "$dir/outcomes.json" --labels "$dir/oracle-labels.csv"
+    python3 -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1]))['summary'], indent=2))" "$dir/oracles.json"
     echo "## Today's gates replayed"
-    python3 "$here/gate_backtest.py" --repo "$dir/clone" --outcomes "$dir/outcomes.json" --manifest "$manifest" | tail -n 20
+    python3 -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1]))['per_gate'], indent=2))" "$dir/gates.json"
   } | tee "$dir/summary.txt"
 done
