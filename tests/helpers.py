@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CI_VARIABLES = ("GITHUB_BASE_REF", "GITHUB_HEAD_REF", "GITHUB_REF_NAME", "GITHUB_REF_TYPE",
-                "VIBE_VERIFIER_BASE_REF", "GITHUB_STEP_SUMMARY")
+                "VIBE_VERIFIER_BASE_REF", "GITHUB_STEP_SUMMARY", "VIBE_VERIFIER_MANIFEST")
 
 
 def clean_env(extra=None):
