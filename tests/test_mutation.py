@@ -4,8 +4,11 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -84,9 +87,10 @@ class RealStryker(unittest.TestCase):
         self.assertEqual([p for p in os.listdir(repo) if p.startswith(".vibe-verifier-mutation-")], [])
 
     def test_a_test_that_imports_the_real_function_passes_in_a_project_below_the_root(self):
-        repo = self.project({"web/src/price.ts": PRICE_BEFORE, "web/src/price.test.ts": IMPORTING_TEST, "tsconfig.base.json": TSCONFIG,
-                             "web/tsconfig.json": json.dumps({"extends": "../tsconfig.base.json", "include": ["src"]})},
-                            {"web/src/price.ts": PRICE_AFTER, "lib/other.ts": "export const other = 1 + 1;\n"}, at="web/")
+        # Under a Next.js-style dynamic segment, a path Stryker refuses a line range on unless it is escaped.
+        repo = self.project({"web/src/[slug]/price.ts": PRICE_BEFORE, "web/src/[slug]/price.test.ts": IMPORTING_TEST,
+                             "tsconfig.base.json": TSCONFIG, "web/tsconfig.json": json.dumps({"extends": "../tsconfig.base.json", "include": ["src"]})},
+                            {"web/src/[slug]/price.ts": PRICE_AFTER, "lib/other.ts": "export const other = 1 + 1;\n"}, at="web/")
         result = gate("changed-code-mutation", repo, "--base-ref", "HEAD~1", "--project", "web")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertRegex(result.stderr, r"(\d+) of \1 mutant\(s\) on the changed lines killed: score 100%")
@@ -96,7 +100,7 @@ class RealStryker(unittest.TestCase):
 FAKE_STRYKER = r"""
 const fs = require("fs");
 const config = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
-fs.writeFileSync(process.env.VV_CAPTURE, JSON.stringify({config, cwd: process.cwd(), sandbox: fs.existsSync(config.tempDirName)}));
+fs.writeFileSync(process.env.VV_CAPTURE, JSON.stringify({config, cwd: process.cwd(), pid: process.pid, sandbox: fs.existsSync(config.tempDirName)}));
 const mode = process.env.VV_MODE || "report";
 if (mode === "hang") {
   setInterval(() => {}, 1000);
@@ -157,13 +161,14 @@ class StandInStryker(unittest.TestCase):
         head.insert(8, "const added = 1;\n")                      # added: line 9 at HEAD
         repo = self.repo({"src/a.ts": "".join(lines), "src/old.ts": padding, "src/gone.ts": "export const g = 1;\nexport const h = 2;\n"},
                          {"src/a.ts": "".join(head), "src/new.ts": "export const n = 1;\nexport const m = 2;\n",
-                          "src/gone.ts": "export const g = 1;\n"})
+                          "src/gone.ts": "export const g = 1;\n", "app/[id]/(group)/page.ts": "export const p = 1;\n"})
         git(repo, "mv", "src/old.ts", "src/moved.ts")
         commit(repo, {"src/moved.ts": padding.replace("keep3 = 3", "keep3 = 33")}, "move and change one line")
         result = self.run_gate(repo, base="HEAD~2")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.captured()["config"]["mutate"],
-                         ["src/a.ts:2-2", "src/a.ts:5-6", "src/a.ts:9-9", "src/moved.ts:4-4", "src/new.ts:1-2"])
+                         ["app/[[]id]/[(]group)/page.ts:1-1", "src/a.ts:2-2", "src/a.ts:5-6", "src/a.ts:9-9", "src/moved.ts:4-4",
+                          "src/new.ts:1-2"])
 
     def test_tests_types_config_stories_node_modules_and_excludes_are_not_mutated(self):
         repo = self.repo({"README.md": "x\n"},
@@ -210,6 +215,24 @@ class StandInStryker(unittest.TestCase):
         self.assertTrue(self.captured()["sandbox"])
         self.assertEqual([p for p in os.listdir(repo) if p.startswith(".vibe-verifier-mutation-")], [])
 
+    def test_a_cancelled_run_kills_stryker_and_cannot_run(self):
+        # Stryker runs in its own session, so a job's SIGTERM to the gate's group never reaches it on its own.
+        repo = self.repo({"README.md": "x\n"}, {"src/a.ts": "export const a = 1;\n"})
+        env = dict(os.environ, VIBE_VERIFIER_TOOLS=self.cache, VV_CAPTURE=self.capture, VV_MODE="hang")
+        gate_process = subprocess.Popen([sys.executable, str(ROOT / "gates" / "changed_code_mutation.py"), "--repo", repo,
+                                         "--base-ref", "HEAD~1"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        deadline = time.time() + 30
+        while not os.path.exists(self.capture) and time.time() < deadline:
+            time.sleep(0.1)
+        time.sleep(0.5)  # the capture is written before the fake starts idling
+        gate_process.send_signal(signal.SIGTERM)
+        _, stderr = gate_process.communicate(timeout=30)
+        self.assertEqual(gate_process.returncode, 2, stderr)
+        self.assertIn("stopped by SIGTERM before StrykerJS finished", stderr)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(self.captured()["pid"], 0)
+        self.assertEqual([p for p in os.listdir(repo) if p.startswith(".vibe-verifier-mutation-")], [])
+
     def test_a_failed_stryker_run_cannot_run_and_shows_why(self):
         repo = self.repo({"README.md": "x\n"}, {"src/a.ts": "export const a = 1;\n"})
         result = self.run_gate(repo, mode="fail")
@@ -246,6 +269,9 @@ class StandInStryker(unittest.TestCase):
             ("src/a.ts", 1, "mutant survived: every test still passed: `a > 1` -> `true` (ConditionalExpression)"),
             ("src/a.ts", 1, "mutant not covered: no test runs this code: `a > 1` -> `false` (ConditionalExpression)")])
         self.assertEqual(self.run_gate(repo, "--break", "61", "--soak", report=report).returncode, 0)
+        two_of_three = self.run_gate(repo, "--break", "67", report=self.scored(["Killed", "Killed", "Survived"]))
+        self.assertEqual(two_of_three.returncode, 1)
+        self.assertIn("is 66% (2 of 3 mutants killed), below --break 67", two_of_three.stdout)  # 66.7%, never shown as 67
 
     def test_no_scored_mutant_on_the_changed_lines_passes(self):
         repo = self.repo({"README.md": "x\n"}, {"src/a.ts": self.SOURCE})

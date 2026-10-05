@@ -70,6 +70,27 @@ def changed_ranges(repo, base, path, origin):
     return ranges
 
 
+def literal(path):
+    """`path` as a Stryker mutate glob that matches only itself. Stryker refuses a line range on a glob,
+    and minimatch reads a one-character class (`[[]`) as that character, not as a glob, so each `[`, `*`,
+    `?` and `(` becomes one: a Next.js `app/[id]/page.tsx` takes a range. Brace syntax (`{a,b}`) cannot be
+    escaped this way; Stryker matches no file for it, and the matched-file count refuses the run."""
+    return re.sub(r"[\[*?(]", lambda char: "[%s]" % char.group(0), path)
+
+
+def stop(process):
+    """Kill Stryker's whole process group (its test runner workers are in it) and reap it."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:  # the group already ended
+        pass
+    process.wait()  # not communicate(): a signal may have interrupted it mid-read, and nothing can write now
+
+
+def interrupted(signum, _frame):
+    raise CannotRun("stopped by %s before StrykerJS finished; no verdict" % signal.Signals(signum).name)
+
+
 def project_vitest(directory):
     """The version of the vitest Node would resolve from `directory`, or None."""
     directory = os.path.abspath(directory)
@@ -98,7 +119,7 @@ def stryker(tool, project_dir, ranges, timeout):
             # not run at all, and when no test does Stryker writes no report.
             "vitest": {"related": False},
             "coverageAnalysis": "perTest",
-            "mutate": ["%s:%d-%d" % (path, first, last) for path, spans in sorted(ranges.items()) for first, last in spans],
+            "mutate": ["%s:%d-%d" % (literal(path), first, last) for path, spans in sorted(ranges.items()) for first, last in spans],
             "reporters": ["json"],
             "jsonReporter": {"fileName": report_path},
             "tempDirName": os.path.basename(sandbox),
@@ -110,18 +131,23 @@ def stryker(tool, project_dir, ranges, timeout):
         with open(config_path, "w", encoding="utf-8") as handle:
             json.dump(config, handle)
         command = ["node", os.path.join(tool, "node_modules", "@stryker-mutator", "core", "bin", "stryker.js"), "run", config_path]
+        # Stryker runs in a session of its own so its whole process group can be killed, which also keeps a
+        # cancelled job's SIGTERM or a Ctrl-C from reaching it: both are caught here and kill the group.
+        signal.signal(signal.SIGTERM, interrupted)
+        signal.signal(signal.SIGINT, interrupted)
+        process = None
         try:
             process = subprocess.Popen(command, cwd=project_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        text=True, encoding="utf-8", errors="replace", start_new_session=True)
             output, _ = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)  # Stryker's test runner workers are in its process group
-            except ProcessLookupError:  # the group ended between the timeout and the kill
-                pass
-            process.communicate()
+            stop(process)
             raise CannotRun("StrykerJS did not finish within --timeout %ds; no verdict on any file. Raise --timeout or "
                             "--max-files on the base manifest, or split the pull request" % timeout)
+        except BaseException:
+            if process:
+                stop(process)
+            raise
         finally:
             shutil.rmtree(sandbox, ignore_errors=True)
         if process.returncode != 0:
@@ -174,14 +200,15 @@ def verdict(report, prefix, threshold):
         note("no mutant on the changed lines to score (%d left out)" % len(excluded))
         return []
     score = 100.0 * killed / scored
-    note("%d of %d mutant(s) on the changed lines killed: score %.0f%%, --break %g" % (killed, scored, score, threshold))
+    shown = "%d%%" % score  # truncated: 59.9% is shown as 59%, never as the 60 it failed
+    note("%d of %d mutant(s) on the changed lines killed: score %s, --break %g" % (killed, scored, shown, threshold))
     if score >= threshold:
         for (path, line), text in undetected:
             note("%s:%d: %s" % (path, line, text))
         return []
-    summary = ("mutation score on the changed lines is %.0f%% (%d of %d mutants killed), below --break %g. Each mutant below "
+    summary = ("mutation score on the changed lines is %s (%d of %d mutants killed), below --break %g. Each mutant below "
                "is a change to the code that no test failed on: test that behavior through the real code, or mark a mutant "
-               "no test can tell apart with `// Stryker disable next-line <Mutator>: <reason>`" % (score, killed, scored, threshold))
+               "no test can tell apart with `// Stryker disable next-line <Mutator>: <reason>`" % (shown, killed, scored, threshold))
     return [Finding(summary)] + [Finding(text, path, line) for (path, line), text in undetected]
 
 

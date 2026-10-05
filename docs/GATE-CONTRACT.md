@@ -395,7 +395,7 @@ against it. A mutant every test still passes on survived.
 
 ```
 changed-code-mutation                                       # a Vitest project at the repository root
-changed-code-mutation --project apps/web --exclude '**/[*]/**' --soak
+changed-code-mutation --project apps/web --break 70 --soak
 ```
 
 - **Only the changed lines.** The gate takes the non-test JS and TS source files changed since the
@@ -404,7 +404,9 @@ changed-code-mutation --project apps/web --exclude '**/[*]/**' --soak
   diff added or modified at `HEAD` (`git diff -U0`; a moved file is compared with itself at its old
   path, and a deletion leaves nothing to mutate). Those ranges are Stryker's `file:start-end`
   mutate ranges, so a mutant is made only where the edited code lies wholly inside a range. Whole
-  files are never mutated.
+  files are never mutated. Stryker refuses a range on a path its glob syntax reads as a pattern, so
+  the gate escapes each `[`, `*`, `?` and `(` as a one-character class (`app/[[]id]/page.tsx`), which
+  matches only that path: Next.js dynamic segments and route groups are judged like any other file.
 - **The project's own Vitest.** It is resolved from `--project` the way Node resolves it, so a
   copy hoisted to the repository root counts. The gate installs nothing for the project: the job
   runs `npm ci` (or the project's equivalent) first. No Vitest, or a Vitest outside 2.x to 4.x, is
@@ -430,17 +432,23 @@ changed-code-mutation --project apps/web --exclude '**/[*]/**' --soak
   `// Stryker disable next-line <Mutator>: <reason>`: head-controlled and visible in the diff,
   like the other tools' escape hatches.
 - **Bounded, never partial.** More than `--max-files` changed source files (default 20), or a run
-  longer than `--timeout` seconds (default 900; Stryker's whole process group is killed and its
-  sandbox removed), is exit 2 naming the bound, never a verdict on part of the change. The cost is
-  one run of the whole suite plus, per mutant, the tests that cover it. The canonical stub installs
-  no dependencies and stops its job at 5 minutes, so a repository subscribes to this gate from a
-  job that runs `npm ci` and then `actions/gates`, with a job timeout above `--timeout`.
+  longer than `--timeout` seconds (default 900), is exit 2 naming the bound, never a verdict on
+  part of the change. On the timeout, and on a SIGTERM or SIGINT to the gate (a cancelled job, a
+  Ctrl-C), Stryker's whole process group is killed and its sandbox removed. The cost is one run of
+  the whole suite plus, per mutant, the tests that cover it, or the whole suite again when no test
+  loads the changed file.
+- **Subscribing.** The canonical stub installs no dependencies and stops its job at 5 minutes, and it
+  runs every gate in `.vibe-verifier`, so this gate is not listed there: there it would be exit 2 on
+  every pull request that changes source. It goes in a manifest file of its own, such as
+  `.vibe-verifier-tests`, run by a second job that runs `npm ci` (or the project's equivalent) and
+  then `actions/gates` with `manifest: .vibe-verifier-tests`, under a job timeout above `--timeout`.
+  The runner judges that file from the base like any manifest in the repository. Not `entries:`: in
+  a repository's own workflow a pull request can edit it.
 - **Exit 2 also when** the suite fails at `HEAD` (Stryker cannot measure a red suite), Stryker exits
-  non-zero, or Stryker matched fewer files than it was given. That last is read from its
+  non-zero, or Stryker matched fewer files than it was given, such as a path with brace syntax
+  (`{a,b}`), which no escape makes literal. That last is read from Stryker's own
   "Found N of M file(s) to be mutated" line, because a file whose changed lines hold no mutant is
-  absent from its report. Stryker 10 refuses a line range on a path with glob characters, so a
-  Next.js dynamic segment such as `app/[id]/page.tsx` cannot be judged: exclude those with
-  `--exclude '**/[*]/**'`.
+  absent from its report.
 - **What it does not catch.** CSS and markup; behavior only an end-to-end or browser test reaches
   (the [QAE harness](../harnesses/qae/README.md) covers that); code no unit test can load; and
   equivalent mutants, which survive whatever the tests do. A flaky test can kill a mutant by
