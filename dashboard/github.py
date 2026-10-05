@@ -69,12 +69,14 @@ class GitHubCollector:
         self._completed_jobs: dict[tuple[str, int, int], tuple[datetime, list[dict]]] = {}
         self._job_lock = threading.Lock()
         self._workflows: dict[str, tuple[datetime, set[str]]] = {}
+        self._pins: dict[tuple, tuple[str, datetime]] = {}
 
     def clear_private_cache(self) -> None:
         with self._job_lock:
             self._jobs.clear()
             self._completed_jobs.clear()
             self._workflows.clear()
+            self._pins.clear()
 
     def _prune_job_cache(self, now: datetime) -> None:
         with self._job_lock:
@@ -220,16 +222,73 @@ class GitHubCollector:
                                                               row.get("updated_at") if row.get("status") == "completed" else None,
                                                               self.clock()),
                            "html_url": github_url(row.get("html_url"), self.config.owner), "jobs": jobs,
+                           "required_workflow": "/actions/required_workflows/" in str(row.get("workflow_url") or ""),
                            "step_summary": step_summary(jobs)})
         return sorted(result, key=lambda row: _time_key(row, "started_at", "created_at"), reverse=True)
 
+    def _pin_since(self, repository: str, rule: dict, workflow: dict) -> datetime | None:
+        """When the ruleset started requiring this workflow at its current pinned SHA.
+
+        A required workflow runs at the SHA pinned when its triggering event fired, so after the pin
+        moves GitHub waits for a new run and ignores older ones. A given pin's start never changes,
+        so it is cached until the pin moves."""
+        key = (rule.get("ruleset_id"), workflow.get("path"), workflow.get("repository_id"))
+        sha = workflow.get("sha")
+        cached = self._pins.get(key)
+        if cached and cached[0] == sha:
+            return cached[1]
+        if rule.get("ruleset_source_type") == "Organization":
+            base = "orgs/%s/rulesets/%s/history" % (rule.get("ruleset_source"), key[0])
+        else:
+            base = "repos/%s/rulesets/%s/history" % (repository, key[0])
+        since = None
+        for version in sorted(self.api.items(_endpoint(base, per_page=100)),
+                              key=lambda row: _time_key(row, "updated_at"), reverse=True):
+            state = self.api.one("%s/%s" % (base, version.get("version_id"))).get("state") or {}
+            pins = {(pinned.get("path"), pinned.get("repository_id")): pinned.get("sha")
+                    for old in state.get("rules") or [] if old.get("type") == "workflows"
+                    for pinned in (old.get("parameters") or {}).get("workflows") or []}
+            if pins.get(key[1:]) != sha:
+                break
+            since = parse_time(version.get("updated_at"))
+        if since:
+            self._pins[key] = (sha, since)
+        return since
+
+    def _expected(self, repository: str, rules: list[dict], evidence: list[dict], runs: list[dict]) -> list[dict]:
+        """Checks the base branch's rulesets require that have not reported on this head.
+
+        GitHub lists these as "Expected" without creating a check run for them, so they are absent
+        from the evidence above. A required workflow run from before its pin moved does not count."""
+        reported = {row["name"] for row in evidence}
+        missing = []
+        for rule in rules:
+            parameters = rule.get("parameters") or {}
+            if rule.get("type") == "required_status_checks":
+                missing += [(item["context"], "Required status check")
+                            for item in parameters.get("required_status_checks") or []
+                            if item["context"] not in reported]
+            elif rule.get("type") == "workflows":
+                for workflow in parameters.get("workflows") or []:
+                    path = workflow["path"]
+                    matching = [run for run in runs if run["required_workflow"] and run["path"] == path]
+                    since = self._pin_since(repository, rule, workflow) if matching else None
+                    if not any(since and _time_key(run, "created_at") >= since for run in matching):
+                        missing.append((matching[0]["name"] if matching else path.rsplit("/", 1)[-1],
+                                        "Required workflow, not run at its current pin"))
+        return [{"id": None, "suite_id": None, "name": name[:200], "provider": provider, "status": "expected",
+                 "conclusion": None, "category": "pending", "started_at": None, "completed_at": None,
+                 "elapsed_seconds": None, "details_url": None} for name, provider in missing]
+
     @staticmethod
-    def _attention(evidence: list[dict], runs: list[dict]) -> tuple[bool, str]:
+    def _attention(evidence: list[dict], runs: list[dict], expected: list[dict]) -> tuple[bool, str]:
         categories = [row["category"] for row in evidence]
         if "failed" in categories:
             return True, "A current-head check failed"
         if "cancelled" in categories:
             return True, "A current-head check was cancelled"
+        if expected:
+            return True, "%d required check%s not run on this head" % (len(expected), "" if len(expected) == 1 else "s")
         if any(job["status"] == "waiting" or job["conclusion"] == "action_required"
                for run in runs for job in run["jobs"]):
             return True, "GitHub reports a job waiting for action"
@@ -247,7 +306,7 @@ class GitHubCollector:
                 "html_url": github_url(row.get("html_url"), self.config.owner),
                 "subscription": inventory["subscription"]}
 
-    def _pull(self, repository: str, row: dict, inventory: dict) -> dict:
+    def _pull(self, repository: str, row: dict, inventory: dict, rules: list[dict] = ()) -> dict:
         identity = self._pull_identity(repository, row, inventory)
         number, sha = identity["number"], identity["head_sha"]
         if not isinstance(number, int) or not isinstance(sha, str):
@@ -260,24 +319,30 @@ class GitHubCollector:
             return {**identity, "head_sha": (current.get("head") or {}).get("sha"), "head_changed": True,
                     "evidence_available": False, "attention": True,
                     "attention_reason": "Head changed while GitHub evidence was loading",
-                    "checks": [], "statuses": [], "runs": []}
-        attention, reason = self._attention(checks + statuses, runs)
+                    "checks": [], "statuses": [], "expected": [], "runs": []}
+        expected = self._expected(repository, rules, checks + statuses, runs)
+        attention, reason = self._attention(checks + statuses, runs, expected)
         return {**identity, "head_changed": False, "evidence_available": True,
                 "attention": attention, "attention_reason": reason,
-                "checks": checks, "statuses": statuses, "runs": runs}
+                "checks": checks, "statuses": statuses, "expected": expected, "runs": runs}
 
     def _repository(self, repository: str, inventory: dict) -> dict:
         rows = self.api.items(_endpoint("repos/%s/pulls" % repository, state="open", per_page=100))
-        pulls, errors = [], []
+        pulls, errors, rules = [], [], {}
         for row in rows:
             try:
-                pulls.append(self._pull(repository, row, inventory))
+                base = (row.get("base") or {}).get("ref")
+                if isinstance(base, str) and base not in rules:
+                    rules[base] = self.api.items(_endpoint("repos/%s/rules/branches/%s" % (repository, quote(base, safe="")),
+                                                           per_page=100))
+                pulls.append(self._pull(repository, row, inventory, rules.get(base, [])))
             except ApiError as error:
                 identity = self._pull_identity(repository, row, inventory)
                 pulls.append({**identity, "head_changed": False, "evidence_available": False,
                               "unavailable": True, "attention": True,
                               "attention_reason": "Current-head evidence is unavailable",
-                              "checks": [], "statuses": [], "runs": [], "source_error": error.code})
+                              "checks": [], "statuses": [], "expected": [], "runs": [],
+                              "source_error": error.code})
                 errors.append({"pull": row.get("number"), "code": error.code})
         return {"repository": repository, **inventory, "pulls": pulls, "errors": errors}
 
