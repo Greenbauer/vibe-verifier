@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .config import Config
+from .favicon import Favicon
 from .service import DashboardService
 from .live_service import LiveService
 
@@ -31,9 +32,11 @@ def safe_json(value: object) -> bytes:
 class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], service: DashboardService, proxy_origin: str | None):
+    def __init__(self, address: tuple[str, int], service: DashboardService, proxy_origin: str | None,
+                 favicon: Favicon):
         self.service = service
         self.proxy_origin = proxy_origin
+        self.favicon = favicon
         super().__init__(address, DashboardHandler)
 
 
@@ -128,6 +131,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._headers(200, "application/json; charset=utf-8", len(body))
             self.wfile.write(body)
             return
+        if path == "/favicon.svg":
+            body = self.server.favicon.svg()
+            self._headers(200, "image/svg+xml", len(body))
+            self.wfile.write(body)
+            return
         item = FILES.get(path)
         if item is None:
             self._deny(404, "not found")
@@ -150,4 +158,5 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def make_server(config: Config, port: int, service: DashboardService | None = None) -> DashboardServer:
-    return DashboardServer(("127.0.0.1", port), service or LiveService(config), config.proxy_origin)
+    return DashboardServer(("127.0.0.1", port), service or LiveService(config), config.proxy_origin,
+                           Favicon(config.owner))
