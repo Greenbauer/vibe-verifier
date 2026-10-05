@@ -264,7 +264,9 @@ same. What differs, and why:
   dedicated to this work.
 - **What the runner needs.** Linux x64 with a dedicated unprivileged runner user, the Playwright
   system packages (`playwright install-deps chromium`, once, as root: `actions/qae-browser` installs
-  them itself only as root or through passwordless sudo, and otherwise installs the browser alone),
+  them itself only as root or through passwordless sudo, and otherwise installs the browser alone;
+  both lanes start playwright-mcp with `--browser chromium`, that installed build, so the runner
+  needs no Google Chrome),
   node for `actions/setup-node`, and the label `qae-codex`. Register one runner per repository; a personal account has no shared
   runner pool. Keep it off any box that must stay credential-free. Pointed at a
   [reachable preview](#a-reachable-preview-instead-of-a-site-on-the-runner), the runner installs and
