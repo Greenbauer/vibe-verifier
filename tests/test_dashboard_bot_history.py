@@ -61,6 +61,10 @@ class BotAPI:
         self.completed = completed if completed is not None else []
         self.jobs = jobs or {}
         self.calls = []
+        self.cache_cleared = False
+
+    def clear_cache(self):
+        self.cache_cleared = True
 
     def items(self, requested, key=None):
         self.calls.append(("items", requested, key))
@@ -206,6 +210,7 @@ class HistoryBounds(unittest.TestCase):
         collector.clear_private_cache()
         self.assertEqual(collector._workflows, {})
         self.assertEqual(collector._completed_jobs, {})
+        self.assertTrue(api.cache_cleared)
 
     def test_failed_workflow_discovery_is_unknown_but_positive_activity_survives(self):
         other = "octocat/unreadable"

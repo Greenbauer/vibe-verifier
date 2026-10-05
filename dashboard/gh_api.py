@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import subprocess
 import threading
@@ -16,8 +17,25 @@ class ApiError(RuntimeError):
         self.code = code
 
 
+def _split_response(stdout: str) -> tuple[int, dict[str, str], str]:
+    """Split `gh api --include` output into the status code, lower-cased headers, and the body."""
+    head, _, body = stdout.replace("\r\n", "\n").partition("\n\n")
+    lines = head.split("\n")
+    try:
+        status = int(lines[0].split()[1])
+    except (IndexError, ValueError):
+        raise ApiError("invalid_response") from None
+    headers = {name.strip().lower(): value.strip()
+               for name, _, value in (line.partition(":") for line in lines[1:])}
+    return status, headers, body
+
+
 class GitHubAPI:
-    """A thread-safe reader with a hard budget counted per HTTP page."""
+    """A thread-safe reader with a hard budget counted per HTTP page.
+
+    Responses carrying an ETag are kept and re-requested conditionally. GitHub answers an unchanged
+    resource with 304, which does not count against its rate limit, so a 304 also returns its budget
+    unit. Only entries used during the previous refresh survive into the next one."""
 
     def __init__(self, *, max_calls: int = 200, timeout: int = 30, clock=time.time,
                  runner=subprocess.run):
@@ -28,12 +46,21 @@ class GitHubAPI:
         self.calls = 0
         self.backoff_until = 0.0
         self._lock = threading.Lock()
+        self._generation = 0
+        self._cache: dict[str, tuple[str, object, int]] = {}
 
     def begin(self) -> None:
         with self._lock:
             self.calls = 0
+            self._generation += 1
+            self._cache = {endpoint: entry for endpoint, entry in self._cache.items()
+                           if entry[2] >= self._generation - 1}
             if self.clock() < self.backoff_until:
                 raise ApiError("rate_limited")
+
+    def clear_cache(self) -> None:
+        with self._lock:
+            self._cache.clear()
 
     def _classify_error(self, stderr: str) -> str:
         lowered = stderr.lower()
@@ -56,17 +83,42 @@ class GitHubAPI:
             if self.calls >= self.max_calls:
                 raise ApiError("request_budget_exhausted")
             self.calls += 1
+            cached = self._cache.get(endpoint)
+        command = ["gh", "api", "--include", endpoint]
+        if cached:
+            command += ["--header", "If-None-Match: %s" % cached[0]]
         try:
-            result = self.runner(["gh", "api", endpoint], capture_output=True, text=True,
-                                 timeout=self.timeout)
+            result = self.runner(command, capture_output=True, text=True, timeout=self.timeout)
         except (OSError, subprocess.TimeoutExpired):
             raise ApiError("unavailable") from None
         if result.returncode != 0:
-            raise ApiError(self._classify_error(result.stderr))
+            status, headers = _split_response(result.stdout)[:2] if result.stdout else (None, {})
+            if cached and status == 304:
+                with self._lock:
+                    self.calls -= 1
+                    self._cache[endpoint] = (cached[0], cached[1], self._generation)
+                return copy.deepcopy(cached[1])
+            code = self._classify_error(result.stderr)
+            # Each owner's repositories can draw on a different hourly bucket, so the reset GitHub
+            # reports on the refused request is the only reliable time to try again.
+            if code == "rate_limited" and headers.get("x-ratelimit-remaining") == "0":
+                try:
+                    reset = float(headers.get("x-ratelimit-reset", ""))
+                except ValueError:
+                    reset = 0.0
+                with self._lock:
+                    self.backoff_until = max(self.backoff_until, reset)
+            raise ApiError(code)
+        _, headers, body = _split_response(result.stdout)
+        etag = headers.get("etag")
         try:
-            return json.loads(result.stdout)
+            value = json.loads(body)
         except json.JSONDecodeError:
             raise ApiError("invalid_response") from None
+        if etag:
+            with self._lock:
+                self._cache[endpoint] = (etag, copy.deepcopy(value), self._generation)
+        return value
 
     @staticmethod
     def _page_endpoint(endpoint: str, page: int) -> str:
