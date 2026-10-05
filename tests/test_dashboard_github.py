@@ -280,20 +280,72 @@ class RepositoryCoverage(unittest.TestCase):
         self.assertEqual(result["errors"], [{"pull": 3, "code": "unavailable"}])
 
 
+def http(status, body="", etag=None, extra=()):
+    """What `gh api --include` prints: a status line, CRLF headers, a blank line, then the body."""
+    lines = ["Content-Type: application/json", *(["Etag: " + etag] if etag else []), *extra]
+    return "HTTP/2.0 %d Status\n%s\r\n%s" % (status, "".join(line + "\r\n" for line in lines), body)
+
+
 class ApiTransport(unittest.TestCase):
     def test_each_explicit_page_consumes_one_request_budget_unit(self):
         commands = []
 
         def runner(command, **kwargs):
             commands.append(command)
-            page = 2 if "page=2" in command[2] else 1
+            page = 2 if "page=2" in command[3] else 1
             rows = [{"id": number} for number in range(100)] if page == 1 else [{"id": 100}]
-            return subprocess.CompletedProcess(command, 0, json.dumps(rows), "")
+            return subprocess.CompletedProcess(command, 0, http(200, json.dumps(rows)), "")
         api = GitHubAPI(runner=runner)
         self.assertEqual(len(api.items("repos/octocat/example/pulls")), 101)
         self.assertEqual(api.calls, 2)
-        self.assertEqual(commands[0], ["gh", "api", "repos/octocat/example/pulls?per_page=100&page=1"])
-        self.assertEqual(commands[1], ["gh", "api", "repos/octocat/example/pulls?per_page=100&page=2"])
+        self.assertEqual(commands[0], ["gh", "api", "--include", "repos/octocat/example/pulls?per_page=100&page=1"])
+        self.assertEqual(commands[1], ["gh", "api", "--include", "repos/octocat/example/pulls?per_page=100&page=2"])
+
+    def test_unchanged_response_is_reused_and_returns_its_budget_unit(self):
+        commands, answers = [], [(0, http(200, '{"state": "pending"}', 'W/"v1"'), ""),
+                                 (1, http(304, etag='"v1"'), "gh: HTTP 304"),
+                                 (0, http(200, '{"state": "success"}', 'W/"v2"'), "")]
+
+        def runner(command, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, *answers[len(commands) - 1])
+        api = GitHubAPI(runner=runner)
+        api.begin()
+        self.assertEqual(api.one("repos/o/r/commits/a/status"), {"state": "pending"})
+        api.begin()
+        unchanged = api.one("repos/o/r/commits/a/status")
+        self.assertEqual(unchanged, {"state": "pending"})
+        self.assertEqual(api.calls, 0)
+        self.assertEqual(commands[1][-2:], ["--header", 'If-None-Match: W/"v1"'])
+        unchanged["state"] = "mutated by a caller"
+        api.begin()
+        self.assertEqual(api.one("repos/o/r/commits/a/status"), {"state": "success"})
+        self.assertEqual(api.calls, 1)
+
+    def test_cache_keeps_only_last_refresh_entries_and_clears_on_request(self):
+        def runner(command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, http(200, "{}", '"tag"'), "")
+        api = GitHubAPI(runner=runner)
+        api.begin()
+        api.one("old")
+        api.one("kept")
+        api.begin()
+        api.one("kept")
+        api.begin()
+        self.assertEqual(set(api._cache), {"kept"})
+        api.clear_cache()
+        self.assertEqual(api._cache, {})
+
+    def test_failure_on_a_cached_endpoint_is_not_served_from_cache(self):
+        answers = [(0, http(200, "{}", '"tag"'), ""), (1, "", "HTTP 404: Not Found")]
+
+        def runner(command, **kwargs):
+            return subprocess.CompletedProcess(command, *answers.pop(0))
+        api = GitHubAPI(runner=runner)
+        api.one("repos/o/r/pulls/1")
+        with self.assertRaisesRegex(ApiError, "not_found"):
+            api.one("repos/o/r/pulls/1")
+        self.assertEqual(api.calls, 2)
 
     def test_rate_limit_errors_are_sanitized_and_back_off(self):
         def runner(command, **kwargs):
@@ -303,6 +355,17 @@ class ApiTransport(unittest.TestCase):
             api.items("rate_limit")
         self.assertNotIn("secret", str(caught.exception))
         self.assertEqual(api.backoff_until, 160)
+
+    def test_exhausted_hourly_limit_backs_off_until_the_reported_reset(self):
+        def runner(command, **kwargs):
+            return subprocess.CompletedProcess(command, 1, http(403, "{}", extra=(
+                "X-Ratelimit-Remaining: 0", "X-Ratelimit-Reset: 700")), "gh: API rate limit exceeded for user ID 1.")
+        api = GitHubAPI(runner=runner, clock=lambda: 100)
+        with self.assertRaisesRegex(ApiError, "rate_limited"):
+            api.one("repos/o/r/pulls/1")
+        self.assertEqual(api.backoff_until, 700)
+        with self.assertRaisesRegex(ApiError, "rate_limited"):
+            api.begin()
 
     def test_request_budget_is_a_hard_bound(self):
         api = GitHubAPI(max_calls=0)

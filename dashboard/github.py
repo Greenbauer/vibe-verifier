@@ -77,6 +77,7 @@ class GitHubCollector:
             self._completed_jobs.clear()
             self._workflows.clear()
             self._pins.clear()
+        self.api.clear_cache()
 
     def _prune_job_cache(self, now: datetime) -> None:
         with self._job_lock:
