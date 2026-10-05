@@ -81,7 +81,9 @@ trusted private HTTPS proxy. It does not change the gate runner.
 
 - **[Code review](harnesses/review/README.md):** Reviews a pull request against your
   repository's `CLAUDE.md` rules. The check requires a completed review of the current
-  commit and no unresolved review threads.
+  commit and no unresolved review threads. If the reviewer's Claude subscription is rate-limited,
+  the check passes with a warning instead, records that the commit was not reviewed, and the next
+  review covers it.
 - **[Browser testing](harnesses/qae/README.md):** Uses AI to try the behavior described
   in the pull request's acceptance criteria, saving screenshots and logs for review.
   Checks flag missing evidence, recorded console errors, and failed requests to your

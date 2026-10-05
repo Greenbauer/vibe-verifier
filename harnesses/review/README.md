@@ -16,10 +16,12 @@ template; the consumer owns `runs-on`, the token secret, and the two catalog pin
 1. **review** checks out the head with `persist-credentials: false`, pins every `CLAUDE.md` and
    `.claude/**` to the base ref (a hostile head could add one as an injection foothold), computes
    the scope, runs `claude-code-action` with [`prompt.md`](prompt.md) when there is something new
-   to review, and then posts
+   to review, reads how the run ended from the action's execution log, and then posts
    `review-receipt: <head sha> -- <mode> -- run <id>` as a PR comment. The receipt step is reached
-   only when every step before it succeeded, so a provider failure, a model error or a broken step
-   leaves no receipt for this head. Usage collection and upload run under `always()` so a failed
+   only when every step before it succeeded, so an invalid or missing token, a crash, a model error
+   or a broken step leaves no receipt for this head. The one exception is a run whose reviewer
+   subscription proved a rate or usage limit: it passes with a warning and its receipt's mode is
+   `limited` (see the rules below). Usage collection and upload run under `always()` so a failed
    review can retain partial statistics without making the review green. These steps follow the receipt:
    a capture failure does not suppress evidence of a completed review, but still fails the review job.
 2. **verify** writes the declared inputs (the head SHA, the newest receipt posted by the workflow's
@@ -34,15 +36,37 @@ the `DELTA_FILES` value in `$GITHUB_ENV`; git C-quotes control characters, so no
 can), **delta** (only the PR files changed since the last
 receipt, so the loop converges: each push shrinks what needs review, and earlier findings stand),
 **nochange** (nothing new since the last receipt: the model is not run and the receipt is posted
-for this head, which is how a re-run after resolving threads turns the gate green).
+for this head, which is how a re-run after resolving threads turns the gate green). A `limited`
+receipt is never the last receipt for this purpose: nothing was reviewed under it, so the next real
+review covers everything it let through.
 
 ## Rules the harness obeys
 
 - **The receipt is the workflow's.** Deterministic text from a step the model cannot reach, keyed
   to the exact head. A receipt for an older commit is not a receipt for this one: a push after
   the review is a change nobody reviewed.
-- **A review that did not complete is red, never green.** No `continue-on-error`, no "skipped
-  review" comment that passes. The gate says why: no receipt for this head.
+- **A review that did not complete is red, unless the reviewer subscription is rate-limited.**
+  The review step runs under `continue-on-error` only so the next step, "Require a completed
+  review", can read the execution log; that step decides. A completed review (the step succeeded
+  and the final result object is a success that is not an error, took at least two turns and cost
+  something) gets its receipt. A run that did not complete and whose log proves a rate or usage
+  limit passes with a `::warning::` that the review did not run because the reviewer subscription
+  is rate-limited, and posts `review-receipt: <sha> -- limited -- run <id>` (decided by the
+  operator on 2026-10-03). Every other ending stays red with no receipt: an invalid or missing
+  token (a 401 "Invalid bearer token", "Not logged in"), a crash, a timeout, the turn cap, a model
+  error. The gate says why: no receipt for this head.
+- **Limited is proven structurally, never read from prose.** The proof is an SDK
+  `rate_limit_event` whose status is `rejected` or `rate_limit`, or a final result object that is an
+  error carrying the CLI's limit message ("You've hit your limit", "usage limit reached", "rate
+  limit") or Anthropic's `rate_limit_error` type. A completed review is never limited, so a diff
+  that merely contains that wording cannot fake one. The action is pinned at v1.0.171 or later
+  because older versions wrote no execution log when the SDK died on a usage limit, which left a
+  limit indistinguishable from a crash.
+- **A limited pass is visible and temporary.** Unlike the old copy that turned a quota failure
+  into a quiet green check, the job warns, the receipt says `limited`, and the scope step never
+  anchors on it. The verify gate accepts a `limited` receipt only for the exact head and still
+  requires zero unresolved threads when `--threads` is wired. Re-run the workflow once the limit
+  resets to get the real review.
 - **Unresolved threads block, when wired.** `--threads` in the manifest makes every unresolved
   review thread a finding, which is the operator's merge rule enforced by a machine on a plan with
   no branch protection. Resolve each thread (reply, then resolve), then re-run the workflow; with
@@ -69,3 +93,7 @@ Copy `review.yml` to `.github/workflows/review.yml` and `manifest` to `.vibe-ver
 pin the catalog actions, set `CLAUDE_CODE_OAUTH_TOKEN`, remove the old `claude-review.yml`, and
 put any repository-specific review focus under a heading in CLAUDE.md. The subscription PR's own
 run is the first review.
+
+A change to `review.yml` reaches a copy only when the copy is edited: `apply-down` moves the pins,
+and `consumers` reports a copy that differs from this file outside the lines the consumer owns as
+drift until it is copied again.

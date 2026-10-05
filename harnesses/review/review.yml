@@ -70,8 +70,10 @@ jobs:
           # Slurped, not filtered per page: with --paginate, --jq runs on each page and would print one
           # "last" per page once the pull request passes 100 comments; a two-line LAST is no commit,
           # and the receipt below could be a stale one (found by review on a wrapper's copy, 2026-09-24).
+          # A `limited` receipt (the reviewer subscription was rate-limited, nothing reviewed) is never
+          # the anchor, so the next real review covers everything it let through.
           LAST=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
-            | jq -r -s '[.[][] | select(.user.login == "github-actions[bot]") | .body | capture("review-receipt: (?<sha>[0-9a-f]{40})") | .sha] | last // ""')
+            | jq -r -s '[.[][] | select(.user.login == "github-actions[bot]") | select(.body | contains(" -- limited -- ") | not) | .body | capture("review-receipt: (?<sha>[0-9a-f]{40})") | .sha] | last // ""')
           mode="full"
           if [ -n "$LAST" ] && git cat-file -e "${LAST}^{commit}" 2>/dev/null && git merge-base --is-ancestor "$LAST" HEAD 2>/dev/null; then
             PR_FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD")
@@ -98,7 +100,13 @@ jobs:
       - name: Review
         id: reviewer
         if: env.REVIEW_MODE != 'nochange'
-        uses: anthropics/claude-code-action@e58dfa55559035499a4982426bb73605e8b5ad8e # v1.0.105
+        # continue-on-error only so "Require a completed review" can read how the run ended; it never
+        # makes the gate optional: that step fails the job unless the review completed or the run
+        # proved a rate or usage limit, and without it the receipt is never posted. v1.0.171 (from
+        # v1.0.105): the older action wrote no execution log when the SDK died on a usage limit, so a
+        # limit could not be told from a crash.
+        continue-on-error: true
+        uses: anthropics/claude-code-action@e90deca47693f9457b72f2b53c17d7c445a87342 # v1.0.171
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -157,10 +165,65 @@ jobs:
             --model claude-opus-4-7
             --max-turns ${{ env.REVIEW_MAX_TURNS }}
             --allowed-tools "mcp__github_inline_comment__create_inline_comment,mcp__github__get_pull_request_diff,mcp__github__get_pull_request_files,mcp__github__get_file_contents"
+      - name: Require a completed review
+        # The execution log decides, read structurally (SDK event types, the final result object and
+        # its error envelope), never the model's prose, so a diff that merely contains limit wording
+        # cannot fake a verdict. A completed review (the step succeeded and the final result is a
+        # success that is not an error, took at least two turns and cost something) passes. The one
+        # pass without a review (operator, 2026-10-03): a run that did not complete and whose log
+        # proves a rate or usage limit, a `rate_limit_event` that was rejected or an error result
+        # carrying the limit message or Anthropic's `rate_limit_error`, warns and makes the receipt
+        # below say `limited`. Anything else (an invalid or missing token, a crash, the turn cap, a
+        # model error) fails the job, so no receipt is posted and the verify job stays red.
+        if: env.REVIEW_MODE != 'nochange'
+        env:
+          OUTCOME: ${{ steps.reviewer.outcome }}
+          EXECUTION_FILE: ${{ steps.reviewer.outputs.execution_file }}
+        run: |
+          set -uo pipefail
+          completed=false
+          limited=false
+          if [ -n "${EXECUTION_FILE:-}" ] && [ -f "$EXECUTION_FILE" ]; then
+            jq -c '(if type == "array" then . else [.] end) | .[] | select(type == "object")
+                   | if .type == "rate_limit_event" then {type, status: (.rate_limit_info.status? // .error?)}
+                     elif .type == "result" then {type, subtype, is_error, num_turns, total_cost_usd}
+                     else empty end' "$EXECUTION_FILE" || true
+            completed=$(jq -r '
+              (if type == "array" then . else [.] end)
+              | [ .[] | select(type == "object" and .type == "result") ] | last
+              | if . == null then false
+                else (.subtype == "success" and ((.is_error // false) | not)
+                      and ((.num_turns // 0) >= 2) and ((.total_cost_usd // 0) > 0)) end
+            ' "$EXECUTION_FILE" 2>/dev/null || echo false)
+            limited=$(jq -r '
+              (if type == "array" then . else [.] end)
+              | any(.[]; type == "object" and .type == "rate_limit_event"
+                    and (((.rate_limit_info.status? // .error? // "") | tostring) as $s
+                         | $s == "rejected" or $s == "rate_limit"))
+                or ([ .[] | select(type == "object" and .type == "result") ] | last
+                    | . != null and .is_error == true
+                      and ([(.result // ""), ((.errors // []) | tostring)] | join(" ") | ascii_downcase
+                           | test("hit your .*limit") or contains("usage limit reached")
+                             or contains("rate limit") or contains("rate_limit_error")))
+            ' "$EXECUTION_FILE" 2>/dev/null || echo false)
+          fi
+          echo "review step: ${OUTCOME:-unknown}; completed=${completed}; rate_limited=${limited}"
+          if [ "$completed" = true ]; then
+            [ "${OUTCOME:-}" = success ] && exit 0
+          elif [ "$limited" = true ]; then
+            echo "::warning::The review did not run: the reviewer subscription is rate-limited. This head was NOT reviewed. Its receipt says limited and is never a review anchor, so the next real review covers it. Re-run the workflow once the limit resets."
+            echo "Not reviewed: the reviewer subscription is rate-limited. Passed with a warning; the receipt says limited." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            echo "REVIEW_MODE=limited" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "::error::The review did not complete, and its log proves no rate or usage limit (an invalid or missing token, a crash, the turn cap or a model error); see the Review step."
+          exit 1
       - name: Post the receipt
-        # Reached only when every step above succeeded, so a quota failure, a model error or a
-        # broken scope step leaves no receipt for this head and the verify job stays red. The
-        # receipt is deterministic text from the workflow, never something the model was asked to say.
+        # Reached only when every step above succeeded, so a model error, an invalid token or a
+        # broken scope step leaves no receipt for this head and the verify job stays red. When the
+        # run proved a rate or usage limit the mode is `limited`: the verify gate accepts it (it
+        # checks the SHA) and the scope step never anchors on it. The receipt is deterministic text
+        # from the workflow, never something the model was asked to say.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

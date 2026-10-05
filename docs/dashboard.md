@@ -11,7 +11,7 @@ copied into the live dashboard. Live mode has no built-in data.
 ## Refresh behavior
 
 Refreshing restores the current view, selected pull request, search and repository filters,
-subscription/attention filters, usage period, and selected bot. A saved PR stays selected while
+subscription/attention filters, and selected bot. A saved PR stays selected while
 GitHub data loads; an unavailable PR shows an explanation and a way back instead of silently
 switching views. Verify these behaviors with populated browser refreshes and the view-state tests.
 
@@ -169,7 +169,8 @@ A busy lane must include a same-owner job or a positive GitHub `runner_id` with 
 registration. The latter shows busy with unmatched job details until a current owner-scoped
 PR job matches the runner ID. Registration alone never implies ready or busy. An allocated lane without a matched job shows its repository
 and pending-match message without a job link. The host panel is always labeled `SHARED HOST`; its values
-are aggregate CPU sampled percent, memory bytes, and usable workspace-filesystem bytes.
+are aggregate CPU sampled percent, memory bytes, and workspace-filesystem bytes. Every host meter
+fills with how much is in use, so a fuller bar means less headroom; disk used is total minus free.
 
 Displayed agent state comes from an explicit identity mapping. Aggregate CI mappings use GitHub
 activity: active jobs prove working, and a complete active scan permits idle. Runner listener
@@ -179,8 +180,8 @@ be mapped to aggregate CI job roles. Recent history uses structural run outcomes
 Unavailable or incomplete history is labeled separately from a complete history with no failures.
 
 Quota windows can omit `allowance_tokens`. A used percentage alone is displayed as a provider
-percentage and never converted into a token quota. The dotted pace line appears only when the source
-provides an actual comparable token allowance. The charts combine observed token counts and show each bot separately. An allowance is used only
+percentage and never converted into a token quota. The flat pace line appears only when the source
+provides an actual comparable token allowance. The charts show each bot separately and then all bots combined. An allowance is used only
 when all plotted samples belong to that same account; account-wide quota percentages remain separate.
 No price is inferred.
 
@@ -211,7 +212,8 @@ clears derived repository data immediately; transient stale data expires after t
 The dashboard shows source-proven failures, cancellations, waiting jobs, and current elapsed times.
 Elapsed time alone never asserts that a job is stuck. The Actions timeline uses shared wall-clock
 coordinates for parallel jobs and does not sum their durations. Unknown step totals never render as
-100 percent.
+100 percent. A completed job with no steps, which is how GitHub reports a skipped job, counts as
+zero steps; a job that has not started yet keeps its run's step total unknown.
 
 ## Data lifecycle and uninstall
 
@@ -236,7 +238,8 @@ discovery; `test_dashboard_service.py` covers source timestamps and refresh cach
 an in-flight refresh. The collector and usage-artifact test files cover the native source contracts.
 `tests/test_dashboard_server_ui.py` covers loopback HTTP, proxy and direct routing headers,
 read-only methods, Host/Origin/traversal, XSS-safe JSON and DOM construction, filters, account usage
-math, local assets, and the approved palette. The repository's existing unittest command runs all
+math, local assets, and the approved palette. `tests/test_dashboard_usage_charts.py` covers the usage
+charts' clock-hour mapping, observed and unobserved hours, usual-day averages, scales, and pace. The repository's existing unittest command runs all
 of them. Configuration tests cover the strict optional proxy origin and its immutable default.
 
 Live acceptance uses private configuration outside this repository, reconciles displayed PRs and
@@ -254,4 +257,25 @@ more exist. Captured token records expire after seven days and disappear when so
 are removed. Missing captures remain unavailable. Old runs cannot be backfilled. The deterministic
 QAE verification gate has no model-token usage and is shown only in PR progress. No quota is inferred from those token counts.
 
-Usage charts leave unobserved time buckets blank. A measured zero is drawn at zero; one captured run never fills earlier history with invented zeros.
+## Bot usage charts
+
+The Bot usage view draws one card per configured bot, then an All bots card: one column on a
+phone, two from 700 pixels wide, four from 1340. The x-axis is the viewer's local clock hour, with
+faint gridlines at 12a, 6a, 12p and 6p and a white marker at now. The solid line is the last 24
+hours and runs on to the now marker; the stretch after the marker is yesterday's tail and is faded.
+Hours follow the local calendar, so a daylight-saving change does not shift them. The dashed line is a usual
+day: each clock hour averaged over the prior six days that were observed, and its hover names the
+fewest days any hour averages. Bot cards share one y-scale so they compare at a glance; All bots
+adds the bots' observed hours and scales to itself. Only All bots carries the flat, wider-dash pace
+line, and only when an allowance is reported as described above; otherwise a note says why it is
+absent. Each card's header gives the most tokens it used in one clock hour of the last 24 hours, and
+its totals line gives the last 24 hours and, once every hour has an observed prior day, a usual day. There is no period selector: the dashed line already carries the multi-day view,
+and a tab saved with the old selector restores without it.
+
+An hour counts as observed from the hour of a bot's first retained sample through the source's last
+observation (its `sampled_at`, and the artifact scan time when present) or any later sample. Inside
+that span an hour with no sample is a measured zero and is drawn at zero. Before it, and after a
+stale source's last observation, nothing is drawn, so one captured run or a stopped collector never
+invents zeros. A bot with no sample in the seven retained days, or no usage source at all, shows
+"Not yet observed". A partial capture keeps its completeness note under the charts, because hours
+drawn as observed can then be missing some runs' tokens.

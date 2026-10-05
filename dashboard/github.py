@@ -37,7 +37,8 @@ def step_summary(jobs: list[dict]) -> dict:
     known = bool(jobs)
     for job in jobs:
         steps = job.get("steps")
-        if not isinstance(steps, list) or not steps:
+        # GitHub returns no steps for a skipped job; once a job completes, an empty list means zero steps.
+        if not isinstance(steps, list) or not steps and job.get("status") != "completed":
             known = False
             continue
         for step in steps:

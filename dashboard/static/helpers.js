@@ -18,12 +18,11 @@
 
   function restoreViewState(raw) {
     const state = { view: "prs", selected: null, query: "", repository: "all", subscribed: false,
-      attention: false, usageRange: "24h", failureBot: null };
+      attention: false, failureBot: null };
     let saved;
     try { saved = JSON.parse(raw); } catch (_) { return state; }
     if (!saved || typeof saved !== "object") return state;
     if (["prs", "usage", "capacity"].includes(saved.view)) state.view = saved.view;
-    if (["24h", "7d"].includes(saved.usageRange)) state.usageRange = saved.usageRange;
     for (const key of ["selected", "query", "repository", "failureBot"]) {
       if (typeof saved[key] === "string") state[key] = saved[key];
     }
@@ -103,6 +102,14 @@
     return element("span", { class: `badge status-${status}`, text: label || STATUS_LABELS[status] || status });
   }
 
+  // The capacity meters show how full a resource is. Disk telemetry reports free space, so derive used.
+  function diskUsage(host) {
+    const free = host.workspace_disk_free_bytes, total = host.workspace_disk_total_bytes;
+    if (!Number.isFinite(free) || !Number.isFinite(total) || total <= 0) return null;
+    const used = Math.max(0, total - free);
+    return { used, total, percent: used / total * 100 };
+  }
+
   function flattenPulls(snapshot) {
     return (snapshot.github.repositories || []).flatMap(repository =>
       (repository.pulls || []).map(pull => ({ ...pull, stale: repository.stale, source_error: repository.source_error }))
@@ -150,5 +157,5 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, formatTime, bytes,
-    badge, flattenPulls, filterPulls, stepTotals, combinedCategory, currentWork, restoreViewState };
+    badge, diskUsage, flattenPulls, filterPulls, stepTotals, combinedCategory, currentWork, restoreViewState };
 });

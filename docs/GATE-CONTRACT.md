@@ -398,7 +398,12 @@ request's head SHA, and the count of unresolved review threads. It passes only w
 names this exact head and, when `--threads` is wired, no thread is unresolved. The receipt is
 deterministic text from a workflow step the model cannot reach, which is the exact-head receipt
 contract: a review that did not complete leaves no receipt and is red, and a push after the review
-is a change nobody reviewed.
+is a change nobody reviewed. The one exception is a run whose execution log structurally proves
+the reviewer subscription hit a rate or usage limit: the job passes with a warning and posts a
+receipt whose mode is `limited`. The gate accepts it for its exact head like any other mode, still
+requires zero unresolved threads when `--threads` is wired, and the scope step never uses it as
+the delta anchor, so the next real review covers what it let through. An invalid or missing
+token, a crash, a timeout or the turn cap stays red.
 
 ## Not built yet
 
