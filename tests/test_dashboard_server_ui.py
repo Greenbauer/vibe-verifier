@@ -248,6 +248,15 @@ console.log(JSON.stringify([h.combinedCategory(pr('success','skipped')),h.combin
 ''')
         self.assertEqual(result, ["success", "skipped", "failed", "pending"])
 
+    def test_step_meter_is_green_only_when_every_check_passed(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+const pr=(...c)=>({checks:c.map(category=>({category}))});
+console.log(JSON.stringify([pr('success','success'),pr('success','failed','pending'),pr('success','pending'),
+ pr('success','cancelled'),pr('unknown'),pr('skipped','skipped')].map(p=>h.meterTone(h.combinedCategory(p)))));
+''')
+        self.assertEqual(result, ["success", "failed", "pending", "pending", "pending", "pending"])
+
     def test_an_expected_required_check_keeps_the_pr_pending_and_its_steps_unknown(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
