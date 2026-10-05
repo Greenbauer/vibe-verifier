@@ -33,16 +33,20 @@ valid and one invalid case, and every rule test must pass; otherwise the gate ca
 and names the rule.
 
     --doc PATH    a file of the repository (repeatable) that must hold the generated rules block, exactly
-                  as `bin/vibe-verifier rules-doc` renders it for the rules at HEAD
+                  as `bin/vibe-verifier rules-doc` renders it for the rules the manifest at HEAD enables
+                  ($VIBE_VERIFIER_MANIFEST, which the runner sets; this gate's own --rules and --pack
+                  when it runs alone)
 
 The block is how a repository's prose about its rules stays true: it is generated from the rule files,
 never written by hand. A missing or different block is a finding naming the command that regenerates
 it, so it blocks, and --soak reports it only, like any other finding. It is read from HEAD rather than
 the base: the pull request that changes a rule regenerates the block with it.
 """
+import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -56,6 +60,7 @@ GATE = "repo-rules"
 PACKS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rules")
 DEFAULT_RULES = ".vibe-verifier-rules"
 CONFIG = "sgconfig.yml"  # at a rule directory's root: only its languageGlobs are read
+MANIFEST = "VIBE_VERIFIER_MANIFEST"  # the runner sets it for every gate: the manifest file it read at HEAD
 ADVISORY = ("warning", "info", "hint")  # severities printed but never blocking; unset and error block
 # The generated rules block (`bin/vibe-verifier rules-doc`): found again by its first and last lines.
 BEGIN = ("<!-- BEGIN vibe-verifier rules-doc: generated from the rule files by `bin/vibe-verifier rules-doc`; "
@@ -63,8 +68,9 @@ BEGIN = ("<!-- BEGIN vibe-verifier rules-doc: generated from the rule files by `
 END = "<!-- END vibe-verifier rules-doc -->"
 BLOCK = re.compile(r"^<!-- BEGIN vibe-verifier rules-doc\b.*?^%s$" % re.escape(END), re.DOTALL | re.MULTILINE)
 INTRO = ("`repo-rules` checks every pull request against these rules. A blocking rule fails a pull request that adds a "
-         "finding to a file; an advisory one only reports it. A rule applies to the files of its language, and to those its "
-         "directory maps to that language, narrowed by its `files` and `ignores` globs.")
+         "finding to a file; an advisory one only reports it. A rule applies to the files of its language (`with` and `without` "
+         "list the globs its directory's sgconfig.yml maps to that language and to others), narrowed by its `files` and "
+         "`ignores` globs.")
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 CHUNK = 500  # paths per ast-grep call, far below any platform's argument limit
 # The standard library reads no YAML, so ast-grep's own YAML grammar reads the rule files: each
@@ -356,7 +362,7 @@ def changed_lines(repo, merge_base, old, path):
 
 
 def mapped_globs(sg, docs, work):
-    """{(project number, language casefolded): [globs]} from each source sgconfig.yml's languageGlobs (the
+    """{project number: {language casefolded: [globs]}} from each source sgconfig.yml's languageGlobs (the
     first, as configure() takes it). Its value, written out as a document of its own, is a mapping of
     language to a sequence of globs, which documents() reads like any rule file."""
     mappings = os.path.join(work, "language-globs")
@@ -367,14 +373,36 @@ def mapped_globs(sg, docs, work):
         if name == "source-" + CONFIG and found:
             with open(os.path.join(mappings, number + ".yml"), "w", encoding="utf-8") as handle:
                 handle.write(textwrap.dedent(found[0]))
-    return {(path[:-len(".yml")], language.casefold()): items
-            for path, entries in documents(sg, mappings).items() for keys, _ in entries for language, (_, items) in keys.items()}
+    return {path[:-len(".yml")]: {language.casefold(): items for keys, _ in entries for language, (_, items) in keys.items()}
+            for path, entries in documents(sg, mappings).items()}
+
+
+def globs_text(globs):
+    return ", ".join("`%s`" % glob for glob in globs)
+
+
+def manifest_rules(path):
+    """([--rules], [--pack]) of every repo-rules line of the manifest at path, in order and without repeats
+    (its other arguments change no rule), or None when it has no repo-rules line."""
+    parser = argparse.ArgumentParser(prog=GATE, add_help=False)
+    add_arguments(parser)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = [shlex.split(raw, comments=True) for raw in handle.read().splitlines()]
+    except (OSError, ValueError) as error:
+        raise CannotRun("cannot read the manifest %s: %s" % (path, error))
+    enabled = [parser.parse_known_args(words[1:])[0] for words in lines if words[:1] == [GATE]]
+    if not enabled:
+        return None
+    return (list(dict.fromkeys(d for line in enabled for d in line.rules or [])),
+            list(dict.fromkeys(name for line in enabled for name in line.pack or [])))
 
 
 def rules_doc(sg, sources):
     """The generated Markdown block: every rule of sources that runs (ast-grep never runs a rule whose
     severity is `off`), sorted by id, with whether it blocks as the gate judges it, its language with the
-    extensions its directory maps to that language, its `files` and `ignores` globs, and its message."""
+    globs its directory maps to that language and those it maps to another (which the language no longer
+    sees), its `files` and `ignores` globs, and its message."""
     with tempfile.TemporaryDirectory(prefix="vv-rules-doc-") as work:
         projects = os.path.join(work, "projects")
         origin = assemble(sources, projects)
@@ -386,11 +414,11 @@ def rules_doc(sg, sources):
         severity = value(keys, "severity")
         if severity == "off":
             continue
-        language = value(keys, "language")
-        extra = mapped.get((number, language.casefold()))
-        scope = [language + (" with " + ", ".join("`%s`" % glob for glob in extra) if extra else "")]
-        scope += ["%s %s" % (key, ", ".join("`%s`" % glob for glob in keys[key][1]))
-                  for key in ("files", "ignores") if key in keys and keys[key][1]]
+        language, mapping = value(keys, "language"), mapped.get(number, {})
+        added = mapping.get(language.casefold(), [])
+        moved = [glob for other, globs in sorted(mapping.items()) if other != language.casefold() for glob in globs]
+        scope = [language + "".join(" %s %s" % (word, globs_text(globs)) for word, globs in (("with", added), ("without", moved)) if globs)]
+        scope += ["%s %s" % (key, globs_text(keys[key][1])) for key in ("files", "ignores") if key in keys and keys[key][1]]
         lines.append("- `%s` (%s; %s): %s" % (rule_id, "advisory" if severity in ADVISORY else "blocking", "; ".join(scope),
                                               " ".join(value(keys, "message").split())))
     return "\n".join(lines + [END])
@@ -413,6 +441,14 @@ def stale_doc(repo, path, block):
     return None
 
 
+def doc_rules(args):
+    """The --rules and --pack the rules block lists: the repo-rules lines of the manifest the runner read at
+    HEAD ($VIBE_VERIFIER_MANIFEST), which on a pull request may differ from this gate's own arguments
+    (those are the base's); this gate's own when it runs alone or the manifest has no repo-rules line."""
+    manifest = os.environ.get(MANIFEST)
+    return (manifest_rules(manifest) if manifest else None) or (args.rules, args.pack)
+
+
 def check(args):
     base = None if args.all else resolve_base(args.repo, args.base_ref)
     tracked = tracked_files(args.repo)
@@ -421,7 +457,7 @@ def check(args):
     with tempfile.TemporaryDirectory(prefix="vv-rules-") as work:
         projects = os.path.join(work, "projects")
         roots, advisory = verify(sg, projects, assemble(sources, projects), [where for where, _ in sources])
-        block = rules_doc(sg, head_sources(args.repo, args.rules, args.pack)) if args.doc else None
+        block = rules_doc(sg, head_sources(args.repo, *doc_rules(args))) if args.doc else None
         stale = [found for found in (stale_doc(args.repo, path, block) for path in args.doc or []) if found]
         if args.all:
             return stale + [finding(hit, advisory) for hit in scan(sg, roots, args.repo, sorted(tracked))]

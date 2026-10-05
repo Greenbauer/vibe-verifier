@@ -12,8 +12,9 @@ BEGIN = ("<!-- BEGIN vibe-verifier rules-doc: generated from the rule files by `
          "edit the rules and run it with --write, never this block -->")
 END = "<!-- END vibe-verifier rules-doc -->"
 INTRO = ("`repo-rules` checks every pull request against these rules. A blocking rule fails a pull request that adds a "
-         "finding to a file; an advisory one only reports it. A rule applies to the files of its language, and to those its "
-         "directory maps to that language, narrowed by its `files` and `ignores` globs.")
+         "finding to a file; an advisory one only reports it. A rule applies to the files of its language (`with` and `without` "
+         "list the globs its directory's sgconfig.yml maps to that language and to others), narrowed by its `files` and "
+         "`ignores` globs.")
 # a.yml holds the rules whose ids sort last, so the order below comes from the ids, not the files.
 LATE = """id: zz-no-alert
 language: Tsx
@@ -57,7 +58,8 @@ MAPPING = "# more extensions for this directory's rules\nlanguageGlobs:\n  tsx: 
 RULES = {".vibe-verifier-rules/a.yml": LATE, ".vibe-verifier-rules/b.yml": EARLY, ".vibe-verifier-rules/tests/all.yml": TESTS,
          ".vibe-verifier-rules/sgconfig.yml": MAPPING}
 LISTED = [
-    "- `aa-no-console-log` (blocking; TypeScript): Use `log.info` from src/log instead of console.log.",
+    # The mapping moves .ts and .mts files to tsx, so this TypeScript rule no longer sees them.
+    "- `aa-no-console-log` (blocking; TypeScript without `*.ts`, `*.mts`): Use `log.info` from src/log instead of console.log.",
     "- `no-debugger` (blocking; TypeScript): Remove the `debugger` statement; it stops every run that has a debugger attached.",
     "- `zz-no-alert` (advisory; Tsx with `*.ts`, `*.mts`; files `src/**`, `app/**`; ignores `legacy/**`): Show a toast instead of alert().",
 ]
@@ -152,6 +154,23 @@ class DocCheck(unittest.TestCase):
         replayed = runner("run", "--repo", repo, "--manifest", str(Path(repo, ".vibe-verifier")), "--base-ref", base)
         self.assertEqual(replayed.returncode, 0, replayed.stdout + replayed.stderr)
         self.assertRegex(replayed.stdout, r"repo-rules\s+PASS")
+
+    def test_a_pull_request_that_changes_the_manifests_rules_regenerates_the_block_with_it(self):
+        # On a pull request the gate's own arguments are the base's line; the block follows the head manifest.
+        repo = doc_repo(self, "repo-rules --doc AGENTS.md\n", {"AGENTS.md": "# Agents\n"})
+        manifest, agents = str(Path(repo, ".vibe-verifier")), str(Path(repo, "AGENTS.md"))
+        self.assertEqual(rules_doc(repo, "--write", agents).returncode, 0)
+        commit(repo, {}, "block")
+        base = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        commit(repo, {".vibe-verifier": "repo-rules --pack example --doc AGENTS.md\n"}, "subscribe to a pack")
+        stale = runner("run", "--repo", repo, "--manifest", manifest, "--base-ref", base)
+        self.assertEqual(stale.returncode, 1, stale.stdout + stale.stderr)
+        self.assertIn("repo-rules: AGENTS.md:3: rules-doc: this rules block is not what the rule files at HEAD generate", stale.stdout)
+        self.assertEqual(rules_doc(repo, "--write", agents).returncode, 0)
+        commit(repo, {}, "regenerate")
+        fresh = runner("run", "--repo", repo, "--manifest", manifest, "--base-ref", base)
+        self.assertEqual(fresh.returncode, 0, fresh.stdout + fresh.stderr)
+        self.assertIn("- `no-debugger` (blocking; TypeScript)", Path(agents).read_text())
 
 
 if __name__ == "__main__":

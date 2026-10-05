@@ -485,9 +485,9 @@ repo-rules --rules lint/rules --pack example --soak
   `--rules` arguments; the rest change no rule), reads those packs and rule directories as the
   working tree has them, and renders one Markdown block: every rule ast-grep runs (one whose severity
   is `off` never runs and is left out), sorted by id, each with whether it blocks or is advisory
-  (severity, as above), its language with the extensions its directory's `sgconfig.yml` maps to that
-  language, its `files` and `ignores` globs, and its message. The block
-  opens and closes with fixed comment lines that say it is generated and to edit the rule files
+  (severity, as above), its language with the globs its directory's `sgconfig.yml` maps to that
+  language (`with`) and to another one (`without`, since the language no longer sees them), its
+  `files` and `ignores` globs, and its message. The block opens and closes with fixed comment lines that say it is generated and to edit the rule files
   instead. Without `--write` it is printed; with it, the block in PATH is replaced, or appended when
   PATH has none. The rule files are read with the gate's own reader, so `rules-doc` refuses (exit 2)
   what the gate refuses: a rule without a message or without a `valid` and an `invalid` case, a
@@ -499,11 +499,15 @@ repo-rules --rules lint/rules --pack example --soak
   repo-rules --pack example --doc AGENTS.md
   ```
 
-  `--doc PATH` (repeatable, a path in the repository) makes the gate render the same block for its
-  own `--rules` and `--pack` at HEAD and report a finding, naming the command that regenerates it,
-  when PATH lacks the block or holds a different one. HEAD and not the base: the block describes what
-  the branch will merge, so the pull request that changes a rule regenerates the block with it, while
-  the rule still judges that pull request as the base has it. A missing or stale block is a finding
+  `--doc PATH` (repeatable, a path in the repository) makes the gate render the same block, for the
+  rule files at HEAD and the `repo-rules` lines of the manifest the run read at HEAD, and report a
+  finding, naming the command that regenerates it, when PATH lacks the block or holds a different
+  one. The runner tells every gate which manifest that is, in `$VIBE_VERIFIER_MANIFEST`; the gate's
+  own arguments are the base's line on a pull request, and are what it renders from only when it runs
+  alone or the head manifest has no `repo-rules` line. HEAD and not the base: the block describes what
+  the branch will merge, so the pull request that changes a rule, or the packs and directories the
+  manifest enables, regenerates the block with it, while the code is still judged by the rules and
+  the line the base has. A missing or stale block is a finding
   like any other: it blocks, and under `--soak` it is reported only, because the gate ran and the
   signal is real; a rule file at HEAD that cannot be read is exit 2, which `--soak` never masks. Two
   consequences of the rest of this contract: the pull request that adds `--doc` to the manifest is

@@ -19,7 +19,9 @@ judged by the line it started from. The base is resolved the way the gates resol
 (--base-ref, then $VIBE_VERIFIER_BASE_REF, $GITHUB_BASE_REF, main, master, HEAD~1); with no
 base, or no manifest at the base, the head manifest stands alone (a first subscription, a
 laptop with no history). The workflow file itself is still the head's, so this is a guard
-against a PR quietly weakening its own manifest, not a platform guarantee.
+against a PR quietly weakening its own manifest, not a platform guarantee. Every gate runs with
+$VIBE_VERIFIER_MANIFEST set to the manifest file the run read (the head's): `repo-rules --doc`
+lists the rules that manifest enables.
 
 `consumers` is the inventory and drift check for subscribed repositories. It reads
 each repository's manifest, its workflow stub, and every other workflow under
@@ -197,7 +199,7 @@ def run(args):
         if args.base_ref:
             command += ["--base-ref", args.base_ref]
         print("::group::%s" % gate if args.format == "github" else "== %s ==" % gate, flush=True)
-        code = subprocess.run(command + gate_args).returncode
+        code = subprocess.run(command + gate_args, env=dict(os.environ, **{repo_rules.MANIFEST: os.path.abspath(args.manifest)})).returncode
         if args.format == "github":
             print("::endgroup::", flush=True)
         results.append((gate, gate_args, code if code in (0, 1) else 2))
@@ -827,19 +829,11 @@ def tool_command(args):
 
 def rules_doc_command(args):
     """Print or write the generated rules block for the rules the manifest's repo-rules lines enable."""
-    lines = [gate_args for gate, gate_args in parse_manifest(args.manifest) if gate == "repo-rules"]
-    if not lines:
-        return fail("%s has no repo-rules line, so it enables no rules" % args.manifest)
-    gate_parser = argparse.ArgumentParser(add_help=False)
-    repo_rules.add_arguments(gate_parser)
-    rules, packs = [], []
-    for gate_args in lines:
-        line = gate_parser.parse_known_args(gate_args)[0]  # --soak, --doc and the rest change no rule
-        rules += line.rules or []
-        packs += line.pack or []
     try:
-        block = repo_rules.rules_doc(ensure("ast-grep"), repo_rules.head_sources(
-            args.repo, list(dict.fromkeys(rules)), list(dict.fromkeys(packs))))
+        enabled = repo_rules.manifest_rules(args.manifest)
+        if not enabled:
+            return fail("%s has no repo-rules line, so it enables no rules" % args.manifest)
+        block = repo_rules.rules_doc(ensure("ast-grep"), repo_rules.head_sources(args.repo, *enabled))
     except CannotRun as error:
         return fail("rules-doc: %s" % error)
     if not args.write:
