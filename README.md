@@ -37,7 +37,7 @@ See [Architecture](docs/architecture.md) and [Threat model](docs/threat-model.md
 
 | Layer | What it verifies |
 |---|---|
-| **Deterministic gates** | Structural, security, workflow, test-presence, and complexity invariants on the pull request diff |
+| **Deterministic gates** | Structural, security, workflow, test-presence, and complexity invariants, and the repository's own declared code patterns, on the pull request diff |
 | **Revision-bound AI review** | A receipt matches the event head commit and the supplied unresolved-thread count is zero |
 | **Acceptance verification** | Each criterion has a PASS with a resolving anchor; recorded browser artifacts satisfy structural checks for the workflow-declared application |
 | **Governance** | Base-manifest arguments resist self-weakening; organization wrappers can protect the required workflow itself |
@@ -134,9 +134,12 @@ Each gate is a command-line program that reads a working tree and its Git histor
 | `zizmor` | Security risks in changed workflows, such as unpinned actions and excessive permissions |
 | `cognitive-complexity` | New files with functions over the complexity limit, or changed files with more of them |
 | `max-file-lines` | New files over the line limit, or existing files over it that grew |
+| `repo-rules` | New findings of the repository's own [ast-grep](https://ast-grep.github.io/) rules and of catalog [rule packs](rules/README.md), each with a message saying what to write instead |
 | `no-duplicate-package-json-keys` | Duplicate keys or invalid JSON in `package.json` |
 | `build-tools-in-devdependencies` | Known development packages listed as runtime dependencies |
 | `branch-name-length` | Branch names longer than the configured limit |
+
+`repo-rules` is how a repository writes its established patterns down as executable rules instead of prose: add `.vibe-verifier-rules/` with a rule and its test, then subscribe with a `repo-rules` line ([setup](docs/GATE-CONTRACT.md#repository-rules)).
 
 The source-file gates focus on JavaScript and TypeScript by default. `new-source-has-test` looks for a matching test filename or relative import; it does not run tests or measure coverage. Keep the project's existing build, test, lint, and security suites.
 

@@ -1,0 +1,9 @@
+id: no-debugger
+valid:
+  - console.info(value)
+invalid:
+  - debugger
+  - |
+    function load() {
+      debugger;
+    }

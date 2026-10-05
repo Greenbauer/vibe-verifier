@@ -25,7 +25,7 @@ against a PR quietly weakening its own manifest, not a platform guarantee.
 each repository's manifest, its workflow stub, and every other workflow under
 .github/workflows/ that pins a catalog action (a harness copy such as qae-explore.yml)
 through `gh api` (read-only) and reports, per repository: whether each pinned commit is
-current, stale (a commit since it touched gates/, bin/, actions/, consumer/ or tools/), or unknown
+current, stale (a commit since it touched gates/, bin/, actions/, consumer/, tools/ or rules/), or unknown
 to this repository's history; whether the stub matches consumer/vibe-verifier.yml outside
 the pin line and the `runs-on:` values (each job's runner is the consumer's choice, and a pin bump
 keeps it); whether every gate in the manifest exists; and the native enforcement GitHub
@@ -101,7 +101,7 @@ PIN_LINE = re.compile(r"(vibe-verifier/actions/[A-Za-z0-9_-]+@)([^\s#]+)([^\n]*)
 # The value of a job's `runs-on:` line (a label or a flow list) is the consumer's choice of runner.
 # It stops at any character YAML reads as a line break, so nothing after it hides on the same line.
 RUNS_ON = re.compile("^([ \t]*runs-on:)[^\n\r\x85\u2028\u2029]*", re.MULTILINE)
-RELEASE_PATHS = ["gates", "bin", "actions", "consumer", "tools"]  # a commit under these makes every older pin stale
+RELEASE_PATHS = ["gates", "bin", "actions", "consumer", "tools", "rules"]  # a commit under these makes every older pin stale
 
 
 def available():

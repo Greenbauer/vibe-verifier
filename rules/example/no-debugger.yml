@@ -1,0 +1,7 @@
+id: no-debugger
+language: TypeScript
+severity: error
+message: Remove the `debugger` statement; it stops every run that has a debugger attached.
+note: Set a breakpoint in the editor instead, or log the value you were inspecting.
+rule:
+  kind: debugger_statement
