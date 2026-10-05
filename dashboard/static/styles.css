@@ -122,6 +122,9 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 
 .list-heading, .pr-row { display: grid; grid-template-columns: minmax(220px, 1.4fr) minmax(170px, 1fr) minmax(150px, .8fr) 110px 10px; gap: 12px; align-items: center; }
 .list-heading { padding: 8px 13px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .6px; }
+.pr-groups { display: flex; flex-direction: column; gap: 18px; }
+.pr-group-title { display: flex; align-items: baseline; gap: 10px; margin: 0 0 7px; font-size: 14px; }
+.pr-group-title small { color: var(--muted); font-size: 11px; font-weight: 400; }
 .pr-list { overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; }
 .pr-row { width: 100%; border: 0; border-top: 1px solid var(--line); padding: 12px 13px; background: transparent; text-align: left; }
 .pr-row:first-child { border-top: 0; }
