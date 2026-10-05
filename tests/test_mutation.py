@@ -272,6 +272,7 @@ class StandInStryker(unittest.TestCase):
         two_of_three = self.run_gate(repo, "--break", "67", report=self.scored(["Killed", "Killed", "Survived"]))
         self.assertEqual(two_of_three.returncode, 1)
         self.assertIn("is 66% (2 of 3 mutants killed), below --break 67", two_of_three.stdout)  # 66.7%, never shown as 67
+        self.assertEqual(self.run_gate(repo, "--break", "66.5", report=report).returncode, 2)  # whole numbers only, so 66% never passes 66.5
 
     def test_no_scored_mutant_on_the_changed_lines_passes(self):
         repo = self.repo({"README.md": "x\n"}, {"src/a.ts": self.SOURCE})

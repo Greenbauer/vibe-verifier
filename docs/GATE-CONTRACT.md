@@ -418,7 +418,7 @@ changed-code-mutation --project apps/web --break 70 --soak
   runs the whole suite: with it on, a test that never imports the changed file is not run at all,
   and when no test imports it Stryker writes no report.
 - **Verdict.** The score is killed / (killed + survived + not covered) over the changed lines.
-  Below `--break` (default 60) the gate fails with one finding for the score and one per
+  Below `--break` (a whole number, default 60) the gate fails with one finding for the score and one per
   surviving mutant, at its line, naming the code it replaced, the replacement and Stryker's
   mutator. Mutants that timed out, did not compile, crashed the test runner, or carry a
   `// Stryker disable` comment are left out of the score and printed. No mutant on the changed
@@ -433,8 +433,8 @@ changed-code-mutation --project apps/web --break 70 --soak
   like the other tools' escape hatches.
 - **Bounded, never partial.** More than `--max-files` changed source files (default 20), or a run
   longer than `--timeout` seconds (default 900), is exit 2 naming the bound, never a verdict on
-  part of the change. On the timeout, and on a SIGTERM or SIGINT to the gate (a cancelled job, a
-  Ctrl-C), Stryker's whole process group is killed and its sandbox removed. The cost is one run of
+  part of the change. On the timeout, and on a SIGTERM or SIGINT the gate receives (a Ctrl-C in a
+  terminal), Stryker's whole process group is killed and its sandbox removed. The cost is one run of
   the whole suite plus, per mutant, the tests that cover it, or the whole suite again when no test
   loads the changed file.
 - **Subscribing.** The canonical stub installs no dependencies and stops its job at 5 minutes, and it

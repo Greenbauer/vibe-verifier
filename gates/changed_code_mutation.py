@@ -132,7 +132,7 @@ def stryker(tool, project_dir, ranges, timeout):
             json.dump(config, handle)
         command = ["node", os.path.join(tool, "node_modules", "@stryker-mutator", "core", "bin", "stryker.js"), "run", config_path]
         # Stryker runs in a session of its own so its whole process group can be killed, which also keeps a
-        # cancelled job's SIGTERM or a Ctrl-C from reaching it: both are caught here and kill the group.
+        # SIGTERM or SIGINT sent to the gate's group (a Ctrl-C) from reaching it: both are caught here and kill it.
         signal.signal(signal.SIGTERM, interrupted)
         signal.signal(signal.SIGINT, interrupted)
         process = None
@@ -200,13 +200,13 @@ def verdict(report, prefix, threshold):
         note("no mutant on the changed lines to score (%d left out)" % len(excluded))
         return []
     score = 100.0 * killed / scored
-    shown = "%d%%" % score  # truncated: 59.9% is shown as 59%, never as the 60 it failed
-    note("%d of %d mutant(s) on the changed lines killed: score %s, --break %g" % (killed, scored, shown, threshold))
+    shown = "%d%%" % score  # truncated: --break is a whole number, so the shown score passes exactly when the real one does
+    note("%d of %d mutant(s) on the changed lines killed: score %s, --break %d" % (killed, scored, shown, threshold))
     if score >= threshold:
         for (path, line), text in undetected:
             note("%s:%d: %s" % (path, line, text))
         return []
-    summary = ("mutation score on the changed lines is %s (%d of %d mutants killed), below --break %g. Each mutant below "
+    summary = ("mutation score on the changed lines is %s (%d of %d mutants killed), below --break %d. Each mutant below "
                "is a change to the code that no test failed on: test that behavior through the real code, or mark a mutant "
                "no test can tell apart with `// Stryker disable next-line <Mutator>: <reason>`" % (shown, killed, scored, threshold))
     return [Finding(summary)] + [Finding(text, path, line) for (path, line), text in undetected]
@@ -255,8 +255,8 @@ def check(args):
 
 def add_arguments(parser):
     parser.add_argument("--project", default=".", help="directory with the Vitest config, relative to the repository (default: its root)")
-    parser.add_argument("--break", dest="break_score", type=float, default=60, metavar="N",
-                        help="lowest passing mutation score over the changed lines, 0-100 (default 60)")
+    parser.add_argument("--break", dest="break_score", type=int, default=60, metavar="N",
+                        help="lowest passing mutation score over the changed lines, a whole number 0-100 (default 60)")
     parser.add_argument("--max-files", type=int, default=20, help="more changed source files than this cannot run (default 20)")
     parser.add_argument("--timeout", type=int, default=900, help="seconds the whole Stryker run may take (default 900)")
     parser.add_argument("--source", action="append", metavar="GLOB")
