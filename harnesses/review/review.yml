@@ -273,9 +273,14 @@ jobs:
           set -euo pipefail
           mkdir -p review-inputs
           printf '%s\n' "$HEAD_SHA" > review-inputs/head.txt
-          # Only the identity the review job posts as may supply a receipt.
+          # Only the identity the review job posts as may supply a receipt, and the input is the newest
+          # one for this head: a review of an older head that finishes after this head's (pushes in
+          # quick succession, runs not cancelled) posts the newest receipt, and taking that one failed
+          # a reviewed head (found on a consumer's pull request, 2026-10-05). With none for this head,
+          # the newest receipt goes in, so the gate can name the head it was for.
           gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
-            | jq -r -s '[.[][] | select(.user.login == "github-actions[bot]") | select(.body | contains("review-receipt:"))] | last | .body // ""' > review-inputs/receipt.md
+            | jq -r -s --arg head "$HEAD_SHA" '[.[][] | select(.user.login == "github-actions[bot]") | select(.body | contains("review-receipt:"))]
+                | (([.[] | select((.body | capture("review-receipt: (?<sha>[0-9a-f]{40})").sha) == $head)] | last) // last) | .body // ""' > review-inputs/receipt.md
           gh api graphql -f query="query { repository(owner: \"${REPO%/*}\", name: \"${REPO#*/}\") { pullRequest(number: ${PR_NUMBER}) { reviewThreads(first: 100) { nodes { isResolved } } } } }" \
             --jq '{unresolved: [.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)] | length}' > review-inputs/threads.json
           cat review-inputs/threads.json
