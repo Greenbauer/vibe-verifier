@@ -24,8 +24,8 @@ template; the consumer owns `runs-on`, the token secret, and the two catalog pin
    `limited` (see the rules below). Usage collection and upload run under `always()` so a failed
    review can retain partial statistics without making the review green. These steps follow the receipt:
    a capture failure does not suppress evidence of a completed review, but still fails the review job.
-2. **verify** writes the declared inputs (the head SHA, the newest receipt posted by the workflow's
-   own identity, the count of unresolved review threads) and runs the
+2. **verify** writes the declared inputs (the head SHA, the newest receipt for that head posted by
+   the workflow's own identity, the count of unresolved review threads) and runs the
    [`review-receipt`](../../gates/review_receipt.py) gate through the composite action with the
    manifest [`manifest`](manifest) (`.vibe-verifier-review` in the consumer).
 
@@ -38,13 +38,21 @@ receipt, so the loop converges: each push shrinks what needs review, and earlier
 **nochange** (nothing new since the last receipt: the model is not run and the receipt is posted
 for this head, which is how a re-run after resolving threads turns the gate green). A `limited`
 receipt is never the last receipt for this purpose: nothing was reviewed under it, so the next real
-review covers everything it let through.
+review covers everything it let through. A receipt for an older head that lands late (its review
+finished after a newer one's) can be the newest; it still marks a reviewed commit, so the next
+delta only starts further back.
 
 ## Rules the harness obeys
 
 - **The receipt is the workflow's.** Deterministic text from a step the model cannot reach, keyed
   to the exact head. A receipt for an older commit is not a receipt for this one: a push after
   the review is a change nobody reviewed.
+- **Verify reads the newest receipt for this head, not the newest receipt.** Runs that are not
+  cancelled can finish out of order, so a review of an older head can post its receipt after this
+  head's; taking the newest comment then failed a reviewed head (a consumer's pull request,
+  2026-10-05). The verify job searches every page of comments for the newest receipt naming the
+  event head. With none, it writes the newest receipt instead, and the gate fails naming the head
+  that receipt was for.
 - **A review that did not complete is red, unless the reviewer subscription is rate-limited.**
   The review step runs under `continue-on-error` only so the next step, "Require a completed
   review", can read the execution log; that step decides. A completed review (the step succeeded

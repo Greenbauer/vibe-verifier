@@ -2,8 +2,9 @@
 """Fail unless the review completed on this exact head, and its threads are resolved.
 
 A wired gate for the review harness. Its inputs are declared files: the newest receipt the
-review workflow posted (`review-receipt: <sha> -- <mode> -- run <id>`), the head SHA the pull
-request is at, and optionally the count of unresolved review threads. A receipt for an older
+review workflow posted for the head (`review-receipt: <sha> -- <mode> -- run <id>`; with none for
+it, the newest receipt, which this gate names in its finding), the head SHA the pull request is at,
+and optionally the count of unresolved review threads. A receipt for an older
 commit is not a receipt for this one: a push after the review is a change nobody reviewed. A
 missing receipt means the review did not complete (an invalid token, a model error, a broken
 step), which is red, never a quiet pass. A `limited` receipt is the workflow's own record that the
@@ -48,7 +49,7 @@ def check(args):
 
 
 def add_arguments(parser):
-    parser.add_argument("--receipt", metavar="FILE", required=True, help="the newest receipt comment the review workflow posted")
+    parser.add_argument("--receipt", metavar="FILE", required=True, help="the newest receipt comment the review workflow posted for the head (else its newest)")
     parser.add_argument("--head", metavar="FILE", required=True, help="a file holding the pull request's head SHA")
     parser.add_argument("--threads", metavar="FILE", default=None, help='JSON {"unresolved": N}; when given, N must be 0')
 

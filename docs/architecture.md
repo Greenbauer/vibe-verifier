@@ -93,7 +93,7 @@ The review job:
 - runs the reviewer with restricted read/comment capabilities,
 - posts a workflow-owned receipt for the exact head after the review completes, or a `limited` receipt with a warning when the run proves the reviewer subscription hit a rate or usage limit.
 
-The verify job converts repository state into declared files: event head SHA, newest bot-authored receipt, and unresolved-thread count from the first 100 review threads. The `review-receipt` gate decides the verdict.
+The verify job converts repository state into declared files: event head SHA, the newest bot-authored receipt for that head (a review of an older head can finish last), and unresolved-thread count from the first 100 review threads. The `review-receipt` gate decides the verdict.
 
 A model can write findings. It cannot manufacture the workflow step that proves the review completed for the current head.
 
