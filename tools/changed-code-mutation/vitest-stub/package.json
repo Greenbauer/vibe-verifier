@@ -1,0 +1,11 @@
+{
+  "name": "vitest",
+  "version": "0.0.0-vibe-verifier-stub.1",
+  "private": true,
+  "description": "Not Vitest. Bump the version when node.js changes: the tool cache is keyed by the lockfile.",
+  "type": "module",
+  "exports": {
+    "./node": "./node.js",
+    "./package.json": "./package.json"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "vibe-verifier-mutation-fixture",
+  "private": true,
+  "description": "The test runner of the changed-code-mutation gate's end-to-end tests: a project's own Vitest, installed with npm ci from this lockfile.",
+  "type": "module",
+  "devDependencies": {
+    "vitest": "4.1.11"
+  }
+}
