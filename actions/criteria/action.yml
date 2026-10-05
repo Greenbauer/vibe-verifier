@@ -1,15 +1,22 @@
 name: Vibe Verifier criteria
-description: Read a pull request body's acceptance criteria, so a harness can skip work the PR declares it has none of.
+description: Read a pull request body's acceptance criteria and changed paths, so a harness can skip work the PR needs none of.
 inputs:
   path:
     description: The PR body, or any criteria document, relative to the workspace.
     required: true
+  changed-files:
+    description: >-
+      The pull request's changed paths, one per line, relative to the workspace. Given, a PR that lists
+      no criteria and changes only CI configuration or documentation no site renders needs no check.
+    default: ""
 outputs:
   count:
-    description: How many criteria the document lists. 0 when it declares none, and 0 when it lists none.
+    description: How many criteria the document lists. 0 when it needs no check, and 0 when it lists none.
     value: ${{ steps.read.outputs.count }}
   declared-none:
-    description: The reason the document gives for having no criteria; empty otherwise.
+    description: >-
+      Why no browser check is needed (the reason the document declares, or that every changed path is
+      unrendered); empty when one is.
     value: ${{ steps.read.outputs.declared-none }}
 runs:
   using: composite
@@ -19,9 +26,12 @@ runs:
       shell: bash
       env:
         VV_PATH: ${{ inputs.path }}
+        VV_CHANGED: ${{ inputs.changed-files }}
       run: |
         set -euo pipefail
-        out=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" criteria "$VV_PATH")
+        args=(criteria "$VV_PATH")
+        if [ -n "$VV_CHANGED" ]; then args+=(--changed-files "$VV_CHANGED"); fi
+        out=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}")
         echo "$out"
         case "$out" in
           none:*)     echo "count=0" >> "$GITHUB_OUTPUT"; echo "declared-none=${out#none: }" >> "$GITHUB_OUTPUT" ;;

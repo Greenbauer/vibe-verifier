@@ -137,6 +137,9 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 .chevron { color: var(--muted); font-size: 18px; }
 .step-meter, .metric-meter { height: 5px; overflow: hidden; border-radius: 5px; background: var(--line); }
 .step-meter span, .metric-meter span { display: block; height: 100%; background: var(--green); }
+.step-meter.tone-pending span { background: var(--yellow); }
+.step-meter.tone-failed span { background: var(--red); }
+.step-meter.tone-neutral span { background: var(--muted); }
 
 .badge { display: inline-flex; width: max-content; align-items: center; border: 1px solid currentColor; border-radius: 99px; padding: 1px 6px; font-size: 10px; line-height: 1.45; }
 .status-success, .status-ready, .status-idle { color: var(--green); }

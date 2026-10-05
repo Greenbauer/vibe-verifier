@@ -1,6 +1,7 @@
 """The explore template: its write-scope, site and verify-input steps run as the shell they are, the
 one site URL it carries from the site step to the prompt and the gate, and the order of its steps.
 All read harnesses/qae/explore.yml itself, so the test judges what a consumer copies."""
+import json
 import os
 import re
 import shlex
@@ -26,6 +27,10 @@ def step_script(start, end):
     match = re.search(r"^( +)run: \|\n((?:\1 .*\n|\n)+)", step, re.MULTILINE)
     indent = len(match.group(1)) + 2
     return "".join(line[indent:] if line.strip() else "\n" for line in match.group(2).splitlines(True))
+
+
+def verify_inputs_script():
+    return step_script("- name: Write the declared inputs", "- name: Run the QA gates")
 
 
 def scope_script():
@@ -130,11 +135,12 @@ class SiteUrl(unittest.TestCase):
         self.assertIn("    outputs:\n      site-url: ${{ steps.site.outputs.url }}\n    steps:\n", text)
         self.assertIn("          SITE_URL: ${{ needs.explore.outputs.site-url }}\n", text)
         preview = "https://site-git-feat-team.vercel.app"
-        bin_dir = stub_bin(self, {"gh": 'case "$1" in\n'
-                                        '  pr) printf "## Acceptance criteria\\n\\n- The quote page loads\\n" ;;\n'
-                                        '  api) printf %s "[{\\"user\\":{\\"login\\":\\"github-actions[bot]\\"},\\"body\\":\\"acceptance-check: AC1 -- PASS -- loaded (qae/AC1.md::step 1: x)\\"}]" ;;\n'
+        bin_dir = stub_bin(self, {"gh": 'case "$1 $2" in\n'
+                                        '  pr*) printf "## Acceptance criteria\\n\\n- The quote page loads\\n" ;;\n'
+                                        '  *pulls*) printf "app/quote/page.tsx\\n" ;;\n'
+                                        '  api*) printf %s "[{\\"user\\":{\\"login\\":\\"github-actions[bot]\\"},\\"body\\":\\"acceptance-check: AC1 -- PASS -- loaded (qae/AC1.md::step 1: x)\\"}]" ;;\n'
                                         'esac\n'})
-        script = step_script("- name: Write the three declared inputs", "- uses: Greenbauer/vibe-verifier/actions/gates@")
+        script = verify_inputs_script()
         result = subprocess.run(["bash", "-e", "-c", script], cwd=self.work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
                                                "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": preview}))
@@ -193,10 +199,102 @@ class Steps(unittest.TestCase):
 
     def test_every_catalog_pin_is_the_placeholder_a_consumer_replaces(self):
         pins = re.findall(r"vibe-verifier/actions/[\w-]+@(\S+)( #[^\n]*)?", TEMPLATE.read_text())
-        self.assertEqual(len(pins), 4)
+        self.assertEqual(len(pins), 6)
         for sha, comment in pins:
             self.assertEqual(sha, "0" * 40)
             self.assertIn("CONSUMER: pin the commit you subscribe to", comment)
+
+
+class Applicability(unittest.TestCase):
+    """A pull request that needs no browser check builds nothing and is not judged, and both jobs
+    decide that with the same action, from the same two inputs."""
+
+    def test_the_explore_job_reads_the_criteria_before_building_anything(self):
+        text = TEMPLATE.read_text()
+        explore = text[:text.index("\n  verify:\n")]
+        read = explore.index("- name: Read the criteria")
+        self.assertLess(explore.index("- name: Write the criteria inputs"), read)
+        for step in ("- run: npm ci", "- name: Build and start the site under test", "- name: Install the browser toolchain",
+                     "- name: Explore the acceptance criteria in a real browser"):
+            at = explore.index(step)
+            self.assertLess(read, at, step)
+            self.assertIn("if: steps.criteria.outputs.count != '0'", explore[at:explore.index("\n      - ", at + 1)], step)
+
+    def test_both_jobs_pass_the_changed_paths_to_the_criteria_action(self):
+        text = TEMPLATE.read_text()
+        self.assertEqual(text.count("uses: Greenbauer/vibe-verifier/actions/criteria@"), 2)
+        self.assertEqual(text.count("          changed-files: qae-inputs/changed-files\n"), 2)
+        self.assertEqual(text.count("--jq '.[] | .filename, (.previous_filename // empty)' > qae-inputs/changed-files"), 2)
+
+    def test_the_explore_inputs_step_writes_the_body_and_every_changed_name(self):
+        work = tempfile.mkdtemp(prefix="vv-work-")
+        self.addCleanup(shutil.rmtree, work, True)
+        bin_dir = stub_bin(self, {"gh": 'case "$1" in\n'
+                                        '  pr) printf "## Why\\n\\ndocs\\n" ;;\n'
+                                        '  api) printf "README.md\\ndocs/about.tsx\\napp/about.tsx\\n" ;;\n'
+                                        'esac\n'})
+        script = step_script("- name: Write the criteria inputs", "- name: Read the criteria")
+        result = subprocess.run(["bash", "-e", "-c", script], cwd=work, capture_output=True, text=True,
+                                env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
+                                               "PR_NUMBER": "7", "REPO": "o/r"}))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(Path(work, "qae-inputs", "changed-files").read_text(), "README.md\ndocs/about.tsx\napp/about.tsx\n")
+        self.assertTrue(Path(work, "qae-inputs", "pr-body.md").is_file())
+
+    def test_the_verify_job_runs_the_gates_unless_no_check_is_needed(self):
+        text = TEMPLATE.read_text()
+        verify = text[text.index("\n  verify:\n"):]
+        download = verify.index("- uses: actions/download-artifact@")
+        self.assertLess(verify.index("- name: Read the criteria"), download)
+        self.assertIn("if: steps.criteria.outputs.count != '0'", verify[download:download + 200])
+        gates = verify.index("- name: Run the QA gates")
+        self.assertIn("        id: gates\n        if: steps.criteria.outputs.declared-none == ''\n", verify[gates:gates + 200])
+
+
+class Review(unittest.TestCase):
+    """The verify job posts the one review comment, after the gates, whatever they concluded."""
+
+    def test_the_review_is_the_last_step_and_runs_unless_cancelled(self):
+        text = TEMPLATE.read_text()
+        verify = text[text.index("\n  verify:\n"):]
+        review = verify[verify.index("- name: Post the QA review"):]
+        self.assertNotIn("\n      - ", review[1:])
+        self.assertIn("        if: ${{ !cancelled() }}\n", review)
+        self.assertIn("uses: Greenbauer/vibe-verifier/actions/qa-review@", review)
+        for line in ("explore-result: ${{ needs.explore.result }}", "gates-outcome: ${{ steps.gates.outcome }}",
+                     "not-required: ${{ steps.criteria.outputs.declared-none }}", "verdict: qae-inputs/verdict.md",
+                     "criteria: qae-inputs/pr-body.md", "token: ${{ secrets.GITHUB_TOKEN }}"):
+            self.assertIn("          %s\n" % line, review)
+
+    def test_only_the_verify_job_may_comment_besides_the_explorer(self):
+        text = TEMPLATE.read_text()
+        verify = text[text.index("\n  verify:\n"):]
+        self.assertIn("      pull-requests: write   # the QA review comment, and nothing else\n", verify)
+        self.assertNotIn("issues: write", text)
+
+    def test_the_verdict_lookup_skips_the_review_comment(self):
+        # The review is posted by the same identity, after the verdict, and can quote a criterion that
+        # reads like a check line. The gate must still be fed the explorer's verdict.
+        work = tempfile.mkdtemp(prefix="vv-work-")
+        self.addCleanup(shutil.rmtree, work, True)
+        verdict = "acceptance-check: AC1 -- PASS -- loaded (qae/AC1.md::step 1: x)"
+        comments = json.dumps([
+            {"user": {"login": "github-actions[bot]"}, "body": verdict},
+            {"user": {"login": "github-actions[bot]"},
+             "body": "<!-- vibe-verifier:qa-review -->\n## QA review: passed\n\n- AC1, explorer says PASS: acceptance-check: AC1 -- PASS"},
+        ])
+        Path(work, "comments.json").write_text(comments)
+        bin_dir = stub_bin(self, {"gh": 'case "$1 $2" in\n'
+                                        '  pr*) printf "## Acceptance criteria\\n\\n- x\\n" ;;\n'
+                                        '  *pulls*) printf "app/page.tsx\\n" ;;\n'
+                                        '  api*) cat "%s" ;;\n'
+                                        'esac\n' % Path(work, "comments.json")})
+        result = subprocess.run(["bash", "-e", "-c", verify_inputs_script()], cwd=work, capture_output=True, text=True,
+                                env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
+                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": "http://localhost:3000"}))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(Path(work, "qae-inputs", "verdict.md").read_text(), verdict + "\n")
+        self.assertEqual(Path(work, "qae-inputs", "changed-files").read_text(), "app/page.tsx\n")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,9 @@ from .util import category, elapsed_seconds, github_url, iso_time, parse_time, s
 MAX_WORKERS = 4
 JOB_CACHE_AGE = timedelta(days=7)
 WORKFLOW_CACHE_AGE = timedelta(minutes=5)
+# History reads jobs only for this many of a workflow's newest completed runs. A configured job name
+# that never runs would otherwise read every run of the last seven days, hundreds in a busy repository.
+HISTORY_RUN_LIMIT = 50
 
 
 def _endpoint(path: str, **query: object) -> str:
@@ -356,6 +359,20 @@ class GitHubCollector:
                 "attention": attention, "attention_reason": reason,
                 "checks": checks, "statuses": statuses, "expected": expected, "runs": runs}
 
+    def _branch_rules(self, repository: str, base: str) -> list[dict]:
+        """The rules GitHub enforces on a base branch, or none where GitHub refuses to list them.
+
+        Branch rules need only metadata read, which every dashboard token has, so a 403 here means the
+        repository's plan has no rulesets (a private repository on a free personal account). Nothing can
+        be required there, and the pull requests' own evidence is still readable."""
+        try:
+            return self.api.items(_endpoint("repos/%s/rules/branches/%s" % (repository, quote(base, safe="")),
+                                            per_page=100))
+        except ApiError as error:
+            if error.code == "forbidden":
+                return []
+            raise
+
     def _repository(self, repository: str, inventory: dict) -> dict:
         rows = self.api.items(_endpoint("repos/%s/pulls" % repository, state="open", per_page=100))
         pulls, errors, rules = [], [], {}
@@ -363,8 +380,7 @@ class GitHubCollector:
             try:
                 base = (row.get("base") or {}).get("ref")
                 if isinstance(base, str) and base not in rules:
-                    rules[base] = self.api.items(_endpoint("repos/%s/rules/branches/%s" % (repository, quote(base, safe="")),
-                                                           per_page=100))
+                    rules[base] = self._branch_rules(repository, base)
                 pulls.append(self._pull(repository, row, inventory, rules.get(base, [])))
             except ApiError as error:
                 identity = self._pull_identity(repository, row, inventory)
@@ -385,7 +401,7 @@ class GitHubCollector:
 
     def _bot_workflow(self, repository: str, workflow: str, roles: list[str], now: datetime) -> dict:
         rows = {role: {"active": [], "completed": []} for role in roles}
-        errors, active_complete, history_complete = [], False, False
+        errors, active_complete, history_complete, floor = [], False, False, None
         role_jobs = {role: set(self.config.bots[role].jobs) for role in roles}
         base = "repos/%s/actions/workflows/%s/runs" % (repository, quote(workflow, safe=""))
         try:
@@ -414,12 +430,17 @@ class GitHubCollector:
                     if ((run.get("repository") or {}).get("full_name") or repository).lower() == repository.lower()
                     and _time_key(run, "created_at") >= cutoff]
             runs.sort(key=lambda run: _time_key(run, "updated_at", "created_at"), reverse=True)
-            for run in runs:
+            for index, run in enumerate(runs):
                 latest_five = [recent_bot_runs(rows[role]["completed"], now, 168) for role in roles]
                 updated = parse_time(run.get("updated_at"))
                 if (updated and updated < now - timedelta(hours=2)
                         and all(len(recent) >= 5 and updated <= parse_time(recent[-1]["completed_at"])
                                 for recent in latest_five)):
+                    break
+                if index == HISTORY_RUN_LIMIT:
+                    # This run and every later one finished no later than this run's update time;
+                    # _bots decides per role whether its newest results make them irrelevant.
+                    floor = _time_key(run, "updated_at", "created_at")
                     break
                 for job in self._run_jobs(repository, run):
                     if job["status"] != "completed" or not job.get("completed_at"):
@@ -432,7 +453,7 @@ class GitHubCollector:
             errors.append({"repository": repository, "workflow": workflow,
                            "phase": "history", "code": error.code})
         return {"rows": rows, "active_complete": active_complete,
-                "history_complete": history_complete, "errors": errors,
+                "history_complete": history_complete, "history_floor": floor, "errors": errors,
                 "active_at": active_at, "history_at": self.clock()}
 
     def _workflow_names(self, repository: str) -> set[str]:
@@ -448,7 +469,8 @@ class GitHubCollector:
     def _bots(self, now: datetime, readable_repositories=None) -> dict:
         groups: dict[tuple[str, str], list[str]] = {}
         all_rows = {role: {"active": [], "completed": [], "active_complete": True,
-                           "history_complete": True, "active_at": [], "history_at": []} for role in BOT_KEYS}
+                           "history_complete": True, "active_at": [], "history_at": [],
+                           "floors": []} for role in BOT_KEYS}
         errors = []
         readable = set(self.config.repositories if readable_repositories is None else readable_repositories)
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
@@ -484,6 +506,8 @@ class GitHubCollector:
                     value["completed"].extend(outcome["rows"][role]["completed"])
                     value["active_complete"] &= outcome["active_complete"]
                     value["history_complete"] &= outcome["history_complete"]
+                    if outcome["history_floor"]:
+                        value["floors"].append(outcome["history_floor"])
                     value["active_at"].append(outcome["active_at"])
                     value["history_at"].append(outcome["history_at"])
         result = {}
@@ -491,6 +515,10 @@ class GitHubCollector:
             active = sorted(value["active"], key=lambda row: _time_key(row, "started_at"), reverse=True)
             history = recent_bot_runs(value["completed"], now, 168)
             active_complete, history_complete = value["active_complete"], value["history_complete"]
+            # A scan cut short by HISTORY_RUN_LIMIT is complete for this role only when its five newest
+            # results, across every repository, are all newer than the runs that scan skipped.
+            if value["floors"] and (len(history) < 5 or parse_time(history[-1]["completed_at"]) < max(value["floors"])):
+                history_complete = False
             state = "working" if active else "idle" if active_complete else "unknown"
             result[role] = {"state": state, "state_source": "github_actions" if state != "unknown" else "unavailable",
                             "sampled_at": iso_time(min(value["active_at"])) if value["active_at"] and (active_complete or active) else None,

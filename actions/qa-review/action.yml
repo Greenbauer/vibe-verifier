@@ -1,0 +1,44 @@
+name: Vibe Verifier QA review
+description: Post the QAE's one review comment on a pull request (passed, changes needed, not required, could not run), or edit it in place.
+inputs:
+  criteria:
+    description: The PR body the run read, relative to the workspace.
+    required: true
+  verdict:
+    description: The explorer's verdict comment, relative to the workspace; empty when there is none.
+    default: ""
+  explore-result:
+    description: The explore job's result (needs.explore.result).
+    required: true
+  gates-outcome:
+    description: The gates step's outcome (steps.<id>.outcome); empty or skipped when the gates did not run.
+    default: ""
+  not-required:
+    description: Why no browser check is needed (the criteria action's declared-none output); empty when one is.
+    default: ""
+  token:
+    description: A token that may comment on the pull request.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Post the QA review
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        VV_REPO: ${{ github.repository }}
+        VV_PR: ${{ github.event.pull_request.number }}
+        VV_HEAD: ${{ github.event.pull_request.head.sha }}
+        VV_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        VV_CRITERIA: ${{ inputs.criteria }}
+        VV_VERDICT: ${{ inputs.verdict }}
+        VV_EXPLORE: ${{ inputs.explore-result }}
+        VV_GATES: ${{ inputs.gates-outcome }}
+        VV_NOT_REQUIRED: ${{ inputs.not-required }}
+      run: |
+        set -euo pipefail
+        args=(qa-review --repo "$VV_REPO" --pr "$VV_PR" --head "$VV_HEAD" --run-url "$VV_RUN"
+              --criteria "$VV_CRITERIA" --explore-result "$VV_EXPLORE" --gates-outcome "$VV_GATES"
+              --not-required "$VV_NOT_REQUIRED")
+        if [ -n "$VV_VERDICT" ]; then args+=(--verdict "$VV_VERDICT"); fi
+        python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}"

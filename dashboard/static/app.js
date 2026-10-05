@@ -1,7 +1,7 @@
 (function () {
   "use strict";
   const { BOT_META, element: el, link, duration, since, formatTime, bytes, badge,
-    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, currentWork } = VV;
+    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterTone, currentWork } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
   const state = { ...VV.restoreViewState(null), ...VV.parseRoute(location.hash) };
@@ -117,7 +117,7 @@
   function progress(pull) {
     const totals = stepTotals(pull);
     if (!totals.known) return el("div", { class: "progress-copy" }, el("b", {}, "Step total unavailable"), el("span", {}, "Progress is not shown as complete"));
-    const meter = el("div", { class: "step-meter", role: "progressbar", "aria-valuemin": 0,
+    const meter = el("div", { class: `step-meter tone-${meterTone(pull)}`, role: "progressbar", "aria-valuemin": 0,
       "aria-valuemax": totals.total, "aria-valuenow": totals.completed });
     meter.append(el("span", { style: `width:${totals.total ? totals.completed / totals.total * 100 : 0}%` }));
     return el("div", { class: "progress-copy" }, el("b", {}, `${totals.completed}/${totals.total} steps`),

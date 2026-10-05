@@ -174,6 +174,15 @@
     return order.find(value => categories.includes(value)) || "unknown";
   }
 
+  // The step meter counts steps that finished, not steps that passed, so its colour carries the verdict:
+  // red on any failure, yellow on any pending check, green only when every check passed, gray otherwise.
+  function meterTone(pull) {
+    const categories = [...(pull.checks || []), ...(pull.statuses || []), ...(pull.expected || [])].map(row => row.category);
+    if (categories.includes("failed")) return "failed";
+    if (categories.includes("pending")) return "pending";
+    return combinedCategory(pull) === "success" ? "success" : "neutral";
+  }
+
   function currentWork(pull) {
     for (const run of pull.runs || []) {
       for (const job of run.jobs || []) {
@@ -186,6 +195,6 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, formatTime, bytes,
-    badge, diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, currentWork, restoreViewState,
+    badge, diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterTone, currentWork, restoreViewState,
     parseRoute, routeHash };
 });

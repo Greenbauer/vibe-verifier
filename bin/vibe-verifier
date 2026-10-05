@@ -68,11 +68,17 @@ is installed (installing it first when the cache does not have that lockfile's d
 workflow step can run a pinned toolchain the same way a gate does. Exit 2 when there is no such
 toolchain or the install fails.
 
-`criteria <file>` reads a PR body (or any criteria document) with the acceptance-verdict
-grammar and prints one line: `none: <reason>` when it declares it has nothing to check,
-else `criteria: <n>`. A harness uses it to skip work a pull request declares it has none
-of, so the decision is made by the same code that later judges the verdict. Exit 2 when
-the file cannot be read.
+`criteria <file> [--changed-files FILE]` reads a PR body (or any criteria document) with the
+acceptance-verdict grammar and prints one line: `none: <reason>` when it needs no browser check,
+else `criteria: <n>`. It needs none when it declares `- None: <why>`, or, given the pull request's
+changed paths one per line, when it lists no criteria and every path is CI configuration or
+documentation no site renders. A harness uses it to skip work, so the decision is made by the same
+code in the job that explores and the job that judges. Exit 2 when a file cannot be read.
+
+`qa-review` posts the QAE's one review comment on a pull request, or edits it in place when it is
+already there: passed, changes needed, not required, or could not run, with the head it judged,
+each criterion's verdict from the explorer, and a link to the run. The state comes from what the
+workflow's jobs and gates concluded, never from the explorer's prose.
 """
 import argparse
 import base64
@@ -89,7 +95,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATES = os.path.join(ROOT, "gates")
 sys.path.insert(0, GATES)
-from _acceptance import criteria as read_criteria, declares_none  # noqa: E402
+from _acceptance import PASS_RE, check_lines, criteria as read_criteria, not_required  # noqa: E402
 from _contract import CannotRun, resolve_base  # noqa: E402
 from _tools import NODE_TOOLS, ensure_node_tool  # noqa: E402
 LABEL = {0: "PASS", 1: "FAIL", 2: "COULD NOT RUN"}
@@ -811,14 +817,103 @@ def tool_command(args):
     return 0
 
 
+def read_text(path):
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        return handle.read()
+
+
 def criteria_command(args):
     try:
-        with open(args.file, encoding="utf-8") as handle:
-            text = handle.read()
+        text = read_text(args.file)
+        changed = [line for line in read_text(args.changed_files).splitlines() if line] if args.changed_files else None
     except OSError as error:
-        return fail("could not read %s: %s" % (args.file, error))
-    reason = declares_none(text)
+        return fail("could not read %s" % error)
+    reason = not_required(text, changed)
     print("none: %s" % reason if reason else "criteria: %d" % len(read_criteria(text)))
+    return 0
+
+
+# The QAE's review comment: one per pull request, found again by this first line and by the identity a
+# workflow's GITHUB_TOKEN posts as, so a comment anyone else writes is never edited. The verify job's
+# verdict lookup skips a comment that starts with it, so the review never stands in for a verdict.
+REVIEW_MARKER = "<!-- vibe-verifier:qa-review -->"
+REVIEW_AUTHOR = "github-actions[bot]"
+REVIEW_HEADINGS = {
+    "passed": "## QA review: passed \u2705",
+    "changes-needed": "## QA review: changes needed \u274c",
+    "not-required": "## QA review: not required \u2705",
+    "could-not-run": "## QA review: could not run \u26a0\ufe0f",
+}
+
+
+def review_state(args):
+    """What the workflow concluded, in order: a pull request that needs no check, an explore job that
+    did not finish, then the gates' own outcome. Gates that never ran (an earlier verify step failed)
+    judged nothing, so that is could-not-run too, never a refusal."""
+    if args.not_required:
+        return "not-required"
+    if args.explore_result != "success" or args.gates_outcome not in ("success", "failure"):
+        return "could-not-run"
+    return "passed" if args.gates_outcome == "success" else "changes-needed"
+
+
+def review_criteria(criteria_text, verdict_text):
+    wanted = read_criteria(criteria_text)
+    if not wanted:
+        return ["The pull request lists no acceptance criteria. Add a `## Acceptance criteria` list, or "
+                "`- None: <why>` when nothing on the site changes."]
+    lines = check_lines(verdict_text, "acceptance-check")
+    rows = []
+    for item, wording in wanted:
+        carried = lines.get(item.casefold(), [])
+        said = "no verdict" if len(carried) != 1 else "explorer says PASS" if PASS_RE.search(carried[0]) else "explorer says FAIL"
+        rows.append("- %s, %s: %s" % (item, said, wording))
+    return rows
+
+
+def review_body(state, args):
+    head = "`%s`" % args.head[:8]
+    lines = [REVIEW_MARKER, REVIEW_HEADINGS[state], ""]
+    if state == "not-required":
+        lines.append("No browser check on %s: %s." % (head, args.not_required.rstrip(".")))
+    elif state == "could-not-run":
+        stopped = ("The explore job ended `%s`" % args.explore_result if args.explore_result != "success"
+                   else "The verify job stopped before its gates ran")
+        lines.append("%s on %s, so nothing was checked. Its log has the cause; rerun the workflow once it "
+                     "is fixed." % (stopped, head))
+    else:
+        lines.append("Every criterion on %s has a PASS anchored to a step the explorer logged, and the "
+                     "evidence gate found nothing." % head if state == "passed" else
+                     "The QA gates refused %s. Their findings are in the qae-verify job's log." % head)
+        lines.append("")
+        verdict = read_text(args.verdict) if args.verdict and os.path.isfile(args.verdict) else ""
+        lines += review_criteria(read_text(args.criteria), verdict)
+    lines += ["", "[The run and its evidence](%s)" % args.run_url]
+    return "\n".join(lines) + "\n"
+
+
+def review_comment_ids(repo, pr):
+    ids, page = [], 1
+    while True:
+        batch = gh_json("repos/%s/issues/%s/comments?per_page=100&page=%d" % (repo, pr, page))
+        ids += [c["id"] for c in batch if c["user"]["login"] == REVIEW_AUTHOR and c["body"].startswith(REVIEW_MARKER)]
+        if len(batch) < 100:
+            return ids
+        page += 1
+
+
+def qa_review_command(args):
+    try:
+        state = review_state(args)
+        body = review_body(state, args)
+        found = review_comment_ids(args.repo, args.pr)
+        if found:
+            gh_json("repos/%s/issues/comments/%s" % (args.repo, found[0]), method="PATCH", body={"body": body})
+        else:
+            gh_json("repos/%s/issues/%s/comments" % (args.repo, args.pr), method="POST", body={"body": body})
+    except (OSError, CannotRead) as error:
+        return fail("could not post the QA review: %s" % error)
+    print("%s the QA review: %s" % ("edited" if found else "posted", state))
     return 0
 
 
@@ -854,6 +949,17 @@ def main():
     toolchain.add_argument("name", help="the toolchain: a directory under tools/ with a package-lock.json")
     reader = commands.add_parser("criteria", help="read a criteria document: prints `none: <reason>` or `criteria: <n>`")
     reader.add_argument("file", help="the PR body or criteria document")
+    reader.add_argument("--changed-files", metavar="FILE", help="the pull request's changed paths, one per line")
+    review = commands.add_parser("qa-review", help="post or edit the QAE's one review comment on a pull request (via gh)")
+    review.add_argument("--repo", required=True, metavar="OWNER/NAME")
+    review.add_argument("--pr", required=True, metavar="N")
+    review.add_argument("--head", required=True, metavar="SHA", help="the head commit the run judged")
+    review.add_argument("--run-url", required=True, metavar="URL")
+    review.add_argument("--criteria", required=True, metavar="FILE", help="the PR body the run read")
+    review.add_argument("--verdict", metavar="FILE", help="the explorer's verdict comment, when there is one")
+    review.add_argument("--explore-result", required=True, help="the explore job's result (success, failure, cancelled)")
+    review.add_argument("--gates-outcome", default="", help="the gates step's outcome (success, failure, skipped)")
+    review.add_argument("--not-required", default="", metavar="REASON", help="why no browser check is needed; empty when one is")
     args = parser.parse_args()
     if args.command == "list":
         print("\n".join(available()))
@@ -864,6 +970,8 @@ def main():
         return apply_down(args)
     if args.command == "criteria":
         return criteria_command(args)
+    if args.command == "qa-review":
+        return qa_review_command(args)
     if args.command == "tool":
         return tool_command(args)
     return run(args)
