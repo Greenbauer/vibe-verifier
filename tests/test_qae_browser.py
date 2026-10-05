@@ -21,7 +21,7 @@ def script():
 
 
 class QaeBrowserAction(unittest.TestCase):
-    def run_action(self, sudo_exit):
+    def run_action(self, sudo_exit, uid=1001):
         temp = Path(tempfile.mkdtemp(prefix="vv-qae-browser-"))
         tool = temp / "tool"
         (tool / "node_modules" / ".bin").mkdir(parents=True)
@@ -36,11 +36,14 @@ class QaeBrowserAction(unittest.TestCase):
         action_path.mkdir(parents=True)
         (temp / "bin").mkdir()
         (temp / "bin" / "vibe-verifier").write_text("import sys; print(%r)\n" % str(tool))
-        # sudo on PATH first: -n true answers with the exit the runner would give.
+        # sudo and id on PATH first: -n true answers with the exit the runner would give, and -u
+        # with the runner's user, whatever user runs the tests.
         path_dir = temp / "path"
         path_dir.mkdir()
         (path_dir / "sudo").write_text("#!/bin/sh\nexit %d\n" % sudo_exit)
-        (path_dir / "sudo").chmod(0o755)
+        (path_dir / "id").write_text("#!/bin/sh\necho %d\n" % uid)
+        for stub in ("sudo", "id"):
+            (path_dir / stub).chmod(0o755)
         output = temp / "output"
         output.write_text("")
         env = clean_env({"GITHUB_ACTION_PATH": str(action_path), "GITHUB_OUTPUT": str(output),
@@ -53,6 +56,11 @@ class QaeBrowserAction(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, "install --with-deps chromium\n")
         self.assertRegex(output, r"^mcp=.*/node_modules/@playwright/mcp/cli\.js\n$")
+
+    def test_as_root_the_system_packages_are_installed_without_sudo(self):
+        result, calls, output = self.run_action(sudo_exit=1, uid=0)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, "install --with-deps chromium\n")
 
     def test_a_runner_whose_user_cannot_sudo_gets_the_browser_alone(self):
         # A password prompt would stop the job; the packages are the runner's own there.
