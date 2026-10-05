@@ -175,9 +175,12 @@
   }
 
   // The step meter counts steps that finished, not steps that passed, so its colour carries the verdict:
-  // green only when every check passed, red on any failure, yellow while anything else is unsettled.
-  function meterTone(category) {
-    return category === "success" || category === "failed" ? category : "pending";
+  // red on any failure, yellow on any pending check, green only when every check passed, gray otherwise.
+  function meterTone(pull) {
+    const categories = [...(pull.checks || []), ...(pull.statuses || []), ...(pull.expected || [])].map(row => row.category);
+    if (categories.includes("failed")) return "failed";
+    if (categories.includes("pending")) return "pending";
+    return combinedCategory(pull) === "success" ? "success" : "neutral";
   }
 
   function currentWork(pull) {
