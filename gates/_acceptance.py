@@ -110,10 +110,14 @@ def not_required(text, changed):
     `text` is its body and `changed` its changed paths (a rename lists both names). It needs none when
     it declares `- None: <why>`, or when it lists no criteria and every changed path is one no browser
     can see. Criteria win over paths: a pull request that lists one is explored whatever it touches.
-    An empty path list proves nothing, so it never exempts.
+    An empty path list proves nothing, so it never exempts. A body lists criteria only under an
+    `Acceptance criteria` heading: without one, the plain-list reading counts every line of prose as a
+    criterion, and a short body with no headings would never be exempt (found on the first consumer
+    PR, 2026-10-05).
     """
     declared = declares_none(text)
-    if declared or criteria(text) or not changed or not all(map(unrendered, changed)):
+    headed = any(CRITERIA_HEADING.match(line) for line in text.splitlines())
+    if declared or (headed and criteria(text)) or not changed or not all(map(unrendered, changed)):
         return declared
     return "every changed file (%d) is CI configuration or documentation no site renders" % len(changed)
 
