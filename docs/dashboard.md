@@ -296,9 +296,9 @@ that matches the filters gets no group. Groups are ordered by their most recentl
 request, newest first; within a group the newest pull request is first and the oldest is last.
 A pull request's badge shows its worst current-head check. A skipped check never outranks a passed
 one, so the badge reads Skipped only when every check was skipped.
-The step meter counts finished steps, not passed ones, so its colour follows the badge: green only
-when every check passed, red when any check failed, and yellow for anything still pending,
-cancelled, unknown, or skipped.
+The step meter counts finished steps, not passed ones, so its colour carries the verdict: red when
+any check failed, yellow when any check is still pending, green only when every check passed, and
+gray when the result is cancelled, skipped, or unknown.
 Elapsed time alone never asserts that a job is stuck. The Actions timeline uses shared wall-clock
 coordinates for parallel jobs and does not sum their durations. Unknown step totals never render as
 100 percent. A completed job with no steps, which is how GitHub reports a skipped job, counts as
