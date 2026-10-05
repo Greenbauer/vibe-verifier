@@ -1,0 +1,33 @@
+id: supabase-upsert-ignore-duplicates
+language: tsx
+message: >-
+  An upsert with ignoreDuplicates needs an onConflict column, and its result must be read with
+  .maybeSingle(), not .single(): ON CONFLICT DO NOTHING returns zero rows when another request
+  won the race, so read the existing row back when data is null.
+note: >-
+  Without onConflict, PostgREST sends a plain insert and a duplicate still fails with 409.
+  .single() turns the legitimate zero-row result into a PGRST116 error.
+ignores: ['**/node_modules/**', '**/__tests__/**', '**/*.test.*', '**/*.spec.*']
+rule:
+  any:
+    - kind: object
+      has:
+        kind: pair
+        regex: ^ignoreDuplicates\s*:\s*true$
+      not:
+        has:
+          kind: pair
+          has:
+            field: key
+            regex: ^['"]?onConflict['"]?$
+      inside:
+        kind: call_expression
+        has:
+          field: function
+          regex: \.upsert$
+        stopBy: end
+    - pattern: $Q.single()
+      has:
+        kind: pair
+        regex: ^ignoreDuplicates\s*:\s*true$
+        stopBy: end

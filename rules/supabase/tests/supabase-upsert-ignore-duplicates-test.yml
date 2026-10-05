@@ -1,0 +1,9 @@
+id: supabase-upsert-ignore-duplicates
+valid:
+  - |
+    const { data } = await db.from("members").upsert(row, { onConflict: "email", ignoreDuplicates: true }).select().maybeSingle();
+invalid:
+  - |
+    const { data } = await db.from("members").upsert(row, { ignoreDuplicates: true }).select().maybeSingle();
+  - |
+    const { data } = await db.from("members").upsert(row, { onConflict: "email", ignoreDuplicates: true }).select().single();

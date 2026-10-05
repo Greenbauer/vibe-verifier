@@ -1,0 +1,47 @@
+id: no-memoized-rejecting-init
+language: tsx
+message: >-
+  This caches a promise that can reject, so one failed attempt is returned to every later
+  caller until the process restarts. Clear the cache when it rejects:
+  `$P = (async () => { ... })().catch((error) => { $P = undefined; throw error; });`
+note: >-
+  A lazily initialised connection, schema check or seed that fails once (a timeout, a
+  deploy race) stays failed for the life of the process.
+ignores: ['**/node_modules/**', '**/__tests__/**', '**/*.test.*', '**/*.spec.*']
+rule:
+  all:
+    - any:
+        - pattern: $P ??= $INIT
+        - pattern: $P ||= $INIT
+        - all:
+            - pattern: $P = $INIT
+            - inside:
+                stopBy: end
+                kind: if_statement
+                has:
+                  field: condition
+                  pattern: (!$P)
+    # Only promises: the cache is awaited, or returned from an async function, or built with .then().
+    - any:
+        - inside:
+            stopBy: end
+            any: [{kind: function_declaration}, {kind: arrow_function}, {kind: method_definition}, {kind: function_expression}]
+            has: {stopBy: end, pattern: await $P}
+        - inside:
+            stopBy: end
+            regex: '^async\b'
+            any: [{kind: function_declaration}, {kind: arrow_function}, {kind: method_definition}, {kind: function_expression}]
+            has: {stopBy: end, pattern: return $P}
+        - has:
+            field: right
+            pattern: $X.then($$$)
+constraints:
+  INIT:
+    kind: call_expression
+    not:
+      has:
+        field: function
+        kind: member_expression
+        has:
+          field: property
+          regex: "^(catch|finally)$"

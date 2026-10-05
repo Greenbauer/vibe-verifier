@@ -1,0 +1,36 @@
+id: no-memoized-rejecting-init
+valid:
+  - |
+    let ready;
+    async function init() {
+      ready ??= connect().catch((error) => { ready = undefined; throw error; });
+      return ready;
+    }
+  - |
+    let client;
+    function getClient() {
+      if (!client) client = makeClient();
+      return client;
+    }
+invalid:
+  - |
+    let ready;
+    function ensure() {
+      if (!ready) {
+        ready = setup().then(() => listen());
+      }
+      return ready;
+    }
+  - |
+    let ready;
+    async function init() {
+      ready ??= connect();
+      return ready;
+    }
+  - |
+    class Store {
+      async init() {
+        if (!this.ready) this.ready = this.load();
+        await this.ready;
+      }
+    }
