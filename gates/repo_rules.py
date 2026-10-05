@@ -401,8 +401,8 @@ def manifest_rules(path):
 def rules_doc(sg, sources):
     """The generated Markdown block: every rule of sources that runs (ast-grep never runs a rule whose
     severity is `off`), sorted by id, with whether it blocks as the gate judges it, its language with the
-    globs its directory maps to that language and those it maps to another (which the language no longer
-    sees), its `files` and `ignores` globs, and its message."""
+    globs its directory maps to that language and those it maps to another (a file they match is parsed as
+    that other language, so the rule never sees it), its `files` and `ignores` globs, and its message."""
     with tempfile.TemporaryDirectory(prefix="vv-rules-doc-") as work:
         projects = os.path.join(work, "projects")
         origin = assemble(sources, projects)

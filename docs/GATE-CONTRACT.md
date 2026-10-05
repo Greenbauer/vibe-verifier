@@ -486,7 +486,8 @@ repo-rules --rules lint/rules --pack example --soak
   working tree has them, and renders one Markdown block: every rule ast-grep runs (one whose severity
   is `off` never runs and is left out), sorted by id, each with whether it blocks or is advisory
   (severity, as above), its language with the globs its directory's `sgconfig.yml` maps to that
-  language (`with`) and to another one (`without`, since the language no longer sees them), its
+  language (`with`) and to another one (`without`: a file such a glob matches is parsed as that
+  other language, so this rule never sees it), its
   `files` and `ignores` globs, and its message. The block opens and closes with fixed comment lines that say it is generated and to edit the rule files
   instead. Without `--write` it is printed; with it, the block in PATH is replaced, or appended when
   PATH has none. The rule files are read with the gate's own reader, so `rules-doc` refuses (exit 2)
