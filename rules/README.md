@@ -57,7 +57,10 @@ Every rule needs:
 
 - an `id`, unique across every pack and rule directory a repository runs together;
 - a `message` that says what to write instead, not only what is wrong: the person or agent reading
-  it has the log and nothing else;
+  it has the log and nothing else, and it is also the rule's line in a subscriber's generated rules
+  block (`bin/vibe-verifier rules-doc`, see the
+  [gate contract](../docs/GATE-CONTRACT.md#repository-rules)), so a pack change that edits a message
+  changes that block;
 - a `note` when the fix needs more than one line (where the replacement lives, how to call it);
 - a rule test in its own directory's `tests/`, with at least one `valid` and one `invalid` case,
   which passes.
