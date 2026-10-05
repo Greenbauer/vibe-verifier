@@ -401,16 +401,47 @@ class ApiTransport(unittest.TestCase):
         self.assertNotIn("secret", str(caught.exception))
         self.assertEqual(api.backoff_until, 160)
 
-    def test_exhausted_hourly_limit_backs_off_until_the_reported_reset(self):
+    def test_a_spent_hourly_counter_pauses_only_its_endpoint_family_until_the_reported_reset(self):
+        # GitHub meters some endpoint families against a separate counter (seen 2026-10-05: attempt
+        # jobs spent while pull requests had thousands left), so one family must not stop the rest.
+        now, commands = [100], []
+
         def runner(command, **kwargs):
-            return subprocess.CompletedProcess(command, 1, http(403, "{}", extra=(
-                "X-Ratelimit-Remaining: 0", "X-Ratelimit-Reset: 700")), "gh: API rate limit exceeded for user ID 1.")
-        api = GitHubAPI(runner=runner, clock=lambda: 100)
+            commands.append(command[3])
+            if "/attempts/" in command[3]:
+                return subprocess.CompletedProcess(command, 1, http(403, "{}", extra=(
+                    "X-Ratelimit-Remaining: 0", "X-Ratelimit-Reset: 700")), "gh: API rate limit exceeded for user ID 1.")
+            return subprocess.CompletedProcess(command, 0, http(200, "{}", extra=("X-Ratelimit-Remaining: 3370",)), "")
+        api = GitHubAPI(runner=runner, clock=lambda: now[0])
+        api.begin()
         with self.assertRaisesRegex(ApiError, "rate_limited"):
-            api.one("repos/o/r/pulls/1")
-        self.assertEqual(api.backoff_until, 700)
+            api.one("repos/o/r/actions/runs/1/attempts/1/jobs")
+        self.assertEqual(api.one("repos/o/r/pulls/1"), {})
         with self.assertRaisesRegex(ApiError, "rate_limited"):
-            api.begin()
+            api.one("repos/o/other/actions/runs/2/attempts/3/jobs")
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(api.backoff_until, 0)
+        api.begin()
+        self.assertEqual(api.lowest_remaining, None)
+        now[0] = 700
+        api.begin()
+        with self.assertRaisesRegex(ApiError, "rate_limited"):
+            api.one("repos/o/r/actions/runs/1/attempts/1/jobs")
+        self.assertEqual(len(commands), 3)
+
+    def test_the_lowest_remaining_count_on_any_response_is_reported(self):
+        answers = [(0, http(200, "{}", extra=("X-Ratelimit-Remaining: 3370",)), ""),
+                   (1, http(403, "{}", extra=("X-Ratelimit-Remaining: 0", "X-Ratelimit-Reset: 700")),
+                    "gh: API rate limit exceeded"),
+                   (0, http(200, "{}", extra=("X-Ratelimit-Remaining: 3369",)), "")]
+        api = GitHubAPI(runner=lambda command, **kwargs: subprocess.CompletedProcess(command, *answers.pop(0)),
+                        clock=lambda: 100)
+        api.begin()
+        api.one("repos/o/r/pulls/1")
+        with self.assertRaises(ApiError):
+            api.one("repos/o/r/actions/workflows")
+        api.one("repos/o/r/pulls/2")
+        self.assertEqual(api.lowest_remaining, 0)
 
     def test_request_budget_is_a_hard_bound(self):
         api = GitHubAPI(max_calls=0)

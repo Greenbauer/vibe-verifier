@@ -537,4 +537,5 @@ class GitHubCollector:
                 "coverage": {"selected": len(self.config.repositories), "readable": len(repository_rows),
                              "label": "Selected repositories", "inventory": inventories},
                 "bots": bots, "errors": errors, "partial": bool(errors) or bots["partial"],
-                "api": {**rate, "calls": self.api.calls, "max_calls": self.api.max_calls}}
+                "api": {**rate, "calls": self.api.calls, "lowest_remaining": self.api.lowest_remaining,
+                        "max_calls": self.api.max_calls}}
