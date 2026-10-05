@@ -46,8 +46,9 @@ verify) are inventoried and bumped by `consumers` and `apply-down` exactly like 
 
 ## Which pull requests need a check
 
-`bin/vibe-verifier criteria`, through `actions/criteria`, decides it in both jobs from the same two
-inputs, so they cannot disagree. A pull request needs no browser check when:
+`bin/vibe-verifier criteria`, through `actions/criteria`, decides it in both jobs with the same code.
+Each job fetches the PR body and changed paths itself, so an edit to the body between them can make
+them disagree, as it already could for the gates. A pull request needs no browser check when:
 
 - its body declares `- None: <why>` under `## Acceptance criteria`, or
 - its body lists no criteria and every changed path (both names of a rename) is one no site serves:
@@ -72,16 +73,17 @@ qa-review`) keeps one comment on the pull request, edited in place on every run,
 | Heading | When |
 |---|---|
 | `## QA review: not required ✅` | the pull request needs no check; the comment gives the reason |
-| `## QA review: could not run ⚠️` | the explore job did not finish, so nothing was judged |
+| `## QA review: could not run ⚠️` | the explore job did not finish, or the verify job stopped before its gates ran, so nothing was judged |
 | `## QA review: passed ✅` | the gates passed |
-| `## QA review: changes needed ❌` | the gates refused, or never ran |
+| `## QA review: changes needed ❌` | the gates refused |
 
 Earlier rows win. The state comes from the jobs' and the gates' outcomes, never from the explorer's
 prose: under it the comment lists each criterion with the word the explorer wrote for it (PASS, FAIL,
 or no verdict), names the head commit it judged, and links the run. It edits only a comment posted by
 `github-actions[bot]` that starts with the marker, and the verdict lookup skips that comment, so a
 review never stands in for a verdict. The explorer's own verdict comment is still posted on every run
-the explorer makes, because it is the gate's input.
+the explorer makes, because it is the gate's input. On a pull request from a fork the workflow token is
+read-only, so the review step cannot post there and fails the verify job.
 
 ## A reachable preview instead of a site on the runner
 
@@ -225,8 +227,10 @@ repository behind SSO starts its site on the runner, as the pilot does.
 - **A pull request with nothing to check says so.** The harness runs on every pull request, and the
   job carries no `if:`, because GitHub counts a skipped required check as satisfied. So a change
   with no rendered surface declares it, one criterion reading `- None: <why>`, or changes only paths
-  no site serves ([above](#which-pull-requests-need-a-check)). Both gates pass on
-  that, the explorer stops without writing, and a bare `- None` or an absent section still fails.
+  no site serves ([above](#which-pull-requests-need-a-check)). The harness then builds nothing,
+  starts no explorer and runs no gate (both gates pass on a `- None:` declaration anyway), and the
+  review comment states the skip. A bare `- None`, or an absent section on a PR that changes the
+  site, still fails.
   Found the first time apply-down opened a pin-bump PR and the gate refused it, correctly.
 
 ## The explorer on Codex: the OpenAI subscription, with the login on the runner

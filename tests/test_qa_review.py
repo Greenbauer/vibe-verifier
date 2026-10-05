@@ -113,9 +113,18 @@ class QaReview(unittest.TestCase):
     def test_a_failed_explore_beats_green_gates(self):
         self.assertIn("could not run", self.posted(explore="failure", gates="success"))
 
-    def test_gates_that_never_ran_are_not_a_pass(self):
-        self.assertIn("changes needed", self.posted(gates="skipped"))
-        self.assertIn("changes needed", self.posted(gates=""))
+    def test_gates_that_never_ran_could_not_run(self):
+        # An earlier verify step failed (an API error, a missing artifact): nothing was judged, and the
+        # comment must not say the gates refused it.
+        for outcome in ("skipped", ""):
+            body = self.posted(gates=outcome)
+            self.assertEqual(body.splitlines()[1], "## QA review: could not run \u26a0\ufe0f", outcome)
+            self.assertIn("The verify job stopped before its gates ran on `01234567`", body)
+            self.assertNotIn("refused", body)
+
+    def test_a_missing_verdict_file_reads_as_no_verdict(self):
+        self.verdict = str(Path(self.fixtures) / "never-written.md")
+        self.assertIn("- AC1, no verdict: The home page loads\n", self.posted(gates="failure"))
 
     def test_the_explorers_prose_never_decides(self):
         # Every line PASS, but the gates refused (an anchor that does not resolve): changes needed.

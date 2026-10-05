@@ -64,6 +64,10 @@ class Criteria(unittest.TestCase):
         result = runner("criteria", self.doc(BODY % "- None: a pin bump."), "--changed-files", self.changed("app/page.tsx"))
         self.assertEqual(result.stdout, "none: a pin bump.\n")
 
+    def test_a_path_with_a_space_is_one_path(self):
+        result = runner("criteria", self.doc("## Why\n\nx\n"), "--changed-files", self.changed("docs/My Guide.md", "README.md"))
+        self.assertEqual(result.stdout, "none: every changed file (2) is CI configuration or documentation no site renders\n")
+
     def test_an_empty_path_list_exempts_nothing(self):
         result = runner("criteria", self.doc("## Why\n\nx\n"), "--changed-files", self.changed())
         self.assertEqual(result.stdout, "criteria: 0\n")

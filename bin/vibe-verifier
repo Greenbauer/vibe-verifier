@@ -825,7 +825,7 @@ def read_text(path):
 def criteria_command(args):
     try:
         text = read_text(args.file)
-        changed = read_text(args.changed_files).split() if args.changed_files else None
+        changed = [line for line in read_text(args.changed_files).splitlines() if line] if args.changed_files else None
     except OSError as error:
         return fail("could not read %s" % error)
     reason = not_required(text, changed)
@@ -848,10 +848,11 @@ REVIEW_HEADINGS = {
 
 def review_state(args):
     """What the workflow concluded, in order: a pull request that needs no check, an explore job that
-    did not finish (so nothing was judged), then the gates' own outcome."""
+    did not finish, then the gates' own outcome. Gates that never ran (an earlier verify step failed)
+    judged nothing, so that is could-not-run too, never a refusal."""
     if args.not_required:
         return "not-required"
-    if args.explore_result != "success":
+    if args.explore_result != "success" or args.gates_outcome not in ("success", "failure"):
         return "could-not-run"
     return "passed" if args.gates_outcome == "success" else "changes-needed"
 
@@ -876,14 +877,17 @@ def review_body(state, args):
     if state == "not-required":
         lines.append("No browser check on %s: %s." % (head, args.not_required.rstrip(".")))
     elif state == "could-not-run":
-        lines.append("The explore job ended `%s` on %s, so nothing was checked. Its log has the cause; "
-                     "rerun the workflow once it is fixed." % (args.explore_result, head))
+        stopped = ("The explore job ended `%s`" % args.explore_result if args.explore_result != "success"
+                   else "The verify job stopped before its gates ran")
+        lines.append("%s on %s, so nothing was checked. Its log has the cause; rerun the workflow once it "
+                     "is fixed." % (stopped, head))
     else:
         lines.append("Every criterion on %s has a PASS anchored to a step the explorer logged, and the "
                      "evidence gate found nothing." % head if state == "passed" else
                      "The QA gates refused %s. Their findings are in the qae-verify job's log." % head)
         lines.append("")
-        lines += review_criteria(read_text(args.criteria), read_text(args.verdict) if args.verdict else "")
+        verdict = read_text(args.verdict) if args.verdict and os.path.isfile(args.verdict) else ""
+        lines += review_criteria(read_text(args.criteria), verdict)
     lines += ["", "[The run and its evidence](%s)" % args.run_url]
     return "\n".join(lines) + "\n"
 
