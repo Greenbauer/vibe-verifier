@@ -213,6 +213,15 @@ console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,
         self.assertTrue(result["safe"].startswith("https://github.com/octocat/"))
         self.assertIsNone(result["unsafe"])
 
+    def test_pr_badge_is_passed_when_the_only_other_checks_were_skipped(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+const pr=(...c)=>({checks:c.map(category=>({category}))});
+console.log(JSON.stringify([h.combinedCategory(pr('success','skipped')),h.combinedCategory(pr('skipped','skipped')),
+ h.combinedCategory(pr('success','skipped','failed')),h.combinedCategory(pr('skipped','pending'))]));
+''')
+        self.assertEqual(result, ["success", "skipped", "failed", "pending"])
+
     def test_disk_meter_reports_used_space_not_free_space(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');

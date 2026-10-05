@@ -140,7 +140,8 @@
   }
 
   function combinedCategory(pull) {
-    const order = ["failed", "cancelled", "pending", "unknown", "skipped", "success"];
+    // A skipped check is not a result, so it never outranks a pass; "skipped" shows only when every check skipped.
+    const order = ["failed", "cancelled", "pending", "unknown", "success", "skipped"];
     const categories = [...(pull.checks || []), ...(pull.statuses || [])].map(row => row.category);
     return order.find(value => categories.includes(value)) || "unknown";
   }
