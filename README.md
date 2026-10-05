@@ -50,6 +50,7 @@ Vibe Verifier is designed for repositories where the thing writing code may also
 | Failure mode | Vibe Verifier behavior |
 |---|---|
 | AI review fails or the provider is unavailable | No new receipt is issued; the review job fails |
+| The reviewer's subscription is rate-limited | The job passes with a warning and posts a `limited` receipt for that head only; the next real review covers what it let through |
 | A new commit is pushed after review | The previous receipt is stale; the new head must be verified |
 | A PR removes a gate, adds `--soak`, or raises its threshold | The current PR is still judged using the base branch's version of that gate |
 | A gate cannot determine a verdict | Exit `2`; never reported as a clean pass |
@@ -155,7 +156,7 @@ The workflow:
 4. issues a workflow-owned receipt only after the review completes, and
 5. lets a deterministic gate verify that the receipt matches the current head and that required threads are resolved.
 
-A push after review makes the old receipt stale. The harness selects a full review, delta review, or no-change receipt refresh from the changed files. A provider failure, model error, or interrupted review issues no new receipt and fails the review job.
+A push after review makes the old receipt stale. The harness selects a full review, delta review, or no-change receipt refresh from the changed files. A provider failure, model error, or interrupted review issues no new receipt and fails the review job. The one exception is a proven rate or usage limit on the reviewer's subscription: the job passes with a warning and posts a `limited` receipt, which counts for that exact head but is never used as the starting point for the next review.
 
 ### Browser acceptance verification
 

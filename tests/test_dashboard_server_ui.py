@@ -190,7 +190,7 @@ class BrowserHelpers(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
-    def test_filters_step_unknowns_buckets_and_pace_are_pure(self):
+    def test_filters_step_unknowns_and_pace_are_pure(self):
         source = r'''
 const h=require('./dashboard/static/helpers.js');
 const c=require('./dashboard/static/charts.js');
@@ -198,11 +198,9 @@ const pulls=[{repository:'octocat/example',number:1,title:'Safe',author:'octocat
              {repository:'octocat/other',number:2,title:'Quiet',author:'octocat',subscription:'unknown',attention:false}];
 const filtered=h.filterPulls(pulls,{query:'safe',repository:'all',subscribed:true,attention:true});
 const unknown=h.stepTotals({runs:[{step_summary:{known:false}}]});
-const now=Date.UTC(2026,8,30,15,0,0);
-const buckets=c.bucketSamples([{timestamp:'2026-09-30T14:30:00Z',bot:'reviewer',input_tokens:10,output_tokens:5}], '24h', now);
-console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,bucket:buckets.reduce((n,x)=>n+x.total,0),
- paceMissing:c.pacePerBucket({allowance_tokens:null,pace_tokens_per_second:null},'24h'),
- pace:c.pacePerBucket({allowance_tokens:1000,pace_tokens_per_second:2},'24h'),
+console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,
+ paceMissing:c.pacePerHour({allowance_tokens:null,pace_tokens_per_second:null}),
+ pace:c.pacePerHour({allowance_tokens:1000,pace_tokens_per_second:2}),
  safe:h.safeUrl('https://github.com/octocat/example/pull/1','octocat'),
  unsafe:h.safeUrl('https://github.com/example/foreign/pull/1','octocat')}));
 '''
@@ -210,27 +208,53 @@ console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,bucket:bu
         self.assertEqual(result["filtered"], [1])
         self.assertFalse(result["unknown"]["known"])
         self.assertIsNone(result["unknown"]["total"])
-        self.assertEqual(result["bucket"], 15)
         self.assertIsNone(result["paceMissing"])
         self.assertEqual(result["pace"], 7200)
         self.assertTrue(result["safe"].startswith("https://github.com/octocat/"))
         self.assertIsNone(result["unsafe"])
 
-    def test_usage_history_leaves_missing_buckets_as_gaps_and_preserves_measured_zero(self):
-        result = self.node(r"""
-const c=require('./dashboard/static/charts.js');
-const now=Date.UTC(2026,8,30,15,0,0);
-const samples=[{timestamp:'2026-09-30T14:30:00Z',bot:'reviewer',input_tokens:0,output_tokens:0}];
-const points=c.seriesFor(samples,'24h',now,'reviewer');
-const other=c.seriesFor(samples,'24h',now,'explorer');
-const path=c.linePath([{y:2},{y:null},{y:0},{y:4}],x=>x,y=>y);
-const expired=c.seriesFor(samples,'24h',now+86400000,'reviewer');
-console.log(JSON.stringify({points,other,path,expired}));
-""")
-        self.assertEqual([point['y'] for point in result['points']], [None] * 23 + [0])
-        self.assertTrue(all(point['y'] is None for point in result['other']))
-        self.assertEqual(result['path'], 'M0,2 M2,0 L3,4')
-        self.assertFalse(any(point['y'] is not None for point in result['expired']))
+    def test_pulls_group_by_repository_newest_activity_first_oldest_pull_last(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+const p=(repository,number,created_at,updated_at)=>({repository,number,created_at,updated_at});
+const groups=h.groupPulls([
+ p('o/quiet',1,'2026-10-01T00:00:00Z','2026-10-01T00:00:00Z'),
+ p('o/busy',2,'2026-09-01T00:00:00Z','2026-10-05T00:00:00Z'),
+ p('o/busy',3,'2026-10-02T00:00:00Z','2026-10-02T00:00:00Z'),
+ p('o/busy',4,'2026-09-15T00:00:00Z','2026-09-15T00:00:00Z'),
+ p('o/blank',5,null,null)]);
+console.log(JSON.stringify(groups.map(g=>[g.repository,g.pulls.map(x=>x.number)])));
+''')
+        self.assertEqual(result, [["o/busy", [3, 4, 2]], ["o/quiet", [1]], ["o/blank", [5]]])
+        self.assertEqual(self.node("console.log(JSON.stringify(require('./dashboard/static/helpers.js').groupPulls([])))"), [])
+
+    def test_pr_badge_is_passed_when_the_only_other_checks_were_skipped(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+const pr=(...c)=>({checks:c.map(category=>({category}))});
+console.log(JSON.stringify([h.combinedCategory(pr('success','skipped')),h.combinedCategory(pr('skipped','skipped')),
+ h.combinedCategory(pr('success','skipped','failed')),h.combinedCategory(pr('skipped','pending'))]));
+''')
+        self.assertEqual(result, ["success", "skipped", "failed", "pending"])
+
+    def test_an_expected_required_check_keeps_the_pr_pending_and_its_steps_unknown(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+const pr={checks:[{category:'success'}],expected:[{category:'pending'}],
+ runs:[{step_summary:{known:true,completed:83,total:83,remaining:0}}]};
+console.log(JSON.stringify([h.combinedCategory(pr),h.stepTotals(pr).known]));
+''')
+        self.assertEqual(result, ["pending", False])
+
+    def test_disk_meter_reports_used_space_not_free_space(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+console.log(JSON.stringify([h.diskUsage({workspace_disk_free_bytes:25,workspace_disk_total_bytes:100}),
+ h.diskUsage({workspace_disk_free_bytes:null,workspace_disk_total_bytes:100}),
+ h.diskUsage({workspace_disk_free_bytes:5,workspace_disk_total_bytes:0})]));
+''')
+        self.assertEqual(result[0], {"used": 75, "total": 100, "percent": 75})
+        self.assertEqual(result[1:], [None, None])
 
     def test_failure_panel_distinguishes_unavailable_empty_and_failed_history(self):
         result = self.node(r"""
@@ -258,7 +282,8 @@ function render(roles) {
   return failurePanel(el,BOT_META,snapshot,state,()=>{},badge,link,value=>value,value=>`${value}s`);
 }
 console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent_7d:[]}}),
-  failed:render({'qae-1':{recent_7d:[run]}})}));
+  failed:render({'qae-1':{recent_7d:[run]}}),
+  pressed:render({'swe-1':{name:'SWE1',role:'swe',recent_7d:[]},'qae-1':{recent_7d:[]}})}));
 """)
 
         def text(node):
@@ -282,6 +307,11 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
         links = [node for node in nodes(result["failed"]) if node["tag"] == "a"]
         self.assertEqual([(text(node), node["attrs"]["href"]) for node in links], [
             ("Open original job", "https://github.com/octocat/example/actions/runs/1/job/2")])
+        # aria-pressed is the string "true" or "false" on every bot button: the selected-button
+        # CSS matches [aria-pressed="true"], and screen readers need both states to read a toggle.
+        buttons = [node for node in nodes(result["pressed"]) if node["tag"] == "button"]
+        self.assertEqual([(text(node).strip(), node["attrs"]["aria-pressed"]) for node in buttons],
+                         [("SWE1", "false"), ("QAE1", "true")])
 
     def test_ui_uses_text_nodes_and_the_approved_local_palette(self):
         app = (ROOT / "dashboard/static/app.js").read_text()

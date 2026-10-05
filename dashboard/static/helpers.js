@@ -16,22 +16,33 @@
     offline: "Offline", allocated: "Allocated"
   };
 
+  // Filters and the selected bot, saved per tab. Where you are (view, PR) lives in the URL instead.
   function restoreViewState(raw) {
-    const state = { view: "prs", selected: null, query: "", repository: "all", subscribed: false,
-      attention: false, usageRange: "24h", failureBot: null };
+    const state = { query: "", repository: "all", subscribed: false, attention: false, failureBot: null };
     let saved;
     try { saved = JSON.parse(raw); } catch (_) { return state; }
     if (!saved || typeof saved !== "object") return state;
-    if (["prs", "usage", "capacity"].includes(saved.view)) state.view = saved.view;
-    if (["24h", "7d"].includes(saved.usageRange)) state.usageRange = saved.usageRange;
-    for (const key of ["selected", "query", "repository", "failureBot"]) {
+    for (const key of ["query", "repository", "failureBot"]) {
       if (typeof saved[key] === "string") state[key] = saved[key];
     }
     for (const key of ["subscribed", "attention"]) {
       if (typeof saved[key] === "boolean") state[key] = saved[key];
     }
-    if (state.view !== "prs") state.selected = null;
     return state;
+  }
+
+  // The URL hash is the one record of the current view, so refresh, back and forward, and a copied
+  // link all land in the same place: #/prs, #/usage, #/capacity, or #/pr/<owner>/<repo>/<number>.
+  // GitHub owner and repository names are only letters, digits, ".", "-" and "_", so no escaping.
+  function parseRoute(hash) {
+    const pull = /^#\/pr\/([\w.-]+)\/([\w.-]+)\/(\d+)$/.exec(hash || "");
+    if (pull) return { view: "prs", selected: `${pull[1]}/${pull[2]}#${pull[3]}` };
+    const view = /^#\/(\w+)$/.exec(hash || "")?.[1];
+    return { view: ["prs", "usage", "capacity"].includes(view) ? view : "prs", selected: null };
+  }
+
+  function routeHash(route) {
+    return route.selected ? `#/pr/${route.selected.replace("#", "/")}` : `#/${route.view}`;
   }
 
   function element(tag, attrs, ...children) {
@@ -103,6 +114,14 @@
     return element("span", { class: `badge status-${status}`, text: label || STATUS_LABELS[status] || status });
   }
 
+  // The capacity meters show how full a resource is. Disk telemetry reports free space, so derive used.
+  function diskUsage(host) {
+    const free = host.workspace_disk_free_bytes, total = host.workspace_disk_total_bytes;
+    if (!Number.isFinite(free) || !Number.isFinite(total) || total <= 0) return null;
+    const used = Math.max(0, total - free);
+    return { used, total, percent: used / total * 100 };
+  }
+
   function flattenPulls(snapshot) {
     return (snapshot.github.repositories || []).flatMap(repository =>
       (repository.pulls || []).map(pull => ({ ...pull, stale: repository.stale, source_error: repository.source_error }))
@@ -119,9 +138,25 @@
     });
   }
 
+  // One group per repository that has pulls, newest activity first. Within a group the oldest pull is last.
+  function groupPulls(pulls) {
+    const time = value => { const at = Date.parse(value); return Number.isFinite(at) ? at : -Infinity; };
+    const groups = new Map();
+    pulls.forEach(pull => {
+      if (!groups.has(pull.repository)) groups.set(pull.repository, { repository: pull.repository, pulls: [], activity: -Infinity });
+      const group = groups.get(pull.repository);
+      group.pulls.push(pull);
+      group.activity = Math.max(group.activity, time(pull.updated_at), time(pull.created_at));
+    });
+    const result = [...groups.values()];
+    result.forEach(group => group.pulls.sort((a, b) => time(b.created_at) - time(a.created_at) || b.number - a.number));
+    return result.sort((a, b) => b.activity - a.activity || a.repository.localeCompare(b.repository));
+  }
+
   function stepTotals(pull) {
     const summaries = (pull.runs || []).map(run => run.step_summary);
-    if (!summaries.length || summaries.some(summary => !summary || !summary.known)) {
+    // A required workflow that has not started yet has no step count, so the total stays unknown.
+    if (!summaries.length || (pull.expected || []).length || summaries.some(summary => !summary || !summary.known)) {
       return { known: false, completed: null, total: null, remaining: null };
     }
     return summaries.reduce((total, summary) => ({
@@ -133,8 +168,9 @@
   }
 
   function combinedCategory(pull) {
-    const order = ["failed", "cancelled", "pending", "unknown", "skipped", "success"];
-    const categories = [...(pull.checks || []), ...(pull.statuses || [])].map(row => row.category);
+    // A skipped check is not a result, so it never outranks a pass; "skipped" shows only when every check skipped.
+    const order = ["failed", "cancelled", "pending", "unknown", "success", "skipped"];
+    const categories = [...(pull.checks || []), ...(pull.statuses || []), ...(pull.expected || [])].map(row => row.category);
     return order.find(value => categories.includes(value)) || "unknown";
   }
 
@@ -150,5 +186,6 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, formatTime, bytes,
-    badge, flattenPulls, filterPulls, stepTotals, combinedCategory, currentWork, restoreViewState };
+    badge, diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, currentWork, restoreViewState,
+    parseRoute, routeHash };
 });

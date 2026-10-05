@@ -1,10 +1,10 @@
 (function () {
   "use strict";
   const { BOT_META, element: el, link, duration, since, formatTime, bytes, badge,
-    flattenPulls, filterPulls, stepTotals, combinedCategory, currentWork } = VV;
+    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, currentWork } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
-  const state = VV.restoreViewState(null);
+  const state = { ...VV.restoreViewState(null), ...VV.parseRoute(location.hash) };
   let snapshot = null;
   let loading = false;
 
@@ -15,8 +15,29 @@
 
   function rememberView() {
     if (!snapshot) return;
-    try { sessionStorage.setItem(`vv-dashboard-view:${snapshot.owner}`, JSON.stringify(state)); }
+    const { view, selected, ...preferences } = state;
+    try { sessionStorage.setItem(`vv-dashboard-view:${snapshot.owner}`, JSON.stringify(preferences)); }
     catch (_) { /* Navigation still works when storage is unavailable. */ }
+  }
+
+  // Every view change sets the URL hash, which adds a history entry; hashchange then draws it.
+  // Back and forward fire the same event, so they draw through the same path.
+  function go(view, selected = null) {
+    const hash = VV.routeHash({ view, selected });
+    if (location.hash !== hash) location.hash = hash;
+    else show();
+  }
+
+  // An empty or unknown hash shows pull requests; rewrite it in place so the address names that view.
+  function replaceUnknownHash() {
+    const hash = VV.routeHash(state);
+    if (location.hash !== hash) history.replaceState(null, "", hash);
+  }
+
+  function show() {
+    Object.assign(state, VV.parseRoute(location.hash));
+    replaceUnknownHash();
+    render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0);
   }
 
   function announce(message) { announcement.textContent = message; }
@@ -62,7 +83,7 @@
         class: `bot-pill${recent[0]?.category === "failed" ? " has-failure" : ""}`,
         title: value.source || "Agent data unavailable",
         "aria-label": `${meta.name}: ${value.state || "unknown"}. Open usage and recent outcomes`,
-        onclick: () => { state.view = "usage"; state.selected = null; state.failureBot = role; render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0); }
+        onclick: () => { state.failureBot = role; go("usage"); }
       });
       button.style.setProperty("--bot", meta.color);
       const dots = el("span", { class: "run-dots", "aria-label": recent.length ? "Newest first completed outcomes" : "No completed outcomes in two hours" });
@@ -116,21 +137,30 @@
       rows.append(snapshot.github.refreshing && !snapshot.github.sampled_at ? empty("Loading pull requests", "Reading selected repositories from GitHub.") : empty("No matching pull requests", "Change a filter or wait for the next successful GitHub sample."));
       return;
     }
-    pulls.forEach(pull => {
-      const category = combinedCategory(pull);
-      const work = currentWork(pull);
-      const button = el("button", { class: "pr-row", onclick: () => {
-        state.selected = `${pull.repository}#${pull.number}`; render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0);
-      }, "aria-label": `Open ${pull.repository} pull request ${pull.number}: ${pull.title}` },
-      el("span", { class: "pr-identity" }, el("b", {}, pull.title),
-        el("small", {}, `${pull.repository.split("/")[1]} #${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
-      el("span", { class: "pr-work" }, badge(category), el("small", {}, pull.attention_reason)),
-      progress(pull),
-      el("span", { class: "pr-age" }, el("b", {}, since(pull.created_at, Date.now())), el("small", {}, work ? `${work.name} · ${duration(work.elapsed)}` : "PR age")),
-      el("span", { class: "chevron", "aria-hidden": "true" }, "›"));
-      if (pull.stale) button.classList.add("stale-row");
-      rows.append(button);
+    groupPulls(pulls).forEach(group => {
+      const list = el("div", { class: "pr-list" });
+      group.pulls.forEach(pull => list.append(prRow(pull)));
+      const name = group.repository.split("/")[1];
+      rows.append(el("section", { class: "pr-group", "aria-label": `${name} pull requests` },
+        el("h2", { class: "pr-group-title" }, name, el("small", {},
+          `${group.pulls.length} open · ${Number.isFinite(group.activity) ? `last activity ${duration(Math.max(0, (Date.now() - group.activity) / 1000))} ago` : "last activity unavailable"}`)),
+        list));
     });
+  }
+
+  function prRow(pull) {
+    const category = combinedCategory(pull);
+    const work = currentWork(pull);
+    const button = el("button", { class: "pr-row", onclick: () => go("prs", `${pull.repository}#${pull.number}`),
+    "aria-label": `Open ${pull.repository} pull request ${pull.number}: ${pull.title}` },
+    el("span", { class: "pr-identity" }, el("b", {}, pull.title),
+      el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
+    el("span", { class: "pr-work" }, badge(category), el("small", {}, pull.attention_reason)),
+    progress(pull),
+    el("span", { class: "pr-age" }, el("b", {}, since(pull.created_at, Date.now())), el("small", {}, work ? `${work.name} · ${duration(work.elapsed)}` : "PR age")),
+    el("span", { class: "chevron", "aria-hidden": "true" }, "›"));
+    if (pull.stale) button.classList.add("stale-row");
+    return button;
   }
 
   function renderPulls() {
@@ -139,7 +169,7 @@
     content.replaceChildren(heading("Pull requests", "Open pull requests and current-head evidence from selected repositories."),
       coverage(), prFilters(pulls), el("div", { class: "list-heading" }, el("span", { id: "pr-count" }),
         el("span", {}, "Current work"), el("span", {}, "Steps"), el("span", {}, "Age")),
-      el("div", { id: "pr-rows", class: "pr-list" }));
+      el("div", { id: "pr-rows", class: "pr-groups" }));
     renderPrRows();
   }
 
@@ -177,7 +207,7 @@
 
   function renderDetail() {
     const pull = flattenPulls(snapshot).find(item => `${item.repository}#${item.number}` === state.selected);
-    const back = el("button", { class: "back", onclick: () => { state.selected = null; render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0); } }, "‹ Pull requests");
+    const back = el("button", { class: "back", onclick: () => go("prs") }, "‹ Pull requests");
     if (!pull) {
       content.replaceChildren(back, empty(snapshot.github.refreshing ? "Loading pull request" : "Pull request unavailable",
         "The selected pull request is not in the current sample. It will appear when available, or you can return to the list."));
@@ -186,7 +216,7 @@
     const header = el("div", { class: "detail-heading" }, el("div", {}, el("h1", {}, pull.title),
       el("p", { class: "muted" }, `${pull.repository} #${pull.number} · current head ${pull.head_sha ? pull.head_sha.slice(0, 12) : "changed"}`)),
       link("Open pull request on GitHub", pull.html_url, snapshot.owner, "primary-link"));
-    const evidence = [...(pull.checks || []), ...(pull.statuses || [])];
+    const evidence = [...(pull.expected || []), ...(pull.checks || []), ...(pull.statuses || [])];
     const checks = el("section", { class: "panel" }, el("h2", {}, "Current-head checks"), progress(pull));
     evidence.forEach(row => checks.append(checkRow(row)));
     if (!evidence.length) checks.append(el("p", { class: "muted" }, "No current-head check evidence is available."));
@@ -213,7 +243,7 @@
     agents.forEach(agent => {
       const role = agent.id;
       const runs = roles[role]?.recent_7d || [];
-      const button = el("button", { "aria-pressed": state.failureBot === role, onclick: () => { state.failureBot = role; render(); } },
+      const button = el("button", { "aria-pressed": String(state.failureBot === role), onclick: () => { state.failureBot = role; render(); } },
         el("span", { style: `color:${BOT_META[agent.role].color}` }, agent.name));
       const dots = el("span", { class: "run-dots" });
       runs.forEach(run => dots.append(el("i", { class: `dot dot-${run.category}` })));
@@ -230,46 +260,50 @@
   }
 
   function usageCharts(usage) {
-    const samples = usage.samples || [];
-    const section = el("section", { class: "panel usage-charts" });
-    section.style.setProperty("--agent-columns", Math.max(1, Math.min(4, snapshot.agents?.rows.length || 0)));
+    const samples = usage.samples || [], now = Date.now();
+    // Hours after the source's last observation are unobserved, not zero, when the source goes stale.
+    const through = Math.min(...[usage.sampled_at, usage.history_sampled_at].map(Date.parse).filter(Number.isFinite));
     const sampleAccounts = new Set(samples.map(sample => sample.account));
     const account = sampleAccounts.size === 1 ? usage.accounts.find(item => sampleAccounts.has(item.id)) : null;
-    const window = account?.quota_windows.find(item => item.allowance_tokens !== null);
-    const pace = VVCharts.pacePerBucket(window, state.usageRange);
-    const chartRows = [{ id: "total", name: "All bots combined", color: "#f2f2f2" },
-      ...(snapshot.agents?.rows || []).map(agent => ({ id: agent.id, name: agent.name, ...BOT_META[agent.role] }))];
-    chartRows.forEach(row => {
-      const measured = samples.filter(sample => row.id === "total" || sample.bot === row.id);
-      const points = VVCharts.seriesFor(measured, state.usageRange, Date.now(), row.id);
-      const total = points.reduce((sum, point) => sum + point.y, 0);
-      const observed = points.some(point => Number.isFinite(point.y));
-      const chart = el("div", { class: `usage-chart${row.id === "total" ? " combined" : ""}` },
-        el("div", { class: "chart-heading" }, el("b", { style: `color:${row.color}` }, row.name),
-          el("span", {}, observed ? `${total.toLocaleString()} tokens observed` : "Not yet observed")),
-        el("div", { class: "chart-canvas" }));
-      section.append(chart);
-      if (observed || (row.id === "total" && pace !== null)) requestAnimationFrame(() => VVCharts.draw(chart.querySelector(".chart-canvas"), points, {
-        color: row.color, pace: row.id === "total" ? pace : null, range: state.usageRange,
-        compact: row.id !== "total", label: `${row.name} ${state.usageRange} token usage`
-      }));
-      else chart.querySelector(".chart-canvas").append(el("p", { class: "chart-empty muted" },
-        "Chart fills as instrumented runs complete."));
-    });
-    section.append(el("p", { class: "muted pace-note" }, pace === null ?
-      "A dotted pace line needs a reported token allowance for the same account. Subscription percentages alone cannot provide it." :
-      "Dotted line: remaining token allowance divided by time until reset."));
-    return section;
+    const pace = VVCharts.pacePerHour(account?.quota_windows.find(item => item.allowance_tokens !== null));
+    const bots = (snapshot.agents?.rows || []).map(agent => ({ name: agent.name, color: BOT_META[agent.role].color,
+      burn: VVCharts.hourlyBurn(samples.filter(sample => sample.bot === agent.id), now, through) }));
+    const observed = bots.map(bot => bot.burn).filter(Boolean);
+    const all = { name: "All bots", color: "rgba(255,255,255,0.6)", all: true, burn: observed.length ? VVCharts.sumBurns(observed) : null };
+    const shared = VVCharts.ceiling(observed);
+    return el("section", { class: "panel usage-charts" }, el("h2", {}, "Token burn pattern"),
+      el("p", { class: "muted" }, "Tokens each bot used, hour by hour. Solid: last 24 hours. Dashed: a usual day. Flat: the pace that lasts until the plan resets."),
+      el("div", { class: "burn-cards" }, bots.map(bot => burnCard(bot, shared, now, null)),
+        burnCard(all, VVCharts.ceiling(all.burn ? [all.burn] : [], pace), now, pace)),
+      el("p", { class: "muted pace-note" }, pace === null ?
+        "No flat pace line: it needs a reported token allowance for the same account. Subscription percentages alone cannot provide it." :
+        "Flat line on All bots: remaining token allowance divided by time until reset."));
+  }
+
+  // One card: name and last-24h peak, the hour-of-day chart (or "Not yet observed"), and its totals.
+  function burnCard(row, maximum, now, pace) {
+    const burn = row.burn, days = burn?.baselineDays ?? null;
+    const card = el("article", { class: `burn-card${row.all ? " all-bots" : ""}`, style: `--accent:${row.color}` });
+    const peak = Math.max(...(burn?.last24h || []).filter(Number.isFinite));
+    card.append(el("div", { class: "burn-head" }, el("b", {}, row.name),
+      el("span", { title: "Most tokens in one clock hour of the last 24 hours" }, Number.isFinite(peak) ? `peak ${VVCharts.short(peak)}/h` : null)));
+    if (!burn) {
+      card.append(el("p", { class: "burn-empty muted" }, "Not yet observed"));
+      return card;
+    }
+    const usual = `prior ${days}-day hourly average`;
+    const method = days === null ? "Tokens in the last 24 hours. A usual day appears once every hour has an observed prior day." :
+      `Tokens in the last 24 hours, and a usual day averaged over the ${days} prior day${days === 1 ? "" : "s"} observed so far${days < 6 ? " (not a full week yet)" : ""}.`;
+    card.append(VVCharts.drawBurn(burn, { color: row.color, maximum, nowMs: now, pace, usualTitle: `${row.name}: ${usual}`,
+      label: `${row.name}: tokens per clock hour, ${days === null ? "no usual day yet" : `against the ${usual}`}`,
+      paceTitle: `Pace to reset: ${Math.round(pace).toLocaleString()} tokens per hour spends the remaining allowance exactly at its reset.` }),
+    el("div", { class: "burn-totals", title: method }, VVCharts.totals(burn)));
+    return card;
   }
 
   function renderUsage() {
     const usage = snapshot.agents?.usage;
-    const select = el("select", { "aria-label": "Usage period", onchange: event => { state.usageRange = event.target.value; render(); } },
-      el("option", { value: "24h", selected: state.usageRange === "24h" }, "Last 24 hours"),
-      el("option", { value: "7d", selected: state.usageRange === "7d" }, "Last 7 days"));
-    const head = heading("Bot usage", "Measured tokens and subscription capacity.");
-    head.append(select);
-    content.replaceChildren(head);
+    content.replaceChildren(heading("Bot usage", "Measured tokens and subscription capacity."));
     if (usage?.available) {
       if (usage.stale) content.append(sourceBanner(`Usage telemetry is stale. Last sample: ${formatTime(usage.sampled_at)}.`, "warning"));
       const quotas = usage.accounts.filter(account => account.quota_windows.length);
@@ -298,12 +332,12 @@
     if (capacity.stale) content.append(sourceBanner(`Capacity telemetry is stale. Last sample: ${formatTime(capacity.sampled_at)}.`, "warning"));
     const host = capacity.host || {};
     const memoryPercent = Number.isFinite(host.memory_used_bytes) && host.memory_total_bytes ? host.memory_used_bytes / host.memory_total_bytes * 100 : null;
-    const diskPercent = Number.isFinite(host.workspace_disk_free_bytes) && host.workspace_disk_total_bytes ? host.workspace_disk_free_bytes / host.workspace_disk_total_bytes * 100 : null;
+    const disk = diskUsage(host);
     content.append(el("section", { class: "panel host-panel" }, el("div", { class: "panel-title" }, el("h2", {}, "SHARED HOST"),
       el("span", { class: "muted" }, `Sampled ${formatTime(capacity.sampled_at)}`)), el("div", { class: "host-grid" },
       metric("CPU sampled", Number.isFinite(host.cpu_percent) ? `${host.cpu_percent}%` : "Unavailable", host.cpu_percent),
       metric("Memory", Number.isFinite(host.memory_used_bytes) ? `${bytes(host.memory_used_bytes)} / ${bytes(host.memory_total_bytes)}` : "Unavailable", memoryPercent),
-      metric("Workspace disk free", Number.isFinite(host.workspace_disk_free_bytes) ? bytes(host.workspace_disk_free_bytes) : "Unavailable", diskPercent))));
+      metric("Workspace disk", disk ? `${bytes(disk.used)} / ${bytes(disk.total)}` : "Unavailable", disk?.percent))));
     const lanes = el("section", { class: "panel" }, el("div", { class: "panel-title" }, el("h2", {}, `${snapshot.owner} runners (${capacity.lanes.length})`),
       el("span", { class: "muted" }, "Registered and on-demand capacity")), el("div", { class: "lane-grid" }));
     const grid = lanes.querySelector(".lane-grid");
@@ -330,6 +364,8 @@
     else if (state.view === "capacity") renderCapacity();
     else renderPulls();
     rememberView();
+    const title = state.selected || { prs: "Pull requests", usage: "Bot usage", capacity: "Capacity" }[state.view];
+    document.title = `${title} · Vibe Verifier`;
     announce(`Showing ${state.selected ? "pull request detail" : state.view}`);
   }
 
@@ -359,9 +395,9 @@
     } finally { loading = false; }
   }
 
-  document.querySelectorAll(".sidebar button").forEach(button => button.addEventListener("click", () => {
-    state.view = button.dataset.view; state.selected = null; render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0);
-  }));
+  document.querySelectorAll(".sidebar button").forEach(button => button.addEventListener("click", () => go(button.dataset.view)));
+  replaceUnknownHash();
+  window.addEventListener("hashchange", show);
   window.addEventListener("pagehide", rememberView);
   load();
   window.setInterval(load, 30000);

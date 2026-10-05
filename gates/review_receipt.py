@@ -5,8 +5,10 @@ A wired gate for the review harness. Its inputs are declared files: the newest r
 review workflow posted (`review-receipt: <sha> -- <mode> -- run <id>`), the head SHA the pull
 request is at, and optionally the count of unresolved review threads. A receipt for an older
 commit is not a receipt for this one: a push after the review is a change nobody reviewed. A
-missing receipt means the review did not complete (quota, a model error, a broken step), which
-is red, never a quiet pass.
+missing receipt means the review did not complete (an invalid token, a model error, a broken
+step), which is red, never a quiet pass. A `limited` receipt is the workflow's own record that the
+reviewer subscription proved a rate or usage limit: it passes for its exact head like any other
+mode, and never excuses unresolved threads.
 """
 import json
 import os

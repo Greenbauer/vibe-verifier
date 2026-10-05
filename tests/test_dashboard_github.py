@@ -123,6 +123,14 @@ class CurrentHeadJoin(unittest.TestCase):
         self.assertFalse(unknown["known"])
         self.assertIsNone(unknown["percent"])
 
+    def test_a_skipped_job_with_no_steps_keeps_the_run_total_known(self):
+        steps = [{"status": "completed", "category": "success"}]
+        summary = step_summary([{"status": "completed", "steps": steps},
+                                {"status": "completed", "conclusion": "skipped", "steps": []}])
+        self.assertTrue(summary["known"])
+        self.assertEqual((summary["completed"], summary["total"], summary["percent"]), (1, 1, 100))
+        self.assertFalse(step_summary([{"status": "queued", "steps": []}])["known"])
+
     def test_a_head_change_drops_all_old_evidence_instead_of_showing_it_as_current(self):
         result = GitHubCollector(config(), joined_api("b" * 40), clock=lambda: NOW)._pull(
             REPO, pull_row(), {"subscription": "subscribed"})
@@ -156,6 +164,81 @@ class CurrentHeadJoin(unittest.TestCase):
             REPO, pull_row(), {"subscription": "subscribed"})
         self.assertEqual({row["provider"] for row in result["checks"]},
                          {"Example checks", "Another provider"})
+
+
+HISTORY = "orgs/octocat/rulesets/5/history"
+
+
+def required_workflow_rule(sha="c" * 40):
+    return {"type": "workflows", "ruleset_id": 5, "ruleset_source": "octocat", "ruleset_source_type": "Organization",
+            "parameters": {"workflows": [{"path": ".github/workflows/ci.yml", "repository_id": 9, "sha": sha}]}}
+
+
+def pinned_api(run_created, *, required=True):
+    """The joined fixture whose CI run comes from a ruleset-required workflow; the pin moved to "c" at 14:45."""
+    api = joined_api()
+    for run in api.item_values[endpoints()["runs"]]:
+        run["created_at"] = run_created
+        run["workflow_url"] = f"https://api.github.com/repos/{REPO}/actions/%s/1" % (
+            "required_workflows" if required else "workflows")
+    api.item_values[f"{HISTORY}?per_page=100"] = [
+        {"version_id": 1, "updated_at": "2026-09-30T14:00:00Z"}, {"version_id": 3, "updated_at": "2026-09-30T14:45:00Z"},
+        {"version_id": 2, "updated_at": "2026-09-30T14:30:00Z"}]
+    for version, sha in ((1, "b"), (2, "b"), (3, "c")):
+        api.one_values[f"{HISTORY}/{version}"] = {"state": {"rules": [required_workflow_rule(sha * 40)]}}
+    return api
+
+
+class RequiredChecks(unittest.TestCase):
+    def pull(self, api, rules, collector=None):
+        collector = collector or GitHubCollector(config(), api, clock=lambda: NOW)
+        return collector._pull(REPO, pull_row(), {"subscription": "subscribed"}, rules)
+
+    def test_a_required_workflow_with_no_run_on_the_head_is_expected_not_complete(self):
+        rule = required_workflow_rule()
+        rule["parameters"]["workflows"][0]["path"] = ".github/workflows/auth-probe.yml"
+        result = self.pull(joined_api(), [rule])
+        self.assertEqual([(row["name"], row["category"]) for row in result["expected"]], [("auth-probe.yml", "pending")])
+        self.assertTrue(result["attention"])
+
+    def test_a_run_from_before_the_pin_moved_does_not_satisfy_the_rule(self):
+        api = pinned_api("2026-09-30T14:40:00Z")
+        api.item_values[endpoints()["checks"]][0]["conclusion"] = "success"
+        result = self.pull(api, [required_workflow_rule()])
+        self.assertEqual([row["name"] for row in result["expected"]], ["CI"])
+        self.assertEqual(result["attention_reason"], "1 required check not run on this head")
+
+    def test_a_run_at_the_current_pin_satisfies_the_rule_and_the_pin_start_is_cached(self):
+        api = pinned_api("2026-09-30T14:50:00Z")
+        api.item_values[endpoints()["checks"]][0]["conclusion"] = "success"
+        collector = GitHubCollector(config(), api, clock=lambda: NOW)
+        self.assertEqual(self.pull(api, [required_workflow_rule()], collector)["expected"], [])
+        history_calls = [call for call in api.calls if HISTORY in call[1]]
+        self.assertNotIn(("one", f"{HISTORY}/1"), history_calls)
+        result = self.pull(api, [required_workflow_rule()], collector)
+        self.assertEqual(([call for call in api.calls if HISTORY in call[1]]), history_calls)
+        self.assertFalse(result["attention"])
+
+    def test_the_repositorys_own_workflow_at_the_same_path_does_not_satisfy_the_rule(self):
+        result = self.pull(pinned_api("2026-09-30T14:50:00Z", required=False), [required_workflow_rule()])
+        self.assertEqual([row["name"] for row in result["expected"]], ["ci.yml"])
+
+    def test_a_required_status_check_counts_only_once_reported(self):
+        rule = {"type": "required_status_checks", "parameters": {"required_status_checks": [
+            {"context": "legacy/status"}, {"context": "deploy/preview"}]}}
+        result = self.pull(joined_api(), [rule])
+        self.assertEqual([(row["name"], row["provider"]) for row in result["expected"]],
+                         [("deploy/preview", "Required status check")])
+
+    def test_rules_are_read_once_per_base_branch(self):
+        pulls, rules = f"repos/{REPO}/pulls?state=open&per_page=100", f"repos/{REPO}/rules/branches/main?per_page=100"
+        api = joined_api()
+        api.item_values[pulls] = [{**pull_row(), "base": {"ref": "main"}}, {**pull_row(), "base": {"ref": "main"}}]
+        api.item_values[rules] = []
+        api.one_values[f"repos/{REPO}/pulls/3"] = {"head": {"sha": SHA}}
+        result = GitHubCollector(config(), api, clock=lambda: NOW)._repository(REPO, {"subscription": "subscribed"})
+        self.assertEqual(len(result["pulls"]), 2)
+        self.assertEqual([call for call in api.calls if call[1] == rules], [("items", rules, None)])
 
 
 class BotHistory(unittest.TestCase):

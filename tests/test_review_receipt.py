@@ -54,6 +54,25 @@ class ReviewReceipt(unittest.TestCase):
         del paths["threads.json"]
         self.assertEqual(self.run_gate(paths).returncode, 0)
 
+    def test_a_limited_receipt_for_this_head_passes(self):
+        # The reviewer subscription was rate-limited: the workflow passed with a warning and said so.
+        root, paths = self.files(receipt="review-receipt: %s -- limited -- run 1\n" % HEAD, threads=json.dumps({"unresolved": 0}))
+        result = self.run_gate(paths)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_limited_receipt_for_another_head_fails(self):
+        root, paths = self.files(receipt="review-receipt: %s -- limited -- run 1\n" % OLD, threads=json.dumps({"unresolved": 0}))
+        result = self.run_gate(paths)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no review receipt for %s" % HEAD[:10], result.stdout)
+        self.assertIn("newest receipt is for %s" % OLD[:10], result.stdout)
+
+    def test_a_limited_receipt_does_not_excuse_unresolved_threads(self):
+        root, paths = self.files(receipt="review-receipt: %s -- limited -- run 1\n" % HEAD, threads=json.dumps({"unresolved": 1}))
+        result = self.run_gate(paths)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("1 unresolved review thread", result.stdout)
+
     def test_soak_reports_and_passes(self):
         root, paths = self.files(receipt="")
         result = self.run_gate(paths, "--soak")

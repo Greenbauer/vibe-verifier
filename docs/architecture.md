@@ -91,7 +91,7 @@ The review job:
 - pins review instruction files such as `CLAUDE.md` and `.claude/**` to the base branch,
 - computes whether the model needs a full review, delta review, or no-change receipt refresh,
 - runs the reviewer with restricted read/comment capabilities,
-- posts a workflow-owned receipt for the exact head after the review completes.
+- posts a workflow-owned receipt for the exact head after the review completes, or a `limited` receipt with a warning when the run proves the reviewer subscription hit a rate or usage limit.
 
 The verify job converts repository state into declared files: event head SHA, newest bot-authored receipt, and unresolved-thread count from the first 100 review threads. The `review-receipt` gate decides the verdict.
 
@@ -168,7 +168,7 @@ A recurring pattern is that the workflow declares the values that determine what
 |---|---|
 | Pull-request head SHA | Git/GitHub workflow |
 | Base revision and policy | Git history / runner |
-| Review receipt | Workflow step after successful review or a scoped no-change refresh |
+| Review receipt | Workflow step after successful review, a scoped no-change refresh, or a proven rate limit (`limited`) |
 | Review findings | Model |
 | Unresolved thread count | GitHub state captured by workflow |
 | Acceptance criteria | Pull-request body |

@@ -90,9 +90,9 @@ def added_files(repo, base):
     return _paths(repo, "--name-only", "--diff-filter=A", base + "...HEAD")
 
 
-def changed_files(repo, base):
-    """Files added, copied, modified or renamed since the base, as tracked paths at HEAD."""
-    return _paths(repo, "--name-only", "--diff-filter=ACMR", base + "...HEAD")
+def changed_files(repo, base, *pathspec):
+    """Files added, copied, modified or renamed since the base, as tracked paths at HEAD; a pathspec narrows them."""
+    return _paths(repo, "--name-only", "--diff-filter=ACMR", base + "...HEAD", "--", *pathspec)
 
 
 def renamed(repo, base):
