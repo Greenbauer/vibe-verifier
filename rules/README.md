@@ -36,7 +36,22 @@ A pack has the same layout as a repository's rule directory:
 rules/<name>/
   <rule>.yml                 one ast-grep rule (or several, separated by ---)
   tests/<rule>-test.yml      its ast-grep rule test
+  sgconfig.yml               optional: only its languageGlobs are read
 ```
+
+**A rule sees only the files its `language` owns by extension.** A `language: Tsx` rule covers
+`.tsx` files and never `.ts` ones, and says nothing about the files it skipped. To cover both, write
+the rule once per language, or map the extra extensions in the directory's `sgconfig.yml`:
+
+```yaml
+languageGlobs:
+  tsx: ['*.ts']
+```
+
+The mapping applies to that directory's rules and tests only: each pack and rule directory runs as
+its own ast-grep project, so a pack's mapping never changes what a repository's rules see, nor the
+other way round. Inside the directory it applies to every rule: with `*.ts` mapped to tsx, the
+directory's `language: TypeScript` rules no longer see `.ts` files.
 
 Every rule needs:
 
@@ -44,7 +59,8 @@ Every rule needs:
 - a `message` that says what to write instead, not only what is wrong: the person or agent reading
   it has the log and nothing else;
 - a `note` when the fix needs more than one line (where the replacement lives, how to call it);
-- a rule test with at least one `valid` and one `invalid` case, which passes.
+- a rule test in its own directory's `tests/`, with at least one `valid` and one `invalid` case,
+  which passes.
 
 A rule without those makes the gate exit 2 for every subscriber, so the catalog's tests run each
 pack through the gate.
