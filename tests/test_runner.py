@@ -66,9 +66,9 @@ class Runner(unittest.TestCase):
 
     def test_list(self):
         self.assertEqual(runner("list").stdout.split(),
-                         ["acceptance-verdict", "actionlint", "branch-name-length", "build-tools-in-devdependencies", "cognitive-complexity",
-                          "gitleaks", "max-file-lines", "new-source-has-test", "no-duplicate-package-json-keys", "qae-artifacts",
-                          "repo-rules", "review-receipt", "zizmor"])
+                         ["acceptance-verdict", "actionlint", "branch-name-length", "build-tools-in-devdependencies", "changed-code-mutation",
+                          "cognitive-complexity", "gitleaks", "max-file-lines", "new-source-has-test", "no-duplicate-package-json-keys",
+                          "qae-artifacts", "repo-rules", "review-receipt", "zizmor"])
 
 
 if __name__ == "__main__":

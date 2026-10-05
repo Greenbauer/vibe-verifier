@@ -363,7 +363,11 @@ eslint-plugin-sonarjs, the TypeScript parser, typescript). The second is `tools/
 of resolving them from the registry in the job that holds the account-level token. The third is
 `tools/codex/` (the Codex CLI and its platform binary), which `actions/qae-codex` installs for the
 QAE harness's Codex lane (`harnesses/qae/explore-codex.yml`); that lane holds no model token at all,
-because the login lives on the runner (see the harness README).
+because the login lives on the runner (see the harness README). The fourth is
+`tools/changed-code-mutation/` (StrykerJS and its Vitest runner plugin, with a stub in Vitest's
+place; see [Changed-code mutation](#changed-code-mutation)). A local package a lockfile links
+(`file:`), such as that stub, is copied into the cache with the lockfile and takes a new cache
+directory only when its version in the lockfile changes.
 
 ### Ratchets
 
@@ -379,6 +383,71 @@ an empty suppressions file, so a repository's `eslint.config.*` and `eslint-supp
 (eslint's bulk suppressions) are for its own lint and never reach the gate: a suppressed count is
 not the base the ratchet compares with, and entries for rules the gate does not run would
 otherwise fail every run as unused.
+
+### Changed-code mutation
+
+`new-source-has-test` proves a test file exists, and a test that copies the code it covers,
+asserts nothing, or matches the source as text satisfies it while that code is broken.
+`changed-code-mutation` measures whether the tests notice: StrykerJS, pinned in
+`tools/changed-code-mutation/`, changes the code one small edit at a time (a `>` to `>=`, a
+condition to `true`, a block emptied), each edit a *mutant*, and runs the project's own tests
+against it. A mutant every test still passes on survived.
+
+```
+changed-code-mutation                                       # a Vitest project at the repository root
+changed-code-mutation --project apps/web --exclude '**/[*]/**' --soak
+```
+
+- **Only the changed lines.** The gate takes the non-test JS and TS source files changed since the
+  base (tests, `*.d.ts`, `*.config.*`, `*.stories.*` and `node_modules` always excluded;
+  `--source` and `--exclude` as in the other source-file gates) and, in each, the line ranges the
+  diff added or modified at `HEAD` (`git diff -U0`; a moved file is compared with itself at its old
+  path, and a deletion leaves nothing to mutate). Those ranges are Stryker's `file:start-end`
+  mutate ranges, so a mutant is made only where the edited code lies wholly inside a range. Whole
+  files are never mutated.
+- **The project's own Vitest.** It is resolved from `--project` the way Node resolves it, so a
+  copy hoisted to the repository root counts. The gate installs nothing for the project: the job
+  runs `npm ci` (or the project's equivalent) first. No Vitest, or a Vitest outside 2.x to 4.x, is
+  exit 2: under Vitest 5 the pinned Stryker 10.0.0 kills no mutant at all (measured 2026-10-05:
+  a test that kills 8 of 8 under Vitest 2.1.9, 3.2.7 and 4.1.10 killed none under 5.0.3), so any
+  verdict there would be false. Stryker's Vitest plugin falls back to a Vitest installed beside
+  it when the project's cannot be loaded; the toolchain installs a stub there that throws, so the
+  Vitest that runs is always the project's. Vitest's `related` filter is off, so the first run
+  runs the whole suite: with it on, a test that never imports the changed file is not run at all,
+  and when no test imports it Stryker writes no report.
+- **Verdict.** The score is killed / (killed + survived + not covered) over the changed lines.
+  Below `--break` (default 60) the gate fails with one finding for the score and one per
+  surviving mutant, at its line, naming the code it replaced, the replacement and Stryker's
+  mutator. Mutants that timed out, did not compile, crashed the test runner, or carry a
+  `// Stryker disable` comment are left out of the score and printed. No mutant on the changed
+  lines is a pass.
+- **Why 60.** It is Stryker's own default `thresholds.low`, the score below which its report marks
+  a project as poor (its `break` is off by default). A changed range often holds only a handful of
+  mutants, so one equivalent mutant (an edit no test could tell apart from the original) moves the
+  score by 10 to 30 points, and 60 leaves room for it, while a test that copies the logic or
+  asserts nothing scores near 0 (the fixture's kills 0 of 8). Raise it on the base manifest once a
+  soak shows a repository's scores. A mutant no test can kill is marked in the source with
+  `// Stryker disable next-line <Mutator>: <reason>`: head-controlled and visible in the diff,
+  like the other tools' escape hatches.
+- **Bounded, never partial.** More than `--max-files` changed source files (default 20), or a run
+  longer than `--timeout` seconds (default 900; Stryker's whole process group is killed and its
+  sandbox removed), is exit 2 naming the bound, never a verdict on part of the change. The cost is
+  one run of the whole suite plus, per mutant, the tests that cover it. The canonical stub installs
+  no dependencies and stops its job at 5 minutes, so a repository subscribes to this gate from a
+  job that runs `npm ci` and then `actions/gates`, with a job timeout above `--timeout`.
+- **Exit 2 also when** the suite fails at `HEAD` (Stryker cannot measure a red suite), Stryker exits
+  non-zero, or Stryker matched fewer files than it was given. That last is read from its
+  "Found N of M file(s) to be mutated" line, because a file whose changed lines hold no mutant is
+  absent from its report. Stryker 10 refuses a line range on a path with glob characters, so a
+  Next.js dynamic segment such as `app/[id]/page.tsx` cannot be judged: exclude those with
+  `--exclude '**/[*]/**'`.
+- **What it does not catch.** CSS and markup; behavior only an end-to-end or browser test reaches
+  (the [QAE harness](../harnesses/qae/README.md) covers that); code no unit test can load; and
+  equivalent mutants, which survive whatever the tests do. A flaky test can kill a mutant by
+  failing for its own reasons. The gate runs the pull request's own code and tests, as the
+  project's CI already does, so it belongs in a job that holds no secrets, and a test written to
+  detect the mutation run could kill every mutant: that is in the diff, where the review harness
+  reads it, not something this gate can see.
 
 ### Repository rules
 

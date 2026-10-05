@@ -37,7 +37,7 @@ See [Architecture](docs/architecture.md) and [Threat model](docs/threat-model.md
 
 | Layer | What it verifies |
 |---|---|
-| **Deterministic gates** | Structural, security, workflow, test-presence, and complexity invariants, and the repository's own declared code patterns, on the pull request diff |
+| **Deterministic gates** | Structural, security, workflow, test-presence, test-strength, and complexity invariants, and the repository's own declared code patterns, on the pull request diff |
 | **Revision-bound AI review** | A receipt matches the event head commit and the supplied unresolved-thread count is zero |
 | **Acceptance verification** | Each criterion has a PASS with a resolving anchor; recorded browser artifacts satisfy structural checks for the workflow-declared application |
 | **Governance** | Base-manifest arguments resist self-weakening; organization wrappers can protect the required workflow itself |
@@ -82,7 +82,7 @@ The full rules are in the [gate contract](docs/GATE-CONTRACT.md).
 
 ## Get started
 
-The deterministic gates need Git and Python 3. Some gates download tools on first use; automatic downloads support macOS (Intel or Apple silicon) and Linux x86-64. The complexity gate uses Node.js 24 and npm.
+The deterministic gates need Git and Python 3. Some gates download tools on first use; automatic downloads support macOS (Intel or Apple silicon) and Linux x86-64. The complexity and mutation gates use Node.js 24 and npm; the mutation gate also runs the project's own Vitest, so install the project's dependencies before it.
 
 ### 1. Declare the verification policy
 
@@ -130,6 +130,7 @@ Each gate is a command-line program that reads a working tree and its Git histor
 |---|---|
 | `gitleaks` | Secrets added in a pull request's commits |
 | `new-source-has-test` | New source files without a matching test filename or relative import from a test |
+| `changed-code-mutation` | Changed lines the project's own tests do not notice being broken: [StrykerJS](https://stryker-mutator.io/) mutates only the lines a pull request added or modified, and the gate fails below a mutation score |
 | `actionlint` | Errors in changed GitHub Actions workflows |
 | `zizmor` | Security risks in changed workflows, such as unpinned actions and excessive permissions |
 | `cognitive-complexity` | New files with functions over the complexity limit, or changed files with more of them |
@@ -141,7 +142,7 @@ Each gate is a command-line program that reads a working tree and its Git histor
 
 `repo-rules` is how a repository writes its established patterns down as executable rules instead of prose: add `.vibe-verifier-rules/` with a rule and its test, then subscribe with a `repo-rules` line ([setup](docs/GATE-CONTRACT.md#repository-rules)).
 
-The source-file gates focus on JavaScript and TypeScript by default. `new-source-has-test` looks for a matching test filename or relative import; it does not run tests or measure coverage. Keep the project's existing build, test, lint, and security suites.
+The source-file gates focus on JavaScript and TypeScript by default. `new-source-has-test` looks for a matching test filename or relative import; it does not run tests or measure coverage, so a test that copies the code it covers or asserts nothing satisfies it. `changed-code-mutation` runs the tests: it changes the changed lines one small edit at a time and reports each edit no test failed on. It runs Vitest 2.x to 4.x projects only, needs the project's dependencies installed first, and does not see CSS, behavior only an end-to-end test reaches, or edits no test could tell apart from the original ([limits](docs/GATE-CONTRACT.md#changed-code-mutation)). Keep the project's existing build, test, lint, and security suites.
 
 See the [gate contract](docs/GATE-CONTRACT.md) for options, comparison branches, exit codes, GitHub setup, wired-gate inputs, and extension rules.
 
