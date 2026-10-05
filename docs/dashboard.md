@@ -24,6 +24,17 @@ browser ends the tab session. If storage is unavailable or a saved value is inva
 remains usable with defaults. No server write is added. `tests/test_dashboard_view_state.py`
 covers the routes, history, and storage.
 
+## Tab icon
+
+The browser tab shows the configured owner's GitHub avatar with the dashboard's green check badge in
+the corner, so the tab names both the owner and this dashboard. The server reads the public avatar
+from `https://github.com/<owner>.png` on the first request for `/favicon.svg` and inlines it in the
+SVG it serves, so the browser loads nothing from GitHub and the CSP is unchanged. If the avatar
+cannot be read, the icon is the owner's first letter on a color derived from a SHA-256 hash of the
+lowercased owner name, with the same badge; the server tries the avatar again after five minutes.
+A successful avatar is kept until the process restarts, so a changed GitHub avatar appears after a
+restart. `tests/test_dashboard_favicon.py` covers the avatar, the fallback, and the retry window.
+
 ## Start it
 
 Requirements are Python 3, `gh`, and an existing `gh` login that can read every selected repository.
@@ -236,6 +247,7 @@ zero steps; a job that has not started yet keeps its run's step total unknown.
 - Configuration: create the owned local file, read it once at startup, restart to update its owner,
   repository selection, telemetry path, or proxy origin, and delete it after stopping the process
   to remove the installation.
+- Tab icon: the owner's public avatar, read once and held only in memory until the process stops.
 - GitHub cache: created from server-side reads, replaced by scoped source identity, held only in
   memory, expired on source failure, and deleted when the process stops.
 - Telemetry: created and atomically replaced by an optional collector, read only by this process,
@@ -255,7 +267,7 @@ discovery; `test_dashboard_service.py` covers source timestamps and refresh cach
 an in-flight refresh. The collector and usage-artifact test files cover the native source contracts.
 `tests/test_dashboard_server_ui.py` covers loopback HTTP, proxy and direct routing headers,
 read-only methods, Host/Origin/traversal, XSS-safe JSON and DOM construction, filters, account usage
-math, local assets, and the approved palette. `tests/test_dashboard_usage_charts.py` covers the usage
+math, local assets, the tab icon route, and the approved palette. `tests/test_dashboard_usage_charts.py` covers the usage
 charts' clock-hour mapping, observed and unobserved hours, usual-day averages, scales, and pace. The repository's existing unittest command runs all
 of them. Configuration tests cover the strict optional proxy origin and its immutable default.
 
