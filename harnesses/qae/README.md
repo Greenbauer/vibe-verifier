@@ -51,7 +51,9 @@ Each job fetches the PR body and changed paths itself, so an edit to the body be
 them disagree, as it already could for the gates. A pull request needs no browser check when:
 
 - its body declares `- None: <why>` under `## Acceptance criteria`, or
-- its body lists no criteria and every changed path (both names of a rename) is one no site serves:
+- its body lists no criteria (none under an `Acceptance criteria` heading; a body with no such
+  heading lists none, whatever bullets it has) and every changed path (both names of a rename) is
+  one no site serves:
   anything under `.github/` or `docs/`, a `.vibe-verifier*` manifest, `LICENSE*`, or a file named
   `README.md`, `CLAUDE.md`, `AGENTS.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`,
   `CODEOWNERS`, `.gitignore`, `.gitattributes` or `.editorconfig` at any depth.

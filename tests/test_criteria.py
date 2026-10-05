@@ -54,6 +54,14 @@ class Criteria(unittest.TestCase):
         result = runner("criteria", self.doc("## Why\n\nx\n"), "--changed-files", self.changed("docs/about.tsx", "app/about.tsx"))
         self.assertEqual(result.stdout, "criteria: 0\n")
 
+    def test_a_body_with_no_headings_lists_no_criteria(self):
+        # A short CI PR body: prose and bullets, no headings. Read as a plain list every line would be a
+        # criterion, so it was never exempt (the first consumer PR, 2026-10-05).
+        body = self.doc("Moves the QAE pins.\n\n- Both jobs read the changed paths\n- One review comment\n")
+        result = runner("criteria", body, "--changed-files", self.changed(".github/workflows/qae-explore.yml"))
+        self.assertEqual(result.stdout, "none: every changed file (1) is CI configuration or documentation no site renders\n")
+        self.assertEqual(runner("criteria", body, "--changed-files", self.changed("app/page.tsx")).stdout, "criteria: 3\n")
+
     def test_criteria_win_over_paths(self):
         # A pull request that lists a criterion is explored whatever it touches.
         result = runner("criteria", self.doc(BODY % "- The docs link in the footer opens /docs"),
