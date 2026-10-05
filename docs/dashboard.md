@@ -169,7 +169,8 @@ A busy lane must include a same-owner job or a positive GitHub `runner_id` with 
 registration. The latter shows busy with unmatched job details until a current owner-scoped
 PR job matches the runner ID. Registration alone never implies ready or busy. An allocated lane without a matched job shows its repository
 and pending-match message without a job link. The host panel is always labeled `SHARED HOST`; its values
-are aggregate CPU sampled percent, memory bytes, and usable workspace-filesystem bytes.
+are aggregate CPU sampled percent, memory bytes, and workspace-filesystem bytes. Every host meter
+fills with how much is in use, so a fuller bar means less headroom; disk used is total minus free.
 
 Displayed agent state comes from an explicit identity mapping. Aggregate CI mappings use GitHub
 activity: active jobs prove working, and a complete active scan permits idle. Runner listener
@@ -211,7 +212,8 @@ clears derived repository data immediately; transient stale data expires after t
 The dashboard shows source-proven failures, cancellations, waiting jobs, and current elapsed times.
 Elapsed time alone never asserts that a job is stuck. The Actions timeline uses shared wall-clock
 coordinates for parallel jobs and does not sum their durations. Unknown step totals never render as
-100 percent.
+100 percent. A completed job with no steps, which is how GitHub reports a skipped job, counts as
+zero steps; a job that has not started yet keeps its run's step total unknown.
 
 ## Data lifecycle and uninstall
 

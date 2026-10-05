@@ -216,6 +216,16 @@ console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,bucket:bu
         self.assertTrue(result["safe"].startswith("https://github.com/octocat/"))
         self.assertIsNone(result["unsafe"])
 
+    def test_disk_meter_reports_used_space_not_free_space(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+console.log(JSON.stringify([h.diskUsage({workspace_disk_free_bytes:25,workspace_disk_total_bytes:100}),
+ h.diskUsage({workspace_disk_free_bytes:null,workspace_disk_total_bytes:100}),
+ h.diskUsage({workspace_disk_free_bytes:5,workspace_disk_total_bytes:0})]));
+''')
+        self.assertEqual(result[0], {"used": 75, "total": 100, "percent": 75})
+        self.assertEqual(result[1:], [None, None])
+
     def test_usage_history_leaves_missing_buckets_as_gaps_and_preserves_measured_zero(self):
         result = self.node(r"""
 const c=require('./dashboard/static/charts.js');

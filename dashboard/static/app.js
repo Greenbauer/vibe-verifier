@@ -1,7 +1,7 @@
 (function () {
   "use strict";
   const { BOT_META, element: el, link, duration, since, formatTime, bytes, badge,
-    flattenPulls, filterPulls, stepTotals, combinedCategory, currentWork } = VV;
+    diskUsage, flattenPulls, filterPulls, stepTotals, combinedCategory, currentWork } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
   const state = VV.restoreViewState(null);
@@ -298,12 +298,12 @@
     if (capacity.stale) content.append(sourceBanner(`Capacity telemetry is stale. Last sample: ${formatTime(capacity.sampled_at)}.`, "warning"));
     const host = capacity.host || {};
     const memoryPercent = Number.isFinite(host.memory_used_bytes) && host.memory_total_bytes ? host.memory_used_bytes / host.memory_total_bytes * 100 : null;
-    const diskPercent = Number.isFinite(host.workspace_disk_free_bytes) && host.workspace_disk_total_bytes ? host.workspace_disk_free_bytes / host.workspace_disk_total_bytes * 100 : null;
+    const disk = diskUsage(host);
     content.append(el("section", { class: "panel host-panel" }, el("div", { class: "panel-title" }, el("h2", {}, "SHARED HOST"),
       el("span", { class: "muted" }, `Sampled ${formatTime(capacity.sampled_at)}`)), el("div", { class: "host-grid" },
       metric("CPU sampled", Number.isFinite(host.cpu_percent) ? `${host.cpu_percent}%` : "Unavailable", host.cpu_percent),
       metric("Memory", Number.isFinite(host.memory_used_bytes) ? `${bytes(host.memory_used_bytes)} / ${bytes(host.memory_total_bytes)}` : "Unavailable", memoryPercent),
-      metric("Workspace disk free", Number.isFinite(host.workspace_disk_free_bytes) ? bytes(host.workspace_disk_free_bytes) : "Unavailable", diskPercent))));
+      metric("Workspace disk", disk ? `${bytes(disk.used)} / ${bytes(disk.total)}` : "Unavailable", disk?.percent))));
     const lanes = el("section", { class: "panel" }, el("div", { class: "panel-title" }, el("h2", {}, `${snapshot.owner} runners (${capacity.lanes.length})`),
       el("span", { class: "muted" }, "Registered and on-demand capacity")), el("div", { class: "lane-grid" }));
     const grid = lanes.querySelector(".lane-grid");
