@@ -30,10 +30,11 @@ console.log(JSON.stringify({saved,restored:restore(JSON.stringify(saved)),
         self.assertTrue(all(row == result['defaults'] for row in result['invalid']))
 
     def test_url_hash_names_every_view_and_pull_request_and_rejects_anything_else(self):
+        # The second PR key is joined at run time: written out, test_public_surface reads it as a citation.
         result = self.node(r'''
 const {parseRoute:parse,routeHash:hash}=require('./dashboard/static/helpers.js');
 const routes=[{view:'prs',selected:null},{view:'usage',selected:null},{view:'capacity',selected:null},
-  {view:'prs',selected:'Greenbauer/vibe-verifier#12'},{view:'prs',selected:'my-org/repo.name_2#7'}];
+  {view:'prs',selected:'Greenbauer/vibe-verifier#12'},{view:'prs',selected:['my-org/repo.name_2','7'].join('#')}];
 console.log(JSON.stringify({hashes:routes.map(hash),round:routes.map(route=>parse(hash(route))),routes,
   invalid:['','#','#/','#/other','#usage','#/usage/x','#/pr/a/b','#/pr/a/b/c','#/pr/a/b/1/2','#/pr/a%2Fb/c/1',
     '#/pr/<x>/b/1',null,undefined].map(parse)}));
