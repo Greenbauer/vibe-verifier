@@ -18,13 +18,16 @@ class ViewState(unittest.TestCase):
         result = self.node(r'''
 const {restoreViewState:restore}=require('./dashboard/static/helpers.js');
 const saved={view:'prs',selected:'Greenbauer/vibe-verifier#12',query:'fix',repository:'Greenbauer/vibe-verifier',
-  subscribed:true,attention:true,usageRange:'7d',failureBot:'qae-1'};
+  subscribed:true,attention:true,failureBot:'qae-1'};
 console.log(JSON.stringify({saved,restored:restore(JSON.stringify(saved)),
+  legacy:restore(JSON.stringify({...saved,usageRange:'7d'})),
   views:['usage','capacity'].map(view=>restore(JSON.stringify({...saved,view}))),
   invalid:[null,'broken','null','42',JSON.stringify({view:'other',selected:42,query:[],repository:false,
     subscribed:'yes',attention:1,usageRange:'forever',failureBot:{}})].map(restore),defaults:restore(null)}));
 ''')
         self.assertEqual(result['restored'], result['saved'])
+        # The usage period selector is gone; a tab saved before then still restores, minus that key.
+        self.assertEqual(result['legacy'], result['saved'])
         self.assertEqual([row['view'] for row in result['views']], ['usage', 'capacity'])
         self.assertTrue(all(row['selected'] is None for row in result['views']))
         self.assertTrue(all(row == result['defaults'] for row in result['invalid']))
@@ -38,7 +41,7 @@ const state=VV.restoreViewState(null),snapshot={owner:'Greenbauer'};
 const entries=new Map(),storage={getItem:key=>entries.get(key)||null,setItem:(key,value)=>entries.set(key,value)};
 const build=new Function('VV','state','snapshot','sessionStorage',functions+'return {restoreView,rememberView};');
 const api=build(VV,state,snapshot,storage);
-Object.assign(state,{view:'usage',usageRange:'7d',failureBot:'qae-1'}); api.rememberView();
+Object.assign(state,{view:'usage',failureBot:'qae-1'}); api.rememberView();
 state.view='prs'; api.restoreView('Greenbauer'); const restored={...state};
 api.restoreView('another-owner'); const other={...state};
 const denied=build(VV,state,snapshot,{getItem(){throw Error('disabled');},setItem(){throw Error('disabled');}});
@@ -46,7 +49,6 @@ denied.restoreView('Greenbauer'); denied.rememberView();
 console.log(JSON.stringify({restored,other,keys:[...entries.keys()]}));
 ''')
         self.assertEqual(result['restored']['view'], 'usage')
-        self.assertEqual(result['restored']['usageRange'], '7d')
         self.assertEqual(result['restored']['failureBot'], 'qae-1')
         self.assertEqual(result['other']['view'], 'prs')
         self.assertEqual(result['keys'], ['vv-dashboard-view:Greenbauer'])
