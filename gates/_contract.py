@@ -31,13 +31,16 @@ class CannotRun(Exception):
 
 
 class Finding:
-    def __init__(self, message, path=None, line=None):
+    """One finding. An advisory one is printed (as a warning) but never fails the gate."""
+
+    def __init__(self, message, path=None, line=None, advisory=False):
         self.message = message
         self.path = path
         self.line = line
+        self.advisory = advisory
 
     def as_dict(self):
-        return {"message": self.message, "path": self.path, "line": self.line}
+        return {"message": self.message, "path": self.path, "line": self.line, "advisory": self.advisory}
 
 
 def git(repo, *args):
@@ -161,19 +164,22 @@ def _text(gate, finding):
     where = ""
     if finding.path:
         where = finding.path + (":%d" % finding.line if finding.line else "") + ": "
-    return "%s: %s%s" % (gate, where, finding.message)
+    return "%s: %s%s%s" % (gate, where, "advisory: " if finding.advisory else "", finding.message)
 
 
 def report(gate, findings, fmt, soak):
+    blocking = [f for f in findings if not f.advisory]
     if fmt == "json":
-        status = "pass" if not findings else ("soak" if soak else "violations")
+        status = "pass" if not blocking else ("soak" if soak else "violations")
         print(json.dumps({"gate": gate, "status": status, "findings": [f.as_dict() for f in findings]}, indent=2))
     else:
         for finding in findings:
-            print(_annotation(gate, finding, soak) if fmt == "github" else _text(gate, finding))
-        if findings:
-            print("%s: %d finding(s), %s" % (gate, len(findings), "reported only (--soak)" if soak else "blocking"))
-    return EXIT_PASS if (soak or not findings) else EXIT_VIOLATIONS
+            print(_annotation(gate, finding, soak or finding.advisory) if fmt == "github" else _text(gate, finding))
+        if blocking:
+            print("%s: %d finding(s), %s" % (gate, len(blocking), "reported only (--soak)" if soak else "blocking"))
+        if len(findings) > len(blocking):
+            print("%s: %d advisory finding(s), not blocking" % (gate, len(findings) - len(blocking)))
+    return EXIT_PASS if (soak or not blocking) else EXIT_VIOLATIONS
 
 
 def run_gate(gate, description, check, add_arguments=None):
