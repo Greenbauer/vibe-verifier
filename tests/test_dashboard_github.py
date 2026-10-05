@@ -51,7 +51,7 @@ class FakeAPI:
 def endpoints():
     return {
         "suites": f"repos/{REPO}/commits/{SHA}/check-suites?per_page=100",
-        "checks": f"repos/{REPO}/check-suites/7/check-runs?per_page=100&filter=latest",
+        "checks": f"repos/{REPO}/commits/{SHA}/check-runs?per_page=100&filter=latest",
         "status": f"repos/{REPO}/commits/{SHA}/status",
         "runs": f"repos/{REPO}/actions/runs?head_sha={SHA}&per_page=100",
         "jobs2": f"repos/{REPO}/actions/runs/11/attempts/2/jobs?per_page=100",
@@ -185,17 +185,30 @@ class CurrentHeadJoin(unittest.TestCase):
         api.item_values[paths["suites"]] += [{"id": 8, "head_sha": SHA}, {"id": 9, "head_sha": SHA}]
         check = {"name": "test", "status": "completed", "app": {"id": 15368, "name": "GitHub Actions"},
                  "started_at": "2026-09-30T14:41:00Z", "completed_at": "2026-09-30T14:42:00Z"}
-        api.item_values[paths["checks"]].append({**check, "id": 31, "check_suite": {"id": 7},
-                                                 "status": "in_progress", "completed_at": None})
-        api.item_values[paths["checks"].replace("/7/", "/8/")] = [
-            {**check, "id": 32, "conclusion": "failure", "check_suite": {"id": 8}}]
-        api.item_values[paths["checks"].replace("/7/", "/9/")] = [
+        api.item_values[paths["checks"]] += [
+            {**check, "id": 31, "check_suite": {"id": 7}, "status": "in_progress", "completed_at": None},
+            {**check, "id": 32, "conclusion": "failure", "check_suite": {"id": 8}},
             {**check, "id": 33, "conclusion": "success", "check_suite": {"id": 9}}]
         result = GitHubCollector(config(), api, clock=lambda: NOW)._pull(REPO, pull_row(), {"subscription": "subscribed"})
         self.assertEqual(sorted(run["id"] for run in result["runs"]), [11, 13])
         self.assertEqual(sorted(row["id"] for row in result["checks"] if row["name"] == "test"), [31, 33])
         summary = [run["step_summary"] for run in result["runs"] if run["id"] == 11][0]
         self.assertEqual((summary["completed"], summary["total"]), (3, 4))
+        self.assertEqual(sum("/check-runs" in call[1] for call in api.calls), 1)
+
+    def test_check_runs_come_from_one_head_listing_and_only_from_this_heads_suites(self):
+        api = joined_api()
+        paths = endpoints()
+        api.item_values[paths["suites"]] += [{"id": 8, "head_sha": SHA}, {"id": 9, "head_sha": "other"}]
+        check = {"status": "completed", "conclusion": "success", "app": {"id": 40, "name": "Example checks"},
+                 "started_at": "2026-09-30T14:52:00Z", "completed_at": "2026-09-30T14:53:00Z"}
+        api.item_values[paths["checks"]] += [{**check, "id": 92, "name": "Second suite", "check_suite": {"id": 8}},
+                                             {**check, "id": 93, "name": "Other head", "check_suite": {"id": 9}},
+                                             {**check, "id": 94, "name": "Unlisted suite", "check_suite": {"id": 10}}]
+        checks, suites = GitHubCollector(config(), api, clock=lambda: NOW)._check_runs(REPO, SHA)
+        self.assertEqual(sorted(row["id"] for row in checks), [91, 92])
+        self.assertEqual(suites, {7, 8})
+        self.assertEqual([call[1] for call in api.calls if "/check-runs" in call[1]], [paths["checks"]])
 
 
 HISTORY = "orgs/octocat/rulesets/5/history"
