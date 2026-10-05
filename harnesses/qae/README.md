@@ -16,12 +16,13 @@ the template; the consumer owns `runs-on` and how the site is built and started 
 [reachable preview](#a-reachable-preview-instead-of-a-site-on-the-runner) is used instead), and that
 step declares the site's URL as its `url` output. For a site behind a login, it writes
 `qae-inputs/site.md` in that same step to tell the explorer how to sign in and what state the site
-starts in (a throwaway account on a throwaway backend, never production). Its four catalog
-pins (`criteria@`, `qae-browser@`, and `usage@` in explore, `gates@` in verify) are inventoried and bumped by
-`consumers` and `apply-down` exactly like the stub's.
+starts in (a throwaway account on a throwaway backend, never production). Its six catalog
+pins (`criteria@`, `qae-browser@`, and `usage@` in explore, `criteria@`, `gates@` and `qa-review@` in
+verify) are inventoried and bumped by `consumers` and `apply-down` exactly like the stub's.
 
-1. **explore** builds and starts the PR's site on the runner (or resolves its preview), reads the PR body with
-   `actions/criteria` and, only when it lists a criterion, runs `claude-code-action` with
+1. **explore** reads the PR body and its changed paths with `actions/criteria` first. Only when the
+   body lists a criterion does it build and start the PR's site on the runner (or resolve its
+   preview), install the browser, and run `claude-code-action` with
    [`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) as its browser. The prompt
    ([`prompt.md`](prompt.md)) tells the model to walk each criterion under the PR body's
    `## Acceptance criteria` heading, append one line per action to `qae-artifacts/qae/ACn.md`
@@ -34,11 +35,53 @@ pins (`criteria@`, `qae-browser@`, and `usage@` in explore, `gates@` in verify) 
    Everything under `qae-artifacts/` is uploaded, always. A separate 7-day artifact named
    `vv-usage-qae-explorer-<run_attempt>` contains only the numeric `usage.json`; a skipped or failed
    explorer is recorded as unavailable or partial, never as zero.
-2. **verify** downloads the artifacts, writes the three declared inputs (the PR body; the newest
-   `acceptance-check:` comment posted by the explore job's own identity; the site URL the explore
-   job declared, in `qae-inputs/site-url`), and runs the
+2. **verify** writes the declared inputs (the PR body; its changed paths; the newest
+   `acceptance-check:` comment posted by the explore job's own identity, skipping the QA review
+   comment; the site URL the explore job declared, in `qae-inputs/site-url`), reads the criteria with
+   the same action, downloads the artifacts when there was a criterion to explore, and runs the
    [`acceptance-verdict`](../../gates/acceptance_verdict.py) gate through the composite action with
-   the manifest [`manifest`](manifest) (`.vibe-verifier-qae` in the consumer).
+   the manifest [`manifest`](manifest) (`.vibe-verifier-qae` in the consumer), unless the pull request
+   needs no check ([below](#which-pull-requests-need-a-check)). Last, whatever happened before it,
+   it posts or edits the [QA review comment](#the-qa-review-comment).
+
+## Which pull requests need a check
+
+`bin/vibe-verifier criteria`, through `actions/criteria`, decides it in both jobs from the same two
+inputs, so they cannot disagree. A pull request needs no browser check when:
+
+- its body declares `- None: <why>` under `## Acceptance criteria`, or
+- its body lists no criteria and every changed path (both names of a rename) is one no site serves:
+  anything under `.github/` or `docs/`, a `.vibe-verifier*` manifest, `LICENSE*`, or a file named
+  `README.md`, `CLAUDE.md`, `AGENTS.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`,
+  `CODEOWNERS`, `.gitignore`, `.gitattributes` or `.editorconfig` at any depth.
+
+Criteria win over paths: a pull request that lists one is explored whatever it touches. One that lists
+none and changes anything else still fails, because it has not said what to check. The list is
+adapted from the no-plan allowlist of a private predecessor's QAE, narrowed from every `*.md` to those
+names because a markdown file elsewhere can be a page the site renders. A repository whose site renders
+`docs/` lists criteria on those pull requests, and the review comment shows every skip, so a wrong one
+is visible. When nothing needs checking, the explore job builds nothing and the verify job runs no
+gate.
+
+## The QA review comment
+
+The verify job's last step ([`actions/qa-review`](../../actions/qa-review/action.yml), `bin/vibe-verifier
+qa-review`) keeps one comment on the pull request, edited in place on every run, whose first line is
+`<!-- vibe-verifier:qa-review -->` and whose heading is one of:
+
+| Heading | When |
+|---|---|
+| `## QA review: not required ✅` | the pull request needs no check; the comment gives the reason |
+| `## QA review: could not run ⚠️` | the explore job did not finish, so nothing was judged |
+| `## QA review: passed ✅` | the gates passed |
+| `## QA review: changes needed ❌` | the gates refused, or never ran |
+
+Earlier rows win. The state comes from the jobs' and the gates' outcomes, never from the explorer's
+prose: under it the comment lists each criterion with the word the explorer wrote for it (PASS, FAIL,
+or no verdict), names the head commit it judged, and links the run. It edits only a comment posted by
+`github-actions[bot]` that starts with the marker, and the verdict lookup skips that comment, so a
+review never stands in for a verdict. The explorer's own verdict comment is still posted on every run
+the explorer makes, because it is the gate's input.
 
 ## A reachable preview instead of a site on the runner
 
@@ -152,9 +195,10 @@ repository behind SSO starts its site on the runner, as the pilot does.
   reset of `CLAUDE.md` and friends to the base branch is not a write, and a PR that changes one of
   them shows it as changed on the runner: the step compares those paths to the base instead of
   failing on sight. Found on the second consumer's first pull request.
-- **Nothing to explore costs no model session.** A PR that declares `- None: <why>`, or lists no
-  criteria at all, skips the explorer: the first because there is nothing for a browser to check,
-  the second because the verdict gate fails it whatever the explorer does. The skip is decided by
+- **Nothing to explore costs no model session.** A PR that needs no check
+  ([above](#which-pull-requests-need-a-check)), or lists no criteria at all, skips the build and the
+  explorer: the first because there is nothing for a browser to check, the second because the verdict
+  gate fails it whatever the explorer does. The skip is decided by
   `bin/vibe-verifier criteria`, the same grammar the verdict gate reads, through the
   `actions/criteria` composite action. Before it, three pin bumps and a CI-only PR each paid for a
   full explore of nothing, and one turned the job red on the account's usage cap (2026-09-21).
@@ -180,7 +224,8 @@ repository behind SSO starts its site on the runner, as the pilot does.
   and on the Codex lane one behind SSO adds the bypass cookie ([above](#a-preview-behind-vercel-sso)).
 - **A pull request with nothing to check says so.** The harness runs on every pull request, and the
   job carries no `if:`, because GitHub counts a skipped required check as satisfied. So a change
-  with no rendered surface declares it: one criterion reading `- None: <why>`. Both gates pass on
+  with no rendered surface declares it, one criterion reading `- None: <why>`, or changes only paths
+  no site serves ([above](#which-pull-requests-need-a-check)). Both gates pass on
   that, the explorer stops without writing, and a bare `- None` or an absent section still fails.
   Found the first time apply-down opened a pin-bump PR and the gate refused it, correctly.
 
