@@ -203,6 +203,7 @@ Other collectors can use this version 1 shape:
             "name": "7 days",
             "used_percent": 25,
             "resets_at": "2026-10-02T15:00:00Z",
+            "window_minutes": 10080,
             "allowance_tokens": 1000000
           }
         ]
@@ -245,11 +246,28 @@ and history, including paused; missing or stale runtime state is unknown. Number
 be mapped to aggregate CI job roles. Recent history uses structural run outcomes and timestamps.
 Unavailable or incomplete history is labeled separately from a complete history with no failures.
 
-Quota windows can omit `allowance_tokens`. A used percentage alone is displayed as a provider
-percentage and never converted into a token quota. The flat pace line appears only when the source
-provides an actual comparable token allowance. The charts show each bot separately and then all bots combined. An allowance is used only
-when all plotted samples belong to that same account; account-wide quota percentages remain separate.
-No price is inferred.
+Quota windows can omit `allowance_tokens` and `window_minutes` (the window's length, at most 31
+days). The charts show each bot separately and then all bots combined. The All bots card draws a
+flat pace line: the tokens per hour that spend the rest of the plan's window exactly at its reset,
+which is (100% minus used%) of the window divided by the hours left. The server computes it once
+(`dashboard/pace.py`) and the page draws that number. The window's size in tokens comes from one of
+two places:
+
+- **Reported.** A window with `allowance_tokens` uses it, but only when every plotted sample belongs
+  to that same account.
+- **Measured.** Otherwise a window with `window_minutes` is sized from the plotted bots' tokens since
+  it began (reset minus length) divided by its used percentage. A plan's percentage is account-wide, so when other use shares the plan this
+  treats the bots' tokens as standing for all of it. The line is then right while the bots keep
+  their share, and the page's hover says so.
+
+When the plan has several windows (say 5-hour and 7-day), the longest one is paced. No
+line is drawn, and the page says why, when two plans could each be billed for the same tokens, the
+plan shows 0% used, no bot tokens fall inside the window, the window began more than the seven days
+of kept samples ago, or token history is stale or partial.
+The All bots header also states the plan's fill against an even burn of its window, in points:
+used percent minus the share of the window elapsed, as `12% under pace`, `21% ahead of pace` or
+`on pace` (within one point). It needs only the window's length and reset, so it shows even when the
+line cannot be sized. No price is inferred.
 
 Every token sample repeats the owner, account, bot, timestamp, input count, and output count. Any
 cross-owner row rejects the whole file. Samples older than seven days are discarded. The file is

@@ -74,7 +74,11 @@ runs:
         mkdir -p "$ARTIFACTS/qae"
         browser=()
         if [ -n "$MCP" ]; then
-          args="\"$MCP\",\"--headless\",\"--isolated\",\"--output-dir\",\"$ARTIFACTS\",\"--save-session\",\"--viewport-size\",\"1280x800\""
+          # --browser chromium: the build actions/qae-browser installed. playwright-mcp otherwise
+          # starts the Google Chrome channel, which only some runners carry; where it is missing every
+          # browser tool fails ("Chromium distribution 'chrome' is not found") and no session log is
+          # written.
+          args="\"$MCP\",\"--browser\",\"chromium\",\"--headless\",\"--isolated\",\"--output-dir\",\"$ARTIFACTS\",\"--save-session\",\"--viewport-size\",\"1280x800\""
           if [ -n "$STORAGE_STATE" ]; then
             # playwright-mcp's --storage-state loads the file into the isolated browser context, and
             # --secrets (dotenv) replaces each listed value with <secret>NAME</secret> in every tool

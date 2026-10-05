@@ -68,7 +68,7 @@ def collector_view(value, config, now):
                 windows.append({"name": "%s · %s" % (limit["limit_id"], duration),
                                 "used_percent": window["used_percent"],
                                 "resets_at": iso_time(datetime.fromtimestamp(window["resets_at"], timezone.utc)),
-                                "allowance_tokens": None, "pace_tokens_per_second": None})
+                                "allowance_tokens": None, "window_minutes": minutes})
         usage = {"available": True, "sampled_at": account["observed_at"], "stale": not fresh(account, now),
                  "accounts": [{"id": "collector:codex", "label": "Codex subscription", "provider": "OpenAI",
                                "quota_windows": windows}], "samples": [],

@@ -1,6 +1,7 @@
 """Project explicitly configured identities, never infer them from job names."""
 from datetime import timedelta
 
+from .pace import plan_pace
 from .util import parse_time
 
 
@@ -30,4 +31,5 @@ def agent_view(config, github, telemetry, now):
         sample_key = agent.workflow_role or agent.id
         samples.extend({**sample, "bot": agent.id} for sample in usage.get("samples", [])
                        if sample["bot"] == sample_key)
-    return {"rows": rows, "usage": {**usage, "samples": samples}}
+    plotted = {**usage, "samples": samples}
+    return {"rows": rows, "usage": {**plotted, "pace": plan_pace(plotted, now)}}
