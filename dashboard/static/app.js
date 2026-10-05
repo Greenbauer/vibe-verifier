@@ -230,46 +230,50 @@
   }
 
   function usageCharts(usage) {
-    const samples = usage.samples || [];
-    const section = el("section", { class: "panel usage-charts" });
-    section.style.setProperty("--agent-columns", Math.max(1, Math.min(4, snapshot.agents?.rows.length || 0)));
+    const samples = usage.samples || [], now = Date.now();
+    // Hours after the source's last observation are unobserved, not zero, when the source goes stale.
+    const through = Math.min(...[usage.sampled_at, usage.history_sampled_at].map(Date.parse).filter(Number.isFinite));
     const sampleAccounts = new Set(samples.map(sample => sample.account));
     const account = sampleAccounts.size === 1 ? usage.accounts.find(item => sampleAccounts.has(item.id)) : null;
-    const window = account?.quota_windows.find(item => item.allowance_tokens !== null);
-    const pace = VVCharts.pacePerBucket(window, state.usageRange);
-    const chartRows = [{ id: "total", name: "All bots combined", color: "#f2f2f2" },
-      ...(snapshot.agents?.rows || []).map(agent => ({ id: agent.id, name: agent.name, ...BOT_META[agent.role] }))];
-    chartRows.forEach(row => {
-      const measured = samples.filter(sample => row.id === "total" || sample.bot === row.id);
-      const points = VVCharts.seriesFor(measured, state.usageRange, Date.now(), row.id);
-      const total = points.reduce((sum, point) => sum + point.y, 0);
-      const observed = points.some(point => Number.isFinite(point.y));
-      const chart = el("div", { class: `usage-chart${row.id === "total" ? " combined" : ""}` },
-        el("div", { class: "chart-heading" }, el("b", { style: `color:${row.color}` }, row.name),
-          el("span", {}, observed ? `${total.toLocaleString()} tokens observed` : "Not yet observed")),
-        el("div", { class: "chart-canvas" }));
-      section.append(chart);
-      if (observed || (row.id === "total" && pace !== null)) requestAnimationFrame(() => VVCharts.draw(chart.querySelector(".chart-canvas"), points, {
-        color: row.color, pace: row.id === "total" ? pace : null, range: state.usageRange,
-        compact: row.id !== "total", label: `${row.name} ${state.usageRange} token usage`
-      }));
-      else chart.querySelector(".chart-canvas").append(el("p", { class: "chart-empty muted" },
-        "Chart fills as instrumented runs complete."));
-    });
-    section.append(el("p", { class: "muted pace-note" }, pace === null ?
-      "A dotted pace line needs a reported token allowance for the same account. Subscription percentages alone cannot provide it." :
-      "Dotted line: remaining token allowance divided by time until reset."));
-    return section;
+    const pace = VVCharts.pacePerHour(account?.quota_windows.find(item => item.allowance_tokens !== null));
+    const bots = (snapshot.agents?.rows || []).map(agent => ({ name: agent.name, color: BOT_META[agent.role].color,
+      burn: VVCharts.hourlyBurn(samples.filter(sample => sample.bot === agent.id), now, through) }));
+    const observed = bots.map(bot => bot.burn).filter(Boolean);
+    const all = { name: "All bots", color: "rgba(255,255,255,0.6)", all: true, burn: observed.length ? VVCharts.sumBurns(observed) : null };
+    const shared = VVCharts.ceiling(observed);
+    return el("section", { class: "panel usage-charts" }, el("h2", {}, "Token burn pattern"),
+      el("p", { class: "muted" }, "Tokens each bot used, hour by hour. Solid: last 24 hours. Dashed: a usual day. Flat: the pace that lasts until the plan resets."),
+      el("div", { class: "burn-cards" }, bots.map(bot => burnCard(bot, shared, now, null)),
+        burnCard(all, VVCharts.ceiling(all.burn ? [all.burn] : [], pace), now, pace)),
+      el("p", { class: "muted pace-note" }, pace === null ?
+        "No flat pace line: it needs a reported token allowance for the same account. Subscription percentages alone cannot provide it." :
+        "Flat line on All bots: remaining token allowance divided by time until reset."));
+  }
+
+  // One card: name and last-24h peak, the hour-of-day chart (or "Not yet observed"), and its totals.
+  function burnCard(row, maximum, now, pace) {
+    const burn = row.burn, days = burn?.baselineDays ?? null;
+    const card = el("article", { class: `burn-card${row.all ? " all-bots" : ""}`, style: `--accent:${row.color}` });
+    const peak = Math.max(...(burn?.last24h || []).filter(Number.isFinite));
+    card.append(el("div", { class: "burn-head" }, el("b", {}, row.name),
+      el("span", { title: "Most tokens in one clock hour of the last 24 hours" }, Number.isFinite(peak) ? `peak ${VVCharts.short(peak)}/h` : null)));
+    if (!burn) {
+      card.append(el("p", { class: "burn-empty muted" }, "Not yet observed"));
+      return card;
+    }
+    const usual = `prior ${days}-day hourly average`;
+    const method = days === null ? "Tokens in the last 24 hours. A usual day appears once every hour has an observed prior day." :
+      `Tokens in the last 24 hours, and a usual day averaged over the ${days} prior day${days === 1 ? "" : "s"} observed so far${days < 6 ? " (not a full week yet)" : ""}.`;
+    card.append(VVCharts.drawBurn(burn, { color: row.color, maximum, nowMs: now, pace, usualTitle: `${row.name}: ${usual}`,
+      label: `${row.name}: tokens per clock hour, ${days === null ? "no usual day yet" : `against the ${usual}`}`,
+      paceTitle: `Pace to reset: ${Math.round(pace).toLocaleString()} tokens per hour spends the remaining allowance exactly at its reset.` }),
+    el("div", { class: "burn-totals", title: method }, VVCharts.totals(burn)));
+    return card;
   }
 
   function renderUsage() {
     const usage = snapshot.agents?.usage;
-    const select = el("select", { "aria-label": "Usage period", onchange: event => { state.usageRange = event.target.value; render(); } },
-      el("option", { value: "24h", selected: state.usageRange === "24h" }, "Last 24 hours"),
-      el("option", { value: "7d", selected: state.usageRange === "7d" }, "Last 7 days"));
-    const head = heading("Bot usage", "Measured tokens and subscription capacity.");
-    head.append(select);
-    content.replaceChildren(head);
+    content.replaceChildren(heading("Bot usage", "Measured tokens and subscription capacity."));
     if (usage?.available) {
       if (usage.stale) content.append(sourceBanner(`Usage telemetry is stale. Last sample: ${formatTime(usage.sampled_at)}.`, "warning"));
       const quotas = usage.accounts.filter(account => account.quota_windows.length);

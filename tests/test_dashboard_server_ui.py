@@ -190,7 +190,7 @@ class BrowserHelpers(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
-    def test_filters_step_unknowns_buckets_and_pace_are_pure(self):
+    def test_filters_step_unknowns_and_pace_are_pure(self):
         source = r'''
 const h=require('./dashboard/static/helpers.js');
 const c=require('./dashboard/static/charts.js');
@@ -198,11 +198,9 @@ const pulls=[{repository:'octocat/example',number:1,title:'Safe',author:'octocat
              {repository:'octocat/other',number:2,title:'Quiet',author:'octocat',subscription:'unknown',attention:false}];
 const filtered=h.filterPulls(pulls,{query:'safe',repository:'all',subscribed:true,attention:true});
 const unknown=h.stepTotals({runs:[{step_summary:{known:false}}]});
-const now=Date.UTC(2026,8,30,15,0,0);
-const buckets=c.bucketSamples([{timestamp:'2026-09-30T14:30:00Z',bot:'reviewer',input_tokens:10,output_tokens:5}], '24h', now);
-console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,bucket:buckets.reduce((n,x)=>n+x.total,0),
- paceMissing:c.pacePerBucket({allowance_tokens:null,pace_tokens_per_second:null},'24h'),
- pace:c.pacePerBucket({allowance_tokens:1000,pace_tokens_per_second:2},'24h'),
+console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,
+ paceMissing:c.pacePerHour({allowance_tokens:null,pace_tokens_per_second:null}),
+ pace:c.pacePerHour({allowance_tokens:1000,pace_tokens_per_second:2}),
  safe:h.safeUrl('https://github.com/octocat/example/pull/1','octocat'),
  unsafe:h.safeUrl('https://github.com/example/foreign/pull/1','octocat')}));
 '''
@@ -210,7 +208,6 @@ console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,bucket:bu
         self.assertEqual(result["filtered"], [1])
         self.assertFalse(result["unknown"]["known"])
         self.assertIsNone(result["unknown"]["total"])
-        self.assertEqual(result["bucket"], 15)
         self.assertIsNone(result["paceMissing"])
         self.assertEqual(result["pace"], 7200)
         self.assertTrue(result["safe"].startswith("https://github.com/octocat/"))
@@ -225,22 +222,6 @@ console.log(JSON.stringify([h.diskUsage({workspace_disk_free_bytes:25,workspace_
 ''')
         self.assertEqual(result[0], {"used": 75, "total": 100, "percent": 75})
         self.assertEqual(result[1:], [None, None])
-
-    def test_usage_history_leaves_missing_buckets_as_gaps_and_preserves_measured_zero(self):
-        result = self.node(r"""
-const c=require('./dashboard/static/charts.js');
-const now=Date.UTC(2026,8,30,15,0,0);
-const samples=[{timestamp:'2026-09-30T14:30:00Z',bot:'reviewer',input_tokens:0,output_tokens:0}];
-const points=c.seriesFor(samples,'24h',now,'reviewer');
-const other=c.seriesFor(samples,'24h',now,'explorer');
-const path=c.linePath([{y:2},{y:null},{y:0},{y:4}],x=>x,y=>y);
-const expired=c.seriesFor(samples,'24h',now+86400000,'reviewer');
-console.log(JSON.stringify({points,other,path,expired}));
-""")
-        self.assertEqual([point['y'] for point in result['points']], [None] * 23 + [0])
-        self.assertTrue(all(point['y'] is None for point in result['other']))
-        self.assertEqual(result['path'], 'M0,2 M2,0 L3,4')
-        self.assertFalse(any(point['y'] is not None for point in result['expired']))
 
     def test_failure_panel_distinguishes_unavailable_empty_and_failed_history(self):
         result = self.node(r"""

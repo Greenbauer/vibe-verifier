@@ -18,12 +18,11 @@
 
   function restoreViewState(raw) {
     const state = { view: "prs", selected: null, query: "", repository: "all", subscribed: false,
-      attention: false, usageRange: "24h", failureBot: null };
+      attention: false, failureBot: null };
     let saved;
     try { saved = JSON.parse(raw); } catch (_) { return state; }
     if (!saved || typeof saved !== "object") return state;
     if (["prs", "usage", "capacity"].includes(saved.view)) state.view = saved.view;
-    if (["24h", "7d"].includes(saved.usageRange)) state.usageRange = saved.usageRange;
     for (const key of ["selected", "query", "repository", "failureBot"]) {
       if (typeof saved[key] === "string") state[key] = saved[key];
     }
