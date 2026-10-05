@@ -201,17 +201,14 @@ class BrowserHelpers(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
-    def test_filters_step_unknowns_and_pace_are_pure(self):
+    def test_filters_step_unknowns_and_urls_are_pure(self):
         source = r'''
 const h=require('./dashboard/static/helpers.js');
-const c=require('./dashboard/static/charts.js');
 const pulls=[{repository:'octocat/example',number:1,title:'Safe',author:'octocat',subscription:'subscribed',attention:true},
              {repository:'octocat/other',number:2,title:'Quiet',author:'octocat',subscription:'unknown',attention:false}];
 const filtered=h.filterPulls(pulls,{query:'safe',repository:'all',subscribed:true,attention:true});
 const unknown=h.stepTotals({runs:[{step_summary:{known:false}}]});
 console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,
- paceMissing:c.pacePerHour({allowance_tokens:null,pace_tokens_per_second:null}),
- pace:c.pacePerHour({allowance_tokens:1000,pace_tokens_per_second:2}),
  safe:h.safeUrl('https://github.com/octocat/example/pull/1','octocat'),
  unsafe:h.safeUrl('https://github.com/example/foreign/pull/1','octocat')}));
 '''
@@ -219,8 +216,6 @@ console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,
         self.assertEqual(result["filtered"], [1])
         self.assertFalse(result["unknown"]["known"])
         self.assertIsNone(result["unknown"]["total"])
-        self.assertIsNone(result["paceMissing"])
-        self.assertEqual(result["pace"], 7200)
         self.assertTrue(result["safe"].startswith("https://github.com/octocat/"))
         self.assertIsNone(result["unsafe"])
 

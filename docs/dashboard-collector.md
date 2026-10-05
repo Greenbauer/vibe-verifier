@@ -117,7 +117,9 @@ available window keeps `duration_minutes`, `used_percent`, and `resets_at`. Null
 omitted while other populated windows remain available. If no windows are populated, usage is
 unknown. These percentages are account-wide and may include activity outside this lane. The
 response does not provide a numeric token allowance, per-bot tokens, or earlier history, so the
-collector does not synthesize them. Quota unavailability remains an explicit stale status.
+collector does not synthesize them. The dashboard passes each window's `duration_minutes` on as
+`window_minutes`, which lets it size the window from captured bot tokens for the pace line
+(see [dashboard.md](dashboard.md)). Quota unavailability remains an explicit stale status.
 
 ## Snapshot schema, version 1
 

@@ -174,13 +174,22 @@ class TelemetryContract(unittest.TestCase):
         self.assertEqual(result["capacity"]["lanes"][0]["state"], "provisionable")
         self.assertFalse(result["capacity"]["lanes"][0]["registered"])
 
-    def test_percentage_does_not_create_a_token_pace_without_an_allowance(self):
+    def test_quota_window_keeps_an_optional_allowance_and_window_length(self):
         without = self.load(telemetry_value())["usage"]["accounts"][0]["quota_windows"][0]
         with_allowance = self.load(telemetry_value(allowance=1_000_000))["usage"]["accounts"][0]["quota_windows"][0]
         self.assertIsNone(without["allowance_tokens"])
-        self.assertIsNone(without["pace_tokens_per_second"])
+        self.assertIsNone(without["window_minutes"])
         self.assertEqual(with_allowance["allowance_tokens"], 1_000_000)
-        self.assertGreater(with_allowance["pace_tokens_per_second"], 0)
+        value = telemetry_value()
+        value["usage"]["accounts"][0]["quota_windows"][0]["window_minutes"] = 10080
+        self.assertEqual(self.load(value)["usage"]["accounts"][0]["quota_windows"][0]["window_minutes"], 10080)
+
+    def test_invalid_window_length_rejects_the_snapshot(self):
+        for minutes in (0, -5, True, 1.5, "10080", 60 * 24 * 32):
+            with self.subTest(minutes=minutes):
+                value = telemetry_value()
+                value["usage"]["accounts"][0]["quota_windows"][0]["window_minutes"] = minutes
+                self.assertFalse(self.load(value)["available"])
 
     def test_stale_sections_are_labeled_not_refreshed(self):
         value = telemetry_value()
