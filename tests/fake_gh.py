@@ -8,6 +8,8 @@ directory instead of GitHub and records every call, so a test can assert what wa
     FAKE_GH_ROOT/<owner>/<name>/.native  JSON overriding that repository's native enforcement:
                                          {"allowed_actions", "sha_pinning_required", "patterns_allowed", "alerts"}
     FAKE_GH_ROOT/<owner>/<name>/.id      the repository id `gh api repos/<owner>/<name>` answers (default 1)
+    FAKE_GH_ROOT/<owner>/<name>/.comments.json  the pull request's comments, a JSON list served by
+                                         `issues/<n>/comments`, paged by its per_page and page parameters
     FAKE_GH_ROOT/<owner>/.rulesets.json  the organization's rulesets, a JSON list of full ruleset objects;
                                          absent, `orgs/<owner>/rulesets` answers 404, as for a user account
     FAKE_GH_ROOT/calls.log               one JSON object per call: {method, endpoint, content?, body?}
@@ -123,6 +125,13 @@ if argv[:1] == ["api"]:
         encoded = base64.b64encode(body).decode()
         print(encoded if "--jq" in argv and argv[argv.index("--jq") + 1] == ".content"
               else json.dumps({"content": encoded, "sha": "b" * 40}))
+        sys.exit(0)
+    if "/issues/" in endpoint and endpoint.split("?")[0].endswith("/comments"):
+        path = os.path.join(root, repo, ".comments.json")
+        comments = json.load(open(path)) if os.path.exists(path) else []
+        query = dict(part.split("=", 1) for part in endpoint.partition("?")[2].split("&") if "=" in part)
+        size, page = int(query.get("per_page", 30)), int(query.get("page", 1))
+        print(json.dumps(comments[(page - 1) * size:page * size]))
         sys.exit(0)
     if "/git/ref/heads/" in endpoint:
         print(json.dumps({"object": {"sha": "a" * 40}}))
