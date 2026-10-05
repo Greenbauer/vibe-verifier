@@ -82,8 +82,8 @@ the stub that calls this runner. Without branch protection (rulesets can require
 trusted ref) a PR can change the workflow file itself. Judging the manifest from the base is a guard
 against a branch quietly weakening its own manifest, the likely failure with agent-authored PRs;
 it is not a platform guarantee, and the same holds for the tools' own escape hatches
-(`gitleaks:allow`, `# zizmor: ignore[...]`, `// ast-grep-ignore`), which are documented, head-controlled, and visible in
-the diff, where the review harness reads them.
+(`gitleaks:allow`, `# zizmor: ignore[...]`, `// ast-grep-ignore`), which are documented,
+head-controlled, and visible in the diff, where the review harness reads them.
 
 A `pull_request_target` stub (workflow and manifest from the default branch, the head checked out
 by SHA, no secrets, `contents: read`) would close all three natively and was considered
@@ -121,17 +121,17 @@ audits about monthly, and a workflow gate judges the whole of any workflow a pul
 so a bump that is not swept re-arms a backlog that lands on whoever next touches `ci.yml`.
 
 Anything a composite action reads through `$GITHUB_ACTION_PATH/../..` must live under a release
-path (`gates/`, `bin/`, `actions/`, `consumer/`, `tools/`, `rules/`): that is what makes a change to it a
-stale pin that `apply-down` delivers. `harnesses/` is not one, so a harness copy takes a change
+path (`gates/`, `bin/`, `actions/`, `consumer/`, `tools/`, `rules/`): that is what makes a change
+to it a stale pin that `apply-down` delivers. `harnesses/` is not one, so a harness copy takes a change
 only by being edited; when the review harness is next changed for real, it becomes
 `actions/review/` with its prompt inside, and the copies shrink to a pin.
 
 `bin/vibe-verifier consumers --owner OWNER` (or `--repo OWNER/NAME`, repeatable) is the read-only
 inventory and drift check. Through `gh api` it reads each repository's manifest, its stub, and every
 other workflow under `.github/workflows/` that pins a catalog action, and reports whether each pin is
-current, stale (a commit since it touched `gates/`, `bin/`, `actions/`, `consumer/`, `tools/` or `rules/`) or
-unknown to this history; whether the stub matches the canonical one outside the pin line and the
-`runs-on:` values; whether a `review.yml` copy matches `harnesses/review/review.yml` outside the
+current, stale (a commit since it touched `gates/`, `bin/`, `actions/`, `consumer/`, `tools/` or
+`rules/`) or unknown to this history; whether the stub matches the canonical one outside the pin
+line and the `runs-on:` values; whether a `review.yml` copy matches `harnesses/review/review.yml` outside the
 same lines (every other line of that harness is the catalog's, so a copy that differs is running a
 review nobody released; the QAE
 template has a consumer-owned build block and is not compared); whether every gate in the
@@ -313,8 +313,9 @@ maintenance. A gate may depend on such a binary, on these terms, all in
 [`gates/_tools.py`](../gates/_tools.py):
 
 - **One pin per tool**: a version and a sha256 per platform, read from the release's own checksum
-  file. The pin lives in the catalog, so a consumer takes a new tool version the way it takes a new
-  gate, by bumping its action pin.
+  file where it publishes one; otherwise from the release assets themselves, with how each digest was
+  checked written next to it. The pin lives in the catalog, so a consumer takes a new tool version
+  the way it takes a new gate, by bumping its action pin.
 - **Resolution fails closed.** A binary of that name on PATH is used only if it reports exactly the
   pinned version; otherwise the cache (`$VIBE_VERIFIER_TOOLS`, default `~/.cache/vibe-verifier/tools`);
   otherwise the pinned release asset is downloaded, verified against its sha256 before anything is
@@ -391,7 +392,8 @@ repo-rules --rules lint/rules --pack example --soak
   one. A run with no rules at all, an unknown pack, or a `--rules` directory with no rule files is
   exit 2.
 - A rule directory holds rule files (`*.yml`, `*.yaml`, at any depth) and, under `tests/`, their
-  ast-grep rule tests:
+  ast-grep rule tests, each written as a block mapping (one `key: value` per line; the gate reads them
+  with ast-grep's YAML grammar, and a document whose `id` it cannot read is exit 2):
 
   ```yaml
   # .vibe-verifier-rules/no-console-log.yml
@@ -417,18 +419,19 @@ repo-rules --rules lint/rules --pack example --soak
   `--soak` does not mask it. Snapshot tests are skipped: the test proves the rule fires and stays
   quiet, not where its label lands.
 - **Ratchet.** A finding's fingerprint is its rule id, its path and the matched text with its
-  whitespace collapsed, and no line number, so moving code down a file or re-indenting it is not
-  new. A fingerprint is a violation when the pull request has more of it than the merge base has
-  under the same rules, which also catches a violation pasted next to an identical old one. Only
-  files the pull request changed are scanned, and a file it moved is compared with itself at its old
-  path. `--all` reports every finding in every tracked file, for an audit or a first subscription.
-- **Base-controlled.** A rule file the base has is judged as the base has it: a pull request that
-  edits, weakens or deletes a rule is still judged by it, the run says so, and the edit applies from
-  the next pull request. A rule file the pull request adds applies at once, to what the pull request
-  adds (it runs over the merge base too, so code already there does not count). A pack comes from
-  the pinned catalog. An absolute `--rules` path is a directory outside the repository, such as one
-  an organization's [wrapper](#wrappers) writes its own rules to; it is read as it is, since a pull
-  request of the target cannot edit it.
+  whitespace normalized (collapsed, and dropped next to punctuation), and no line number, so moving
+  code down a file, re-indenting it or re-wrapping it is not new. A fingerprint is a violation when
+  the pull request has more of it than the merge base has under the same rules, which also catches
+  a violation pasted next to an identical old one. Only files the pull request changed are scanned,
+  and a file it moved is compared with itself at its old path. `--all` reports every finding in
+  every tracked file, for an audit or a first subscription.
+- **Base-controlled.** A rule file the base has is judged as the base has it, at its base path: a
+  pull request that edits, weakens, deletes, moves or renames a rule is still judged by it, the run
+  says so, and the change applies from the next pull request. A rule file the pull request adds
+  applies at once, to what the pull request adds (it runs over the merge base too, so code already
+  there does not count). A pack comes from the pinned catalog. An absolute `--rules` path is a
+  directory outside the repository, such as one an organization's [wrapper](#wrappers) writes its
+  own rules to; it is read as it is, since a pull request of the target cannot edit it.
 - Each finding prints `path:line`, the rule id, the message and, when the rule has one, its note.
 - The gate builds its own ast-grep project around the rules, so a repository's `sgconfig.yml` is not
   read: shared utility rules go in each rule's `utils:`, and `utilDirs` and custom languages are not

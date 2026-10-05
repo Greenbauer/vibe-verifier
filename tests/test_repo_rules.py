@@ -74,9 +74,10 @@ class Ratchet(unittest.TestCase):
         self.assertEqual(where(findings), [("src/a.ts", 1), ("src/a.ts", 2)])
         self.assertIn("2 in this file now, 1 at the merge base", findings[0]["message"])
 
-    def test_reindenting_or_moving_down_a_violation_is_not_new(self):
-        repo = rules_repo(self, {"src/a.ts": 'console.log(\n  "a",\n  "b")\n'})
-        commit(repo, {"src/a.ts": 'export const x = 1\nif (x) {\n  console.log(\n    "a",\n    "b")\n}\n'})
+    def test_reindenting_moving_down_or_rewrapping_a_violation_is_not_new(self):
+        repo = rules_repo(self, {"src/a.ts": 'console.log(\n  "a",\n  "b")\n', "src/b.ts": 'console.log(\n  "a",\n  "b"\n)\n'})
+        commit(repo, {"src/a.ts": 'export const x = 1\nif (x) {\n  console.log(\n    "a",\n    "b")\n}\n',
+                      "src/b.ts": 'console.log("a", "b")\n'})
         result, findings = run(repo)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -117,6 +118,18 @@ class BaseControl(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(where(findings), [("src/b.ts", 1)])
         self.assertIn(".vibe-verifier-rules/no-console-log.yml is judged as it is at HEAD~1", result.stderr)
+
+    def test_a_rule_the_branch_renames_still_judges_it_wherever_it_went(self):
+        for target in (".vibe-verifier-rules/no-console-log.txt", ".vibe-verifier-rules/tests/moved.yml",
+                       ".vibe-verifier-rules/renamed.yml", "elsewhere/no-console-log.yml"):
+            repo = rules_repo(self, {"src/a.ts": "export const a = 1\n"})
+            Path(repo, target).parent.mkdir(parents=True, exist_ok=True)
+            git(repo, "mv", ".vibe-verifier-rules/no-console-log.yml", target)
+            commit(repo, {"src/b.ts": LOG})
+            result, findings = run(repo)
+            self.assertEqual(result.returncode, 1, "%s: %s" % (target, result.stdout + result.stderr))
+            self.assertEqual(where(findings), [("src/b.ts", 1)])
+            self.assertIn(".vibe-verifier-rules/no-console-log.yml is judged as it is at HEAD~1", result.stderr)
 
     def test_a_rule_the_branch_weakens_still_judges_it_as_the_base_has_it(self):
         repo = rules_repo(self, {"src/a.ts": "export const a = 1\n"})
@@ -179,6 +192,13 @@ class RuleRequirements(unittest.TestCase):
         error = self.cannot_run(dict(RULES, **{".vibe-verifier-rules/broken.yml": "id: broken\nlanguage: Klingon\nmessage: x\nrule: {pattern: x}\n"}))
         self.assertIn(".vibe-verifier-rules/broken.yml", error)
         self.assertNotIn("vv-rules-", error)
+
+    def test_a_rule_the_reader_cannot_see_into_cannot_run(self):
+        flow = "{id: no-alert, language: TypeScript, rule: {pattern: alert($$$A)}}\n"
+        error = self.cannot_run({".vibe-verifier-rules/only.yml": flow})
+        self.assertIn(".vibe-verifier-rules/only.yml holds a document whose id cannot be read", error)
+        error = self.cannot_run(dict(RULES, **{".vibe-verifier-rules/tests/no-console-log-test.yml": '{id: no-console-log, valid: [a()], invalid: ["console.log(1)"]}\n'}))
+        self.assertIn(".vibe-verifier-rules/tests/no-console-log-test.yml holds a document whose id cannot be read", error)
 
     def test_no_rules_an_empty_directory_and_an_unknown_pack_cannot_run(self):
         self.assertIn("no rules to run", self.cannot_run({}))

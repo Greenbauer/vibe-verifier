@@ -11,7 +11,7 @@ that tells whoever wrote the code what to do instead. The rules come from:
 A rule directory holds rule files (*.yml, *.yaml) and, under tests/, their ast-grep rule tests.
 
 A ratchet: a finding counts only when its fingerprint (rule id, path, and the matched text with its
-whitespace collapsed; no line numbers) occurs more often at HEAD than the same rules find at the
+whitespace normalized; no line numbers) occurs more often at HEAD than the same rules find at the
 merge base, so what the pull request did not add never blocks, and a file it moved is compared with
 itself at its old path. --all reports every finding in every tracked file instead, with no base.
 
@@ -65,19 +65,18 @@ def read(repo, path):
 
 def judged_files(args, base, directory, tracked):
     """{path under the directory: bytes} as this run judges them, and the paths judged as at the base
-    although the head differs. With a base: every file the base has, as the base has it (one the pull
-    request moved at its new path), and the files the pull request added. Without one: the head's."""
+    although the head differs. With a base: every file the base has, at its base path and as the base
+    has it, whatever the pull request did to it (edited, deleted, moved, renamed to anything), and the
+    files the pull request added. Without one: the head's."""
     prefix = directory + "/"
     if base is None:
         return {p[len(prefix):]: read(args.repo, p) for p in tracked if p.startswith(prefix) and is_yaml(p)}, []
     at_base = [p for p in git(args.repo, "ls-tree", "-r", "-z", "--name-only", base, "--", directory).split("\0") if is_yaml(p)]
-    moved = {old: new for new, old in renamed(args.repo, base).items() if new.startswith(prefix)}
     files, differs = {}, []
     for path in at_base:
-        here = moved.get(path, path)
-        files[here[len(prefix):]] = text = show(args.repo, base, path)
-        if here not in tracked or read(args.repo, here) != text:
-            differs.append(here)
+        files[path[len(prefix):]] = text = show(args.repo, base, path)
+        if path not in tracked or read(args.repo, path) != text:
+            differs.append(path)
     for path in added_files(args.repo, base):
         if path.startswith(prefix) and is_yaml(path) and path[len(prefix):] not in files:
             files[path[len(prefix):]] = read(args.repo, path)
@@ -171,7 +170,8 @@ def scalar(text):
 
 
 def documents(sg, project):
-    """{path in the project: [{top-level key: (value, items in its sequence)}]}, one dict per YAML document."""
+    """{path in the project: [({top-level key: (value, items in its sequence)}, text)]}, one per YAML document.
+    Only block mappings are read (`key: value` on its own line); verify() refuses any other shape."""
     result = subprocess.run([sg, "scan", "--inline-rules", READER, "--json=stream", "--", "rules", "tests"],
                             cwd=project, capture_output=True, text=True)
     if result.returncode != 0:
@@ -189,10 +189,15 @@ def documents(sg, project):
             if where == path and start <= offset < end:
                 entry[2] += 1
     docs = {}
-    for path, start, end, _ in sorted(spans("doc"), key=lambda span: span[:3]):
-        docs.setdefault(path, []).append({key: (value, items) for (where, s, _), (key, value, items) in keys.items()
-                                          if where == path and start <= s < end})
+    for path, start, end, hit in sorted(spans("doc"), key=lambda span: span[:3]):
+        docs.setdefault(path, []).append(({key: (value, items) for (where, s, _), (key, value, items) in keys.items()
+                                           if where == path and start <= s < end}, hit["text"]))
     return docs
+
+
+def has_content(text):
+    """Whether a YAML document holds anything but comments and document markers."""
+    return any(line and not line.startswith("#") for line in (re.sub(r"^(---|\.\.\.)", "", raw).strip() for raw in text.splitlines()))
 
 
 def verify(sg, project, origin):
@@ -202,10 +207,13 @@ def verify(sg, project, origin):
                             cwd=project, capture_output=True, text=True)
     if tested.returncode != 0:
         raise CannotRun("the rule tests do not pass:\n%s" % relabel(tested.stdout + tested.stderr, project, origin))
-    rules, cases = {}, {}
+    rules, cases, problems = {}, {}, []
     for path, docs in documents(sg, project).items():
-        for keys in docs:
+        for keys, text in docs:
             if "id" not in keys:
+                if has_content(text):
+                    problems.append("%s holds a document whose id cannot be read; write it as a block mapping, one "
+                                    "`key: value` per line" % origin[path])
                 continue
             rule_id = scalar(keys["id"][0])
             if path.startswith("rules/"):
@@ -214,7 +222,6 @@ def verify(sg, project, origin):
                 count = cases.setdefault(rule_id, [0, 0])
                 count[0] += keys.get("valid", ("", 0))[1]
                 count[1] += keys.get("invalid", ("", 0))[1]
-    problems = []
     for rule_id, (where, message) in sorted(rules.items()):
         valid, invalid = cases.get(rule_id, (0, 0))
         if not message:
@@ -240,7 +247,9 @@ def scan(sg, project, root, paths):
 
 
 def fingerprint(hit):
-    return hit["ruleId"], hit["file"], " ".join(hit["text"].split())
+    """Rule id, path and matched text, the text's whitespace collapsed and dropped next to punctuation, so
+    re-indenting, moving or re-wrapping a match (`f(\n  a,\n  b\n)` and `f(a, b)`) keeps its fingerprint."""
+    return hit["ruleId"], hit["file"], re.sub(r"\s*([^\w\s])\s*", r"\1", " ".join(hit["text"].split()))
 
 
 def finding(hit, context=""):
