@@ -62,6 +62,12 @@ Every rule needs:
 - a rule test in its own directory's `tests/`, with at least one `valid` and one `invalid` case,
   which passes.
 
+A rule blocks pull requests unless it says `severity: warning`, `info` or `hint`, which print as
+advisory and never fail. Leave `severity` unset or `error` for a rule that should block; use `hint`
+for one still being observed. The gate counts findings per rule and file against the merge base, so
+a rule only ever blocks a file that gained a violation; see the
+[gate contract](../docs/GATE-CONTRACT.md#repository-rules).
+
 A rule without those makes the gate exit 2 for every subscriber, so the catalog's tests run each
 pack through the gate.
 
