@@ -123,6 +123,14 @@ class CurrentHeadJoin(unittest.TestCase):
         self.assertFalse(unknown["known"])
         self.assertIsNone(unknown["percent"])
 
+    def test_a_skipped_job_with_no_steps_keeps_the_run_total_known(self):
+        steps = [{"status": "completed", "category": "success"}]
+        summary = step_summary([{"status": "completed", "steps": steps},
+                                {"status": "completed", "conclusion": "skipped", "steps": []}])
+        self.assertTrue(summary["known"])
+        self.assertEqual((summary["completed"], summary["total"], summary["percent"]), (1, 1, 100))
+        self.assertFalse(step_summary([{"status": "queued", "steps": []}])["known"])
+
     def test_a_head_change_drops_all_old_evidence_instead_of_showing_it_as_current(self):
         result = GitHubCollector(config(), joined_api("b" * 40), clock=lambda: NOW)._pull(
             REPO, pull_row(), {"subscription": "subscribed"})
