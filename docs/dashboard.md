@@ -235,6 +235,9 @@ stale data without advancing its successful sample timestamp. Authentication or 
 clears derived repository data immediately; transient stale data expires after three minutes.
 
 The dashboard shows source-proven failures, cancellations, waiting jobs, and current elapsed times.
+The pull request list groups pull requests by repository. A repository with no open pull request
+that matches the filters gets no group. Groups are ordered by their most recently updated pull
+request, newest first; within a group the newest pull request is first and the oldest is last.
 A pull request's badge shows its worst current-head check. A skipped check never outranks a passed
 one, so the badge reads Skipped only when every check was skipped.
 Elapsed time alone never asserts that a job is stuck. The Actions timeline uses shared wall-clock
