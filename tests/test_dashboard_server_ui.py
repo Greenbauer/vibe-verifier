@@ -213,6 +213,21 @@ console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,
         self.assertTrue(result["safe"].startswith("https://github.com/octocat/"))
         self.assertIsNone(result["unsafe"])
 
+    def test_pulls_group_by_repository_newest_activity_first_oldest_pull_last(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+const p=(repository,number,created_at,updated_at)=>({repository,number,created_at,updated_at});
+const groups=h.groupPulls([
+ p('o/quiet',1,'2026-10-01T00:00:00Z','2026-10-01T00:00:00Z'),
+ p('o/busy',2,'2026-09-01T00:00:00Z','2026-10-05T00:00:00Z'),
+ p('o/busy',3,'2026-10-02T00:00:00Z','2026-10-02T00:00:00Z'),
+ p('o/busy',4,'2026-09-15T00:00:00Z','2026-09-15T00:00:00Z'),
+ p('o/blank',5,null,null)]);
+console.log(JSON.stringify(groups.map(g=>[g.repository,g.pulls.map(x=>x.number)])));
+''')
+        self.assertEqual(result, [["o/busy", [3, 4, 2]], ["o/quiet", [1]], ["o/blank", [5]]])
+        self.assertEqual(self.node("console.log(JSON.stringify(require('./dashboard/static/helpers.js').groupPulls([])))"), [])
+
     def test_pr_badge_is_passed_when_the_only_other_checks_were_skipped(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');

@@ -126,6 +126,21 @@
     });
   }
 
+  // One group per repository that has pulls, newest activity first. Within a group the oldest pull is last.
+  function groupPulls(pulls) {
+    const time = value => { const at = Date.parse(value); return Number.isFinite(at) ? at : -Infinity; };
+    const groups = new Map();
+    pulls.forEach(pull => {
+      if (!groups.has(pull.repository)) groups.set(pull.repository, { repository: pull.repository, pulls: [], activity: -Infinity });
+      const group = groups.get(pull.repository);
+      group.pulls.push(pull);
+      group.activity = Math.max(group.activity, time(pull.updated_at), time(pull.created_at));
+    });
+    const result = [...groups.values()];
+    result.forEach(group => group.pulls.sort((a, b) => time(b.created_at) - time(a.created_at) || b.number - a.number));
+    return result.sort((a, b) => b.activity - a.activity || a.repository.localeCompare(b.repository));
+  }
+
   function stepTotals(pull) {
     const summaries = (pull.runs || []).map(run => run.step_summary);
     if (!summaries.length || summaries.some(summary => !summary || !summary.known)) {
@@ -158,5 +173,5 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, formatTime, bytes,
-    badge, diskUsage, flattenPulls, filterPulls, stepTotals, combinedCategory, currentWork, restoreViewState };
+    badge, diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, currentWork, restoreViewState };
 });
