@@ -213,7 +213,7 @@
     agents.forEach(agent => {
       const role = agent.id;
       const runs = roles[role]?.recent_7d || [];
-      const button = el("button", { "aria-pressed": state.failureBot === role, onclick: () => { state.failureBot = role; render(); } },
+      const button = el("button", { "aria-pressed": String(state.failureBot === role), onclick: () => { state.failureBot = role; render(); } },
         el("span", { style: `color:${BOT_META[agent.role].color}` }, agent.name));
       const dots = el("span", { class: "run-dots" });
       runs.forEach(run => dots.append(el("i", { class: `dot dot-${run.category}` })));

@@ -258,7 +258,8 @@ function render(roles) {
   return failurePanel(el,BOT_META,snapshot,state,()=>{},badge,link,value=>value,value=>`${value}s`);
 }
 console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent_7d:[]}}),
-  failed:render({'qae-1':{recent_7d:[run]}})}));
+  failed:render({'qae-1':{recent_7d:[run]}}),
+  pressed:render({'swe-1':{name:'SWE1',role:'swe',recent_7d:[]},'qae-1':{recent_7d:[]}})}));
 """)
 
         def text(node):
@@ -282,6 +283,11 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
         links = [node for node in nodes(result["failed"]) if node["tag"] == "a"]
         self.assertEqual([(text(node), node["attrs"]["href"]) for node in links], [
             ("Open original job", "https://github.com/octocat/example/actions/runs/1/job/2")])
+        # aria-pressed is the string "true" or "false" on every bot button: the selected-button
+        # CSS matches [aria-pressed="true"], and screen readers need both states to read a toggle.
+        buttons = [node for node in nodes(result["pressed"]) if node["tag"] == "button"]
+        self.assertEqual([(text(node).strip(), node["attrs"]["aria-pressed"]) for node in buttons],
+                         [("SWE1", "false"), ("QAE1", "true")])
 
     def test_ui_uses_text_nodes_and_the_approved_local_palette(self):
         app = (ROOT / "dashboard/static/app.js").read_text()
