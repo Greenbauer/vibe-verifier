@@ -139,7 +139,7 @@ Each gate is a command-line program that reads a working tree and its Git histor
 | `build-tools-in-devdependencies` | Known development packages listed as runtime dependencies |
 | `branch-name-length` | Branch names longer than the configured limit |
 
-`repo-rules` is how a repository writes its established patterns down as executable rules instead of prose: add `.vibe-verifier-rules/` with a rule and its test, then subscribe with a `repo-rules` line ([setup](docs/GATE-CONTRACT.md#repository-rules)).
+`repo-rules` is how a repository writes its established patterns down as executable rules instead of prose: add `.vibe-verifier-rules/` with a rule and its test, then subscribe with a `repo-rules` line ([setup](docs/GATE-CONTRACT.md#repository-rules)). The prose follows the rules, not the other way round: `bin/vibe-verifier rules-doc` writes a generated block listing every rule with its message into a file such as `AGENTS.md`, and `repo-rules --doc AGENTS.md` fails a pull request whose block no longer matches the rule files. Two [agent skills](skills/README.md) for Claude Code and Cursor build on it: `follow-repo-rules` (read the block, run the gates before pushing, fix findings the way each message says) and `encode-a-lesson` (turn a mistake that happened twice into a type, a rule, a helper or a runtime check).
 
 The source-file gates focus on JavaScript and TypeScript by default. `new-source-has-test` looks for a matching test filename or relative import; it does not run tests or measure coverage. Keep the project's existing build, test, lint, and security suites.
 

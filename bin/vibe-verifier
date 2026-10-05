@@ -75,6 +75,13 @@ changed paths one per line, when it lists no criteria and every path is CI confi
 documentation no site renders. A harness uses it to skip work, so the decision is made by the same
 code in the job that explores and the job that judges. Exit 2 when a file cannot be read.
 
+`rules-doc` renders the Markdown block that lists every rule the manifest's `repo-rules` lines enable
+(their packs and rule directories, read from the working tree): each rule's id, whether it blocks or
+is advisory (as the gate judges it), its language and globs, and its message, sorted by id, between
+BEGIN and END comment lines that say it is generated. It prints the block, or with `--write PATH`
+replaces the block in that file, appending it when the file has none. `repo-rules --doc PATH` fails a
+pull request whose block differs from what this renders for its HEAD.
+
 `qa-review` posts the QAE's one review comment on a pull request, or edits it in place when it is
 already there: passed, changes needed, not required, or could not run, with the head it judged,
 each criterion's verdict from the explorer, and a link to the run. The state comes from what the
@@ -97,7 +104,8 @@ GATES = os.path.join(ROOT, "gates")
 sys.path.insert(0, GATES)
 from _acceptance import PASS_RE, check_lines, criteria as read_criteria, not_required  # noqa: E402
 from _contract import CannotRun, resolve_base  # noqa: E402
-from _tools import NODE_TOOLS, ensure_node_tool  # noqa: E402
+from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
+import repo_rules  # noqa: E402
 LABEL = {0: "PASS", 1: "FAIL", 2: "COULD NOT RUN"}
 STUB_PATH = ".github/workflows/vibe-verifier.yml"
 STUB_TEMPLATE = os.path.join(ROOT, "consumer", "vibe-verifier.yml")
@@ -817,6 +825,38 @@ def tool_command(args):
     return 0
 
 
+def rules_doc_command(args):
+    """Print or write the generated rules block for the rules the manifest's repo-rules lines enable."""
+    lines = [gate_args for gate, gate_args in parse_manifest(args.manifest) if gate == "repo-rules"]
+    if not lines:
+        return fail("%s has no repo-rules line, so it enables no rules" % args.manifest)
+    gate_parser = argparse.ArgumentParser(add_help=False)
+    repo_rules.add_arguments(gate_parser)
+    rules, packs = [], []
+    for gate_args in lines:
+        line = gate_parser.parse_known_args(gate_args)[0]  # --soak, --doc and the rest change no rule
+        rules += line.rules or []
+        packs += line.pack or []
+    try:
+        block = repo_rules.rules_doc(ensure("ast-grep"), repo_rules.head_sources(
+            args.repo, list(dict.fromkeys(rules)), list(dict.fromkeys(packs))))
+    except CannotRun as error:
+        return fail("rules-doc: %s" % error)
+    if not args.write:
+        print(block)
+        return 0
+    text = read_text(args.write) if os.path.isfile(args.write) else ""
+    found = repo_rules.BLOCK.search(text)
+    if found:
+        text = text[:found.start()] + block + text[found.end():]
+    else:
+        text += ("\n" if text and not text.endswith("\n") else "") + ("\n" if text.strip() else "") + block + "\n"
+    with open(args.write, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    print("%s the rules block in %s" % ("replaced" if found else "appended", args.write))
+    return 0
+
+
 def read_text(path):
     with open(path, encoding="utf-8", errors="replace") as handle:
         return handle.read()
@@ -950,6 +990,11 @@ def main():
     reader = commands.add_parser("criteria", help="read a criteria document: prints `none: <reason>` or `criteria: <n>`")
     reader.add_argument("file", help="the PR body or criteria document")
     reader.add_argument("--changed-files", metavar="FILE", help="the pull request's changed paths, one per line")
+    doc = commands.add_parser("rules-doc", help="print, or write into a file, the generated block listing the rules "
+                              "the manifest's repo-rules lines enable")
+    doc.add_argument("--repo", default=".")
+    doc.add_argument("--manifest", default=".vibe-verifier")
+    doc.add_argument("--write", metavar="PATH", help="replace the block in this file, or append it when the file has none")
     review = commands.add_parser("qa-review", help="post or edit the QAE's one review comment on a pull request (via gh)")
     review.add_argument("--repo", required=True, metavar="OWNER/NAME")
     review.add_argument("--pr", required=True, metavar="N")
@@ -974,6 +1019,8 @@ def main():
         return qa_review_command(args)
     if args.command == "tool":
         return tool_command(args)
+    if args.command == "rules-doc":
+        return rules_doc_command(args)
     return run(args)
 
 

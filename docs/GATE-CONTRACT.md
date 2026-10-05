@@ -480,6 +480,37 @@ repo-rules --rules lint/rules --pack example --soak
   rules this gate never loads.
 - ast-grep's releases publish no checksum file and no attestation, so its pin is the sha256 GitHub
   recorded for each release asset, matched against a download of each before it was written down.
+- **The rules block is generated, never hand-synced.** `bin/vibe-verifier rules-doc --repo DIR
+  --manifest FILE [--write PATH]` reads the manifest's `repo-rules` lines (their `--pack` and
+  `--rules` arguments; the rest change no rule), reads those packs and rule directories as the
+  working tree has them, and renders one Markdown block: every rule ast-grep runs (one whose severity
+  is `off` never runs and is left out), sorted by id, each with whether it blocks or is advisory
+  (severity, as above), its language with the extensions its directory's `sgconfig.yml` maps to that
+  language, its `files` and `ignores` globs, and its message. The block
+  opens and closes with fixed comment lines that say it is generated and to edit the rule files
+  instead. Without `--write` it is printed; with it, the block in PATH is replaced, or appended when
+  PATH has none. The rule files are read with the gate's own reader, so `rules-doc` refuses (exit 2)
+  what the gate refuses: a rule without a message or without a `valid` and an `invalid` case, a
+  document whose `id` cannot be read. It does not run the rule tests; the gate does. The
+  [agent skills](../skills/README.md) read this block before editing and regenerate it after
+  changing a rule.
+
+  ```
+  repo-rules --pack example --doc AGENTS.md
+  ```
+
+  `--doc PATH` (repeatable, a path in the repository) makes the gate render the same block for its
+  own `--rules` and `--pack` at HEAD and report a finding, naming the command that regenerates it,
+  when PATH lacks the block or holds a different one. HEAD and not the base: the block describes what
+  the branch will merge, so the pull request that changes a rule regenerates the block with it, while
+  the rule still judges that pull request as the base has it. A missing or stale block is a finding
+  like any other: it blocks, and under `--soak` it is reported only, because the gate ran and the
+  signal is real; a rule file at HEAD that cannot be read is exit 2, which `--soak` never masks. Two
+  consequences of the rest of this contract: the pull request that adds `--doc` to the manifest is
+  judged by the base's line, which lacks it, so it adds the block in the same change and the check
+  bites from the next pull request; and a catalog pin bump that changes a subscribed pack's rules
+  leaves the block stale, so its pull request needs the block regenerated, which `apply-down` (pin
+  lines only) does not do.
 
 ## Harnesses
 

@@ -31,6 +31,14 @@ sgconfig.yml it adds once it merges (a mapping can narrow what rules see). Packs
 from the catalog itself. Every rule needs a non-empty message and a rule test with at least one
 valid and one invalid case, and every rule test must pass; otherwise the gate cannot run (exit 2)
 and names the rule.
+
+    --doc PATH    a file of the repository (repeatable) that must hold the generated rules block, exactly
+                  as `bin/vibe-verifier rules-doc` renders it for the rules at HEAD
+
+The block is how a repository's prose about its rules stays true: it is generated from the rule files,
+never written by hand. A missing or different block is a finding naming the command that regenerates
+it, so it blocks, and --soak reports it only, like any other finding. It is read from HEAD rather than
+the base: the pull request that changes a rule regenerates the block with it.
 """
 import json
 import os
@@ -38,6 +46,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import textwrap
 from collections import Counter
 
 from _contract import CannotRun, Finding, added_files, changed_files, git, renamed, resolve_base, run_gate, tracked_files
@@ -48,6 +57,14 @@ PACKS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_RULES = ".vibe-verifier-rules"
 CONFIG = "sgconfig.yml"  # at a rule directory's root: only its languageGlobs are read
 ADVISORY = ("warning", "info", "hint")  # severities printed but never blocking; unset and error block
+# The generated rules block (`bin/vibe-verifier rules-doc`): found again by its first and last lines.
+BEGIN = ("<!-- BEGIN vibe-verifier rules-doc: generated from the rule files by `bin/vibe-verifier rules-doc`; "
+         "edit the rules and run it with --write, never this block -->")
+END = "<!-- END vibe-verifier rules-doc -->"
+BLOCK = re.compile(r"^<!-- BEGIN vibe-verifier rules-doc\b.*?^%s$" % re.escape(END), re.DOTALL | re.MULTILINE)
+INTRO = ("`repo-rules` checks every pull request against these rules. A blocking rule fails a pull request that adds a "
+         "finding to a file; an advisory one only reports it. A rule applies to the files of its language, and to those its "
+         "directory maps to that language, narrowed by its `files` and `ignores` globs.")
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 CHUNK = 500  # paths per ast-grep call, far below any platform's argument limit
 # The standard library reads no YAML, so ast-grep's own YAML grammar reads the rule files: each
@@ -117,21 +134,13 @@ def pack_files(name):
     return directory_files(root)
 
 
-def rule_sources(args, base, tracked):
-    """[(where, {path: bytes})] for every pack and rule directory this run judges by.
-
-    A relative --rules is a directory of the repository, judged from the base. An absolute one lies
-    outside it, such as one a wrapper writes, and is read as it is: a pull request cannot edit it."""
-    sources = [("catalog:rules/%s/" % name, pack_files(name)) for name in args.pack or []]
-    explicit = [os.path.normpath(d).replace(os.sep, "/") for d in args.rules or []]
+def rule_sources(rules, packs, read_directory):
+    """[(where, {path: bytes})] for every pack (from the catalog) and rule directory (default
+    .vibe-verifier-rules), each directory as read_directory(directory) returns it."""
+    sources = [("catalog:rules/%s/" % name, pack_files(name)) for name in packs or []]
+    explicit = [os.path.normpath(d).replace(os.sep, "/") for d in rules or []]
     for directory in explicit or [DEFAULT_RULES]:
-        if os.path.isabs(directory):
-            files, differs = directory_files(directory), []
-        else:
-            files, differs = judged_files(args, base, directory, set(tracked))
-        for path in differs:
-            print("%s: %s is judged as it is at %s; this branch's change to it applies once it merges" % (GATE, path, base),
-                  file=sys.stderr)
+        files = read_directory(directory)
         if files:
             sources.append((directory + "/", files))
         elif explicit:
@@ -142,6 +151,26 @@ def rule_sources(args, base, tracked):
     if not sources:
         raise CannotRun("no rules to run: add %s/, or pass --rules DIR or --pack NAME" % DEFAULT_RULES)
     return sources
+
+
+def judged_directory(args, base, tracked):
+    """read_directory for a run. A relative --rules is a directory of the repository, judged from the
+    base. An absolute one lies outside it, such as one a wrapper writes, and is read as it is: a pull
+    request cannot edit it."""
+    def read_directory(directory):
+        if os.path.isabs(directory):
+            return directory_files(directory)
+        files, differs = judged_files(args, base, directory, tracked)
+        for path in differs:
+            print("%s: %s is judged as it is at %s; this branch's change to it applies once it merges" % (GATE, path, base),
+                  file=sys.stderr)
+        return files
+    return read_directory
+
+
+def head_sources(repo, rules, packs):
+    """The sources as the working tree has them, whatever the base has: what the rules block lists."""
+    return rule_sources(rules, packs, lambda directory: directory_files(os.path.join(repo, directory)))
 
 
 def assemble(sources, work):
@@ -210,8 +239,9 @@ def scalar(text):
 
 
 def documents(sg, work):
-    """{path under work: [({top-level key: (value, items in its sequence)}, text)]}, one per YAML document.
-    Only block mappings are read (`key: value` on its own line); a document of any other shape is refused."""
+    """{path under work: [({top-level key: (value, [each item of its sequence, as a scalar])}, text)]}, one per
+    YAML document. Only block mappings are read (`key: value` on its own line); a document of any other
+    shape is refused."""
     result = subprocess.run([sg, "scan", "--inline-rules", READER, "--json=stream", "--", *sorted(os.listdir(work))],
                             cwd=work, capture_output=True, text=True)
     if result.returncode != 0:
@@ -223,11 +253,11 @@ def documents(sg, work):
     keys = {}
     for path, start, end, hit in spans("key"):
         label = hit["metaVariables"]["single"]["KEY"]["text"]
-        keys[(path, start, end)] = [scalar(label), hit["text"][len(label):].lstrip()[1:], 0]  # value: past the key's colon
-    for path, offset, _, _ in spans("item"):
+        keys[(path, start, end)] = [scalar(label), hit["text"][len(label):].lstrip()[1:], []]  # value: past the key's colon
+    for path, offset, _, hit in spans("item"):
         for (where, start, end), entry in keys.items():
             if where == path and start <= offset < end:
-                entry[2] += 1
+                entry[2].append(scalar(re.sub(r"^-(\s|$)", "", hit["text"])))  # a block item starts with its `- `
     docs = {}
     for path, start, end, hit in sorted(spans("doc"), key=lambda span: span[:3]):
         docs.setdefault(path, []).append(({key: (value, items) for (where, s, _), (key, value, items) in keys.items()
@@ -240,17 +270,15 @@ def has_content(text):
     return any(line and not line.startswith("#") for line in (re.sub(r"^(---|\.\.\.)", "", raw).strip() for raw in text.splitlines()))
 
 
-def verify(sg, work, origin, wheres):
-    """Configure each project, then refuse a rule that cannot tell anyone what to do instead (no message)
-    or that nothing proves (no passing rule test of its own directory with a valid and an invalid case).
-    Return the project roots."""
-    docs = documents(sg, work)
-    roots = configure(work, len(wheres), docs, origin)
-    for root, where in zip(roots, wheres):  # each directory's tests run under its own languageGlobs
-        tested = subprocess.run([sg, "test", "--config", CONFIG, "--skip-snapshot-tests", "--include-off", "--color", "never"],
-                                cwd=root, capture_output=True, text=True)
-        if tested.returncode != 0:
-            raise CannotRun("the rule tests of %s do not pass:\n%s" % (where, relabel(tested.stdout + tested.stderr, root, origin)))
+def value(keys, key):
+    """A top-level key's scalar value, or "" when the document does not set it."""
+    return scalar(keys[key][0]) if key in keys else ""
+
+
+def read_rules(docs, origin):
+    """{rule id: (project number, where, its top-level keys)} from documents(). Refuse a rule that cannot
+    tell anyone what to do instead (no message) or that nothing proves (no rule test of its own
+    directory with a valid and an invalid case)."""
     rules, cases, problems = {}, {}, []
     for path, entries in sorted(docs.items()):
         number, kind = path.split("/")[:2]
@@ -262,26 +290,39 @@ def verify(sg, work, origin, wheres):
                     problems.append("%s holds a document whose id cannot be read; write it as a block mapping, one "
                                     "`key: value` per line" % origin[path])
                 continue
-            rule_id = scalar(keys["id"][0])
+            rule_id = value(keys, "id")
             if kind == "rules":
                 if rule_id in rules and rules[rule_id][0] != number:
                     problems.append("rule %s is defined in both %s and %s" % (rule_id, rules[rule_id][1], origin[path]))
-                rules[rule_id] = (number, origin[path], scalar(keys.get("message", ("", 0))[0]),
-                                  scalar(keys.get("severity", ("", 0))[0]))
+                rules[rule_id] = (number, origin[path], keys)
             else:
                 tally = cases.setdefault((number, rule_id), [0, 0])  # a test counts only for its own directory's rule
-                tally[0] += keys.get("valid", ("", 0))[1]
-                tally[1] += keys.get("invalid", ("", 0))[1]
-    for rule_id, (number, where, message, _) in sorted(rules.items()):
+                tally[0] += len(keys.get("valid", ("", []))[1])
+                tally[1] += len(keys.get("invalid", ("", []))[1])
+    for rule_id, (number, where, keys) in sorted(rules.items()):
         valid, invalid = cases.get((number, rule_id), (0, 0))
-        if not message:
+        if not value(keys, "message"):
             problems.append("rule %s (%s) has no message; say what to write instead" % (rule_id, where))
         if not valid or not invalid:
             problems.append("rule %s (%s) has %d valid and %d invalid test cases under its directory's tests/; "
                             "it needs at least one of each" % (rule_id, where, valid, invalid))
     if problems:
         raise CannotRun("\n".join(problems))
-    return roots, {rule_id for rule_id, (_, _, _, severity) in rules.items() if severity in ADVISORY}
+    return rules
+
+
+def verify(sg, work, origin, wheres):
+    """Configure each project, run its rule tests, which must pass, and read its rules (read_rules).
+    Return the project roots and the ids of the advisory rules."""
+    docs = documents(sg, work)
+    roots = configure(work, len(wheres), docs, origin)
+    for root, where in zip(roots, wheres):  # each directory's tests run under its own languageGlobs
+        tested = subprocess.run([sg, "test", "--config", CONFIG, "--skip-snapshot-tests", "--include-off", "--color", "never"],
+                                cwd=root, capture_output=True, text=True)
+        if tested.returncode != 0:
+            raise CannotRun("the rule tests of %s do not pass:\n%s" % (where, relabel(tested.stdout + tested.stderr, root, origin)))
+    rules = read_rules(docs, origin)
+    return roots, {rule_id for rule_id, (_, _, keys) in rules.items() if value(keys, "severity") in ADVISORY}
 
 
 def scan(sg, roots, root, paths):
@@ -314,16 +355,76 @@ def changed_lines(repo, merge_base, old, path):
     return {first + n for start, count in HUNK.findall(diff) for first in [int(start)] for n in range(int(count or 1))}
 
 
+def mapped_globs(sg, docs, work):
+    """{(project number, language casefolded): [globs]} from each source sgconfig.yml's languageGlobs (the
+    first, as configure() takes it). Its value, written out as a document of its own, is a mapping of
+    language to a sequence of globs, which documents() reads like any rule file."""
+    mappings = os.path.join(work, "language-globs")
+    os.makedirs(mappings)
+    for path, entries in docs.items():
+        number, name = path.split("/")[:2]
+        found = [keys["languageGlobs"][0] for keys, _ in entries if "languageGlobs" in keys]
+        if name == "source-" + CONFIG and found:
+            with open(os.path.join(mappings, number + ".yml"), "w", encoding="utf-8") as handle:
+                handle.write(textwrap.dedent(found[0]))
+    return {(path[:-len(".yml")], language.casefold()): items
+            for path, entries in documents(sg, mappings).items() for keys, _ in entries for language, (_, items) in keys.items()}
+
+
+def rules_doc(sg, sources):
+    """The generated Markdown block: every rule of sources that runs (ast-grep never runs a rule whose
+    severity is `off`), sorted by id, with whether it blocks as the gate judges it, its language with the
+    extensions its directory maps to that language, its `files` and `ignores` globs, and its message."""
+    with tempfile.TemporaryDirectory(prefix="vv-rules-doc-") as work:
+        projects = os.path.join(work, "projects")
+        origin = assemble(sources, projects)
+        docs = documents(sg, projects)
+        rules = read_rules(docs, origin)
+        mapped = mapped_globs(sg, docs, work)
+    lines = [BEGIN, INTRO, ""]
+    for rule_id, (number, _, keys) in sorted(rules.items()):
+        severity = value(keys, "severity")
+        if severity == "off":
+            continue
+        language = value(keys, "language")
+        extra = mapped.get((number, language.casefold()))
+        scope = [language + (" with " + ", ".join("`%s`" % glob for glob in extra) if extra else "")]
+        scope += ["%s %s" % (key, ", ".join("`%s`" % glob for glob in keys[key][1]))
+                  for key in ("files", "ignores") if key in keys and keys[key][1]]
+        lines.append("- `%s` (%s; %s): %s" % (rule_id, "advisory" if severity in ADVISORY else "blocking", "; ".join(scope),
+                                              " ".join(value(keys, "message").split())))
+    return "\n".join(lines + [END])
+
+
+def stale_doc(repo, path, block):
+    """A finding when the file at path in the repository lacks the generated block, or holds a different one."""
+    fix = "regenerate it from the repository root with `<catalog>/bin/vibe-verifier rules-doc --repo . --manifest <manifest> --write %s`" % path
+    try:
+        with open(os.path.join(repo, path), encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+    except FileNotFoundError:
+        text = ""
+    found = BLOCK.search(text)
+    if not found:
+        return Finding("rules-doc: %s has no generated rules block; %s" % (path, fix), path)
+    if found.group(0) != block:
+        return Finding("rules-doc: this rules block is not what the rule files at HEAD generate; %s" % fix,
+                       path, text.count("\n", 0, found.start()) + 1)
+    return None
+
+
 def check(args):
     base = None if args.all else resolve_base(args.repo, args.base_ref)
     tracked = tracked_files(args.repo)
-    sources = rule_sources(args, base, tracked)
+    sources = rule_sources(args.rules, args.pack, judged_directory(args, base, set(tracked)))
     sg = ensure("ast-grep")
     with tempfile.TemporaryDirectory(prefix="vv-rules-") as work:
         projects = os.path.join(work, "projects")
         roots, advisory = verify(sg, projects, assemble(sources, projects), [where for where, _ in sources])
+        block = rules_doc(sg, head_sources(args.repo, args.rules, args.pack)) if args.doc else None
+        stale = [found for found in (stale_doc(args.repo, path, block) for path in args.doc or []) if found]
         if args.all:
-            return [finding(hit, advisory) for hit in scan(sg, roots, args.repo, sorted(tracked))]
+            return stale + [finding(hit, advisory) for hit in scan(sg, roots, args.repo, sorted(tracked))]
         listed = set(tracked)
         head = scan(sg, roots, args.repo, sorted(p for p in changed_files(args.repo, base) if p in listed))
         merge_base = git(args.repo, "merge-base", base, "HEAD").strip()
@@ -351,7 +452,7 @@ def check(args):
         else:
             findings += [finding(hit, advisory, " (%s; none is on a line this pull request changed, so all are listed)" % counts)
                          for hit in hits]
-    return sorted(findings, key=lambda f: (f.path, f.line, f.message))
+    return stale + sorted(findings, key=lambda f: (f.path, f.line, f.message))
 
 
 def add_arguments(parser):
@@ -359,6 +460,8 @@ def add_arguments(parser):
                         "default %s when present)" % DEFAULT_RULES)
     parser.add_argument("--pack", action="append", metavar="NAME", help="a catalog pack, rules/NAME/ (repeatable)")
     parser.add_argument("--all", action="store_true", help="report every finding in every tracked file, with no ratchet")
+    parser.add_argument("--doc", action="append", metavar="PATH", help="a file of the repository whose generated rules block "
+                        "must match what `bin/vibe-verifier rules-doc` renders for the rules at HEAD (repeatable)")
 
 
 if __name__ == "__main__":
