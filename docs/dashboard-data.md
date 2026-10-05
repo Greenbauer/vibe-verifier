@@ -8,7 +8,7 @@ Each refresh checks the REST core rate limit, then scans configured repositories
 
 1. Refreshes direct subscription evidence when the five-minute inventory cache expires.
 2. Lists open pull requests.
-3. Joins each pull request to check suites and latest check runs for its exact head SHA.
+3. Joins each pull request to check suites and latest check runs for its exact head SHA. The check runs come from one listing for the head (`commits/{sha}/check-runs?filter=latest`), not one request per check suite, and a run counts only when its suite belongs to that head.
 4. Joins Actions runs by head SHA and check-suite ID, selecting the latest run attempt and its matching jobs.
 5. Reads commit statuses and then re-reads the pull request head. Evidence is discarded if the head changed during collection.
 6. Lists checks the base branch's rulesets require that have not reported on the head as `expected` rows (category `pending`). The rules are read once per base branch per scan. A required workflow counts only for a run created after its current pin took effect, learned from the ruleset's version history and cached until the pin moves.
