@@ -146,12 +146,14 @@ jobs:
         # without a sandbox here, cannot post, push, or read a credential it was never given. A site
         # step that fetched a preview's bypass cookie declares the file as its `storage-state` output
         # and the browser starts with it; the template's site step declares none, so this is empty
-        # (harnesses/qae/README.md, "A preview behind Vercel SSO").
+        # (harnesses/qae/README.md, "A preview behind Vercel SSO"). A site step that gives the
+        # explorer a login declares its `secrets-file` the same way (README, "A preview behind a login").
         uses: Greenbauer/vibe-verifier/actions/qae-codex@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
         with:
           prompt-file: qae-inputs/prompt.md
           mcp: ${{ steps.browser.outputs.mcp }}
           storage-state: ${{ steps.site.outputs.storage-state }}
+          secrets-file: ${{ steps.site.outputs.secrets-file }}
       - name: Post the verdict the explorer wrote
         # The one comment this job posts, by the workflow, from the one file: the verify job filters
         # verdicts by this job's identity, and the explorer itself never holds the token.
