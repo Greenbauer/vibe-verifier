@@ -23,6 +23,7 @@ import subprocess
 import tarfile
 import tempfile
 import urllib.request
+import zipfile
 
 from _contract import CannotRun
 
@@ -71,6 +72,22 @@ TOOLS = {
         },
         "version_args": ["--version"],
     },
+    "ast-grep": {
+        "version": "0.45.3",
+        "url": "https://github.com/ast-grep/ast-grep/releases/download/{version}/{asset}",
+        # The release publishes no checksum file and no attestation (gh attestation verify: 404). These
+        # are the sha256 digests GitHub recorded for each release asset at upload (the API's `digest`),
+        # read 2026-10-05 and matched by hashing each downloaded asset before they were written down.
+        "assets": {
+            ("Linux", "x86_64"): ("app-x86_64-unknown-linux-gnu.zip",
+                                  "f8ac830881339d1edee6b2652f54798c0f4da5a827f2db38a08ee31117783ce8"),
+            ("Darwin", "arm64"): ("app-aarch64-apple-darwin.zip",
+                                  "6d2279dea5bea2ad79c66ea93f5fe54ba926e398a8a26de76c56db68fe59eac6"),
+            ("Darwin", "x86_64"): ("app-x86_64-apple-darwin.zip",
+                                   "b2ffd26f42810340326a9e8a084bdc3647a8795c1a3f21fc06bd7bef3c7c5b2c"),
+        },
+        "version_args": ["--version"],
+    },
 }
 
 
@@ -85,6 +102,17 @@ def _reports_version(binary, tool):
         return False
     first = (out.stdout.strip() or out.stderr.strip()).splitlines()[0] if (out.stdout.strip() or out.stderr.strip()) else ""
     return out.returncode == 0 and re.search(r"(?<![0-9.])%s(?![0-9.])" % re.escape(tool["version"]), first) is not None
+
+
+def _member(archive, asset, name):
+    """The bytes of the file called `name` in a .zip or .tar.gz release asset, or None."""
+    if asset.endswith(".zip"):
+        with zipfile.ZipFile(archive) as bundle:
+            member = next((m for m in bundle.infolist() if not m.is_dir() and os.path.basename(m.filename) == name), None)
+            return bundle.read(member) if member else None
+    with tarfile.open(fileobj=archive, mode="r:gz") as bundle:
+        member = next((m for m in bundle.getmembers() if m.isfile() and os.path.basename(m.name) == name), None)
+        return bundle.extractfile(member).read() if member else None
 
 
 def _download(name, tool, target):
@@ -107,11 +135,9 @@ def _download(name, tool, target):
     actual = hashlib.sha256(data).hexdigest()
     if actual != digest:
         raise CannotRun("%s does not match its pinned sha256 (got %s, pinned %s); refusing to run it" % (asset, actual, digest))
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
-        member = next((m for m in archive.getmembers() if m.isfile() and os.path.basename(m.name) == name), None)
-        if member is None:
-            raise CannotRun("%s holds no file named %s" % (asset, name))
-        payload = archive.extractfile(member).read()
+    payload = _member(io.BytesIO(data), asset, name)
+    if payload is None:
+        raise CannotRun("%s holds no file named %s" % (asset, name))
     handle, temp = tempfile.mkstemp(dir=os.path.dirname(target))
     with os.fdopen(handle, "wb") as out:
         out.write(payload)
