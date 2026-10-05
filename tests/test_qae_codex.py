@@ -194,17 +194,28 @@ class StorageState(unittest.TestCase):
     def test_no_storage_state_starts_the_browser_with_none(self):
         result = self.run_step()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(self.browser_args(), ["/opt/mcp/cli.js", "--headless", "--isolated", "--output-dir", "qae-artifacts",
-                                               "--save-session", "--viewport-size", "1280x800"])
+        self.assertEqual(self.browser_args(), ["/opt/mcp/cli.js", "--browser", "chromium", "--headless", "--isolated",
+                                               "--output-dir", "qae-artifacts", "--save-session", "--viewport-size",
+                                               "1280x800"])
         usage = json.loads(Path(self.temp, "vv-usage", "usage.json").read_text())
         self.assertEqual((usage["status"], usage["status_reason"]), ("unavailable", "no_final_usage"))
+
+    def test_both_lanes_start_the_chromium_that_qae_browser_installs(self):
+        # Without --browser, playwright-mcp starts the Google Chrome channel. A self-hosted runner
+        # without Chrome then fails every browser tool ("Chromium distribution 'chrome' is not
+        # found") and writes no session log, so the qae-artifacts gate fails the run.
+        result = self.run_step()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.browser_args()[1:3], ["--browser", "chromium"])
+        template = Path(ROOT, "harnesses", "qae", "explore.yml").read_text()
+        self.assertIn('"args":["${{ steps.browser.outputs.mcp }}","--browser","chromium",', template)
 
     def test_the_storage_state_reaches_the_browser_and_every_cookie_value_is_redacted(self):
         other = dict(COOKIE, name="consent", value="all", httpOnly=False)
         result = self.run_step({"cookies": [COOKIE, other], "origins": []})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         secrets = os.path.join(self.temp, "qae-codex-cookies.env")
-        self.assertEqual(self.browser_args()[8:], ["--storage-state", os.path.realpath(os.path.join(self.work, "state.json")),
+        self.assertEqual(self.browser_args()[10:], ["--storage-state", os.path.realpath(os.path.join(self.work, "state.json")),
                                                    "--secrets", secrets])
         self.assertEqual(Path(secrets).read_text(), 'VV_COOKIE_1="%s"\nVV_COOKIE_2="all"\n' % COOKIE["value"])
         self.assertEqual(stat.S_IMODE(os.stat(secrets).st_mode), 0o600)

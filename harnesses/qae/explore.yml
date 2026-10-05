@@ -123,7 +123,7 @@ jobs:
           claude_args: >-
             --model claude-opus-4-7
             --max-turns 80
-            --mcp-config '{"mcpServers":{"playwright":{"command":"node","args":["${{ steps.browser.outputs.mcp }}","--headless","--isolated","--output-dir","qae-artifacts","--save-session","--viewport-size","1280x800"]}}}'
+            --mcp-config '{"mcpServers":{"playwright":{"command":"node","args":["${{ steps.browser.outputs.mcp }}","--browser","chromium","--headless","--isolated","--output-dir","qae-artifacts","--save-session","--viewport-size","1280x800"]}}}'
             --allowed-tools "mcp__playwright,Read(qae-inputs/**),Read(qae-artifacts/**),Edit(qae-artifacts/**),Bash(mkdir:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --body-file qae-artifacts/verdict.md)"
             # Read and Edit rules are the only file rules Claude Code consults (a Write(path) rule is
             # accepted and ignored), and an allow rule anchors at the working directory, so the model
