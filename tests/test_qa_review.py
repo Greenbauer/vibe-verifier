@@ -87,8 +87,9 @@ class QaReview(unittest.TestCase):
         self.assertIn("- AC2, no verdict: The menu opens\n", self.posted(gates="failure"))
 
     def test_a_pull_request_with_no_criteria_is_told_how_to_add_them(self):
+        # The criteria job found nothing to walk, so the explore job was skipped and the gates judged.
         self.criteria = self.file("pr-body.md", "## Why\n\nchanges the home page\n")
-        body = self.posted(gates="failure", verdict=False)
+        body = self.posted(explore="skipped", gates="failure", verdict=False)
         self.assertEqual(body.splitlines()[1], "## QA review: changes needed ❌")
         self.assertIn("lists no acceptance criteria", body)
         self.assertIn("`- None: <why>`", body)
@@ -121,6 +122,14 @@ class QaReview(unittest.TestCase):
             self.assertEqual(body.splitlines()[1], "## QA review: could not run \u26a0\ufe0f", outcome)
             self.assertIn("The verify job stopped before its gates ran on `01234567`", body)
             self.assertNotIn("refused", body)
+
+    def test_a_skipped_explore_whose_criteria_job_failed_could_not_run(self):
+        # The verify job's first step refuses an unfinished criteria job, so its gates never ran. The
+        # comment blames that, never the skipped explore job.
+        body = self.posted(explore="skipped", gates="", verdict=False)
+        self.assertEqual(body.splitlines()[1], "## QA review: could not run \u26a0\ufe0f")
+        self.assertIn("The verify job stopped before its gates ran on `01234567`", body)
+        self.assertNotIn("explore job ended", body)
 
     def test_a_missing_verdict_file_reads_as_no_verdict(self):
         self.verdict = str(Path(self.fixtures) / "never-written.md")

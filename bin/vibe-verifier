@@ -880,13 +880,18 @@ REVIEW_HEADINGS = {
 }
 
 
+EXPLORE_DONE = ("success", "skipped")
+
+
 def review_state(args):
     """What the workflow concluded, in order: a pull request that needs no check, an explore job that
     did not finish, then the gates' own outcome. Gates that never ran (an earlier verify step failed)
-    judged nothing, so that is could-not-run too, never a refusal."""
+    judged nothing, so that is could-not-run too, never a refusal. A skipped explore job found no
+    criterion to walk: the verify job's first step fails when the criteria job that decided it did not
+    finish, so its gates never run and that case lands on could-not-run too."""
     if args.not_required:
         return "not-required"
-    if args.explore_result != "success" or args.gates_outcome not in ("success", "failure"):
+    if args.explore_result not in EXPLORE_DONE or args.gates_outcome not in ("success", "failure"):
         return "could-not-run"
     return "passed" if args.gates_outcome == "success" else "changes-needed"
 
@@ -911,7 +916,7 @@ def review_body(state, args):
     if state == "not-required":
         lines.append("No browser check on %s: %s." % (head, args.not_required.rstrip(".")))
     elif state == "could-not-run":
-        stopped = ("The explore job ended `%s`" % args.explore_result if args.explore_result != "success"
+        stopped = ("The explore job ended `%s`" % args.explore_result if args.explore_result not in EXPLORE_DONE
                    else "The verify job stopped before its gates ran")
         lines.append("%s on %s, so nothing was checked. Its log has the cause; rerun the workflow once it "
                      "is fixed." % (stopped, head))
@@ -996,7 +1001,7 @@ def main():
     review.add_argument("--run-url", required=True, metavar="URL")
     review.add_argument("--criteria", required=True, metavar="FILE", help="the PR body the run read")
     review.add_argument("--verdict", metavar="FILE", help="the explorer's verdict comment, when there is one")
-    review.add_argument("--explore-result", required=True, help="the explore job's result (success, failure, cancelled)")
+    review.add_argument("--explore-result", required=True, help="the explore job's result (success, skipped, failure, cancelled)")
     review.add_argument("--gates-outcome", default="", help="the gates step's outcome (success, failure, skipped)")
     review.add_argument("--not-required", default="", metavar="REASON", help="why no browser check is needed; empty when one is")
     args = parser.parse_args()
