@@ -50,6 +50,57 @@ public listener, browser credential, built-in authentication, or CORS access. Wi
 `proxy_origin`, forwarded headers are rejected. The server accepts `GET` only, rejects untrusted or
 duplicate routing headers, and serves a fixed path allowlist with no remote scripts, fonts, or icons.
 
+## Keep it running on the newest main
+
+`bin/vibe-dashboard-follow` runs one or more dashboards and keeps them on merged code. Every
+minute it fetches `main` from origin and fast-forwards its own checkout. A merged change to the
+server's Python (`dashboard/` outside `dashboard/static/`, or `bin/vibe-dashboard`) restarts the
+dashboards; the first GitHub sample after a restart takes a few minutes to load. A change under
+`dashboard/static/` needs no restart, because the server reads those files on every request, so a
+browser reload shows it within a minute. A change to the follower re-runs it. A dashboard that exits
+is started again. If origin is unreachable or the checkout has local edits, it logs that and keeps
+serving the code it has.
+
+Give it a clone nobody edits, so a fast-forward always applies:
+
+```bash
+git clone https://github.com/Greenbauer/vibe-verifier.git ~/.vibe-verifier-dashboard/checkout
+~/.vibe-verifier-dashboard/checkout/bin/vibe-dashboard-follow \
+  --serve /absolute/path/octocat.json 8765 --serve /absolute/path/other-owner.json 8766
+```
+
+On macOS, a LaunchAgent starts it at login and again if it exits. Save this as
+`~/Library/LaunchAgents/<label>.plist`, with absolute paths and the Python and `gh` that work in
+your shell (launchd's default `PATH` has neither Homebrew directory), then run
+`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<label>.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>/Users/YOU/.vibe-verifier-dashboard/checkout/bin/vibe-dashboard-follow</string>
+    <string>--serve</string><string>/absolute/path/octocat.json</string><string>8765</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/YOU/.vibe-verifier-dashboard/follow.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/.vibe-verifier-dashboard/follow.log</string>
+</dict>
+</plist>
+```
+
+The log gets one line per update or restart plus anything a dashboard prints. To remove it, run
+`launchctl bootout gui/$(id -u)/LABEL`, then delete the plist and `~/.vibe-verifier-dashboard`.
+`tests/test_dashboard_follow.py` covers the fast-forward, the restart rule, and restarting a
+dashboard that exited.
+
 ## Configuration contract
 
 Configuration is read once at startup. Restart to change it. Every repository must belong to the
