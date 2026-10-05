@@ -224,6 +224,35 @@ class GitHubCollector:
         return sorted(result, key=lambda row: _time_key(row, "started_at", "created_at"), reverse=True)
 
     @staticmethod
+    def _current_only(checks: list[dict], runs: list[dict]) -> tuple[list[dict], list[dict]]:
+        """Keep only the newest copy of each job and check, as GitHub's pull request page does.
+
+        Each event that starts a workflow on the same head (a push, a review, a comment) creates a new
+        run and check suite, so one job can appear several times. Older copies are superseded."""
+        created = {run["suite_id"]: _time_key(run, "created_at") for run in runs}
+        workflow = {run["suite_id"]: run["path"] or run["name"] for run in runs}
+
+        def newest(rows: list, key, rank) -> set[int]:
+            latest = {}
+            for index, row in enumerate(rows):
+                if key(row) not in latest or rank(row) > latest[key(row)][0]:
+                    latest[key(row)] = (rank(row), index)
+            return {index for _, index in latest.values()}
+
+        keep = newest(checks, lambda row: (row["provider"], workflow.get(row["suite_id"]), row["name"]),
+                      lambda row: (created.get(row["suite_id"]) or _time_key(row, "started_at"), row["id"] or 0))
+        checks = [row for index, row in enumerate(checks) if index in keep]
+        jobs = [(run_index, job) for run_index, run in enumerate(runs) for job in run["jobs"]]
+        keep = newest(jobs, lambda pair: (workflow[runs[pair[0]]["suite_id"]], pair[1]["name"]),
+                      lambda pair: (created[runs[pair[0]]["suite_id"]], pair[1]["id"] or 0))
+        current = []
+        for run_index, run in enumerate(runs):
+            run_jobs = [job for index, (owner, job) in enumerate(jobs) if owner == run_index and index in keep]
+            if run_jobs or not run["jobs"]:
+                current.append({**run, "jobs": run_jobs, "step_summary": step_summary(run_jobs)})
+        return checks, current
+
+    @staticmethod
     def _attention(evidence: list[dict], runs: list[dict]) -> tuple[bool, str]:
         categories = [row["category"] for row in evidence]
         if "failed" in categories:
@@ -261,6 +290,7 @@ class GitHubCollector:
                     "evidence_available": False, "attention": True,
                     "attention_reason": "Head changed while GitHub evidence was loading",
                     "checks": [], "statuses": [], "runs": []}
+        checks, runs = self._current_only(checks, runs)
         attention, reason = self._attention(checks + statuses, runs)
         return {**identity, "head_changed": False, "evidence_available": True,
                 "attention": attention, "attention_reason": reason,

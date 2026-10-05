@@ -196,6 +196,8 @@ not zero.
 The server uses bounded `gh api` pages and JSON fields, never formatted table output. It reads
 PR check suites and check runs for the current head, joins Actions runs by exact head SHA plus check
 suite ID, selects the greatest run attempt for each run ID, and loads jobs from that exact attempt.
+When several runs of one workflow exist on the head (each triggering event starts its own run), only
+the newest copy of each job and check counts toward step totals and attention.
 It re-reads the PR head after collection; a race drops the collected evidence instead of attaching
 it to the new revision. Commit statuses and third-party checks remain separate evidence rows.
 
