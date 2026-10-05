@@ -377,6 +377,18 @@ class Packs(unittest.TestCase):
             result = gate("repo-rules", repo, "--all", "--pack", pack)
             self.assertEqual(result.returncode, 0, "pack %s: %s" % (pack, result.stdout + result.stderr))
 
+    def test_the_typescript_and_supabase_packs_cover_ts_files(self):
+        # Each pack maps .ts onto its tsx rules; without that mapping a .ts violation is silently skipped.
+        cases = {"typescript": ("src/main.ts", "if (import.meta.url === `file://${process.argv[1]}`) main();\n", "no-raw-main-entry-check"),
+                 "supabase": ("src/admin.ts", "export const admin = createServerClient(url, process.env.SUPABASE_SERVICE_ROLE_KEY!, { cookies });\n",
+                              "supabase-service-role-not-ssr-client")}
+        for pack, (path, source, rule) in cases.items():
+            repo = make_repo(self, {"README.md": "x\n"})
+            commit(repo, {path: source})
+            result = gate("repo-rules", repo, "--base-ref", "HEAD~1", "--pack", pack)
+            self.assertEqual(result.returncode, 1, "pack %s: %s" % (pack, result.stdout + result.stderr))
+            self.assertIn(rule, result.stdout)
+
     def test_a_catalog_pack_runs_alongside_the_repositorys_rules(self):
         repo = rules_repo(self, {"src/a.ts": "export const a = 1\n"})
         commit(repo, {"src/b.ts": "debugger\n" + LOG})

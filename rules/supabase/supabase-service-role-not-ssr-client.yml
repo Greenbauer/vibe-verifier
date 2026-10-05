@@ -1,0 +1,23 @@
+id: supabase-service-role-not-ssr-client
+language: tsx
+message: >-
+  The service-role key is going into @supabase/ssr's createServerClient, which attaches the
+  caller's session cookie, so row-level security still applies as that user. Build the
+  service-role client with supabase-js createClient instead, with no cookies and
+  `auth: { persistSession: false, autoRefreshToken: false }`.
+note: >-
+  PostgREST takes the role from the Authorization JWT, not the apikey, so a cookie-bound client
+  holding the service key runs as the signed-in user. It usually goes unnoticed until RLS
+  policies tighten and admin-only work starts failing for ordinary users.
+ignores: ['**/node_modules/**', '**/__tests__/**', '**/*.test.*', '**/*.spec.*']
+rule:
+  kind: call_expression
+  all:
+    - has:
+        field: function
+        regex: ^createServerClient$
+    - has:
+        field: arguments
+        has:
+          nthChild: 2
+          regex: SERVICE_ROLE

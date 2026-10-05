@@ -1,0 +1,11 @@
+id: no-resolve-undefined-in-catch
+valid:
+  - |
+    new Promise((resolve, reject) => {
+      try { resolve(run()); } catch (error) { reject(error); }
+    });
+invalid:
+  - |
+    new Promise((resolve) => {
+      try { resolve(run()); } catch (error) { notify(error); resolve(undefined); }
+    });

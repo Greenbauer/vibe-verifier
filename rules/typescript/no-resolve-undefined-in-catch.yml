@@ -1,0 +1,15 @@
+id: no-resolve-undefined-in-catch
+language: tsx
+message: >-
+  This catch block resolves the promise with no value, so the caller sees success and the error
+  is lost. Call reject(error); a caller that must continue regardless can add its own
+  .catch(() => fallback).
+note: Callers such as data-fetching libraries treat a resolved promise as success and run their success path.
+ignores: ['**/node_modules/**', '**/__tests__/**', '**/*.test.*', '**/*.spec.*']
+rule:
+  any:
+    - pattern: resolve(undefined)
+    - pattern: resolve()
+  inside:
+    kind: catch_clause
+    stopBy: end

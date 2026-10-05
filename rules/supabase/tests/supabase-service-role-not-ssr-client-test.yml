@@ -1,0 +1,9 @@
+id: supabase-service-role-not-ssr-client
+valid:
+  - |
+    const admin = createClient(url, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false, autoRefreshToken: false } });
+  - |
+    const user = createServerClient(url, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, { cookies });
+invalid:
+  - |
+    const admin = createServerClient(url, process.env.SUPABASE_SERVICE_ROLE_KEY!, { cookies });
