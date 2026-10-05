@@ -268,13 +268,24 @@
     const bots = (snapshot.agents?.rows || []).map(agent => ({ name: agent.name, color: BOT_META[agent.role].color,
       burn: VVCharts.hourlyBurn(samples.filter(sample => sample.bot === agent.id), now, through) }));
     const observed = bots.map(bot => bot.burn).filter(Boolean);
-    const all = { name: "All bots", color: "rgba(255,255,255,0.6)", all: true, burn: observed.length ? VVCharts.sumBurns(observed) : null };
+    const all = { name: "All bots", color: "rgba(255,255,255,0.6)", all: true, burn: observed.length ? VVCharts.sumBurns(observed) : null,
+      ...paceHeader(plan.delta_points ?? null) };
     const shared = VVCharts.ceiling(observed);
     return el("section", { class: "panel usage-charts" }, el("h2", {}, "Token burn pattern"),
       el("p", { class: "muted" }, "Tokens each bot used, hour by hour. Solid: last 24 hours. Dashed: a usual day. Flat: the pace that lasts until the plan resets."),
       el("div", { class: "burn-cards" }, bots.map(bot => burnCard(bot, shared, now, null)),
         burnCard(all, VVCharts.ceiling(all.burn ? [all.burn] : [], pace), now, pace)),
       paceNote(plan));
+  }
+
+  // "12% under pace": the plan's fill against an even burn of its window, in points.
+  function paceHeader(delta) {
+    if (delta === null) return {};
+    if (delta > 1) return { pace: `${Math.round(delta)}% ahead of pace`,
+      paceTitle: `${Math.round(delta)} points ahead of an even burn: spending the plan faster than its window resets.` };
+    if (delta < -1) return { pace: `${Math.round(-delta)}% under pace`,
+      paceTitle: `${Math.round(-delta)} points behind an even burn: headroom.` };
+    return { pace: "on pace", paceTitle: "On pace with the plan's reset window." };
   }
 
   // What the flat line is, in words; how its size was measured rides the hover.
@@ -293,7 +304,7 @@
     const burn = row.burn, days = burn?.baselineDays ?? null;
     const card = el("article", { class: `burn-card${row.all ? " all-bots" : ""}`, style: `--accent:${row.color}` });
     const peak = Math.max(...(burn?.last24h || []).filter(Number.isFinite));
-    card.append(el("div", { class: "burn-head" }, el("b", {}, row.name),
+    card.append(el("div", { class: "burn-head" }, el("b", { title: row.paceTitle }, row.pace ? `${row.name} · ${row.pace}` : row.name),
       el("span", { title: "Most tokens in one clock hour of the last 24 hours" }, Number.isFinite(peak) ? `peak ${VVCharts.short(peak)}/h` : null)));
     if (!burn) {
       card.append(el("p", { class: "burn-empty muted" }, "Not yet observed"));

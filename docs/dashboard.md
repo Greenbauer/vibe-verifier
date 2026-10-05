@@ -263,7 +263,11 @@ two places:
 When the plan has several windows (say 5-hour and 7-day), the longest one is paced. No
 line is drawn, and the page says why, when two plans could each be billed for the same tokens, the
 plan shows 0% used, no bot tokens fall inside the window, the window began more than the seven days
-of kept samples ago, or token history is stale or partial. No price is inferred.
+of kept samples ago, or token history is stale or partial.
+The All bots header also states the plan's fill against an even burn of its window, in points:
+used percent minus the share of the window elapsed, as `12% under pace`, `21% ahead of pace` or
+`on pace` (within one point). It needs only the window's length and reset, so it shows even when the
+line cannot be sized. No price is inferred.
 
 Every token sample repeats the owner, account, bot, timestamp, input count, and output count. Any
 cross-owner row rejects the whole file. Samples older than seven days are discarded. The file is

@@ -38,6 +38,16 @@ class DerivedPace(unittest.TestCase):
         self.assertAlmostEqual(pace["tokens_per_hour"], 600 / 96)
         self.assertAlmostEqual(pace["tokens_per_hour"] / pace["allowance_tokens"] * 100, (100 - 40) / 96)
 
+    def test_header_delta_is_fill_minus_elapsed_share_of_the_window(self):
+        # 72 of 168 hours elapsed is 42.9% of the window; 40% used is 2.9 points under an even burn.
+        self.assertAlmostEqual(plan_pace(usage([sample(1, 400)]), NOW)["delta_points"], 40 - 72 / 168 * 100)
+
+    def test_header_delta_needs_no_token_history(self):
+        # The plan's own percentage is enough for the header even when its size cannot be measured.
+        pace = plan_pace(usage([], stale=True), NOW)
+        self.assertIsNone(pace["tokens_per_hour"])
+        self.assertAlmostEqual(pace["delta_points"], 40 - 72 / 168 * 100)
+
     def test_tokens_before_the_window_began_do_not_size_it(self):
         pace = plan_pace(usage([sample(10, 400), sample(73, 5000), sample(150, 9000)]), NOW)
         self.assertEqual(pace["window_tokens"], 400)
@@ -98,7 +108,9 @@ class ReportedAllowance(unittest.TestCase):
         self.assertAlmostEqual(pace["tokens_per_hour"], 750_000 / 96)
 
     def test_reported_size_for_another_account_draws_nothing(self):
-        self.assertIsNone(plan_pace(usage([sample(1, 400)], self.windows()), NOW)["tokens_per_hour"])
+        pace = plan_pace(usage([sample(1, 400)], self.windows()), NOW)
+        self.assertIsNone(pace["tokens_per_hour"])
+        self.assertIsNone(pace["delta_points"])  # no window length, so no elapsed share
 
 
 if __name__ == "__main__":

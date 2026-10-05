@@ -42,25 +42,35 @@ def plan_pace(usage: dict, now: datetime) -> dict:
     remaining = (reset - now).total_seconds()
     if remaining <= 0:
         return _none("the plan's window has reset; waiting for its next reading.")
+    # Points the fill sits ahead of an even burn: needs only the window's length, never its size.
+    delta = None
+    if window.get("window_minutes"):
+        elapsed = 1 - remaining / (window["window_minutes"] * 60)
+        if 0 < elapsed <= 1:
+            delta = min(used, 100) - elapsed * 100
+
+    def none(reason: str) -> dict:
+        return {**_none(reason), "delta_points": delta}
+
     result = {"plan": account["label"], "window": window["name"], "resets_at": window["resets_at"],
-              "used_percent": used}
+              "used_percent": used, "delta_points": delta}
     if reported:
         # A reported size paces only bots that are wholly on that account.
         if not samples or any(sample["account"] != account["id"] for sample in samples):
-            return _none("the reported allowance belongs to a different account than the plotted tokens.")
+            return none("the reported allowance belongs to a different account than the plotted tokens.")
         allowance, window_tokens, sized_from = window["allowance_tokens"], None, "reported"
     else:
         start = reset - timedelta(minutes=window["window_minutes"])
         if start < now - HISTORY:
-            return _none("the plan's window began before the seven days of token history kept here.")
+            return none("the plan's window began before the seven days of token history kept here.")
         if usage.get("stale") or usage.get("history_stale") or usage.get("partial"):
-            return _none("token history is stale or incomplete, so the plan's size cannot be measured.")
+            return none("token history is stale or incomplete, so the plan's size cannot be measured.")
         if used <= 0:
-            return _none("the plan shows 0% used, so its size cannot be measured yet.")
+            return none("the plan shows 0% used, so its size cannot be measured yet.")
         # Hourly rows are stamped at the hour's start, so the hour the window began in is left out.
         window_tokens = sum(_tokens(sample) for sample in samples if parse_time(sample["timestamp"]) >= start)
         if window_tokens == 0:
-            return _none("no bot tokens are recorded since the plan's window began.")
+            return none("no bot tokens are recorded since the plan's window began.")
         allowance, sized_from = window_tokens / (used / 100), "bot_tokens"
     return {**result, "tokens_per_hour": allowance * (1 - min(used, 100) / 100) / remaining * 3600,
             "allowance_tokens": round(allowance), "window_tokens": window_tokens, "sized_from": sized_from}

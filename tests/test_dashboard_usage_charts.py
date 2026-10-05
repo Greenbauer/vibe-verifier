@@ -176,7 +176,7 @@ const text=node=>typeof node==='string'?node:(node.children||[]).map(text).join(
 const snapshot={agents:{rows:[{id:'ci-swe',name:'SWE',role:'swe'},{id:'ci-qae',name:'QAE',role:'qae'},{id:'qae-2',name:'QAE2',role:'qae'}]}};
 const at=hours=>new Date(Date.now()-hours*3600000).toISOString();
 const usage={sampled_at:new Date().toISOString(),accounts:[],
-  pace:{tokens_per_hour:3600,plan:'ChatGPT subscription',window:'7d',used_percent:40,resets_at:at(-10),
+  pace:{tokens_per_hour:3600,plan:'ChatGPT subscription',window:'7d',used_percent:40,resets_at:at(-10),delta_points:-11.6,
         sized_from:'bot_tokens',window_tokens:940,allowance_tokens:2350},
   samples:[{account:'a',bot:'ci-swe',timestamp:at(2),input_tokens:40,output_tokens:0},
            {account:'a',bot:'ci-qae',timestamp:at(3),input_tokens:900,output_tokens:0}]};
@@ -185,12 +185,16 @@ const build=new Function('el','BOT_META','VVCharts','snapshot','formatTime',SOUR
 const charts=build(el,BOT_META,VVCharts,snapshot,formatTime);
 const section=charts(usage);
 const cards=section.children[2].children, note=section.children[3];
+const head=section=>section.children[2].children[3].children[0].children[0];
+const header=delta=>text(head(charts({...usage,pace:{...usage.pace,delta_points:delta}})));
 const missing=charts({...usage,pace:{tokens_per_hour:null,reason:'the plan shows 0% used, so its size cannot be measured yet.'}});
 console.log(JSON.stringify({drawn,names:cards.map(card=>card.children[0].children[0].children[0]),
   qae2:text(cards[2]),allClass:cards[3].attrs.class,note:text(note),noteTitle:note.attrs.title,
-  missing:text(missing.children[3]),missingPace:drawn[drawn.length-1].pace}));
+  missing:text(missing.children[3]),missingPace:drawn[drawn.length-1].pace,
+  header:text(head(section)),headerTitle:head(section).attrs.title,missingHeader:text(head(missing)),
+  ahead:header(21.2),even:header(0.6),swe:text(cards[0].children[0].children[0])}));
 """.replace("SOURCE", json.dumps(source)))
-        self.assertEqual(result["names"], ["SWE", "QAE", "QAE2", "All bots"])
+        self.assertEqual(result["names"], ["SWE", "QAE", "QAE2", "All bots · 12% under pace"])
         self.assertIn("Not yet observed", result["qae2"])
         self.assertIn("all-bots", result["allClass"])
         bots, everyone = result["drawn"][:2], result["drawn"][2]
@@ -204,6 +208,12 @@ console.log(JSON.stringify({drawn,names:cards.map(card=>card.children[0].childre
         self.assertIn("keep their current share", result["noteTitle"])
         self.assertEqual(result["missing"], "No flat pace line: the plan shows 0% used, so its size cannot be measured yet.")
         self.assertIsNone(result["missingPace"])
+        self.assertEqual(result["header"], "All bots · 12% under pace")
+        self.assertEqual(result["headerTitle"], "12 points behind an even burn: headroom.")
+        self.assertEqual(result["ahead"], "All bots · 21% ahead of pace")
+        self.assertEqual(result["even"], "All bots · on pace")
+        self.assertEqual(result["missingHeader"], "All bots")
+        self.assertEqual(result["swe"], "SWE")
 
 
 if __name__ == "__main__":
