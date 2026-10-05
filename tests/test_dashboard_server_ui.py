@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from dashboard.config import BotDefinition, Config
+from dashboard.favicon import Favicon
 from dashboard.server import DashboardHandler, make_server
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -43,6 +44,7 @@ class FakeSocket:
 class FakeServer:
     server_port = 8765
     service = FakeService()
+    favicon = Favicon("octocat", fetch=lambda owner: None)
 
     def __init__(self, proxy_origin=None):
         self.proxy_origin = proxy_origin
@@ -76,6 +78,15 @@ class ServerSecurity(unittest.TestCase):
         self.assertNotIn(b"<img", body)
         self.assertEqual(json.loads(body)["owner"], "octocat")
         self.assertNotIn("access-control-allow-origin", headers)
+
+    def test_favicon_is_served_same_origin_and_linked_from_the_page(self):
+        status, headers, body = self.request("GET", "/favicon.svg")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["content-type"], "image/svg+xml")
+        self.assertIn("img-src 'self' data:", headers["content-security-policy"])
+        self.assertIn(b">O</text>", body)
+        _, _, page = self.request("GET", "/")
+        self.assertIn(b'<link rel="icon" href="/favicon.svg" type="image/svg+xml">', page)
 
     def test_untrusted_host_and_origin_are_rejected(self):
         self.assertEqual(self.request("GET", "/", {"Host": "example.invalid"})[0], 421)

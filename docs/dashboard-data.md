@@ -15,6 +15,8 @@ Each refresh checks the REST core rate limit, then scans configured repositories
 
 Check reruns are resolved by check suite, GitHub App identity, and check name. A newer rerun replaces an older attempt from the same provider. Providers that use the same check name remain separate.
 
+Each event that starts a workflow on the same head (a push, a review, a review comment, a label) creates a separate run in its own check suite, so one job can appear several times. Only the newest copy counts: a job, and the check run it reports, is keyed by workflow file and job name, and the run created last wins. Non-Actions checks are keyed by provider and check name. Step totals, attention, and the job timeline use only these current copies, and a run whose jobs were all superseded is dropped. Jobs with the same name in different workflows remain separate.
+
 If a listed pull request's detail requests fail, its identity remains in the response with `evidence_available: false`. The dashboard may claim that a readable repository has no open pull requests only when the open-pull list itself completed successfully.
 
 ## Request and history bounds

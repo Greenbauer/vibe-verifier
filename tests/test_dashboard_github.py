@@ -165,6 +165,38 @@ class CurrentHeadJoin(unittest.TestCase):
         self.assertEqual({row["provider"] for row in result["checks"]},
                          {"Example checks", "Another provider"})
 
+    def test_a_rerun_of_the_same_workflow_on_the_head_supersedes_the_older_run(self):
+        # Every event that starts a workflow on the same head makes a new run and suite.
+        api = joined_api()
+        paths = endpoints()
+        older = {**api.item_values[paths["runs"]][1], "id": 12, "run_attempt": 1, "check_suite_id": 8,
+                 "status": "completed", "conclusion": "failure", "created_at": "2026-09-30T14:40:00Z"}
+        other = {**older, "id": 13, "check_suite_id": 9, "name": "Lint", "path": ".github/workflows/lint.yml",
+                 "status": "completed", "conclusion": "success"}
+        api.item_values[paths["runs"]] += [older, other]
+        step = {"number": 1, "name": "run", "status": "completed", "conclusion": "failure",
+                "started_at": "2026-09-30T14:41:00Z", "completed_at": "2026-09-30T14:42:00Z"}
+        job = {"head_sha": SHA, "name": "test", "status": "completed", "conclusion": "failure",
+               "created_at": "2026-09-30T14:40:00Z", "started_at": "2026-09-30T14:41:00Z",
+               "completed_at": "2026-09-30T14:42:00Z", "steps": [step, {**step, "number": 2}]}
+        api.item_values[f"repos/{REPO}/actions/runs/12/attempts/1/jobs?per_page=100"] = [{**job, "id": 22, "run_id": 12}]
+        api.item_values[f"repos/{REPO}/actions/runs/13/attempts/1/jobs?per_page=100"] = [
+            {**job, "id": 23, "run_id": 13, "conclusion": "success", "steps": [{**step, "conclusion": "success"}]}]
+        api.item_values[paths["suites"]] += [{"id": 8, "head_sha": SHA}, {"id": 9, "head_sha": SHA}]
+        check = {"name": "test", "status": "completed", "app": {"id": 15368, "name": "GitHub Actions"},
+                 "started_at": "2026-09-30T14:41:00Z", "completed_at": "2026-09-30T14:42:00Z"}
+        api.item_values[paths["checks"]].append({**check, "id": 31, "check_suite": {"id": 7},
+                                                 "status": "in_progress", "completed_at": None})
+        api.item_values[paths["checks"].replace("/7/", "/8/")] = [
+            {**check, "id": 32, "conclusion": "failure", "check_suite": {"id": 8}}]
+        api.item_values[paths["checks"].replace("/7/", "/9/")] = [
+            {**check, "id": 33, "conclusion": "success", "check_suite": {"id": 9}}]
+        result = GitHubCollector(config(), api, clock=lambda: NOW)._pull(REPO, pull_row(), {"subscription": "subscribed"})
+        self.assertEqual(sorted(run["id"] for run in result["runs"]), [11, 13])
+        self.assertEqual(sorted(row["id"] for row in result["checks"] if row["name"] == "test"), [31, 33])
+        summary = [run["step_summary"] for run in result["runs"] if run["id"] == 11][0]
+        self.assertEqual((summary["completed"], summary["total"]), (3, 4))
+
 
 HISTORY = "orgs/octocat/rulesets/5/history"
 
