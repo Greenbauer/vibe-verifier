@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 
 from dashboard.config import BotDefinition, Config
 from dashboard.gh_api import ApiError
-from dashboard.github import GitHubCollector
+from dashboard.github import HISTORY_RUN_LIMIT, GitHubCollector
 from dashboard.service import DashboardService
 
 
@@ -241,6 +241,36 @@ class HistoryBounds(unittest.TestCase):
         wall[0] += timedelta(minutes=2)
         collector._workflow_names(REPO)
         self.assertEqual(sum("/actions/workflows?" in call[1] for call in api.calls), 2)
+
+
+class HistoryRunLimit(unittest.TestCase):
+    """A configured job name that never runs must not read every run of the last seven days."""
+
+    @staticmethod
+    def api(count):
+        runs = [run(number, "completed", number * 10) for number in range(1, count + 1)]
+        return BotAPI(completed=runs, jobs={
+            jobs_endpoint(number): [job(number, "review", "completed", "success", number * 10),
+                                    job(number, "lint", "completed", "success", number * 10)]
+            for number in range(1, count + 1)})
+
+    def test_a_job_name_that_never_runs_stops_the_scan_at_the_limit_and_reports_partial(self):
+        api = self.api(HISTORY_RUN_LIMIT + 70)
+        result = GitHubCollector(config(), api, clock=lambda: NOW)._bots(NOW)
+        self.assertEqual(sum("/attempts/" in call[1] for call in api.calls), HISTORY_RUN_LIMIT)
+        reviewer, explorer = result["roles"]["reviewer"], result["roles"]["explorer"]
+        self.assertEqual(len(reviewer["recent_7d"]), 5)
+        self.assertEqual(reviewer["coverage"]["history"], "complete")
+        self.assertEqual(explorer["recent_7d"], [])
+        self.assertEqual(explorer["coverage"]["history"], "partial")
+        self.assertIsNone(explorer["history_sampled_at"])
+        self.assertFalse(result["partial"])
+
+    def test_a_scan_that_ends_within_the_limit_still_proves_a_job_absent(self):
+        api = self.api(10)
+        result = GitHubCollector(config(), api, clock=lambda: NOW)._bots(NOW)
+        self.assertEqual(sum("/attempts/" in call[1] for call in api.calls), 10)
+        self.assertEqual(result["roles"]["explorer"]["coverage"]["history"], "complete")
 
 
 class CompletedJobCache(unittest.TestCase):
