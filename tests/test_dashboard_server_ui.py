@@ -237,6 +237,15 @@ console.log(JSON.stringify([h.combinedCategory(pr('success','skipped')),h.combin
 ''')
         self.assertEqual(result, ["success", "skipped", "failed", "pending"])
 
+    def test_an_expected_required_check_keeps_the_pr_pending_and_its_steps_unknown(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+const pr={checks:[{category:'success'}],expected:[{category:'pending'}],
+ runs:[{step_summary:{known:true,completed:83,total:83,remaining:0}}]};
+console.log(JSON.stringify([h.combinedCategory(pr),h.stepTotals(pr).known]));
+''')
+        self.assertEqual(result, ["pending", False])
+
     def test_disk_meter_reports_used_space_not_free_space(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
