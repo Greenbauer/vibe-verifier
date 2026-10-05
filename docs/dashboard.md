@@ -210,6 +210,8 @@ stale data without advancing its successful sample timestamp. Authentication or 
 clears derived repository data immediately; transient stale data expires after three minutes.
 
 The dashboard shows source-proven failures, cancellations, waiting jobs, and current elapsed times.
+A pull request's badge shows its worst current-head check. A skipped check never outranks a passed
+one, so the badge reads Skipped only when every check was skipped.
 Elapsed time alone never asserts that a job is stuck. The Actions timeline uses shared wall-clock
 coordinates for parallel jobs and does not sum their durations. Unknown step totals never render as
 100 percent. A completed job with no steps, which is how GitHub reports a skipped job, counts as
