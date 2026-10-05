@@ -438,9 +438,9 @@ class GitHubCollector:
                                 for recent in latest_five)):
                     break
                 if index == HISTORY_RUN_LIMIT:
-                    # Runs past the limit finished no later than this one; _bots decides per role
-                    # whether its newest results make them irrelevant.
-                    floor = _time_key(runs[index - 1], "updated_at", "created_at")
+                    # This run and every later one finished no later than this run's update time;
+                    # _bots decides per role whether its newest results make them irrelevant.
+                    floor = _time_key(run, "updated_at", "created_at")
                     break
                 for job in self._run_jobs(repository, run):
                     if job["status"] != "completed" or not job.get("completed_at"):
