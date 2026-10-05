@@ -303,7 +303,11 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
   `none: <reason>` or `criteria: <n>`) to skip the model session. A bare `- None` does not, and neither does silence:
   the declaration is a claim a reviewer can weigh against the diff, and an absent section is
   indistinguishable from forgetting. This is the "declared, not silent" rule the harness contracts
-  use everywhere.
+  use everywhere. The QAE harness adds one exemption, in the harness and not in the gate: given the
+  pull request's changed paths (`--changed-files`), a body with no criteria whose every path is CI
+  configuration or documentation no site serves needs no check, and the harness runs no gate. There
+  the diff, read by code, is the claim, and the harness's review comment states the skip and its
+  reason on the pull request ([the list](../harnesses/qae/README.md#which-pull-requests-need-a-check)).
 
 In a workflow the two files come from `gh pr view <n> --json body --jq .body` and from the newest
 PR comment containing `acceptance-check:`. Who writes that comment is the harness's business (the
@@ -482,7 +486,8 @@ repo-rules --rules lint/rules --pack example --soak
 A harness is a parameterised workflow that produces the declared inputs a wired gate grades. The
 first is the QAE harness in [`harnesses/qae/`](../harnesses/qae/README.md): an explore job whose
 model drives a real browser and writes step logs, screenshots and a verdict comment; a verify job
-that feeds those to `acceptance-verdict`. The consumer owns `runs-on`, how its site is started (or
+that feeds those to `acceptance-verdict` and keeps one review comment on the pull request saying
+whether QA passed, needs changes, was not required, or could not run. The consumer owns `runs-on`, how its site is started (or
 which reachable preview it uses, and on the Codex lane the cookies the browser starts with when that
 preview is behind Vercel SSO) and the action pins; the harness owns the prompt, the grammar and
 the rules.

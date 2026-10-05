@@ -42,16 +42,44 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+      - name: Write the criteria inputs
+        # The PR body and its changed paths. A rename lists both names: moving a page into docs/ still
+        # takes it off the site.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p qae-artifacts/qae qae-inputs
+          gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
+          gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --paginate \
+            --jq '.[] | .filename, (.previous_filename // empty)' > qae-inputs/changed-files
+      - name: Read the criteria
+        # A PR that declares `- None: <why>`, or lists no criteria and changes only CI configuration or
+        # documentation no site renders, needs no browser check; one that lists no criteria and changes
+        # the site fails the verdict gate whatever the explorer does. None of them builds the site or
+        # spends a model session: those steps run only when there is a criterion to walk. Decided by
+        # the same code the verify job runs. Before this, three pin bumps and a CI-only PR each paid
+        # for a full explore of nothing, and on 2026-09-21 one of them turned the job red on the
+        # account's usage cap for it.
+        id: criteria
+        uses: Greenbauer/vibe-verifier/actions/criteria@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
+        with:
+          path: qae-inputs/pr-body.md
+          changed-files: qae-inputs/changed-files
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '24'
           cache: npm
       - run: npm ci
+        if: steps.criteria.outputs.count != '0'
       - name: Build and start the site under test   # CONSUMER: your build and start; leave the URL answering
         # Ends by declaring the URL under test as this step's `url` output: the explorer's prompt names
         # it and the verify job's gate judges requests to it. A repository with a reachable preview
         # builds nothing here and resolves that preview's URL instead (harnesses/qae/README.md).
         id: site
+        if: steps.criteria.outputs.count != '0'
         env:
           NEXT_TELEMETRY_DISABLED: '1'
         run: |
@@ -69,24 +97,8 @@ jobs:
         # integrity fixed by tools/qae-browser/package-lock.json in the catalog. Nothing here is
         # resolved from the registry at run time: this job holds the account-level token.
         id: browser
+        if: steps.criteria.outputs.count != '0'
         uses: Greenbauer/vibe-verifier/actions/qae-browser@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
-      - name: Write the criteria input
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
-      - name: Read the criteria
-        # A PR that declares `- None: <why>` has nothing for a browser to check, and one that lists
-        # no criteria fails the verdict gate whatever the explorer does, so neither spends a model
-        # session: the explorer runs only when there is a criterion to walk. Decided by the same
-        # code that judges the verdict later. Before this, three pin bumps and a CI-only PR each
-        # paid for a full explore of nothing, and on 2026-09-21 one of them turned the job red on
-        # the account's usage cap for it.
-        id: criteria
-        uses: Greenbauer/vibe-verifier/actions/criteria@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
-        with:
-          path: qae-inputs/pr-body.md
       - name: Write the explorer's prompt
         # The harness prompt (harnesses/qae/prompt.md) with this pull request filled in. Step 4
         # differs from the Claude lane: the model posts nothing, the workflow posts the verdict file.
@@ -196,17 +208,13 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write   # the QA review comment, and nothing else
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: qae-artifacts
-          path: qae-artifacts
-      - name: Write the three declared inputs
+      - name: Write the declared inputs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -216,17 +224,46 @@ jobs:
           set -euo pipefail
           mkdir -p qae-inputs
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
+          gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --paginate \
+            --jq '.[] | .filename, (.previous_filename // empty)' > qae-inputs/changed-files
           # Only the identity the explore job posts as may supply a verdict. Without this filter any
           # commenter could paste a PASS anchored to a real step line and the gate would accept it.
           # Slurped, not filtered per page: with --paginate, --jq runs on each page and would emit one
           # "last" per page once the pull request passes 100 comments, so a verdict from an earlier push
-          # could win (found by review on a wrapper's copy, 2026-09-24).
+          # could win (found by review on a wrapper's copy, 2026-09-24). The QA review comment is posted by
+          # the same identity and can quote a criterion, so a comment that starts with its marker is skipped.
           gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
-            | jq -r -s '[.[][] | select(.user.login == "github-actions[bot]") | select(.body | contains("acceptance-check:"))] | last | .body // ""' > qae-inputs/verdict.md
+            | jq -r -s '[.[][] | select(.user.login == "github-actions[bot]") | select(.body | startswith("<!-- vibe-verifier:qa-review -->") | not) | select(.body | contains("acceptance-check:"))] | last | .body // ""' > qae-inputs/verdict.md
           echo "verdict lines: $(grep -c 'acceptance-check:' qae-inputs/verdict.md || true)"
           # The URL the explore job's site step declared, for the gate's --site-file. Empty when that
           # step never declared one, and the gate refuses an empty file.
           printf '%s\n' "$SITE_URL" > qae-inputs/site-url
-      - uses: Greenbauer/vibe-verifier/actions/gates@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
+      - name: Read the criteria
+        id: criteria
+        uses: Greenbauer/vibe-verifier/actions/criteria@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
+        with:
+          path: qae-inputs/pr-body.md
+          changed-files: qae-inputs/changed-files
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: steps.criteria.outputs.count != '0'
+        with:
+          name: qae-artifacts
+          path: qae-artifacts
+      - name: Run the QA gates
+        id: gates
+        if: steps.criteria.outputs.declared-none == ''
+        uses: Greenbauer/vibe-verifier/actions/gates@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
         with:
           manifest: .vibe-verifier-qae
+      - name: Post the QA review
+        # One comment per pull request, edited in place on every run: passed, changes needed, not
+        # required, or could not run, from what the jobs and gates concluded, never the explorer's prose.
+        if: ${{ !cancelled() }}
+        uses: Greenbauer/vibe-verifier/actions/qa-review@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
+        with:
+          criteria: qae-inputs/pr-body.md
+          verdict: qae-inputs/verdict.md
+          explore-result: ${{ needs.explore.result }}
+          gates-outcome: ${{ steps.gates.outcome }}
+          not-required: ${{ steps.criteria.outputs.declared-none }}
+          token: ${{ secrets.GITHUB_TOKEN }}

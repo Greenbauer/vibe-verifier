@@ -89,6 +89,35 @@ def declares_none(text):
     return match.group("reason") if match else None
 
 
+# Paths no browser can see: CI configuration, this catalog's manifests, and documentation a site does
+# not render. Adapted from the no-plan allowlist of a private predecessor's QAE (2026-10), which also
+# exempts every `*.md`; that is narrowed here to the names below, because a `.md` elsewhere can be a
+# page the site renders.
+UNRENDERED_DIRS = (".github", "docs")
+UNRENDERED_NAMES = {"README.md", "CLAUDE.md", "AGENTS.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md",
+                    "CODEOWNERS", ".gitignore", ".gitattributes", ".editorconfig"}
+
+
+def unrendered(path):
+    name = path.rsplit("/", 1)[-1]
+    return (path.split("/", 1)[0] in UNRENDERED_DIRS or name in UNRENDERED_NAMES
+            or name.startswith((".vibe-verifier", "LICENSE")))
+
+
+def not_required(text, changed):
+    """Why a pull request needs no browser check, or None when it does.
+
+    `text` is its body and `changed` its changed paths (a rename lists both names). It needs none when
+    it declares `- None: <why>`, or when it lists no criteria and every changed path is one no browser
+    can see. Criteria win over paths: a pull request that lists one is explored whatever it touches.
+    An empty path list proves nothing, so it never exempts.
+    """
+    declared = declares_none(text)
+    if declared or criteria(text) or not changed or not all(map(unrendered, changed)):
+        return declared
+    return "every changed file (%d) is CI configuration or documentation no site renders" % len(changed)
+
+
 def marker_re(token):
     """`<token>: <id> ...`, optionally as a list item with a CHECKED box. An unchecked box
     beside a PASS contradicts itself and is left unmatched, so it reads as missing."""
