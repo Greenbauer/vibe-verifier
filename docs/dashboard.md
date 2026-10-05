@@ -292,8 +292,12 @@ run on the head. A required workflow runs at the SHA its ruleset pinned when the
 so after the pin moves GitHub waits for a new run. The dashboard reads the ruleset's version history
 once per pin to learn when the current pin took effect, and a run created before then does not
 count. An expected row keeps the pull request pending, flags it for attention, and keeps its step
-total unknown. Reading an organization ruleset's history needs organization admin access; without
-it the pull request's evidence is reported unavailable. Classic branch protection is not read.
+total unknown. GitHub serves an organization ruleset's history only to a token with organization
+administration write, which a read-only dashboard should not hold. When the history is refused,
+any run of the required workflow on the head counts, so the pull request keeps its evidence; right
+after a pin moves it can show as passed while GitHub waits for a rerun, and GitHub's merge box
+still enforces the rule. A required workflow that never ran on the head is still expected.
+Classic branch protection is not read.
 
 Direct manifest or workflow evidence reports `subscribed`. An installation subscribed only through
 an organization wrapper or ruleset reports `unknown` in this pilot, not `false`; wrapper/ruleset

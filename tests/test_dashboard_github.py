@@ -264,6 +264,29 @@ class RequiredChecks(unittest.TestCase):
         self.assertEqual(([call for call in api.calls if HISTORY in call[1]]), history_calls)
         self.assertFalse(result["attention"])
 
+    def test_a_refused_ruleset_history_counts_any_run_and_keeps_the_evidence(self):
+        # GitHub serves organization ruleset history only with organization administration write.
+        api = pinned_api("2026-09-30T14:40:00Z")
+        api.item_values[f"{HISTORY}?per_page=100"] = ApiError("forbidden")
+        collector = GitHubCollector(config(), api, clock=lambda: NOW)
+        result = self.pull(api, [required_workflow_rule()], collector)
+        self.assertTrue(result["evidence_available"])
+        self.assertEqual(result["expected"], [])
+        self.pull(api, [required_workflow_rule()], collector)
+        self.assertEqual(sum(HISTORY in call[1] for call in api.calls), 1)
+
+    def test_a_refused_history_still_expects_a_required_workflow_that_never_ran(self):
+        api = pinned_api("2026-09-30T14:40:00Z", required=False)
+        api.item_values[f"{HISTORY}?per_page=100"] = ApiError("forbidden")
+        result = self.pull(api, [required_workflow_rule()])
+        self.assertEqual([row["name"] for row in result["expected"]], ["ci.yml"])
+
+    def test_other_ruleset_history_failures_still_mark_the_pull_unavailable(self):
+        api = pinned_api("2026-09-30T14:50:00Z")
+        api.item_values[f"{HISTORY}?per_page=100"] = ApiError("unavailable")
+        with self.assertRaises(ApiError):
+            self.pull(api, [required_workflow_rule()])
+
     def test_the_repositorys_own_workflow_at_the_same_path_does_not_satisfy_the_rule(self):
         result = self.pull(pinned_api("2026-09-30T14:50:00Z", required=False), [required_workflow_rule()])
         self.assertEqual([row["name"] for row in result["expected"]], ["ci.yml"])
