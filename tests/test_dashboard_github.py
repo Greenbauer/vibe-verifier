@@ -286,6 +286,27 @@ class RequiredChecks(unittest.TestCase):
         self.assertEqual([call for call in api.calls if call[1] == rules], [("items", rules, None)])
 
 
+    def test_a_plan_without_rulesets_still_shows_the_pull_requests_evidence(self):
+        # A private repository on a free personal account answers the branch-rules request with 403.
+        pulls, rules = f"repos/{REPO}/pulls?state=open&per_page=100", f"repos/{REPO}/rules/branches/main?per_page=100"
+        api = joined_api()
+        api.item_values[pulls] = [{**pull_row(), "base": {"ref": "main"}}]
+        api.item_values[rules] = ApiError("forbidden")
+        result = GitHubCollector(config(), api, clock=lambda: NOW)._repository(REPO, {"subscription": "subscribed"})
+        self.assertTrue(result["pulls"][0]["evidence_available"])
+        self.assertEqual(result["pulls"][0]["expected"], [])
+        self.assertEqual(result["errors"], [])
+
+    def test_other_branch_rule_failures_still_mark_the_pull_unavailable(self):
+        pulls, rules = f"repos/{REPO}/pulls?state=open&per_page=100", f"repos/{REPO}/rules/branches/main?per_page=100"
+        api = joined_api()
+        api.item_values[pulls] = [{**pull_row(), "base": {"ref": "main"}}]
+        api.item_values[rules] = ApiError("unavailable")
+        result = GitHubCollector(config(), api, clock=lambda: NOW)._repository(REPO, {"subscription": "subscribed"})
+        self.assertFalse(result["pulls"][0]["evidence_available"])
+        self.assertEqual(result["errors"], [{"pull": 3, "code": "unavailable"}])
+
+
 class BotHistory(unittest.TestCase):
     def test_two_hour_boundary_is_inclusive_newest_first_and_capped_at_five(self):
         rows = []

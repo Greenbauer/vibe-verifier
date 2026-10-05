@@ -356,6 +356,20 @@ class GitHubCollector:
                 "attention": attention, "attention_reason": reason,
                 "checks": checks, "statuses": statuses, "expected": expected, "runs": runs}
 
+    def _branch_rules(self, repository: str, base: str) -> list[dict]:
+        """The rules GitHub enforces on a base branch, or none where GitHub refuses to list them.
+
+        Branch rules need only metadata read, which every dashboard token has, so a 403 here means the
+        repository's plan has no rulesets (a private repository on a free personal account). Nothing can
+        be required there, and the pull requests' own evidence is still readable."""
+        try:
+            return self.api.items(_endpoint("repos/%s/rules/branches/%s" % (repository, quote(base, safe="")),
+                                            per_page=100))
+        except ApiError as error:
+            if error.code == "forbidden":
+                return []
+            raise
+
     def _repository(self, repository: str, inventory: dict) -> dict:
         rows = self.api.items(_endpoint("repos/%s/pulls" % repository, state="open", per_page=100))
         pulls, errors, rules = [], [], {}
@@ -363,8 +377,7 @@ class GitHubCollector:
             try:
                 base = (row.get("base") or {}).get("ref")
                 if isinstance(base, str) and base not in rules:
-                    rules[base] = self.api.items(_endpoint("repos/%s/rules/branches/%s" % (repository, quote(base, safe="")),
-                                                           per_page=100))
+                    rules[base] = self._branch_rules(repository, base)
                 pulls.append(self._pull(repository, row, inventory, rules.get(base, [])))
             except ApiError as error:
                 identity = self._pull_identity(repository, row, inventory)
