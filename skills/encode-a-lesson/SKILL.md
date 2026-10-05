@@ -26,7 +26,8 @@ mistake and `<fix>` the commit that fixed it.
 1. `<dir>/<id>.yml`: `id`, `language`, `rule`, a `message` that says what to write instead in one
    sentence, and a `note` saying where the replacement lives and how to call it. Leave `severity`
    unset to block; set `severity: hint` to observe it first. A rule sees only its language's file
-   extensions: a `Tsx` rule never sees `.ts` files.
+   extensions: a `Tsx` rule sees no `.ts` file unless the directory's `sgconfig.yml` maps `*.ts` to
+   tsx under `languageGlobs`.
 2. `<dir>/tests/<id>-test.yml`: the `invalid` case is the real bad code from `<bad>`, trimmed to the
    smallest snippet that still shows the mistake; the `valid` case is the same code as `<fix>` wrote
    it. Add a `valid` case for every false alarm you find below.
