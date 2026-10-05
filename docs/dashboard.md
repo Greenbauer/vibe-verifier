@@ -299,6 +299,8 @@ Direct manifest or workflow evidence reports `subscribed`. An installation subsc
 an organization wrapper or ruleset reports `unknown` in this pilot, not `false`; wrapper/ruleset
 resolution is not duplicated here. Bot roles sharing a workflow share collection. Active runs are collected independently of history;
 history is inspected until the newest five outcomes are known or coverage is explicitly partial.
+Jobs are read for at most a workflow's 50 newest completed runs, so a job name that never runs in
+that workflow reports partial history instead of reading every run of the past week.
 A refresh is capped at 200 REST page requests that cost rate limit; an unchanged answer (HTTP 304) is free
 and not counted. Active data is cached for 60
 seconds and direct subscription inventory for 300 seconds. The response includes calls used, the
