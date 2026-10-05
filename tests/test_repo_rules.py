@@ -54,7 +54,7 @@ class Ratchet(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(where(findings), [("src/b.ts", 2)])
         message = findings[0]["message"]
-        for part in ("no-console-log", "Use `log.info` from src/log instead of console.log.", "new in this pull request",
+        for part in ("no-console-log", "Use `log.info` from src/log instead of console.log.", "in this file: 0 at the merge base, 1 now",
                      "note: The logger tags each line with the request id."):
             self.assertIn(part, message)
 
@@ -66,13 +66,49 @@ class Ratchet(unittest.TestCase):
         self.assertIn("repo-rules: src/b.ts:1: no-console-log: Use `log.info`", result.stdout)
         self.assertIn("\n  note: The logger tags each line with the request id.", result.stdout)
 
-    def test_a_second_copy_in_the_same_file_is_a_finding(self):
-        repo = rules_repo(self, {"src/a.ts": LOG})
-        commit(repo, {"src/a.ts": LOG + LOG})
+    def test_one_added_copy_reports_only_the_added_line(self):
+        repo = rules_repo(self, {"src/a.ts": LOG * 3})
+        commit(repo, {"src/a.ts": LOG * 4})
+        result, findings = run(repo)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(where(findings), [("src/a.ts", 4)])
+        self.assertIn("in this file: 3 at the merge base, 4 now", findings[0]["message"])
+
+    def test_editing_a_violation_in_place_is_not_new(self):
+        repo = rules_repo(self, {"src/a.ts": "export const a = 1\n" + LOG})
+        commit(repo, {"src/a.ts": 'export const a = 1\nconsole.log("ready", a, Date.now())\n'})
+        result, findings = run(repo)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_moving_and_restyling_a_violation_within_its_file_is_not_new(self):
+        repo = rules_repo(self, {"src/a.ts": "console.log('ready')\nexport const a = 1\nexport function f() {}\n"})
+        commit(repo, {"src/a.ts": 'export const a = 1\nexport function f() {\n  console.log("ready", a)\n}\n'})
+        result, findings = run(repo)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_fixing_one_and_adding_one_in_the_same_file_nets_zero(self):
+        repo = rules_repo(self, {"src/a.ts": 'console.log("old")\n'})
+        commit(repo, {"src/a.ts": 'console.log("new")\n'})
+        self.assertEqual(run(repo)[0].returncode, 0)  # the documented trade-off of counting per file
+
+    def test_a_count_rise_with_no_finding_on_a_changed_line_lists_them_all(self):
+        guarded = """id: no-unguarded-call
+language: TypeScript
+message: Wrap riskyCall() in try/catch.
+rule:
+  pattern: riskyCall()
+  not:
+    inside: {kind: try_statement, stopBy: end}
+"""
+        tests = "id: no-unguarded-call\nvalid:\n  - try { riskyCall() } catch (e) {}\ninvalid:\n  - riskyCall()\n"
+        repo = make_repo(self, {".vibe-verifier-rules/r.yml": guarded, ".vibe-verifier-rules/tests/t.yml": tests,
+                                "src/a.ts": "riskyCall()\ntry {\nriskyCall()\n} catch (e) {}\n"})
+        commit(repo, {"src/a.ts": "riskyCall()\nriskyCall()\n"})  # deletes the try lines; both calls stay as they were
         result, findings = run(repo)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(where(findings), [("src/a.ts", 1), ("src/a.ts", 2)])
-        self.assertIn("2 in this file now, 1 at the merge base", findings[0]["message"])
+        self.assertIn("in this file: 1 at the merge base, 2 now; none is on a line this pull request changed, so all are listed",
+                      findings[0]["message"])
 
     def test_reindenting_moving_down_or_rewrapping_a_violation_is_not_new(self):
         repo = rules_repo(self, {"src/a.ts": 'console.log(\n  "a",\n  "b")\n', "src/b.ts": 'console.log(\n  "a",\n  "b"\n)\n'})
@@ -107,6 +143,38 @@ class Ratchet(unittest.TestCase):
         repo = rules_repo(self, {"src/a.ts": "export const a = 1\n"})
         commit(repo, {"src/a.ts": "// ast-grep-ignore: some-other-rule\nexport const a = 2\n// ast-grep-ignore: no-console-log\n" + LOG})
         self.assertEqual(run(repo)[0].returncode, 0)
+
+
+class Severity(unittest.TestCase):
+    def repo_with(self, severity):
+        rule = RULE.replace("severity: error\n", "" if severity is None else "severity: %s\n" % severity)
+        repo = make_repo(self, {".vibe-verifier-rules/no-console-log.yml": rule, ".vibe-verifier-rules/tests/t.yml": TEST,
+                                "src/a.ts": "export const a = 1\n"})
+        commit(repo, {"src/b.ts": LOG})
+        return repo
+
+    def test_warning_info_and_hint_are_advisory_even_under_all_and_unset_or_error_block(self):
+        for severity in ("warning", "info", "hint"):
+            repo = self.repo_with(severity)
+            result, findings = run(repo)
+            self.assertEqual((result.returncode, where(findings), findings[0]["advisory"]), (0, [("src/b.ts", 1)], True), severity)
+            self.assertEqual(run(repo, "--all")[0].returncode, 0, severity)
+            text = gate("repo-rules", repo, "--base-ref", "HEAD~1")
+            self.assertEqual(text.returncode, 0)
+            self.assertIn("repo-rules: src/b.ts:1: advisory: no-console-log:", text.stdout)
+            self.assertIn("repo-rules: 1 advisory finding(s), not blocking", text.stdout)
+            self.assertIn("::warning file=src/b.ts,line=1", gate("repo-rules", repo, "--base-ref", "HEAD~1", "--format", "github").stdout)
+        for severity in ("error", None):
+            result, findings = run(self.repo_with(severity))
+            self.assertEqual((result.returncode, findings[0]["advisory"]), (1, False), severity)
+
+    def test_the_base_severity_wins_over_a_branch_that_downgrades_the_rule(self):
+        repo = rules_repo(self, {"src/a.ts": "export const a = 1\n"})
+        commit(repo, {".vibe-verifier-rules/no-console-log.yml": RULE.replace("severity: error", "severity: hint"), "src/b.ts": LOG})
+        result, findings = run(repo)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual((where(findings), findings[0]["advisory"]), ([("src/b.ts", 1)], False))
+        self.assertIn(".vibe-verifier-rules/no-console-log.yml is judged as it is at HEAD~1", result.stderr)
 
 
 class BaseControl(unittest.TestCase):
