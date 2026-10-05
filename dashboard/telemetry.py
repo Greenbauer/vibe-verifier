@@ -143,17 +143,18 @@ def _capacity(value: object, config: Config, now: datetime) -> dict:
 
 
 def _window(row: object, now: datetime) -> dict:
-    if not isinstance(row, dict) or set(row) - {"name", "used_percent", "resets_at", "allowance_tokens"}:
+    if not isinstance(row, dict) or set(row) - {"name", "used_percent", "resets_at", "allowance_tokens", "window_minutes"}:
         raise TelemetryError("quota window is invalid")
     used = _number(row.get("used_percent"), 0, 100)
     reset = _timestamp(row.get("resets_at"), now + timedelta(days=3650))
-    allowance = row.get("allowance_tokens")
+    allowance, minutes = row.get("allowance_tokens"), row.get("window_minutes")
     if allowance is not None:
         allowance = int(_number(allowance, 1))
-    remaining_seconds = max(0, int((parse_time(reset) - now).total_seconds()))
-    pace = None if allowance is None or remaining_seconds == 0 else allowance * (1 - used / 100) / remaining_seconds
+    # The window's length dates its start (reset minus length), which is what sizes it from tokens.
+    if minutes is not None and (isinstance(minutes, bool) or not isinstance(minutes, int) or not 0 < minutes <= 60 * 24 * 31):
+        raise TelemetryError("quota window length is invalid")
     return {"name": _text(row.get("name"), 40), "used_percent": used, "resets_at": reset,
-            "allowance_tokens": allowance, "pace_tokens_per_second": pace}
+            "allowance_tokens": allowance, "window_minutes": minutes}
 
 
 def _usage(value: object, config: Config, now: datetime) -> dict:

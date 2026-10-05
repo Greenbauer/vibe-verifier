@@ -116,12 +116,6 @@
     return found.filter(run => run.length);
   }
 
-  // The pace line in tokens per hour, only from a reported allowance. Percentages alone never make one.
-  function pacePerHour(quotaWindow) {
-    if (!quotaWindow || !Number.isFinite(quotaWindow.allowance_tokens) || !Number.isFinite(quotaWindow.pace_tokens_per_second)) return null;
-    return quotaWindow.pace_tokens_per_second * 3600;
-  }
-
   // "Last 24 hours 12k tokens · usual day 9k". A usual day is stated only when every hour has one.
   function totals(burn) {
     const live = `Last 24 hours ${short(sum(burn.last24h))} tokens`;
@@ -192,5 +186,5 @@
     return String(Math.round(value));
   }
 
-  return { hourLabel, hourlyBurn, sumBurns, ceiling, smoothPath, runs, pacePerHour, totals, drawBurn, short };
+  return { hourLabel, hourlyBurn, sumBurns, ceiling, smoothPath, runs, totals, drawBurn, short };
 });
