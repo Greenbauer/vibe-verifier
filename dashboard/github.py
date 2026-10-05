@@ -63,6 +63,10 @@ def recent_bot_runs(rows: list[dict], now: datetime, hours: int, limit: int = 5)
     return complete[:limit]
 
 
+# The start of a pin whose ruleset history GitHub refused: every run counts as at the current pin.
+PIN_UNKNOWN = datetime.min.replace(tzinfo=timezone.utc)
+
+
 class GitHubCollector:
     def __init__(self, config: Config, api: GitHubAPI | None = None, *, clock=None):
         self.config = config
@@ -245,8 +249,17 @@ class GitHubCollector:
         else:
             base = "repos/%s/rulesets/%s/history" % (repository, key[0])
         since = None
-        for version in sorted(self.api.items(_endpoint(base, per_page=100)),
-                              key=lambda row: _time_key(row, "updated_at"), reverse=True):
+        try:
+            versions = self.api.items(_endpoint(base, per_page=100))
+        except ApiError as error:
+            # GitHub serves an organization ruleset's history only with organization administration
+            # write, which a read-only dashboard token should not hold. Without it the pin's start is
+            # unknown, so any run of the required workflow counts, as it did before the pin was read.
+            if error.code != "forbidden":
+                raise
+            self._pins[key] = (sha, PIN_UNKNOWN)
+            return PIN_UNKNOWN
+        for version in sorted(versions, key=lambda row: _time_key(row, "updated_at"), reverse=True):
             state = self.api.one("%s/%s" % (base, version.get("version_id"))).get("state") or {}
             pins = {(pinned.get("path"), pinned.get("repository_id")): pinned.get("sha")
                     for old in state.get("rules") or [] if old.get("type") == "workflows"

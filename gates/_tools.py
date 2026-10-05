@@ -153,7 +153,9 @@ def ensure_node_tool(name):
 
     Installed once per lockfile digest into the cache with `npm ci --ignore-scripts`, so every
     package version and tarball integrity comes from the committed lockfile, never from what the
-    registry says today. No node or npm on PATH, or an install that fails, is CannotRun.
+    registry says today; a local package the lockfile links (`file:`) is copied from the catalog with
+    it, and changes the cache key only through its version in the lockfile. No node or npm on PATH,
+    or an install that fails, is CannotRun.
     """
     source = os.path.join(NODE_TOOLS, name)
     with open(os.path.join(source, "package-lock.json"), "rb") as handle:
@@ -166,7 +168,10 @@ def ensure_node_tool(name):
     try:
         os.makedirs(target, exist_ok=True)
         for item in os.listdir(source):
-            shutil.copy(os.path.join(source, item), os.path.join(target, item))
+            if os.path.isdir(os.path.join(source, item)):  # a local package the lockfile links, such as a stub
+                shutil.copytree(os.path.join(source, item), os.path.join(target, item), dirs_exist_ok=True)
+            else:
+                shutil.copy(os.path.join(source, item), os.path.join(target, item))
     except OSError as error:
         raise CannotRun("cannot write the tool cache %s: %s" % (target, error))
     result = subprocess.run(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=target,

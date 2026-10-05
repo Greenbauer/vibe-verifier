@@ -1,0 +1,11 @@
+{
+  "name": "vibe-verifier-changed-code-mutation",
+  "private": true,
+  "description": "The pinned toolchain for the changed-code-mutation gate: StrykerJS, its Vitest runner plugin, and typescript, which Stryker imports beside itself to rewrite a project's tsconfig.json for its sandbox. The project's own Vitest is the one that runs; vitest-stub only satisfies the plugin's static import and fails loudly if it is ever reached.",
+  "dependencies": {
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
+    "typescript": "5.9.3",
+    "vitest": "file:vitest-stub"
+  }
+}
