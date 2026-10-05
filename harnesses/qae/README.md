@@ -11,19 +11,22 @@ and a second site rendered from a WordPress API on the runner (since 2026-09-21;
 
 ## The shape
 
-Two jobs on every pull request, in the consumer's own workflow. [`explore.yml`](explore.yml) is
-the template; the consumer owns `runs-on` and how the site is built and started (or which
+Three jobs on every pull request, in the consumer's own workflow. [`explore.yml`](explore.yml) is
+the template; the consumer owns each job's `runs-on` and how the site is built and started (or which
 [reachable preview](#a-reachable-preview-instead-of-a-site-on-the-runner) is used instead), and that
 step declares the site's URL as its `url` output. For a site behind a login, it writes
 `qae-inputs/site.md` in that same step to tell the explorer how to sign in and what state the site
 starts in (a throwaway account on a throwaway backend, never production). Its six catalog
-pins (`criteria@`, `qae-browser@`, and `usage@` in explore, `criteria@`, `gates@` and `qa-review@` in
-verify) are inventoried and bumped by `consumers` and `apply-down` exactly like the stub's.
+pins (`criteria@` in criteria, `qae-browser@` and `usage@` in explore, `criteria@`, `gates@` and
+`qa-review@` in verify) are inventoried and bumped by `consumers` and `apply-down` exactly like the stub's.
 
-1. **explore** reads the PR body and its changed paths with `actions/criteria` first. Only when the
-   body lists a criterion does it build and start the PR's site on the runner (or resolve its
-   preview), install the browser, and run `claude-code-action` with
-   [`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) as its browser. The prompt
+1. **criteria** reads the PR body and its changed paths with `actions/criteria`, on any runner: it
+   holds no model login, checks out nothing and builds nothing. Its `count` output decides whether
+   the explore job starts at all, so on the Codex lane a pull request with nothing to walk never
+   queues for, or holds, the one runner with the login.
+2. **explore** runs only when the criteria job found a criterion. It builds and starts the PR's
+   site on the runner (or resolves its preview), installs the browser, and runs
+   `claude-code-action` with [`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) as its browser. The prompt
    ([`prompt.md`](prompt.md)) tells the model to walk each criterion under the PR body's
    `## Acceptance criteria` heading, append one line per action to `qae-artifacts/qae/ACn.md`
    (`- step k: <what you did> -> <what you saw>`), save a screenshot per step, then write
@@ -33,9 +36,12 @@ verify) are inventoried and bumped by `consumers` and `apply-down` exactly like 
    `claude-code-action` itself resets to the base branch before the model runs (`CLAUDE.md`,
    `.claude/`, `.mcp.json` and a few more) are excused only while they still match the base.
    Everything under `qae-artifacts/` is uploaded, always. A separate 7-day artifact named
-   `vv-usage-qae-explorer-<run_attempt>` contains only the numeric `usage.json`; a skipped or failed
-   explorer is recorded as unavailable or partial, never as zero.
-2. **verify** writes the declared inputs (the PR body; its changed paths; the newest
+   `vv-usage-qae-explorer-<run_attempt>` contains only the numeric `usage.json`; an explorer that
+   did not finish is recorded as unavailable or partial, never as zero. A run whose explore job was
+   skipped (no criterion) uploads none.
+3. **verify** first fails unless the criteria job succeeded (a job whose need failed is skipped,
+   exactly like an explore job with nothing to walk, so this step tells the two apart). Then it
+   writes the declared inputs (the PR body; its changed paths; the newest
    `acceptance-check:` comment posted by the explore job's own identity, skipping the QA review
    comment; the site URL the explore job declared, in `qae-inputs/site-url`), reads the criteria with
    the same action, downloads the artifacts when there was a criterion to explore, and runs the
@@ -46,8 +52,8 @@ verify) are inventoried and bumped by `consumers` and `apply-down` exactly like 
 
 ## Which pull requests need a check
 
-`bin/vibe-verifier criteria`, through `actions/criteria`, decides it in both jobs with the same code.
-Each job fetches the PR body and changed paths itself, so an edit to the body between them can make
+`bin/vibe-verifier criteria`, through `actions/criteria`, decides it in the criteria and verify jobs
+with the same code. Each job fetches the PR body and changed paths itself, so an edit to the body between them can make
 them disagree, as it already could for the gates. A pull request needs no browser check when:
 
 - its body declares `- None: <why>` under `## Acceptance criteria`, or
@@ -227,7 +233,9 @@ repository behind SSO starts its site on the runner, as the pilot does.
   preview resolves its URL instead ([above](#a-reachable-preview-instead-of-a-site-on-the-runner)),
   and on the Codex lane one behind SSO adds the bypass cookie ([above](#a-preview-behind-vercel-sso)).
 - **A pull request with nothing to check says so.** The harness runs on every pull request, and the
-  job carries no `if:`, because GitHub counts a skipped required check as satisfied. So a change
+  verify job runs whatever the jobs before it did (`if: always()`). The explore job is skipped when
+  there is no criterion, and GitHub counts a skipped required check as satisfied, so never require
+  `qae-explore` without `qae-verify`: the verify job fails when the criteria job did not finish. So a change
   with no rendered surface declares it, one criterion reading `- None: <why>`, or changes only paths
   no site serves ([above](#which-pull-requests-need-a-check)). The harness then builds nothing,
   starts no explorer and runs no gate (both gates pass on a `- None:` declaration anyway), and the
@@ -249,7 +257,8 @@ same. What differs, and why:
   a public repository". So the lane runs on a self-hosted runner (`runs-on: [self-hosted,
   qae-codex]`, consumer-owned) whose runner user holds `$HOME/.codex-qae`, seeded once with
   `CODEX_HOME=$HOME/.codex-qae codex login --device-auth` and `cli_auth_credentials_store = "file"` in
-  its `config.toml`. One runner is one store is one job at a time. `actions/qae-codex` checks the
+  its `config.toml`. One runner is one store is one job at a time, and only pull requests with a
+  criterion reach it: the criteria job decides on any other runner first. `actions/qae-codex` checks the
   store is a ChatGPT login with a refresh token and never writes it. A repository whose pull requests
   go quiet copies [`codex-keepalive.yml`](codex-keepalive.yml) too: Codex refreshes a store that is
   about eight days old during any run, and the weekly exec keeps that happening.

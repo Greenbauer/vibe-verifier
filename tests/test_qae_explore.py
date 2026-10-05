@@ -166,12 +166,9 @@ class SiteUrl(unittest.TestCase):
 class Steps(unittest.TestCase):
     def test_the_explorer_runs_only_when_there_is_a_criterion(self):
         text = TEMPLATE.read_text()
-        read = text.index("- name: Read the criteria")
-        explore = text.index("- name: Explore the acceptance criteria in a real browser")
-        self.assertLess(read, explore)
-        self.assertIn("id: criteria", text[read:explore])
-        self.assertIn("uses: Greenbauer/vibe-verifier/actions/criteria@", text[read:explore])
-        self.assertIn("if: steps.criteria.outputs.count != '0'", text[explore:explore + 400])
+        self.assertIn("  explore:\n    name: qae-explore\n    needs: criteria\n"
+                      "    if: needs.criteria.outputs.count != '0'\n", text)
+        self.assertIn("    outputs:\n      count: ${{ steps.criteria.outputs.count }}\n", text[:text.index("\n  explore:\n")])
 
     def test_the_only_comment_the_explorer_may_post_is_the_verdict_file(self):
         # gh opens --body-file itself, so a wildcard rule would let a hostile PR body post any file.
@@ -209,16 +206,32 @@ class Applicability(unittest.TestCase):
     """A pull request that needs no browser check builds nothing and is not judged, and both jobs
     decide that with the same action, from the same two inputs."""
 
-    def test_the_explore_job_reads_the_criteria_before_building_anything(self):
+    def test_a_criteria_job_on_any_runner_decides_before_the_explore_job_takes_its_runner(self):
+        # On the Codex lane the explore job's runner holds the one login, so a pull request with
+        # nothing to walk must never queue for it: the criteria job is first, holds no model token,
+        # builds nothing and never checks out the pull request's code.
         text = TEMPLATE.read_text()
-        explore = text[:text.index("\n  verify:\n")]
-        read = explore.index("- name: Read the criteria")
-        self.assertLess(explore.index("- name: Write the criteria inputs"), read)
-        for step in ("- run: npm ci", "- name: Build and start the site under test", "- name: Install the browser toolchain",
-                     "- name: Explore the acceptance criteria in a real browser"):
-            at = explore.index(step)
-            self.assertLess(read, at, step)
-            self.assertIn("if: steps.criteria.outputs.count != '0'", explore[at:explore.index("\n      - ", at + 1)], step)
+        criteria = text[text.index("jobs:\n  criteria:\n"):text.index("\n  explore:\n")]
+        self.assertIn("    runs-on: ubuntu-latest   # CONSUMER: any runner. It holds no model login and builds nothing.\n", criteria)
+        self.assertIn("      pull-requests: read\n", criteria)
+        self.assertLess(criteria.index("- name: Write the criteria inputs"), criteria.index("- name: Read the criteria"))
+        for absent in ("secrets.CLAUDE", "actions/checkout@", "npm ", "write"):
+            self.assertNotIn(absent, criteria.replace("- name: Write the criteria inputs", ""), absent)
+        explore = text[text.index("\n  explore:\n"):text.index("\n  verify:\n")]
+        self.assertNotIn("steps.criteria", explore)
+
+    def test_the_verify_job_refuses_a_criteria_job_that_did_not_finish(self):
+        # A job whose need failed is skipped, exactly like an explore job with nothing to walk, so the
+        # verify job tells the two apart itself, first, before anything can read as a pass.
+        text = TEMPLATE.read_text()
+        verify = text[text.index("\n  verify:\n"):]
+        self.assertIn("    needs: [criteria, explore]\n    if: always()\n", verify)
+        self.assertLess(verify.index("- name: Require a finished criteria job"), verify.index("- uses: actions/checkout@"))
+        script = step_script("- name: Require a finished criteria job", "- uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0\n        with:\n          fetch-depth: 0")
+        for result, code in (("success", 0), ("failure", 1), ("cancelled", 1), ("skipped", 1), ("", 1)):
+            ran = subprocess.run(["bash", "-e", "-c", script], capture_output=True, text=True,
+                                 env=clean_env({"CRITERIA_RESULT": result}))
+            self.assertEqual(ran.returncode, code, result)
 
     def test_both_jobs_pass_the_changed_paths_to_the_criteria_action(self):
         text = TEMPLATE.read_text()
