@@ -47,6 +47,17 @@ class HourOfDay(unittest.TestCase):
         self.assertEqual(india["last24h"][20], 7)
         self.assertEqual(india["last24h"][19], None)
 
+    def test_daylight_saving_changes_keep_samples_on_their_clock_hour_and_day(self):
+        # Fall back: 2026-11-01 10:30 EST. 00:30 EDT is today's 12a, 01:30 EDT is 1a, and
+        # yesterday's 12:30 EDT is yesterday's 12p (in the tail), even though that day had 25 hours.
+        fall = burn([sample("2026-11-01T04:30:00Z", 1), sample("2026-11-01T05:30:00Z", 2),
+                     sample("2026-10-31T16:30:00Z", 3)], "Date.UTC(2026,10,1,15,30,0)", tz="America/New_York")
+        self.assertEqual([fall["last24h"][0], fall["last24h"][1], fall["last24h"][12]], [1, 2, 3])
+        self.assertEqual(fall["last24h"][11], None)  # before the first sample
+        # Spring forward: 2026-03-08 10:30 EDT. 01:30 EST is 1a; 2a did not exist and holds nothing.
+        spring = burn([sample("2026-03-08T06:30:00Z", 5)], "Date.UTC(2026,2,8,14,30,0)", tz="America/New_York")
+        self.assertEqual(spring["last24h"][1:4], [5, 0, 0])
+
 
 class ObservedHours(unittest.TestCase):
     def test_hours_before_the_first_sample_are_unobserved_and_later_empty_hours_are_measured_zero(self):
@@ -60,6 +71,12 @@ class ObservedHours(unittest.TestCase):
     def test_a_bot_with_no_sample_is_not_observed_rather_than_zero(self):
         self.assertIsNone(burn([], NOW))
         self.assertIsNone(burn([sample("not a time", 5), sample("2026-09-30T16:00:00Z", 5)], NOW))
+
+    def test_a_first_sample_older_than_the_oldest_hour_still_starts_observation(self):
+        # 167 hours 50 minutes old: still retained, older than the first prior-day hour shown.
+        result = burn([sample("2026-09-23T15:30:00Z", 5), sample("2026-09-27T12:10:00Z", 50)], NOW)
+        self.assertAlmostEqual(result["avg"][12], 50 / 6)
+        self.assertEqual(result["baselineDays"], 6)
 
     def test_hours_after_a_stale_source_last_observed_are_unobserved(self):
         through = "Date.UTC(2026,8,30,11,40,0)"
@@ -119,10 +136,27 @@ console.log(JSON.stringify({clamped:ys(c.smoothPath(points,{min:8,max:110})),fre
         self.assertTrue(all(8 <= y <= 110 for y in result["clamped"]))
         self.assertGreater(max(result["free"]), 110)  # Unclamped Catmull-Rom does overshoot here.
 
-    def test_an_unobserved_hour_breaks_the_line_and_a_lone_point_draws_nothing(self):
+    def test_an_unobserved_hour_breaks_the_line(self):
         result = node("const c=require('./dashboard/static/charts.js');"
                       "console.log(JSON.stringify(c.runs([null,1,2,null,3,null,4,5],0,7)));")
-        self.assertEqual([[point["value"] for point in run] for run in result], [[1, 2], [4, 5]])
+        self.assertEqual([[point["value"] for point in run] for run in result], [[1, 2], [3], [4, 5]])
+
+    def test_todays_line_reaches_the_now_marker_so_the_hour_after_midnight_is_drawn(self):
+        result = node(r"""
+const make=tag=>({tag,attrs:{},children:[],style:{},setAttribute(k,v){this.attrs[k]=v;},append(...c){this.children.push(...c);}});
+global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
+const c=require('./dashboard/static/charts.js');
+const burn={last24h:Array(24).fill(null),avg:Array(24).fill(null)};
+burn.last24h[0]=500; burn.last24h[22]=9;
+const svg=c.drawBurn(burn,{color:'#809cff',maximum:500,nowMs:Date.UTC(2026,8,30,0,20,0),label:'x'}).children[0];
+const paths=svg.children.filter(n=>n.tag==='path').map(n=>({cls:n.attrs.class,d:n.attrs.d}));
+const now=svg.children.find(n=>n.attrs.class==='burn-now').attrs.x1;
+console.log(JSON.stringify({paths,now}));
+""")
+        # Hour 0 alone becomes a flat stub ending at the now marker; yesterday's lone 10p draws nothing.
+        self.assertEqual([path["cls"] for path in result["paths"]], ["burn-line"])
+        self.assertTrue(result["paths"][0]["d"].startswith("M 4 8 "))
+        self.assertTrue(result["paths"][0]["d"].endswith(" %s 8" % round(float(result["now"]), 1)))
 
 
 class Cards(unittest.TestCase):

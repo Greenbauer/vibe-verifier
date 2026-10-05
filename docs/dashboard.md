@@ -262,13 +262,14 @@ QAE verification gate has no model-token usage and is shown only in PR progress.
 The Bot usage view draws one card per configured bot, then an All bots card: one column on a
 phone, two from 700 pixels wide, four from 1340. The x-axis is the viewer's local clock hour, with
 faint gridlines at 12a, 6a, 12p and 6p and a white marker at now. The solid line is the last 24
-hours; the stretch after the now marker is yesterday's tail and is faded. The dashed line is a usual
+hours and runs on to the now marker; the stretch after the marker is yesterday's tail and is faded.
+Hours follow the local calendar, so a daylight-saving change does not shift them. The dashed line is a usual
 day: each clock hour averaged over the prior six days that were observed, and its hover names the
 fewest days any hour averages. Bot cards share one y-scale so they compare at a glance; All bots
 adds the bots' observed hours and scales to itself. Only All bots carries the flat, wider-dash pace
 line, and only when an allowance is reported as described above; otherwise a note says why it is
-absent. Each card's header gives its busiest clock hour of the last 24 hours, and its totals line
-gives the last 24 hours and, once every hour has an observed prior day, a usual day. There is no period selector: the dashed line already carries the multi-day view,
+absent. Each card's header gives the most tokens it used in one clock hour of the last 24 hours, and
+its totals line gives the last 24 hours and, once every hour has an observed prior day, a usual day. There is no period selector: the dashed line already carries the multi-day view,
 and a tab saved with the old selector restores without it.
 
 An hour counts as observed from the hour of a bot's first retained sample through the source's last
