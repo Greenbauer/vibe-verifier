@@ -186,7 +186,7 @@
     const header = el("div", { class: "detail-heading" }, el("div", {}, el("h1", {}, pull.title),
       el("p", { class: "muted" }, `${pull.repository} #${pull.number} · current head ${pull.head_sha ? pull.head_sha.slice(0, 12) : "changed"}`)),
       link("Open pull request on GitHub", pull.html_url, snapshot.owner, "primary-link"));
-    const evidence = [...(pull.checks || []), ...(pull.statuses || [])];
+    const evidence = [...(pull.expected || []), ...(pull.checks || []), ...(pull.statuses || [])];
     const checks = el("section", { class: "panel" }, el("h2", {}, "Current-head checks"), progress(pull));
     evidence.forEach(row => checks.append(checkRow(row)));
     if (!evidence.length) checks.append(el("p", { class: "muted" }, "No current-head check evidence is available."));
