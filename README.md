@@ -1,13 +1,132 @@
 # Vibe Verifier
 
-Vibe Verifier helps you assess whether vibe-coded changes are ready to merge.
-You can use it on any pull request.
+**Verification infrastructure for AI-generated pull requests.**
 
-## What it checks
+Agents and tools produce evidence. Deterministic gates decide whether that evidence satisfies the configured merge checks.
 
-Each check is called a **gate**. You choose which ones run.
+Vibe Verifier combines diff-aware repository gates, revision-bound AI code review, browser-driven acceptance verification, multi-repository governance, and read-only CI observability. Model output is evidence, never authority: workflows and deterministic gates own the final pass/fail signal.
 
-| Check | What it catches |
+## Verification model
+
+```mermaid
+flowchart TD
+    PR["Pull request / workflow revision"]
+    DG["Deterministic gates"]
+    REVIEW["AI code review"]
+    QAE["Browser acceptance explorer"]
+    FINDINGS["Findings + exit status"]
+    RECEIPT["Workflow-issued review receipt + thread state"]
+    ARTIFACTS["Step logs + screenshots + verdict anchors"]
+    VERIFY["Deterministic verification"]
+    MERGE["GitHub merge gate"]
+
+    PR --> DG
+    PR --> REVIEW
+    PR --> QAE
+    DG --> FINDINGS --> VERIFY
+    REVIEW --> RECEIPT --> VERIFY
+    QAE --> ARTIFACTS --> VERIFY
+    VERIFY --> MERGE
+```
+
+The important boundary is between **producing evidence** and **deciding whether that evidence is sufficient**. AI can inspect code and exercise a running application, but it does not directly issue the merge verdict.
+
+See [Architecture](docs/architecture.md) and [Threat model](docs/threat-model.md).
+
+## What it establishes
+
+| Layer | What it verifies |
+|---|---|
+| **Deterministic gates** | Structural, security, workflow, test-presence, and complexity invariants on the pull request diff |
+| **Revision-bound AI review** | A receipt matches the event head commit and the supplied unresolved-thread count is zero |
+| **Acceptance verification** | Each criterion has a PASS with a resolving anchor; recorded browser artifacts satisfy structural checks for the workflow-declared application |
+| **Governance** | Base-manifest arguments resist self-weakening; organization wrappers can protect the required workflow itself |
+| **Observability** | Current PR checks, bot activity, runner capacity, and optional numeric model usage are visible without exposing dashboard write controls |
+
+### Trust properties
+
+Vibe Verifier is designed for repositories where the thing writing code may also be capable of editing tests, workflows, review instructions, and configuration.
+
+| Failure mode | Vibe Verifier behavior |
+|---|---|
+| AI review fails or the provider is unavailable | No new receipt is issued; the review job fails |
+| The reviewer's subscription is rate-limited | The job passes with a warning and posts a `limited` receipt for that head only; the next real review covers what it let through |
+| A new commit is pushed after review | The previous receipt is stale; the new head must be verified |
+| A PR removes a gate, adds `--soak`, or raises its threshold | The current PR is still judged using the base branch's version of that gate |
+| A gate cannot determine a verdict | Exit `2`; never reported as a clean pass |
+| Browser QAE claims a criterion passed without evidence | The deterministic verifier rejects missing or unresolved evidence anchors |
+| The explorer tries to choose which deployed site was judged | The workflow declares the URL used to scope request checks; direct-consumer workflows still need protection |
+| A new gate needs observation before enforcement | `--soak` reports violations without blocking, but still fails if the gate itself cannot run |
+
+The full rules are in the [gate contract](docs/GATE-CONTRACT.md).
+
+## Capabilities
+
+| Capability | Included |
+|---|:---:|
+| Diff-aware local and CI gates | ✓ |
+| Fail-closed `pass / violation / cannot-run` contract | ✓ |
+| Base-controlled verification policy | ✓ |
+| Observe-before-enforce rollout | ✓ |
+| AI pull-request review | ✓ |
+| Exact-head review receipts | ✓ |
+| Unresolved review threads can block | ✓ |
+| Browser-driven acceptance exploration | ✓ |
+| Screenshot and step-log evidence | ✓ |
+| Deterministic validation of AI-produced evidence | ✓ |
+| Organization wrapper workflows | ✓ |
+| Ruleset-based cross-repository enforcement | ✓ |
+| Commit-SHA pin inventory and propagation | ✓ |
+| Local read-only verification dashboard | ✓ |
+| Numeric model-usage and runner-capacity telemetry | Optional |
+
+## Get started
+
+The deterministic gates need Git and Python 3. Some gates download tools on first use; automatic downloads support macOS (Intel or Apple silicon) and Linux x86-64. The complexity gate uses Node.js 24 and npm.
+
+### 1. Declare the verification policy
+
+Create `.vibe-verifier` at the root of the project, one gate per line:
+
+```text
+gitleaks
+no-duplicate-package-json-keys
+new-source-has-test
+max-file-lines --max 500
+```
+
+Each line is both a subscription and that gate's configuration. Add `--soak` while introducing a gate if you want findings reported before they block merging.
+
+### 2. Run it locally
+
+Check out and commit the branch you want to verify. The gates use Git history, so uncommitted edits are not fully checked and the branch you plan to merge into must be available locally.
+
+Clone Vibe Verifier separately and run it against the project:
+
+```bash
+git clone https://github.com/Greenbauer/vibe-verifier.git
+cd vibe-verifier
+bin/vibe-verifier run \
+  --repo "/path/to/your/project" \
+  --manifest "/path/to/your/project/.vibe-verifier" \
+  --base-ref main
+```
+
+Results distinguish gates that **passed**, **found violations**, and **could not run**. A run that verified nothing does not look like a pass.
+
+### 3. Make it a GitHub merge gate
+
+Copy [`consumer/vibe-verifier.yml`](consumer/vibe-verifier.yml) to the consumer repository as `.github/workflows/vibe-verifier.yml`. Replace the all-zero placeholder on its last line with the full commit SHA from `git rev-parse HEAD` in the Vibe Verifier clone.
+
+Commit the workflow and `.vibe-verifier` together, then make `vibe-verifier-ok` a required check when it should block merging.
+
+For organization-level enforcement without a mutable workflow in each consumer repository, use [wrapper workflows](docs/GATE-CONTRACT.md#wrappers).
+
+## Deterministic verification gates
+
+Each gate is a command-line program that reads a working tree and its Git history. Pure gates need no secrets, network, or service account, so the same gate can run on a laptop, in a pre-push hook, or on a CI runner.
+
+| Gate | What it catches |
 |---|---|
 | `gitleaks` | Secrets added in a pull request's commits |
 | `new-source-has-test` | New source files without a matching test filename or relative import from a test |
@@ -17,101 +136,114 @@ Each check is called a **gate**. You choose which ones run.
 | `max-file-lines` | New files over the line limit, or existing files over it that grew |
 | `no-duplicate-package-json-keys` | Duplicate keys or invalid JSON in `package.json` |
 | `build-tools-in-devdependencies` | Known development packages listed as runtime dependencies |
-| `branch-name-length` | Branch names longer than your configured limit |
+| `branch-name-length` | Branch names longer than the configured limit |
 
-The source-file checks focus on JavaScript and TypeScript by default. The test-file
-check looks for a matching test filename or relative import; it does not run tests
-or measure coverage. Keep your existing build and test suite.
+The source-file gates focus on JavaScript and TypeScript by default. `new-source-has-test` looks for a matching test filename or relative import; it does not run tests or measure coverage. Keep the project's existing build, test, lint, and security suites.
 
-## Get started
+See the [gate contract](docs/GATE-CONTRACT.md) for options, comparison branches, exit codes, GitHub setup, wired-gate inputs, and extension rules.
 
-You need Git and Python 3. Some checks download tools on first use; automatic
-downloads support macOS (Intel or Apple silicon) and Linux x86-64.
-For the complexity check, use Node.js 24 and npm.
+## Agent verification harnesses
 
-1. Create a `.vibe-verifier` file at the root of your project, with one check per line.
-   For example, a JavaScript or TypeScript project could start with:
+### Revision-bound AI review
 
-   ```text
-   gitleaks
-   no-duplicate-package-json-keys
-   new-source-has-test
-   max-file-lines --max 500
-   ```
+The [review harness](harnesses/review/README.md) asks a model to review a pull request against the consumer repository's own rules, but the model does not create the trusted success signal.
 
-2. In your project, check out the branch you want to verify and commit the changes
-   you want checked. The checks use Git history, so uncommitted edits are not fully
-   checked. Make sure the branch you plan to merge into is available locally.
+The workflow:
 
-   Clone Vibe Verifier separately and run it against your project.
-   Replace `/path/to/your/project` with its location and `main` with the branch
-   you plan to merge into:
+1. pins review instructions to the base branch,
+2. scopes the review to the current pull-request revision,
+3. runs the reviewer with read/comment tools,
+4. issues a workflow-owned receipt only after the review completes, and
+5. lets a deterministic gate verify that the receipt matches the current head and that required threads are resolved.
 
-   ```bash
-   git clone https://github.com/Greenbauer/vibe-verifier.git
-   cd vibe-verifier
-   bin/vibe-verifier run \
-     --repo "/path/to/your/project" \
-     --manifest "/path/to/your/project/.vibe-verifier" \
-     --base-ref main
-   ```
+A push after review makes the old receipt stale. The harness selects a full review, delta review, or no-change receipt refresh from the changed files. A provider failure, model error, or interrupted review issues no new receipt and fails the review job. The one exception is a proven rate or usage limit on the reviewer's subscription: the job passes with a warning and posts a `limited` receipt, which counts for that exact head but is never used as the starting point for the next review.
 
-   Results show which checks passed, found problems, or could not run.
-   When first adding a check, put `--soak` on its line to report problems without
-   blocking on them. Errors that prevent a check from running still fail.
-   An existing check keeps the settings from the base branch until a settings
-   change is merged.
+### Browser acceptance verification
 
-3. To run on GitHub pull requests, copy
-   [`consumer/vibe-verifier.yml`](consumer/vibe-verifier.yml) into your project's
-   `.github/workflows/vibe-verifier.yml`. Replace the all-zero placeholder on its
-   last line with the full commit SHA from `git rev-parse HEAD` in your Vibe Verifier clone.
-   Commit the workflow and `.vibe-verifier` together, then make `vibe-verifier-ok`
-   a required check in your branch rules if it should block merging.
+The [QAE harness](harnesses/qae/README.md) turns pull-request acceptance criteria into browser evidence against a running application.
 
-See the [configuration guide](docs/GATE-CONTRACT.md) for check options, comparison
-branches, exit codes, and GitHub setup details.
+```mermaid
+flowchart LR
+    AC["PR acceptance criteria"] --> EXPLORE["AI browser explorer"]
+    EXPLORE --> APP["Workflow-declared app / preview"]
+    APP --> EVIDENCE["Step logs + screenshots + verdict anchors"]
+    EVIDENCE --> GATE["Deterministic acceptance gate"]
+    GATE --> RESULT["PASS / FAIL / CANNOT RUN"]
+```
 
-For a private, local, read-only view of selected repositories, current-head checks,
-bot activity, and optional capacity/usage telemetry, see the opt-in
-[dashboard pilot](docs/dashboard.md). It binds only to loopback and can optionally sit behind a
-trusted private HTTPS proxy. It does not change the gate runner.
+The explorer can navigate and observe. The verifier independently checks that every criterion has a PASS with at least one resolving evidence anchor in the working tree or run artifacts. It checks screenshots for recorded steps, a navigation and network record, and recorded console/request failures outside configured exceptions, including a criterion's declared expected 401/403 refusal. These checks establish evidence shape, not whether the observations prove the criterion's meaning.
 
-## Optional AI checks
+Review receipts explicitly name a head SHA. QAE instead uses the pull-request workflow checkout and artifacts from the same run; its verdict comment is selected by bot identity, without a SHA/run-ID match. The consumer must supply the intended application revision, and configure the required checks to include explorer failures. See the [revision-binding limits](docs/threat-model.md#revision-binding-limits).
 
-- **[Code review](harnesses/review/README.md):** Reviews a pull request against your
-  repository's `CLAUDE.md` rules. The check requires a completed review of the current
-  commit and no unresolved review threads. If the reviewer's Claude subscription is rate-limited,
-  the check passes with a warning instead, records that the commit was not reviewed, and the next
-  review covers it.
-- **[Browser testing](harnesses/qae/README.md):** Uses AI to try the behavior described
-  in the pull request's acceptance criteria, saving screenshots and logs for review.
-  Checks flag missing evidence, recorded console errors, and failed requests to your
-  app outside your configured exceptions. The explorer runs on Claude by default, or on Codex through a self-hosted runner that holds a ChatGPT login (`harnesses/qae/explore-codex.yml`).
+The review harness and default Claude explorer need Claude authentication. A Codex explorer lane can use a self-hosted runner holding a ChatGPT login; browser testing also needs an application it can start or reach. The regular gates need no AI account. CI and model usage may incur charges under the selected providers' plans.
 
-These workflows need Claude authentication; browser testing also needs an app it can
-start or reach. The regular checks need no AI account. CI and AI usage may incur
-charges under your providers' plans.
+## Organization governance
 
-## Keep checks up to date
+For multiple repositories, Vibe Verifier can move the verification policy out of individual consumer pull requests.
 
-Run `git fetch origin` in your Vibe Verifier clone before checking for updates.
-For multiple projects, see [how to check versions and open update pull requests](docs/GATE-CONTRACT.md#subscribing-in-ci).
-Each job's `runs-on:` value in your copy is yours to choose: the version check does not count it as a
-difference, and update pull requests keep it.
-An organization can instead subscribe every repository through one CI repository of its own, which
-its rulesets require on each pull request and which holds every repository's gate list; see
-[wrappers](docs/GATE-CONTRACT.md#wrappers).
+A wrapper repository can carry the required workflows and each repository's gate list. GitHub organization rulesets then require those pinned workflows on target repositories. A consumer pull request does not contain the workflow or policy that judges it.
+
+```mermaid
+flowchart TD
+    VV["Vibe Verifier catalog"] --> WRAPPER["Organization CI wrapper"]
+    WRAPPER --> RULESET["GitHub ruleset: required workflows"]
+    RULESET --> A["Repo A"]
+    RULESET --> B["Repo B"]
+    RULESET --> C["Repo C"]
+```
+
+`bin/vibe-verifier consumers` inventories policy, workflow drift, action pins, and selected native GitHub enforcement. `bin/vibe-verifier apply-down` plans pin updates and prints a digest. Confirming that plan opens pin-update pull requests; with `--wrapper`, it can also update organization ruleset pins directly once the wrapper changes are on its default branch. It never merges the update pull requests.
+
+See [Wrappers](docs/GATE-CONTRACT.md#wrappers) for the complete model and limitations.
+
+## Verification observability
+
+The optional [local CI dashboard](docs/dashboard.md) gives a read-only view of selected repositories:
+
+- current pull requests and exact-head check state,
+- configured reviewer, explorer, and verifier activity,
+- workflow/job history and current elapsed time,
+- optional runner-capacity telemetry,
+- optional numeric model usage and quota windows.
+
+It binds to loopback, can optionally sit behind a trusted private HTTPS proxy, accepts `GET` only, has no merge/retry/cancel/publish controls, and does not change the gate runner. Missing telemetry stays unavailable rather than becoming zero; stale and partial samples retain explicit status and timestamps.
+
+## Built from real CI failures
+
+The verification contracts have been tightened in response to failures observed in live consumers, including:
+
+- an 87-file pull request that exceeded a fixed AI-review turn cap, leading to scope-sized caps while retaining failure when the cap is reached ([`028a691`](https://github.com/Greenbauer/vibe-verifier/commit/028a691c528475d1b86dd279cbd567a01df079e1)),
+- pull requests with more than 100 comments exposing receipt/verdict pagination errors ([`3d1eab1`](https://github.com/Greenbauer/vibe-verifier/commit/3d1eab1f568168aa126abcb7d47361d7b47da624)),
+- a self-hosted QAE runner without passwordless `sudo` exposing Playwright installation assumptions ([`cf27b2b`](https://github.com/Greenbauer/vibe-verifier/commit/cf27b2b73636cae7cb1f50389992fd422e2eb4db)), and
+- protected Vercel previews requiring a cookie-based browser path that does not put the bypass secret in the preview URL ([`70c559e`](https://github.com/Greenbauer/vibe-verifier/commit/70c559ee5372e577aa128edd689904cd27b28ba6)).
+
+These cases are part of the design history because a verification system should fail visibly when it cannot establish a trustworthy verdict.
+
+## Keep consumers current
+
+Run `git fetch origin` in the Vibe Verifier clone before checking for updates.
+
+For multiple projects, see [subscribing in CI](docs/GATE-CONTRACT.md#subscribing-in-ci). Each consumer owns its `runs-on:` choice; inventory and pin propagation treat runner selection as consumer configuration rather than catalog drift.
+
+## Architecture and security
+
+- [Architecture](docs/architecture.md): system layers, trust boundaries, evidence flow, and invariants.
+- [Threat model](docs/threat-model.md): untrusted inputs, mitigations, and residual risks.
+- [Gate contract](docs/GATE-CONTRACT.md): gate interface, manifests, base-policy behavior, CI subscription, wrappers, and extension rules.
+- [Review harness](harnesses/review/README.md): revision-bound AI review and workflow receipts.
+- [QAE harness](harnesses/qae/README.md): browser exploration, artifacts, and deterministic acceptance verdicts.
+- [Dashboard](docs/dashboard.md): local read-only verification observability.
+- [Security policy](SECURITY.md): vulnerability reporting and supported versions.
 
 ## Contribute
 
-Read [how to add a gate](docs/GATE-CONTRACT.md#adding-a-gate) and run the existing tests:
+Read [how to add a gate](docs/GATE-CONTRACT.md#adding-a-gate) and run the test suite:
 
 ```bash
 python3 -m unittest discover -s tests
 ```
 
-For vulnerability reports, see [SECURITY.md](SECURITY.md).
+For vulnerability reports, follow [SECURITY.md](SECURITY.md).
 
 ## License
 
