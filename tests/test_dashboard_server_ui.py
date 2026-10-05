@@ -247,10 +247,12 @@ console.log(JSON.stringify([h.combinedCategory(pr('success','skipped')),h.combin
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
 const pr=(...c)=>({checks:c.map(category=>({category}))});
-console.log(JSON.stringify([pr('success','success'),pr('success','failed','pending'),pr('success','pending'),
- pr('success','cancelled'),pr('unknown'),pr('skipped','skipped')].map(p=>h.meterTone(h.combinedCategory(p)))));
+console.log(JSON.stringify([pr('success','success'),pr('success','skipped'),pr('success','failed','pending'),
+ pr('success','pending'),pr('cancelled','pending'),pr('unknown','pending'),
+ pr('success','cancelled'),pr('unknown'),pr('skipped','skipped')].map(h.meterTone)));
 ''')
-        self.assertEqual(result, ["success", "failed", "pending", "pending", "pending", "pending"])
+        self.assertEqual(result, ["success", "success", "failed", "pending", "pending", "pending",
+                                  "neutral", "neutral", "neutral"])
 
     def test_an_expected_required_check_keeps_the_pr_pending_and_its_steps_unknown(self):
         result = self.node(r'''

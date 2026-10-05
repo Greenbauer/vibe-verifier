@@ -117,7 +117,7 @@
   function progress(pull) {
     const totals = stepTotals(pull);
     if (!totals.known) return el("div", { class: "progress-copy" }, el("b", {}, "Step total unavailable"), el("span", {}, "Progress is not shown as complete"));
-    const meter = el("div", { class: `step-meter tone-${meterTone(combinedCategory(pull))}`, role: "progressbar", "aria-valuemin": 0,
+    const meter = el("div", { class: `step-meter tone-${meterTone(pull)}`, role: "progressbar", "aria-valuemin": 0,
       "aria-valuemax": totals.total, "aria-valuenow": totals.completed });
     meter.append(el("span", { style: `width:${totals.total ? totals.completed / totals.total * 100 : 0}%` }));
     return el("div", { class: "progress-copy" }, el("b", {}, `${totals.completed}/${totals.total} steps`),
