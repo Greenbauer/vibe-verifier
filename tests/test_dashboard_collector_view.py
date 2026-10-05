@@ -34,6 +34,7 @@ class CollectorIntegration(unittest.TestCase):
         self.assertIn('7d', window['name'])
         self.assertEqual(window['used_percent'], 22)
         self.assertIsNone(window['allowance_tokens'])
+        self.assertEqual(window['window_minutes'], 10080)
         self.assertEqual(parsed['usage']['samples'], [])
 
     def test_stale_snapshot_never_claims_slots_are_ready(self):

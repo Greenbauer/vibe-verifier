@@ -263,9 +263,8 @@
     const samples = usage.samples || [], now = Date.now();
     // Hours after the source's last observation are unobserved, not zero, when the source goes stale.
     const through = Math.min(...[usage.sampled_at, usage.history_sampled_at].map(Date.parse).filter(Number.isFinite));
-    const sampleAccounts = new Set(samples.map(sample => sample.account));
-    const account = sampleAccounts.size === 1 ? usage.accounts.find(item => sampleAccounts.has(item.id)) : null;
-    const pace = VVCharts.pacePerHour(account?.quota_windows.find(item => item.allowance_tokens !== null));
+    const plan = usage.pace || { tokens_per_hour: null, reason: "usage telemetry is unavailable." };
+    const pace = plan.tokens_per_hour;
     const bots = (snapshot.agents?.rows || []).map(agent => ({ name: agent.name, color: BOT_META[agent.role].color,
       burn: VVCharts.hourlyBurn(samples.filter(sample => sample.bot === agent.id), now, through) }));
     const observed = bots.map(bot => bot.burn).filter(Boolean);
@@ -275,9 +274,18 @@
       el("p", { class: "muted" }, "Tokens each bot used, hour by hour. Solid: last 24 hours. Dashed: a usual day. Flat: the pace that lasts until the plan resets."),
       el("div", { class: "burn-cards" }, bots.map(bot => burnCard(bot, shared, now, null)),
         burnCard(all, VVCharts.ceiling(all.burn ? [all.burn] : [], pace), now, pace)),
-      el("p", { class: "muted pace-note" }, pace === null ?
-        "No flat pace line: it needs a reported token allowance for the same account. Subscription percentages alone cannot provide it." :
-        "Flat line on All bots: remaining token allowance divided by time until reset."));
+      paceNote(plan));
+  }
+
+  // What the flat line is, in words; how its size was measured rides the hover.
+  function paceNote(plan) {
+    if (plan.tokens_per_hour === null) return el("p", { class: "muted pace-note" }, `No flat pace line: ${plan.reason}`);
+    const sized = plan.sized_from === "reported" ? "The source reports the window's size." :
+      `Window size measured from the bots: ${VVCharts.short(plan.window_tokens)} tokens since the window began made ${plan.used_percent}% of it, ` +
+      `so it holds about ${VVCharts.short(plan.allowance_tokens)}. If anything else uses this plan, the line assumes the bots keep their current share.`;
+    return el("p", { class: "muted pace-note", title: sized },
+      `Flat line on All bots: ${VVCharts.short(plan.tokens_per_hour)} tokens an hour uses the rest of ${plan.plan} ` +
+      `(${plan.window}, ${plan.used_percent}% used) exactly when it resets ${formatTime(plan.resets_at)}.`);
   }
 
   // One card: name and last-24h peak, the hour-of-day chart (or "Not yet observed"), and its totals.

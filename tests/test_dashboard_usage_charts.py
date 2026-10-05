@@ -175,14 +175,20 @@ function el(tag,attrs={},...children){
 const text=node=>typeof node==='string'?node:(node.children||[]).map(text).join(' ');
 const snapshot={agents:{rows:[{id:'ci-swe',name:'SWE',role:'swe'},{id:'ci-qae',name:'QAE',role:'qae'},{id:'qae-2',name:'QAE2',role:'qae'}]}};
 const at=hours=>new Date(Date.now()-hours*3600000).toISOString();
-const usage={sampled_at:new Date().toISOString(),accounts:[{id:'a',quota_windows:[{allowance_tokens:1000,pace_tokens_per_second:1}]}],
+const usage={sampled_at:new Date().toISOString(),accounts:[],
+  pace:{tokens_per_hour:3600,plan:'ChatGPT subscription',window:'7d',used_percent:40,resets_at:at(-10),
+        sized_from:'bot_tokens',window_tokens:940,allowance_tokens:2350},
   samples:[{account:'a',bot:'ci-swe',timestamp:at(2),input_tokens:40,output_tokens:0},
            {account:'a',bot:'ci-qae',timestamp:at(3),input_tokens:900,output_tokens:0}]};
-const build=new Function('el','BOT_META','VVCharts','snapshot',SOURCE+'\nreturn usageCharts;');
-const section=build(el,BOT_META,VVCharts,snapshot)(usage);
-const cards=section.children[2].children;
+const formatTime=value=>'RESET';
+const build=new Function('el','BOT_META','VVCharts','snapshot','formatTime',SOURCE+'\nreturn usageCharts;');
+const charts=build(el,BOT_META,VVCharts,snapshot,formatTime);
+const section=charts(usage);
+const cards=section.children[2].children, note=section.children[3];
+const missing=charts({...usage,pace:{tokens_per_hour:null,reason:'the plan shows 0% used, so its size cannot be measured yet.'}});
 console.log(JSON.stringify({drawn,names:cards.map(card=>card.children[0].children[0].children[0]),
-  qae2:text(cards[2]),allClass:cards[3].attrs.class}));
+  qae2:text(cards[2]),allClass:cards[3].attrs.class,note:text(note),noteTitle:note.attrs.title,
+  missing:text(missing.children[3]),missingPace:drawn[drawn.length-1].pace}));
 """.replace("SOURCE", json.dumps(source)))
         self.assertEqual(result["names"], ["SWE", "QAE", "QAE2", "All bots"])
         self.assertIn("Not yet observed", result["qae2"])
@@ -192,6 +198,12 @@ console.log(JSON.stringify({drawn,names:cards.map(card=>card.children[0].childre
         self.assertEqual([row["pace"] for row in bots], [None, None])
         self.assertEqual(everyone["pace"], 3600)
         self.assertEqual(everyone["maximum"], 3600)
+        self.assertEqual(result["note"], "Flat line on All bots: 4k tokens an hour uses the rest of ChatGPT subscription "
+                                         "(7d, 40% used) exactly when it resets RESET.")
+        self.assertIn("940 tokens since the window began made 40% of it, so it holds about 2k", result["noteTitle"])
+        self.assertIn("keep their current share", result["noteTitle"])
+        self.assertEqual(result["missing"], "No flat pace line: the plan shows 0% used, so its size cannot be measured yet.")
+        self.assertIsNone(result["missingPace"])
 
 
 if __name__ == "__main__":
