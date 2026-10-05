@@ -13,10 +13,17 @@ sgconfig.yml at its root is read for one key, languageGlobs (ast-grep's format),
 extensions to a language for that directory's rules and tests only: each directory runs as its own
 ast-grep project, so one directory's mapping never changes what another's rules see.
 
-A ratchet: a finding counts only when its fingerprint (rule id, path, and the matched text with its
-whitespace normalized; no line numbers) occurs more often at HEAD than the same rules find at the
-merge base, so what the pull request did not add never blocks, and a file it moved is compared with
-itself at its old path. --all reports every finding in every tracked file instead, with no base.
+A ratchet by count, the way ESLint's bulk suppressions work: a file violates a rule only when it has
+more of that rule's findings at HEAD than at the merge base (a file the pull request moved is
+compared with itself at its old path), so editing, restyling or moving a violation within its file
+never blocks. Fixing one and adding one in the same file nets zero and passes. When a count rises,
+the findings on lines the pull request added or changed are reported; when none is on such a line,
+all of that rule's findings in the file are, with the count before and after. --all reports every
+finding in every tracked file instead, with no base.
+
+A rule blocks unless its file says `severity: warning`, `info` or `hint`: those findings are printed
+as advisory and never fail the gate, --all included. An unset severity blocks, although ast-grep
+itself reads it as hint, so a rule is advisory only when it says so.
 
 Base-controlled, like the manifest: a rule file the base has is judged as the base has it, even when
 the pull request edits or deletes it; a rule file the pull request adds applies at once, an
@@ -40,6 +47,8 @@ GATE = "repo-rules"
 PACKS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rules")
 DEFAULT_RULES = ".vibe-verifier-rules"
 CONFIG = "sgconfig.yml"  # at a rule directory's root: only its languageGlobs are read
+ADVISORY = ("warning", "info", "hint")  # severities printed but never blocking; unset and error block
+HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 CHUNK = 500  # paths per ast-grep call, far below any platform's argument limit
 # The standard library reads no YAML, so ast-grep's own YAML grammar reads the rule files: each
 # document, each top-level key of a document, and each item of a top-level sequence.
@@ -257,12 +266,13 @@ def verify(sg, work, origin, wheres):
             if kind == "rules":
                 if rule_id in rules and rules[rule_id][0] != number:
                     problems.append("rule %s is defined in both %s and %s" % (rule_id, rules[rule_id][1], origin[path]))
-                rules[rule_id] = (number, origin[path], scalar(keys.get("message", ("", 0))[0]))
+                rules[rule_id] = (number, origin[path], scalar(keys.get("message", ("", 0))[0]),
+                                  scalar(keys.get("severity", ("", 0))[0]))
             else:
                 tally = cases.setdefault((number, rule_id), [0, 0])  # a test counts only for its own directory's rule
                 tally[0] += keys.get("valid", ("", 0))[1]
                 tally[1] += keys.get("invalid", ("", 0))[1]
-    for rule_id, (number, where, message) in sorted(rules.items()):
+    for rule_id, (number, where, message, _) in sorted(rules.items()):
         valid, invalid = cases.get((number, rule_id), (0, 0))
         if not message:
             problems.append("rule %s (%s) has no message; say what to write instead" % (rule_id, where))
@@ -271,7 +281,7 @@ def verify(sg, work, origin, wheres):
                             "it needs at least one of each" % (rule_id, where, valid, invalid))
     if problems:
         raise CannotRun("\n".join(problems))
-    return roots
+    return roots, {rule_id for rule_id, (_, _, _, severity) in rules.items() if severity in ADVISORY}
 
 
 def scan(sg, roots, root, paths):
@@ -288,17 +298,20 @@ def scan(sg, roots, root, paths):
     return sorted(hits, key=lambda h: (h["file"], h["range"]["start"]["line"], h["range"]["start"]["column"], h["ruleId"]))
 
 
-def fingerprint(hit):
-    """Rule id, path and matched text, the text's whitespace collapsed and dropped next to punctuation, so
-    re-indenting, moving or re-wrapping a match (`f(\n  a,\n  b\n)` and `f(a, b)`) keeps its fingerprint."""
-    return hit["ruleId"], hit["file"], re.sub(r"\s*([^\w\s])\s*", r"\1", " ".join(hit["text"].split()))
-
-
-def finding(hit, context=""):
+def finding(hit, advisory, context=""):
     text = "%s: %s%s" % (hit["ruleId"], hit["message"], context)
     if hit.get("note"):
         text += "\n  note: " + hit["note"].strip().replace("\n", "\n  ")
-    return Finding(text, hit["file"], hit["range"]["start"]["line"] + 1)
+    return Finding(text, hit["file"], hit["range"]["start"]["line"] + 1, advisory=hit["ruleId"] in advisory)
+
+
+def changed_lines(repo, merge_base, old, path):
+    """The line numbers at HEAD that the pull request added or changed in path, or None if all of them
+    are (the file is new). `old` is the file's path at the merge base."""
+    if show(repo, merge_base, old) is None:
+        return None
+    diff = git(repo, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "%s:%s" % (merge_base, old), "HEAD:%s" % path)
+    return {first + n for start, count in HUNK.findall(diff) for first in [int(start)] for n in range(int(count or 1))}
 
 
 def check(args):
@@ -308,9 +321,9 @@ def check(args):
     sg = ensure("ast-grep")
     with tempfile.TemporaryDirectory(prefix="vv-rules-") as work:
         projects = os.path.join(work, "projects")
-        roots = verify(sg, projects, assemble(sources, projects), [where for where, _ in sources])
+        roots, advisory = verify(sg, projects, assemble(sources, projects), [where for where, _ in sources])
         if args.all:
-            return [finding(hit) for hit in scan(sg, roots, args.repo, sorted(tracked))]
+            return [finding(hit, advisory) for hit in scan(sg, roots, args.repo, sorted(tracked))]
         listed = set(tracked)
         head = scan(sg, roots, args.repo, sorted(p for p in changed_files(args.repo, base) if p in listed))
         merge_base = git(args.repo, "merge-base", base, "HEAD").strip()
@@ -324,11 +337,21 @@ def check(args):
             with open(os.path.join(snapshot, path), "wb") as handle:
                 handle.write(text)
             at_base.append(path)
-        before = Counter(fingerprint(hit) for hit in scan(sg, roots, snapshot, at_base))
-    now = Counter(fingerprint(hit) for hit in head)
-    return [finding(hit, " (new in this pull request)" if not before[fingerprint(hit)] else
-                    " (%d in this file now, %d at the merge base)" % (now[fingerprint(hit)], before[fingerprint(hit)]))
-            for hit in head if now[fingerprint(hit)] > before[fingerprint(hit)]]
+        before = Counter((hit["ruleId"], hit["file"]) for hit in scan(sg, roots, snapshot, at_base))
+    now = Counter((hit["ruleId"], hit["file"]) for hit in head)
+    findings = []
+    for rule_id, path in sorted(key for key in now if now[key] > before[key]):
+        hits = [hit for hit in head if (hit["ruleId"], hit["file"]) == (rule_id, path)]
+        lines = changed_lines(args.repo, merge_base, moved.get(path, path), path)
+        touched = [hit for hit in hits if lines is None or
+                   lines & set(range(hit["range"]["start"]["line"] + 1, hit["range"]["end"]["line"] + 2))]
+        counts = "in this file: %d at the merge base, %d now" % (before[(rule_id, path)], now[(rule_id, path)])
+        if touched:
+            findings += [finding(hit, advisory, " (%s)" % counts) for hit in touched]
+        else:
+            findings += [finding(hit, advisory, " (%s; none is on a line this pull request changed, so all are listed)" % counts)
+                         for hit in hits]
+    return sorted(findings, key=lambda f: (f.path, f.line, f.message))
 
 
 def add_arguments(parser):

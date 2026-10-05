@@ -23,6 +23,10 @@ Gate-specific options (`--max`, `--source`, `--exclude`) are documented in each 
 | 1 | Violations found. |
 | 2 | Could not run: bad usage, missing history, a crash. |
 
+A gate may mark a finding advisory: it is printed (as a warning annotation under `--format github`,
+with `"advisory": true` under `--format json`) and never counts toward exit 1. `repo-rules` uses it
+for rules whose severity is below `error`.
+
 **`--soak` never masks exit 2.** Soak exists so a new gate can collect signal before it blocks
 anything. A gate that cannot run has produced no signal, and a soak that is silently broken looks
 exactly like a soak that is clean. A mutation-testing soak in a sibling project produced no score
@@ -418,13 +422,22 @@ repo-rules --rules lint/rules --pack example --soak
   `valid` and one `invalid` case, or whose tests fail is exit 2 naming the rule, never a pass, and
   `--soak` does not mask it. Snapshot tests are skipped: the test proves the rule fires and stays
   quiet, not where its label lands.
-- **Ratchet.** A finding's fingerprint is its rule id, its path and the matched text with its
-  whitespace normalized (collapsed, and dropped next to punctuation), and no line number, so moving
-  code down a file, re-indenting it or re-wrapping it is not new. A fingerprint is a violation when
-  the pull request has more of it than the merge base has under the same rules, which also catches
-  a violation pasted next to an identical old one. Only files the pull request changed are scanned,
-  and a file it moved is compared with itself at its old path. `--all` reports every finding in
-  every tracked file, for an audit or a first subscription.
+- **Ratchet, by count per rule and file**, the way ESLint's bulk suppressions work. A file
+  violates a rule only when it has more of that rule's findings at HEAD than at the merge base under
+  the same rules, so editing, restyling, re-indenting or moving a violation within its file never
+  blocks; a file the pull request moved is compared with itself at its old path, and only files the
+  pull request changed are scanned. The trade-off is accepted: fixing one violation and adding
+  another of the same rule in the same file nets zero and passes. When a count rises, the gate
+  reports that rule's findings on lines the pull request added or changed (from the diff), with the
+  count before and after; when none of them is on such a line (the change was elsewhere, such as
+  removing the `try` a rule looks for), it reports all of that rule's findings in the file and says
+  so. `--all` reports every finding in every tracked file, for an audit or a first subscription.
+- **Severity.** A finding blocks unless its rule says `severity: warning`, `info` or `hint`; those
+  are printed as advisory (a warning annotation on GitHub) and never fail the gate, under `--all`
+  too. An unset severity blocks, although ast-grep itself reads it as `hint` and plain `sg scan`
+  does not fail on it: a rule is advisory only when it says so. Severity is part of the rule file,
+  so it is base-controlled: a pull request that downgrades a rule is still judged at the base's
+  severity.
 - **Base-controlled.** A rule file the base has is judged as the base has it, at its base path: a
   pull request that edits, weakens, deletes, moves or renames a rule is still judged by it, the run
   says so, and the change applies from the next pull request. A rule file the pull request adds
