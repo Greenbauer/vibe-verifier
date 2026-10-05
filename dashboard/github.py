@@ -112,22 +112,21 @@ class GitHubCollector:
     def _check_runs(self, repository: str, sha: str) -> tuple[list[dict], set[int]]:
         suites = self.api.items(_endpoint("repos/%s/commits/%s/check-suites" % (repository, sha), per_page=100),
                                 "check_suites")
-        latest, suite_ids = {}, set()
-        for suite in suites:
-            suite_id = suite.get("id")
-            if not isinstance(suite_id, int) or suite.get("head_sha") not in (None, sha):
+        suite_ids = {suite.get("id") for suite in suites
+                     if isinstance(suite.get("id"), int) and suite.get("head_sha") in (None, sha)}
+        # One listing for the whole head instead of one per suite: a head collects a suite for every
+        # event that started a workflow, often twenty or more, and each listing is a rate-limited request.
+        rows = self.api.items(_endpoint("repos/%s/commits/%s/check-runs" % (repository, sha),
+                                        per_page=100, filter="latest"), "check_runs")
+        latest = {}
+        for row in rows:
+            suite_id = (row.get("check_suite") or {}).get("id")
+            if suite_id not in suite_ids or row.get("head_sha") not in (None, sha):
                 continue
-            suite_ids.add(suite_id)
-            rows = self.api.items(_endpoint("repos/%s/check-suites/%s/check-runs" % (repository, suite_id),
-                                            per_page=100, filter="latest"), "check_runs")
-            for row in rows:
-                if ((row.get("check_suite") or {}).get("id") not in (None, suite_id)
-                        or row.get("head_sha") not in (None, sha)):
-                    continue
-                key = self._check_identity(row, suite_id)
-                rank = (_time_key(row, "started_at", "completed_at"), row.get("id") or 0)
-                if key not in latest or rank > latest[key][0]:
-                    latest[key] = (rank, row, suite_id)
+            key = self._check_identity(row, suite_id)
+            rank = (_time_key(row, "started_at", "completed_at"), row.get("id") or 0)
+            if key not in latest or rank > latest[key][0]:
+                latest[key] = (rank, row, suite_id)
         checks = []
         for _, row, suite_id in latest.values():
             checks.append({"id": row.get("id"), "suite_id": suite_id,
@@ -538,4 +537,5 @@ class GitHubCollector:
                 "coverage": {"selected": len(self.config.repositories), "readable": len(repository_rows),
                              "label": "Selected repositories", "inventory": inventories},
                 "bots": bots, "errors": errors, "partial": bool(errors) or bots["partial"],
-                "api": {**rate, "calls": self.api.calls, "max_calls": self.api.max_calls}}
+                "api": {**rate, "calls": self.api.calls, "lowest_remaining": self.api.lowest_remaining,
+                        "max_calls": self.api.max_calls}}

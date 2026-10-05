@@ -8,7 +8,10 @@ that tells whoever wrote the code what to do instead. The rules come from:
                   when the base or the head has it)
     --pack NAME   a catalog pack, rules/NAME/ in this catalog at its pinned revision (repeatable)
 
-A rule directory holds rule files (*.yml, *.yaml) and, under tests/, their ast-grep rule tests.
+A rule directory holds rule files (*.yml, *.yaml) and, under tests/, their ast-grep rule tests. An
+sgconfig.yml at its root is read for one key, languageGlobs (ast-grep's format), which maps more file
+extensions to a language for that directory's rules and tests only: each directory runs as its own
+ast-grep project, so one directory's mapping never changes what another's rules see.
 
 A ratchet: a finding counts only when its fingerprint (rule id, path, and the matched text with its
 whitespace normalized; no line numbers) occurs more often at HEAD than the same rules find at the
@@ -16,7 +19,8 @@ merge base, so what the pull request did not add never blocks, and a file it mov
 itself at its old path. --all reports every finding in every tracked file instead, with no base.
 
 Base-controlled, like the manifest: a rule file the base has is judged as the base has it, even when
-the pull request edits or deletes it; a rule file the pull request adds applies at once. Packs come
+the pull request edits or deletes it; a rule file the pull request adds applies at once, an
+sgconfig.yml it adds once it merges (a mapping can narrow what rules see). Packs come
 from the catalog itself. Every rule needs a non-empty message and a rule test with at least one
 valid and one invalid case, and every rule test must pass; otherwise the gate cannot run (exit 2)
 and names the rule.
@@ -35,6 +39,7 @@ from _tools import ensure
 GATE = "repo-rules"
 PACKS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rules")
 DEFAULT_RULES = ".vibe-verifier-rules"
+CONFIG = "sgconfig.yml"  # at a rule directory's root: only its languageGlobs are read
 CHUNK = 500  # paths per ast-grep call, far below any platform's argument limit
 # The standard library reads no YAML, so ast-grep's own YAML grammar reads the rule files: each
 # document, each top-level key of a document, and each item of a top-level sequence.
@@ -67,7 +72,8 @@ def judged_files(args, base, directory, tracked):
     """{path under the directory: bytes} as this run judges them, and the paths judged as at the base
     although the head differs. With a base: every file the base has, at its base path and as the base
     has it, whatever the pull request did to it (edited, deleted, moved, renamed to anything), and the
-    files the pull request added. Without one: the head's."""
+    files the pull request added, except an sgconfig.yml: a mapping can narrow what rules see, so it
+    applies once it merges. Without one: the head's."""
     prefix = directory + "/"
     if base is None:
         return {p[len(prefix):]: read(args.repo, p) for p in tracked if p.startswith(prefix) and is_yaml(p)}, []
@@ -78,7 +84,9 @@ def judged_files(args, base, directory, tracked):
         if path not in tracked or read(args.repo, path) != text:
             differs.append(path)
     for path in added_files(args.repo, base):
-        if path.startswith(prefix) and is_yaml(path) and path[len(prefix):] not in files:
+        if path == prefix + CONFIG:
+            differs.append(path)
+        elif path.startswith(prefix) and is_yaml(path) and path[len(prefix):] not in files:
             files[path[len(prefix):]] = read(args.repo, path)
     return files, differs
 
@@ -120,37 +128,60 @@ def rule_sources(args, base, tracked):
         elif explicit:
             raise CannotRun("--rules %s holds no rule files" % directory)
     for where, files in sources:
-        if not any(not name.startswith("tests/") for name in files):
-            raise CannotRun("%s holds no rules, only tests" % where)
+        if not any(not name.startswith("tests/") and name != CONFIG for name in files):
+            raise CannotRun("%s holds no rules" % where)
     if not sources:
         raise CannotRun("no rules to run: add %s/, or pass --rules DIR or --pack NAME" % DEFAULT_RULES)
     return sources
 
 
-def assemble(sources, project):
-    """Write every source into one ast-grep project; return {path in the project: where it came from}."""
+def assemble(sources, work):
+    """Write each source into an ast-grep project of its own, <work>/<n>/ (rules/, tests/, and its
+    sgconfig.yml as source-sgconfig.yml until configure() reads it); return {path under work: where
+    it came from}."""
     origin = {}
     for number, (where, files) in enumerate(sources):
         for name, data in files.items():
-            kind, inner = ("tests", name[len("tests/"):]) if name.startswith("tests/") else ("rules", name)
-            assembled = "%s/%d/%s" % (kind, number, inner)
-            os.makedirs(os.path.dirname(os.path.join(project, assembled)), exist_ok=True)
-            with open(os.path.join(project, assembled), "wb") as handle:
+            if name == CONFIG:
+                assembled = "%d/source-%s" % (number, CONFIG)
+            elif name.startswith("tests/"):
+                assembled = "%d/%s" % (number, name)
+            else:
+                assembled = "%d/rules/%s" % (number, name)
+            os.makedirs(os.path.dirname(os.path.join(work, assembled)), exist_ok=True)
+            with open(os.path.join(work, assembled), "wb") as handle:
                 handle.write(data)
             origin[assembled] = where + name
-    for kind in ("rules", "tests"):
-        os.makedirs(os.path.join(project, kind), exist_ok=True)
-    with open(os.path.join(project, "sgconfig.yml"), "w", encoding="utf-8") as handle:
-        handle.write("ruleDirs: [rules]\ntestConfigs:\n  - testDir: tests\n")
+        for kind in ("rules", "tests"):
+            os.makedirs(os.path.join(work, str(number), kind), exist_ok=True)
     return origin
 
 
-def relabel(text, project, origin):
-    """ast-grep's own output, with the project's temporary paths put back as the files they came from."""
-    for root in {project, os.path.realpath(project)}:  # a temporary directory may be reached through a symlink
-        text = text.replace(root + os.sep, "")
+def configure(work, count, docs, origin):
+    """Write each project's sgconfig.yml: its rules and tests, plus the languageGlobs of the source's own
+    sgconfig.yml, copied as written. Return the project roots."""
+    roots = []
+    for number in range(count):
+        config, globs = "%d/source-%s" % (number, CONFIG), ""
+        for keys, text in docs.get(config, []):
+            if not keys and has_content(text):
+                raise CannotRun("%s cannot be read; write it as a block mapping, one `key: value` per line" % origin[config])
+            if "languageGlobs" in keys and not globs:
+                globs = "languageGlobs:" + keys["languageGlobs"][0] + "\n"
+        roots.append(os.path.join(work, str(number)))
+        with open(os.path.join(roots[-1], CONFIG), "w", encoding="utf-8") as handle:
+            handle.write("ruleDirs: [rules]\ntestConfigs:\n  - testDir: tests\n" + globs)
+    return roots
+
+
+def relabel(text, root, origin):
+    """ast-grep's output for the project at root, with its temporary paths put back as the files they came from."""
+    prefix = os.path.basename(root) + "/"
+    for path in {root, os.path.realpath(root)}:  # a temporary directory may be reached through a symlink
+        text = text.replace(path + os.sep, "")
     for assembled, where in origin.items():
-        text = text.replace(assembled, where)
+        if assembled.startswith(prefix):
+            text = text.replace(assembled[len(prefix):], where)
     return text.strip()
 
 
@@ -169,11 +200,11 @@ def scalar(text):
     return "" if text in ("~", "null", "Null", "NULL") else text
 
 
-def documents(sg, project):
-    """{path in the project: [({top-level key: (value, items in its sequence)}, text)]}, one per YAML document.
-    Only block mappings are read (`key: value` on its own line); verify() refuses any other shape."""
-    result = subprocess.run([sg, "scan", "--inline-rules", READER, "--json=stream", "--", "rules", "tests"],
-                            cwd=project, capture_output=True, text=True)
+def documents(sg, work):
+    """{path under work: [({top-level key: (value, items in its sequence)}, text)]}, one per YAML document.
+    Only block mappings are read (`key: value` on its own line); a document of any other shape is refused."""
+    result = subprocess.run([sg, "scan", "--inline-rules", READER, "--json=stream", "--", *sorted(os.listdir(work))],
+                            cwd=work, capture_output=True, text=True)
     if result.returncode != 0:
         raise CannotRun("ast-grep could not read the rule files: %s" % (result.stderr.strip() or "no output"))
     hits = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
@@ -200,49 +231,60 @@ def has_content(text):
     return any(line and not line.startswith("#") for line in (re.sub(r"^(---|\.\.\.)", "", raw).strip() for raw in text.splitlines()))
 
 
-def verify(sg, project, origin):
-    """Refuse a rule that cannot tell anyone what to do instead (no message) or that nothing proves
-    (no passing rule test with both a valid and an invalid case)."""
-    tested = subprocess.run([sg, "test", "--config", "sgconfig.yml", "--skip-snapshot-tests", "--include-off", "--color", "never"],
-                            cwd=project, capture_output=True, text=True)
-    if tested.returncode != 0:
-        raise CannotRun("the rule tests do not pass:\n%s" % relabel(tested.stdout + tested.stderr, project, origin))
+def verify(sg, work, origin, wheres):
+    """Configure each project, then refuse a rule that cannot tell anyone what to do instead (no message)
+    or that nothing proves (no passing rule test of its own directory with a valid and an invalid case).
+    Return the project roots."""
+    docs = documents(sg, work)
+    roots = configure(work, len(wheres), docs, origin)
+    for root, where in zip(roots, wheres):  # each directory's tests run under its own languageGlobs
+        tested = subprocess.run([sg, "test", "--config", CONFIG, "--skip-snapshot-tests", "--include-off", "--color", "never"],
+                                cwd=root, capture_output=True, text=True)
+        if tested.returncode != 0:
+            raise CannotRun("the rule tests of %s do not pass:\n%s" % (where, relabel(tested.stdout + tested.stderr, root, origin)))
     rules, cases, problems = {}, {}, []
-    for path, docs in documents(sg, project).items():
-        for keys, text in docs:
+    for path, entries in sorted(docs.items()):
+        number, kind = path.split("/")[:2]
+        if kind not in ("rules", "tests"):
+            continue  # the source's sgconfig.yml, read by configure()
+        for keys, text in entries:
             if "id" not in keys:
                 if has_content(text):
                     problems.append("%s holds a document whose id cannot be read; write it as a block mapping, one "
                                     "`key: value` per line" % origin[path])
                 continue
             rule_id = scalar(keys["id"][0])
-            if path.startswith("rules/"):
-                rules[rule_id] = (origin[path], scalar(keys.get("message", ("", 0))[0]))
+            if kind == "rules":
+                if rule_id in rules and rules[rule_id][0] != number:
+                    problems.append("rule %s is defined in both %s and %s" % (rule_id, rules[rule_id][1], origin[path]))
+                rules[rule_id] = (number, origin[path], scalar(keys.get("message", ("", 0))[0]))
             else:
-                count = cases.setdefault(rule_id, [0, 0])
-                count[0] += keys.get("valid", ("", 0))[1]
-                count[1] += keys.get("invalid", ("", 0))[1]
-    for rule_id, (where, message) in sorted(rules.items()):
-        valid, invalid = cases.get(rule_id, (0, 0))
+                tally = cases.setdefault((number, rule_id), [0, 0])  # a test counts only for its own directory's rule
+                tally[0] += keys.get("valid", ("", 0))[1]
+                tally[1] += keys.get("invalid", ("", 0))[1]
+    for rule_id, (number, where, message) in sorted(rules.items()):
+        valid, invalid = cases.get((number, rule_id), (0, 0))
         if not message:
             problems.append("rule %s (%s) has no message; say what to write instead" % (rule_id, where))
         if not valid or not invalid:
-            problems.append("rule %s (%s) has %d valid and %d invalid test cases under tests/; it needs at least one of each"
-                            % (rule_id, where, valid, invalid))
+            problems.append("rule %s (%s) has %d valid and %d invalid test cases under its directory's tests/; "
+                            "it needs at least one of each" % (rule_id, where, valid, invalid))
     if problems:
         raise CannotRun("\n".join(problems))
+    return roots
 
 
-def scan(sg, project, root, paths):
-    """Every finding of the assembled rules in paths (relative to root), in a stable order."""
+def scan(sg, roots, root, paths):
+    """Every finding of every project's rules in paths (relative to root), in a stable order."""
     hits = []
-    for start in range(0, len(paths), CHUNK):
-        result = subprocess.run([sg, "scan", "--config", os.path.join(project, "sgconfig.yml"), "--off=unused-suppression",
-                                 "--json=stream", "--", *paths[start:start + CHUNK]], cwd=root, capture_output=True, text=True)
-        found = [json.loads(line) for line in result.stdout.splitlines() if line.strip()] if result.returncode in (0, 1) else []
-        if result.returncode not in (0, 1) or (result.returncode == 1 and not found):
-            raise CannotRun("ast-grep scan exited %d: %s" % (result.returncode, (result.stderr.strip() or "no output").splitlines()[-1]))
-        hits += found
+    for project in roots:
+        for start in range(0, len(paths), CHUNK):
+            result = subprocess.run([sg, "scan", "--config", os.path.join(project, CONFIG), "--off=unused-suppression",
+                                     "--json=stream", "--", *paths[start:start + CHUNK]], cwd=root, capture_output=True, text=True)
+            found = [json.loads(line) for line in result.stdout.splitlines() if line.strip()] if result.returncode in (0, 1) else []
+            if result.returncode not in (0, 1) or (result.returncode == 1 and not found):
+                raise CannotRun("ast-grep scan exited %d: %s" % (result.returncode, (result.stderr.strip() or "no output").splitlines()[-1]))
+            hits += found
     return sorted(hits, key=lambda h: (h["file"], h["range"]["start"]["line"], h["range"]["start"]["column"], h["ruleId"]))
 
 
@@ -265,12 +307,12 @@ def check(args):
     sources = rule_sources(args, base, tracked)
     sg = ensure("ast-grep")
     with tempfile.TemporaryDirectory(prefix="vv-rules-") as work:
-        project = os.path.join(work, "project")
-        verify(sg, project, assemble(sources, project))
+        projects = os.path.join(work, "projects")
+        roots = verify(sg, projects, assemble(sources, projects), [where for where, _ in sources])
         if args.all:
-            return [finding(hit) for hit in scan(sg, project, args.repo, sorted(tracked))]
+            return [finding(hit) for hit in scan(sg, roots, args.repo, sorted(tracked))]
         listed = set(tracked)
-        head = scan(sg, project, args.repo, sorted(p for p in changed_files(args.repo, base) if p in listed))
+        head = scan(sg, roots, args.repo, sorted(p for p in changed_files(args.repo, base) if p in listed))
         merge_base = git(args.repo, "merge-base", base, "HEAD").strip()
         moved = renamed(args.repo, base)
         snapshot, at_base = os.path.join(work, "base"), []
@@ -282,7 +324,7 @@ def check(args):
             with open(os.path.join(snapshot, path), "wb") as handle:
                 handle.write(text)
             at_base.append(path)
-        before = Counter(fingerprint(hit) for hit in scan(sg, project, snapshot, at_base))
+        before = Counter(fingerprint(hit) for hit in scan(sg, roots, snapshot, at_base))
     now = Counter(fingerprint(hit) for hit in head)
     return [finding(hit, " (new in this pull request)" if not before[fingerprint(hit)] else
                     " (%d in this file now, %d at the merge base)" % (now[fingerprint(hit)], before[fingerprint(hit)]))

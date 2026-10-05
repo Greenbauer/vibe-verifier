@@ -436,10 +436,32 @@ repo-rules --rules lint/rules --pack example --soak
   there does not count). A pack comes from the pinned catalog. An absolute `--rules` path is a
   directory outside the repository, such as one an organization's [wrapper](#wrappers) writes its
   own rules to; it is read as it is, since a pull request of the target cannot edit it.
+- **A rule sees only its language's extensions.** ast-grep picks a file's language by extension, so
+  a `language: Tsx` rule covers `.tsx` files only, never `.ts`, and finds nothing there without a
+  word. A rule meant for both is written once per language, or its directory maps more extensions to
+  its language with an `sgconfig.yml` at the directory's root, of which the gate reads one key,
+  `languageGlobs`, in ast-grep's own format:
+
+  ```yaml
+  # .vibe-verifier-rules/sgconfig.yml
+  languageGlobs:
+    tsx: ['*.ts']
+  ```
+
+  Each rule directory and pack runs as an ast-grep project of its own, its rule tests included, so a
+  mapping applies to its own directory's rules and to no one else's: once `*.ts` is tsx there, that
+  directory's `language: TypeScript` rules no longer see `.ts` files, while a TypeScript rule in
+  another directory or pack still does. Two directories can therefore map one extension differently
+  without either being picked over the other. The mapping is base-controlled: the base's
+  `sgconfig.yml` applies even when the branch edits or removes it, and one the branch adds applies
+  once it merges, because a mapping can narrow what rules see. An `sgconfig.yml` the gate cannot
+  read, or a language ast-grep does not know, is exit 2. Since the projects are separate, a rule id
+  may appear in only one directory of a run (exit 2 naming both), and a rule's tests count only from
+  its own directory's `tests/`.
 - Each finding prints `path:line`, the rule id, the message and, when the rule has one, its note.
-- The gate builds its own ast-grep project around the rules, so a repository's `sgconfig.yml` is not
-  read: shared utility rules go in each rule's `utils:`, and `utilDirs` and custom languages are not
-  available. A line can opt out with ast-grep's `// ast-grep-ignore: <rule-id>` comment,
+- Of a rule directory's `sgconfig.yml` only `languageGlobs` is read; the gate writes the rest of each
+  project itself. Shared utility rules go in each rule's `utils:`, and `utilDirs` and custom
+  languages are not available. A line can opt out with ast-grep's `// ast-grep-ignore: <rule-id>` comment,
   head-controlled and visible in the diff like the other tools' escape hatches. ast-grep's report of
   an unused suppression is off: a repository that also runs ast-grep for its own rules suppresses
   rules this gate never loads.

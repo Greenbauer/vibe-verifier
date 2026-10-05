@@ -51,7 +51,7 @@ class FakeAPI:
 def endpoints():
     return {
         "suites": f"repos/{REPO}/commits/{SHA}/check-suites?per_page=100",
-        "checks": f"repos/{REPO}/check-suites/7/check-runs?per_page=100&filter=latest",
+        "checks": f"repos/{REPO}/commits/{SHA}/check-runs?per_page=100&filter=latest",
         "status": f"repos/{REPO}/commits/{SHA}/status",
         "runs": f"repos/{REPO}/actions/runs?head_sha={SHA}&per_page=100",
         "jobs2": f"repos/{REPO}/actions/runs/11/attempts/2/jobs?per_page=100",
@@ -185,17 +185,30 @@ class CurrentHeadJoin(unittest.TestCase):
         api.item_values[paths["suites"]] += [{"id": 8, "head_sha": SHA}, {"id": 9, "head_sha": SHA}]
         check = {"name": "test", "status": "completed", "app": {"id": 15368, "name": "GitHub Actions"},
                  "started_at": "2026-09-30T14:41:00Z", "completed_at": "2026-09-30T14:42:00Z"}
-        api.item_values[paths["checks"]].append({**check, "id": 31, "check_suite": {"id": 7},
-                                                 "status": "in_progress", "completed_at": None})
-        api.item_values[paths["checks"].replace("/7/", "/8/")] = [
-            {**check, "id": 32, "conclusion": "failure", "check_suite": {"id": 8}}]
-        api.item_values[paths["checks"].replace("/7/", "/9/")] = [
+        api.item_values[paths["checks"]] += [
+            {**check, "id": 31, "check_suite": {"id": 7}, "status": "in_progress", "completed_at": None},
+            {**check, "id": 32, "conclusion": "failure", "check_suite": {"id": 8}},
             {**check, "id": 33, "conclusion": "success", "check_suite": {"id": 9}}]
         result = GitHubCollector(config(), api, clock=lambda: NOW)._pull(REPO, pull_row(), {"subscription": "subscribed"})
         self.assertEqual(sorted(run["id"] for run in result["runs"]), [11, 13])
         self.assertEqual(sorted(row["id"] for row in result["checks"] if row["name"] == "test"), [31, 33])
         summary = [run["step_summary"] for run in result["runs"] if run["id"] == 11][0]
         self.assertEqual((summary["completed"], summary["total"]), (3, 4))
+        self.assertEqual(sum("/check-runs" in call[1] for call in api.calls), 1)
+
+    def test_check_runs_come_from_one_head_listing_and_only_from_this_heads_suites(self):
+        api = joined_api()
+        paths = endpoints()
+        api.item_values[paths["suites"]] += [{"id": 8, "head_sha": SHA}, {"id": 9, "head_sha": "other"}]
+        check = {"status": "completed", "conclusion": "success", "app": {"id": 40, "name": "Example checks"},
+                 "started_at": "2026-09-30T14:52:00Z", "completed_at": "2026-09-30T14:53:00Z"}
+        api.item_values[paths["checks"]] += [{**check, "id": 92, "name": "Second suite", "check_suite": {"id": 8}},
+                                             {**check, "id": 93, "name": "Other head", "check_suite": {"id": 9}},
+                                             {**check, "id": 94, "name": "Unlisted suite", "check_suite": {"id": 10}}]
+        checks, suites = GitHubCollector(config(), api, clock=lambda: NOW)._check_runs(REPO, SHA)
+        self.assertEqual(sorted(row["id"] for row in checks), [91, 92])
+        self.assertEqual(suites, {7, 8})
+        self.assertEqual([call[1] for call in api.calls if "/check-runs" in call[1]], [paths["checks"]])
 
 
 HISTORY = "orgs/octocat/rulesets/5/history"
@@ -388,16 +401,47 @@ class ApiTransport(unittest.TestCase):
         self.assertNotIn("secret", str(caught.exception))
         self.assertEqual(api.backoff_until, 160)
 
-    def test_exhausted_hourly_limit_backs_off_until_the_reported_reset(self):
+    def test_a_spent_hourly_counter_pauses_only_its_endpoint_family_until_the_reported_reset(self):
+        # GitHub meters some endpoint families against a separate counter (seen 2026-10-05: attempt
+        # jobs spent while pull requests had thousands left), so one family must not stop the rest.
+        now, commands = [100], []
+
         def runner(command, **kwargs):
-            return subprocess.CompletedProcess(command, 1, http(403, "{}", extra=(
-                "X-Ratelimit-Remaining: 0", "X-Ratelimit-Reset: 700")), "gh: API rate limit exceeded for user ID 1.")
-        api = GitHubAPI(runner=runner, clock=lambda: 100)
+            commands.append(command[3])
+            if "/attempts/" in command[3]:
+                return subprocess.CompletedProcess(command, 1, http(403, "{}", extra=(
+                    "X-Ratelimit-Remaining: 0", "X-Ratelimit-Reset: 700")), "gh: API rate limit exceeded for user ID 1.")
+            return subprocess.CompletedProcess(command, 0, http(200, "{}", extra=("X-Ratelimit-Remaining: 3370",)), "")
+        api = GitHubAPI(runner=runner, clock=lambda: now[0])
+        api.begin()
         with self.assertRaisesRegex(ApiError, "rate_limited"):
-            api.one("repos/o/r/pulls/1")
-        self.assertEqual(api.backoff_until, 700)
+            api.one("repos/o/r/actions/runs/1/attempts/1/jobs")
+        self.assertEqual(api.one("repos/o/r/pulls/1"), {})
         with self.assertRaisesRegex(ApiError, "rate_limited"):
-            api.begin()
+            api.one("repos/o/other/actions/runs/2/attempts/3/jobs")
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(api.backoff_until, 0)
+        api.begin()
+        self.assertEqual(api.lowest_remaining, None)
+        now[0] = 700
+        api.begin()
+        with self.assertRaisesRegex(ApiError, "rate_limited"):
+            api.one("repos/o/r/actions/runs/1/attempts/1/jobs")
+        self.assertEqual(len(commands), 3)
+
+    def test_the_lowest_remaining_count_on_any_response_is_reported(self):
+        answers = [(0, http(200, "{}", extra=("X-Ratelimit-Remaining: 3370",)), ""),
+                   (1, http(403, "{}", extra=("X-Ratelimit-Remaining: 0", "X-Ratelimit-Reset: 700")),
+                    "gh: API rate limit exceeded"),
+                   (0, http(200, "{}", extra=("X-Ratelimit-Remaining: 3369",)), "")]
+        api = GitHubAPI(runner=lambda command, **kwargs: subprocess.CompletedProcess(command, *answers.pop(0)),
+                        clock=lambda: 100)
+        api.begin()
+        api.one("repos/o/r/pulls/1")
+        with self.assertRaises(ApiError):
+            api.one("repos/o/r/actions/workflows")
+        api.one("repos/o/r/pulls/2")
+        self.assertEqual(api.lowest_remaining, 0)
 
     def test_request_budget_is_a_hard_bound(self):
         api = GitHubAPI(max_calls=0)

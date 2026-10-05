@@ -283,8 +283,10 @@ resolution is not duplicated here. Bot roles sharing a workflow share collection
 history is inspected until the newest five outcomes are known or coverage is explicitly partial.
 A refresh is capped at 200 REST page requests that cost rate limit; an unchanged answer (HTTP 304) is free
 and not counted. Active data is cached for 60
-seconds and direct subscription inventory for 300 seconds. The response includes calls used and the
-reported REST limit/remaining/reset values. Rate limits and source errors return partial or briefly
+seconds and direct subscription inventory for 300 seconds. The response includes calls used, the
+reported REST limit/remaining/reset values, and the lowest remaining count seen on any response
+(`lowest_remaining`; GitHub meters some endpoint families against a separate counter that the reported
+values omit). A spent counter pauses only its endpoint family until its reset. Rate limits and source errors return partial or briefly
 stale data without advancing its successful sample timestamp. Authentication or access revocation
 clears derived repository data immediately; transient stale data expires after three minutes.
 

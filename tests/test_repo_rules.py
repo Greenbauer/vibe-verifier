@@ -185,7 +185,7 @@ class RuleRequirements(unittest.TestCase):
     def test_a_failing_rule_test_cannot_run_and_names_the_rule(self):
         error = self.cannot_run({".vibe-verifier-rules/r.yml": RULE,
                                  ".vibe-verifier-rules/tests/t.yml": TEST.replace('console.log("ready")', 'log.warn("ready")')})
-        self.assertIn("the rule tests do not pass", error)
+        self.assertIn("the rule tests of .vibe-verifier-rules/ do not pass", error)
         self.assertIn("FAIL no-console-log", error)
 
     def test_a_rule_ast_grep_cannot_parse_cannot_run_and_names_the_file(self):
@@ -205,7 +205,7 @@ class RuleRequirements(unittest.TestCase):
         self.assertIn("--rules lint/rules holds no rule files", self.cannot_run({}, "--rules", "lint/rules"))
         self.assertIn("no catalog pack 'nope' (packs: example", self.cannot_run({}, "--pack", "nope"))
         self.assertIn("no catalog pack '../rules'", self.cannot_run({}, "--pack", "../rules"))
-        self.assertIn("holds no rules, only tests", self.cannot_run({".vibe-verifier-rules/tests/t.yml": TEST}))
+        self.assertIn(".vibe-verifier-rules/ holds no rules", self.cannot_run({".vibe-verifier-rules/tests/t.yml": TEST}))
 
     def test_flow_style_quoted_and_multi_document_rule_files_are_read(self):
         second = 'id: "no-alert"\nlanguage: TypeScript\nmessage: "Show a toast instead of alert()."\nrule: {pattern: alert($$$A)}\n'
@@ -215,6 +215,89 @@ class RuleRequirements(unittest.TestCase):
         result, findings = run(repo, "--rules", "lint")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual([(f["path"], f["line"], f["message"].split(":")[0]) for f in findings], [("src/b.ts", 1, "no-alert")])
+
+
+EFFECT = """id: no-raw-effect
+language: Tsx
+message: Call `useMountEffect` from src/hooks instead of useEffect.
+rule:
+  pattern: useEffect($$$ARGS)
+"""
+EFFECT_TEST = "id: no-raw-effect\nvalid:\n  - useMountEffect(load)\ninvalid:\n  - useEffect(load)\n"
+TS_AS_TSX = "# only languageGlobs is read\nruleDirs: [elsewhere]\nlanguageGlobs:\n  tsx: ['*.ts']\n"
+EFFECTS = {".vibe-verifier-rules/no-raw-effect.yml": EFFECT, ".vibe-verifier-rules/tests/no-raw-effect-test.yml": EFFECT_TEST}
+HOOK = "export function useData() {\n  useEffect(load)\n}\n"
+
+
+class LanguageGlobs(unittest.TestCase):
+    """A tsx rule sees only .tsx files unless its directory's sgconfig.yml maps more extensions to tsx."""
+
+    def replay(self, files, change):
+        repo = make_repo(self, dict({"src/a.tsx": "export const a = 1\n", ".vibe-verifier": "repo-rules\n"}, **files))
+        base = rev(repo)
+        change(repo)
+        return runner("run", "--repo", repo, "--manifest", str(Path(repo, ".vibe-verifier")), "--base-ref", base)
+
+    def test_a_tsx_rule_finds_a_ts_violation_through_the_runner_only_when_its_directory_maps_ts(self):
+        mapped = self.replay(dict(EFFECTS, **{".vibe-verifier-rules/sgconfig.yml": TS_AS_TSX}), lambda r: commit(r, {"src/hook.ts": HOOK}))
+        self.assertEqual(mapped.returncode, 1, mapped.stdout + mapped.stderr)
+        self.assertIn("repo-rules: src/hook.ts:2: no-raw-effect: Call `useMountEffect`", mapped.stdout)
+        unmapped = self.replay(EFFECTS, lambda r: commit(r, {"src/hook.ts": HOOK}))
+        self.assertEqual(unmapped.returncode, 0, unmapped.stdout + unmapped.stderr)  # documented: tsx covers .tsx only
+
+    def test_the_base_mapping_wins_over_a_branch_that_removes_or_adds_one(self):
+        def remove(repo):
+            Path(repo, ".vibe-verifier-rules/sgconfig.yml").unlink()
+            commit(repo, {"src/hook.ts": HOOK})
+        removed = self.replay(dict(EFFECTS, **{".vibe-verifier-rules/sgconfig.yml": TS_AS_TSX}), remove)
+        self.assertEqual(removed.returncode, 1, removed.stdout + removed.stderr)
+        self.assertIn("src/hook.ts:2: no-raw-effect", removed.stdout)
+        self.assertIn(".vibe-verifier-rules/sgconfig.yml is judged as it is at", removed.stderr)
+        added = self.replay(EFFECTS, lambda r: commit(r, {".vibe-verifier-rules/sgconfig.yml": TS_AS_TSX, "src/hook.ts": HOOK}))
+        self.assertEqual(added.returncode, 0, added.stdout + added.stderr)  # it applies once it merges
+        self.assertIn(".vibe-verifier-rules/sgconfig.yml is judged as it is at", added.stderr)
+
+    def test_each_directory_keeps_its_own_mapping_so_none_is_picked_silently(self):
+        # Under one shared mapping, `*.ts` as tsx would hide every .ts file from lint/'s TypeScript rule.
+        repo = make_repo(self, dict(EFFECTS, **{".vibe-verifier-rules/sgconfig.yml": TS_AS_TSX,
+                                                "lint/no-console-log.yml": RULE, "lint/tests/no-console-log-test.yml": TEST,
+                                                "src/a.ts": "export const a = 1\n"}))
+        commit(repo, {"src/x.ts": "useEffect(load)\n" + LOG})
+        result, findings = run(repo, "--rules", ".vibe-verifier-rules", "--rules", "lint")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual([(f["line"], f["message"].split(":")[0]) for f in findings], [(1, "no-raw-effect"), (2, "no-console-log")])
+
+    def test_rule_tests_run_under_the_mapping_and_a_bad_mapping_cannot_run(self):
+        repo = make_repo(self, dict(EFFECTS, **{".vibe-verifier-rules/sgconfig.yml": "languageGlobs:\n  klingon: ['*.ts']\n"}))
+        commit(repo, {"src/hook.ts": HOOK})
+        result = gate("repo-rules", repo, "--base-ref", "HEAD~1")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("the rule tests of .vibe-verifier-rules/ do not pass", result.stderr)
+        self.assertIn("klingon", result.stderr)
+
+    def test_an_unreadable_sgconfig_cannot_run(self):
+        repo = make_repo(self, dict(EFFECTS, **{".vibe-verifier-rules/sgconfig.yml": "{languageGlobs: {tsx: ['*.ts']}}\n"}))
+        commit(repo, {"src/hook.ts": HOOK})
+        result = gate("repo-rules", repo, "--base-ref", "HEAD~1")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn(".vibe-verifier-rules/sgconfig.yml cannot be read", result.stderr)
+
+
+class Directories(unittest.TestCase):
+    def test_one_rule_id_in_two_directories_cannot_run(self):
+        repo = make_repo(self, dict(RULES, **{"lint/no-console-log.yml": RULE, "lint/tests/t.yml": TEST, "src/a.ts": "x\n"}))
+        commit(repo, {"src/b.ts": LOG})
+        result = gate("repo-rules", repo, "--base-ref", "HEAD~1", "--rules", ".vibe-verifier-rules", "--rules", "lint")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("rule no-console-log is defined in both .vibe-verifier-rules/no-console-log.yml and lint/no-console-log.yml", result.stderr)
+
+    def test_a_test_counts_only_for_a_rule_of_its_own_directory(self):
+        repo = make_repo(self, {".vibe-verifier-rules/no-console-log.yml": RULE, "lint/tests/no-console-log-test.yml": TEST,
+                                "lint/other.yml": EFFECT, "lint/tests/other.yml": EFFECT_TEST, "src/a.ts": "x\n"})
+        commit(repo, {"src/b.ts": LOG})
+        result = gate("repo-rules", repo, "--base-ref", "HEAD~1", "--rules", ".vibe-verifier-rules", "--rules", "lint")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("rule no-console-log (.vibe-verifier-rules/no-console-log.yml) has 0 valid and 0 invalid", result.stderr)
 
 
 class Packs(unittest.TestCase):
