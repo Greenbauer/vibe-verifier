@@ -8,17 +8,21 @@ The static view adapts the compact layout, CSS structure, and pure interaction p
 operator-approved local dashboard prototype dated 2026-09-30. Its synthetic preview records were not
 copied into the live dashboard. Live mode has no built-in data.
 
-## Refresh behavior
+## Navigation, back/forward, and refresh
 
-Refreshing restores the current view, selected pull request, search and repository filters,
-subscription/attention filters, and selected bot. A saved PR stays selected while
-GitHub data loads; an unavailable PR shows an explanation and a way back instead of silently
-switching views. Verify these behaviors with populated browser refreshes and the view-state tests.
+The current view lives in the URL hash: `#/prs`, `#/usage`, `#/capacity`, or
+`#/pr/<owner>/<repo>/<number>` for one pull request. Every view change adds a browser history
+entry, so the back and forward buttons move between views, and refreshing or opening a copied link
+lands on the same view. A selected PR stays selected while GitHub data loads; an unavailable PR
+shows an explanation and a way back instead of silently switching views. An empty or unknown hash
+shows pull requests and is rewritten to `#/prs` in place. The hash never reaches the server.
 
-These navigation preferences are created and updated in the current tab's session storage,
-scoped to the configured owner. They contain no API data or credentials, are read only by that
-dashboard origin, and disappear when the browser ends the tab session. If storage is unavailable
-or a saved value is invalid, the dashboard remains usable with defaults. No server write is added.
+The search and repository filters, subscription/attention filters, and selected bot are kept in
+the current tab's session storage, scoped to the configured owner, and restored on refresh. They
+contain no API data or credentials, are read only by that dashboard origin, and disappear when the
+browser ends the tab session. If storage is unavailable or a saved value is invalid, the dashboard
+remains usable with defaults. No server write is added. `tests/test_dashboard_view_state.py`
+covers the routes, history, and storage.
 
 ## Start it
 
@@ -201,6 +205,16 @@ the newest copy of each job and check counts toward step totals and attention.
 It re-reads the PR head after collection; a race drops the collected evidence instead of attaching
 it to the new revision. Commit statuses and third-party checks remain separate evidence rows.
 
+GitHub lists a check the base branch's rulesets require as "Expected" without creating a check run
+for it, so the dashboard reads the rules for each pull request's base branch and adds an expected
+row for every required status check that has not reported and every required workflow that has not
+run on the head. A required workflow runs at the SHA its ruleset pinned when the run was triggered,
+so after the pin moves GitHub waits for a new run. The dashboard reads the ruleset's version history
+once per pin to learn when the current pin took effect, and a run created before then does not
+count. An expected row keeps the pull request pending, flags it for attention, and keeps its step
+total unknown. Reading an organization ruleset's history needs organization admin access; without
+it the pull request's evidence is reported unavailable. Classic branch protection is not read.
+
 Direct manifest or workflow evidence reports `subscribed`. An installation subscribed only through
 an organization wrapper or ruleset reports `unknown` in this pilot, not `false`; wrapper/ruleset
 resolution is not duplicated here. Bot roles sharing a workflow share collection. Active runs are collected independently of history;
@@ -212,6 +226,9 @@ stale data without advancing its successful sample timestamp. Authentication or 
 clears derived repository data immediately; transient stale data expires after three minutes.
 
 The dashboard shows source-proven failures, cancellations, waiting jobs, and current elapsed times.
+The pull request list groups pull requests by repository. A repository with no open pull request
+that matches the filters gets no group. Groups are ordered by their most recently updated pull
+request, newest first; within a group the newest pull request is first and the oldest is last.
 A pull request's badge shows its worst current-head check. A skipped check never outranks a passed
 one, so the badge reads Skipped only when every check was skipped.
 Elapsed time alone never asserts that a job is stuck. The Actions timeline uses shared wall-clock
@@ -235,7 +252,8 @@ zero steps; a job that has not started yet keeps its run's step total unknown.
 
 `tests/test_dashboard_config_telemetry.py` covers owner isolation, two instances, mixed telemetry,
 quota pace, stale sections, and 16-lane on-demand capacity. `tests/test_dashboard_github.py` covers
-current-head suite/run/attempt joins, race handling, status/step categories, pagination, rate limits,
+current-head suite/run/attempt joins, race handling, expected required checks and stale workflow pins,
+status/step categories, pagination, rate limits,
 and subscription uncertainty. `test_dashboard_bot_history.py` covers bounded history and workflow
 discovery; `test_dashboard_service.py` covers source timestamps and refresh caching.
 `test_dashboard_live_service.py` covers independently aging quota/history and revocation during

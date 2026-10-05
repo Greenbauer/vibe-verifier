@@ -1,10 +1,10 @@
 (function () {
   "use strict";
   const { BOT_META, element: el, link, duration, since, formatTime, bytes, badge,
-    diskUsage, flattenPulls, filterPulls, stepTotals, combinedCategory, currentWork } = VV;
+    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, currentWork } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
-  const state = VV.restoreViewState(null);
+  const state = { ...VV.restoreViewState(null), ...VV.parseRoute(location.hash) };
   let snapshot = null;
   let loading = false;
 
@@ -15,8 +15,29 @@
 
   function rememberView() {
     if (!snapshot) return;
-    try { sessionStorage.setItem(`vv-dashboard-view:${snapshot.owner}`, JSON.stringify(state)); }
+    const { view, selected, ...preferences } = state;
+    try { sessionStorage.setItem(`vv-dashboard-view:${snapshot.owner}`, JSON.stringify(preferences)); }
     catch (_) { /* Navigation still works when storage is unavailable. */ }
+  }
+
+  // Every view change sets the URL hash, which adds a history entry; hashchange then draws it.
+  // Back and forward fire the same event, so they draw through the same path.
+  function go(view, selected = null) {
+    const hash = VV.routeHash({ view, selected });
+    if (location.hash !== hash) location.hash = hash;
+    else show();
+  }
+
+  // An empty or unknown hash shows pull requests; rewrite it in place so the address names that view.
+  function replaceUnknownHash() {
+    const hash = VV.routeHash(state);
+    if (location.hash !== hash) history.replaceState(null, "", hash);
+  }
+
+  function show() {
+    Object.assign(state, VV.parseRoute(location.hash));
+    replaceUnknownHash();
+    render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0);
   }
 
   function announce(message) { announcement.textContent = message; }
@@ -62,7 +83,7 @@
         class: `bot-pill${recent[0]?.category === "failed" ? " has-failure" : ""}`,
         title: value.source || "Agent data unavailable",
         "aria-label": `${meta.name}: ${value.state || "unknown"}. Open usage and recent outcomes`,
-        onclick: () => { state.view = "usage"; state.selected = null; state.failureBot = role; render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0); }
+        onclick: () => { state.failureBot = role; go("usage"); }
       });
       button.style.setProperty("--bot", meta.color);
       const dots = el("span", { class: "run-dots", "aria-label": recent.length ? "Newest first completed outcomes" : "No completed outcomes in two hours" });
@@ -116,21 +137,30 @@
       rows.append(snapshot.github.refreshing && !snapshot.github.sampled_at ? empty("Loading pull requests", "Reading selected repositories from GitHub.") : empty("No matching pull requests", "Change a filter or wait for the next successful GitHub sample."));
       return;
     }
-    pulls.forEach(pull => {
-      const category = combinedCategory(pull);
-      const work = currentWork(pull);
-      const button = el("button", { class: "pr-row", onclick: () => {
-        state.selected = `${pull.repository}#${pull.number}`; render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0);
-      }, "aria-label": `Open ${pull.repository} pull request ${pull.number}: ${pull.title}` },
-      el("span", { class: "pr-identity" }, el("b", {}, pull.title),
-        el("small", {}, `${pull.repository.split("/")[1]} #${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
-      el("span", { class: "pr-work" }, badge(category), el("small", {}, pull.attention_reason)),
-      progress(pull),
-      el("span", { class: "pr-age" }, el("b", {}, since(pull.created_at, Date.now())), el("small", {}, work ? `${work.name} · ${duration(work.elapsed)}` : "PR age")),
-      el("span", { class: "chevron", "aria-hidden": "true" }, "›"));
-      if (pull.stale) button.classList.add("stale-row");
-      rows.append(button);
+    groupPulls(pulls).forEach(group => {
+      const list = el("div", { class: "pr-list" });
+      group.pulls.forEach(pull => list.append(prRow(pull)));
+      const name = group.repository.split("/")[1];
+      rows.append(el("section", { class: "pr-group", "aria-label": `${name} pull requests` },
+        el("h2", { class: "pr-group-title" }, name, el("small", {},
+          `${group.pulls.length} open · ${Number.isFinite(group.activity) ? `last activity ${duration(Math.max(0, (Date.now() - group.activity) / 1000))} ago` : "last activity unavailable"}`)),
+        list));
     });
+  }
+
+  function prRow(pull) {
+    const category = combinedCategory(pull);
+    const work = currentWork(pull);
+    const button = el("button", { class: "pr-row", onclick: () => go("prs", `${pull.repository}#${pull.number}`),
+    "aria-label": `Open ${pull.repository} pull request ${pull.number}: ${pull.title}` },
+    el("span", { class: "pr-identity" }, el("b", {}, pull.title),
+      el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
+    el("span", { class: "pr-work" }, badge(category), el("small", {}, pull.attention_reason)),
+    progress(pull),
+    el("span", { class: "pr-age" }, el("b", {}, since(pull.created_at, Date.now())), el("small", {}, work ? `${work.name} · ${duration(work.elapsed)}` : "PR age")),
+    el("span", { class: "chevron", "aria-hidden": "true" }, "›"));
+    if (pull.stale) button.classList.add("stale-row");
+    return button;
   }
 
   function renderPulls() {
@@ -139,7 +169,7 @@
     content.replaceChildren(heading("Pull requests", "Open pull requests and current-head evidence from selected repositories."),
       coverage(), prFilters(pulls), el("div", { class: "list-heading" }, el("span", { id: "pr-count" }),
         el("span", {}, "Current work"), el("span", {}, "Steps"), el("span", {}, "Age")),
-      el("div", { id: "pr-rows", class: "pr-list" }));
+      el("div", { id: "pr-rows", class: "pr-groups" }));
     renderPrRows();
   }
 
@@ -177,7 +207,7 @@
 
   function renderDetail() {
     const pull = flattenPulls(snapshot).find(item => `${item.repository}#${item.number}` === state.selected);
-    const back = el("button", { class: "back", onclick: () => { state.selected = null; render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0); } }, "‹ Pull requests");
+    const back = el("button", { class: "back", onclick: () => go("prs") }, "‹ Pull requests");
     if (!pull) {
       content.replaceChildren(back, empty(snapshot.github.refreshing ? "Loading pull request" : "Pull request unavailable",
         "The selected pull request is not in the current sample. It will appear when available, or you can return to the list."));
@@ -186,7 +216,7 @@
     const header = el("div", { class: "detail-heading" }, el("div", {}, el("h1", {}, pull.title),
       el("p", { class: "muted" }, `${pull.repository} #${pull.number} · current head ${pull.head_sha ? pull.head_sha.slice(0, 12) : "changed"}`)),
       link("Open pull request on GitHub", pull.html_url, snapshot.owner, "primary-link"));
-    const evidence = [...(pull.checks || []), ...(pull.statuses || [])];
+    const evidence = [...(pull.expected || []), ...(pull.checks || []), ...(pull.statuses || [])];
     const checks = el("section", { class: "panel" }, el("h2", {}, "Current-head checks"), progress(pull));
     evidence.forEach(row => checks.append(checkRow(row)));
     if (!evidence.length) checks.append(el("p", { class: "muted" }, "No current-head check evidence is available."));
@@ -334,6 +364,8 @@
     else if (state.view === "capacity") renderCapacity();
     else renderPulls();
     rememberView();
+    const title = state.selected || { prs: "Pull requests", usage: "Bot usage", capacity: "Capacity" }[state.view];
+    document.title = `${title} · Vibe Verifier`;
     announce(`Showing ${state.selected ? "pull request detail" : state.view}`);
   }
 
@@ -363,9 +395,9 @@
     } finally { loading = false; }
   }
 
-  document.querySelectorAll(".sidebar button").forEach(button => button.addEventListener("click", () => {
-    state.view = button.dataset.view; state.selected = null; render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0);
-  }));
+  document.querySelectorAll(".sidebar button").forEach(button => button.addEventListener("click", () => go(button.dataset.view)));
+  replaceUnknownHash();
+  window.addEventListener("hashchange", show);
   window.addEventListener("pagehide", rememberView);
   load();
   window.setInterval(load, 30000);
