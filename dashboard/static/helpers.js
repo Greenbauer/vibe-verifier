@@ -128,7 +128,8 @@
 
   function stepTotals(pull) {
     const summaries = (pull.runs || []).map(run => run.step_summary);
-    if (!summaries.length || summaries.some(summary => !summary || !summary.known)) {
+    // A required workflow that has not started yet has no step count, so the total stays unknown.
+    if (!summaries.length || (pull.expected || []).length || summaries.some(summary => !summary || !summary.known)) {
       return { known: false, completed: null, total: null, remaining: null };
     }
     return summaries.reduce((total, summary) => ({
@@ -142,7 +143,7 @@
   function combinedCategory(pull) {
     // A skipped check is not a result, so it never outranks a pass; "skipped" shows only when every check skipped.
     const order = ["failed", "cancelled", "pending", "unknown", "success", "skipped"];
-    const categories = [...(pull.checks || []), ...(pull.statuses || [])].map(row => row.category);
+    const categories = [...(pull.checks || []), ...(pull.statuses || []), ...(pull.expected || [])].map(row => row.category);
     return order.find(value => categories.includes(value)) || "unknown";
   }
 

@@ -199,6 +199,16 @@ suite ID, selects the greatest run attempt for each run ID, and loads jobs from 
 It re-reads the PR head after collection; a race drops the collected evidence instead of attaching
 it to the new revision. Commit statuses and third-party checks remain separate evidence rows.
 
+GitHub lists a check the base branch's rulesets require as "Expected" without creating a check run
+for it, so the dashboard reads the rules for each pull request's base branch and adds an expected
+row for every required status check that has not reported and every required workflow that has not
+run on the head. A required workflow runs at the SHA its ruleset pinned when the run was triggered,
+so after the pin moves GitHub waits for a new run. The dashboard reads the ruleset's version history
+once per pin to learn when the current pin took effect, and a run created before then does not
+count. An expected row keeps the pull request pending, flags it for attention, and keeps its step
+total unknown. Reading an organization ruleset's history needs organization admin access; without
+it the pull request's evidence is reported unavailable. Classic branch protection is not read.
+
 Direct manifest or workflow evidence reports `subscribed`. An installation subscribed only through
 an organization wrapper or ruleset reports `unknown` in this pilot, not `false`; wrapper/ruleset
 resolution is not duplicated here. Bot roles sharing a workflow share collection. Active runs are collected independently of history;
@@ -233,7 +243,8 @@ zero steps; a job that has not started yet keeps its run's step total unknown.
 
 `tests/test_dashboard_config_telemetry.py` covers owner isolation, two instances, mixed telemetry,
 quota pace, stale sections, and 16-lane on-demand capacity. `tests/test_dashboard_github.py` covers
-current-head suite/run/attempt joins, race handling, status/step categories, pagination, rate limits,
+current-head suite/run/attempt joins, race handling, expected required checks and stale workflow pins,
+status/step categories, pagination, rate limits,
 and subscription uncertainty. `test_dashboard_bot_history.py` covers bounded history and workflow
 discovery; `test_dashboard_service.py` covers source timestamps and refresh caching.
 `test_dashboard_live_service.py` covers independently aging quota/history and revocation during
