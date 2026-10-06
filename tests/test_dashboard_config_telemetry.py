@@ -197,6 +197,8 @@ class TelemetryContract(unittest.TestCase):
         result = self.load(value)
         self.assertTrue(result["capacity"]["stale"])
         self.assertEqual(result["capacity"]["sampled_at"], iso(NOW - timedelta(minutes=6)))
+        self.assertEqual(result["capacity"]["lanes"][0]["state"], "busy")
+        self.assertEqual(result["capacity"]["lanes"][0]["job"]["name"], "test")
 
 
 if __name__ == "__main__":

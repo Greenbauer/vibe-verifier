@@ -60,15 +60,17 @@ class CollectorIntegration(unittest.TestCase):
         self.assertEqual([window['name'] for window in accounts[0]['quota_windows']], ['7 days', '5 hours'])
         self.assertEqual(accounts[1]['quota_windows'][0]['name'], '1 day')
 
-    def test_stale_snapshot_never_claims_slots_are_ready(self):
+    def test_stale_snapshot_keeps_the_last_lanes_and_marks_them_stale(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'telemetry.json'
             refresh(config(), path, fetch=lambda *_: {'host': remote_host(), 'quota': {'status': 'ok', 'rate_limits': quota()}}, now=STAMP)
             selected = Config('example-ci', ('example-ci/repo',), {}, path)
             parsed = read_telemetry(selected, NOW + timedelta(minutes=6))
             self.assertTrue(parsed['capacity']['stale'])
-            self.assertTrue(all(row['state'] == 'unknown' for row in parsed['capacity']['lanes']))
-            self.assertFalse(parsed['bots']['available'])
+            self.assertTrue(parsed['capacity']['lanes'])
+            self.assertTrue(all(row['state'] == 'provisionable' for row in parsed['capacity']['lanes']))
+            self.assertTrue(parsed['bots']['stale'])
+            self.assertEqual(parsed['bots']['states'][0]['state'], 'idle')
             self.assertEqual(parsed['capacity']['sampled_at'], STAMP)
             value = json.loads(path.read_text()); value['owner'] = 'other'
             path.write_text(json.dumps(value))

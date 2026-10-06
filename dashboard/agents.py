@@ -22,8 +22,8 @@ def agent_view(config, github, telemetry, now):
                        coverage=source.get("coverage", row["coverage"]), source="CI workflow activity")
         elif agent.id in runtime:
             source = runtime[agent.id]
-            row.update(state="unknown" if observed.get("stale") else source["state"],
-                       source="Agent runtime", coverage={"history": "stale" if observed.get("stale") else "complete"})
+            row.update(state=source["state"], source="Agent runtime",
+                       coverage={"history": "stale" if observed.get("stale") else "complete"})
             history = sorted(source["runs"], key=lambda run: run["completed_at"], reverse=True)
             for key, hours in (("recent_2h", 2), ("recent_7d", 168)):
                 row[key] = [run for run in history if timedelta(0) <= now - parse_time(run["completed_at"]) <= timedelta(hours=hours)][:5]

@@ -53,7 +53,9 @@ class AgentIdentities(unittest.TestCase):
         self.assertEqual(agent_view(config, {}, {}, NOW)["rows"][0]["state"], "unknown")
         runtime = _agents(self.runtime(), config, NOW + timedelta(minutes=6))
         self.assertTrue(runtime["stale"])
-        self.assertEqual(agent_view(config, {}, {"available": True, "agents": runtime}, NOW)["rows"][0]["state"], "unknown")
+        row = agent_view(config, {}, {"available": True, "agents": runtime}, NOW)["rows"][0]
+        self.assertEqual(row["state"], "paused")
+        self.assertEqual(row["coverage"]["history"], "stale")
         raw = self.runtime()
         raw["rows"][0]["id"] = "foreign-agent"
         with self.assertRaises(TelemetryError):
