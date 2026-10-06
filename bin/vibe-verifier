@@ -73,11 +73,23 @@ workflow step can run a pinned toolchain the same way a gate does. Exit 2 when t
 toolchain or the install fails.
 
 `criteria <file> [--changed-files FILE]` reads a PR body (or any criteria document) with the
-acceptance-verdict grammar and prints one line: `none: <reason>` when it needs no browser check,
-else `criteria: <n>`. It needs none when it declares `- None: <why>`, or, given the pull request's
+acceptance-verdict grammar. Its first line is `none: <reason>` when it needs no browser check, else
+`criteria: <n>`. It needs none when it declares `- None: <why>`, or, given the pull request's
 changed paths one per line, when it lists no criteria and every path is CI configuration or
 documentation no site renders. A harness uses it to skip work, so the decision is made by the same
-code in the job that explores and the job that judges. Exit 2 when a file cannot be read.
+code in the job that explores and the job that judges. After `criteria: <n>` it prints one line per
+annotation a criterion carries (`AC2 references: home-desktop`, `AC3 roles: admin, read-only`,
+`AC4 malformed: [ref: ]`), read the way the acceptance-verdict gate reads them. Exit 2 when a file
+cannot be read.
+
+`qae-inputs [--references DIR] [--evidence DIR] [--listing FILE] [--digests FILE]` prepares what the
+QAE explorer and its gates read from the site step's supplies, before the explorer runs. Each design
+reference `<key>.png` the site step wrote to DIR (default qae-inputs/references) is copied to
+`<evidence>/references/<key>.png` (default qae-artifacts), listed with its size in FILE (default
+qae-inputs/references.md) for the explorer, and its sha256 written to the digests file as one JSON
+object, which the workflow declares as an output so the gate judges the image the workflow supplied
+and never one the explorer wrote. It prints `references: <n>` and one `<key>: <width>x<height>` line
+each. Exit 2 when a supplied file is not a PNG or its name is not a reference key.
 
 `features --manifest FILE --changed-files FILE [--out DIR]` reads the manifest's acceptance-verdict
 line (judged from the base, like a run) and, when it has `--features`, prints which features of that
@@ -116,7 +128,8 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATES = os.path.join(ROOT, "gates")
 sys.path.insert(0, GATES)
-from _acceptance import PASS_RE, check_lines, criteria as read_criteria, not_required  # noqa: E402
+from _acceptance import (PASS_RE, REFERENCE_KEY, annotations, check_lines, criteria as read_criteria,  # noqa: E402
+                         not_required, png_size)
 from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
 from _features import add_selection_arguments, describe, selection  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
@@ -892,7 +905,47 @@ def criteria_command(args):
     except OSError as error:
         return fail("could not read %s" % error)
     reason = not_required(text, changed)
-    print("none: %s" % reason if reason else "criteria: %d" % len(read_criteria(text)))
+    if reason:
+        print("none: %s" % reason)
+        return 0
+    wanted = read_criteria(text)
+    print("criteria: %d" % len(wanted))
+    for item, wording in wanted:
+        notes = annotations(wording)
+        for label, values in (("references", notes.references), ("roles", notes.roles), ("malformed", notes.malformed)):
+            if values:
+                print("%s %s: %s" % (item, label, ", ".join(values)))
+    return 0
+
+
+def qae_inputs_command(args):
+    """Copy each supplied design reference into the evidence, list it for the explorer, declare its digest."""
+    names = sorted(os.listdir(args.references)) if os.path.isdir(args.references) else []
+    images = [name for name in names if name.endswith(".png")]
+    found = {}
+    for name in images:
+        path = os.path.join(args.references, name)
+        size = png_size(path) if REFERENCE_KEY.match(name[:-4]) else None
+        if not size:
+            return fail("%s is not a PNG named <key>.png (a key is letters, digits, - and _)" % path)
+        found[name[:-4]] = (path, size)
+    digests = {}
+    if found:
+        os.makedirs(os.path.join(args.evidence, "references"), exist_ok=True)
+        listing = ["# Design references", "",
+                   "The workflow supplied these images. A criterion naming `[ref: <key>]` is compared with the "
+                   "image of that key, at its width.", ""]
+        for key, (path, (width, height)) in sorted(found.items()):
+            shutil.copyfile(path, os.path.join(args.evidence, "references", key + ".png"))
+            with open(path, "rb") as handle:
+                digests[key] = hashlib.sha256(handle.read()).hexdigest()
+            listing.append("- %s: %s, %d pixels wide (%d x %d)" % (key, path, width, width, height))
+        with open(args.listing, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(listing) + "\n")
+    if args.digests:
+        with open(args.digests, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(digests, sort_keys=True) + "\n")
+    print("\n".join(["references: %d" % len(found)] + ["%s: %dx%d" % (key, *size) for key, (_, size) in sorted(found.items())]))
     return 0
 
 
@@ -1050,6 +1103,15 @@ def main():
     reader = commands.add_parser("criteria", help="read a criteria document: prints `none: <reason>` or `criteria: <n>`")
     reader.add_argument("file", help="the PR body or criteria document")
     reader.add_argument("--changed-files", metavar="FILE", help="the pull request's changed paths, one per line")
+    inputs = commands.add_parser("qae-inputs", help="copy the site step's design references into the QAE evidence, "
+                                 "list them for the explorer and write their digests")
+    inputs.add_argument("--references", default="qae-inputs/references", metavar="DIR",
+                        help="where the site step wrote <key>.png (default: qae-inputs/references)")
+    inputs.add_argument("--evidence", default="qae-artifacts", metavar="DIR",
+                        help="the explorer's artifact directory; copies go to its references/ (default: qae-artifacts)")
+    inputs.add_argument("--listing", default="qae-inputs/references.md", metavar="FILE",
+                        help="the list the explorer reads (default: qae-inputs/references.md)")
+    inputs.add_argument("--digests", metavar="FILE", help="write {key: sha256} here, one JSON object")
     rewalk = commands.add_parser("features", help="the features a pull request's changed paths touch, by the selection "
                                  "on the manifest's acceptance-verdict line: prints `features: <n>`")
     rewalk.add_argument("--manifest", default=".vibe-verifier-qae")
@@ -1084,6 +1146,8 @@ def main():
         return criteria_command(args)
     if args.command == "features":
         return features_command(args)
+    if args.command == "qae-inputs":
+        return qae_inputs_command(args)
     if args.command == "qa-review":
         return qa_review_command(args)
     if args.command == "tool":

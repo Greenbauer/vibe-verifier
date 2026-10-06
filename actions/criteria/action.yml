@@ -33,8 +33,10 @@ runs:
         if [ -n "$VV_CHANGED" ]; then args+=(--changed-files "$VV_CHANGED"); fi
         out=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}")
         echo "$out"
-        case "$out" in
-          none:*)     echo "count=0" >> "$GITHUB_OUTPUT"; echo "declared-none=${out#none: }" >> "$GITHUB_OUTPUT" ;;
-          criteria:*) echo "count=${out#criteria: }" >> "$GITHUB_OUTPUT"; echo "declared-none=" >> "$GITHUB_OUTPUT" ;;
-          *) echo "::error::unexpected output from vibe-verifier criteria: $out"; exit 2 ;;
+        # The first line decides; the lines after it name each criterion's annotations, for the log.
+        first=${out%%$'\n'*}
+        case "$first" in
+          none:*)     echo "count=0" >> "$GITHUB_OUTPUT"; echo "declared-none=${first#none: }" >> "$GITHUB_OUTPUT" ;;
+          criteria:*) echo "count=${first#criteria: }" >> "$GITHUB_OUTPUT"; echo "declared-none=" >> "$GITHUB_OUTPUT" ;;
+          *) echo "::error::unexpected output from vibe-verifier criteria: $first"; exit 2 ;;
         esac

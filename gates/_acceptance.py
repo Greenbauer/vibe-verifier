@@ -1,4 +1,4 @@
-"""The acceptance-verdict grammar: criteria, check lines, and evidence anchors.
+"""The acceptance-verdict grammar: criteria, their annotations, check lines, and evidence anchors.
 
 Adapted from the grammar a private predecessor's QAE bots write verdicts in (2026-09). Kept: the PASS token, the marker-line form, and
 the two anchor forms. Dropped: the looser "substantive" and "resolvable token" bars that the
@@ -12,9 +12,14 @@ and an anchor is either `<path>::<test title>`, whose title must appear verbatim
 `<path>:<line>` / `<path>:<start>-<end>`, which must lie inside the file. An anchor names WHERE the
 proof is; a bare file name does not, because a file exists whether or not the assertion cited
 exists inside it.
+
+A criterion's own text may carry annotations a QAE run is held to (harnesses/qae/README.md):
+`[ref: <key>]` names a design reference the workflow supplies, and `[as: <role>, <role>]` the roles
+to walk the criterion as.
 """
 import os
 import re
+import struct
 from typing import NamedTuple
 
 FILE_EXT = r"[cm]?tsx?|[cm]?jsx?|css|scss|html|svelte|vue|astro|md|ya?ml|sql|json|sh|py"
@@ -88,6 +93,44 @@ def declares_none(text):
         return None
     match = NONE_ITEM.match(items[0][1])
     return match.group("reason") if match else None
+
+
+# `[ref: home-desktop]` and `[as: admin, read-only]` inside a criterion's text, each a comma list. A
+# reference key is the file stem of qae-inputs/references/<key>.png. A role is what a step line names
+# after "as" and before a colon, so it holds no colon, comma or bracket. A bracket that starts like an
+# annotation and does not parse is malformed, never skipped: a typo must not drop a requirement silently.
+ANNOTATION = re.compile(r"\[[ \t]*(?P<kind>ref|as)[ \t]*:(?P<value>[^\]]*)\]", re.IGNORECASE)
+REFERENCE_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+ROLE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]*$")
+
+
+class Annotations(NamedTuple):
+    references: list  # reference keys, in written order, deduplicated
+    roles: list       # role names, the same
+    malformed: list   # each bracket that starts like an annotation and does not parse, as written
+
+
+def annotations(wording):
+    """The annotations in one criterion's text."""
+    found = Annotations([], [], [])
+    for match in ANNOTATION.finditer(wording):
+        kind = match.group("kind").casefold()
+        grammar, into = (REFERENCE_KEY, found.references) if kind == "ref" else (ROLE_NAME, found.roles)
+        items = [item.strip() for item in match.group("value").split(",")]
+        if not all(grammar.match(item) for item in items):
+            found.malformed.append(match.group(0))
+            continue
+        into.extend(item for item in dict.fromkeys(items) if item not in into)
+    return found
+
+
+def png_size(path):
+    """(width, height) from a PNG file's header, or None when the file is not a PNG."""
+    with open(path, "rb") as handle:
+        head = handle.read(24)
+    if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return None
+    return struct.unpack(">II", head[16:24])
 
 
 # Paths no browser can see: CI configuration, this catalog's manifests, and documentation a site does
