@@ -81,7 +81,9 @@ jobs:
           if [ -n "$LAST" ] && git cat-file -e "${LAST}^{commit}" 2>/dev/null && git merge-base --is-ancestor "$LAST" HEAD 2>/dev/null; then
             PR_FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD")
             CHANGED=$(git diff --name-only "${LAST}..HEAD")
-            FILES=$(comm -12 <(printf '%s\n' "$PR_FILES" | sort -u) <(printf '%s\n' "$CHANGED" | sort -u))
+            # Bytewise order. en_US.UTF-8 ignores the leading quote, so a C-quoted name sorts after
+            # app.js; C.UTF-8 (GitHub-hosted runners) sorts it first. comm must use that same order.
+            FILES=$(LC_ALL=C comm -12 <(printf '%s\n' "$PR_FILES" | LC_ALL=C sort -u) <(printf '%s\n' "$CHANGED" | LC_ALL=C sort -u))
             if [ -z "$FILES" ]; then
               mode="nochange"
             elif ! grep -qE '`|^EOF$' <<< "$FILES"; then
