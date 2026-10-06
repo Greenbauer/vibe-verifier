@@ -75,6 +75,15 @@ class QaReview(unittest.TestCase):
         self.assertIn("- AC1, explorer says PASS: The home page loads\n", body)
         self.assertIn("[The run and its evidence](%s)" % RUN, body)
 
+    def test_a_re_walked_feature_is_listed_as_the_explorer_judged_it(self):
+        # docs/feature-map.md: the explorer adds one regression-check line per feature it re-walked.
+        self.verdict = self.file("verdict.md", VERDICT + "regression-check: sign-in -- FAIL -- the dashboard never opened "
+                                                         "(qae/features/sign-in.md::step 1: signed in -> a blank page)\n")
+        body = self.posted(gates="failure")
+        self.assertIn("- AC2, explorer says FAIL: The menu opens\n- Feature `sign-in` re-walked, explorer says FAIL\n", body)
+        self.verdict = self.file("verdict.md", VERDICT)
+        self.assertNotIn("re-walked", self.posted(gates="failure"))
+
     def test_changes_needed_lists_each_criterion_as_the_explorer_judged_it(self):
         body = self.posted(gates="failure")
         self.assertEqual(body.splitlines()[1], "## QA review: changes needed ❌")

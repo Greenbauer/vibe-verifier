@@ -17,7 +17,8 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
                              without a manifest edit; a missing, empty or malformed file cannot run
 
 1. Every step in every step log has its screenshot: `qae/ACn.md` line `- step k:` needs a
-   non-empty `qae/ACn-step-k.png`. A step without a picture is a claim, not evidence.
+   non-empty `qae/ACn-step-k.png`. A step without a picture is a claim, not evidence. A feature
+   re-walk's log, `qae/features/<id>.md`, is held to the same rule (`qae/features/<id>-step-k.png`).
 2. The console holds no error outside the allowlist: every `[ERROR]` line in `console-*.log`.
 3. The session log exists (`session-*/session.md`, written by `--save-session`) and shows the
    browser was driven: at least one `browser_navigate` call.
@@ -71,17 +72,22 @@ def relative(path, root):
 
 
 def steps_have_screenshots(root):
-    findings = []
     logs = sorted(glob.glob(os.path.join(root, "qae", "AC*.md")))
     if not logs:
         return [Finding("no step logs under qae/ (the explorer writes one qae/ACn.md per criterion)")]
+    return screenshot_findings(root, logs + sorted(glob.glob(os.path.join(root, "qae", "features", "*.md"))))
+
+
+def screenshot_findings(root, logs):
+    """A finding per `- step k:` line whose `<log stem>-step-k.png` beside the log is missing or empty."""
+    findings = []
     for log in logs:
         stem = os.path.basename(log)[:-3]
         for line in read(log).splitlines():
             match = STEP_LINE.match(line)
             if not match:
                 continue
-            shot = os.path.join(root, "qae", "%s-step-%s.png" % (stem, match.group("k")))
+            shot = os.path.join(os.path.dirname(log), "%s-step-%s.png" % (stem, match.group("k")))
             if not os.path.isfile(shot) or os.path.getsize(shot) == 0:
                 findings.append(Finding("step %s has no screenshot (expected %s)" % (match.group("k"), relative(shot, root)), relative(log, root)))
     return findings
