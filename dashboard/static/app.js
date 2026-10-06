@@ -1,7 +1,7 @@
 (function () {
   "use strict";
   const { BOT_META, element: el, link, safeUrl, duration, since, formatTime, bytes, badge,
-    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterTone, currentWork } = VV;
+    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
   const state = { ...VV.restoreViewState(null), ...VV.parseRoute(location.hash) };
@@ -117,9 +117,11 @@
   function progress(pull) {
     const totals = stepTotals(pull);
     if (!totals.known) return el("div", { class: "progress-copy" }, el("b", {}, "Step total unavailable"), el("span", {}, "Progress is not shown as complete"));
-    const meter = el("div", { class: `step-meter tone-${meterTone(pull)}`, role: "progressbar", "aria-valuemin": 0,
-      "aria-valuemax": totals.total, "aria-valuenow": totals.completed });
-    meter.append(el("span", { style: `width:${totals.total ? totals.completed / totals.total * 100 : 0}%` }));
+    const meter = el("div", { class: "step-meter", role: "img", "aria-label": meterLabel(totals) });
+    meterSegments(totals).forEach(segment => meter.append(el("span", {
+      class: `seg-${segment.state}`, style: `flex:${segment.count} 1 0`, title: `${segment.count} ${segment.label}`,
+      "aria-hidden": "true"
+    })));
     return el("div", { class: "progress-copy" }, el("b", {}, `${totals.completed}/${totals.total} steps`),
       meter, el("span", {}, `${totals.remaining} remaining`));
   }
@@ -362,10 +364,15 @@
     } finally { loading = false; }
   }
 
+  // A load can make the server re-read GitHub, whose hourly budget the signed-in account shares with
+  // everything else it runs. A tab nobody can see skips its refresh and catches up when shown again.
+  function refreshIfVisible() { if (!document.hidden) load(); }
+
   document.querySelectorAll(".sidebar button").forEach(button => button.addEventListener("click", () => go(button.dataset.view)));
   replaceUnknownHash();
   window.addEventListener("hashchange", show);
   window.addEventListener("pagehide", rememberView);
   load();
-  window.setInterval(load, 30000);
+  window.setInterval(refreshIfVisible, 30000);
+  document.addEventListener("visibilitychange", refreshIfVisible);
 })();

@@ -94,6 +94,31 @@ console.log(JSON.stringify({clicked,renders,known,state,hash:location.hash,repla
         self.assertEqual(result['state'], {'view': 'prs'})
         self.assertEqual((result['hash'], result['replaced']), ('#/prs', ['#/prs']))
 
+    def test_hidden_tab_skips_timed_refresh_and_catches_up_when_shown(self):
+        # Runs the page's real start-up wiring with stand-ins for the browser, then fires the 30-second
+        # timer and visibility changes by hand.
+        result = self.node(r'''
+const fs=require('fs');
+const app=fs.readFileSync('./dashboard/static/app.js','utf8');
+const start=app.indexOf('  function refreshIfVisible(');
+const helper=app.slice(start,app.indexOf('  document.querySelectorAll(".sidebar button")',start));
+const wiring=app.slice(app.indexOf('  load();\n  window.setInterval('),app.lastIndexOf('})();'));
+let loads=0,timer=null,period=null;const listeners={};
+const document={hidden:false,addEventListener:(type,fn)=>{listeners[type]=fn;},querySelectorAll:()=>[]};
+const window={setInterval:(fn,ms)=>{timer=fn;period=ms;},addEventListener(){}};
+new Function('document','window','load','replaceUnknownHash','show','rememberView','go',helper+wiring)(
+  document,window,()=>loads++,()=>{},()=>{},()=>{},()=>{});
+const seen=[loads];
+timer(); seen.push(loads);
+document.hidden=true; timer(); timer(); seen.push(loads);
+listeners.visibilitychange(); seen.push(loads);
+document.hidden=false; listeners.visibilitychange(); seen.push(loads);
+console.log(JSON.stringify({seen,period}));
+''')
+        self.assertEqual(result['period'], 30000)
+        # Start-up loads once, a visible tick loads, hidden ticks and the hide event do not, showing
+        # the tab again loads at once.
+        self.assertEqual(result['seen'], [1, 2, 2, 2, 3])
 
 if __name__ == '__main__':
     unittest.main()

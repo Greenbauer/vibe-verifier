@@ -151,18 +151,32 @@
     return result.sort((a, b) => b.activity - a.activity || a.repository.localeCompare(b.repository));
   }
 
+  // GitHub's status ring draws one slice per outcome, sized by that outcome's share.
+  // The step line uses the same buckets, left to right: passed, pending, failed, then the gray ones.
+  const METER_STATES = ["success", "pending", "failed", "skipped", "cancelled", "unknown"];
+
+  function emptyStepCounts() {
+    return { success: 0, failed: 0, skipped: 0, cancelled: 0, pending: 0, unknown: 0 };
+  }
+
   function stepTotals(pull) {
     const summaries = (pull.runs || []).map(run => run.step_summary);
     // A required workflow that has not started yet has no step count, so the total stays unknown.
     if (!summaries.length || (pull.expected || []).length || summaries.some(summary => !summary || !summary.known)) {
-      return { known: false, completed: null, total: null, remaining: null };
+      return { known: false, completed: null, total: null, remaining: null, counts: null };
     }
-    return summaries.reduce((total, summary) => ({
-      known: true,
-      completed: total.completed + summary.completed,
-      total: total.total + summary.total,
-      remaining: total.remaining + summary.remaining
-    }), { known: true, completed: 0, total: 0, remaining: 0 });
+    return summaries.reduce((total, summary) => {
+      const counts = { ...total.counts };
+      const incoming = summary.counts || {};
+      METER_STATES.forEach(state => { counts[state] += Number(incoming[state]) || 0; });
+      return {
+        known: true,
+        completed: total.completed + summary.completed,
+        total: total.total + summary.total,
+        remaining: total.remaining + summary.remaining,
+        counts
+      };
+    }, { known: true, completed: 0, total: 0, remaining: 0, counts: emptyStepCounts() });
   }
 
   function combinedCategory(pull) {
@@ -172,13 +186,20 @@
     return order.find(value => categories.includes(value)) || "unknown";
   }
 
-  // The step meter counts steps that finished, not steps that passed, so its colour carries the verdict:
-  // red on any failure, yellow on any pending check, green only when every check passed, gray otherwise.
-  function meterTone(pull) {
-    const categories = [...(pull.checks || []), ...(pull.statuses || []), ...(pull.expected || [])].map(row => row.category);
-    if (categories.includes("failed")) return "failed";
-    if (categories.includes("pending")) return "pending";
-    return combinedCategory(pull) === "success" ? "success" : "neutral";
+  function meterSegments(totals) {
+    if (!totals || !totals.known || !totals.total || !totals.counts) return [];
+    return METER_STATES.flatMap(state => {
+      const count = Number(totals.counts[state]) || 0;
+      return count > 0 ? [{ state, count, label: STATUS_LABELS[state] }] : [];
+    });
+  }
+
+  function meterLabel(totals) {
+    const segments = meterSegments(totals);
+    if (!totals || !totals.known) return "Step total unavailable";
+    if (!segments.length) return `${totals.completed} of ${totals.total} steps`;
+    const parts = segments.map(segment => `${segment.count} ${segment.label.toLowerCase()}`);
+    return `${parts.join(", ")} of ${totals.total} steps`;
   }
 
   function currentWork(pull) {
@@ -193,6 +214,6 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, formatTime, bytes,
-    badge, diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterTone, currentWork, restoreViewState,
+    badge, diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork, restoreViewState,
     parseRoute, routeHash };
 });
