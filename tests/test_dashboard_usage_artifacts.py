@@ -110,7 +110,8 @@ class ArtifactCollection(unittest.TestCase):
         self.artifact.update(id=9, size_in_bytes=500, expired=False, created_at='2026-09-30T11:00:00Z')
         self.run['path'] = '.github/workflows/explore.yml'
         self.listing = {'total_count': 1, 'artifacts': [self.artifact]}
-        self.elapsed, self.downloads, self.revoked = 0, 0, False
+        self.elapsed, self.downloads, self.revoked, self.exhausted = 0, 0, False, False
+        self.more, self.pages_read = {}, []
         config = Config('example', (REPO,), {'explorer': BotDefinition('explore.yml', ('explore',))}, None)
         self.reader = UsageArtifacts(config, api=self, downloader=self.download, clock=lambda: self.elapsed)
 
@@ -120,8 +121,12 @@ class ArtifactCollection(unittest.TestCase):
     def one(self, endpoint):
         if self.revoked:
             raise ApiError('not_found')
-        if endpoint.endswith('actions/artifacts?per_page=100&page=1'):
-            return self.listing
+        if self.exhausted:
+            raise ApiError('request_budget_exhausted')
+        if '/actions/artifacts?per_page=100&page=' in endpoint:
+            number = int(endpoint.rsplit('=', 1)[1])
+            self.pages_read.append(number)
+            return self.listing if number == 1 else self.more.get(number, {'artifacts': []})
         self.assertEqual(endpoint, 'repos/example/site/actions/runs/42/attempts/1')
         return self.run
 
@@ -160,6 +165,43 @@ class ArtifactCollection(unittest.TestCase):
         self.assertEqual(result['samples'], [])
         self.assertEqual(result['accounts'], [])
         self.assertEqual(self.reader.cache, {})
+
+    def filler(self, created, count=100):
+        return [{'id': 1000 + index, 'name': 'build-output', 'expired': False, 'size_in_bytes': 10,
+                 'created_at': created} for index in range(count)]
+
+    def test_a_week_that_spills_onto_a_second_page_is_read_whole(self):
+        self.listing = {'total_count': 101, 'artifacts': self.filler('2026-09-30T11:30:00Z')}
+        self.more = {2: {'total_count': 101, 'artifacts': [self.artifact]}}
+        result = self.reader.collect(NOW)
+        self.assertEqual(self.pages_read, [1, 2])
+        self.assertEqual(result['samples'][0]['input_tokens'], 100)
+        self.assertFalse(result['partial'])
+
+    def test_a_page_that_reaches_past_the_week_ends_the_listing(self):
+        rows = self.filler('2026-09-30T11:30:00Z', 99) + [{**self.filler('2026-09-20T00:00:00Z', 1)[0], 'id': 5}]
+        self.listing = {'total_count': 300, 'artifacts': [self.artifact] + rows[1:]}
+        self.listing['artifacts'][-1]['created_at'] = '2026-09-20T00:00:00Z'
+        result = self.reader.collect(NOW)
+        self.assertEqual(self.pages_read, [1])
+        self.assertFalse(result['partial'])
+
+    def test_a_listing_longer_than_the_page_cap_is_partial(self):
+        self.listing = {'total_count': 900, 'artifacts': self.filler('2026-09-30T11:30:00Z')}
+        self.more = {n: {'artifacts': self.filler('2026-09-30T11:30:00Z')} for n in range(2, 10)}
+        self.assertTrue(self.reader.collect(NOW)['partial'])
+        self.assertEqual(self.pages_read, [1, 2, 3, 4, 5])
+
+    def test_a_spent_call_budget_keeps_the_history_already_read(self):
+        self.assertEqual(len(self.reader.collect(NOW)['samples']), 1)
+        self.elapsed, self.exhausted = 301, True
+        result = self.reader.collect(NOW)
+        self.assertTrue(result['partial'])
+        self.assertEqual(result['samples'][0]['input_tokens'], 100)
+        self.assertEqual(len(self.reader.cache), 1)
+        self.elapsed, self.exhausted = 602, False
+        self.assertFalse(self.reader.collect(NOW)['partial'])
+        self.assertEqual(self.downloads, 1)
 
 
 if __name__ == '__main__':

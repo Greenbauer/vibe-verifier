@@ -367,10 +367,15 @@ The server refreshes GitHub and usage sources in the background; the page retain
 and expanded job details during refresh. Numeric usage artifacts are read
 every five minutes through the current GitHub credentials, verified against their run/attempt/head
 and configured workflow, and parsed without extracting files or copying model content. Each scan
-reads at most the first 100 artifacts per selected repository and reports partial coverage when
-more exist. Captured token records expire after seven days and disappear when source artifacts
-are removed. Missing captures remain unavailable. Old runs cannot be backfilled. The deterministic
-QAE verification gate has no model-token usage and is shown only in PR progress. No quota is inferred from those token counts.
+pages through a repository's artifacts, newest first, until a page reaches past seven days, at most
+five pages (500 artifacts) per repository; a longer week reports partial coverage. Each scan has a
+budget of 80 GitHub calls. A scan that spends it keeps the records earlier scans read, reports
+partial coverage, and reads the rest on the next scan; only lost access clears them. Token history
+counts as stale after two missed scans (ten minutes), not during an ordinary refresh. Captured token
+records expire after seven days and disappear when source artifacts are removed. Missing captures
+remain unavailable. Old runs cannot be backfilled. The deterministic QAE verification gate has no
+model-token usage and is shown only in PR progress. The only use of these counts beyond the charts
+is sizing the plan's window for the pace line, described above; no price is inferred.
 
 ## Bot usage charts
 

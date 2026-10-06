@@ -102,7 +102,7 @@ class LiveComposition(unittest.TestCase):
         self.assertEqual(self.service._usage_next, 0)
 
     def test_fresh_quota_does_not_hide_stale_history_age(self):
-        observed = (NOW - timedelta(minutes=6)).isoformat()
+        observed = (NOW - timedelta(minutes=11)).isoformat()
         self.service._usage_running = True
         self.service._usage_result = {'available': True, 'sampled_at': observed, 'stale': False,
             'accounts': [], 'samples': [{'input_tokens': 123}], 'completeness': 'Captured.'}
@@ -116,7 +116,7 @@ class LiveComposition(unittest.TestCase):
         self.assertEqual(self.service._usage_result['sampled_at'], observed)
 
     def test_history_only_source_ages_without_a_refresh_and_boundary_stays_current(self):
-        for minutes, stale in [(5, False), (6, True)]:
+        for minutes, stale in [(10, False), (11, True)]:
             with self.subTest(minutes=minutes):
                 observed = (NOW - timedelta(minutes=minutes)).isoformat()
                 self.service._usage_result = {'available': True, 'sampled_at': observed, 'stale': False,
