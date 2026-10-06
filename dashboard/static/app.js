@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-  const { BOT_META, element: el, link, duration, since, formatTime, bytes, badge,
+  const { BOT_META, element: el, link, safeUrl, duration, since, formatTime, bytes, badge,
     diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
@@ -15,15 +15,15 @@
 
   function rememberView() {
     if (!snapshot) return;
-    const { view, selected, ...preferences } = state;
+    const { view, ...preferences } = state;
     try { sessionStorage.setItem(`vv-dashboard-view:${snapshot.owner}`, JSON.stringify(preferences)); }
     catch (_) { /* Navigation still works when storage is unavailable. */ }
   }
 
   // Every view change sets the URL hash, which adds a history entry; hashchange then draws it.
   // Back and forward fire the same event, so they draw through the same path.
-  function go(view, selected = null) {
-    const hash = VV.routeHash({ view, selected });
+  function go(view) {
+    const hash = VV.routeHash({ view });
     if (location.hash !== hash) location.hash = hash;
     else show();
   }
@@ -153,76 +153,27 @@
   function prRow(pull) {
     const category = combinedCategory(pull);
     const work = currentWork(pull);
-    const button = el("button", { class: "pr-row", onclick: () => go("prs", `${pull.repository}#${pull.number}`),
-    "aria-label": `Open ${pull.repository} pull request ${pull.number}: ${pull.title}` },
+    const href = safeUrl(pull.html_url, snapshot.owner);
+    return el(href ? "a" : "div", {
+      class: `pr-row${pull.stale ? " stale-row" : ""}`,
+      href, target: href ? "_blank" : null, rel: href ? "noreferrer" : null,
+      "aria-label": href ? `Open ${pull.repository} pull request ${pull.number} on GitHub: ${pull.title}` : null
+    },
     el("span", { class: "pr-identity" }, el("b", {}, pull.title),
       el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
     el("span", { class: "pr-work" }, badge(category), el("small", {}, pull.attention_reason)),
     progress(pull),
     el("span", { class: "pr-age" }, el("b", {}, since(pull.created_at, Date.now())), el("small", {}, work ? `${work.name} · ${duration(work.elapsed)}` : "PR age")),
     el("span", { class: "chevron", "aria-hidden": "true" }, "›"));
-    if (pull.stale) button.classList.add("stale-row");
-    return button;
   }
 
   function renderPulls() {
-    state.selected = null;
     const pulls = flattenPulls(snapshot);
     content.replaceChildren(heading("Pull requests", "Open pull requests and current-head evidence from selected repositories."),
       coverage(), prFilters(pulls), el("div", { class: "list-heading" }, el("span", { id: "pr-count" }),
         el("span", {}, "Current work"), el("span", {}, "Steps"), el("span", {}, "Age")),
       el("div", { id: "pr-rows", class: "pr-groups" }));
     renderPrRows();
-  }
-
-  function checkRow(row) {
-    return el("div", { class: "check-row" }, el("span", {}, el("b", {}, row.name), el("small", {}, row.provider)),
-      badge(row.category), el("span", { class: "mono" }, duration(row.elapsed_seconds)),
-      link("Original evidence", row.details_url, snapshot.owner));
-  }
-
-  function timeline(pull) {
-    const jobs = (pull.runs || []).flatMap(run => (run.jobs || []).map(job => ({ ...job, run })));
-    if (!jobs.length) return empty("Actions timing unavailable", "Third-party checks remain listed above. No joined Actions jobs were returned.");
-    const starts = jobs.map(job => Date.parse(job.started_at || job.created_at)).filter(Number.isFinite);
-    const ends = jobs.map(job => Date.parse(job.completed_at) || Date.now()).filter(Number.isFinite);
-    const start = Math.min(...starts), end = Math.max(...ends), span = Math.max(1, end - start);
-    const panel = el("section", { class: "panel" }, el("h2", {}, "Parallel job timeline"),
-      el("p", { class: "muted" }, "Bars share wall-clock time. Job durations are not summed."));
-    jobs.forEach(job => {
-      const began = Date.parse(job.started_at || job.created_at), finished = Date.parse(job.completed_at) || Date.now();
-      const bar = el("span", { class: `timeline-bar status-${job.category}` });
-      bar.style.left = `${Math.max(0, (began - start) / span * 100)}%`;
-      bar.style.width = `${Math.max(1, (finished - began) / span * 100)}%`;
-      const details = el("details", { class: "job-detail", "data-job-id": job.id },
-        el("summary", {}, el("span", {}, job.name), badge(job.category), el("span", { class: "mono" }, duration(job.elapsed_seconds))),
-        el("div", { class: "timeline-track" }, bar),
-        el("p", { class: "muted" }, `Created-to-start: ${duration(job.queue_seconds)} · run attempt ${job.run.attempt}`));
-      (job.steps || []).forEach(step => details.append(el("div", { class: "step-row" }, badge(step.category),
-        el("span", {}, step.name), el("span", { class: "mono" }, duration(step.elapsed_seconds)))));
-      const evidence = link("Open job on GitHub", job.html_url, snapshot.owner);
-      if (evidence) details.append(evidence);
-      panel.append(details);
-    });
-    return panel;
-  }
-
-  function renderDetail() {
-    const pull = flattenPulls(snapshot).find(item => `${item.repository}#${item.number}` === state.selected);
-    const back = el("button", { class: "back", onclick: () => go("prs") }, "‹ Pull requests");
-    if (!pull) {
-      content.replaceChildren(back, empty(snapshot.github.refreshing ? "Loading pull request" : "Pull request unavailable",
-        "The selected pull request is not in the current sample. It will appear when available, or you can return to the list."));
-      return;
-    }
-    const header = el("div", { class: "detail-heading" }, el("div", {}, el("h1", {}, pull.title),
-      el("p", { class: "muted" }, `${pull.repository} #${pull.number} · current head ${pull.head_sha ? pull.head_sha.slice(0, 12) : "changed"}`)),
-      link("Open pull request on GitHub", pull.html_url, snapshot.owner, "primary-link"));
-    const evidence = [...(pull.expected || []), ...(pull.checks || []), ...(pull.statuses || [])];
-    const checks = el("section", { class: "panel" }, el("h2", {}, "Current-head checks"), progress(pull));
-    evidence.forEach(row => checks.append(checkRow(row)));
-    if (!evidence.length) checks.append(el("p", { class: "muted" }, "No current-head check evidence is available."));
-    content.replaceChildren(back, header, sourceBanner(pull.attention_reason, pull.attention ? "warning" : ""), checks, timeline(pull));
   }
 
   function quota(account) {
@@ -380,14 +331,13 @@
   function render() {
     if (!snapshot) return;
     renderChrome();
-    if (state.selected) renderDetail();
-    else if (state.view === "usage") renderUsage();
+    if (state.view === "usage") renderUsage();
     else if (state.view === "capacity") renderCapacity();
     else renderPulls();
     rememberView();
-    const title = state.selected || { prs: "Pull requests", usage: "Bot usage", capacity: "Capacity" }[state.view];
+    const title = { prs: "Pull requests", usage: "Bot usage", capacity: "Capacity" }[state.view];
     document.title = `${title} · Vibe Verifier`;
-    announce(`Showing ${state.selected ? "pull request detail" : state.view}`);
+    announce(`Showing ${state.view}`);
   }
 
   async function load() {
@@ -399,12 +349,10 @@
       const next = await response.json();
       if (!snapshot) restoreView(next.owner);
       snapshot = next;
-      const openedJobs = [...content.querySelectorAll("details[open]")].map(item => item.dataset.jobId);
       const focused = document.activeElement;
       const filterId = ["pr-search", "repo-filter"].includes(focused?.id) ? focused.id : null;
       const selection = filterId === "pr-search" ? [focused.selectionStart, focused.selectionEnd] : null;
       render();
-      content.querySelectorAll("details[data-job-id]").forEach(item => { item.open = openedJobs.includes(item.dataset.jobId); });
       const replacement = filterId && document.getElementById(filterId);
       if (replacement) {
         replacement.focus({ preventScroll: true });
