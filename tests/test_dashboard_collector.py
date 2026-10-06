@@ -92,6 +92,39 @@ class RemoteSamplerTests(unittest.TestCase):
             with self.assertRaisesRegex(REMOTE.SampleError, "foreign_job_target"):
                 REMOTE.scan_slots("example-ci", "example-ci", 1, states, directory, ("ci",))
 
+    def test_an_organization_scope_job_names_only_the_owner_and_projects_without_a_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            job = Path(directory) / "example-ci" / "ci" / "1" / "job"
+            job.parent.mkdir(parents=True)
+            job.write_text("EXAMPLE-CI ci 2 5386 runner-ci-1\n")
+            states = {"example-ci-ci@1.service": {"ActiveState": "active", "SubState": "running"}}
+            occupied = REMOTE.scan_slots("example-ci", "example-ci", 1, states, directory, ("ci",))
+            self.assertEqual(occupied[0]["state"], "allocated")
+            self.assertIsNone(occupied[0]["target_repository"])
+            self.assertEqual(occupied[0]["runner_id"], 5386)
+            projected = COLLECTOR.project_host(remote_host(occupied), config())
+            self.assertIsNone(projected["slots"]["occupied"][0]["target_repository"])
+            job.write_text("different-owner ci 2 5386 runner-ci-1\n")
+            with self.assertRaisesRegex(REMOTE.SampleError, "foreign_job_target"):
+                REMOTE.scan_slots("example-ci", "example-ci", 1, states, directory, ("ci",))
+        for target in ("example-ci", "different-owner/repo", 7):
+            with self.subTest(target), self.assertRaises(ValueError):
+                COLLECTOR.project_host(remote_host([dict(occupied[0], target_repository=target)]), config())
+
+    def test_every_unknown_reason_the_sampler_reports_survives_projection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            unreadable = Path(directory) / "example-ci" / "ci" / "1" / "job"
+            unreadable.parent.mkdir(parents=True)
+            unreadable.write_text("not a job\n")
+            states = {"example-ci-ci@1.service": {"ActiveState": "active", "SubState": "running"},
+                      "example-ci-ci@2.service": {"ActiveState": "active", "SubState": "running"}}
+            occupied = REMOTE.scan_slots("example-ci", "example-ci", 3, states, directory, ("ci",))
+        self.assertEqual([row["reason"] for row in occupied],
+                         ["job_unreadable", "active_unit_without_job", "unit_state_unavailable"])
+        projected = COLLECTOR.project_host(remote_host(occupied), config())
+        self.assertEqual([row["reason"] for row in projected["slots"]["occupied"]],
+                         ["job_unreadable", "active_unit_without_job", "unit_state_unavailable"])
+
     def test_sixteen_candidate_units_still_use_one_combined_budget(self):
         with tempfile.TemporaryDirectory() as directory:
             states = {}
