@@ -369,6 +369,16 @@ place; see [Changed-code mutation](#changed-code-mutation)). A local package a l
 (`file:`), such as that stub, is copied into the cache with the lockfile and takes a new cache
 directory only when its version in the lockfile changes.
 
+### Python toolchains
+
+A tool that lives on PyPI is pinned by `tools/<name>/requirements.txt`: exact versions, and the
+sha256 of every wheel the index lists for them. It installs with `pip install --require-hashes
+--only-binary :all: --no-deps` into a venv in the cache, one directory per requirements digest and
+interpreter version (a compiled wheel is built for one CPython), so pip takes only a listed wheel and
+never builds from source. No `python3` with `venv` and `pip`, or an install that fails, is exit 2.
+The first is `tools/cognitive-complexity-python/` (complexipy, which measures Python files for
+`cognitive-complexity`; its `measure.py` runs under the venv's interpreter).
+
 ### Ratchets
 
 `cognitive-complexity` and `max-file-lines` judge the source files a pull request changed, against
@@ -382,7 +392,9 @@ audit or to decide a first subscription. `cognitive-complexity` runs eslint on i
 an empty suppressions file, so a repository's `eslint.config.*` and `eslint-suppressions.json`
 (eslint's bulk suppressions) are for its own lint and never reach the gate: a suppressed count is
 not the base the ratchet compares with, and entries for rules the gate does not run would
-otherwise fail every run as unused.
+otherwise fail every run as unused. Python files go to complexipy, whose `# noqa: complexipy` and
+`# complexipy: ignore` comments are neutralized before measuring for the same reason. Both gates
+measure JS, TS and Python files by default; `--source` narrows them.
 
 ### Changed-code mutation
 

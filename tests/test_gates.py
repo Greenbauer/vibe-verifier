@@ -164,6 +164,61 @@ class NewSourceHasTest(unittest.TestCase):
         self.assertNotIn("lib/b.ts", result.stdout)
 
 
+class NewPythonSourceHasTest(unittest.TestCase):
+    """Python's own layouts: pytest names in a tests/ directory, imports by dotted name (absolute,
+    from a src/ layout, or relative), and scripts a test runs by name."""
+
+    def on_branch(self, base_files, branch_files):
+        repo = make_repo(self, dict({"README.md": "x\n"}, **base_files))
+        git(repo, "checkout", "-q", "-b", "feat/x")
+        commit(repo, branch_files)
+        return repo
+
+    def test_an_untested_python_file_fails(self):
+        result = gate("new-source-has-test", self.on_branch({}, {"pkg/billing.py": "x = 1\n"}))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("pkg/billing.py", result.stdout)
+
+    def test_a_test_named_for_it_beside_it_or_under_tests_counts(self):
+        for test in ("pkg/test_billing.py", "pkg/billing_test.py", "tests/test_billing.py", "tests/unit/pkg/test_billing.py"):
+            repo = self.on_branch({}, {"pkg/billing.py": "x = 1\n", test: "def test_x(): pass\n"})
+            self.assertEqual(gate("new-source-has-test", repo).returncode, 0, test)
+
+    def test_a_same_named_test_somewhere_else_does_not_count(self):
+        repo = self.on_branch({}, {"pkg/billing.py": "x = 1\n", "other/test_billing.py": "def test_x(): pass\n"})
+        self.assertEqual(gate("new-source-has-test", repo).returncode, 1)
+
+    def test_a_test_that_imports_it_counts(self):
+        for imports in ("import pkg.billing\n", "from pkg import billing\n", "from pkg.billing import charge\n",
+                        "from billing import charge\n", "import app.pkg.billing as b\n"):
+            repo = self.on_branch({}, {"src/app/pkg/billing.py": "x = 1\n", "tests/test_payments.py": imports})
+            self.assertEqual(gate("new-source-has-test", repo).returncode, 0, imports)
+
+    def test_a_relative_import_resolves_against_the_test_files_package(self):
+        repo = self.on_branch({}, {"pkg/billing.py": "x = 1\n", "pkg/tests/test_money.py": "from ..billing import charge\n"})
+        self.assertEqual(gate("new-source-has-test", repo).returncode, 0)
+        repo = self.on_branch({}, {"pkg/billing.py": "x = 1\n", "pkg/tests/test_money.py": "from .billing import charge\n"})
+        self.assertEqual(gate("new-source-has-test", repo).returncode, 1)
+
+    def test_a_test_that_runs_it_as_a_script_counts(self):
+        for call in ('run([sys.executable, "scripts/sync_rates.py"])\n', 'path = ROOT / "sync_rates.py"\n', 'cli("sync-rates")\n'):
+            repo = self.on_branch({}, {"scripts/sync_rates.py": "x = 1\n", "tests/test_cli.py": call})
+            self.assertEqual(gate("new-source-has-test", repo).returncode, 0, call)
+
+    def test_an_unrelated_import_or_a_bare_word_does_not_count(self):
+        repo = self.on_branch({}, {"pkg/config.py": "x = 1\n", "pkg/rates.py": "y = 2\n",
+                                   "tests/test_rates.py": 'from pkg import rates\nkey = "config"\n'})
+        result = gate("new-source-has-test", repo)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("pkg/config.py", result.stdout)
+        self.assertNotIn("pkg/rates.py", result.stdout)
+
+    def test_package_markers_conftest_and_tests_are_not_source(self):
+        repo = self.on_branch({}, {"pkg/__init__.py": "", "tests/conftest.py": "x = 1\n", "setup.py": "x = 1\n",
+                                   "tests/test_nothing.py": "def test_x(): pass\n"})
+        self.assertEqual(gate("new-source-has-test", repo).returncode, 0)
+
+
 class BranchNameLength(unittest.TestCase):
     def test_over_and_under_budget(self):
         repo = make_repo(self, {"a.txt": "x"})

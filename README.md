@@ -129,7 +129,7 @@ Each gate is a command-line program that reads a working tree and its Git histor
 | Gate | What it catches |
 |---|---|
 | `gitleaks` | Secrets added in a pull request's commits |
-| `new-source-has-test` | New source files without a matching test filename or relative import from a test |
+| `new-source-has-test` | New source files without a matching test filename or an import from a test (Python: also a test that runs the script by name) |
 | `changed-code-mutation` | Changed lines the project's own tests do not notice being broken: [StrykerJS](https://stryker-mutator.io/) mutates only the lines a pull request added or modified, and the gate fails below a mutation score |
 | `actionlint` | Errors in changed GitHub Actions workflows |
 | `zizmor` | Security risks in changed workflows, such as unpinned actions and excessive permissions |
@@ -142,7 +142,7 @@ Each gate is a command-line program that reads a working tree and its Git histor
 
 `repo-rules` is how a repository writes its established patterns down as executable rules instead of prose: add `.vibe-verifier-rules/` with a rule and its test, then subscribe with a `repo-rules` line ([setup](docs/GATE-CONTRACT.md#repository-rules)). The prose follows the rules, not the other way round: `bin/vibe-verifier rules-doc` writes a generated block listing every rule with its message into a file such as `AGENTS.md`, and `repo-rules --doc AGENTS.md` fails a pull request whose block no longer matches the rule files. Two [agent skills](skills/README.md) for Claude Code and Cursor build on it: `follow-repo-rules` (read the block, run the gates before pushing, fix findings the way each message says) and `encode-a-lesson` (turn a mistake that happened twice into a type, a rule, a helper or a runtime check).
 
-The source-file gates focus on JavaScript and TypeScript by default. `new-source-has-test` looks for a matching test filename or relative import; it does not run tests or measure coverage, so a test that copies the code it covers or asserts nothing satisfies it. `changed-code-mutation` runs the tests: it changes the changed lines one small edit at a time and reports each edit no test failed on. It runs Vitest 2.x to 4.x projects only, needs the project's dependencies installed first, and does not see CSS, behavior only an end-to-end test reaches, or edits no test could tell apart from the original ([limits](docs/GATE-CONTRACT.md#changed-code-mutation)). Keep the project's existing build, test, lint, and security suites.
+`new-source-has-test`, `cognitive-complexity` and `max-file-lines` cover JavaScript, TypeScript and Python by default; `changed-code-mutation` covers JavaScript and TypeScript only. `new-source-has-test` looks for a matching test filename or an import; it does not run tests or measure coverage, so a test that copies the code it covers or asserts nothing satisfies it. `changed-code-mutation` runs the tests: it changes the changed lines one small edit at a time and reports each edit no test failed on. It runs Vitest 2.x to 4.x projects only, needs the project's dependencies installed first, and does not see CSS, behavior only an end-to-end test reaches, or edits no test could tell apart from the original ([limits](docs/GATE-CONTRACT.md#changed-code-mutation)). Keep the project's existing build, test, lint, and security suites.
 
 See the [gate contract](docs/GATE-CONTRACT.md) for options, comparison branches, exit codes, GitHub setup, wired-gate inputs, and extension rules.
 

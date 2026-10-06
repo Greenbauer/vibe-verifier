@@ -5,3 +5,6 @@ actionlint
 zizmor
 cognitive-complexity
 max-file-lines
+no-duplicate-package-json-keys
+build-tools-in-devdependencies
+new-source-has-test
