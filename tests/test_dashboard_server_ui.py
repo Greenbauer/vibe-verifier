@@ -361,6 +361,53 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
         self.assertEqual([(text(node).strip(), node["attrs"]["aria-pressed"]) for node in buttons],
                          [("SWE1", "false"), ("QAE1", "true")])
 
+    def test_pull_request_row_opens_github_instead_of_a_dashboard_page(self):
+        result = self.node(r'''
+const fs=require('fs');
+const {safeUrl}=require('./dashboard/static/helpers.js');
+const app=fs.readFileSync('./dashboard/static/app.js','utf8');
+const source=app.slice(app.indexOf('  function prRow('),app.indexOf('  function renderPulls('));
+function el(tag, attrs={}, ...children) {
+  return {tag, attrs, children:children.flat().filter(value => value !== null && value !== undefined)};
+}
+const prRow=new Function('el','safeUrl','snapshot','combinedCategory','currentWork','badge','progress','since',
+  source+'return prRow;')(el, safeUrl, {owner:'octocat'}, ()=>'failed', ()=>null,
+  status=>el('span',{},status), ()=>el('div',{class:'progress'}), ()=>'2d');
+const pull=(html_url, stale)=>({repository:'octocat/example',number:3,title:'Fix the gate',author:'octocat',
+  head_sha:'abcdef1234567890',html_url,attention_reason:'A current-head check failed',
+  created_at:'2026-10-01T00:00:00Z',stale});
+console.log(JSON.stringify({
+  linked:prRow(pull('https://github.com/octocat/example/pull/3', false)),
+  stale:prRow(pull('https://github.com/octocat/example/pull/3', true)),
+  foreign:prRow(pull('https://github.com/evil/example/pull/3', false)),
+  missing:prRow(pull(null, false)),
+  detail:app.includes('function renderDetail(')||app.includes('go("prs",')
+}));
+''')
+
+        def text(node):
+            if isinstance(node, str):
+                return node
+            return " ".join(text(child) for child in node.get("children", []))
+
+        linked = result["linked"]
+        self.assertEqual(linked["tag"], "a")
+        self.assertEqual(linked["attrs"]["href"], "https://github.com/octocat/example/pull/3")
+        self.assertEqual(linked["attrs"]["target"], "_blank")
+        self.assertEqual(linked["attrs"]["rel"], "noreferrer")
+        self.assertNotIn("onclick", linked["attrs"])
+        self.assertIn("on GitHub", linked["attrs"]["aria-label"])
+        self.assertIn("Fix the gate", text(linked))
+        self.assertEqual(result["stale"]["attrs"]["class"], "pr-row stale-row")
+        self.assertEqual(result["stale"]["attrs"]["href"], linked["attrs"]["href"])
+        for key in ("foreign", "missing"):
+            row = result[key]
+            self.assertEqual(row["tag"], "div")
+            self.assertIsNone(row["attrs"]["href"])
+            self.assertIsNone(row["attrs"]["aria-label"])
+            self.assertIn("Fix the gate", text(row))
+        self.assertFalse(result["detail"])
+
     def test_ui_uses_text_nodes_and_the_approved_local_palette(self):
         app = (ROOT / "dashboard/static/app.js").read_text()
         helpers = (ROOT / "dashboard/static/helpers.js").read_text()
