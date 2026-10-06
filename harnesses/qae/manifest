@@ -1,5 +1,7 @@
 # Gates the QAE verify job runs. Copy to the consumer as .vibe-verifier-qae. One per line: <gate> [args]
 # The three input files are written by the verify job before the gate runs; the artifacts come from the explore job.
+# To re-walk the features each pull request touches (docs/feature-map.md), add to it:
+#   --features docs/features --changed-files qae-inputs/changed-files
 acceptance-verdict --criteria qae-inputs/pr-body.md --verdict qae-inputs/verdict.md --artifacts qae-artifacts
 # The adjudicator: screenshots per step, console and network clean outside what this repo declares expected.
 # Declare only what is environmental (for example an analytics script that only exists on the host platform).

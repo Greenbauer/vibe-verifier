@@ -79,9 +79,13 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
+          # With the base: the feature selection below reads the QAE manifest and the feature map as the
+          # base has them, so a pull request cannot narrow its own re-walk.
+          fetch-depth: 0
           persist-credentials: false
       - name: Write the explorer's input
-        # The PR body the prompt points the explorer at. The criteria job already found a criterion in it.
+        # The PR body the prompt points the explorer at (the criteria job already found a criterion in
+        # it), and the changed paths the feature selection reads.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -90,6 +94,17 @@ jobs:
           set -euo pipefail
           mkdir -p qae-artifacts/qae qae-inputs
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
+          gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --paginate \
+            --jq '.[] | .filename, (.previous_filename // empty)' > qae-inputs/changed-files
+      - name: Select the features to re-walk
+        # Off unless the acceptance-verdict line in .vibe-verifier-qae has --features (docs/feature-map.md).
+        # Then each feature whose source globs match a changed path is copied to qae-inputs/features/<id>.md
+        # for the explorer to re-walk after the criteria: a path more than --shared-over features list
+        # counts for none, and at most --max-features are picked. The verify job's gate makes the same
+        # selection itself and requires one regression-check line per feature, so this step only informs.
+        uses: Greenbauer/vibe-verifier/actions/features@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
+        with:
+          changed-files: qae-inputs/changed-files
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '24'
@@ -144,10 +159,20 @@ jobs:
                note what you found on the step it belongs to. On every page you visit, read the browser
                console messages. When you finish a criterion, call browser_network_requests and
                browser_console_messages once more, so the record of what the site did is saved with the run.
-            3. Write qae-artifacts/verdict.md with exactly one line per criterion, nothing else:
+               If the directory qae-inputs/features/ exists, each <id>.md in it describes a feature this pull
+               request's changes touch. After the criteria, re-walk each one the same way: get there as its
+               Reach section says, then check what its Verify section says a user would see (its numbered
+               steps, and what each cited test title describes), first setting up whatever state a step
+               needs (who is signed in, which record exists). Its step log is qae-artifacts/qae/features/<id>.md
+               and each step's screenshot qae-artifacts/qae/features/<id>-step-k.png, under the same rules.
+            3. Write qae-artifacts/verdict.md with exactly one line per criterion, then one per re-walked
+               feature, nothing else:
                  acceptance-check: ACn -- PASS -- <one sentence> (qae/ACn.md::<the step line text that showed it, exactly as written after "- ">)
                or, when the criterion did not hold or you could not check it:
                  acceptance-check: ACn -- FAIL -- <what happened> (qae/ACn.md::<the step line text>)
+               and for each re-walked feature, FAIL when it no longer works the way its file describes:
+                 regression-check: <id> -- PASS -- <one sentence> (qae/features/<id>.md::<the step line text>)
+                 regression-check: <id> -- FAIL -- <what broke> (qae/features/<id>.md::<the step line text>)
                Never write PASS for anything you did not see in the browser. The text after :: must be
                copied verbatim from the step log line, because a gate checks that it is there.
             4. Post the verdict as a pull request comment, with exactly this command (no other form is allowed):

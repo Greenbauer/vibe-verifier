@@ -16,16 +16,19 @@ the template; the consumer owns each job's `runs-on` and how the site is built a
 [reachable preview](#a-reachable-preview-instead-of-a-site-on-the-runner) is used instead), and that
 step declares the site's URL as its `url` output. For a site behind a login, it writes
 `qae-inputs/site.md` in that same step to tell the explorer how to sign in and what state the site
-starts in (a throwaway account on a throwaway backend, never production). Its six catalog
-pins (`criteria@` in criteria, `qae-browser@` and `usage@` in explore, `criteria@`, `gates@` and
-`qa-review@` in verify) are inventoried and bumped by `consumers` and `apply-down` exactly like the stub's.
+starts in (a throwaway account on a throwaway backend, never production). Its seven catalog
+pins (`criteria@` in criteria, `features@`, `qae-browser@` and `usage@` in explore, `criteria@`,
+`gates@` and `qa-review@` in verify) are inventoried and bumped by `consumers` and `apply-down`
+exactly like the stub's.
 
 1. **criteria** reads the PR body and its changed paths with `actions/criteria`, on any runner: it
    holds no model login, checks out nothing and builds nothing. Its `count` output decides whether
    the explore job starts at all, so on the Codex lane a pull request with nothing to walk never
    queues for, or holds, the one runner with the login.
-2. **explore** runs only when the criteria job found a criterion. It builds and starts the PR's
-   site on the runner (or resolves its preview), installs the browser, and runs
+2. **explore** runs only when the criteria job found a criterion. It checks out the PR with its
+   base, picks the [features to re-walk](#re-walking-the-features-a-pull-request-touches) when that is
+   on, builds and starts the PR's site on the runner (or resolves its preview), installs the browser,
+   and runs
    `claude-code-action` with [`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) as its browser. The prompt
    ([`prompt.md`](prompt.md)) tells the model to walk each criterion under the PR body's
    `## Acceptance criteria` heading, append one line per action to `qae-artifacts/qae/ACn.md`
@@ -49,6 +52,29 @@ pins (`criteria@` in criteria, `qae-browser@` and `usage@` in explore, `criteria
    the manifest [`manifest`](manifest) (`.vibe-verifier-qae` in the consumer), unless the pull request
    needs no check ([below](#which-pull-requests-need-a-check)). Last, whatever happened before it,
    it posts or edits the [QA review comment](#the-qa-review-comment).
+
+## Re-walking the features a pull request touches
+
+Opt-in, for a repository with a [feature map](../../docs/feature-map.md): the explorer also re-walks
+each feature the pull request's changed paths touch, and the verify job requires a PASS for each.
+Turn it on by adding `--features docs/features --changed-files qae-inputs/changed-files` to the
+`acceptance-verdict` line of `.vibe-verifier-qae` (the line is judged from the base, so the next pull
+request is the first one re-walked). Without that, the explore job's `Select the features to re-walk`
+step selects nothing and nothing changes.
+
+- The explore job's step runs [`actions/features`](../../actions/features/action.yml): the features
+  whose own source globs match a changed path, a path more than `--shared-over` (default 2) features
+  list counting for none, at most `--max-features` (default 3), each feature judged by its file at
+  the base. It copies each to `qae-inputs/features/<id>.md`. The checkout has the base for this
+  (`fetch-depth: 0`).
+- The explorer re-walks each after the criteria, logs it to `qae/features/<id>.md` with a screenshot
+  per step, and adds `regression-check: <id> -- PASS|FAIL -- <sentence> (qae/features/<id>.md::<step>)`
+  to its verdict.
+- `acceptance-verdict` selects the features again itself and refuses a run unless each has exactly one
+  such line, a PASS whose anchor resolves; `qae-artifacts` checks the feature step logs' screenshots
+  like the criteria's; the review comment lists each re-walked feature.
+
+A wrapper passes its gate list to `actions/features` as `entries:`, as it does to `actions/gates`.
 
 ## Which pull requests need a check
 

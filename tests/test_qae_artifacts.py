@@ -68,6 +68,21 @@ class QaeArtifacts(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("step 2 has no screenshot (expected qae/AC1-step-2.png)", result.stdout)
 
+    def test_a_feature_re_walk_step_needs_its_screenshot_too(self):
+        # A re-walk (docs/feature-map.md) logs each feature under qae/features/, beside its screenshots.
+        write(self.root, {"qae/features/sign-in.md": "- step 1: signed in -> the dashboard\n- step 2: signed out -> the login page\n",
+                          "qae/features/sign-in-step-1.png": "png"})
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("qae/features/sign-in.md: step 2 has no screenshot (expected qae/features/sign-in-step-2.png)", result.stdout)
+        write(self.root, {"qae/features/sign-in-step-2.png": "png"})
+        self.assertEqual(self.run_gate().returncode, 0)
+
+    def test_feature_logs_do_not_stand_in_for_the_criteria_logs(self):
+        shutil.rmtree(os.path.join(self.root, "qae"))
+        write(self.root, {"qae/features/sign-in.md": "- step 1: signed in -> the dashboard\n", "qae/features/sign-in-step-1.png": "png"})
+        self.assertIn("no step logs under qae/", self.run_gate().stdout)
+
     def test_no_step_logs_fails(self):
         shutil.rmtree(os.path.join(self.root, "qae"))
         result = self.run_gate()
