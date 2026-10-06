@@ -365,7 +365,8 @@ configuration or captured telemetry. See [collection/cache behavior](dashboard-d
 [numeric usage artifact contract](USAGE-CONTRACT.md).
 
 The server refreshes GitHub and usage sources in the background; the page retains search focus
-and expanded job details during refresh. Numeric usage artifacts are read
+and expanded job details during refresh. The page asks for new data every 30 seconds while it is visible; a hidden
+tab skips those requests, so it spends no GitHub calls, and loads once when shown again. Numeric usage artifacts are read
 every five minutes through the current GitHub credentials, verified against their run/attempt/head
 and configured workflow, and parsed without extracting files or copying model content. Each scan
 pages through a repository's artifacts, newest first, until a page reaches past seven days, at most

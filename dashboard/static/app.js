@@ -416,10 +416,15 @@
     } finally { loading = false; }
   }
 
+  // A load can make the server re-read GitHub, whose hourly budget the signed-in account shares with
+  // everything else it runs. A tab nobody can see skips its refresh and catches up when shown again.
+  function refreshIfVisible() { if (!document.hidden) load(); }
+
   document.querySelectorAll(".sidebar button").forEach(button => button.addEventListener("click", () => go(button.dataset.view)));
   replaceUnknownHash();
   window.addEventListener("hashchange", show);
   window.addEventListener("pagehide", rememberView);
   load();
-  window.setInterval(load, 30000);
+  window.setInterval(refreshIfVisible, 30000);
+  document.addEventListener("visibilitychange", refreshIfVisible);
 })();
