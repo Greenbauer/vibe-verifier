@@ -17,9 +17,11 @@ would have caught both occurrences, in this order:
 
 Stop at the first that fits. The rest of this skill is for a rule (2 and 3).
 
-`<catalog>` is a clone of Vibe Verifier. `<dir>` is the rule directory: `.vibe-verifier-rules/` unless
-the manifest's `repo-rules` line passes `--rules DIR`. `<bad>` is the commit that introduced the
-mistake and `<fix>` the commit that fixed it.
+`<catalog>` is a clone of Vibe Verifier. `<manifest>` is the gate list: `.vibe-verifier` at the
+repository root, or, when a CI wrapper keeps the list instead, a temporary file holding the
+`repo-rules` line from the repository's `AGENTS.md` or `CLAUDE.md`. `<dir>` is the rule directory:
+`.vibe-verifier-rules/` unless the manifest's `repo-rules` line passes `--rules DIR`. `<bad>` is the
+commit that introduced the mistake and `<fix>` the commit that fixed it.
 
 ## Write the rule and its test
 
