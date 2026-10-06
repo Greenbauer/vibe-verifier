@@ -5,5 +5,11 @@
   "dependencies": {
     "@playwright/mcp": "0.0.81",
     "playwright": "1.64.0-alpha-2026-09-14"
+  },
+  "vibeVerifier": {
+    "allowInDependencies": {
+      "@playwright/mcp": "this package is the QAE harness's pinned browser toolchain: running it is its only job, installed by the harness's npm ci",
+      "playwright": "this package is the QAE harness's pinned browser toolchain: running it is its only job, installed by the harness's npm ci"
+    }
   }
 }

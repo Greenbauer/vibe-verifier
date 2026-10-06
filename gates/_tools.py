@@ -181,6 +181,41 @@ def ensure_node_tool(name):
     return target
 
 
+def ensure_python_tool(name):
+    """The interpreter of a venv holding the Python toolchain pinned by tools/<name>/requirements.txt.
+
+    Installed once per requirements digest and interpreter version (a compiled wheel is built for
+    one CPython) into the cache with `pip install --require-hashes --only-binary :all: --no-deps`, so
+    every package is a wheel whose sha256 the committed file lists, never a source build and never
+    what the index serves today. No python3 with venv and pip, or an install that fails, is CannotRun.
+    """
+    source = os.path.join(NODE_TOOLS, name, "requirements.txt")
+    with open(source, "rb") as handle:
+        digest = hashlib.sha256(handle.read()).hexdigest()[:12]
+    python = shutil.which("python3")
+    if not python:
+        raise CannotRun("%s needs python3 on PATH" % name)
+    version = subprocess.run([python, "-c", "import sys; print('%d%d' % sys.version_info[:2])"],
+                             capture_output=True, text=True).stdout.strip()
+    target = os.path.join(cache_dir(), "%s-%s-py%s" % (name, digest, version))
+    interpreter = os.path.join(target, "bin", "python")
+    if os.path.isfile(os.path.join(target, ".installed")):
+        return interpreter
+    shutil.rmtree(target, ignore_errors=True)  # a half-made venv from an install that failed
+    for step in ([python, "-m", "venv", target],
+                 [interpreter, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "--require-hashes",
+                  "--only-binary", ":all:", "--no-deps", "-r", source]):
+        try:
+            result = subprocess.run(step, capture_output=True, text=True)
+        except OSError as error:
+            raise CannotRun("installing %s failed: %s" % (name, error))
+        if result.returncode != 0:
+            raise CannotRun("installing %s failed (%s): %s" % (name, " ".join(step[1:4]),
+                                                             (result.stderr.strip() or "no output").splitlines()[-1]))
+    open(os.path.join(target, ".installed"), "w").close()
+    return interpreter
+
+
 def ensure(name):
     """The path of the pinned tool, resolving PATH, then the cache, then a verified download."""
     tool = TOOLS[name]
