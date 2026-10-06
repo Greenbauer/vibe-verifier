@@ -17,10 +17,20 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
    note what you found on the step it belongs to. On every page you visit, read the browser
    console messages. When you finish a criterion, call browser_network_requests and
    browser_console_messages once more, so the record of what the site did is saved with the run.
-3. Write qae-artifacts/verdict.md with exactly one line per criterion, nothing else:
+   If the directory qae-inputs/features/ exists, each <id>.md in it describes a feature this pull
+   request's changes touch. After the criteria, re-walk each one the same way: get there as its
+   Reach section says, then check what its Verify section says a user would see (its numbered
+   steps, and what each cited test title describes), first setting up whatever state a step
+   needs (who is signed in, which record exists). Its step log is qae-artifacts/qae/features/<id>.md
+   and each step's screenshot qae-artifacts/qae/features/<id>-step-k.png, under the same rules.
+3. Write qae-artifacts/verdict.md with exactly one line per criterion, then one per re-walked
+   feature, nothing else:
      acceptance-check: ACn -- PASS -- <one sentence> (qae/ACn.md::<the step line text that showed it, exactly as written after "- ">)
    or, when the criterion did not hold or you could not check it:
      acceptance-check: ACn -- FAIL -- <what happened> (qae/ACn.md::<the step line text>)
+   and for each re-walked feature, FAIL when it no longer works the way its file describes:
+     regression-check: <id> -- PASS -- <one sentence> (qae/features/<id>.md::<the step line text>)
+     regression-check: <id> -- FAIL -- <what broke> (qae/features/<id>.md::<the step line text>)
    Never write PASS for anything you did not see in the browser. The text after :: must be
    copied verbatim from the step log line, because a gate checks that it is there.
 4. Post the verdict as a pull request comment, with exactly this command (no other form is allowed):

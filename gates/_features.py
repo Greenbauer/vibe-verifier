@@ -16,13 +16,21 @@ in any order; others (a `## Sub-features` list, say) are allowed and not read:
 
 In Surfaces and Verify every top-level `- ` bullet must have one of the shapes above: a bullet that
 does not is malformed, never skipped, because a typo would otherwise drop a claim silently.
+
+`select` picks the features a pull request's changed files touch, for a QAE re-walk: the features
+whose own source globs match a changed file, ignoring a file so many features list that it says
+nothing about which one changed, best first, capped. The rule reads the map and nothing else (no
+history, no outcomes), and a feature file the base has selects by its base Surfaces, so a pull
+request cannot narrow its own re-walk by editing the map.
 """
 import os
 import posixpath
 import re
+import subprocess
+from typing import NamedTuple
 
 from _acceptance import parse_anchor
-from _contract import CannotRun
+from _contract import CannotRun, glob_to_regex, resolve_base
 
 SECTION = re.compile(r"^##[ \t]+(?P<name>\S.*?)[ \t]*$")
 SURFACE = re.compile(r"^- (?P<kind>[a-z][a-z0-9-]*): `(?P<value>[^`]+)`[ \t]*$")
@@ -113,3 +121,101 @@ def head_map(repo, directory, tracked):
         with open(os.path.join(repo, path), encoding="utf-8", errors="replace") as handle:
             features.append(parse(handle.read(), posixpath.basename(path)[:-3], path))
     return features
+
+
+def base_map(repo, directory, base):
+    """{id: Feature} for the map at the base commit; empty when the base has none."""
+    prefix = map_directory(directory) + "/"
+    listed = subprocess.run(["git", "-C", repo, "ls-tree", "-z", "--name-only", base, "--", prefix],
+                            capture_output=True, text=True)
+    if listed.returncode != 0:
+        raise CannotRun("git ls-tree %s %s failed: %s" % (base, prefix, listed.stderr.strip()))
+    features = {}
+    for path in feature_paths(directory, [p for p in listed.stdout.split("\0") if p]):
+        shown = subprocess.run(["git", "-C", repo, "show", "%s:%s" % (base, path)], capture_output=True, text=True)
+        if shown.returncode != 0:
+            raise CannotRun("git show %s:%s failed: %s" % (base, path, shown.stderr.strip()))
+        fid = posixpath.basename(path)[:-3]
+        features[fid] = parse(shown.stdout, fid, path)
+    return features
+
+
+class Selection(NamedTuple):
+    selected: list  # [(feature id, [changed paths it owns])], best first, at most the cap
+    dropped: list   # the same, for features over the cap
+    shared: list    # [(changed path, [ids of the features whose globs match it])], not counted
+
+
+def select(head, base, changed, cap, shared_over):
+    """The features `changed` touches. `head` is the map at the head ([Feature]); `base` the map at the
+    base ({id: Feature}), whose version of a feature, when it has one, supplies that feature's globs.
+
+    A changed path counts for every feature whose source globs match it, unless more than `shared_over`
+    features match it: then it is shared (a stylesheet, a router) and counts for none. Features rank by
+    how many counted paths they own, then by id, and the first `cap` are selected.
+    """
+    globs = {feature.id: [glob_to_regex(glob) for glob, _ in (base.get(feature.id) or feature).sources]
+             for feature in head}
+    owned, shared = {}, []
+    for path in dict.fromkeys(changed):
+        ids = listers(path, globs)
+        if len(ids) > shared_over:
+            shared.append((path, ids))
+            continue
+        for fid in ids:
+            owned.setdefault(fid, []).append(path)
+    ranked = sorted(owned, key=lambda fid: (-len(owned[fid]), fid))
+    return Selection([(fid, owned[fid]) for fid in ranked[:cap]], [(fid, owned[fid]) for fid in ranked[cap:]], shared)
+
+
+def listers(path, globs):
+    """The ids, sorted, of the features whose compiled globs match `path`."""
+    return [fid for fid in sorted(globs) if any(regex.match(path) for regex in globs[fid])]
+
+
+def add_selection_arguments(parser):
+    """The selection options, on acceptance-verdict's manifest line and read from it by
+    `vibe-verifier features`, so both apply one rule with one set of defaults."""
+    parser.add_argument("--features", metavar="DIR", default=None,
+                        help="the feature map; turns on the re-walk check (default: off)")
+    parser.add_argument("--changed-files", metavar="FILE", default=None,
+                        help="the pull request's changed paths, one per line (required with --features)")
+    parser.add_argument("--max-features", metavar="N", type=int, default=3,
+                        help="re-walk at most this many features (default: 3)")
+    parser.add_argument("--shared-over", metavar="N", type=int, default=2,
+                        help="a changed file more than N features list is shared and selects none (default: 2)")
+
+
+def selection(repo, args, base_ref=None):
+    """(Selection, {id: Feature at the head}) for the selection options in `args`, or exit 2 when the
+    map, the changed paths or the base cannot be read. With no base to resolve (no history, no
+    default branch), the head's map stands alone, as the runner's manifest does; an explicit
+    `base_ref` must resolve."""
+    if not args.changed_files or not os.path.isfile(args.changed_files):
+        raise CannotRun("--features needs --changed-files, a readable file of changed paths: %s" % (args.changed_files or "(none given)"))
+    if args.max_features < 1 or args.shared_over < 1:
+        raise CannotRun("--max-features and --shared-over must be 1 or more")
+    with open(args.changed_files, encoding="utf-8", errors="replace") as handle:
+        changed = [line.strip() for line in handle if line.strip()]
+    tracked = subprocess.run(["git", "-C", repo, "ls-files", "-z"], capture_output=True, text=True)
+    if tracked.returncode != 0:
+        raise CannotRun("git ls-files failed: %s" % tracked.stderr.strip())
+    head = head_map(repo, args.features, [p for p in tracked.stdout.split("\0") if p])
+    try:
+        base_commit = resolve_base(repo, base_ref)
+    except CannotRun:
+        if base_ref:
+            raise
+        base_commit = None
+    base = base_map(repo, args.features, base_commit) if base_commit else {}
+    return select(head, base, changed, args.max_features, args.shared_over), {feature.id: feature for feature in head}
+
+
+def describe(chosen):
+    """One line per decision, for a log a person reads."""
+    def owns(paths):
+        return "%d changed file%s" % (len(paths), "" if len(paths) == 1 else "s")
+    lines = ["re-walk: %s (%s)" % (fid, owns(paths)) for fid, paths in chosen.selected]
+    lines += ["shared, not counted: %s (listed by %d features)" % (path, len(ids)) for path, ids in chosen.shared]
+    lines += ["over the cap, not re-walked: %s (%s)" % (fid, owns(paths)) for fid, paths in chosen.dropped]
+    return lines

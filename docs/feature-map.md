@@ -4,9 +4,12 @@ A feature map is one short Markdown file per user-facing feature: what the featu
 a user reaches it, what proves it works, and what tends to go wrong. An agent reads the files of the
 features a change touches before making it, and re-walks them after. A map helps only while it is
 true, so the [`feature-map`](../gates/feature_map.py) gate fails a pull request that leaves it wrong.
+The QAE harness can also [re-walk](#re-walking-the-features-a-pull-request-touches) in a browser the
+features each pull request touches.
 
 The idea of one short verification file per feature comes from Poteto's pstack
-(`/create-verification-skill`). The deterministic drift check below is this catalog's own. In a
+(`/create-verification-skill`). The deterministic drift check and the re-walk of only the features
+a pull request touches are this catalog's own. In a
 historical pilot on a consumer web app, a map and a blind browser re-walk of the features past pull
 requests touched caught two shipped regressions those pull requests' own acceptance criteria missed.
 
@@ -114,6 +117,63 @@ The line's arguments are judged from the base like any manifest line, so a pull 
 a `--surface` to pass. The map itself is judged at the head, because the map is what a pull request
 has to bring up to date.
 
+## Re-walking the features a pull request touches
+
+The [QAE harness](../harnesses/qae/README.md) can re-walk, in the same browser session as the
+acceptance criteria and on the same application, every feature a pull request's changes touch, and
+the verify job refuses the run unless each one has an anchored PASS.
+
+**Which features.** A feature is touched when one of its own `source:` globs matches a changed path
+(both names of a rename). Two rules keep the selection narrow, both read from the map and nothing
+else (no history, no outcomes):
+
+- A changed path that more than `--shared-over` features list (default 2, so three or more) is
+  shared, a stylesheet or a router, and selects none: it says nothing about which feature changed.
+  In the pilot, shared files made one pull request select about 18 of its 19 features.
+- At most `--max-features` (default 3) are selected: those owning the most changed paths, then by
+  id. The run's log names the ones over the cap.
+
+A feature file the base has selects by its Surfaces as the base has them, and one the pull request
+adds selects by its own, like a rule file under `repo-rules`: a pull request cannot take a feature
+out of its own re-walk by narrowing its globs or listing a file in more features. A feature the pull
+request deletes is retired and selects nothing.
+
+**Turning it on.** Add the selection to the `acceptance-verdict` line of `.vibe-verifier-qae`:
+
+```
+acceptance-verdict --criteria qae-inputs/pr-body.md --verdict qae-inputs/verdict.md --artifacts qae-artifacts --features docs/features --changed-files qae-inputs/changed-files
+```
+
+and use a QAE template ([`explore.yml`](../harnesses/qae/explore.yml) or
+[`explore-codex.yml`](../harnesses/qae/explore-codex.yml)) that has the `Select the features to
+re-walk` step. Optional: `--max-features N`, `--shared-over N`. The line is judged from the base, so
+the pull request that adds it is not re-walked and the next one is, and one that removes it still is.
+
+**What happens.** The explore job runs `actions/features` (`bin/vibe-verifier features`), which
+copies each selected feature file to `qae-inputs/features/<id>.md`. The explorer re-walks each after
+the criteria (Reach to get there, Verify for what to check, setting up the state each step needs)
+and records it like a criterion: `qae/features/<id>.md` with a screenshot per step. It adds one line
+per feature to its verdict:
+
+```
+regression-check: sign-in -- PASS -- still signs in (qae/features/sign-in.md::step 2: signed in as the test user -> the dashboard)
+```
+
+The verify job's `acceptance-verdict` makes the selection again itself, from its own arguments and
+the map, and requires exactly one such line per selected feature, a PASS whose anchor resolves: a
+missing line, a FAIL, or a PASS that points at nothing is a finding. It never takes the explorer's
+word for which features were selected. `qae-artifacts` holds the feature step logs to the same
+screenshot rule as the criteria's, and the QA review comment lists each re-walked feature with the
+word the explorer wrote.
+
+**Limits.** The re-walk runs when the explorer runs, that is on a pull request that lists acceptance
+criteria. One that declares `- None: <why>` is not explored, so it is not re-walked either: the
+declaration is a claim the review weighs against the diff. A change made only in shared files
+selects no feature, so list each feature's own files, not only the shared ones it runs through
+(run over 30 past pull requests of the pilot, the rule picked 0 to 3 features each, and two fixes
+made wholly in shared files picked none). And an anchored PASS proves a step was logged and
+photographed, not that the feature is right.
+
 ## Creating, updating and retiring features
 
 The map changes in the same pull request as the code it describes, by whoever writes that pull
@@ -124,9 +184,11 @@ happen, because the code change alone leaves the map wrong.
   four sections and a row in the README index. A feature that brings a new surface (a route, a page,
   a command) cannot be left out: until a file lists it, the surface is owned by no feature. Prefer a
   directory glob (`src/auth/**`) where a feature owns a directory, so a new file there is covered.
-- **Read.** Before a change, find every feature whose source globs match the files being changed,
-  re-walk its Reach and Verify, and run its tests, not only the tests for the behaviour meant to
-  change. Reviewers read the map changes in the diff like any other change.
+- **Read.** Before a change, find every feature whose source globs match the files being changed
+  (`bin/vibe-verifier features --manifest .vibe-verifier-qae --changed-files <file>` lists them when
+  the re-walk is on), re-walk its Reach and Verify, and run its tests, not only the tests for the
+  behaviour meant to change. The QAE re-walk reads the same files. Reviewers read the map changes in
+  the diff like any other change.
 - **Update.** A pull request that renames or removes a surface, moves a source file, or renames a
   test a feature cites updates that feature in the same change. The gate forces each one: a renamed
   route is a stale listing and an unowned surface, a moved file leaves its glob matching nothing,

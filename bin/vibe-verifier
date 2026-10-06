@@ -79,6 +79,14 @@ changed paths one per line, when it lists no criteria and every path is CI confi
 documentation no site renders. A harness uses it to skip work, so the decision is made by the same
 code in the job that explores and the job that judges. Exit 2 when a file cannot be read.
 
+`features --manifest FILE --changed-files FILE [--out DIR]` reads the manifest's acceptance-verdict
+line (judged from the base, like a run) and, when it has `--features`, prints which features of that
+feature map the changed paths touch: the same selection the gate requires a `regression-check:` line
+for (gates/_features.py). Its first line is `features: <n>`; with `--out` it copies each selected
+feature file, as the head has it, to `<DIR>/<id>.md` for a QAE explorer to read. A line without
+`--features` prints `features: 0` and the reason. Exit 2 when the manifest, the changed paths or the
+map cannot be read.
+
 `rules-doc` renders the Markdown block that lists every rule the manifest's `repo-rules` lines enable
 (their packs and rule directories, read from the working tree): each rule's id, whether it blocks or
 is advisory (as the gate judges it), its language and globs, and its message, sorted by id, between
@@ -88,7 +96,7 @@ pull request whose block differs from what this renders for its HEAD.
 
 `qa-review` posts the QAE's one review comment on a pull request, or edits it in place when it is
 already there: passed, changes needed, not required, or could not run, with the head it judged,
-each criterion's verdict from the explorer, and a link to the run. The state comes from what the
+each criterion's verdict from the explorer (and each re-walked feature's), and a link to the run. The state comes from what the
 workflow's jobs and gates concluded, never from the explorer's prose.
 """
 import argparse
@@ -100,6 +108,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -109,6 +118,7 @@ GATES = os.path.join(ROOT, "gates")
 sys.path.insert(0, GATES)
 from _acceptance import PASS_RE, check_lines, criteria as read_criteria, not_required  # noqa: E402
 from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
+from _features import add_selection_arguments, describe, selection  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
 import repo_rules  # noqa: E402
 LABEL = {0: "PASS", 1: "FAIL", 2: "COULD NOT RUN"}
@@ -168,8 +178,9 @@ def base_manifest(args):
     return base, parse_entries(shown.stdout, "%s:%s" % (base, relative))
 
 
-def judged_entries(args):
-    """The entries the run judges: the head manifest, unioned with the base's on a pull request."""
+def judged_entries(args, notice=None):
+    """The entries the run judges: the head manifest, unioned with the base's on a pull request. Where they
+    differ it says so on `notice` (default stdout)."""
     head = parse_manifest(args.manifest)
     base, at_base = base_manifest(args)
     if not at_base:
@@ -179,7 +190,8 @@ def judged_entries(args):
     merged += [(gate, gate_args) for gate, gate_args in at_base if gate not in dict(head)]
     if merged != head:
         print("vibe-verifier: judged by the manifest at %s where it differs from the head's "
-              "(a gate this branch removed or weakened still runs as it was; a gate it added runs too)" % base, flush=True)
+              "(a gate this branch removed or weakened still runs as it was; a gate it added runs too)" % base,
+              file=notice or sys.stdout, flush=True)
     return merged
 
 
@@ -884,6 +896,32 @@ def criteria_command(args):
     return 0
 
 
+def features_command(args):
+    """The features the acceptance-verdict line's selection picks for these changed paths."""
+    # The notice goes to stderr: a workflow reads this command's first line as `features: <n>`.
+    lines = [gate_args for gate, gate_args in judged_entries(args, notice=sys.stderr) if gate == "acceptance-verdict"]
+    parser = argparse.ArgumentParser(prog="acceptance-verdict", add_help=False)
+    add_selection_arguments(parser)
+    try:
+        options = parser.parse_known_args(lines[0])[0] if lines else None
+    except SystemExit:
+        return fail("the acceptance-verdict line in %s has a malformed selection option" % args.manifest)
+    if not options or not options.features:
+        print("features: 0 (the re-walk is off: %s has no acceptance-verdict line with --features)" % args.manifest)
+        return 0
+    options.changed_files = args.changed_files
+    try:
+        chosen, features = selection(args.repo, options, args.base_ref)
+    except CannotRun as error:
+        return fail("features: %s" % error)
+    print("\n".join(["features: %d" % len(chosen.selected)] + describe(chosen)))
+    if args.out and chosen.selected:
+        os.makedirs(args.out, exist_ok=True)
+        for fid, _ in chosen.selected:
+            shutil.copyfile(os.path.join(args.repo, features[fid].path), os.path.join(args.out, fid + ".md"))
+    return 0
+
+
 # The QAE's review comment: one per pull request, found again by this first line and by the identity a
 # workflow's GITHUB_TOKEN posts as, so a comment anyone else writes is never edited. The verify job's
 # verdict lookup skips a comment that starts with it, so the review never stands in for a verdict.
@@ -921,10 +959,16 @@ def review_criteria(criteria_text, verdict_text):
     lines = check_lines(verdict_text, "acceptance-check")
     rows = []
     for item, wording in wanted:
-        carried = lines.get(item.casefold(), [])
-        said = "no verdict" if len(carried) != 1 else "explorer says PASS" if PASS_RE.search(carried[0]) else "explorer says FAIL"
-        rows.append("- %s, %s: %s" % (item, said, wording))
+        rows.append("- %s, %s: %s" % (item, explorer_said(lines.get(item.casefold(), [])), wording))
+    # A feature re-walk (docs/feature-map.md) adds one line per feature; which features were required is
+    # the gate's to decide, so this lists what the explorer wrote and the gate's log names any missing.
+    for fid, carried in check_lines(verdict_text, "regression-check").items():
+        rows.append("- Feature `%s` re-walked, %s" % (fid, explorer_said(carried)))
     return rows
+
+
+def explorer_said(carried):
+    return "no verdict" if len(carried) != 1 else "explorer says PASS" if PASS_RE.search(carried[0]) else "explorer says FAIL"
 
 
 def review_body(state, args):
@@ -1006,6 +1050,13 @@ def main():
     reader = commands.add_parser("criteria", help="read a criteria document: prints `none: <reason>` or `criteria: <n>`")
     reader.add_argument("file", help="the PR body or criteria document")
     reader.add_argument("--changed-files", metavar="FILE", help="the pull request's changed paths, one per line")
+    rewalk = commands.add_parser("features", help="the features a pull request's changed paths touch, by the selection "
+                                 "on the manifest's acceptance-verdict line: prints `features: <n>`")
+    rewalk.add_argument("--manifest", default=".vibe-verifier-qae")
+    rewalk.add_argument("--repo", default=".")
+    rewalk.add_argument("--base-ref", default=None)
+    rewalk.add_argument("--changed-files", required=True, metavar="FILE", help="the pull request's changed paths, one per line")
+    rewalk.add_argument("--out", metavar="DIR", help="copy each selected feature file here as <id>.md")
     doc = commands.add_parser("rules-doc", help="print, or write into a file, the generated block listing the rules "
                               "the manifest's repo-rules lines enable")
     doc.add_argument("--repo", default=".")
@@ -1031,6 +1082,8 @@ def main():
         return apply_down(args)
     if args.command == "criteria":
         return criteria_command(args)
+    if args.command == "features":
+        return features_command(args)
     if args.command == "qa-review":
         return qa_review_command(args)
     if args.command == "tool":

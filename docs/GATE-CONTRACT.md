@@ -300,6 +300,12 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
 - The gate never judges whether the evidence covers the criterion's meaning. It refuses a PASS that
   points at nothing, which is the floor; a PASS that points at the wrong real thing is a review
   concern.
+- `--features DIR` with `--changed-files FILE` (optional `--max-features N`, default 3, and
+  `--shared-over N`, default 2) adds the [feature re-walk](feature-map.md#re-walking-the-features-a-pull-request-touches):
+  every feature of that map whose source globs match a changed path (a path more than N features list
+  counts for none; each feature judged by its file at the base) needs exactly one
+  `regression-check: <id> -- PASS -- <evidence>` line, held to the same anchor rule. The gate selects
+  them itself; `bin/vibe-verifier features` prints the same selection for the explore job.
 - A missing input file is exit 2. A criteria file with no criteria is a finding: a repository that
   subscribes has decided its PRs state them.
 - A pull request with nothing to check says so, in the same section: one item reading
@@ -675,7 +681,7 @@ the rules.
 
 The harness's second gate, `qae-artifacts`, is the adjudicator: it reads the run's artifact
 directory (`--artifacts`) and refuses on structural facts, never on the model's prose: a step
-without its screenshot, a console error outside `--allow-console`, a missing session or network
+(of a criterion, or of a re-walked feature under `qae/features/`) without its screenshot, a console error outside `--allow-console`, a missing session or network
 record, a request to the site under test that answered 400 or worse or failed outside
 `--allow-request`. The site is `--site <URL>`, or `--site-file <FILE>`: the URL the explore job
 declared, written by the verify job, where a missing or malformed file is exit 2. The consumer
