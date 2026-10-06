@@ -134,6 +134,8 @@ class Host(unittest.TestCase):
             "missing repository": granted(repositories=[{"full_name": REPOSITORIES[0]}]),
             "repository list absent": {key: value for key, value in granted().items() if key != "repositories"},
             "token that would break the YAML": granted(token="ghs_a\n    user: someone"),
+            "token that starts a YAML sequence": granted(token="- ghs_a"),
+            "token over 4096 characters": granted(token="ghs_" + "a" * 4093),
             "no token": {key: value for key, value in granted().items() if key != "token"},
         }
         for name, response in cases.items():
@@ -142,6 +144,13 @@ class Host(unittest.TestCase):
             self.assertEqual(self.hosts.read_text(), "old\n")
         self.refresh_token(granted(repositories=[{"full_name": "OctoCat/Example"}, {"full_name": "octocat/other"}]))
         self.assertIn("oauth_token: ghs_", self.hosts.read_text())
+
+    def test_a_long_token_with_dots_and_dashes_is_written_verbatim(self):
+        # GitHub's installation tokens grew to about 390 characters with "." and "-" (2026-10-06).
+        token = "ghs_" + "AbC1.dEf-2_" * 35 + "z"
+        self.refresh_token(granted(token=token))
+        self.assertEqual(self.hosts.read_text(), "github.com:\n    oauth_token: %s\n    user: example-app[bot]\n"
+                                                 "    git_protocol: https\n" % token)
 
     def test_a_refused_exchange_reports_its_status_without_the_body(self):
         refusal = urllib.error.HTTPError(host.ACCESS_TOKENS % 42, 422, "Unprocessable", {},
