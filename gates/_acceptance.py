@@ -13,6 +13,7 @@ and an anchor is either `<path>::<test title>`, whose title must appear verbatim
 proof is; a bare file name does not, because a file exists whether or not the assertion cited
 exists inside it.
 """
+import os
 import re
 from typing import NamedTuple
 
@@ -186,3 +187,50 @@ def anchors(line):
         if key not in seen:
             seen.add(key)
             found.append(anchor)
+
+
+# One whole anchor, as a feature map's Verify bullet holds it between backticks. The backticks bound
+# it, so the path needs no known extension (the extension list above exists to find an anchor inside
+# free prose) and the title runs to the end.
+WHOLE_ANCHOR = re.compile(r"^(?P<path>[^\s`:]+)(?:::(?P<title>.+)|:(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?)$")
+
+
+def parse_anchor(text):
+    """The one anchor `text` is, or None: `<path>::<title>` (a title of MIN_ANCHOR_TITLE characters
+    or more) or `<path>:<line>` / `<path>:<start>-<end>`."""
+    match = WHOLE_ANCHOR.match(text.strip())
+    if not match:
+        return None
+    if match.group("title") is not None:
+        title = match.group("title").strip()
+        return Anchor(match.group("path"), title, 0, 0, text.strip()) if len(title) >= MIN_ANCHOR_TITLE else None
+    first = int(match.group("start"))
+    last = int(match.group("end")) if match.group("end") else first
+    return Anchor(match.group("path"), "", first, last, text.strip())
+
+
+def locate(anchor, repo, tracked, artifacts):
+    """The file an anchor names: a tracked path at the head, else a file under `artifacts`."""
+    if anchor.path in tracked:
+        return os.path.join(repo, anchor.path)
+    if artifacts:
+        candidate = os.path.normpath(os.path.join(artifacts, anchor.path))
+        if candidate.startswith(os.path.normpath(artifacts) + os.sep) and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def resolves(anchor, repo, tracked, artifacts=None):
+    """Why the anchor does not resolve, or None when it does: a tracked path (or one under
+    `artifacts`) whose text holds the title, or whose length holds the line range."""
+    located = locate(anchor, repo, tracked, artifacts)
+    if located is None:
+        return "%s is not in the tree%s" % (anchor.path, " or the artifacts" if artifacts else "")
+    with open(located, encoding="utf-8", errors="replace") as handle:
+        body = handle.read()
+    if anchor.title:
+        return None if anchor.title in body else 'the title "%s" is not in %s' % (anchor.title, anchor.path)
+    length = body.count("\n") + (0 if body.endswith("\n") or not body else 1)
+    if anchor.start < 1 or anchor.end < anchor.start or anchor.end > length:
+        return "%s has %d lines, so %s is outside it" % (anchor.path, length, anchor.raw)
+    return None

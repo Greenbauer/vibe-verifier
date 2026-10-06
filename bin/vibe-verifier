@@ -10,7 +10,9 @@ The manifest is a plain text file, one gate per line:
 
 The aggregate follows the gate contract: exit 2 if any gate could not run, else
 exit 1 if any gate found violations, else 0. A missing or empty manifest is
-exit 2: a run that verified nothing must not look like a pass.
+exit 2: a run that verified nothing must not look like a pass. A gate whose pass
+checked less than it could leaves a note (`qualify` in gates/_contract.py), and its
+summary row reads `PASS (<note>)`.
 
 On a pull request the manifest is judged from the base: the run's entries are the union of
 the base's and the head's gates, and a gate in both takes the base's arguments. A PR that adds a
@@ -100,12 +102,13 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATES = os.path.join(ROOT, "gates")
 sys.path.insert(0, GATES)
 from _acceptance import PASS_RE, check_lines, criteria as read_criteria, not_required  # noqa: E402
-from _contract import CannotRun, resolve_base  # noqa: E402
+from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
 import repo_rules  # noqa: E402
 LABEL = {0: "PASS", 1: "FAIL", 2: "COULD NOT RUN"}
@@ -192,18 +195,19 @@ def run(args):
     for gate, gate_args in entries:
         if not re.match(r"^[a-z0-9-]+$", gate) or gate not in known:
             print("vibe-verifier: unknown gate %r (available: %s)" % (gate, ", ".join(known)), file=sys.stderr)
-            results.append((gate, gate_args, 2))
+            results.append((gate, gate_args, 2, ""))
             continue
         command = [sys.executable, os.path.join(GATES, gate.replace("-", "_") + ".py"),
                    "--repo", args.repo, "--format", args.format]
         if args.base_ref:
             command += ["--base-ref", args.base_ref]
         print("::group::%s" % gate if args.format == "github" else "== %s ==" % gate, flush=True)
-        code = subprocess.run(command + gate_args, env=dict(os.environ, **{repo_rules.MANIFEST: os.path.abspath(args.manifest)})).returncode
+        code, note = gate_process(command + gate_args, os.path.abspath(args.manifest))
         if args.format == "github":
             print("::endgroup::", flush=True)
-        results.append((gate, gate_args, code if code in (0, 1) else 2))
-    rows = [(gate, LABEL[code] + (" (soak)" if code == 0 and "--soak" in gate_args else "")) for gate, gate_args, code in results]
+        results.append((gate, gate_args, code if code in (0, 1) else 2, note))
+    rows = [(gate, LABEL[code] + (" (soak)" if code == 0 and "--soak" in gate_args else "")
+             + (" (%s)" % note if code == 0 and note else "")) for gate, gate_args, code, note in results]
     print("\nvibe-verifier summary")
     for gate, status in rows:
         print("  %-36s %s" % (gate, status))
@@ -212,8 +216,21 @@ def run(args):
         with open(summary, "a", encoding="utf-8") as handle:
             handle.write("### Vibe Verifier\n\n| Gate | Result |\n|---|---|\n")
             handle.writelines("| `%s` | %s |\n" % row for row in rows)
-    codes = [code for _, _, code in results]
+    codes = [code for _, _, code, _ in results]
     return 2 if 2 in codes else (1 if 1 in codes else 0)
+
+
+def gate_process(command, manifest):
+    """Run one gate: its exit code, and the note it left when its pass checked less than it could
+    (`qualify` in gates/_contract.py), else an empty string."""
+    handle, note_path = tempfile.mkstemp(prefix="vv-note-")
+    os.close(handle)
+    try:
+        code = subprocess.run(command, env=dict(os.environ, **{repo_rules.MANIFEST: manifest, QUALIFIER: note_path})).returncode
+        with open(note_path, encoding="utf-8") as note:
+            return code, note.read().strip()
+    finally:
+        os.unlink(note_path)
 
 
 class CannotRead(Exception):

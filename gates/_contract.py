@@ -26,6 +26,20 @@ EXIT_VIOLATIONS = 1
 EXIT_CANNOT_RUN = 2
 
 
+# The file a runner names for a gate to leave a note in when its pass checked less than it could.
+QUALIFIER = "VIBE_VERIFIER_QUALIFIER"
+
+
+def qualify(note):
+    """Mark this run's pass as partial. The runner's summary then reads `PASS (<note>)` instead of a
+    bare PASS, so a check that verified less than it could never looks like a full one. Outside a
+    runner it does nothing: the gate's own output says it too."""
+    path = os.environ.get(QUALIFIER)
+    if path:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(note)
+
+
 class CannotRun(Exception):
     """The gate cannot produce a verdict. Always exit 2, even under --soak."""
 

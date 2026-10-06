@@ -27,6 +27,11 @@ A gate may mark a finding advisory: it is printed (as a warning annotation under
 with `"advisory": true` under `--format json`) and never counts toward exit 1. `repo-rules` uses it
 for rules whose severity is below `error`.
 
+A gate may also qualify a pass that checked less than it could (`qualify` in
+[`gates/_contract.py`](../gates/_contract.py)): the runner's summary then reads `PASS (<note>)`, not
+a bare `PASS`. `feature-map` does it when no `--surface` is declared, so it checked anchors and globs
+but not whether every surface is owned.
+
 **`--soak` never masks exit 2.** Soak exists so a new gate can collect signal before it blocks
 anything. A gate that cannot run has produced no signal, and a soak that is silently broken looks
 exactly like a soak that is clean. A mutation-testing soak in a sibling project produced no score
@@ -631,6 +636,31 @@ repo-rules --rules lint/rules --pack example --soak
   bites from the next pull request; and a catalog pin bump that changes a subscribed pack's rules
   leaves the block stale, so its pull request needs the block regenerated, which `apply-down` (pin
   lines only) does not do.
+
+## Feature map
+
+`feature-map` keeps a [feature map](feature-map.md) (one Markdown file per user-facing feature under
+`docs/features/`) true against the code at the head. A pure gate: it reads the tracked files and
+nothing else.
+
+```
+feature-map --surface route src/routes.ts '^\s*path: "([^"]+)"'
+feature-map --dir docs/features --surface page 'content/**/*.md'
+```
+
+- `--surface KIND GLOB REGEX` (repeatable): the code's surfaces of one kind are every match of the
+  one capture group of REGEX (`^` and `$` per line) in every tracked file GLOB matches; with no
+  REGEX, each matched path is one. A feature owns a surface by listing `` - KIND: `value` `` under
+  its Surfaces.
+- A finding is a surface no feature lists, a listing the code no longer declares (or of a kind no
+  `--surface` declares), a `- source:` glob matching no tracked file (or a feature with none), a
+  Verify anchor that does not resolve (the `acceptance-verdict` anchor forms, resolved the same way),
+  and a malformed bullet or missing section. The whole map is judged on every run, so a repository
+  subscribes clean.
+- With no `--surface`, anchors and globs are checked and the pass is qualified
+  `completeness not checked`, with an advisory finding saying why.
+- Exit 2 when the map has no feature file, or a `--surface` is malformed, matches no tracked file or
+  finds no surface.
 
 ## Harnesses
 
