@@ -51,7 +51,7 @@ class FakeAPI:
 def endpoints():
     return {
         "suites": f"repos/{REPO}/commits/{SHA}/check-suites?per_page=100",
-        "checks": f"repos/{REPO}/commits/{SHA}/check-runs?per_page=100&filter=latest",
+        "checks": f"repos/{REPO}/commits/{SHA}/check-runs?per_page=100&filter=all",
         "status": f"repos/{REPO}/commits/{SHA}/status",
         "runs": f"repos/{REPO}/actions/runs?head_sha={SHA}&per_page=100",
         "jobs2": f"repos/{REPO}/actions/runs/11/attempts/2/jobs?per_page=100",
