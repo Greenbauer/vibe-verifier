@@ -101,6 +101,13 @@ The log gets one line per update or restart plus anything a dashboard prints. To
 `tests/test_dashboard_follow.py` covers the fast-forward, the restart rule, and restarting a
 dashboard that exited.
 
+On a Linux host the dashboards are systemd units, and the follower runs as root with
+`--unit vibe-dashboard@NAME.service PORT` instead of `--serve`. In that mode it moves only to a `main`
+commit whose GitHub check runs all passed, restarts the units, checks that each dashboard answers
+`/api/dashboard` on its port, and resets to the previous commit when one does not. The
+[Linux host runbook](dashboard-host.md) covers that mode, the units, the root timers that refresh a
+narrowed read-only GitHub token and local telemetry, and the accounts and files they use.
+
 ## Configuration contract
 
 Configuration is read once at startup. Restart to change it. Every repository must belong to the
@@ -351,6 +358,8 @@ and subscription uncertainty. `test_dashboard_bot_history.py` covers bounded his
 discovery; `test_dashboard_service.py` covers source timestamps and refresh caching.
 `test_dashboard_live_service.py` covers independently aging quota/history and revocation during
 an in-flight refresh. The collector and usage-artifact test files cover the native source contracts.
+`tests/test_dashboard_host.py` covers the Linux host's token minting, telemetry publishing, and unit
+templates, and `test_dashboard_follow.py` the follower's check-run gate and rollback.
 `tests/test_dashboard_server_ui.py` covers loopback HTTP, proxy and direct routing headers,
 read-only methods, Host/Origin/traversal, XSS-safe JSON and DOM construction, filters, account usage
 math, local assets, the tab icon route, and the approved palette. `tests/test_dashboard_usage_charts.py` covers the usage

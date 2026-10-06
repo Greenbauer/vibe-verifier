@@ -74,7 +74,7 @@ class Config:
     agents: tuple[AgentDefinition, ...] = ()
 
 
-def _owned_regular_file(path: Path, *, may_be_missing: bool = False) -> None:
+def _owned_regular_file(path: Path, uid: int | None, *, may_be_missing: bool = False) -> None:
     try:
         info = path.stat(follow_symlinks=False)
     except FileNotFoundError:
@@ -83,14 +83,14 @@ def _owned_regular_file(path: Path, *, may_be_missing: bool = False) -> None:
         raise ConfigError("configuration file does not exist") from None
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
         raise ConfigError("path must be a regular file, not a symlink")
-    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+    if uid is not None and info.st_uid != uid:
         raise ConfigError("file must be owned by the dashboard user")
     if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
         raise ConfigError("file must not be group- or world-writable")
 
 
-def _read_json(path: Path) -> object:
-    _owned_regular_file(path)
+def _read_json(path: Path, uid: int | None) -> object:
+    _owned_regular_file(path, uid)
     if path.stat().st_size > MAX_CONFIG_BYTES:
         raise ConfigError("configuration file is too large")
     try:
@@ -147,10 +147,15 @@ def _parse_proxy_origin(value: object) -> str | None:
     return value
 
 
-def load_config(filename: str | os.PathLike[str]) -> Config:
-    """Load once at process startup; callers retain the returned frozen value."""
+def load_config(filename: str | os.PathLike[str], uid: int | None = None) -> Config:
+    """Load once at process startup; callers retain the returned frozen value.
+
+    The configuration and telemetry files must belong to uid, by default this process's user. A root
+    helper passes the dashboard user's uid, so it accepts exactly what the dashboard itself will."""
+    if uid is None and hasattr(os, "getuid"):
+        uid = os.getuid()
     path = Path(filename).expanduser()
-    value = _read_json(path)
+    value = _read_json(path, uid)
     if not isinstance(value, dict):
         raise ConfigError("configuration must be a JSON object")
     _only_keys(value, {"version", "owner", "repositories", "bots", "telemetry_file", "proxy_origin", "agents"},
@@ -179,6 +184,6 @@ def load_config(filename: str | os.PathLike[str]) -> Config:
         if not isinstance(telemetry, str) or not Path(telemetry).is_absolute():
             raise ConfigError("telemetry_file must be an absolute path")
         telemetry_path = Path(telemetry)
-        _owned_regular_file(telemetry_path, may_be_missing=True)
+        _owned_regular_file(telemetry_path, uid, may_be_missing=True)
     return Config(owner, tuple(canonical), _parse_bots(value.get("bots")), telemetry_path,
                   _parse_proxy_origin(value.get("proxy_origin")), _parse_agents(value.get("agents", [])))

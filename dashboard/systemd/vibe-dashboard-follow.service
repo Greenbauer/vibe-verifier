@@ -1,0 +1,29 @@
+# Keeps this host's dashboards on green main, as root. One per host, Linux, systemd.
+# Edit ExecStart: one --unit pair per dashboard, each with the PORT from its host.env.
+[Unit]
+Description=Keep the Vibe Verifier dashboards on green main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/
+ExecStart=/usr/bin/env -i HOME=/root PYTHONNOUSERSITE=1 PATH=/usr/bin:/bin /usr/bin/python3 /opt/vibe-verifier/bin/vibe-dashboard-follow --unit vibe-dashboard@example.service 8765
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadWritePaths=/opt/vibe-verifier
+# Not 0077: the dashboard accounts read the code this writes, so it must stay world-readable.
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target
