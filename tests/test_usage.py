@@ -265,9 +265,9 @@ class WorkflowWiring(unittest.TestCase):
             self.assertIn("path: ${{ runner.temp }}/vv-usage/usage.json", block)
             self.assertIn("name: vv-usage-%s-${{ github.run_attempt }}" % role, block)
             self.assertIn(UPLOAD, block)
-            # Only the review's model step tolerates a failure, so its gate step can classify it.
+            # Only the review's two model steps (one per account) tolerate a failure, so a classify step can read it.
             self.assertNotIn("continue-on-error", block)
-            self.assertEqual(text.count("continue-on-error: true"), 1 if path == REVIEW else 0)
+            self.assertEqual(text.count("continue-on-error: true"), 2 if path == REVIEW else 0)
 
     def test_consumer_templates_pin_usage_and_source_review_uses_the_local_action(self):
         self.assertIn("uses: Greenbauer/vibe-verifier/actions/usage@" + "0" * 40, REVIEW.read_text())

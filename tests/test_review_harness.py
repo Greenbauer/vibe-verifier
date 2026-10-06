@@ -19,7 +19,7 @@ PROMPT = ROOT / "harnesses" / "review" / "prompt.md"
 
 
 def prompt_block(text):
-    match = re.search(r"^( +)PROMPT: \|\n((?:\1  .*\n|\n)+)", text, re.MULTILINE)
+    match = re.search(r"^( +)(?:prompt|PROMPT): \|\n((?:\1  .*\n|\n)+)", text, re.MULTILINE)
     indent = len(match.group(1)) + 2
     return "".join(line[indent:] if line.strip() else "\n" for line in match.group(2).splitlines(True))
 
@@ -250,7 +250,7 @@ class ReviewGate(unittest.TestCase):
         self.assertTrue(receipt.endswith(" -- full -- run 7"), receipt)
 
     def test_the_fallback_account_reviews_when_the_first_is_limited(self):
-        # This repository's own reviews, 2026-09 to 2026-10-05: every run was limited on the one account.
+        # This repository's own pull requests 40 to 69, 2026-10-05: every run was limited on the one account.
         for first in ([LIMIT_EVENT], [HIT_LIMIT], [BAD_TOKEN]):
             gate, receipt = self.run_gate(first, fallback=([REVIEWED], "success"))
             self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
