@@ -182,7 +182,11 @@ slots.remaining_on_demand, slots.occupied[]
 
 Each occupied entry has `kind`, `index`, `state`, and exact unit `active_state` and `sub_state`.
 An `allocated` entry also has `target_repository`, `set_id`, `runner_id`, `runner_name`, and
-`allocated_at`. An `unknown` entry has only an allowlisted `reason`, with no job identity.
+`allocated_at`. `target_repository` is `OWNER/REPO`, or `null` when an organization-scope scale set
+assigned the job and its job file names only the owner; the dashboard then takes the repository from
+GitHub's in-progress job with the same runner ID. An `unknown` entry has only an allowlisted
+`reason` (`job_unreadable`, `active_unit_without_job` or `unit_state_unavailable`), with no job
+identity.
 
 The account section is:
 

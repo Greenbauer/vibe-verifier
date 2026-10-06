@@ -50,8 +50,11 @@ def collector_view(value, config, now):
             if current and row["state"] == "allocated":
                 lane["runner_id"] = row["runner_id"]
                 lane["allocated_at"] = row["allocated_at"]
-                lane["job"] = {"repository": row["target_repository"],
-                               "name": "Runner allocated; job match pending", "url": None}
+                # An organization-scope allocation names no repository; join_runner_jobs then finds
+                # the job by runner ID alone.
+                if row["target_repository"]:
+                    lane["job"] = {"repository": row["target_repository"],
+                                   "name": "Runner allocated; job match pending", "url": None}
             lanes.append(lane)
         listener_up = host["listener"]["state"] == "up"
         for index in range(host["slots"]["remaining_on_demand"]):

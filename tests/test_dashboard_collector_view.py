@@ -89,3 +89,19 @@ class CollectorIntegration(unittest.TestCase):
         join_runner_jobs(telemetry, github)
         self.assertEqual(lane['state'], 'busy')
         self.assertEqual(lane['job']['name'], 'Build')
+
+    def test_an_organization_scope_allocation_takes_its_repository_from_the_matching_runner_job(self):
+        occupied = [{'kind': 'ci', 'index': 1, 'state': 'allocated', 'unit': {'active_state': 'active', 'sub_state': 'running'},
+                     'target_repository': None, 'set_id': 2, 'runner_id': 42, 'runner_name': 'runner-ci-1',
+                     'allocated_at': STAMP}]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'telemetry.json'
+            refresh(config(), path, fetch=lambda *_: {'host': remote_host(occupied), 'quota': {'status': 'ok', 'rate_limits': quota()}}, now=STAMP)
+            telemetry = read_telemetry(Config('example-ci', ('example-ci/repo',), {}, path), NOW)
+        lane = telemetry['capacity']['lanes'][0]
+        self.assertEqual((lane['state'], lane['runner_id']), ('allocated', 42))
+        self.assertNotIn('job', lane)
+        job = {'runner_id': 42, 'status': 'in_progress', 'name': 'Build', 'html_url': 'https://github.com/example-ci/repo/actions/runs/1/job/2'}
+        join_runner_jobs(telemetry, {'repositories': [{'repository': 'example-ci/repo', 'pulls': [{'runs': [{'jobs': [job]}]}]}]})
+        self.assertEqual(lane['state'], 'busy')
+        self.assertEqual(lane['job'], {'repository': 'example-ci/repo', 'name': 'Build', 'url': job['html_url']})

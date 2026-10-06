@@ -20,7 +20,8 @@ MAX_JOB = 4096
 MAX_PROCESS_OUTPUT = 256 * 1024
 OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 LANE_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
-TARGET_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]{1,100})$")
+# A job targets OWNER/REPO, or only OWNER when an organization-scope scale set assigned it.
+TARGET_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]{0,38})(?:/([A-Za-z0-9._-]{1,100}))?$")
 RUNNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 STATE_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 
@@ -239,7 +240,7 @@ def read_job(path, owner, expected_kind):
     if match.group(1).casefold() != owner.casefold():
         raise SampleError("foreign_job_target")
     return {
-        "target_repository": owner + "/" + match.group(2),
+        "target_repository": owner + "/" + match.group(2) if match.group(2) else None,
         "set_id": set_id,
         "runner_id": runner_id,
         "runner_name": fields[4],

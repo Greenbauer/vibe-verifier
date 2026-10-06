@@ -214,7 +214,7 @@ def _integer(value, minimum=0, maximum=None, nullable=False):
     return value
 
 def _state(value, choices=None):
-    if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", value):
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", value):
         raise ValueError
     if choices and value not in choices:
         raise ValueError
@@ -249,12 +249,12 @@ def project_host(raw, config):
             item.get("state"), ("allocated", "unknown")), "unit": {
                 "active_state": _state(unit.get("active_state")), "sub_state": _state(unit.get("sub_state"))}}
         if record["state"] == "allocated":
-            match = TARGET_RE.fullmatch(item.get("target_repository", ""))
-            if not match or match.group(1).casefold() != config.owner.casefold():
+            match = TARGET_RE.fullmatch(target) if isinstance(target := item.get("target_repository"), str) else None
+            if target is not None and (not match or match.group(1).casefold() != config.owner.casefold()):
                 raise ValueError
             if not TOKEN_RE.fullmatch(item.get("runner_name", "")) or not _parse_time(item.get("allocated_at")):
                 raise ValueError
-            record.update({"target_repository": config.owner + "/" + match.group(2),
+            record.update({"target_repository": config.owner + "/" + match.group(2) if match else None,
                            "set_id": _integer(item.get("set_id"), 1),
                            "runner_id": _integer(item.get("runner_id"), 1),
                            "runner_name": item["runner_name"], "allocated_at": item["allocated_at"]})
