@@ -7,7 +7,7 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
     --artifacts DIR          the run's artifact directory (required)
     --criteria FILE          the PR body; when it declares `- None: <why>` there was nothing to
                              explore, so an empty run is correct and this gate passes. A criterion
-                             whose line carries `expected-refusal: <401|403> <path-or-URL>` makes
+                             whose line carries `expected-refusal: <status> <path-or-URL>` makes
                              exactly that status at exactly that URL expected for this run (see 5)
     --allow-console REGEX    console errors matching this are expected (repeatable)
     --allow-request REGEX    requests whose URL matches this are not judged (repeatable)
@@ -15,6 +15,8 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
     --site-file FILE         the same, read from a file the workflow wrote: one http(s) URL, the
                              one the explore job declared, so a preview's URL reaches the gate
                              without a manifest edit; a missing, empty or malformed file cannot run
+    --widths N[,N...]        viewport widths in pixels (opt-in, the repository's choice): each
+                             criterion's step screenshots must include one of each width (see 6)
 
 1. Every step in every step log has its screenshot: `qae/ACn.md` line `- step k:` needs a
    non-empty `qae/ACn-step-k.png`. A step without a picture is a claim, not evidence. A feature
@@ -27,25 +29,33 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    such result, or in a `network-*.log` file, answered 400 or worse or failed, outside the
    allowlist. This encodes the recorded false-PASS lesson: a PASS obtained while the real
    endpoint failed is refused here whatever the verdict says.
-5. A refusal is the correct outcome of some criteria (an auth gate answering 401 signed out), so a
-   criterion declares it: `- Signed out, the quotes API refuses (expected-refusal: 401 /api/quotes)`.
+5. A refusal is the correct outcome of some criteria (an auth gate answering 401 signed out, a
+   server answering 422 to the invalid input the explorer is told to try), so a criterion declares
+   it: `- Signed out, the quotes API refuses (expected-refusal: 401 /api/quotes)`.
    The declaration is read from the criteria file the workflow fetched, never from the explorer,
    and only from a criterion's own line (an HTML comment does not count). It excuses that status at
    that URL and nothing else: the request in the network record, and Chromium's `Failed to load
    resource: ... status of 401` console line for it. A path resolves against the site, a URL is
    taken as written, and either must match the request's URL exactly (query included, fragment
    dropped). A 5xx, another status, another URL, and any other console error still fail, and a
-   declaration of any status but 401 or 403, or a path with no site to resolve it, is a finding.
+   declaration of any status but a handled refusal (400, 401, 403, 404, 409 or 422), or a path with
+   no site to resolve it, is a finding.
+6. With --widths, each criterion was checked at every declared viewport width: among the step
+   screenshots of each `qae/ACn.md`, one is that many pixels wide, read from the PNG's header (a
+   browser screenshot is as wide as its viewport). A step screenshot that is not a PNG is a finding.
+   The explore job writes the same widths to qae-inputs/widths for the explorer (actions/qae-inputs),
+   from this line as the base has it. Feature re-walk logs are not held to it.
 
 Exit 2 when the artifact directory is missing, or a --site-file is missing or holds anything but
 one http(s) URL: nothing was adjudicated.
 """
+import argparse
 import glob
 import os
 import re
 import urllib.parse
 
-from _acceptance import criteria, declares_none
+from _acceptance import criteria, declares_none, png_size
 from _contract import CannotRun, Finding, run_gate
 
 GATE = "qae-artifacts"
@@ -56,7 +66,7 @@ TOOL_CALL = re.compile(r"^### Tool call: (?P<name>\S+)\s*$", re.MULTILINE)
 # inside a JSON result the newline is escaped, so the line is matched without anchors.
 REQUEST = re.compile(r"[0-9]+\. \[(?P<method>[A-Z]+)\] (?P<url>\S+) => \[(?P<status>[0-9]{3}|FAILED)\]")
 REFUSAL = re.compile(r"expected-refusal:[ \t]*(?P<status>[^\s`]+)[ \t]+(?P<target>[^\s`)]+)", re.IGNORECASE)
-REFUSABLE = ("401", "403")
+REFUSABLE = ("400", "401", "403", "404", "409", "422")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 # Chromium's line for a response it refused to load, as playwright-mcp saves it: `<text> @ <url>:<line>`.
 RESOURCE_ERROR = re.compile(r"^Failed to load resource: the server responded with a status of (?P<status>[0-9]{3})\b.* @ (?P<url>\S+):[0-9]+$")
@@ -93,6 +103,47 @@ def screenshot_findings(root, logs):
     return findings
 
 
+def screenshot_widths(root, log):
+    """({widths of the step screenshots of one log}, [findings for the ones that are not PNGs])."""
+    stem, seen, findings = os.path.basename(log)[:-3], set(), []
+    for k in (m.group("k") for m in map(STEP_LINE.match, read(log).splitlines()) if m):
+        shot = os.path.join(root, "qae", "%s-step-%s.png" % (stem, k))
+        if not os.path.isfile(shot) or os.path.getsize(shot) == 0:
+            continue  # already a finding: the step has no screenshot
+        size = png_size(shot)
+        if size is None:
+            findings.append(Finding("step %s's screenshot is not a PNG, so its width cannot be read" % k, relative(log, root)))
+        else:
+            seen.add(size[0])
+    return seen, findings
+
+
+def widths_findings(root, widths):
+    """A finding per criterion step log whose step screenshots miss a declared width."""
+    findings = []
+    for log in sorted(glob.glob(os.path.join(root, "qae", "AC*.md"))):
+        seen, unreadable = screenshot_widths(root, log)
+        findings += unreadable
+        missing = [width for width in widths if width not in seen]
+        if missing:
+            findings.append(Finding("no step screenshot %s pixels wide (its widths: %s): check the criterion's end state "
+                                    "at each width in qae-inputs/widths" % (" or ".join(map(str, missing)),
+                                                                            ", ".join(map(str, sorted(seen))) or "none"),
+                                    relative(log, root)))
+    return findings
+
+
+def width_list(text):
+    """`1280,375` as [1280, 375]: what --widths takes, also read by actions/qae-inputs from the manifest line."""
+    try:
+        widths = [int(part) for part in text.split(",")]
+    except ValueError:
+        widths = []
+    if not widths or any(width < 1 for width in widths):
+        raise argparse.ArgumentTypeError("widths are positive whole numbers of pixels, comma-separated: %r" % text)
+    return list(dict.fromkeys(widths))
+
+
 def exact(url):
     return urllib.parse.urldefrag(url)[0]
 
@@ -105,7 +156,8 @@ def expected_refusals(text, site):
         for match in REFUSAL.finditer(wording):
             status, target = match.group("status"), match.group("target").rstrip(".,;:")
             if status not in REFUSABLE:
-                findings.append(Finding("%s declares expected-refusal %s: only 401 or 403 can be expected" % (ac, status)))
+                findings.append(Finding("%s declares expected-refusal %s: only a handled refusal (%s) can be expected"
+                                        % (ac, status, ", ".join(REFUSABLE))))
             elif urllib.parse.urlsplit(target).scheme in ("http", "https"):
                 expected.add((status, exact(target)))
             elif target.startswith("/") and site:
@@ -200,6 +252,7 @@ def check(args):
     expected, declared = expected_refusals(body, site)
     return (declared
             + steps_have_screenshots(root)
+            + (widths_findings(root, args.widths) if args.widths else [])
             + console_is_clean(root, console_allow, expected)
             + session_and_network(root, request_allow, site, expected))
 
@@ -209,6 +262,7 @@ def add_arguments(parser):
     parser.add_argument("--criteria", metavar="FILE", default=None)
     parser.add_argument("--allow-console", action="append", metavar="REGEX")
     parser.add_argument("--allow-request", action="append", metavar="REGEX")
+    parser.add_argument("--widths", metavar="N[,N...]", type=width_list, default=None)
     site = parser.add_mutually_exclusive_group()
     site.add_argument("--site", metavar="URL-PREFIX", default=None)
     site.add_argument("--site-file", metavar="FILE", default=None)
