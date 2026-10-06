@@ -409,7 +409,8 @@ def rules_doc(sg, sources):
         docs = documents(sg, projects)
         rules = read_rules(docs, origin)
         mapped = mapped_globs(sg, docs, work)
-    lines = [BEGIN, INTRO, ""]
+    # Blank lines after BEGIN and before END keep Markdown formatters (Prettier) from rewriting the block.
+    lines = [BEGIN, "", INTRO, ""]
     for rule_id, (number, _, keys) in sorted(rules.items()):
         severity = value(keys, "severity")
         if severity == "off":
@@ -421,7 +422,12 @@ def rules_doc(sg, sources):
         scope += ["%s %s" % (key, globs_text(keys[key][1])) for key in ("files", "ignores") if key in keys and keys[key][1]]
         lines.append("- `%s` (%s; %s): %s" % (rule_id, "advisory" if severity in ADVISORY else "blocking", "; ".join(scope),
                                               " ".join(value(keys, "message").split())))
-    return "\n".join(lines + [END])
+    return "\n".join(lines + ["", END])
+
+
+def _content(block):
+    """A block's non-blank lines: a formatter adding or removing blank lines does not make it stale."""
+    return [line.rstrip() for line in block.splitlines() if line.strip()]
 
 
 def stale_doc(repo, path, block):
@@ -435,7 +441,7 @@ def stale_doc(repo, path, block):
     found = BLOCK.search(text)
     if not found:
         return Finding("rules-doc: %s has no generated rules block; %s" % (path, fix), path)
-    if found.group(0) != block:
+    if _content(found.group(0)) != _content(block):
         return Finding("rules-doc: this rules block is not what the rule files at HEAD generate; %s" % fix,
                        path, text.count("\n", 0, found.start()) + 1)
     return None

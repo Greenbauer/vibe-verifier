@@ -26,6 +26,9 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+    env:
+      # Whether a second account is configured; the token itself reaches only its own Review step.
+      HAS_FALLBACK_ACCOUNT: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_FALLBACK != '' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -97,21 +100,13 @@ jobs:
           echo "REVIEW_MODE=$mode" >> "$GITHUB_ENV"
           echo "REVIEW_MAX_TURNS=$turns" >> "$GITHUB_ENV"
           echo "mode: $mode (last receipt: ${LAST:-none}), ${count} file(s) in scope, max turns ${turns}"
-      - name: Review
-        id: reviewer
+      - name: Write the review prompt
+        # One prompt for every account in the chain. The random delimiter keeps a DELTA_FILES line from
+        # ending the output early.
         if: env.REVIEW_MODE != 'nochange'
-        # continue-on-error only so "Require a completed review" can read how the run ended; it never
-        # makes the gate optional: that step fails the job unless the review completed or the run
-        # proved a rate or usage limit, and without it the receipt is never posted. v1.0.171 (from
-        # v1.0.105): the older action wrote no execution log when the SDK died on a usage limit, so a
-        # limit could not be told from a crash.
-        continue-on-error: true
-        uses: anthropics/claude-code-action@e90deca47693f9457b72f2b53c17d7c445a87342 # v1.0.171
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          allowed_bots: cursor,cursor[bot]
-          prompt: |
+        id: prompt
+        env:
+          PROMPT: |
             You are reviewing a pull request against this repository's house rules. CLAUDE.md is loaded for
             you from the trusted base ref by the workflow (and by the action's own restore); do not fetch it.
 
@@ -161,62 +156,185 @@ jobs:
             Do not post nits (formatting, naming preference). Do post every finding above with a one-line
             explanation and a suggested fix. If you are running low on turns or time, stop walking new files
             and post the findings you already have; partial output beats a silent timeout.
+        run: |
+          set -euo pipefail
+          delimiter="PROMPT_$(openssl rand -hex 16)"
+          { echo "text<<$delimiter"; printf '%s\n' "$PROMPT"; echo "$delimiter"; } >> "$GITHUB_OUTPUT"
+      - name: Review
+        id: reviewer
+        if: env.REVIEW_MODE != 'nochange'
+        # continue-on-error only so the classify step can read how the run ended; it never makes the
+        # gate optional: "Require a completed review" fails the job unless an account completed a
+        # review or every configured account proved a rate or usage limit, and without it the receipt
+        # is never posted. v1.0.171 (from v1.0.105): the older action wrote no execution log when the
+        # SDK died on a usage limit, so a limit could not be told from a crash.
+        continue-on-error: true
+        uses: anthropics/claude-code-action@e90deca47693f9457b72f2b53c17d7c445a87342 # v1.0.171
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          allowed_bots: cursor,cursor[bot]
+          prompt: ${{ steps.prompt.outputs.text }}
           claude_args: >-
             --model claude-opus-4-7
             --max-turns ${{ env.REVIEW_MAX_TURNS }}
             --allowed-tools "mcp__github_inline_comment__create_inline_comment,mcp__github__get_pull_request_diff,mcp__github__get_pull_request_files,mcp__github__get_file_contents"
-      - name: Require a completed review
+      - name: Classify the first account's review
         # The execution log decides, read structurally (SDK event types, the final result object and
         # its error envelope), never the model's prose, so a diff that merely contains limit wording
-        # cannot fake a verdict. A completed review (the step succeeded and the final result is a
-        # success that is not an error, took at least two turns and cost something) passes. The one
-        # pass without a review (operator, 2026-10-03): a run that did not complete and whose log
-        # proves a rate or usage limit, a `rate_limit_event` that was rejected or an error result
-        # carrying the limit message or Anthropic's `rate_limit_error`, warns and makes the receipt
-        # below say `limited`. Anything else (an invalid or missing token, a crash, the turn cap, a
-        # model error) fails the job, so no receipt is posted and the verify job stays red.
-        if: env.REVIEW_MODE != 'nochange'
+        # cannot fake a verdict. Completed: the step succeeded and the final result is a success that is
+        # not an error, took at least two turns and cost something. Rate-limited: a `rate_limit_event`
+        # that was rejected, or an error result carrying the CLI's limit message or Anthropic's
+        # `rate_limit_error`. The log is moved to this attempt's own name first: the action writes one
+        # fixed path, and the next attempt must never be judged by this one's log. The fallback
+        # account's classify step runs this same script (a test holds them equal).
+        id: first
+        if: always() && env.REVIEW_MODE != 'nochange'
         env:
+          ATTEMPT: first
           OUTCOME: ${{ steps.reviewer.outcome }}
           EXECUTION_FILE: ${{ steps.reviewer.outputs.execution_file }}
         run: |
           set -uo pipefail
           completed=false
           limited=false
-          if [ -n "${EXECUTION_FILE:-}" ] && [ -f "$EXECUTION_FILE" ]; then
+          file="${EXECUTION_FILE:-}"
+          shared="${RUNNER_TEMP}/claude-execution-output.json"
+          if { [ -z "$file" ] || [ ! -f "$file" ]; } && [ "${OUTCOME:-skipped}" != skipped ]; then
+            file="$shared"  # a step that failed publishes no output, but the action wrote its log here first
+          fi
+          if [ -n "$file" ] && [ -f "$file" ]; then
+            kept="${RUNNER_TEMP}/review-${ATTEMPT}.json"
+            mv -f "$file" "$kept"
+            file="$kept"
+            echo "log=$file" >> "$GITHUB_OUTPUT"
             jq -c '(if type == "array" then . else [.] end) | .[] | select(type == "object")
                    | if .type == "rate_limit_event" then {type, status: (.rate_limit_info.status? // .error?)}
                      elif .type == "result" then {type, subtype, is_error, num_turns, total_cost_usd}
-                     else empty end' "$EXECUTION_FILE" || true
+                     else empty end' "$file" || true
             completed=$(jq -r '
               (if type == "array" then . else [.] end)
               | [ .[] | select(type == "object" and .type == "result") ] | last
               | if . == null then false
                 else (.subtype == "success" and ((.is_error // false) | not)
                       and ((.num_turns // 0) >= 2) and ((.total_cost_usd // 0) > 0)) end
-            ' "$EXECUTION_FILE" 2>/dev/null || echo false)
-            limited=$(jq -r '
-              (if type == "array" then . else [.] end)
-              | any(.[]; type == "object" and .type == "rate_limit_event"
-                    and (((.rate_limit_info.status? // .error? // "") | tostring) as $s
-                         | $s == "rejected" or $s == "rate_limit"))
-                or ([ .[] | select(type == "object" and .type == "result") ] | last
-                    | . != null and .is_error == true
-                      and ([(.result // ""), ((.errors // []) | tostring)] | join(" ") | ascii_downcase
-                           | test("hit your .*limit") or contains("usage limit reached")
-                             or contains("rate limit") or contains("rate_limit_error")))
-            ' "$EXECUTION_FILE" 2>/dev/null || echo false)
+            ' "$file" 2>/dev/null || echo false)
+            if [ "$completed" != true ]; then
+              completed=false
+              limited=$(jq -r '
+                (if type == "array" then . else [.] end)
+                | any(.[]; type == "object" and .type == "rate_limit_event"
+                      and (((.rate_limit_info.status? // .error? // "") | tostring) as $s
+                           | $s == "rejected" or $s == "rate_limit"))
+                  or ([ .[] | select(type == "object" and .type == "result") ] | last
+                      | . != null and .is_error == true
+                        and ([(.result // ""), ((.errors // []) | tostring)] | join(" ") | ascii_downcase
+                             | test("hit your .*limit") or contains("usage limit reached")
+                               or contains("rate limit") or contains("rate_limit_error")))
+              ' "$file" 2>/dev/null || echo false)
+              [ "$limited" = true ] || limited=false
+            elif [ "${OUTCOME:-}" != success ]; then
+              completed=false  # a completed log from a step that failed afterwards is not a review
+            fi
           fi
-          echo "review step: ${OUTCOME:-unknown}; completed=${completed}; rate_limited=${limited}"
-          if [ "$completed" = true ]; then
-            [ "${OUTCOME:-}" = success ] && exit 0
-          elif [ "$limited" = true ]; then
-            echo "::warning::The review did not run: the reviewer subscription is rate-limited. This head was NOT reviewed. Its receipt says limited and is never a review anchor, so the next real review covers it. Re-run the workflow once the limit resets."
-            echo "Not reviewed: the reviewer subscription is rate-limited. Passed with a warning; the receipt says limited." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          echo "${ATTEMPT} account: step ${OUTCOME:-skipped}; completed=${completed}; rate_limited=${limited}"
+          { echo "completed=$completed"; echo "rate_limited=$limited"; } >> "$GITHUB_OUTPUT"
+      - name: Review with the fallback account
+        id: fallback_reviewer
+        # The subscription limit is per account, so a second account (CLAUDE_CODE_OAUTH_TOKEN_FALLBACK,
+        # optional) reviews when the first did not complete one. Same prompt, model and tools.
+        if: env.REVIEW_MODE != 'nochange' && env.HAS_FALLBACK_ACCOUNT == 'true' && steps.first.outputs.completed != 'true'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@e90deca47693f9457b72f2b53c17d7c445a87342 # v1.0.171
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_FALLBACK }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          allowed_bots: cursor,cursor[bot]
+          prompt: ${{ steps.prompt.outputs.text }}
+          claude_args: >-
+            --model claude-opus-4-7
+            --max-turns ${{ env.REVIEW_MAX_TURNS }}
+            --allowed-tools "mcp__github_inline_comment__create_inline_comment,mcp__github__get_pull_request_diff,mcp__github__get_pull_request_files,mcp__github__get_file_contents"
+      - name: Classify the fallback account's review
+        id: fallback
+        if: always() && env.REVIEW_MODE != 'nochange'
+        env:
+          ATTEMPT: fallback
+          OUTCOME: ${{ steps.fallback_reviewer.outcome }}
+          EXECUTION_FILE: ${{ steps.fallback_reviewer.outputs.execution_file }}
+        run: |
+          set -uo pipefail
+          completed=false
+          limited=false
+          file="${EXECUTION_FILE:-}"
+          shared="${RUNNER_TEMP}/claude-execution-output.json"
+          if { [ -z "$file" ] || [ ! -f "$file" ]; } && [ "${OUTCOME:-skipped}" != skipped ]; then
+            file="$shared"  # a step that failed publishes no output, but the action wrote its log here first
+          fi
+          if [ -n "$file" ] && [ -f "$file" ]; then
+            kept="${RUNNER_TEMP}/review-${ATTEMPT}.json"
+            mv -f "$file" "$kept"
+            file="$kept"
+            echo "log=$file" >> "$GITHUB_OUTPUT"
+            jq -c '(if type == "array" then . else [.] end) | .[] | select(type == "object")
+                   | if .type == "rate_limit_event" then {type, status: (.rate_limit_info.status? // .error?)}
+                     elif .type == "result" then {type, subtype, is_error, num_turns, total_cost_usd}
+                     else empty end' "$file" || true
+            completed=$(jq -r '
+              (if type == "array" then . else [.] end)
+              | [ .[] | select(type == "object" and .type == "result") ] | last
+              | if . == null then false
+                else (.subtype == "success" and ((.is_error // false) | not)
+                      and ((.num_turns // 0) >= 2) and ((.total_cost_usd // 0) > 0)) end
+            ' "$file" 2>/dev/null || echo false)
+            if [ "$completed" != true ]; then
+              completed=false
+              limited=$(jq -r '
+                (if type == "array" then . else [.] end)
+                | any(.[]; type == "object" and .type == "rate_limit_event"
+                      and (((.rate_limit_info.status? // .error? // "") | tostring) as $s
+                           | $s == "rejected" or $s == "rate_limit"))
+                  or ([ .[] | select(type == "object" and .type == "result") ] | last
+                      | . != null and .is_error == true
+                        and ([(.result // ""), ((.errors // []) | tostring)] | join(" ") | ascii_downcase
+                             | test("hit your .*limit") or contains("usage limit reached")
+                               or contains("rate limit") or contains("rate_limit_error")))
+              ' "$file" 2>/dev/null || echo false)
+              [ "$limited" = true ] || limited=false
+            elif [ "${OUTCOME:-}" != success ]; then
+              completed=false  # a completed log from a step that failed afterwards is not a review
+            fi
+          fi
+          echo "${ATTEMPT} account: step ${OUTCOME:-skipped}; completed=${completed}; rate_limited=${limited}"
+          { echo "completed=$completed"; echo "rate_limited=$limited"; } >> "$GITHUB_OUTPUT"
+      - name: Require a completed review
+        # Passes when an account completed a review. The one pass without a review (operator,
+        # 2026-10-03): every configured account proved a rate or usage limit, which warns and makes the
+        # receipt below say `limited`. Anything else (an invalid or missing token, a crash, the turn
+        # cap, a model error, on the last account tried) fails the job, so no receipt is posted and the
+        # verify job stays red.
+        if: env.REVIEW_MODE != 'nochange'
+        env:
+          FIRST_COMPLETED: ${{ steps.first.outputs.completed }}
+          FIRST_LIMITED: ${{ steps.first.outputs.rate_limited }}
+          FALLBACK_COMPLETED: ${{ steps.fallback.outputs.completed }}
+          FALLBACK_LIMITED: ${{ steps.fallback.outputs.rate_limited }}
+        run: |
+          set -uo pipefail
+          for account in FIRST FALLBACK; do
+            completed="${account}_COMPLETED"
+            if [ "${!completed:-}" = true ]; then
+              echo "Reviewed by the $(tr '[:upper:]' '[:lower:]' <<< "$account") account." | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+              exit 0
+            fi
+          done
+          if [ "${FIRST_LIMITED:-}" = true ] && { [ "${HAS_FALLBACK_ACCOUNT:-}" != true ] || [ "${FALLBACK_LIMITED:-}" = true ]; }; then
+            echo "::warning::The review did not run: every reviewer account is rate-limited. This head was NOT reviewed. Its receipt says limited and is never a review anchor, so the next real review covers it. Re-run the workflow once a limit resets."
+            echo "Not reviewed: every reviewer account is rate-limited. Passed with a warning; the receipt says limited." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
             echo "REVIEW_MODE=limited" >> "$GITHUB_ENV"
             exit 0
           fi
-          echo "::error::The review did not complete, and its log proves no rate or usage limit (an invalid or missing token, a crash, the turn cap or a model error); see the Review step."
+          echo "::error::No account completed the review, and not every configured account proved a rate or usage limit (an invalid or missing token, a crash, the turn cap or a model error); see the Review steps."
           exit 1
       - name: Post the receipt
         # Reached only when every step above succeeded, so a model error, an invalid token or a
@@ -236,7 +354,7 @@ jobs:
         if: always()
         uses: ./actions/usage # zizmor: ignore[self-repository]
         with:
-          source-file: ${{ steps.reviewer.outputs.execution_file }}
+          source-file: ${{ steps.fallback.outputs.log || steps.first.outputs.log }}
           source-ran: ${{ env.REVIEW_MODE != 'nochange' }}
           role: swe-reviewer
           job-key: review

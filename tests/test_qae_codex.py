@@ -131,6 +131,9 @@ class Action(unittest.TestCase):
         self.assertIn("--sandbox danger-full-access", exec_line)
         self.assertIn("""-c 'approval_policy="never"'""", exec_line)
         self.assertIn("--skip-git-repo-check", exec_line)
+        # No session rollout on the runner: the Codex home persists between jobs, and a rollout keeps
+        # everything the model read, site.md included.
+        self.assertIn("exec --json --ephemeral", exec_line)
         self.assertTrue(exec_line.endswith("< /dev/null"))
 
     def test_the_login_is_checked_never_written(self):
@@ -166,21 +169,33 @@ class StorageState(unittest.TestCase):
         self.temp = os.path.join(self.work, "runner-temp")
         os.mkdir(self.temp)
         self.codex = os.path.join(self.work, "codex")
+        # Records the playwright-mcp arguments, and leaves what a real explorer leaves when it typed a
+        # secret: playwright-mcp's session log holds the typed value, and the model may copy it.
         with open(self.codex, "w") as handle:
             handle.write('#!/bin/sh\nfor a in "$@"; do case "$a" in mcp_servers.playwright.args=*) '
-                         'printf %s "${a#mcp_servers.playwright.args=}" > "$(dirname "$0")/args" ;; esac; done\n')
+                         'printf %s "${a#mcp_servers.playwright.args=}" > "$(dirname "$0")/args" ;; esac; done\n'
+                         'if [ -n "$TYPED" ]; then mkdir -p qae-artifacts/session-1 qae-artifacts/qae\n'
+                         '  printf \'"value": "%s"\\n\' "$TYPED" > qae-artifacts/session-1/session.md\n'
+                         '  printf \'acceptance-check: AC1 -- PASS -- typed %s\\n\' "$TYPED" > qae-artifacts/verdict.md\n'
+                         '  printf \'PNG%s\' "$TYPED" > qae-artifacts/qae/AC1-step-1.png; fi\n')
         os.chmod(self.codex, 0o755)
         Path(self.work, "prompt.md").write_text("prompt\n")
 
-    def run_step(self, state=None, raw=None):
+    def run_step(self, state=None, raw=None, secrets=None, typed=""):
         path = ""
         if state is not None or raw is not None:
             path = "state.json"
             Path(self.work, path).write_text(raw if raw is not None else json.dumps(state))
-        script = run_script(ACTION.read_text(), "- name: Explore the acceptance criteria in a real browser")
+        secrets_file = ""
+        if secrets is not None:
+            secrets_file = os.path.join(self.temp, "login.json")
+            Path(secrets_file).write_text(secrets if isinstance(secrets, str) else json.dumps(secrets))
+        script = run_script(ACTION.read_text(), "- name: Explore the acceptance criteria in a real browser",
+                            "- name: Redact the secrets from the artifacts")
         return subprocess.run(["bash", "-c", script], cwd=self.work, capture_output=True, text=True,
                               env=clean_env({"CODEX": self.codex, "PROMPT_FILE": "prompt.md", "MCP": "/opt/mcp/cli.js",
                                              "ARTIFACTS": "qae-artifacts", "STORAGE_STATE": path,
+                                             "SECRETS_FILE": secrets_file, "TYPED": typed,
                                              "RUNNER_TEMP": self.temp, "GITHUB_ACTION_PATH": str(ACTION.parent),
                                              "GITHUB_REPOSITORY": "octo/demo", "GITHUB_RUN_ID": "1",
                                              "GITHUB_RUN_ATTEMPT": "1", "VV_HEAD_SHA": "0" * 40,
@@ -212,12 +227,98 @@ class StorageState(unittest.TestCase):
         other = dict(COOKIE, name="consent", value="all", httpOnly=False)
         result = self.run_step({"cookies": [COOKIE, other], "origins": []})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        secrets = os.path.join(self.temp, "qae-codex-cookies.env")
+        secrets = os.path.join(self.temp, "qae-codex-mcp.env")
         self.assertEqual(self.browser_args()[10:], ["--storage-state", os.path.realpath(os.path.join(self.work, "state.json")),
                                                    "--secrets", secrets])
-        self.assertEqual(Path(secrets).read_text(), 'VV_COOKIE_1="%s"\nVV_COOKIE_2="all"\n' % COOKIE["value"])
+        self.assertEqual(Path(secrets).read_text(), "VV_COOKIE_1='%s'\nVV_COOKIE_2='all'\n" % COOKIE["value"])
         self.assertEqual(stat.S_IMODE(os.stat(secrets).st_mode), 0o600)
         self.assertNotIn(COOKIE["value"], result.stdout + result.stderr)
+
+    def redact(self):
+        script = run_script(ACTION.read_text(), "- name: Redact the secrets from the artifacts", "- name: Keep numeric usage")
+        return subprocess.run(["bash", "-c", script], cwd=self.work, capture_output=True, text=True,
+                              env=clean_env({"ARTIFACTS": "qae-artifacts", "RUNNER_TEMP": self.temp}))
+
+    def test_a_login_reaches_the_browser_by_name_and_is_redacted_from_every_text_artifact(self):
+        cases = {"a quote-free value": "s3cret-Login-Value", "every quote but one": "It's\"a\\nmix"}
+        for label, value in cases.items():
+            with self.subTest(label):
+                for leftover in ("qae-artifacts", "args"):
+                    shutil.rmtree(os.path.join(self.work, leftover), True)
+                    if os.path.exists(os.path.join(self.work, leftover)):
+                        os.remove(os.path.join(self.work, leftover))
+                result = self.run_step({"cookies": [COOKIE], "origins": []}, secrets={"QAE_TRAVELER_PASSWORD": value},
+                                       typed=value)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                dotenv = os.path.join(self.temp, "qae-codex-mcp.env")
+                self.assertEqual(self.browser_args()[-2:], ["--secrets", dotenv])
+                lines = Path(dotenv).read_text().splitlines()
+                self.assertEqual(lines[0], "VV_COOKIE_1='%s'" % COOKIE["value"])
+                self.assertTrue(lines[1].startswith("QAE_TRAVELER_PASSWORD="), lines)
+                quote = lines[1][len("QAE_TRAVELER_PASSWORD=")]
+                self.assertEqual(lines[1], "QAE_TRAVELER_PASSWORD=%s%s%s" % (quote, value, quote))
+                self.assertNotIn(quote, value)
+                self.assertNotIn(value, result.stdout + result.stderr)
+                redacted = self.redact()
+                self.assertEqual(redacted.returncode, 0, redacted.stdout + redacted.stderr)
+                self.assertIn("redacted 2 secret value(s) in 2 file(s)", redacted.stdout)
+                for name in ("session-1/session.md", "verdict.md"):
+                    text = Path(self.work, "qae-artifacts", name).read_text()
+                    self.assertNotIn(value, text)
+                    self.assertIn("<secret>QAE_TRAVELER_PASSWORD</secret>", text)
+                self.assertEqual(Path(self.work, "qae-artifacts", "qae", "AC1-step-1.png").read_bytes(), b"PNG" + value.encode())
+                for name in ("qae-codex-redact.json", "qae-codex-mcp.env"):
+                    self.assertFalse(os.path.exists(os.path.join(self.temp, name)), name + " outlived the redaction")
+
+    def test_escaped_and_encoded_forms_of_a_value_are_redacted_and_no_fragment_survives(self):
+        # A JSON writer (the session log) or a URL leaves a value escaped, so the raw bytes alone
+        # would let `\\"`, `\\\\`, `\\u00e9` or `%40` forms through; and a value that is part of a
+        # longer one must not be replaced first, or the longer one's tail survives.
+        import urllib.parse
+        value = 'pa"ss\\wo @rd\u00e9!'
+        longer = "abc123XYZ-long-tail"
+        result = self.run_step(secrets={"QAE_PASSWORD": value, "QAE_SHORT": "abc123XYZ", "QAE_LONG": longer})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        forms = [value, json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1],
+                 urllib.parse.quote(value, safe=""), urllib.parse.quote_plus(value)]
+        self.assertEqual(len(set(forms)), 5)
+        artifacts = Path(self.work, "qae-artifacts")
+        (artifacts / "session-1").mkdir(parents=True, exist_ok=True)
+        (artifacts / "session-1" / "session.md").write_text(
+            "\n".join('"value": "%s"' % form for form in forms) + "\nlong: %s\n" % longer, encoding="utf-8")
+        redacted = self.redact()
+        self.assertEqual(redacted.returncode, 0, redacted.stdout + redacted.stderr)
+        text = (artifacts / "session-1" / "session.md").read_text(encoding="utf-8")
+        for form in forms:
+            self.assertNotIn(form, text)
+        self.assertEqual(text.count("<secret>QAE_PASSWORD</secret>"), 5, text)
+        self.assertIn("long: <secret>QAE_LONG</secret>\n", text)
+        self.assertNotIn("long-tail", text)
+
+    def test_a_malformed_secrets_file_stops_the_run_before_the_model(self):
+        cases = {
+            "not json": "{",
+            "a list": json.dumps(["x"]),
+            "empty": json.dumps({}),
+            "a lower-case name": json.dumps({"password": "x"}),
+            "a cookie name": json.dumps({"VV_COOKIE_1": "x"}),
+            "an empty value": json.dumps({"PASSWORD": ""}),
+            "two lines": json.dumps({"PASSWORD": "a\nb"}),
+            "every quote": json.dumps({"PASSWORD": "'`\""}),
+        }
+        for label, raw in cases.items():
+            with self.subTest(label):
+                result = self.run_step(secrets=raw)
+                self.assertEqual(result.returncode, 2, label + ": " + result.stdout + result.stderr)
+                self.assertIn("::error::the secrets file", result.stdout)
+                self.assertFalse(os.path.exists(os.path.join(self.work, "args")), "codex ran")
+
+    def test_nothing_to_redact_without_secrets(self):
+        result = self.run_step()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("--secrets", self.browser_args())
+        redacted = self.redact()
+        self.assertEqual((redacted.returncode, redacted.stdout), (0, ""))
 
     def test_a_file_that_is_not_a_cookies_only_storage_state_stops_the_run(self):
         cases = {
@@ -256,6 +357,7 @@ class StorageState(unittest.TestCase):
         text = CODEX.read_text()
         explore = text[text.index("- name: Explore the acceptance criteria in a real browser"):text.index("- name: Post the verdict the explorer wrote")]
         self.assertIn("          storage-state: ${{ steps.site.outputs.storage-state }}\n", explore)
+        self.assertIn("          secrets-file: ${{ steps.site.outputs.secrets-file }}\n", explore)
         self.assertIn("  storage-state:\n", ACTION.read_text())
 
     def test_the_readme_recipe_writes_a_storage_state_the_action_accepts(self):

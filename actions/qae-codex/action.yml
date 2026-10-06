@@ -16,6 +16,17 @@ inputs:
   storage-state:
     description: A Playwright storage-state file the workflow wrote before this step, holding cookies only (an `origins` list must be empty), for example the bypass cookie of a preview behind Vercel SSO. The browser starts with it, every cookie value is redacted from what the explorer sees and saves, and a file that is not a cookies-only storage state fails the step before the model runs. Write it outside the workspace ($RUNNER_TEMP). Empty (the default) starts the browser with no state.
     default: ""
+  secrets-file:
+    description: >-
+      A JSON object of credentials the workflow wrote before this step, outside the workspace ($RUNNER_TEMP),
+      mapping a NAME (capital letters, digits and underscores) to its value, for example a preview login's
+      password. Give the explorer the NAME, never the value: the explorer types a value by entering its NAME
+      (playwright-mcp's --secrets), every tool result shows <secret>NAME</secret> instead, and after the
+      explorer every non-image file under the artifacts directory has each value replaced, because
+      playwright-mcp's session log still records what was typed. So neither the posted verdict nor the
+      uploaded evidence holds one. A malformed file fails the step before the model runs. Empty (the
+      default) adds nothing.
+    default: ""
   usage-account-alias:
     description: Optional caller-owned logical alias for the Codex subscription. Empty stays unmapped.
     default: ""
@@ -67,11 +78,17 @@ runs:
         MCP: ${{ inputs.mcp }}
         ARTIFACTS: ${{ inputs.artifacts }}
         STORAGE_STATE: ${{ inputs.storage-state }}
+        SECRETS_FILE: ${{ inputs.secrets-file }}
         USAGE_ACCOUNT_ALIAS: ${{ inputs.usage-account-alias }}
         VV_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
         set -euo pipefail
         mkdir -p "$ARTIFACTS/qae"
+        # Both files hold credential values: written owner-only outside the workspace, and removed by
+        # the redaction step after the explorer.
+        redact="$RUNNER_TEMP/qae-codex-redact.json"
+        dotenv="$RUNNER_TEMP/qae-codex-mcp.env"
+        rm -f "$redact" "$dotenv"
         browser=()
         if [ -n "$MCP" ]; then
           # --browser chromium: the build actions/qae-browser installed. playwright-mcp otherwise
@@ -85,10 +102,9 @@ runs:
             # result, saved file and session log, so the cookie never reaches the model through the
             # browser or the uploaded artifacts. Checked here first, never printed: a file that is not
             # a cookies-only storage state stops the run before a model session is spent on it.
-            secrets="$RUNNER_TEMP/qae-codex-cookies.env"
-            if ! state=$(python3 - "$STORAGE_STATE" "$secrets" <<'PY'
+            if ! state=$(python3 - "$STORAGE_STATE" "$redact" <<'PY'
         import json, os, re, sys
-        path, secrets = sys.argv[1], sys.argv[2]
+        path, redact = sys.argv[1], sys.argv[2]
         def refuse(why):
             print("::error::the storage state %s %s (harnesses/qae/README.md)" % (path, why))
             sys.exit(2)
@@ -111,24 +127,109 @@ runs:
                 refuse("cookie %d lacks a name, a domain or a path" % number)
             if not isinstance(fields.get("value"), str) or not octets.match(fields["value"]):
                 refuse("cookie %d has a value that is not a cookie value" % number)
-        with open(os.open(secrets, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as handle:
-            handle.writelines('VV_COOKIE_%d="%s"\n' % (number, cookie["value"]) for number, cookie in enumerate(cookies, 1))
+        with open(os.open(redact, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as handle:
+            json.dump({"VV_COOKIE_%d" % number: cookie["value"] for number, cookie in enumerate(cookies, 1)}, handle)
         print(os.path.abspath(path))
         PY
             ); then
               echo "$state"
               exit 2
             fi
-            args+=",\"--storage-state\",\"$state\",\"--secrets\",\"$secrets\""
+            args+=",\"--storage-state\",\"$state\""
+          fi
+          # The workflow's credentials join the cookie values: one map (for the redaction step after
+          # the explorer) and one dotenv file for playwright-mcp, each value quoted with a quote it
+          # does not contain, since dotenv has no escape for a quote inside a quoted value.
+          if [ -n "$SECRETS_FILE" ] || [ -s "$redact" ]; then
+            if ! out=$(python3 - "$SECRETS_FILE" "$redact" "$dotenv" <<'PY'
+        import json, os, re, sys
+        given, redact, dotenv = sys.argv[1], sys.argv[2], sys.argv[3]
+        def refuse(why):
+            print("::error::the secrets file %s %s (harnesses/qae/README.md)" % (given, why))
+            sys.exit(2)
+        merged = {}
+        if os.path.exists(redact):
+            with open(redact) as handle:
+                merged.update(json.load(handle))
+        if given:
+            try:
+                with open(given) as handle:
+                    named = json.load(handle)
+            except (OSError, ValueError) as error:
+                refuse("is not a readable JSON file: %s" % error)
+            if not isinstance(named, dict) or not named:
+                refuse("is not a JSON object of NAME to value")
+            for name, value in named.items():
+                if not re.fullmatch(r"[A-Z][A-Z0-9_]*", name) or name.startswith("VV_COOKIE_"):
+                    refuse("names a secret %r; a NAME is capital letters, digits and underscores, not VV_COOKIE_*" % name)
+                if not isinstance(value, str) or not value or "\n" in value or "\r" in value:
+                    refuse("gives %s a value that is not a one-line string" % name)
+                merged[name] = value
+        lines = []
+        for name, value in merged.items():
+            quote = next((q for q in ("'", "`", '"') if q not in value), None)
+            if quote is None or (quote == '"' and ("\\n" in value or "\\r" in value)):
+                refuse("gives %s a value no dotenv quoting can carry" % name)
+            lines.append("%s=%s%s%s\n" % (name, quote, value, quote))
+        for path, text in ((redact, json.dumps(merged)), (dotenv, "".join(lines))):
+            with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as handle:
+                handle.write(text)
+        PY
+            ); then
+              echo "$out"
+              exit 2
+            fi
+            args+=",\"--secrets\",\"$dotenv\""
           fi
           browser=(-c 'mcp_servers.playwright.command="node"' -c "mcp_servers.playwright.args=[$args]")
         fi
         python3 "$GITHUB_ACTION_PATH/../usage/collect.py" \
           --output "$RUNNER_TEMP/vv-usage/usage.json" \
           --role qae-explorer --job-key explore --account-alias "$USAGE_ACCOUNT_ALIAS" \
-          codex -- "$CODEX" exec --json --skip-git-repo-check --sandbox danger-full-access \
+          codex -- "$CODEX" exec --json --ephemeral --skip-git-repo-check --sandbox danger-full-access \
           -c 'approval_policy="never"' "${browser[@]}" \
           -o "$ARTIFACTS/final.md" "$(cat "$PROMPT_FILE")" < /dev/null
+    - name: Redact the secrets from the artifacts
+      # playwright-mcp's --secrets keeps each value out of the tool results, but its session log
+      # still records what was typed, and the model could write a value anywhere under the
+      # artifacts directory. Every non-image file there gets each value replaced with
+      # <secret>NAME</secret> before the workflow posts the verdict or uploads the evidence, and the
+      # value files are removed. A value is also found in the forms a JSON or URL writer leaves it
+      # in (escaped quotes and backslashes, \uXXXX, percent-encoding), and the longest form is
+      # replaced first, so no fragment of one value survives another's replacement. Screenshots
+      # hold pixels, not text.
+      if: always()
+      shell: bash
+      env:
+        ARTIFACTS: ${{ inputs.artifacts }}
+      run: |
+        set -euo pipefail
+        redact="$RUNNER_TEMP/qae-codex-redact.json"
+        [ -s "$redact" ] || { rm -f "$RUNNER_TEMP/qae-codex-mcp.env"; exit 0; }
+        python3 - "$redact" "$ARTIFACTS" <<'PY'
+        import json, pathlib, sys, urllib.parse
+        values = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+        forms = {}
+        for name, value in values.items():
+            tag = b"<secret>%s</secret>" % name.encode()
+            for form in (value, json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1],
+                         urllib.parse.quote(value, safe=""), urllib.parse.quote_plus(value)):
+                forms[form.encode("utf-8")] = tag
+        ordered = sorted(forms.items(), key=lambda item: -len(item[0]))
+        root = pathlib.Path(sys.argv[2])
+        changed = 0
+        for path in (root.rglob("*") if root.is_dir() else ()):
+            if not path.is_file() or path.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                continue
+            data = clean = path.read_bytes()
+            for form, tag in ordered:
+                clean = clean.replace(form, tag)
+            if clean != data:
+                path.write_bytes(clean)
+                changed += 1
+        print("redacted %d secret value(s) in %d file(s)" % (len(values), changed))
+        PY
+        rm -f "$redact" "$RUNNER_TEMP/qae-codex-mcp.env"
     - name: Keep numeric usage
       if: always() && inputs.mcp != ''
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
