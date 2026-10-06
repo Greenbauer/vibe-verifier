@@ -132,7 +132,7 @@ class SiteUrl(unittest.TestCase):
 
     def test_the_declared_url_reaches_the_gate_through_the_verify_job(self):
         text = TEMPLATE.read_text()
-        self.assertIn("    outputs:\n      site-url: ${{ steps.site.outputs.url }}\n    steps:\n", text)
+        self.assertIn("    outputs:\n      site-url: ${{ steps.site.outputs.url }}\n", text)
         self.assertIn("          SITE_URL: ${{ needs.explore.outputs.site-url }}\n", text)
         preview = "https://site-git-feat-team.vercel.app"
         bin_dir = stub_bin(self, {"gh": 'case "$1 $2" in\n'
@@ -143,7 +143,7 @@ class SiteUrl(unittest.TestCase):
         script = verify_inputs_script()
         result = subprocess.run(["bash", "-e", "-c", script], cwd=self.work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
-                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": preview}))
+                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": preview, "REFERENCES": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(Path(self.work, "qae-inputs", "site-url").read_text(), preview + "\n")
         # The run's artifacts: the preview answered 500, the local default 404; only the declared site counts.
@@ -196,7 +196,7 @@ class Steps(unittest.TestCase):
 
     def test_every_catalog_pin_is_the_placeholder_a_consumer_replaces(self):
         pins = re.findall(r"vibe-verifier/actions/[\w-]+@(\S+)( #[^\n]*)?", TEMPLATE.read_text())
-        self.assertEqual(len(pins), 7)
+        self.assertEqual(len(pins), 8)
         for sha, comment in pins:
             self.assertEqual(sha, "0" * 40)
             self.assertIn("CONSUMER: pin the commit you subscribe to", comment)
@@ -349,7 +349,8 @@ class Review(unittest.TestCase):
                                         'esac\n' % Path(work, "comments.json")})
         result = subprocess.run(["bash", "-e", "-c", verify_inputs_script()], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
-                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": "http://localhost:3000"}))
+                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": "http://localhost:3000",
+                                               "REFERENCES": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(Path(work, "qae-inputs", "verdict.md").read_text(), verdict + "\n")
         self.assertEqual(Path(work, "qae-inputs", "changed-files").read_text(), "app/page.tsx\n")

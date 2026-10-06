@@ -16,10 +16,11 @@ the template; the consumer owns each job's `runs-on` and how the site is built a
 [reachable preview](#a-reachable-preview-instead-of-a-site-on-the-runner) is used instead), and that
 step declares the site's URL as its `url` output. For a site behind a login, it writes
 `qae-inputs/site.md` in that same step to tell the explorer how to sign in and what state the site
-starts in (a throwaway account on a throwaway backend, never production). Its seven catalog
-pins (`criteria@` in criteria, `features@`, `qae-browser@` and `usage@` in explore, `criteria@`,
-`gates@` and `qa-review@` in verify) are inventoried and bumped by `consumers` and `apply-down`
-exactly like the stub's.
+starts in (a throwaway account on a throwaway backend, never production), and it supplies any
+[design references](#design-references-and-roles) the criteria name. Its eight catalog
+pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `usage@` in explore,
+`criteria@`, `gates@` and `qa-review@` in verify) are inventoried and bumped by `consumers` and
+`apply-down` exactly like the stub's.
 
 1. **criteria** reads the PR body and its changed paths with `actions/criteria`, on any runner: it
    holds no model login, checks out nothing and builds nothing. Its `count` output decides whether
@@ -27,8 +28,8 @@ exactly like the stub's.
    queues for, or holds, the one runner with the login.
 2. **explore** runs only when the criteria job found a criterion. It checks out the PR with its
    base, picks the [features to re-walk](#re-walking-the-features-a-pull-request-touches) when that is
-   on, builds and starts the PR's site on the runner (or resolves its preview), installs the browser,
-   and runs
+   on, builds and starts the PR's site on the runner (or resolves its preview), copies the design
+   references the site step supplied into the evidence, installs the browser, and runs
    `claude-code-action` with [`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) as its browser. The prompt
    ([`prompt.md`](prompt.md)) tells the model to walk each criterion under the PR body's
    `## Acceptance criteria` heading, append one line per action to `qae-artifacts/qae/ACn.md`
@@ -75,6 +76,72 @@ step selects nothing and nothing changes.
   like the criteria's; the review comment lists each re-walked feature.
 
 A wrapper passes its gate list to `actions/features` as `entries:`, as it does to `actions/gates`.
+
+## Design references and roles
+
+A criterion may carry two annotations, in square brackets inside its own text. `bin/vibe-verifier
+criteria` prints the ones it reads (the criteria job's log shows them), and the gate refuses a bracket
+that starts like one and does not parse, so a typo never drops a requirement.
+
+```
+- The home page matches the design at desktop width [ref: home-desktop]
+- Only an admin can delete a post, and a read-only user sees no Delete button [as: admin, read-only]
+```
+
+**`[ref: <key>]`** compares the built screen with a design reference by looking, the way a reviewer
+holds a mockup beside the page.
+
+- The consumer's site step supplies the image as `qae-inputs/references/<key>.png` (a key is letters,
+  digits, `-` and `_`), one per screen, state and width, exported at 1x so that its width in pixels
+  is the viewport width it shows. Where it comes from is the consumer's choice: committed in the
+  repository, fetched from a design tool with a token the step holds, or anything else the step can
+  reach. Committed ones are best read from the base branch, so a pull request cannot supply the image
+  it is judged against:
+
+  ```yaml
+            mkdir -p qae-inputs/references
+            base="origin/$GITHUB_BASE_REF"   # the explore checkout has the base (fetch-depth: 0)
+            for path in $(git ls-tree --name-only "$base" design/references/ | grep '\.png$' || true); do
+              git show "$base:$path" > "qae-inputs/references/${path##*/}"
+            done
+  ```
+- The template's `Keep the design references with the evidence` step
+  ([`actions/qae-inputs`](../../actions/qae-inputs/action.yml)) runs after the site step and before the
+  explorer. It copies each image to `qae-artifacts/references/<key>.png`, so the uploaded evidence holds
+  what was compared, lists each with its width in `qae-inputs/references.md` for the explorer, and
+  declares each image's sha256 as the explore job's `references` output, which the verify job writes to
+  `qae-inputs/references.json` for `acceptance-verdict --references`.
+- The explorer opens the image, reaches the same screen and state with the browser resized to that
+  width, saves the screenshot and compares the two, logging a step that names `reference <key>`. A
+  control present in one image and not the other is a difference, never a match: it FAILs a structural
+  mismatch (a missing or extra control, a different layout, a different state) and never pixel noise.
+- The gate refuses the criterion when the workflow supplied no such image: a reference is the
+  operator's to supply (needs-operator-reference) and never one the explorer invents, so the criterion
+  cannot pass until the site step supplies it. It also refuses an evidence copy whose sha256 is not the
+  declared one (the explorer can write under `qae-artifacts/`, so the digest travels as a step output,
+  [like the site URL](#rules-the-harness-obeys-each-from-a-real-run)), and a PASS whose step log
+  `qae/ACn.md` has no step line naming `reference <key>`. Whether the two images match is the
+  explorer's judgment, in that step line and its screenshot; the gate holds that the comparison
+  happened, against the image the workflow supplied.
+
+**`[as: <role>, <role>]`** walks the criterion once per role.
+
+- `qae-inputs/site.md` says how to sign in as each role: an account per role on a throwaway backend.
+  On the Codex lane each role's password goes in the [secrets file](#a-preview-behind-a-login) under a
+  name of its own (`QAE_ADMIN_PASSWORD`, `QAE_READONLY_PASSWORD`), and site.md names it.
+- The explorer starts each of a role's step lines with `as <role>:`, and as each role checks that
+  what the role may do works, that what it may not do is refused, and that controls it must not use
+  are not shown.
+- The gate refuses a PASS whose step log has no line starting `as <role>:` for some role the criterion
+  names. That a refused path was really refused is the explorer's judgment, in those lines and their
+  screenshots.
+
+To adopt them, copy the template's `Keep the design references with the evidence` step and its
+plumbing (the explore job's `references` output, the verify job's `REFERENCES` line), add
+`--references qae-inputs/references.json` to the acceptance-verdict line of `.vibe-verifier-qae`
+(judged from the base, so it applies from the next pull request), and have the site step supply the
+images and the role sign-ins. A criterion naming a reference in a repository whose manifest line
+lacks `--references` is refused with that instruction.
 
 ## Which pull requests need a check
 
@@ -277,8 +344,9 @@ everything the model read, off the runner.
   output is named in the prompt, and the explore job passes it on as its `site-url` output to the
   verify job, which writes `qae-inputs/site-url` for `qae-artifacts --site-file`. It is a step output
   and not a file in the artifact because the explorer writes under `qae-artifacts/`, and it must not
-  choose which site the gate judges. The pilot starts the site on the runner because the repo's
-  Vercel previews sit behind Vercel SSO with no automation bypass configured; a repo with a reachable
+  choose which site the gate judges. The digests of the [design references](#design-references-and-roles)
+  travel the same way, as the explore job's `references` output, for the same reason. The pilot
+  starts the site on the runner because the repo's Vercel previews sit behind Vercel SSO with no automation bypass configured; a repo with a reachable
   preview resolves its URL instead ([above](#a-reachable-preview-instead-of-a-site-on-the-runner)),
   and on the Codex lane one behind SSO adds the bypass cookie ([above](#a-preview-behind-vercel-sso)).
 - **A pull request with nothing to check says so.** The harness runs on every pull request, and the

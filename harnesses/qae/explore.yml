@@ -72,10 +72,12 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    # The URL under test, as the site step declared it, for the verify job's gate. A step output:
-    # the explorer runs later and cannot change it, and nothing reads it from the pull request.
+    # The URL under test, as the site step declared it, and the digest of each design reference it
+    # supplied, for the verify job's gates. Step outputs: the explorer runs later and cannot change them,
+    # and nothing reads them from the pull request.
     outputs:
       site-url: ${{ steps.site.outputs.url }}
+      references: ${{ steps.references.outputs.references }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -127,6 +129,14 @@ jobs:
             sleep 2
           done
           echo "::error::site did not answer on http://localhost:3000 within 120s"; tail -50 qae-artifacts/server.log; exit 1
+      - name: Keep the design references with the evidence
+        # A criterion naming `[ref: <key>]` is compared with qae-inputs/references/<key>.png, which the site
+        # step supplies (harnesses/qae/README.md). Each is copied into qae-artifacts/references/ before the
+        # explorer runs, so the evidence holds what it was compared with, and listed with its width in
+        # qae-inputs/references.md. Its digest goes out as the `references` output, so the verify job's gate
+        # judges the image the workflow supplied, never one the explorer wrote. None supplied is none copied.
+        id: references
+        uses: Greenbauer/vibe-verifier/actions/qae-inputs@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
       - name: Install the browser toolchain from the catalog's lockfile
         # playwright-mcp, the Playwright build it pins and that build's chromium, every tarball's
         # integrity fixed by tools/qae-browser/package-lock.json in the catalog. Nothing here is
@@ -159,6 +169,22 @@ jobs:
                note what you found on the step it belongs to. On every page you visit, read the browser
                console messages. When you finish a criterion, call browser_network_requests and
                browser_console_messages once more, so the record of what the site did is saved with the run.
+               A criterion may carry annotations in square brackets, and a gate checks its step log for them:
+               - [ref: <key>] names a design reference, qae-inputs/references/<key>.png, which this repository's
+                 workflow supplied; qae-inputs/references.md lists each with its width. Open the image, reach the
+                 same screen and state with the browser resized to that width, save the screenshot, and compare the
+                 two by looking. Log the comparison as a step that names the reference:
+                   - step k: compared with reference <key> -> <what matches and what differs>
+                 A control present in one image and not the other is a difference, never a match. FAIL the criterion
+                 on a structural difference (a missing or extra control, a different layout, a different state),
+                 never on pixel noise (anti-aliasing, font rendering, real data in place of sample data). If the
+                 image is not there, FAIL the criterion and say the reference was not supplied; never compare
+                 against anything else.
+               - [as: <role>, <role>] names the roles to walk the criterion as; qae-inputs/site.md says how to sign
+                 in as each. Walk it once per role, and start each of that role's step lines with "as <role>:"
+                   - step k: as <role>: <what you did> -> <what you saw>
+                 As each role, check that what the role may do works, that what it may not do is refused, and that
+                 controls it must not use are not shown.
                If the directory qae-inputs/features/ exists, each <id>.md in it describes a feature this pull
                request's changes touch. After the criteria, re-walk each one the same way: get there as its
                Reach section says, then check what its Verify section says a user would see (its numbered
@@ -270,6 +296,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           SITE_URL: ${{ needs.explore.outputs.site-url }}
+          REFERENCES: ${{ needs.explore.outputs.references }}
         run: |
           set -euo pipefail
           mkdir -p qae-inputs
@@ -288,6 +315,9 @@ jobs:
           # The URL the explore job's site step declared, for the gate's --site-file. Empty when that
           # step never declared one, and the gate refuses an empty file.
           printf '%s\n' "$SITE_URL" > qae-inputs/site-url
+          # The digest of each design reference the explore job's workflow supplied, for the gate's
+          # --references. Empty when that job never got that far, which the gate reads as none supplied.
+          printf '%s\n' "$REFERENCES" > qae-inputs/references.json
       - name: Read the criteria
         id: criteria
         uses: Greenbauer/vibe-verifier/actions/criteria@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
