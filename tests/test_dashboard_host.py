@@ -115,7 +115,7 @@ class Host(unittest.TestCase):
         self.assertEqual(timeout, 15)
         self.assertEqual(json.loads(request.data), {"repositories": ["example", "other"],
                                                     "permissions": dict.fromkeys(
-            ["actions", "checks", "contents", "metadata", "pull_requests", "statuses"], "read")})
+            ["actions", "administration", "checks", "contents", "metadata", "pull_requests", "statuses"], "read")})
         self.assertTrue(request.get_header("Authorization").startswith("Bearer eyJ"))
         self.assertEqual(self.hosts.read_text(), "github.com:\n    oauth_token: ghs_%s\n    user: example-app[bot]\n"
                                                  "    git_protocol: https\n" % ("a" * 36))

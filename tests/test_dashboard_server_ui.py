@@ -286,14 +286,37 @@ console.log(JSON.stringify({sum:h.stepTotals(pull),missing:h.stepTotals(missing)
         self.assertEqual(result["missing"], {"success": 0, "failed": 0, "skipped": 0,
                                               "cancelled": 0, "pending": 0, "unknown": 0})
 
-    def test_an_expected_required_check_keeps_the_pr_pending_and_its_steps_unknown(self):
+    def test_an_expected_required_check_keeps_the_pr_pending_and_takes_one_share(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
-const pr={checks:[{category:'success'}],expected:[{category:'pending'}],
- runs:[{step_summary:{known:true,completed:83,total:83,remaining:0,counts:{success:83}}}]};
-console.log(JSON.stringify([h.combinedCategory(pr),h.stepTotals(pr).known,h.stepTotals(pr).counts]));
+const counts={success:83,failed:0,skipped:0,cancelled:0,pending:0,unknown:0};
+const pr={checks:[{category:'success'}],expected:[{name:'qae-verify',category:'pending'}],
+ runs:[{step_summary:{known:true,completed:83,total:83,remaining:0,counts}}]};
+const none=h.stepTotals({runs:[],expected:[],checks:[]});
+const only=h.stepTotals({runs:[],checks:[],statuses:[],expected:[{name:'lint',category:'pending'}]});
+const totals=h.stepTotals(pr);
+console.log(JSON.stringify([h.combinedCategory(pr),totals.known,totals.completed,totals.total,totals.remaining,totals.counts.pending,none.known,only.total,only.counts.pending]));
 ''')
-        self.assertEqual(result, ["pending", False, None])
+        self.assertEqual(result, ["pending", True, 83, 84, 1, 1, False, 1, 1])
+
+    def test_a_skipped_check_with_no_steps_takes_one_share_and_a_shown_one_does_not(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+const base={success:2,failed:0,skipped:0,cancelled:0,pending:0,unknown:0};
+const missing={runs:[{suite_id:7,step_summary:{known:true,completed:2,total:2,remaining:0,counts:base},
+ jobs:[{name:'build',category:'success',steps:[{category:'success'}]}]}],
+ checks:[{name:'provision-dispatch',suite_id:8,category:'skipped'}],statuses:[],expected:[]};
+const shownCounts={success:0,failed:0,skipped:1,cancelled:0,pending:0,unknown:0};
+const shown={runs:[{suite_id:7,step_summary:{known:true,completed:1,total:1,remaining:0,counts:shownCounts},
+ jobs:[{name:'provision-dispatch',category:'skipped',steps:[{category:'skipped'}]}]}],
+ checks:[{name:'provision-dispatch',suite_id:7,category:'skipped'}],statuses:[],expected:[]};
+console.log(JSON.stringify({
+ missing:[h.stepTotals(missing).counts.skipped,h.stepTotals(missing).total],
+ shown:[h.stepTotals(shown).counts.skipped,h.stepTotals(shown).total]
+}));
+''')
+        self.assertEqual(result["missing"], [1, 3])
+        self.assertEqual(result["shown"], [1, 1])
 
     def test_a_green_step_list_stays_open_while_github_still_has_a_pending_check(self):
         result = self.node(r'''

@@ -34,6 +34,23 @@ def _time_key(row: dict, *keys: str) -> datetime:
     return datetime.min.replace(tzinfo=timezone.utc)
 
 
+def _required_contexts(protection: dict) -> list[str]:
+    """Context names from classic branch protection, preferring the checks list GitHub still fills."""
+    checks = protection.get("checks")
+    if isinstance(checks, list) and checks:
+        contexts = []
+        for item in checks:
+            context = item.get("context") if isinstance(item, dict) else None
+            if not isinstance(context, str) or not context:
+                raise ApiError("invalid_response")
+            contexts.append(context)
+        return contexts
+    raw = protection.get("contexts") or []
+    if not isinstance(raw, list) or not all(isinstance(item, str) and item for item in raw):
+        raise ApiError("invalid_response")
+    return raw
+
+
 def step_summary(jobs: list[dict]) -> dict:
     counts = {name: 0 for name in ("success", "failed", "skipped", "cancelled", "pending", "unknown")}
     total = completed = 0
@@ -272,12 +289,13 @@ class GitHubCollector:
         return since
 
     def _expected(self, repository: str, rules: list[dict], evidence: list[dict], runs: list[dict]) -> list[dict]:
-        """Checks the base branch's rulesets require that have not reported on this head.
+        """Checks the base branch requires that have not reported on this head.
 
         GitHub lists these as "Expected" without creating a check run for them, so they are absent
         from the evidence above. A required workflow run from before its pin moved does not count."""
         reported = {row["name"] for row in evidence}
         missing = []
+        seen = set()
         for rule in rules:
             parameters = rule.get("parameters") or {}
             if rule.get("type") == "required_status_checks":
@@ -292,9 +310,15 @@ class GitHubCollector:
                     if not any(since and _time_key(run, "created_at") >= since for run in matching):
                         missing.append((matching[0]["name"] if matching else path.rsplit("/", 1)[-1],
                                         "Required workflow, not run at its current pin"))
-        return [{"id": None, "suite_id": None, "name": name[:200], "provider": provider, "status": "expected",
-                 "conclusion": None, "category": "pending", "started_at": None, "completed_at": None,
-                 "elapsed_seconds": None, "details_url": None} for name, provider in missing]
+        rows = []
+        for name, provider in missing:
+            if name in seen:
+                continue
+            seen.add(name)
+            rows.append({"id": None, "suite_id": None, "name": name[:200], "provider": provider,
+                         "status": "expected", "conclusion": None, "category": "pending", "started_at": None,
+                         "completed_at": None, "elapsed_seconds": None, "details_url": None})
+        return rows
 
     @staticmethod
     def _current_only(checks: list[dict], runs: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -372,19 +396,38 @@ class GitHubCollector:
                 "attention": attention, "attention_reason": reason,
                 "checks": checks, "statuses": statuses, "expected": expected, "runs": runs}
 
+    def _classic_required(self, repository: str, base: str) -> list[dict]:
+        """Required status checks from classic branch protection, which the rules API does not return.
+
+        Reading them needs Administration read. A token without it, or a branch with no classic
+        protection, leaves these checks out; the pull request's other evidence still stands."""
+        try:
+            protection = self.api.one("repos/%s/branches/%s/protection/required_status_checks"
+                                      % (repository, quote(base, safe="")))
+        except ApiError as error:
+            if error.code in {"forbidden", "not_found"}:
+                return []
+            raise
+        contexts = _required_contexts(protection)
+        if not contexts:
+            return []
+        return [{"type": "required_status_checks", "parameters": {
+            "required_status_checks": [{"context": context} for context in contexts]}}]
+
     def _branch_rules(self, repository: str, base: str) -> list[dict]:
         """The rules GitHub enforces on a base branch, or none where GitHub refuses to list them.
 
         Branch rules need only metadata read, which every dashboard token has, so a 403 here means the
-        repository's plan has no rulesets (a private repository on a free personal account). Nothing can
-        be required there, and the pull requests' own evidence is still readable."""
+        repository's plan has no rulesets (a private repository on a free personal account). Classic
+        branch protection is a separate read and can still require checks on that plan."""
         try:
-            return self.api.items(_endpoint("repos/%s/rules/branches/%s" % (repository, quote(base, safe="")),
-                                            per_page=100))
+            rules = self.api.items(_endpoint("repos/%s/rules/branches/%s" % (repository, quote(base, safe="")),
+                                             per_page=100))
         except ApiError as error:
-            if error.code == "forbidden":
-                return []
-            raise
+            if error.code != "forbidden":
+                raise
+            rules = []
+        return rules + self._classic_required(repository, base)
 
     def _repository(self, repository: str, inventory: dict) -> dict:
         rows = self.api.items(_endpoint("repos/%s/pulls" % repository, state="open", per_page=100))
