@@ -426,8 +426,8 @@ def rules_doc(sg, sources):
 
 
 def _content(block):
-    """A block's non-blank lines: a formatter adding or removing blank lines does not make it stale."""
-    return [line.rstrip() for line in block.splitlines() if line.strip()]
+    """Non-blank lines minus Markdown escapes: a formatter's blank lines or `\\_` never make a block stale."""
+    return [re.sub(r"\\([\\`*_{}\[\]()#+\-.!|<>~])", r"\1", line.rstrip()) for line in block.splitlines() if line.strip()]
 
 
 def stale_doc(repo, path, block):
