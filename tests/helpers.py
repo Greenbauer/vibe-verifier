@@ -1,10 +1,13 @@
 """Black-box helpers: every test drives a gate or the runner through its command line,
 because the command line is the contract."""
+import binascii
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,3 +59,12 @@ def gate(name, repo, *args, env=None):
 def runner(*args, env=None):
     return subprocess.run([sys.executable, str(ROOT / "bin" / "vibe-verifier"), *args],
                           capture_output=True, text=True, env=clean_env(env))
+
+
+def png(width, height=1):
+    """A valid, blank RGB PNG of this size, as bytes: what a browser screenshot or a design export is."""
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", binascii.crc32(kind + data) & 0xFFFFFFFF)
+    rows = (b"\x00" + b"\x00" * 3 * width) * height
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))

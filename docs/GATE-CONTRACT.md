@@ -306,6 +306,15 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
   counts for none; each feature judged by its file at the base) needs exactly one
   `regression-check: <id> -- PASS -- <evidence>` line, held to the same anchor rule. The gate selects
   them itself; `bin/vibe-verifier features` prints the same selection for the explore job.
+- A criterion's own text may carry [annotations](../harnesses/qae/README.md#design-references-and-roles),
+  held to its step log `qae/ACn.md` under `--artifacts`. `[ref: <key>]` names a design reference: the
+  criterion is refused unless `--references FILE` (the JSON object of key to image sha256 the workflow
+  declared; an empty file is none) lists the key and the evidence holds that very image at
+  `references/<key>.png`, and a PASS also needs a step line naming `reference <key>`. A reference the
+  workflow did not supply is the operator's to supply, never invented. `[as: <role>, <role>]` makes a
+  PASS need, for each role, a step line starting `as <role>:`. A bracket that starts like either and
+  does not parse is a finding. `bin/vibe-verifier criteria` prints each criterion's annotations after
+  its count line.
 - A missing input file is exit 2. A criteria file with no criteria is a finding: a repository that
   subscribes has decided its PRs state them.
 - A pull request with nothing to check says so, in the same section: one item reading
@@ -674,7 +683,8 @@ A harness is a parameterised workflow that produces the declared inputs a wired 
 first is the QAE harness in [`harnesses/qae/`](../harnesses/qae/README.md): an explore job whose
 model drives a real browser and writes step logs, screenshots and a verdict comment; a verify job
 that feeds those to `acceptance-verdict` and keeps one review comment on the pull request saying
-whether QA passed, needs changes, was not required, or could not run. The consumer owns `runs-on`, how its site is started (or
+whether QA passed, needs changes, was not required, or could not run. The consumer owns `runs-on`, the
+design references and role sign-ins its site step supplies, how its site is started (or
 which reachable preview it uses, and on the Codex lane the cookies the browser starts with when that
 preview is behind Vercel SSO) and the action pins; the harness owns the prompt, the grammar and
 the rules.

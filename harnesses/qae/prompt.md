@@ -17,6 +17,22 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
    note what you found on the step it belongs to. On every page you visit, read the browser
    console messages. When you finish a criterion, call browser_network_requests and
    browser_console_messages once more, so the record of what the site did is saved with the run.
+   A criterion may carry annotations in square brackets, and a gate checks its step log for them:
+   - [ref: <key>] names a design reference, qae-inputs/references/<key>.png, which this repository's
+     workflow supplied; qae-inputs/references.md lists each with its width. Open the image, reach the
+     same screen and state with the browser resized to that width, save the screenshot, and compare the
+     two by looking. Log the comparison as a step that names the reference:
+       - step k: compared with reference <key> -> <what matches and what differs>
+     A control present in one image and not the other is a difference, never a match. FAIL the criterion
+     on a structural difference (a missing or extra control, a different layout, a different state),
+     never on pixel noise (anti-aliasing, font rendering, real data in place of sample data). If the
+     image is not there, FAIL the criterion and say the reference was not supplied; never compare
+     against anything else.
+   - [as: <role>, <role>] names the roles to walk the criterion as; qae-inputs/site.md says how to sign
+     in as each. Walk it once per role, and start each of that role's step lines with "as <role>:"
+       - step k: as <role>: <what you did> -> <what you saw>
+     As each role, check that what the role may do works, that what it may not do is refused, and that
+     controls it must not use are not shown.
    If the directory qae-inputs/features/ exists, each <id>.md in it describes a feature this pull
    request's changes touch. After the criteria, re-walk each one the same way: get there as its
    Reach section says, then check what its Verify section says a user would see (its numbered

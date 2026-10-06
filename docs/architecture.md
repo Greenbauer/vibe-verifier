@@ -105,7 +105,7 @@ The QAE harness applies the same split to functional behavior.
 
 The pull-request body declares acceptance criteria. A workflow-owned site step declares the application URL. The explorer then uses a browser to exercise each criterion and records:
 
-- step-by-step observations,
+- step-by-step observations (once per role a criterion names, and a comparison step for each design reference it names),
 - screenshots,
 - console/network evidence,
 - one verdict line per criterion with an evidence anchor.
@@ -173,6 +173,7 @@ A recurring pattern is that the workflow declares the values that determine what
 | Unresolved thread count | GitHub state captured by workflow |
 | Acceptance criteria | Pull-request body |
 | Application URL under test | Consumer workflow |
+| Design reference images, and their digests | Consumer workflow (site step), declared by the workflow before the explorer runs |
 | Browser observations/screenshots | Model/browser harness |
 | Acceptance verdict validity | Deterministic gates |
 | Aggregate CI status | Gate runner / GitHub job |
