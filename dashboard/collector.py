@@ -29,8 +29,7 @@ OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 LANE_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 DESTINATION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@:\[\]-]{0,254}$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-# OWNER/REPO, or only OWNER for an organization-scope scale set (docs/dashboard-collector.md).
-TARGET_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]{0,38})(?:/([A-Za-z0-9._-]{1,100}))?$")
+TARGET_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]{1,100})$")
 TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 SAFE_ERRORS = {"collection_failed", "host_metrics_unavailable", "invalid_arguments",
                "listener_budget_invalid", "listener_config_unavailable", "listener_identity_mismatch",
@@ -250,10 +249,8 @@ def project_host(raw, config):
             item.get("state"), ("allocated", "unknown")), "unit": {
                 "active_state": _state(unit.get("active_state")), "sub_state": _state(unit.get("sub_state"))}}
         if record["state"] == "allocated":
-            target = item.get("target_repository")
-            match = TARGET_RE.fullmatch(target) if isinstance(target, str) else None
-            if target is not None and (not match or not match.group(2)
-                                       or match.group(1).casefold() != config.owner.casefold()):
+            match = TARGET_RE.fullmatch(target) if isinstance(target := item.get("target_repository"), str) else None
+            if target is not None and (not match or match.group(1).casefold() != config.owner.casefold()):
                 raise ValueError
             if not TOKEN_RE.fullmatch(item.get("runner_name", "")) or not _parse_time(item.get("allocated_at")):
                 raise ValueError
