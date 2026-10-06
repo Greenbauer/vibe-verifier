@@ -18,6 +18,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import tarfile
@@ -181,20 +182,22 @@ def ensure_node_tool(name):
     return target
 
 
-def ensure_python_tool(name):
+def ensure_python_tool(name, python=None):
     """The interpreter of a venv holding the Python toolchain pinned by tools/<name>/requirements.txt.
 
-    Installed once per requirements digest and interpreter version (a compiled wheel is built for
-    one CPython) into the cache with `pip install --require-hashes --only-binary :all: --no-deps`, so
-    every package is a wheel whose sha256 the committed file lists, never a source build and never
-    what the index serves today. No python3 with venv and pip, or an install that fails, is CannotRun.
+    The venv is made from `python` (default: python3 on PATH) and installed once per requirements
+    digest and interpreter version (a compiled wheel is built for one CPython) into the cache with
+    `pip install --require-hashes --only-binary :all: --no-deps`, so every package is a wheel whose
+    sha256 the committed file lists, never a source build and never what the index serves today. No
+    such interpreter with venv and pip, or an install that fails, is CannotRun.
     """
     source = os.path.join(NODE_TOOLS, name, "requirements.txt")
     with open(source, "rb") as handle:
         digest = hashlib.sha256(handle.read()).hexdigest()[:12]
-    python = shutil.which("python3")
+    requested = python or "python3"
+    python = shutil.which(requested)
     if not python:
-        raise CannotRun("%s needs python3 on PATH" % name)
+        raise CannotRun("%s needs %s on PATH" % (name, requested))
     version = subprocess.run([python, "-c", "import sys; print('%d%d' % sys.version_info[:2])"],
                              capture_output=True, text=True).stdout.strip()
     target = os.path.join(cache_dir(), "%s-%s-py%s" % (name, digest, version))
@@ -214,6 +217,41 @@ def ensure_python_tool(name):
                                                              (result.stderr.strip() or "no output").splitlines()[-1]))
     open(os.path.join(target, ".installed"), "w").close()
     return interpreter
+
+
+def _stop(process):
+    """Kill a tool's whole process group (its test runner workers are in it) and reap it."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:  # the group already ended
+        pass
+    process.wait()  # not communicate(): a signal may have interrupted it mid-read, and nothing can write now
+
+
+def run_tool(command, cwd, timeout, name, env=None, budget=None):
+    """(exit code, combined output) of a tool run in a session of its own, so its whole process group can be
+    killed. That also keeps a SIGTERM or SIGINT sent to the gate's group (a Ctrl-C) from reaching it: both are
+    caught here and kill it. Past `timeout` seconds the group is killed and the gate cannot run; `budget` is
+    the --timeout the message names when `timeout` is what is left of it."""
+    def interrupted(signum, _frame):
+        raise CannotRun("stopped by %s before %s finished; no verdict" % (signal.Signals(signum).name, name))
+
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGINT, interrupted)
+    process = None
+    try:
+        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   text=True, encoding="utf-8", errors="replace", start_new_session=True)
+        output, _ = process.communicate(timeout=max(timeout, 1))
+    except subprocess.TimeoutExpired:
+        _stop(process)
+        raise CannotRun("%s did not finish within --timeout %ds; no verdict on any file. Raise --timeout or "
+                        "--max-files on the base manifest, or split the pull request" % (name, budget or timeout))
+    except BaseException:
+        if process:
+            _stop(process)
+        raise
+    return process.returncode, output
 
 
 def ensure(name):

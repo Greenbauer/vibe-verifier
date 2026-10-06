@@ -3,25 +3,30 @@
 
 StrykerJS, pinned in tools/changed-code-mutation with its Vitest runner, makes small changes
 (mutants) to the lines the pull request added or modified in non-test JS and TS source files,
-and runs the project's own Vitest suite against each one. A mutant every test still passes on
+and runs the project's own Vitest suite against each one. Python files get the same from mutmut,
+pinned in tools/changed-code-mutation-python, running the project's own pytest (gates/_mutation_python.py). A mutant every test still passes on
 survived: that line can be wrong and nothing notices, which is what a test that copies the code
 it covers, asserts nothing, or reads the source as text looks like. Only the changed line ranges
 are mutated (Stryker's `file:start-end` mutate ranges), never whole files.
 
-The score is killed / (killed + survived + not covered) over those mutants. Below --break the
-gate fails and lists every surviving mutant at its line with the code it replaced. Mutants that
-timed out, did not compile, crashed the runner or carry a `// Stryker disable` comment are left
-out of the score and reported. No mutant on the changed lines is a pass.
+The score is killed / (killed + survived + not covered) over those mutants, both languages
+together. Below --break the gate fails and lists every surviving mutant at its line with the code
+it replaced. Mutants that timed out, did not compile, crashed the runner or carry a
+`// Stryker disable` comment are left out of the score and reported; so are changed Python lines
+mutmut makes no mutant on (decorated functions, nested classes, `# pragma: no mutate`). No mutant
+on the changed lines is a pass.
 
-The project's own Vitest (2.x to 4.x) and dependencies must be installed (`npm ci`) before the
-gate runs. Without them, with failing tests, past --max-files or past --timeout, it cannot run
-(exit 2): never a pass, and never a verdict on part of the change.
+The project's own test runner and dependencies must be installed before the gate runs: Vitest
+2.x to 4.x (`npm ci`) for JS and TS, pytest in --python's environment for Python. Without them,
+with failing tests, past --max-files or past --timeout, it cannot run (exit 2): never a pass, and
+never a verdict on part of the change.
 
-    --project DIR       directory with the Vitest config and package.json (default: the repository root)
+    --project DIR       directory with the Vitest config and package.json, or the pytest project (default: the repository root)
+    --python PATH       the project's interpreter, with pytest installed (default: python3 on PATH; a relative path is the repository's)
     --break N           lowest passing score, 0-100 (default 60)
     --max-files N       more changed source files than this cannot run (default 20)
-    --timeout SECONDS   wall-clock limit for the whole Stryker run (default 900)
-    --source GLOB       what counts as source (repeatable; default: JS and TS files)
+    --timeout SECONDS   wall-clock limit for the whole run, both languages (default 900)
+    --source GLOB       what counts as source (repeatable; default: JS, TS and Python files)
     --exclude GLOB      extra paths to ignore (repeatable; tests, *.d.ts, config, stories and node_modules always are)
 """
 import json
@@ -29,18 +34,18 @@ import os
 import posixpath
 import re
 import shutil
-import signal
-import subprocess
 import sys
 import tempfile
+import time
 
 from _contract import CannotRun, Finding, changed_files, git, matches, renamed, resolve_base, run_gate, tracked_files
-from _tools import ensure_node_tool
+from _mutation_python import clip, mutate
+from _tools import ensure_node_tool, run_tool
 
 GATE = "changed-code-mutation"
-DEFAULT_SOURCE = ["**/*." + ext for ext in ("ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts")]
+DEFAULT_SOURCE = ["**/*." + ext for ext in ("ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "py")]
 ALWAYS_EXCLUDED = ["**/*.test.*", "**/*.spec.*", "**/__tests__/**", "**/*.d.ts", "**/*.config.*", "**/*.stories.*",
-                   "**/node_modules/**"]
+                   "**/node_modules/**", "**/test_*.py", "**/*_test.py", "**/conftest.py"]
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 # Under Vitest 5 the pinned Stryker 10.0.0 kills no mutant at all (measured 2026-10-05: 8 of 8 survived
 # a test that kills all 8 under Vitest 2.1.9, 3.2.7 and 4.1.10), so outside this range there is no verdict.
@@ -76,19 +81,6 @@ def literal(path):
     `?` and `(` becomes one: a Next.js `app/[id]/page.tsx` takes a range. Brace syntax (`{a,b}`) cannot be
     escaped this way; Stryker matches no file for it, and the matched-file count refuses the run."""
     return re.sub(r"[\[*?(]", lambda char: "[%s]" % char.group(0), path)
-
-
-def stop(process):
-    """Kill Stryker's whole process group (its test runner workers are in it) and reap it."""
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:  # the group already ended
-        pass
-    process.wait()  # not communicate(): a signal may have interrupted it mid-read, and nothing can write now
-
-
-def interrupted(signum, _frame):
-    raise CannotRun("stopped by %s before StrykerJS finished; no verdict" % signal.Signals(signum).name)
 
 
 def project_vitest(directory):
@@ -131,28 +123,13 @@ def stryker(tool, project_dir, ranges, timeout):
         with open(config_path, "w", encoding="utf-8") as handle:
             json.dump(config, handle)
         command = ["node", os.path.join(tool, "node_modules", "@stryker-mutator", "core", "bin", "stryker.js"), "run", config_path]
-        # Stryker runs in a session of its own so its whole process group can be killed, which also keeps a
-        # SIGTERM or SIGINT sent to the gate's group (a Ctrl-C) from reaching it: both are caught here and kill it.
-        signal.signal(signal.SIGTERM, interrupted)
-        signal.signal(signal.SIGINT, interrupted)
-        process = None
         try:
-            process = subprocess.Popen(command, cwd=project_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                       text=True, encoding="utf-8", errors="replace", start_new_session=True)
-            output, _ = process.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            stop(process)
-            raise CannotRun("StrykerJS did not finish within --timeout %ds; no verdict on any file. Raise --timeout or "
-                            "--max-files on the base manifest, or split the pull request" % timeout)
-        except BaseException:
-            if process:
-                stop(process)
-            raise
+            returncode, output = run_tool(command, project_dir, timeout, "StrykerJS")
         finally:
             shutil.rmtree(sandbox, ignore_errors=True)
-        if process.returncode != 0:
+        if returncode != 0:
             print(output, file=sys.stderr)
-            raise CannotRun("StrykerJS exited %d (its output is above)" % process.returncode)
+            raise CannotRun("StrykerJS exited %d (its output is above)" % returncode)
         found = FOUND.search(output)
         if not found or int(found.group(1)) != len(ranges):
             print(output, file=sys.stderr)
@@ -165,11 +142,6 @@ def stryker(tool, project_dir, ranges, timeout):
             raise CannotRun("StrykerJS's JSON report could not be read: %s" % error)
 
 
-def clip(text):
-    text = " ".join(str(text).split())
-    return text if len(text) <= 60 else text[:57] + "..."
-
-
 def describe(mutant, lines):
     """`original` -> `replacement` (Mutator), the original only when the mutant sits on one line."""
     start, end = mutant["location"]["start"], mutant["location"]["end"]
@@ -179,7 +151,8 @@ def describe(mutant, lines):
     return "%s (%s)" % (replaced, mutant.get("mutatorName", "?"))
 
 
-def verdict(report, prefix, threshold):
+def stryker_results(report, prefix):
+    """(killed, undetected, excluded) from Stryker's JSON report, the last two as [((path, line), text)]."""
     undetected, excluded, killed = [], [], 0
     for name, entry in sorted(report.get("files", {}).items()):
         lines = entry.get("source", "").splitlines()
@@ -193,6 +166,10 @@ def verdict(report, prefix, threshold):
                 excluded.append((where, "mutant %s, left out of the score: %s" % (EXCLUDED[status], describe(mutant, lines))))
             else:
                 raise CannotRun("StrykerJS left mutant %s in %s with status %r: the run did not finish" % (mutant.get("id"), name, status))
+    return killed, undetected, excluded
+
+
+def verdict(killed, undetected, excluded, threshold):
     for (path, line), text in excluded:
         note("%s:%d: %s" % (path, line, text))
     scored = killed + len(undetected)
@@ -208,7 +185,8 @@ def verdict(report, prefix, threshold):
         return []
     summary = ("mutation score on the changed lines is %s (%d of %d mutants killed), below --break %d. Each mutant below "
                "is a change to the code that no test failed on: test that behavior through the real code, or mark a mutant "
-               "no test can tell apart with `// Stryker disable next-line <Mutator>: <reason>`" % (shown, killed, scored, threshold))
+               "no test can tell apart with `// Stryker disable next-line <Mutator>: <reason>` (JS, TS) or "
+               "`# pragma: no mutate` with the reason (Python)" % (shown, killed, scored, threshold))
     return [Finding(summary)] + [Finding(text, path, line) for (path, line), text in undetected]
 
 
@@ -242,23 +220,33 @@ def check(args):
     if len(ranges) > args.max_files:
         raise CannotRun("%d changed source files, over --max-files %d; no verdict on any of them. Raise --max-files on the "
                         "base manifest, or split the pull request" % (len(ranges), args.max_files))
-    version = project_vitest(project_dir)
-    if version is None:
-        raise CannotRun("no vitest is installed for %s: install the project's dependencies (npm ci) before this gate, "
-                        "which runs the project's own Vitest" % project)
-    major = re.match(r"(\d+)\.", version)
-    if not major or int(major.group(1)) not in VITEST_MAJORS:
-        raise CannotRun("vitest %s is not 2.x to 4.x, the versions the pinned StrykerJS kills mutants under" % version)
-    tool = ensure_node_tool(GATE)
-    return verdict(stryker(tool, project_dir, ranges, args.timeout), prefix, args.break_score)
+    python = {path: spans for path, spans in ranges.items() if path.endswith(".py")}
+    script = {path: spans for path, spans in ranges.items() if path not in python}
+    killed, undetected, excluded = 0, [], []
+    deadline = time.monotonic() + args.timeout
+    if script:
+        version = project_vitest(project_dir)
+        if version is None:
+            raise CannotRun("no vitest is installed for %s: install the project's dependencies (npm ci) before this gate, "
+                            "which runs the project's own Vitest" % project)
+        major = re.match(r"(\d+)\.", version)
+        if not major or int(major.group(1)) not in VITEST_MAJORS:
+            raise CannotRun("vitest %s is not 2.x to 4.x, the versions the pinned StrykerJS kills mutants under" % version)
+        tool = ensure_node_tool(GATE)
+        killed, undetected, excluded = stryker_results(stryker(tool, project_dir, script, args.timeout), prefix)
+    if python:
+        more = mutate(args.repo, prefix, python, args.python, max(deadline - time.monotonic(), 1))
+        killed, undetected, excluded = killed + more[0], undetected + more[1], excluded + more[2]
+    return verdict(killed, undetected, excluded, args.break_score)
 
 
 def add_arguments(parser):
-    parser.add_argument("--project", default=".", help="directory with the Vitest config, relative to the repository (default: its root)")
+    parser.add_argument("--project", default=".", help="directory with the Vitest config or the pytest project, relative to the repository (default: its root)")
+    parser.add_argument("--python", default="python3", help="the project's interpreter, with pytest installed (default: python3)")
     parser.add_argument("--break", dest="break_score", type=int, default=60, metavar="N",
                         help="lowest passing mutation score over the changed lines, a whole number 0-100 (default 60)")
     parser.add_argument("--max-files", type=int, default=20, help="more changed source files than this cannot run (default 20)")
-    parser.add_argument("--timeout", type=int, default=900, help="seconds the whole Stryker run may take (default 900)")
+    parser.add_argument("--timeout", type=int, default=900, help="seconds the whole run may take, both languages (default 900)")
     parser.add_argument("--source", action="append", metavar="GLOB")
     parser.add_argument("--exclude", action="append", metavar="GLOB")
 
