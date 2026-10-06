@@ -105,7 +105,7 @@ holds a mockup beside the page.
               git show "$base:$path" > "qae-inputs/references/${path##*/}"
             done
   ```
-- The template's `Keep the design references with the evidence` step
+- The template's `Prepare the explorer's references and widths` step
   ([`actions/qae-inputs`](../../actions/qae-inputs/action.yml)) runs after the site step and before the
   explorer. It copies each image to `qae-artifacts/references/<key>.png`, so the uploaded evidence holds
   what was compared, lists each with its width in `qae-inputs/references.md` for the explorer, and
@@ -136,12 +136,42 @@ holds a mockup beside the page.
   names. That a refused path was really refused is the explorer's judgment, in those lines and their
   screenshots.
 
-To adopt them, copy the template's `Keep the design references with the evidence` step and its
+To adopt them, copy the template's `Prepare the explorer's references and widths` step and its
 plumbing (the explore job's `references` output, the verify job's `REFERENCES` line), add
 `--references qae-inputs/references.json` to the acceptance-verdict line of `.vibe-verifier-qae`
 (judged from the base, so it applies from the next pull request), and have the site step supply the
 images and the role sign-ins. A criterion naming a reference in a repository whose manifest line
 lacks `--references` is refused with that instruction.
+
+## Viewports, themes, and what a criterion does not say
+
+**Widths** are opt-in and the consumer's choice: add `--widths 1280,375` (any widths, in pixels) to the
+qae-artifacts line of `.vibe-verifier-qae`.
+
+- The explore job's `Prepare the explorer's references and widths` step
+  ([`actions/qae-inputs`](../../actions/qae-inputs/action.yml)) reads that line as the base has it and
+  writes the widths, one per line, to `qae-inputs/widths`. The explorer checks every criterion's end
+  state at each width, with the browser resized to it, as a step with its own screenshot.
+- `qae-artifacts` refuses a criterion whose step screenshots (`qae/ACn-step-k.png`) include none of a
+  declared width, read from each PNG's header (a browser screenshot is as wide as its viewport), and a
+  step screenshot that is not a PNG. Feature re-walk logs are not held to it.
+- The widths live in the manifest and nowhere else, so the explorer and the gate cannot disagree. The
+  line is judged from the base: a pull request that adds or drops `--widths` changes the next one.
+
+**Themes**: when `qae-inputs/site.md` says the site has more than one theme (light and dark), the
+explorer checks each end state in every theme. No gate checks it: which theme a screenshot shows is
+not readable from its header.
+
+**Beyond the criteria**, on each criterion's screen, the explorer also uses every action control the
+criterion touches through to its end state (a save that is saved, not a button that is only shown),
+reloads after a save to check the entered values persisted, and tries one invalid input, expecting a
+handled error rather than a crash or a blank page. Each is a step of that criterion, with its
+screenshot, and any that fails makes the criterion a FAIL. No gate checks them: what counts as every
+control a criterion touches, or as a handled error, is judgment. Two structural checks still apply.
+A save that answered 400 or worse fails the network check, and so does the invalid input's request,
+if it reaches the server, unless the criterion declares that refusal
+(`expected-refusal: 422 /api/profile`, [below](#the-adjudicator-the-artifacts-decide-not-the-prose)).
+The explorer is told to prefer an invalid input the page refuses before sending anything.
 
 ## Which pull requests need a check
 
@@ -434,7 +464,9 @@ and refuses on structural facts:
 3. the session log exists (`--save-session`) and shows a `browser_navigate`;
 4. a `browser_network_requests` result exists (the prompt asks for one after each criterion), and
    no request to the site under test (`--site-file`, the URL the explore job declared, or a fixed
-   `--site`) answered 400 or worse or failed, outside `--allow-request` patterns.
+   `--site`) answered 400 or worse or failed, outside `--allow-request` patterns;
+5. with `--widths`, each criterion's step screenshots include one of each declared width
+   ([above](#viewports-themes-and-what-a-criterion-does-not-say)).
 
 Run against the pilot's real first-run artifacts with no allowlist it found three things: the
 second step of AC2 had no screenshot, the analytics 404, and no network record. The consumer
@@ -453,9 +485,10 @@ browser) is declared in that criterion instead, on its own line in `## Acceptanc
 ```
 
 The gate reads the declaration from the criteria file the verify job fetched, never from the
-explorer's artifacts, and it excuses exactly that status (401 or 403 only) at exactly that URL for
-that run: the request in the network record and Chromium's `Failed to load resource: ... status of
-401` console line for it. A path resolves against the site under test; an `http(s)` URL is taken as
+explorer's artifacts, and it excuses exactly that status at exactly that URL for that run: the
+request in the network record and Chromium's `Failed to load resource: ... status of 401` console
+line for it. Only a handled refusal can be declared: 401 or 403 (an auth gate), 400, 404, 409 or 422
+(a server refusing the invalid input the explorer is told to try). A path resolves against the site under test; an `http(s)` URL is taken as
 written; the match is exact, query included. A 5xx at the same URL, the same 401 at any other URL,
 and every other console error still fail, and a declaration of another status, or a path with no
 site, is itself a finding. Because the declaration is a criterion, the explorer must still show the

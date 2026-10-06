@@ -82,14 +82,18 @@ annotation a criterion carries (`AC2 references: home-desktop`, `AC3 roles: admi
 `AC4 malformed: [ref: ]`), read the way the acceptance-verdict gate reads them. Exit 2 when a file
 cannot be read.
 
-`qae-inputs [--references DIR] [--evidence DIR] [--listing FILE] [--digests FILE]` prepares what the
-QAE explorer and its gates read from the site step's supplies, before the explorer runs. Each design
-reference `<key>.png` the site step wrote to DIR (default qae-inputs/references) is copied to
-`<evidence>/references/<key>.png` (default qae-artifacts), listed with its size in FILE (default
-qae-inputs/references.md) for the explorer, and its sha256 written to the digests file as one JSON
-object, which the workflow declares as an output so the gate judges the image the workflow supplied
-and never one the explorer wrote. It prints `references: <n>` and one `<key>: <width>x<height>` line
-each. Exit 2 when a supplied file is not a PNG or its name is not a reference key.
+`qae-inputs [--manifest FILE] [--widths-file FILE] [--references DIR] [--evidence DIR] [--listing FILE]
+[--digests FILE]` prepares what the QAE explorer and its gates read from the site step's supplies and
+the QAE manifest, before the explorer runs. Each design reference `<key>.png` the site step wrote to DIR
+(default qae-inputs/references) is copied to `<evidence>/references/<key>.png` (default qae-artifacts),
+listed with its size in FILE (default qae-inputs/references.md) for the explorer, and its sha256 written
+to the digests file as one JSON object, which the workflow declares as an output so the gate judges the
+image the workflow supplied and never one the explorer wrote. Given the manifest, the `--widths` of its
+qae-artifacts line (judged from the base, like a run) are written one per line to the widths file
+(default qae-inputs/widths), so the explorer checks each criterion at the widths the gate will require;
+no such option writes no file. It prints `references: <n>`, one `<key>: <width>x<height>` line each, and
+`widths: <list>` (or `widths: none`). Exit 2 when a supplied file is not a PNG or its name is not a
+reference key, or the manifest cannot be read.
 
 `features --manifest FILE --changed-files FILE [--out DIR]` reads the manifest's acceptance-verdict
 line (judged from the base, like a run) and, when it has `--features`, prints which features of that
@@ -133,6 +137,7 @@ from _acceptance import (PASS_RE, REFERENCE_KEY, annotations, check_lines, crite
 from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
 from _features import add_selection_arguments, describe, selection  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
+import qae_artifacts  # noqa: E402
 import repo_rules  # noqa: E402
 LABEL = {0: "PASS", 1: "FAIL", 2: "COULD NOT RUN"}
 STUB_PATH = ".github/workflows/vibe-verifier.yml"
@@ -918,8 +923,27 @@ def criteria_command(args):
     return 0
 
 
+def manifest_widths(args):
+    """The --widths on the manifest's qae-artifacts line, judged from the base; [] when it has none."""
+    if not args.manifest:
+        return []
+    lines = [gate_args for gate, gate_args in judged_entries(args, notice=sys.stderr) if gate == "qae-artifacts"]
+    parser = argparse.ArgumentParser(prog="qae-artifacts", add_help=False)
+    parser.add_argument("--widths", type=qae_artifacts.width_list, default=None)
+    try:
+        return (parser.parse_known_args(lines[0])[0].widths or []) if lines else []
+    except SystemExit:
+        sys.exit(fail("the qae-artifacts line in %s has a malformed --widths" % args.manifest))
+
+
 def qae_inputs_command(args):
-    """Copy each supplied design reference into the evidence, list it for the explorer, declare its digest."""
+    """Copy each supplied design reference into the evidence, list it for the explorer, declare its digest,
+    and write the widths the manifest's qae-artifacts line requires."""
+    widths = manifest_widths(args)
+    if widths:
+        os.makedirs(os.path.dirname(args.widths_file) or ".", exist_ok=True)
+        with open(args.widths_file, "w", encoding="utf-8") as handle:
+            handle.write("".join("%d\n" % width for width in widths))
     names = sorted(os.listdir(args.references)) if os.path.isdir(args.references) else []
     images = [name for name in names if name.endswith(".png")]
     found = {}
@@ -945,7 +969,8 @@ def qae_inputs_command(args):
     if args.digests:
         with open(args.digests, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(digests, sort_keys=True) + "\n")
-    print("\n".join(["references: %d" % len(found)] + ["%s: %dx%d" % (key, *size) for key, (_, size) in sorted(found.items())]))
+    print("\n".join(["references: %d" % len(found)] + ["%s: %dx%d" % (key, *size) for key, (_, size) in sorted(found.items())]
+                    + ["widths: %s" % (", ".join(map(str, widths)) or "none")]))
     return 0
 
 
@@ -1112,6 +1137,12 @@ def main():
     inputs.add_argument("--listing", default="qae-inputs/references.md", metavar="FILE",
                         help="the list the explorer reads (default: qae-inputs/references.md)")
     inputs.add_argument("--digests", metavar="FILE", help="write {key: sha256} here, one JSON object")
+    inputs.add_argument("--manifest", metavar="FILE", help="the QAE manifest: its qae-artifacts line's --widths, judged "
+                        "from the base, are written to --widths-file")
+    inputs.add_argument("--widths-file", default="qae-inputs/widths", metavar="FILE",
+                        help="where the widths go, one per line (default: qae-inputs/widths)")
+    inputs.add_argument("--repo", default=".")
+    inputs.add_argument("--base-ref", default=None)
     rewalk = commands.add_parser("features", help="the features a pull request's changed paths touch, by the selection "
                                  "on the manifest's acceptance-verdict line: prints `features: <n>`")
     rewalk.add_argument("--manifest", default=".vibe-verifier-qae")

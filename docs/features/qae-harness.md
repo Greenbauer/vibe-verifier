@@ -40,6 +40,8 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - `tests/test_qae_annotations.py::test_a_reference_the_workflow_did_not_supply_is_the_operators_to_supply`
 - `tests/test_qae_annotations.py::test_a_pass_missing_a_role_is_refused`
 - `tests/test_qae_annotations.py::test_the_declared_digests_reach_the_gate_on_the_manifest_line`
+- `tests/test_qae_widths.py::test_a_criterion_missing_a_width_is_refused`
+- `tests/test_qae_widths.py::test_a_branch_dropping_the_widths_is_still_told_the_bases`
 - `tests/test_runner.py::test_the_qae_browser_toolchain_installs_from_its_lockfile`
 
 ## Gotchas

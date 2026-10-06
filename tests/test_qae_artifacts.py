@@ -239,10 +239,17 @@ class QaeArtifacts(unittest.TestCase):
             self.assertIn("request answered %s outside the allowlist" % status, result.stdout)
             self.assertIn("status of %s () @" % status, result.stdout)
 
-    def test_only_401_or_403_can_be_declared_and_a_path_needs_a_site(self):
+    def test_an_expected_422_for_an_invalid_input_passes(self):
+        # The invalid input the explorer is told to try, which this server refuses with a handled 422.
+        result = self.refusal_run("An empty name is refused with a message (expected-refusal: 422 /api/profile)",
+                                  ("422", "/api/profile"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_only_a_handled_refusal_can_be_declared_and_a_path_needs_a_site(self):
         result = self.refusal_run("The import endpoint fails (expected-refusal: 500 /api/import)", ("500", "/api/import"))
         self.assertEqual(result.returncode, 1)
-        self.assertIn("AC1 declares expected-refusal 500: only 401 or 403 can be expected", result.stdout)
+        self.assertIn("AC1 declares expected-refusal 500: only a handled refusal (400, 401, 403, 404, 409, 422) can be expected",
+                      result.stdout)
         inputs = tempfile.mkdtemp(prefix="vv-refusal-")
         self.addCleanup(shutil.rmtree, inputs, True)
         write(inputs, {"body.md": "## Acceptance criteria\n\n- Signed out refused (expected-refusal: 401 /api/quotes)\n"})

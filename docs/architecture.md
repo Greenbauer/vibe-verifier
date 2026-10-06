@@ -106,7 +106,7 @@ The QAE harness applies the same split to functional behavior.
 The pull-request body declares acceptance criteria. A workflow-owned site step declares the application URL. The explorer then uses a browser to exercise each criterion and records:
 
 - step-by-step observations (once per role a criterion names, and a comparison step for each design reference it names),
-- screenshots,
+- screenshots (at each viewport width the repository declares, when it declares any),
 - console/network evidence,
 - one verdict line per criterion with an evidence anchor.
 

@@ -696,8 +696,11 @@ record, a request to the site under test that answered 400 or worse or failed ou
 `--allow-request`. The site is `--site <URL>`, or `--site-file <FILE>`: the URL the explore job
 declared, written by the verify job, where a missing or malformed file is exit 2. The consumer
 declares only what is environmental. A pull request declares an expected refusal in a criterion's
-own line, `expected-refusal: <401|403> <path-or-URL>`, read from `--criteria`: it excuses exactly
-that status at exactly that URL for that run, and nothing else.
+own line, `expected-refusal: <status> <path-or-URL>`, read from `--criteria`, where the status is a
+handled refusal (400, 401, 403, 404, 409 or 422): it excuses exactly that status at exactly that URL
+for that run, and nothing else. With `--widths N[,N...]` (opt-in) each criterion's step screenshots
+must include one of each width, read from the PNG header; the explore job tells the explorer the same
+widths, from the same manifest line as the base has it, in `qae-inputs/widths`.
 
 The second harness is the review harness in [`harnesses/review/`](../harnesses/review/README.md).
 Its wired gate, `review-receipt`, reads three declared files: the newest

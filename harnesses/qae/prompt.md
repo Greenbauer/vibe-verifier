@@ -33,6 +33,19 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
        - step k: as <role>: <what you did> -> <what you saw>
      As each role, check that what the role may do works, that what it may not do is refused, and that
      controls it must not use are not shown.
+   If qae-inputs/widths exists, it lists viewport widths in pixels, one per line, and a gate checks that
+   each criterion's step screenshots include one at each width: check every criterion's end state at
+   each of them, with the browser resized to that width, as a step with its own screenshot. If
+   qae-inputs/site.md says the site has more than one theme (light and dark), check each end state in
+   every theme as well.
+   Beyond what a criterion says, on the screen it is about: use every action control the criterion
+   touches through to its end state (a save that is saved, not a button that is only shown); after
+   saving anything, reload the page and check that the values you entered are still there; and try one
+   invalid input (an empty required field, a malformed value) and check that the site answers with a
+   handled error, not a crash or a blank page. Prefer an input the page refuses before sending
+   anything: a request the site answers with 400 or worse fails the run unless the criterion declares
+   it (expected-refusal: <status> <path>). Log each as a step of that criterion; any of them that fails
+   makes the criterion a FAIL.
    If the directory qae-inputs/features/ exists, each <id>.md in it describes a feature this pull
    request's changes touch. After the criteria, re-walk each one the same way: get there as its
    Reach section says, then check what its Verify section says a user would see (its numbered

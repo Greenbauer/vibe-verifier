@@ -93,7 +93,7 @@ class QaeInputs(unittest.TestCase):
         output.write_text("")
         result = subprocess.run(["bash", "-e", "-c", action_script("qae-inputs")], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"GITHUB_ACTION_PATH": str(ROOT / "actions" / "qae-inputs"),
-                                               "GITHUB_OUTPUT": str(output), "RUNNER_TEMP": work,
+                                               "GITHUB_OUTPUT": str(output), "RUNNER_TEMP": work, "VV_MANIFEST": "", "VV_ENTRIES": "",
                                                "VV_REFERENCES": "qae-inputs/references", "VV_EVIDENCE": "qae-artifacts"}))
         return result, output.read_text()
 
@@ -233,7 +233,7 @@ class Template(unittest.TestCase):
     def test_the_references_step_runs_after_the_site_step_and_before_the_explorer(self):
         text = TEMPLATE.read_text()
         explore = text[text.index("\n  explore:\n"):text.index("\n  verify:\n")]
-        order = [explore.index(step) for step in ("        id: site\n", "- name: Keep the design references with the evidence",
+        order = [explore.index(step) for step in ("        id: site\n", "- name: Prepare the explorer's references and widths",
                                                   "- name: Explore the acceptance criteria in a real browser")]
         self.assertEqual(order, sorted(order))
         self.assertIn("        id: references\n        uses: Greenbauer/vibe-verifier/actions/qae-inputs@", explore)
@@ -249,7 +249,7 @@ class Template(unittest.TestCase):
         prepare = subprocess.run(["bash", "-e", "-c", action_script("qae-inputs")], cwd=work, capture_output=True, text=True,
                                  env=clean_env({"GITHUB_ACTION_PATH": str(ROOT / "actions" / "qae-inputs"), "GITHUB_OUTPUT": str(output),
                                                 "RUNNER_TEMP": work, "VV_REFERENCES": "qae-inputs/references",
-                                                "VV_EVIDENCE": "qae-artifacts"}))
+                                                "VV_EVIDENCE": "qae-artifacts", "VV_MANIFEST": "", "VV_ENTRIES": ""}))
         self.assertEqual(prepare.returncode, 0, prepare.stdout + prepare.stderr)
         declared = output.read_text().split("=", 1)[1].strip()
         # The verify job's runner has none of the explore job's files: only the output and the artifact.
