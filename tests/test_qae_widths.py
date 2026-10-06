@@ -3,7 +3,6 @@ screenshots to include one of each declared width, read from the PNG header, and
 writes the same widths, from the manifest's qae-artifacts line as the base has it, to qae-inputs/widths
 for the explorer. Driven through the gate's command line, the action script and the shipped template."""
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -11,17 +10,12 @@ import unittest
 from pathlib import Path
 
 from helpers import ROOT, clean_env, commit, gate, git, make_repo, png, write
+from test_qae_annotations import action_script
 from test_qae_artifacts import CLEAN_REQUESTS, session_with
 
 MANIFEST = ROOT / "harnesses" / "qae" / "manifest"
 QAE = ("acceptance-verdict --criteria qae-inputs/pr-body.md --verdict qae-inputs/verdict.md --artifacts qae-artifacts\n"
        "qae-artifacts --artifacts qae-artifacts --criteria qae-inputs/pr-body.md --site-file qae-inputs/site-url --widths 1280,375\n")
-
-
-def action_script():
-    text = (ROOT / "actions" / "qae-inputs" / "action.yml").read_text()
-    script = re.search(r"^      run: \|\n((?:        .*\n|\n)+)", text, re.MULTILINE).group(1)
-    return "".join(line[8:] if line.strip() else "\n" for line in script.splitlines(True))
 
 
 class Gate(unittest.TestCase):
@@ -78,7 +72,7 @@ class QaeInputs(unittest.TestCase):
     def run_action(self, repo, manifest=".vibe-verifier-qae", entries=""):
         output = Path(repo, ".git", "github-output")
         output.write_text("")
-        result = subprocess.run(["bash", "-e", "-c", action_script()], cwd=repo, capture_output=True, text=True,
+        result = subprocess.run(["bash", "-e", "-c", action_script("qae-inputs")], cwd=repo, capture_output=True, text=True,
                                 env=clean_env({"GITHUB_ACTION_PATH": str(ROOT / "actions" / "qae-inputs"), "GITHUB_OUTPUT": str(output),
                                                "RUNNER_TEMP": os.path.join(repo, ".git"), "VV_MANIFEST": manifest,
                                                "VV_ENTRIES": entries, "VV_REFERENCES": "qae-inputs/references",
