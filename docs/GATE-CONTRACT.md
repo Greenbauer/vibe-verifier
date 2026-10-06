@@ -652,6 +652,53 @@ repo-rules --rules lint/rules --pack example --soak
   leaves the block stale, so its pull request needs the block regenerated, which `apply-down` (pin
   lines only) does not do.
 
+### Universal checks
+
+A rule of the form "every X goes through Y" was once graded by a lint the pull request itself wrote,
+as a list of the forms its ticket happened to name; calls in other forms survived. `universal-checks`
+reads the rule's definition from outside the pull request: the repository's `ci/universal-checks.md`
+(`--rules PATH` names another) as the merge base of the base ref and HEAD has it.
+
+```
+# ci/universal-checks.md
+Universal checks:
+- `\.(?:route|waitForResponse|waitForRequest)\s*\(` in `e2e/*.spec.ts` conforms to `apiPath\(`
+- `(?<!function )\bapiPath\(` in `e2e/helpers.ts` conforms to `^`
+```
+
+- **One rule per bullet** under a `Universal checks:` heading (up to three `#`, bold, any case,
+  optional colon); a wrapped bullet joins the one above it. Every match of the population regex in a
+  tracked file the glob selects is a member. A member ending in a call, or followed by one, is graded
+  on the call argument its match ends in: for a call-shape population the first argument (the matcher,
+  not the handler body), and a population that consumes leading arguments
+  (`\.on\(\s*"response"\s*,`) grades the next one. Any other member is graded on the rest of its
+  line. It conforms when that text matches the conforms regex, whose alternatives are the exemptions.
+- **Write the population as every place the rule governs**, by the shape of the code that does the
+  governed thing (for a rule about an API, every method of it that can do that thing), never by the
+  wrong forms someone happened to mention. A rule that a helper stays in use lists its calls in the
+  files that must call it and conforms to `^`: if the calls go, the population is empty and the rule
+  fails.
+- Regexes are Python `re` with MULTILINE. The glob is `fnmatch` over the repository-relative path, so
+  `*` also crosses `/`, as in the rule files this grammar was ported from. Comments in the `//` and
+  `/* */` forms are blanked first, so a match inside one is not a member, and string, template and
+  regex literals are skipped when finding an argument; a comment in another language's form still
+  counts.
+- **Judged from the merge base.** A pull request that edits, weakens or deletes a rule is still judged
+  by the rule as the merge base has it. When the head's copy of the file differs (or the base has
+  none), it is graded too, so a rule a pull request adds is proven before it merges, and a malformed
+  copy cannot merge and then break every later pull request. A rule that lands on the default branch
+  after a pull request branched reaches that pull request when it updates from the base.
+- **Fails closed.** Exit 1 for each member that does not conform, at its line. Exit 2, which `--soak`
+  never masks, when no copy of the file exists at the merge base or the head; when a copy parses to no
+  rule, holds a malformed rule or a heading with none under it, or has a backticked bullet outside a
+  section (a note between bullets ends the section above it); when a regex does not compile; when a
+  glob matches no tracked file; and when a population matches nothing. An empty population is a typo
+  or a rule whose code is gone, never a pass. To retire a rule, remove its line first and merge, then
+  delete the code it governed; to rename what it governs, widen the rule to accept both names, then
+  rename, then narrow it.
+- It sees text, not meaning: whether the author named every code shape of the API is the author's
+  reading, and a rule pairing two things (an import with its use) needs a test of its own.
+
 ## Feature map
 
 `feature-map` keeps a [feature map](feature-map.md) (one Markdown file per user-facing feature under

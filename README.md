@@ -136,6 +136,7 @@ Each gate is a command-line program that reads a working tree and its Git histor
 | `cognitive-complexity` | New files with functions over the complexity limit, or changed files with more of them |
 | `max-file-lines` | New files over the line limit, or existing files over it that grew |
 | `repo-rules` | New findings of the repository's own [ast-grep](https://ast-grep.github.io/) rules and of catalog [rule packs](rules/README.md), each with a message saying what to write instead |
+| `universal-checks` | A place in the code that breaks one of the repository's standing rules, `ci/universal-checks.md`: every match of a rule's population (every call shape of an API, say) must conform to it, and a rule whose population matches nothing fails closed. The rules are read at the merge base, so a pull request cannot weaken its own ([format](docs/GATE-CONTRACT.md#universal-checks)) |
 | `feature-map` | A [feature map](docs/feature-map.md) out of step with the code: a surface (route, page, command) no feature owns, a listed surface the code no longer declares, a source glob matching nothing, or a test anchor that does not resolve |
 | `no-duplicate-package-json-keys` | Duplicate keys or invalid JSON in `package.json` |
 | `build-tools-in-devdependencies` | Known development packages listed as runtime dependencies |
