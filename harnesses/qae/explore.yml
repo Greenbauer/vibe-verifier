@@ -2,8 +2,10 @@ name: QAE explore
 
 # Vibe Verifier QAE harness: copy to .github/workflows/qae-explore.yml, with harnesses/qae/manifest
 # copied to .vibe-verifier-qae. Consumer-owned parts, marked CONSUMER below: runs-on, how the site is
-# built and started (or a reachable preview URL passed in instead), the action pins. Two jobs:
-#   explore: builds and starts this PR's site on the runner (or resolves its preview), then an LLM
+# built and started (or a reachable preview URL passed in instead), the action pins. Three jobs:
+#   criteria: on any runner, reads the PR body and changed paths and decides whether there is a
+#            criterion to walk. Nothing else starts without one.
+#   explore:  builds and starts this PR's site on the runner (or resolves its preview), then an LLM
 #            with a real browser (playwright-mcp) walks the PR's acceptance criteria, writes one step
 #            log per criterion plus screenshots into qae-artifacts/, and posts a verdict comment in
 #            the acceptance-check grammar.
@@ -23,8 +25,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  criteria:
+    name: qae-criteria
+    runs-on: ubuntu-latest   # CONSUMER: any runner. It holds no model login and builds nothing.
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      count: ${{ steps.criteria.outputs.count }}
+    steps:
+      - name: Write the criteria inputs
+        # The PR body and its changed paths. A rename lists both names: moving a page into docs/ still
+        # takes it off the site.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p qae-inputs
+          gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
+          gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --paginate \
+            --jq '.[] | .filename, (.previous_filename // empty)' > qae-inputs/changed-files
+      - name: Read the criteria
+        # A PR that declares `- None: <why>`, or lists no criteria and changes only CI configuration or
+        # documentation no site renders, needs no browser check; one that lists no criteria and changes
+        # the site fails the verdict gate whatever the explorer does. None of them starts the explore
+        # job: it runs only when there is a criterion to walk. Decided by the same code the verify job
+        # runs. Before this, three pin bumps and a CI-only PR each paid for a full explore of nothing,
+        # and on 2026-09-21 one of them turned the job red on the account's usage cap for it. Decided
+        # in its own job, on any runner, since 2026-10-05: on the Codex lane the explore runner holds
+        # the one login, and a 6-second skip queued up to 15 minutes behind real explorations for it.
+        id: criteria
+        uses: Greenbauer/vibe-verifier/actions/criteria@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
+        with:
+          path: qae-inputs/pr-body.md
+          changed-files: qae-inputs/changed-files
+
   explore:
     name: qae-explore
+    needs: criteria
+    if: needs.criteria.outputs.count != '0'
     runs-on: ubuntu-latest   # CONSUMER
     timeout-minutes: 30
     permissions:
@@ -38,9 +80,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - name: Write the criteria inputs
-        # The PR body and its changed paths. A rename lists both names: moving a page into docs/ still
-        # takes it off the site.
+      - name: Write the explorer's input
+        # The PR body the prompt points the explorer at. The criteria job already found a criterion in it.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -49,33 +90,16 @@ jobs:
           set -euo pipefail
           mkdir -p qae-artifacts/qae qae-inputs
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
-          gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --paginate \
-            --jq '.[] | .filename, (.previous_filename // empty)' > qae-inputs/changed-files
-      - name: Read the criteria
-        # A PR that declares `- None: <why>`, or lists no criteria and changes only CI configuration or
-        # documentation no site renders, needs no browser check; one that lists no criteria and changes
-        # the site fails the verdict gate whatever the explorer does. None of them builds the site or
-        # spends a model session: those steps run only when there is a criterion to walk. Decided by
-        # the same code the verify job runs. Before this, three pin bumps and a CI-only PR each paid
-        # for a full explore of nothing, and on 2026-09-21 one of them turned the job red on the
-        # account's usage cap for it.
-        id: criteria
-        uses: Greenbauer/vibe-verifier/actions/criteria@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
-        with:
-          path: qae-inputs/pr-body.md
-          changed-files: qae-inputs/changed-files
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '24'
           cache: npm
       - run: npm ci
-        if: steps.criteria.outputs.count != '0'
       - name: Build and start the site under test   # CONSUMER: your build and start; leave the URL answering
         # Ends by declaring the URL under test as this step's `url` output: the explorer's prompt names
         # it and the verify job's gate judges requests to it. A repository with a reachable preview
         # builds nothing here and resolves that preview's URL instead (harnesses/qae/README.md).
         id: site
-        if: steps.criteria.outputs.count != '0'
         env:
           NEXT_TELEMETRY_DISABLED: '1'
         run: |
@@ -93,11 +117,9 @@ jobs:
         # integrity fixed by tools/qae-browser/package-lock.json in the catalog. Nothing here is
         # resolved from the registry at run time: this job holds the account-level token.
         id: browser
-        if: steps.criteria.outputs.count != '0'
         uses: Greenbauer/vibe-verifier/actions/qae-browser@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
       - name: Explore the acceptance criteria in a real browser
         id: explorer
-        if: steps.criteria.outputs.count != '0'
         uses: anthropics/claude-code-action@e58dfa55559035499a4982426bb73605e8b5ad8e # v1.0.105
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -149,7 +171,7 @@ jobs:
         uses: Greenbauer/vibe-verifier/actions/usage@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
         with:
           source-file: ${{ steps.explorer.outputs.execution_file }}
-          source-ran: ${{ steps.criteria.outputs.count != '0' }}
+          source-ran: true
           role: qae-explorer
           job-key: explore
       - name: Keep numeric usage
@@ -198,7 +220,7 @@ jobs:
 
   verify:
     name: qae-verify
-    needs: explore
+    needs: [criteria, explore]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -206,6 +228,13 @@ jobs:
       contents: read
       pull-requests: write   # the QA review comment, and nothing else
     steps:
+      - name: Require a finished criteria job
+        # The explore job is skipped when the criteria job found nothing to walk, and also when that
+        # job failed, since a job whose need failed is skipped too. Only the first is a pass.
+        env:
+          CRITERIA_RESULT: ${{ needs.criteria.result }}
+        run: |
+          if [ "$CRITERIA_RESULT" != success ]; then echo "::error::the criteria job ended $CRITERIA_RESULT, so nothing was decided"; exit 1; fi
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0

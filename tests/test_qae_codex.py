@@ -94,9 +94,9 @@ class Template(unittest.TestCase):
         c_head, c_tail = split(claude)
         x_head, x_tail = split(codex)
         self.assertEqual(c_tail, x_tail)
-        self.assertEqual(c_head.replace("runs-on: ubuntu-latest   # CONSUMER", "RUNS-ON"),
+        self.assertEqual(c_head.replace("runs-on: ubuntu-latest   # CONSUMER\n", "RUNS-ON\n"),
                          x_head[:x_head.index("- name: Write the explorer's prompt")].replace(
-                             "runs-on: [self-hosted, qae-codex]   # CONSUMER: a runner that holds the Codex login (harnesses/qae/README.md)", "RUNS-ON"))
+                             "runs-on: [self-hosted, qae-codex]   # CONSUMER: a runner that holds the Codex login (harnesses/qae/README.md)\n", "RUNS-ON\n"))
 
     def test_the_explorer_holds_no_secret_and_the_workflow_posts_the_verdict(self):
         text = CODEX.read_text()
@@ -104,10 +104,8 @@ class Template(unittest.TestCase):
         self.assertNotIn("secrets.", explore)
         self.assertNotIn("GH_TOKEN", explore)
         self.assertIn("uses: Greenbauer/vibe-verifier/actions/qae-codex@", explore)
-        self.assertIn("if: steps.criteria.outputs.count != '0'", explore)
         post = text[text.index("- name: Post the verdict the explorer wrote"):text.index("- name: Enforce the write scope")]
         self.assertIn('gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file qae-artifacts/verdict.md', post)
-        self.assertIn("if: steps.criteria.outputs.count != '0'", post)
 
     def test_every_catalog_pin_is_the_placeholder_a_consumer_replaces(self):
         for template, count in ((CODEX, 6), (KEEPALIVE, 1)):
