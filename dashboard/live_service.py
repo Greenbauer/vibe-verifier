@@ -10,6 +10,11 @@ from .usage_artifacts import UsageArtifacts
 from .util import parse_time
 from .agents import agent_view
 
+USAGE_REFRESH_SECONDS = 300
+# A refresh starts at most one interval after the last one ended and then takes its own time, so a
+# history is stale only once it misses a whole cycle.
+USAGE_STALE_AFTER = timedelta(seconds=2 * USAGE_REFRESH_SECONDS)
+
 
 class LiveService(DashboardService):
     def __init__(self, config, **kwargs):
@@ -35,7 +40,7 @@ class LiveService(DashboardService):
             with self._usage_lock:
                 if generation == self._usage_generation:
                     self._usage_result = value
-                    self._usage_next = self.monotonic() + 300
+                    self._usage_next = self.monotonic() + USAGE_REFRESH_SECONDS
                     if failed:
                         self.usage_reader = UsageArtifacts(self.config)
                 self._usage_running = False
@@ -62,7 +67,7 @@ class LiveService(DashboardService):
             observed = parse_time(usage.get('sampled_at'))
             age = self.wall_clock() - observed if observed else None
             usage['stale'] = (usage.get('stale', False) or age is None or
-                              age < timedelta(0) or age > timedelta(minutes=5))
+                              age < timedelta(0) or age > USAGE_STALE_AFTER)
             usage['history_sampled_at'] = usage.get('sampled_at')
             usage['history_stale'] = usage['stale']
             if usage['stale']:

@@ -14,6 +14,7 @@ from .util import parse_time, iso_time
 
 MAX_ARCHIVE = 65536
 MAX_RECORD = 16384
+MAX_PAGES = 5  # 500 artifacts a week per repository
 ROLE = {"swe-reviewer": "reviewer", "qae-explorer": "explorer"}
 NAME = re.compile(r"vv-usage-(swe-reviewer|qae-explorer)-([1-9][0-9]*)\Z")
 ALIAS = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,63}\Z")
@@ -108,23 +109,38 @@ class UsageArtifacts:
         self.downloader, self.clock = downloader, clock
         self.cache, self.result, self.updated = {}, None, float("-inf")
 
+    def _recent(self, repository, cutoff):
+        """A repository's artifacts, page by page until one reaches past the cutoff.
+
+        The listing runs newest first (by id, which follows creation), so once a page holds an artifact
+        older than the cutoff, later pages hold nothing newer. Returns the artifacts and whether the
+        listing reached that point within MAX_PAGES.
+        """
+        artifacts = []
+        for number in range(1, MAX_PAGES + 1):
+            page = self.api.one("repos/%s/actions/artifacts?per_page=100&page=%s" % (repository, number))
+            rows = page.get("artifacts", [])
+            artifacts.extend(rows)
+            created = [parse_time(row.get("created_at")) for row in rows]
+            if len(rows) < 100 or any(time is not None and time < cutoff for time in created):
+                return artifacts, True
+        return artifacts, False
+
     def collect(self, now=None):
         now = now or datetime.now(timezone.utc)
         if self.result is not None and self.clock() - self.updated < 300:
             return self.result
         self.api.begin()
-        records, partial, seen = [], False, set()
+        cutoff = now - timedelta(days=7)
+        records, partial, seen, listed = [], False, set(), set()
         try:
             for repository in self.config.repositories:
-                # One bounded listing per repo; an incomplete page is explicitly partial.
-                page = self.api.one("repos/%s/actions/artifacts?per_page=100&page=1" % repository)
-                if page.get("total_count", 0) > 100:
-                    partial = True
-                for artifact in page.get("artifacts", []):
+                artifacts, complete = self._recent(repository, cutoff)
+                partial |= not complete
+                for artifact in artifacts:
                     matched = NAME.fullmatch(artifact.get("name", ""))
                     created = parse_time(artifact.get("created_at"))
-                    if (not matched or artifact.get("expired") or created is None or
-                            created < now - timedelta(days=7)):
+                    if (not matched or artifact.get("expired") or created is None or created < cutoff):
                         continue
                     artifact_id = artifact.get("id")
                     size = artifact.get("size_in_bytes")
@@ -151,11 +167,18 @@ class UsageArtifacts:
                         records.append(record)
                     except (ApiError, ValueError, TypeError, KeyError, zipfile.BadZipFile, OSError):
                         partial = True
-        except ApiError:
-            # Failed access invalidates prior private usage, including cached history.
-            self.cache = {}
-            records, partial = [], True
-        self.cache = {key: value for key, value in self.cache.items() if key in seen}
+                listed.add(repository)
+        except ApiError as error:
+            partial = True
+            if error.code != "request_budget_exhausted":
+                # Failed access invalidates prior private usage, including cached history.
+                self.cache, records, listed = {}, [], set()
+        # A repository the call budget did not reach keeps what earlier passes read, inside the window;
+        # the next pass reads it again. A listed repository keeps only what it still lists.
+        self.cache = {key: value for key, value in self.cache.items()
+                      if key in seen or (key[0] not in listed and
+                                         (value is None or parse_time(value["sample"]["timestamp"]) >= cutoff))}
+        records.extend(value for key, value in self.cache.items() if key not in seen)
         accounts, samples = {}, []
         for record in records:
             if record is None:
