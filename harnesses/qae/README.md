@@ -22,7 +22,8 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
 `criteria@`, `gates@` and `qa-review@` in verify) are inventoried and bumped by `consumers` and
 `apply-down` exactly like the stub's.
 
-1. **criteria** reads the PR body and its changed paths with `actions/criteria`, on any runner: it
+1. **criteria** reads the PR body, its changed paths and, when the consumer supplies them,
+   [its ticket's criteria](#the-tickets-criteria) with `actions/criteria`, on any runner: it
    holds no model login, checks out nothing and builds nothing. Its `count` output decides whether
    the explore job starts at all, so on the Codex lane a pull request with nothing to walk never
    queues for, or holds, the one runner with the login.
@@ -143,6 +144,58 @@ plumbing (the explore job's `references` output, the verify job's `REFERENCES` l
 images and the role sign-ins. A criterion naming a reference in a repository whose manifest line
 lacks `--references` is refused with that instruction.
 
+## The ticket's criteria
+
+Opt-in. A pull request's own `## Acceptance criteria` list is written by whoever opened it, so a
+requirement its ticket states can go missing from it, or the list can be `- None:`. A consumer whose
+pull requests implement tickets in a tracker can supply the ticket's criteria, and the harness then
+holds the pull request to them as well.
+
+- The criteria job's `Write the ticket's criteria` step is the consumer's. Its default writes an empty
+  `qae-inputs/ticket.md`, which links no ticket. Replace it with a step that writes the acceptance
+  criteria of the ticket the pull request implements, read with the PR body's grammar: a
+  `## Acceptance criteria` list (a ticket body that has that section can be written as it is), or a
+  plain list with no headings. For tickets that are GitHub issues linked as `Closes #123` (the job
+  then needs `issues: read`):
+
+  ```yaml
+        - name: Write the ticket's criteria   # CONSUMER
+          env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            REPO: ${{ github.repository }}
+          run: |
+            set -euo pipefail
+            issue=$(grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?) #[0-9]+' qae-inputs/pr-body.md | head -1 | grep -oE '[0-9]+' || true)
+            if [ -n "$issue" ]; then gh issue view "$issue" --repo "$REPO" --json body --jq .body > qae-inputs/ticket.md
+            else : > qae-inputs/ticket.md; fi
+  ```
+
+  Any other tracker works the same way: find the ticket's key in the branch name or the PR body, fetch
+  it with a token the step holds (a repository secret; the criteria job runs no model), and write its
+  criteria. Fail the step when a linked ticket cannot be fetched, so a broken lookup never reads as "no
+  ticket".
+- `actions/criteria` counts the ticket's criteria as TC1, TC2, ... in addition to the PR body's, and
+  passes the file's text on as the criteria job's `ticket` output. The explore and verify jobs write
+  `qae-inputs/ticket.md` from that output, so every job judges the text the criteria job read, before
+  any model ran.
+- A ticket that lists criteria needs a check whatever the pull request says: a `- None:` declaration or
+  a list that leaves one out does not drop it. A ticket that declares `- None: <why>` has none. A
+  non-empty ticket in which no criteria can be found (a bold "Acceptance criteria:" line in place of a
+  heading, say) is a finding, never "no criteria", so a section the reader missed cannot drop the
+  ticket's requirements silently.
+- The explorer walks each ticket criterion like the pull request's, with its step log `qae/TCn.md`,
+  its screenshots `qae/TCn-step-k.png` and a line `acceptance-check: TCn -- ...`; `[ref:]`, `[as:]`,
+  the widths and `expected-refusal:` apply to it the same way. `acceptance-verdict --ticket` requires
+  its anchored PASS, `qae-artifacts --ticket` holds its log to the screenshot and width rules, and the
+  QA review comment lists it, marked "from the ticket".
+- The manifest template's two gate lines carry `--ticket qae-inputs/ticket.md`, a file the template
+  always writes (empty without a ticket). A consumer adopting it copies the step, the job output and
+  the two lines that write the file. A ticket split across several pull requests is graded whole on
+  each, so write only the criteria the pull request owns, or link the sub-ticket.
+
+The ticket's text is untrusted input to the explorer, like the PR body: the same tool rules and write
+scope hold.
+
 ## Viewports, themes, and what a criterion does not say
 
 **Widths** are opt-in and the consumer's choice: add `--widths 1280,375` (any widths, in pixels) to the
@@ -187,6 +240,8 @@ them disagree, as it already could for the gates. A pull request needs no browse
   `README.md`, `CLAUDE.md`, `AGENTS.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`,
   `CODEOWNERS`, `.gitignore`, `.gitattributes` or `.editorconfig` at any depth.
 
+Neither applies when the workflow supplies [ticket criteria](#the-tickets-criteria) (or a non-empty ticket
+in which none can be found): the ticket's requirements are checked whatever the pull request declares.
 Criteria win over paths: a pull request that lists one is explored whatever it touches. One that lists
 none and changes anything else still fails, because it has not said what to check. The list is
 adapted from the no-plan allowlist of a private predecessor's QAE, narrowed from every `*.md` to those

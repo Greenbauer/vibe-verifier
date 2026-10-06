@@ -171,7 +171,7 @@ A recurring pattern is that the workflow declares the values that determine what
 | Review receipt | Workflow step after successful review, a scoped no-change refresh, or a proven rate limit (`limited`) |
 | Review findings | Model |
 | Unresolved thread count | GitHub state captured by workflow |
-| Acceptance criteria | Pull-request body |
+| Acceptance criteria | Pull-request body, plus its ticket's when the consumer workflow supplies them (read once, before any model runs) |
 | Application URL under test | Consumer workflow |
 | Design reference images, and their digests | Consumer workflow (site step), declared by the workflow before the explorer runs |
 | Browser observations/screenshots | Model/browser harness |

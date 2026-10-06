@@ -42,6 +42,14 @@ A criterion's annotations (harnesses/qae/README.md) are held to the run's eviden
     [as: <role>, ...]     a PASS needs, for each role, a step line starting `as <role>:`
     a malformed bracket   refused, so a typo never drops a requirement
 
+The ticket's criteria (opt-in, harnesses/qae/README.md):
+
+    --ticket FILE         the acceptance criteria of the ticket the pull request implements, written by
+                          the consumer's workflow: each is TC1, TC2, ... and needs its own anchored PASS,
+                          in addition to the pull request's. A pull request that declares `- None: <why>`
+                          or leaves one out cannot drop them. An empty file links no ticket; a non-empty
+                          one in which no criteria can be found is a finding
+
 A missing input file is exit 2: nothing was graded. A criteria file with no criteria in it is a
 finding, because a repository that subscribes to this gate has decided its PRs state them.
 """
@@ -50,7 +58,8 @@ import json
 import os
 import re
 
-from _acceptance import ANCHOR_FORMS, PASS_RE, anchors, annotations, check_lines, criteria, declares_none, resolves
+from _acceptance import (ANCHOR_FORMS, PASS_RE, anchors, annotations, check_lines, criteria, declares_none, resolves,
+                         ticket_items)
 from _contract import CannotRun, Finding, run_gate, tracked_files
 from _features import add_selection_arguments, describe, selection
 
@@ -164,18 +173,20 @@ def regression_findings(args, verdict, tracked):
 
 def check(args):
     criteria_text = read_input(args.criteria, "criteria")
+    ticket, problem = ticket_items(read_input(args.ticket, "ticket") if args.ticket else "", args.ticket)
     reason = declares_none(criteria_text)
-    if reason:
+    if reason and not (ticket or problem):
         print("%s: nothing to verify, declared: %s" % (GATE, reason))
         return []
-    wanted = criteria(criteria_text)
+    findings = [Finding(problem, args.ticket)] if problem else []
+    wanted = ([] if reason else criteria(criteria_text)) + ticket
     verdict = read_input(args.verdict, "verdict")
     if not wanted:
-        return [Finding("no acceptance criteria found (a `## Acceptance criteria` list, or `- None: <why>`)", args.criteria)]
+        return findings or [Finding("no acceptance criteria found (a `## Acceptance criteria` list, or `- None: <why>`)",
+                                    args.criteria)]
     tracked = set(tracked_files(args.repo))
     lines = check_lines(verdict, args.token)
     declared = declared_references(args.references)
-    findings = []
     for item, wording in wanted:
         why = line_finding(item, wording, lines.get(item.casefold(), []), args.token, args.repo, tracked, args.artifacts)
         if why:
@@ -192,6 +203,7 @@ def add_arguments(parser):
     parser.add_argument("--artifacts", metavar="DIR", default=None)
     parser.add_argument("--token", default="acceptance-check")
     parser.add_argument("--references", metavar="FILE", default=None)
+    parser.add_argument("--ticket", metavar="FILE", default=None)
     add_selection_arguments(parser)
 
 

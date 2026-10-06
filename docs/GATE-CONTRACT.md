@@ -315,6 +315,13 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
   PASS need, for each role, a step line starting `as <role>:`. A bracket that starts like either and
   does not parse is a finding. `bin/vibe-verifier criteria` prints each criterion's annotations after
   its count line.
+- `--ticket FILE` (opt-in) is the acceptance criteria of the ticket the pull request implements,
+  written by the consumer's workflow with the PR body's grammar
+  ([the harness](../harnesses/qae/README.md#the-tickets-criteria)). Each is `TC1`, `TC2`, ... and needs
+  its own anchored PASS, in addition to the pull request's; a `- None:` in the PR body does not drop
+  them. An empty file links no ticket, a ticket that declares `- None: <why>` has none, and a non-empty
+  one in which no criteria can be found is a finding. `bin/vibe-verifier criteria --ticket FILE` counts
+  them the same way.
 - A missing input file is exit 2. A criteria file with no criteria is a finding: a repository that
   subscribes has decided its PRs state them.
 - A pull request with nothing to check says so, in the same section: one item reading
@@ -747,7 +754,10 @@ own line, `expected-refusal: <status> <path-or-URL>`, read from `--criteria`, wh
 handled refusal (400, 401, 403, 404, 409 or 422): it excuses exactly that status at exactly that URL
 for that run, and nothing else. With `--widths N[,N...]` (opt-in) each criterion's step screenshots
 must include one of each width, read from the PNG header; the explore job tells the explorer the same
-widths, from the same manifest line as the base has it, in `qae-inputs/widths`.
+widths, from the same manifest line as the base has it, in `qae-inputs/widths`. With `--ticket FILE`
+the ticket's criteria (`qae/TCn.md` logs) are held to the same rules, their `expected-refusal:`
+declarations count, and a pull request that declares `- None:` is still judged when its ticket lists
+criteria.
 
 The second harness is the review harness in [`harnesses/review/`](../harnesses/review/README.md).
 Its wired gate, `review-receipt`, reads three declared files: the newest

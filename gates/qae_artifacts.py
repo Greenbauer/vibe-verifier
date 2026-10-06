@@ -17,6 +17,10 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
                              without a manifest edit; a missing, empty or malformed file cannot run
     --widths N[,N...]        viewport widths in pixels (opt-in, the repository's choice): each
                              criterion's step screenshots must include one of each width (see 6)
+    --ticket FILE            the criteria of the ticket the pull request implements (TC1, TC2, ...):
+                             their step logs `qae/TCn.md` are held to the rules a criterion's are,
+                             their `expected-refusal:` declarations count, and a pull request that
+                             declares `- None:` still needs a run when its ticket lists criteria
 
 1. Every step in every step log has its screenshot: `qae/ACn.md` line `- step k:` needs a
    non-empty `qae/ACn-step-k.png`. A step without a picture is a claim, not evidence. A feature
@@ -55,7 +59,7 @@ import os
 import re
 import urllib.parse
 
-from _acceptance import criteria, declares_none, png_size
+from _acceptance import criteria, declares_none, png_size, ticket_items
 from _contract import CannotRun, Finding, run_gate
 
 GATE = "qae-artifacts"
@@ -81,10 +85,16 @@ def relative(path, root):
     return os.path.relpath(path, root).replace(os.sep, "/")
 
 
+def criterion_logs(root):
+    """The step logs of the criteria: `qae/ACn.md` for the pull request's, `qae/TCn.md` for its ticket's."""
+    return sorted(glob.glob(os.path.join(root, "qae", "AC*.md")) + glob.glob(os.path.join(root, "qae", "TC*.md")))
+
+
 def steps_have_screenshots(root):
-    logs = sorted(glob.glob(os.path.join(root, "qae", "AC*.md")))
+    logs = criterion_logs(root)
     if not logs:
-        return [Finding("no step logs under qae/ (the explorer writes one qae/ACn.md per criterion)")]
+        return [Finding("no step logs under qae/ (the explorer writes one qae/ACn.md, or qae/TCn.md for a ticket's, "
+                        "per criterion)")]
     return screenshot_findings(root, logs + sorted(glob.glob(os.path.join(root, "qae", "features", "*.md"))))
 
 
@@ -121,7 +131,7 @@ def screenshot_widths(root, log):
 def widths_findings(root, widths):
     """A finding per criterion step log whose step screenshots miss a declared width."""
     findings = []
-    for log in sorted(glob.glob(os.path.join(root, "qae", "AC*.md"))):
+    for log in criterion_logs(root):
         seen, unreadable = screenshot_widths(root, log)
         findings += unreadable
         missing = [width for width in widths if width not in seen]
@@ -148,11 +158,11 @@ def exact(url):
     return urllib.parse.urldefrag(url)[0]
 
 
-def expected_refusals(text, site):
-    """The (status, URL) pairs the criteria in `text` declare expected, and findings for any
-    declaration that cannot be honoured as written."""
+def expected_refusals(items, site):
+    """The (status, URL) pairs the criteria `items` ((id, wording) pairs) declare expected, and findings
+    for any declaration that cannot be honoured as written."""
     expected, findings = set(), []
-    for ac, wording in criteria(HTML_COMMENT.sub("", text)):
+    for ac, wording in items:
         for match in REFUSAL.finditer(wording):
             status, target = match.group("status"), match.group("target").rstrip(".,;:")
             if status not in REFUSABLE:
@@ -231,25 +241,32 @@ def declared_site(path):
     return words[0]
 
 
+def read_declared(path, label):
+    """The text of an input file the manifest line names, "" when it names none."""
+    if not path:
+        return ""
+    if not os.path.isfile(path):
+        raise CannotRun("%s file not found: %s" % (label, path))
+    return read(path)
+
+
 def check(args):
     root = args.artifacts
     if not root or not os.path.isdir(root):
         raise CannotRun("artifact directory not found: %s" % (root or "(none given)"))
-    body = ""
-    if args.criteria:
-        if not os.path.isfile(args.criteria):
-            raise CannotRun("criteria file not found: %s" % args.criteria)
-        body = read(args.criteria)
-        reason = declares_none(body)
-        if reason:
-            print("%s: nothing was required, declared: %s" % (GATE, reason))
-            return []
+    body = read_declared(args.criteria, "criteria")
+    ticket = ticket_items(HTML_COMMENT.sub("", read_declared(args.ticket, "ticket")))[0]
+    reason = declares_none(body)
+    if reason and not ticket:
+        print("%s: nothing was required, declared: %s" % (GATE, reason))
+        return []
     # Resolved only once something is being judged: a pull request that declares None runs no
     # explorer, so its site step may never have declared a URL, and that must not fail it.
     site = declared_site(args.site_file) if args.site_file else args.site
     console_allow = [re.compile(pattern) for pattern in (args.allow_console or [])]
     request_allow = [re.compile(pattern) for pattern in (args.allow_request or [])]
-    expected, declared = expected_refusals(body, site)
+    items = ([] if reason else criteria(HTML_COMMENT.sub("", body))) + ticket
+    expected, declared = expected_refusals(items, site)
     return (declared
             + steps_have_screenshots(root)
             + (widths_findings(root, args.widths) if args.widths else [])
@@ -263,6 +280,7 @@ def add_arguments(parser):
     parser.add_argument("--allow-console", action="append", metavar="REGEX")
     parser.add_argument("--allow-request", action="append", metavar="REGEX")
     parser.add_argument("--widths", metavar="N[,N...]", type=width_list, default=None)
+    parser.add_argument("--ticket", metavar="FILE", default=None)
     site = parser.add_mutually_exclusive_group()
     site.add_argument("--site", metavar="URL-PREFIX", default=None)
     site.add_argument("--site-file", metavar="FILE", default=None)
