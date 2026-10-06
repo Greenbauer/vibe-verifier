@@ -279,6 +279,15 @@ used percent minus the share of the window elapsed, as `12% under pace`, `21% ah
 `on pace` (within one point). It needs only the window's length and reset, so it shows even when the
 line cannot be sized. No price is inferred.
 
+Above the charts, each provider is one block (`OpenAI usage`, `Anthropic usage`). A provider with
+more than one metered plan names each plan; a single plan does not repeat its label. Each of that
+plan's windows is a bar, shorter windows first, labeled from its length (`5 hours`, `7 days`). The
+fill is green under half and on pace, yellow from half full or when the fill is more than a point
+ahead of an even burn, and red from 90% full or 25 points ahead. A white tick marks the even burn.
+The line reads `70% · resets 3d 4h · +16%` (the signed points, omitted within one point of even).
+The hover keeps the clock time of the reset and a reported token allowance. There is no
+primary/fallback account row.
+
 Every token sample repeats the owner, account, bot, timestamp, input count, and output count. Any
 cross-owner row rejects the whole file. Samples older than seven days are discarded. The file is
 limited to 2 MiB, 1,024 lanes, 64 accounts, and 20,000 token samples. Sections older than five
@@ -371,7 +380,9 @@ templates, and `test_dashboard_follow.py` the follower's check-run gate and roll
 `tests/test_dashboard_server_ui.py` covers loopback HTTP, proxy and direct routing headers,
 read-only methods, Host/Origin/traversal, XSS-safe JSON and DOM construction, filters, account usage
 math, local assets, the tab icon route, and the approved palette. `tests/test_dashboard_usage_charts.py` covers the usage
-charts' clock-hour mapping, observed and unobserved hours, usual-day averages, scales, and pace. The repository's existing unittest command runs all
+charts' clock-hour mapping, observed and unobserved hours, usual-day averages, scales, and pace.
+`tests/test_dashboard_usage_quota.py` covers the subscription bars: window labels, pace tick, color,
+reset countdown, and one block per provider. The repository's existing unittest command runs all
 of them. Configuration tests cover the strict optional proxy origin and its immutable default.
 
 Live acceptance uses private configuration outside this repository, reconciles displayed PRs and

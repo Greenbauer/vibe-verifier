@@ -1,7 +1,8 @@
 (function () {
   "use strict";
   const { BOT_META, element: el, link, safeUrl, duration, since, formatTime, bytes, badge,
-    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork } = VV;
+    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork,
+    quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
   const state = { ...VV.restoreViewState(null), ...VV.parseRoute(location.hash) };
@@ -176,15 +177,58 @@
     renderPrRows();
   }
 
-  function quota(account) {
-    const panel = el("div", { class: "quota-row" });
-    if (!account.quota_windows.length) return panel.appendChild(el("span", { class: "muted" }, "Quota window unavailable"));
-    account.quota_windows.forEach(window => panel.append(el("div", { class: "quota" },
-      el("b", {}, window.name), el("span", {}, `${window.used_percent}% used`),
-      el("small", {}, `Resets ${formatTime(window.resets_at)}`),
-      window.allowance_tokens === null ? null :
-        el("small", {}, `${window.allowance_tokens.toLocaleString()} token allowance reported`))));
+  function subscriptionPanel(accounts, now = Date.now()) {
+    const panel = el("section", { class: "panel subscription-panel" });
+    quotaGroups(accounts).forEach(group => {
+      const block = el("div", { class: "subscription-group",
+        title: group.accounts.map(account => account.label).filter(Boolean).join(", ") });
+      block.append(el("h2", {}, group.title));
+      group.accounts.forEach(account => {
+        if (group.accounts.length > 1 && account.label) block.append(el("h3", { class: "subscription-model" }, account.label));
+        block.append(quota(account, now));
+      });
+      panel.append(block);
+    });
     return panel;
+  }
+
+  function quota(account, now = Date.now()) {
+    const panel = el("div", { class: "quota-lines" });
+    if (!account.quota_windows.length) return panel.appendChild(el("span", { class: "muted" }, "Quota window unavailable"));
+    account.quota_windows.map((window, index) => ({ window, index })).sort((a, b) => {
+      const left = Number.isFinite(a.window.window_minutes) ? a.window.window_minutes : Infinity;
+      const right = Number.isFinite(b.window.window_minutes) ? b.window.window_minutes : Infinity;
+      return left - right || a.index - b.index;
+    }).forEach(({ window }) => panel.append(quotaLine(window, now)));
+    return panel;
+  }
+
+  function quotaLine(window, now) {
+    const label = quotaWindowLabel(window);
+    const used = quotaDisplayPercent(window.used_percent);
+    const pace = quotaPace(window, now);
+    const tone = quotaTone(window.used_percent, pace ? pace.delta : null);
+    const countdown = quotaCountdown(window.resets_at, now);
+    const delta = pace ? quotaDeltaLabel(pace.delta) : null;
+    const usedText = used === null ? "usage unavailable" : `${used}% used`;
+    const detail = [`${label}: ${usedText}`];
+    if (pace) detail.push(quotaPacePhrase(pace));
+    detail.push(`Resets ${formatTime(window.resets_at)}`);
+    if (Number.isFinite(window.allowance_tokens)) detail.push(`${window.allowance_tokens.toLocaleString()} token allowance reported`);
+    const track = el("div", {
+      class: "quota-track", role: "meter", "aria-valuemin": "0", "aria-valuemax": "100",
+      "aria-valuenow": used === null ? "0" : String(used),
+      "aria-label": [usedText, pace ? quotaPacePhrase(pace) : null, countdown].filter(Boolean).join(", ")
+    });
+    if (used) track.append(el("span", { class: `quota-fill tone-${tone}`, style: `width:${used}%` }));
+    if (pace) track.append(el("span", {
+      class: "quota-tick", style: `left:${pace.expected}%`, title: `Even pace: ${Math.round(pace.expected)}% used`
+    }));
+    const meta = [el("b", {}, used === null ? "Unavailable" : `${used}%`)];
+    if (countdown) meta.push(` · ${countdown}`);
+    if (delta) meta.push(" · ", el("span", { class: `quota-delta tone-${tone}` }, delta));
+    return el("div", { class: "quota-line", title: detail.join(". ") },
+      el("span", { class: "quota-label" }, label), track, el("span", { class: "quota-meta" }, ...meta));
   }
 
   function failurePanel() {
@@ -279,12 +323,7 @@
     if (usage?.available) {
       if (usage.stale) content.append(sourceBanner(`Usage telemetry is stale. Last sample: ${formatTime(usage.sampled_at)}.`, "warning"));
       const quotas = usage.accounts.filter(account => account.quota_windows.length);
-      if (quotas.length) {
-        const panel = el("section", { class: "panel subscription-panel" });
-        quotas.forEach(account => panel.append(el("div", { class: "account-heading" },
-          el("h2", {}, account.label), quota(account))));
-        content.append(panel);
-      }
+      if (quotas.length) content.append(subscriptionPanel(quotas));
       content.append(usageCharts(usage), el("p", { class: "muted coverage-note" }, usage.completeness));
     } else content.append(usageCharts({ samples: [], accounts: [] }), sourceBanner("Usage source is unavailable.", "warning"));
     content.append(failurePanel());

@@ -30,12 +30,35 @@ class CollectorIntegration(unittest.TestCase):
         self.assertEqual(parsed['capacity']['limits']['qae_concurrency'], 2)
         self.assertEqual(parsed['capacity']['limits']['memory_max_bytes'], 100)
         self.assertEqual(parsed['capacity']['host']['memory_total_bytes'], 1000)
-        window = parsed['usage']['accounts'][0]['quota_windows'][0]
-        self.assertIn('7d', window['name'])
+        account = parsed['usage']['accounts'][0]
+        self.assertEqual(account['id'], 'collector:codex')
+        self.assertEqual(account['label'], 'Codex')
+        self.assertEqual(account['provider'], 'OpenAI')
+        window = account['quota_windows'][0]
+        self.assertEqual(window['name'], '7 days')
         self.assertEqual(window['used_percent'], 22)
         self.assertIsNone(window['allowance_tokens'])
         self.assertEqual(window['window_minutes'], 10080)
         self.assertEqual(parsed['usage']['samples'], [])
+
+    def test_each_metered_plan_is_its_own_account_and_windows_keep_their_length(self):
+        limits = [
+            {"limit_id": "codex", "windows": [
+                {"name": "secondary", "duration_minutes": 10080, "used_percent": 70, "resets_at": 1791383461},
+                {"name": "primary", "duration_minutes": 300, "used_percent": 0, "resets_at": 1791383461}]},
+            {"limit_id": "gpt-5.4", "windows": [
+                {"name": "primary", "duration_minutes": 1440, "used_percent": 10, "resets_at": 1791383461}]}]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'telemetry.json'
+            refresh(config(), path, fetch=lambda *_: {
+                'host': remote_host(), 'quota': {'status': 'ok', 'rate_limits': limits}}, now=STAMP)
+            parsed = read_telemetry(Config('example-ci', ('example-ci/repo',), {}, path), NOW)
+        accounts = parsed['usage']['accounts']
+        self.assertEqual([(account['id'], account['label']) for account in accounts],
+                         [('collector:codex', 'Codex'), ('collector:gpt-5.4', 'gpt-5.4')])
+        self.assertTrue(all(account['provider'] == 'OpenAI' for account in accounts))
+        self.assertEqual([window['name'] for window in accounts[0]['quota_windows']], ['7 days', '5 hours'])
+        self.assertEqual(accounts[1]['quota_windows'][0]['name'], '1 day')
 
     def test_stale_snapshot_never_claims_slots_are_ready(self):
         with tempfile.TemporaryDirectory() as directory:
