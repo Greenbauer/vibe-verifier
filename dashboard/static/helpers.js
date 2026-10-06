@@ -16,7 +16,7 @@
     offline: "Offline", allocated: "Allocated"
   };
 
-  // Filters and the selected bot, saved per tab. Where you are (view, PR) lives in the URL instead.
+  // Filters and the selected bot, saved per tab. Where you are lives in the URL instead.
   function restoreViewState(raw) {
     const state = { query: "", repository: "all", subscribed: false, attention: false, failureBot: null };
     let saved;
@@ -32,17 +32,15 @@
   }
 
   // The URL hash is the one record of the current view, so refresh, back and forward, and a copied
-  // link all land in the same place: #/prs, #/usage, #/capacity, or #/pr/<owner>/<repo>/<number>.
-  // GitHub owner and repository names are only letters, digits, ".", "-" and "_", so no escaping.
+  // link all land in the same place: #/prs, #/usage, or #/capacity. A pull request opens on GitHub,
+  // so an older #/pr/<owner>/<repo>/<number> hash is not a view and falls back to the list.
   function parseRoute(hash) {
-    const pull = /^#\/pr\/([\w.-]+)\/([\w.-]+)\/(\d+)$/.exec(hash || "");
-    if (pull) return { view: "prs", selected: `${pull[1]}/${pull[2]}#${pull[3]}` };
     const view = /^#\/(\w+)$/.exec(hash || "")?.[1];
-    return { view: ["prs", "usage", "capacity"].includes(view) ? view : "prs", selected: null };
+    return { view: ["prs", "usage", "capacity"].includes(view) ? view : "prs" };
   }
 
   function routeHash(route) {
-    return route.selected ? `#/pr/${route.selected.replace("#", "/")}` : `#/${route.view}`;
+    return `#/${route.view}`;
   }
 
   function element(tag, attrs, ...children) {
@@ -153,18 +151,32 @@
     return result.sort((a, b) => b.activity - a.activity || a.repository.localeCompare(b.repository));
   }
 
+  // GitHub's status ring draws one slice per outcome, sized by that outcome's share.
+  // The step line uses the same buckets, left to right: passed, pending, failed, then the gray ones.
+  const METER_STATES = ["success", "pending", "failed", "skipped", "cancelled", "unknown"];
+
+  function emptyStepCounts() {
+    return { success: 0, failed: 0, skipped: 0, cancelled: 0, pending: 0, unknown: 0 };
+  }
+
   function stepTotals(pull) {
     const summaries = (pull.runs || []).map(run => run.step_summary);
     // A required workflow that has not started yet has no step count, so the total stays unknown.
     if (!summaries.length || (pull.expected || []).length || summaries.some(summary => !summary || !summary.known)) {
-      return { known: false, completed: null, total: null, remaining: null };
+      return { known: false, completed: null, total: null, remaining: null, counts: null };
     }
-    return summaries.reduce((total, summary) => ({
-      known: true,
-      completed: total.completed + summary.completed,
-      total: total.total + summary.total,
-      remaining: total.remaining + summary.remaining
-    }), { known: true, completed: 0, total: 0, remaining: 0 });
+    return summaries.reduce((total, summary) => {
+      const counts = { ...total.counts };
+      const incoming = summary.counts || {};
+      METER_STATES.forEach(state => { counts[state] += Number(incoming[state]) || 0; });
+      return {
+        known: true,
+        completed: total.completed + summary.completed,
+        total: total.total + summary.total,
+        remaining: total.remaining + summary.remaining,
+        counts
+      };
+    }, { known: true, completed: 0, total: 0, remaining: 0, counts: emptyStepCounts() });
   }
 
   function combinedCategory(pull) {
@@ -174,13 +186,20 @@
     return order.find(value => categories.includes(value)) || "unknown";
   }
 
-  // The step meter counts steps that finished, not steps that passed, so its colour carries the verdict:
-  // red on any failure, yellow on any pending check, green only when every check passed, gray otherwise.
-  function meterTone(pull) {
-    const categories = [...(pull.checks || []), ...(pull.statuses || []), ...(pull.expected || [])].map(row => row.category);
-    if (categories.includes("failed")) return "failed";
-    if (categories.includes("pending")) return "pending";
-    return combinedCategory(pull) === "success" ? "success" : "neutral";
+  function meterSegments(totals) {
+    if (!totals || !totals.known || !totals.total || !totals.counts) return [];
+    return METER_STATES.flatMap(state => {
+      const count = Number(totals.counts[state]) || 0;
+      return count > 0 ? [{ state, count, label: STATUS_LABELS[state] }] : [];
+    });
+  }
+
+  function meterLabel(totals) {
+    const segments = meterSegments(totals);
+    if (!totals || !totals.known) return "Step total unavailable";
+    if (!segments.length) return `${totals.completed} of ${totals.total} steps`;
+    const parts = segments.map(segment => `${segment.count} ${segment.label.toLowerCase()}`);
+    return `${parts.join(", ")} of ${totals.total} steps`;
   }
 
   function currentWork(pull) {
@@ -195,6 +214,6 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, formatTime, bytes,
-    badge, diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterTone, currentWork, restoreViewState,
+    badge, diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork, restoreViewState,
     parseRoute, routeHash };
 });
