@@ -193,6 +193,29 @@ never goes near it. The Claude lane takes no storage state yet: its browser is c
 the template, with no released step to check the file and redact its values, so a Claude-lane
 repository behind SSO starts its site on the runner, as the pilot does.
 
+## A preview behind a login
+
+When the explorer must sign in, the site step writes the login somewhere the workflow controls and
+hands the explorer only a name for each credential:
+
+```yaml
+          # in the site step, after reading the login (masked) into $password
+          echo "::add-mask::$password"
+          jq -n --arg p "$password" '{QAE_PASSWORD: $p}' > "$RUNNER_TEMP/qae-login.json"
+          chmod 600 "$RUNNER_TEMP/qae-login.json"
+          echo "secrets-file=$RUNNER_TEMP/qae-login.json" >> "$GITHUB_OUTPUT"
+          echo "Sign in at $url/login as $email; for the password, type QAE_PASSWORD exactly." > qae-inputs/site.md
+```
+
+The explorer step passes `secrets-file: ${{ steps.site.outputs.secrets-file }}` to `actions/qae-codex`.
+playwright-mcp then types the value when the explorer enters the name, and shows `<secret>QAE_PASSWORD</secret>`
+in every tool result. Its session log still records what was typed, so after the explorer the action
+replaces every value (and its JSON-escaped and URL-encoded forms) in each non-image file under `qae-artifacts/` (the session log, the step logs,
+the verdict) and removes its copies; the posted verdict and the uploaded evidence hold no value. Never
+write a value into `site.md` or the prompt: the explorer does not need it, and the action can only
+redact what the file declares. `codex exec --ephemeral` keeps the run's session rollout, which holds
+everything the model read, off the runner.
+
 ## Rules the harness obeys, each from a real run
 
 - **Anchors resolve or the PASS is refused.** A step line the model did not write cannot be cited.
