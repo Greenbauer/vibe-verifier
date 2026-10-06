@@ -79,7 +79,7 @@ class ServerSecurity(unittest.TestCase):
         self.assertEqual(json.loads(body)["owner"], "octocat")
         self.assertNotIn("access-control-allow-origin", headers)
 
-    def test_favicon_is_served_same_origin_and_linked_from_the_page(self):
+    def test_favicon_is_served_same_origin_and_used_as_tab_icon_and_header_logo(self):
         status, headers, body = self.request("GET", "/favicon.svg")
         self.assertEqual(status, 200)
         self.assertEqual(headers["content-type"], "image/svg+xml")
@@ -87,6 +87,7 @@ class ServerSecurity(unittest.TestCase):
         self.assertIn(b">O</text>", body)
         _, _, page = self.request("GET", "/")
         self.assertIn(b'<link rel="icon" href="/favicon.svg" type="image/svg+xml">', page)
+        self.assertIn(b'<img class="brand-mark" src="/favicon.svg" alt="">', page)
 
     def test_untrusted_host_and_origin_are_rejected(self):
         self.assertEqual(self.request("GET", "/", {"Host": "example.invalid"})[0], 421)

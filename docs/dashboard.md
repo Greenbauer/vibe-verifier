@@ -29,8 +29,8 @@ covers the routes, history, and storage.
 
 ## Tab icon
 
-The browser tab shows the configured owner's GitHub avatar with the dashboard's green check badge in
-the corner, so the tab names both the owner and this dashboard. The server reads the public avatar
+The browser tab and the header logo show the configured owner's GitHub avatar with the dashboard's
+green check badge in the corner, so they name both the owner and this dashboard. The server reads the public avatar
 from `https://github.com/<owner>.png` on the first request for `/favicon.svg` and inlines it in the
 SVG it serves, so the browser loads nothing from GitHub and the CSP is unchanged. If the avatar
 cannot be read, the icon is the owner's first letter on a color derived from a SHA-256 hash of the
