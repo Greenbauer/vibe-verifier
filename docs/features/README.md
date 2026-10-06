@@ -12,6 +12,7 @@ One file per feature of this catalog: its gates, its harnesses and its command-l
 | [Changed-code mutation](mutation.md) | `changed-code-mutation` |
 | [Complexity and file-length ratchets](ratchets.md) | `cognitive-complexity`, `max-file-lines` |
 | [Repository rules and the generated rules block](repo-rules.md) | `repo-rules`, `rules-doc` |
+| [Universal checks](universal-checks.md) | `universal-checks` |
 | [package.json hygiene](package-json.md) | `no-duplicate-package-json-keys`, `build-tools-in-devdependencies` |
 | [Branch name length](branch-name.md) | `branch-name-length` |
 | [Feature map drift](feature-map.md) | `feature-map` |
