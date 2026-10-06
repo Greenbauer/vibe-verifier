@@ -45,7 +45,7 @@ a { color: var(--ink); text-underline-offset: 3px; }
   border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: center; gap: 9px; font-weight: 650; letter-spacing: -.25px; }
-.brand-mark { width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid #444; border-radius: 6px; }
+.brand-mark { width: 26px; height: 26px; }
 .owner { color: var(--muted); font-size: 12px; }
 .source-stamp { margin-left: auto; color: var(--muted); font-size: 11px; }
 
