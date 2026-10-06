@@ -147,7 +147,8 @@ class DocCheck(unittest.TestCase):
         self.assertTrue(BLOCK.split("\n")[1] == "" and BLOCK.split("\n")[-2] == "", BLOCK)
         squeezed = "\n".join(line for line in BLOCK.split("\n") if line.strip())
         spread = BLOCK.replace("\n", "\n\n")
-        for variant in (squeezed, spread):
+        escaped = BLOCK.replace("console.log", "console\\.log")  # what a Markdown formatter may write
+        for variant in (squeezed, spread, escaped):
             repo = doc_repo(self, files={"AGENTS.md": "# Agents\n\n" + variant + "\n"})
             commit(repo, {"src/b.ts": "export const b = 1\n"})
             result, findings = check(repo, "--doc", "AGENTS.md")

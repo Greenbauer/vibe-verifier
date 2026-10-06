@@ -594,7 +594,8 @@ repo-rules --rules lint/rules --pack example --soak
   finding, naming the command that regenerates it, when PATH lacks the block or holds a different
   one. Blank lines do not count: the block is written with a blank line after its first marker and
   before its last so Markdown formatters such as Prettier leave it alone, and one a formatter
-  reflowed anyway is still current; any changed text is not. The runner tells every gate which manifest that is, in `$VIBE_VERIFIER_MANIFEST`; the gate's
+  reflowed anyway, or one whose characters it backslash-escaped (Prettier writes `_x` as `\_x`), is
+  still current; any changed text is not. The runner tells every gate which manifest that is, in `$VIBE_VERIFIER_MANIFEST`; the gate's
   own arguments are the base's line on a pull request, and are what it renders from only when it runs
   alone or the head manifest has no `repo-rules` line. HEAD and not the base: the block describes what
   the branch will merge, so the pull request that changes a rule, or the packs and directories the
