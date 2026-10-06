@@ -85,6 +85,10 @@ feature-map --surface page 'content/**/*.md'
 feature-map
 ```
 
+This repository's own map, [`docs/features/`](features/README.md), is the example for a repository
+with no site: its surfaces are its gates (each `gates/*.py` declares `GATE = "<name>"`) and its
+`bin/vibe-verifier` subcommands, and its `.vibe-verifier` carries the line that checks them.
+
 - `--surface KIND GLOB REGEX`: every match of REGEX in every tracked file GLOB matches is a surface
   of that kind, its value the one capture group. `^` and `$` match at each line. Choose a pattern that
   matches only declarations: a string literal used elsewhere would become a surface no feature owns.
