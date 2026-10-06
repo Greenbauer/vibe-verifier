@@ -377,7 +377,11 @@ sha256 of every wheel the index lists for them. It installs with `pip install --
 interpreter version (a compiled wheel is built for one CPython), so pip takes only a listed wheel and
 never builds from source. No `python3` with `venv` and `pip`, or an install that fails, is exit 2.
 The first is `tools/cognitive-complexity-python/` (complexipy, which measures Python files for
-`cognitive-complexity`; its `measure.py` runs under the venv's interpreter).
+`cognitive-complexity`; its `measure.py` runs under the venv's interpreter). The second is
+`tools/changed-code-mutation-python/` (mutmut and everything it needs but pytest, which must be the
+project's own); its venv is made from the project's interpreter (`--python`), so every compiled wheel
+matches it, and the gate appends the venv's packages to that interpreter's path rather than running
+the venv.
 
 ### Ratchets
 
@@ -461,6 +465,25 @@ changed-code-mutation --project apps/web --break 70 --soak
   (`{a,b}`), which no escape makes literal. That last is read from Stryker's own
   "Found N of M file(s) to be mutated" line, because a file whose changed lines hold no mutant is
   absent from its report.
+- **Python files.** A changed `.py` file (Python tests, `test_*.py`, `*_test.py` and `conftest.py`,
+  always excluded) goes to mutmut 3.8, pinned in `tools/changed-code-mutation-python/` (see
+  [Python toolchains](#python-toolchains)), and its mutants join the same score. mutmut runs the
+  project's own pytest in the project's own interpreter, `--python` (default `python3`; a relative
+  path is the repository's, such as `--python .venv/bin/python`): its package is appended to the end
+  of that interpreter's `sys.path`, so the project's own packages win. No pytest there, or Python
+  before 3.10, is exit 2. It runs on a copy of the project's tracked files under the gate's own
+  `[tool.mutmut]` table (any the project has is replaced): mutmut generates a mutant per change it
+  can make in every function of the changed files and runs the whole suite once to learn which tests
+  reach which function; the gate places each mutant on the source line where it first differs from
+  the function it copies and keeps only those on the changed lines; mutmut then runs just those,
+  each against the tests that reach its function. When mutmut writes no coverage (it exits 1 both
+  when the suite fails and when no test reaches a changed function), the gate runs the project's
+  pytest once itself: a failing suite is exit 2, a passing one makes every mutant on the changed lines
+  not covered. mutmut makes no mutant in a decorated function, a method of a nested class, or a line
+  marked `# pragma: no mutate` (Python's escape hatch, with the reason in the comment); changed lines
+  there are printed as left out and never scored. Like Stryker's `perTest` coverage, a test reaches
+  a function only in its own process: code a test runs as a separate process (a CLI it calls) is not
+  covered.
 - **What it does not catch.** CSS and markup; behavior only an end-to-end or browser test reaches
   (the [QAE harness](../harnesses/qae/README.md) covers that); code no unit test can load; and
   equivalent mutants, which survive whatever the tests do. A flaky test can kill a mutant by
