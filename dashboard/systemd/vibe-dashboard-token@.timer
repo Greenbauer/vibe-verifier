@@ -1,0 +1,11 @@
+# Installation tokens live an hour; every ten minutes leaves room for missed runs. Linux, systemd.
+[Unit]
+Description=Schedule the read token refresh of Vibe Verifier dashboard %i
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=10min
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

@@ -429,15 +429,25 @@ def collect(payload, run_root="/run", runner=run_bounded, sleeper=time.sleep,
     return {"ok": True, "host": host, "quota": quota}
 
 
+def respond(payload):
+    """collect() as the collector reads it, over SSH or in-process (its local mode): the sample, or
+    an error code and never raw text."""
+    try:
+        if not isinstance(payload, dict):
+            raise SampleError("invalid_arguments")
+        return collect(payload)
+    except SampleError as error:
+        return {"ok": False, "error": str(error)}
+    except Exception:
+        return {"ok": False, "error": "collection_failed"}
+
+
 def main():
     try:
         if len(sys.argv) != 2 or len(sys.argv[1]) > MAX_FILE * 2:
             raise SampleError("invalid_arguments")
         raw = base64.urlsafe_b64decode(sys.argv[1].encode())
-        payload = json.loads(raw.decode("utf-8"))
-        if not isinstance(payload, dict):
-            raise SampleError("invalid_arguments")
-        result = collect(payload)
+        result = respond(json.loads(raw.decode("utf-8")))
     except SampleError as error:
         result = {"ok": False, "error": str(error)}
     except Exception:

@@ -236,7 +236,7 @@ For multiple projects, see [subscribing in CI](docs/GATE-CONTRACT.md#subscribing
 - [Gate contract](docs/GATE-CONTRACT.md): gate interface, manifests, base-policy behavior, CI subscription, wrappers, and extension rules.
 - [Review harness](harnesses/review/README.md): revision-bound AI review and workflow receipts.
 - [QAE harness](harnesses/qae/README.md): browser exploration, artifacts, and deterministic acceptance verdicts.
-- [Dashboard](docs/dashboard.md): local read-only verification observability.
+- [Dashboard](docs/dashboard.md): local read-only verification observability, and the [Linux host runbook](docs/dashboard-host.md) that runs it under systemd.
 - [Security policy](SECURITY.md): vulnerability reporting and supported versions.
 
 ## Contribute

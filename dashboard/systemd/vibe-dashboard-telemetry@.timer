@@ -1,0 +1,11 @@
+# The dashboard calls a telemetry section stale after five minutes; every 30 seconds keeps it current.
+[Unit]
+Description=Schedule the telemetry refresh of Vibe Verifier dashboard %i
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
