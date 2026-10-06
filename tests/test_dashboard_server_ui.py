@@ -295,6 +295,34 @@ console.log(JSON.stringify([h.combinedCategory(pr),h.stepTotals(pr).known,h.step
 ''')
         self.assertEqual(result, ["pending", False, None])
 
+    def test_a_green_step_list_stays_open_while_github_still_has_a_pending_check(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+const steps={known:true,completed:273,total:273,remaining:0,counts:{success:273,failed:0,skipped:0,cancelled:0,pending:0,unknown:0}};
+const pending={runs:[{suite_id:7,step_summary:steps,jobs:[{name:'test',status:'completed',category:'success',steps:[{category:'success',status:'completed'}]}]}],
+ checks:[{name:'deploy',suite_id:8,category:'pending'}],statuses:[],expected:[]};
+const covered={runs:[{suite_id:7,step_summary:{known:true,completed:3,total:4,remaining:1,counts:{success:3,failed:0,skipped:0,cancelled:0,pending:1,unknown:0}},
+ jobs:[{name:'test',status:'in_progress',category:'pending',steps:[{category:'success',status:'completed'},{category:'pending',status:'in_progress'}]}]}],
+ checks:[{name:'test',suite_id:7,category:'pending'}]};
+const running={runs:[{suite_id:7,step_summary:steps,jobs:[{name:'test',status:'in_progress',category:'pending',steps:[{category:'success',status:'completed'}]}]}],
+ checks:[],statuses:[],expected:[]};
+const failed={runs:[{suite_id:7,step_summary:steps,jobs:[{name:'test',status:'completed',category:'success',steps:[{category:'success',status:'completed'}]}]}],
+ checks:[{name:'lint',suite_id:9,category:'failed'}],statuses:[],expected:[]};
+const passed={runs:[{suite_id:7,step_summary:steps,jobs:[]}],checks:[{name:'lint',category:'success'}],statuses:[],expected:[]};
+console.log(JSON.stringify({
+ pending:[h.stepTotals(pending).counts.pending,h.stepTotals(pending).remaining,h.stepTotals(pending).total],
+ covered:h.stepTotals(covered).counts.pending,
+ running:h.stepTotals(running).counts.pending,
+ failed:[h.stepTotals(failed).counts.failed,h.stepTotals(failed).remaining],
+ passed:h.stepTotals(passed).total
+}));
+''')
+        self.assertEqual(result["pending"], [1, 1, 274])
+        self.assertEqual(result["covered"], 1)
+        self.assertEqual(result["running"], 1)
+        self.assertEqual(result["failed"], [1, 0])
+        self.assertEqual(result["passed"], 273)
+
     def test_disk_meter_reports_used_space_not_free_space(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');

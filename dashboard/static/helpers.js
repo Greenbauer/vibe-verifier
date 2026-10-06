@@ -159,13 +159,79 @@
     return { success: 0, failed: 0, skipped: 0, cancelled: 0, pending: 0, unknown: 0 };
   }
 
+  function countsOnTheMeter(row) {
+    return !!row && row.category !== "success" && row.category !== "skipped" && METER_STATES.includes(row.category);
+  }
+
+  function meterKey(suite, name, category) {
+    return `${suite == null ? "*" : suite}\0${name}\0${category}`;
+  }
+
+  // A step GitHub has already returned for this job. Pending steps that have not started are absent.
+  function shownBySteps(pull, name, suite, category) {
+    for (const run of pull.runs || []) {
+      if (suite != null && run.suite_id != null && run.suite_id !== suite) continue;
+      for (const job of run.jobs || []) {
+        if (job.name === name && (job.steps || []).some(step => step.category === category)) return true;
+      }
+    }
+    return false;
+  }
+
+  function addCheckGaps(pull, gaps, seen) {
+    for (const row of [...(pull.checks || []), ...(pull.statuses || [])]) {
+      if (!countsOnTheMeter(row)) continue;
+      seen.add(meterKey(row.suite_id, row.name, row.category));
+      if (!shownBySteps(pull, row.name, row.suite_id, row.category)) gaps[row.category] += 1;
+    }
+  }
+
+  function addJobGaps(pull, gaps, seen) {
+    for (const run of pull.runs || []) {
+      for (const job of run.jobs || []) {
+        if (!countsOnTheMeter(job) || shownBySteps(pull, job.name, run.suite_id, job.category)) continue;
+        if (seen.has(meterKey(run.suite_id, job.name, job.category)) || seen.has(meterKey(null, job.name, job.category))) continue;
+        gaps[job.category] += 1;
+      }
+    }
+  }
+
+  // Reported steps can all be successes while GitHub still shows a pending or failed check.
+  function ciGaps(pull) {
+    const gaps = emptyStepCounts();
+    const seen = new Set();
+    addCheckGaps(pull, gaps, seen);
+    addJobGaps(pull, gaps, seen);
+    return gaps;
+  }
+
+  function applyGaps(total, gaps) {
+    const counts = { ...total.counts };
+    let added = 0;
+    let open = 0;
+    for (const state of METER_STATES) {
+      const count = gaps[state] || 0;
+      counts[state] += count;
+      added += count;
+      if (state === "pending" || state === "unknown") open += count;
+    }
+    if (!added) return total;
+    return {
+      known: true,
+      completed: total.completed + added - open,
+      total: total.total + added,
+      remaining: total.remaining + open,
+      counts
+    };
+  }
+
   function stepTotals(pull) {
     const summaries = (pull.runs || []).map(run => run.step_summary);
     // A required workflow that has not started yet has no step count, so the total stays unknown.
     if (!summaries.length || (pull.expected || []).length || summaries.some(summary => !summary || !summary.known)) {
       return { known: false, completed: null, total: null, remaining: null, counts: null };
     }
-    return summaries.reduce((total, summary) => {
+    const summed = summaries.reduce((total, summary) => {
       const counts = { ...total.counts };
       const incoming = summary.counts || {};
       METER_STATES.forEach(state => { counts[state] += Number(incoming[state]) || 0; });
@@ -177,6 +243,7 @@
         counts
       };
     }, { known: true, completed: 0, total: 0, remaining: 0, counts: emptyStepCounts() });
+    return applyGaps(summed, ciGaps(pull));
   }
 
   function combinedCategory(pull) {

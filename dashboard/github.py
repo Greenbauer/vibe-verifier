@@ -121,17 +121,17 @@ class GitHubCollector:
                                 "check_suites")
         suite_ids = {suite.get("id") for suite in suites
                      if isinstance(suite.get("id"), int) and suite.get("head_sha") in (None, sha)}
-        # One listing for the whole head instead of one per suite: a head collects a suite for every
-        # event that started a workflow, often twenty or more, and each listing is a rate-limited request.
+        # filter=all, one listing for the head. filter=latest keeps the newest completed_at and drops
+        # a queued rerun; the newest check run id is that attempt, which often has no timestamps.
         rows = self.api.items(_endpoint("repos/%s/commits/%s/check-runs" % (repository, sha),
-                                        per_page=100, filter="latest"), "check_runs")
+                                        per_page=100, filter="all"), "check_runs")
         latest = {}
         for row in rows:
             suite_id = (row.get("check_suite") or {}).get("id")
             if suite_id not in suite_ids or row.get("head_sha") not in (None, sha):
                 continue
             key = self._check_identity(row, suite_id)
-            rank = (_time_key(row, "started_at", "completed_at"), row.get("id") or 0)
+            rank = (row.get("id") or 0, _time_key(row, "started_at", "completed_at"))
             if key not in latest or rank > latest[key][0]:
                 latest[key] = (rank, row, suite_id)
         checks = []

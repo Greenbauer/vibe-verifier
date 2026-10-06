@@ -334,6 +334,11 @@ The step meter is one line for the whole step total. Each outcome takes a share 
 equal to its count, with a gap between shares: green for passed, yellow for pending, red for
 failed, and gray for skipped, cancelled, or unknown. Finished steps over the total stay in the
 text above the line. The badge beside it, not the line, is the worst current-head check.
+Reported steps can all be successes while GitHub still shows a check as pending or failed: a
+queued or in-progress check has no steps yet, and a running job omits steps that have not
+started. Each such check or job adds one share of its outcome, so the line cannot be entirely
+green while that work is still open. A skipped or passed check adds nothing, because the steps
+already carry that detail.
 Elapsed time alone never asserts that a job is stuck. Unknown step totals never render as
 100 percent. A completed job with no steps, which is how GitHub reports a skipped job, counts as
 zero steps; a job that has not started yet keeps its run's step total unknown.
