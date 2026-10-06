@@ -7,5 +7,13 @@
     "@stryker-mutator/vitest-runner": "10.0.0",
     "typescript": "5.9.3",
     "vitest": "file:vitest-stub"
+  },
+  "vibeVerifier": {
+    "allowInDependencies": {
+      "@stryker-mutator/core": "this package is the changed-code-mutation gate's pinned toolchain: running it is its only job, installed by the gate's npm ci",
+      "@stryker-mutator/vitest-runner": "this package is the changed-code-mutation gate's pinned toolchain: running it is its only job, installed by the gate's npm ci",
+      "typescript": "this package is the changed-code-mutation gate's pinned toolchain: running it is its only job, installed by the gate's npm ci",
+      "vitest": "this package is the changed-code-mutation gate's pinned toolchain: running it is its only job, installed by the gate's npm ci"
+    }
   }
 }

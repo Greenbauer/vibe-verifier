@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Fail when a file this pull request changed has more over-limit functions than it had at the base.
 
-The metric is SonarSource's cognitive complexity, computed by eslint-plugin-sonarjs through the
-pinned toolchain in tools/cognitive-complexity (eslint, the sonarjs plugin, the TypeScript parser
-and typescript, every version and tarball integrity from the committed lockfile). A ratchet, not
+The metric is SonarSource's cognitive complexity. JS and TS files are measured by
+eslint-plugin-sonarjs through the pinned toolchain in tools/cognitive-complexity (eslint, the sonarjs
+plugin, the TypeScript parser and typescript, every version and tarball integrity from the committed
+lockfile); Python files by complexipy through tools/cognitive-complexity-python (one wheel per
+interpreter, every digest in the committed requirements file). Neither honors the repository's own
+suppressions (eslint bulk suppressions, complexipy's ignore comments): the ratchet counts. A ratchet, not
 a backlog: every source file changed since the base ref is measured at HEAD and at the base, and
 a file is a finding only when it has more functions over the limit than it had, or is new and
 has any. Functions nobody touched never block, and a refactor that removes one is never undone
 by the count. --all measures every tracked source file against the limit instead, for an audit.
 
     --max N          the limit (default 15)
-    --source GLOB    what counts as source (repeatable; default: JS and TS files)
+    --source GLOB    what counts as source (repeatable; default: JS, TS and Python files)
     --exclude GLOB   extra paths to ignore (repeatable; tests, node_modules and *.d.ts always are)
 """
 import json
@@ -19,22 +22,44 @@ import subprocess
 import tempfile
 
 from _contract import CannotRun, Finding, changed_files, git, matches, renamed, resolve_base, run_gate, tracked_files
-from _tools import NODE_TOOLS, ensure_node_tool
+from _tools import NODE_TOOLS, ensure_node_tool, ensure_python_tool
 
 GATE = "cognitive-complexity"
 RULE = "sonarjs/cognitive-complexity"
-DEFAULT_SOURCE = ["**/*." + ext for ext in ("ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts")]
-ALWAYS_EXCLUDED = ["**/*.d.ts", "**/node_modules/**", "**/*.test.*", "**/*.spec.*", "**/__tests__/**"]
+DEFAULT_SOURCE = ["**/*." + ext for ext in ("ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "py")]
+ALWAYS_EXCLUDED = ["**/*.d.ts", "**/node_modules/**", "**/*.test.*", "**/*.spec.*", "**/__tests__/**",
+                   "**/test_*.py", "**/*_test.py", "**/conftest.py"]
 # eslint applies the eslint-suppressions.json in its working directory (bulk suppressions). The consumer's is
 # for its own config: against this one rule its other entries look unused (eslint exits 2), and its count
 # for this rule would hide what the ratchet counts. Read from the catalog, not the cache, whose key is the lockfile.
 NO_SUPPRESSIONS = os.path.join(NODE_TOOLS, "cognitive-complexity", "no-suppressions.json")
 
 
-def measure(tool, root, files, limit):
+def measure(root, files, limit):
+    """{path: [(line, message)]} for every over-limit function in files under root, each language by its tool."""
+    python = [p for p in files if p.endswith(".py")]
+    found = measure_js(root, [p for p in files if not p.endswith(".py")], limit)
+    if python:
+        found.update(measure_python(ensure_python_tool("cognitive-complexity-python"), root, python, limit))
+    return found
+
+
+def measure_python(interpreter, root, files, limit):
+    result = subprocess.run([interpreter, os.path.join(NODE_TOOLS, "cognitive-complexity-python", "measure.py"), root, str(limit), *files],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        raise CannotRun((result.stderr.strip() or "complexipy exited %d with no output" % result.returncode).splitlines()[-1])
+    try:
+        return {path: [tuple(hit) for hit in hits] for path, hits in json.loads(result.stdout).items()}
+    except ValueError as error:
+        raise CannotRun("complexipy's JSON report could not be read: %s" % error)
+
+
+def measure_js(root, files, limit):
     """{path: [(line, message)]} for every over-limit function eslint reports under root."""
     if not files:
         return {}
+    tool = ensure_node_tool("cognitive-complexity")
     result = subprocess.run([os.path.join(tool, "node_modules", ".bin", "eslint"), "--no-config-lookup", "--config",
                              os.path.join(tool, "eslint.config.mjs"), "--format", "json",
                              "--suppressions-location", NO_SUPPRESSIONS, *files],
@@ -63,15 +88,13 @@ def check(args):
     tracked = set(tracked_files(args.repo))
     if args.all:
         files = sorted(p for p in tracked if matches(p, source) and not matches(p, excluded))
-        tool = ensure_node_tool("cognitive-complexity")
         return [Finding("%s (this file has it at the base too; --all reports everything)" % text, path, line)
-                for path, hits in sorted(measure(tool, args.repo, files, args.max).items()) for line, text in hits]
+                for path, hits in sorted(measure(args.repo, files, args.max).items()) for line, text in hits]
     base = resolve_base(args.repo, args.base_ref)
     files = sorted(p for p in changed_files(args.repo, base) if p in tracked and matches(p, source) and not matches(p, excluded))
     if not files:
         return []
-    tool = ensure_node_tool("cognitive-complexity")
-    head = measure(tool, args.repo, files, args.max)
+    head = measure(args.repo, files, args.max)
     moved = renamed(args.repo, base)
     with tempfile.TemporaryDirectory(prefix="vv-base-") as snapshot:
         at_base = []
@@ -85,7 +108,7 @@ def check(args):
             with open(target, "w", encoding="utf-8") as handle:
                 handle.write(git(args.repo, "show", "%s:%s" % (base, origin)))
             at_base.append(path)
-        before = measure(tool, snapshot, at_base, args.max)
+        before = measure(snapshot, at_base, args.max)
     findings = []
     for path, hits in sorted(head.items()):
         had = len(before.get(path, []))

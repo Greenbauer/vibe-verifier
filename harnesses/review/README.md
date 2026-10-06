@@ -16,12 +16,14 @@ template; the consumer owns `runs-on`, the token secret, and the two catalog pin
 1. **review** checks out the head with `persist-credentials: false`, pins every `CLAUDE.md` and
    `.claude/**` to the base ref (a hostile head could add one as an injection foothold), computes
    the scope, runs `claude-code-action` with [`prompt.md`](prompt.md) when there is something new
-   to review, reads how the run ended from the action's execution log, and then posts
+   to review, reads how the run ended from the action's execution log, runs it again on a second
+   account (`CLAUDE_CODE_OAUTH_TOKEN_FALLBACK`, optional) when the first did not complete a
+   review, and then posts
    `review-receipt: <head sha> -- <mode> -- run <id>` as a PR comment. The receipt step is reached
    only when every step before it succeeded, so an invalid or missing token, a crash, a model error
-   or a broken step leaves no receipt for this head. The one exception is a run whose reviewer
-   subscription proved a rate or usage limit: it passes with a warning and its receipt's mode is
-   `limited` (see the rules below). Usage collection and upload run under `always()` so a failed
+   or a broken step leaves no receipt for this head. The one exception is a run in which every
+   configured account proved a rate or usage limit: it passes with a warning and its receipt's mode
+   is `limited` (see the rules below). Usage collection and upload run under `always()` so a failed
    review can retain partial statistics without making the review green. These steps follow the receipt:
    a capture failure does not suppress evidence of a completed review, but still fails the review job.
 2. **verify** writes the declared inputs (the head SHA, the newest receipt for that head posted by
@@ -53,16 +55,24 @@ delta only starts further back.
   2026-10-05). The verify job searches every page of comments for the newest receipt naming the
   event head. With none, it writes the newest receipt instead, and the gate fails naming the head
   that receipt was for.
-- **A review that did not complete is red, unless the reviewer subscription is rate-limited.**
-  The review step runs under `continue-on-error` only so the next step, "Require a completed
-  review", can read the execution log; that step decides. A completed review (the step succeeded
-  and the final result object is a success that is not an error, took at least two turns and cost
-  something) gets its receipt. A run that did not complete and whose log proves a rate or usage
-  limit passes with a `::warning::` that the review did not run because the reviewer subscription
-  is rate-limited, and posts `review-receipt: <sha> -- limited -- run <id>` (decided by the
-  operator on 2026-10-03). Every other ending stays red with no receipt: an invalid or missing
-  token (a 401 "Invalid bearer token", "Not logged in"), a crash, a timeout, the turn cap, a model
-  error. The gate says why: no receipt for this head.
+- **A review that did not complete is red, unless every reviewer account is rate-limited.**
+  Each review step runs under `continue-on-error` only so the classify step after it can read its
+  execution log; "Require a completed review" decides from what they found. A completed review
+  (the step succeeded and the final result object is a success that is not an error, took at least
+  two turns and cost something) by either account gets its receipt. A run in which every configured
+  account proved a rate or usage limit passes with a `::warning::` that the review did not run, and
+  posts `review-receipt: <sha> -- limited -- run <id>` (decided by the operator on 2026-10-03).
+  Every other ending stays red with no receipt: an invalid or missing token (a 401 "Invalid bearer
+  token", "Not logged in"), a crash, a timeout, the turn cap, a model error. The gate says why: no
+  receipt for this head.
+- **A second account takes over when the first does not finish.** Subscription limits are per
+  account, and with one account every review on this repository came back `limited` from its
+  pull request 40 to 69 on 2026-10-05: thirty pull requests in a row got no model review. When
+  `CLAUDE_CODE_OAUTH_TOKEN_FALLBACK` is set, the same prompt, model and tools run on that account
+  whenever the first one did not complete a review, for any reason. Each attempt's log is moved to
+  its own name before the next one runs, because the action writes one fixed path and the fallback
+  must never be judged by the first attempt's log. Without the secret the chain is one account,
+  as before.
 - **Limited is proven structurally, never read from prose.** The proof is an SDK
   `rate_limit_event` whose status is `rejected` or `rate_limit`, or a final result object that is an
   error carrying the CLI's limit message ("You've hit your limit", "usage limit reached", "rate
@@ -98,7 +108,8 @@ delta only starts further back.
 ## Subscribing
 
 Copy `review.yml` to `.github/workflows/review.yml` and `manifest` to `.vibe-verifier-review`,
-pin the catalog actions, set `CLAUDE_CODE_OAUTH_TOKEN`, remove the old `claude-review.yml`, and
+pin the catalog actions, set `CLAUDE_CODE_OAUTH_TOKEN` (and `CLAUDE_CODE_OAUTH_TOKEN_FALLBACK`
+for a second account's subscription, recommended), remove the old `claude-review.yml`, and
 put any repository-specific review focus under a heading in CLAUDE.md. The subscription PR's own
 run is the first review.
 
