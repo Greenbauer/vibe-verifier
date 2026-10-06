@@ -425,13 +425,9 @@ def rules_doc(sg, sources):
     return "\n".join(lines + ["", END])
 
 
-MARKDOWN_ESCAPE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!|<>~])")
-
-
 def _content(block):
-    """A block's non-blank lines with Markdown backslash escapes removed: a formatter adding or removing
-    blank lines, or escaping a character (Prettier writes `_helpers` as `\\_helpers`), does not make it stale."""
-    return [MARKDOWN_ESCAPE.sub(r"\1", line.rstrip()) for line in block.splitlines() if line.strip()]
+    """Non-blank lines minus Markdown escapes: a formatter's blank lines or `\\_` never make a block stale."""
+    return [re.sub(r"\\([\\`*_{}\[\]()#+\-.!|<>~])", r"\1", line.rstrip()) for line in block.splitlines() if line.strip()]
 
 
 def stale_doc(repo, path, block):
