@@ -118,28 +118,18 @@ const describe=line=>{
   return {label:view.label, meta:view.meta, title:view.title, fill:fill?fill.attrs.class:null,
           width:fill?fill.attrs.style:null, tick:tick?tick.attrs.style:null};
 };
-const models=block=>{
-  const rows=[]; let current=null;
-  block.children.forEach(node=>{
-    if(node.tag==='h3'){ current={name:text(node), lines:[]}; rows.push(current); }
-    else if(node.attrs.class==='quota-lines'){
-      if(!current){ current={name:null, lines:[]}; rows.push(current); }
-      current.lines.push(...node.children.map(describe));
-    }
-  });
-  return rows;
-};
+const lines=block=>block.children.filter(node=>node.attrs.class==='quota-lines').flatMap(node=>node.children).map(describe);
 console.log(JSON.stringify({
   titles:blocks.map(block=>text(block.children[0])),
-  openai:models(blocks[0]),
-  claude:models(blocks[1]),
+  headings:blocks.map(block=>block.children.filter(node=>node.tag==='h3').map(text)),
+  openai:lines(blocks[0]),
+  claude:lines(blocks[1]),
   text:text(section)
 }));
 """.replace("SOURCE", json.dumps(source)))
         self.assertEqual(result["titles"], ["OpenAI usage", "Anthropic usage"])
-        codex, spark = result["openai"]
-        self.assertEqual([codex["name"], spark["name"]], ["Codex", "gpt-5.4"])
-        five, week = codex["lines"]
+        self.assertEqual(result["headings"], [[], []])
+        five, week, behind = result["openai"]
         self.assertEqual(five["label"], "5 hours")
         self.assertIsNone(five["fill"])
         self.assertIsNone(five["tick"])
@@ -151,18 +141,19 @@ console.log(JSON.stringify({
         self.assertEqual(week["meta"], "70% · resets 3d 5h · +16%")
         self.assertIn("1,000,000 token allowance reported", week["title"])
         self.assertIn("16 points ahead", week["title"])
-        behind = spark["lines"][0]
         self.assertEqual(behind["fill"], "quota-fill tone-ok")
         self.assertEqual(behind["width"], "width:20%")
         self.assertIn("-34%", behind["meta"])
         self.assertTrue(behind["tick"].startswith("left:54"))
         claude = result["claude"][0]
-        self.assertIsNone(claude["name"])
-        self.assertEqual(claude["lines"][0]["label"], "Weekly")
-        self.assertEqual(claude["lines"][0]["fill"], "quota-fill tone-hot")
-        self.assertIsNone(claude["lines"][0]["tick"])
+        self.assertEqual(claude["label"], "Weekly")
+        self.assertEqual(claude["fill"], "quota-fill tone-hot")
+        self.assertIsNone(claude["tick"])
         self.assertNotIn("Fallback", result["text"])
         self.assertNotIn("Primary", result["text"])
+        self.assertNotIn("Codex", result["text"])
+        self.assertNotIn("gpt-5.4", result["text"])
+        self.assertNotIn("Claude", result["text"])
 
 
 if __name__ == "__main__":

@@ -279,10 +279,9 @@ used percent minus the share of the window elapsed, as `12% under pace`, `21% ah
 `on pace` (within one point). It needs only the window's length and reset, so it shows even when the
 line cannot be sized. No price is inferred.
 
-Above the charts, each provider is one block (`OpenAI usage`, `Anthropic usage`). A provider with
-more than one metered plan names each plan; a single plan does not repeat its label. Each of that
-plan's windows is a bar, shorter windows first, labeled from its length (`5 hours`, `7 days`). The
-fill is green under half and on pace, yellow from half full or when the fill is more than a point
+Above the charts, each provider is one block (`OpenAI usage`, `Anthropic usage`). The block
+does not name the model or plan. Each window is a bar, shorter windows first, labeled from its
+length (`5 hours`, `7 days`). The fill is green under half and on pace, yellow from half full or when the fill is more than a point
 ahead of an even burn, and red from 90% full or 25 points ahead. A white tick marks the even burn.
 The line reads `70% · resets 3d 4h · +16%` (the signed points, omitted within one point of even).
 The hover keeps the clock time of the reset and a reported token allowance. There is no

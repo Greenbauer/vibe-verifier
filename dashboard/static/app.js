@@ -180,13 +180,9 @@
   function subscriptionPanel(accounts, now = Date.now()) {
     const panel = el("section", { class: "panel subscription-panel" });
     quotaGroups(accounts).forEach(group => {
-      const block = el("div", { class: "subscription-group",
-        title: group.accounts.map(account => account.label).filter(Boolean).join(", ") });
+      const block = el("div", { class: "subscription-group" });
       block.append(el("h2", {}, group.title));
-      group.accounts.forEach(account => {
-        if (group.accounts.length > 1 && account.label) block.append(el("h3", { class: "subscription-model" }, account.label));
-        block.append(quota(account, now));
-      });
+      group.accounts.forEach(account => block.append(quota(account, now)));
       panel.append(block);
     });
     return panel;

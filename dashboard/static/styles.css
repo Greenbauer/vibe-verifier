@@ -167,7 +167,6 @@ a.pr-row { color: inherit; text-decoration: none; cursor: pointer; }
 .failure-detail { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 7px 9px; background: var(--row); border-radius: 5px; font-size: 12px; }
 .usage-account { margin-top: 13px; }
 .subscription-group + .subscription-group { margin-top: 14px; }
-.subscription-model { margin: 8px 0 0; font-size: 12px; font-weight: 600; }
 .quota-lines { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .quota-line { display: grid; grid-template-columns: 72px minmax(80px, 1fr) max-content; gap: 10px; align-items: center; min-width: 0; }
 .quota-label { color: var(--muted); font-size: 12px; }
