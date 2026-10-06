@@ -6,7 +6,7 @@ grew since the base ref. A long file that shrank, or that nobody touched, never 
 reports every tracked source file over the limit instead, for an audit.
 
     --max N          lines a file may have (default 500)
-    --source GLOB    what counts as source (repeatable; default: JS and TS files)
+    --source GLOB    what counts as source (repeatable; default: JS, TS and Python files)
     --exclude GLOB   extra paths to ignore (repeatable; node_modules and *.d.ts always are)
 """
 import os
@@ -14,7 +14,7 @@ import os
 from _contract import CannotRun, Finding, changed_files, git, matches, renamed, resolve_base, run_gate, tracked_files
 
 GATE = "max-file-lines"
-DEFAULT_SOURCE = ["**/*." + ext for ext in ("ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts")]
+DEFAULT_SOURCE = ["**/*." + ext for ext in ("ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "py")]
 ALWAYS_EXCLUDED = ["**/*.d.ts", "**/node_modules/**"]
 
 

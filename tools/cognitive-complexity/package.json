@@ -7,5 +7,13 @@
     "eslint": "10.11.0",
     "eslint-plugin-sonarjs": "4.2.1",
     "typescript": "5.9.3"
+  },
+  "vibeVerifier": {
+    "allowInDependencies": {
+      "@typescript-eslint/parser": "this package is the cognitive-complexity gate's pinned toolchain: running it is its only job, installed by the gate's npm ci",
+      "eslint": "this package is the cognitive-complexity gate's pinned toolchain: running it is its only job, installed by the gate's npm ci",
+      "eslint-plugin-sonarjs": "this package is the cognitive-complexity gate's pinned toolchain: running it is its only job, installed by the gate's npm ci",
+      "typescript": "this package is the cognitive-complexity gate's pinned toolchain: running it is its only job, installed by the gate's npm ci"
+    }
   }
 }
