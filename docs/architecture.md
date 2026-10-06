@@ -90,8 +90,8 @@ The review job:
 - checks out the pull-request revision (the template uses GitHub's default PR merge checkout),
 - pins review instruction files such as `CLAUDE.md` and `.claude/**` to the base branch,
 - computes whether the model needs a full review, delta review, or no-change receipt refresh,
-- runs the reviewer with restricted read/comment capabilities,
-- posts a workflow-owned receipt for the exact head after the review completes, or a `limited` receipt with a warning when the run proves the reviewer subscription hit a rate or usage limit.
+- runs the reviewer with restricted read/comment capabilities, on a second account when the first does not complete a review,
+- posts a workflow-owned receipt for the exact head after the review completes, or a `limited` receipt with a warning when every configured reviewer account proves a rate or usage limit.
 
 The verify job converts repository state into declared files: event head SHA, the newest bot-authored receipt for that head (a review of an older head can finish last), and unresolved-thread count from the first 100 review threads. The `review-receipt` gate decides the verdict.
 
