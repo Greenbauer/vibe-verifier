@@ -16,7 +16,7 @@
     offline: "Offline", allocated: "Allocated"
   };
 
-  // Filters and the selected bot, saved per tab. Where you are (view, PR) lives in the URL instead.
+  // Filters and the selected bot, saved per tab. Where you are lives in the URL instead.
   function restoreViewState(raw) {
     const state = { query: "", repository: "all", subscribed: false, attention: false, failureBot: null };
     let saved;
@@ -32,17 +32,15 @@
   }
 
   // The URL hash is the one record of the current view, so refresh, back and forward, and a copied
-  // link all land in the same place: #/prs, #/usage, #/capacity, or #/pr/<owner>/<repo>/<number>.
-  // GitHub owner and repository names are only letters, digits, ".", "-" and "_", so no escaping.
+  // link all land in the same place: #/prs, #/usage, or #/capacity. A pull request opens on GitHub,
+  // so an older #/pr/<owner>/<repo>/<number> hash is not a view and falls back to the list.
   function parseRoute(hash) {
-    const pull = /^#\/pr\/([\w.-]+)\/([\w.-]+)\/(\d+)$/.exec(hash || "");
-    if (pull) return { view: "prs", selected: `${pull[1]}/${pull[2]}#${pull[3]}` };
     const view = /^#\/(\w+)$/.exec(hash || "")?.[1];
-    return { view: ["prs", "usage", "capacity"].includes(view) ? view : "prs", selected: null };
+    return { view: ["prs", "usage", "capacity"].includes(view) ? view : "prs" };
   }
 
   function routeHash(route) {
-    return route.selected ? `#/pr/${route.selected.replace("#", "/")}` : `#/${route.view}`;
+    return `#/${route.view}`;
   }
 
   function element(tag, attrs, ...children) {

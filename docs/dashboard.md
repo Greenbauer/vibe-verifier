@@ -10,12 +10,15 @@ copied into the live dashboard. Live mode has no built-in data.
 
 ## Navigation, back/forward, and refresh
 
-The current view lives in the URL hash: `#/prs`, `#/usage`, `#/capacity`, or
-`#/pr/<owner>/<repo>/<number>` for one pull request. Every view change adds a browser history
-entry, so the back and forward buttons move between views, and refreshing or opening a copied link
-lands on the same view. A selected PR stays selected while GitHub data loads; an unavailable PR
-shows an explanation and a way back instead of silently switching views. An empty or unknown hash
-shows pull requests and is rewritten to `#/prs` in place. The hash never reaches the server.
+The current view lives in the URL hash: `#/prs`, `#/usage`, or `#/capacity`. Every view change adds
+a browser history entry, so the back and forward buttons move between views, and refreshing or
+opening a copied link lands on the same view. An empty or unknown hash, including an older
+`#/pr/<owner>/<repo>/<number>` link, shows pull requests and is rewritten to `#/prs` in place. The
+hash never reaches the server.
+
+A pull request row opens that pull request on GitHub in a new tab. The address is the pull request's
+`html_url` only when it is an HTTPS `github.com` link under the configured owner. Any other address
+leaves the row as text, not a link.
 
 The search and repository filters, subscription/attention filters, and selected bot are kept in
 the current tab's session storage, scoped to the configured owner, and restored on refresh. They
@@ -323,8 +326,7 @@ one, so the badge reads Skipped only when every check was skipped.
 The step meter counts finished steps, not passed ones, so its colour carries the verdict: red when
 any check failed, yellow when any check is still pending, green only when every check passed, and
 gray when the result is cancelled, skipped, or unknown.
-Elapsed time alone never asserts that a job is stuck. The Actions timeline uses shared wall-clock
-coordinates for parallel jobs and does not sum their durations. Unknown step totals never render as
+Elapsed time alone never asserts that a job is stuck. Unknown step totals never render as
 100 percent. A completed job with no steps, which is how GitHub reports a skipped job, counts as
 zero steps; a job that has not started yet keeps its run's step total unknown.
 
@@ -364,7 +366,7 @@ configuration or captured telemetry. See [collection/cache behavior](dashboard-d
 [numeric usage artifact contract](USAGE-CONTRACT.md).
 
 The server refreshes GitHub and usage sources in the background; the page retains search focus
-and expanded job details during refresh. Numeric usage artifacts are read
+during refresh. Numeric usage artifacts are read
 every five minutes through the current GitHub credentials, verified against their run/attempt/head
 and configured workflow, and parsed without extracting files or copying model content. Each scan
 pages through a repository's artifacts, newest first, until a page reaches past seven days, at most
