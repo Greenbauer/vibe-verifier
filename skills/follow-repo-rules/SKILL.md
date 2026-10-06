@@ -23,6 +23,7 @@ generated from the rule files, so the rule files are the source of truth.
    ```
 
    No block? Print it: `<catalog>/bin/vibe-verifier rules-doc --repo . --manifest <manifest>`.
+
 2. Note every rule whose language and globs cover the files you will touch. A blocking rule fails the
    pull request; an advisory one is reported only. Follow both.
 3. Before writing new code, find how the repository already does the same thing and reuse it. Prefer

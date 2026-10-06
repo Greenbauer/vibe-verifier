@@ -63,7 +63,7 @@ LISTED = [
     "- `no-debugger` (blocking; TypeScript): Remove the `debugger` statement; it stops every run that has a debugger attached.",
     "- `zz-no-alert` (advisory; Tsx with `*.ts`, `*.mts`; files `src/**`, `app/**`; ignores `legacy/**`): Show a toast instead of alert().",
 ]
-BLOCK = "\n".join([BEGIN, INTRO, ""] + LISTED + [END])
+BLOCK = "\n".join([BEGIN, "", INTRO, ""] + LISTED + ["", END])
 
 
 def doc_repo(test, manifest="repo-rules --pack example\n", files=None):
@@ -140,6 +140,18 @@ class DocCheck(unittest.TestCase):
         self.assertIn("not what the rule files at HEAD generate", findings[0]["message"])
         result, findings = check(repo, "--doc", "AGENTS.md", "--soak")
         self.assertEqual((result.returncode, len(findings)), (0, 1), result.stdout + result.stderr)
+
+    def test_blank_lines_a_formatter_adds_or_removes_never_make_the_block_stale(self):
+        # The block sits between blank lines so Prettier leaves it alone; one that a formatter reflowed
+        # anyway (blank lines added or dropped) is still fresh, while any changed text is not.
+        self.assertTrue(BLOCK.split("\n")[1] == "" and BLOCK.split("\n")[-2] == "", BLOCK)
+        squeezed = "\n".join(line for line in BLOCK.split("\n") if line.strip())
+        spread = BLOCK.replace("\n", "\n\n")
+        for variant in (squeezed, spread):
+            repo = doc_repo(self, files={"AGENTS.md": "# Agents\n\n" + variant + "\n"})
+            commit(repo, {"src/b.ts": "export const b = 1\n"})
+            result, findings = check(repo, "--doc", "AGENTS.md")
+            self.assertEqual((result.returncode, findings), (0, []), result.stdout + result.stderr)
 
     def test_a_fresh_block_passes_and_follows_the_rules_at_head_not_the_base(self):
         repo = doc_repo(self, "repo-rules --pack example --doc AGENTS.md\n", {"AGENTS.md": "# Agents\n\n" + BLOCK + "\n"})
