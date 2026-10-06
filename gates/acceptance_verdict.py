@@ -21,7 +21,7 @@ finding, because a repository that subscribes to this gate has decided its PRs s
 """
 import os
 
-from _acceptance import ANCHOR_FORMS, PASS_RE, anchors, check_lines, criteria, declares_none
+from _acceptance import ANCHOR_FORMS, PASS_RE, anchors, check_lines, criteria, declares_none, resolves
 from _contract import CannotRun, Finding, run_gate, tracked_files
 
 GATE = "acceptance-verdict"
@@ -32,32 +32,6 @@ def read_input(path, label):
         raise CannotRun("%s file not found: %s" % (label, path or "(none given)"))
     with open(path, encoding="utf-8", errors="replace") as handle:
         return handle.read()
-
-
-def locate(anchor, repo, tracked, artifacts):
-    """The file an anchor names: a tracked path at the head, else a file under --artifacts."""
-    if anchor.path in tracked:
-        return os.path.join(repo, anchor.path)
-    if artifacts:
-        candidate = os.path.normpath(os.path.join(artifacts, anchor.path))
-        if candidate.startswith(os.path.normpath(artifacts) + os.sep) and os.path.isfile(candidate):
-            return candidate
-    return None
-
-
-def resolves(anchor, repo, tracked, artifacts):
-    """Why the anchor does not resolve, or None when it does."""
-    located = locate(anchor, repo, tracked, artifacts)
-    if located is None:
-        return "%s is not in the tree%s" % (anchor.path, " or the artifacts" if artifacts else "")
-    with open(located, encoding="utf-8", errors="replace") as handle:
-        body = handle.read()
-    if anchor.title:
-        return None if anchor.title in body else 'the title "%s" is not in %s' % (anchor.title, anchor.path)
-    length = body.count("\n") + (0 if body.endswith("\n") or not body else 1)
-    if anchor.start < 1 or anchor.end < anchor.start or anchor.end > length:
-        return "%s has %d lines, so %s is outside it" % (anchor.path, length, anchor.raw)
-    return None
 
 
 def check(args):
