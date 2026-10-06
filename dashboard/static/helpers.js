@@ -78,6 +78,11 @@
     return safe ? element("a", { href: safe, class: className || "evidence-link", target: "_blank", rel: "noreferrer" }, label) : null;
   }
 
+  const DAY = 24 * 60 * 60;
+  const WEEK = 7 * DAY;
+  const MONTH = 30 * DAY;
+  const YEAR = 365 * DAY;
+
   function duration(seconds) {
     if (!Number.isFinite(seconds) || seconds < 0) return "Unavailable";
     const whole = Math.floor(seconds);
@@ -89,9 +94,37 @@
     return `${Math.floor(hours / 24)}d ${hours % 24}h`;
   }
 
-  function since(value, now) {
+  function elapsedSeconds(value, now) {
     const at = Date.parse(value);
-    return Number.isFinite(at) ? duration(Math.max(0, (now - at) / 1000)) : "Unavailable";
+    const seconds = (now - at) / 1000;
+    return Number.isFinite(at) && Number.isFinite(seconds) ? Math.max(0, seconds) : null;
+  }
+
+  // Open-pull age. Two units under a day, then one: days through a week, weeks through
+  // thirty days, months until a year, then years. An exact three-day or two-week age
+  // keeps the younger color.
+  function ageLabel(seconds) {
+    const whole = Math.floor(seconds);
+    if (whole < 60) return `${whole}s`;
+    const minutes = Math.floor(whole / 60);
+    if (minutes < 60) return `${minutes}m ${whole % 60}s`;
+    const hours = Math.floor(minutes / 60);
+    if (whole < DAY) return `${hours}h ${minutes % 60}m`;
+    if (whole <= WEEK) return `${Math.floor(whole / DAY)}d`;
+    if (whole <= MONTH) return `${Math.floor(whole / WEEK)}w`;
+    if (whole < YEAR) return `${Math.floor(whole / MONTH)}mo`;
+    return `${Math.floor(whole / YEAR)}y`;
+  }
+
+  function since(value, now) {
+    const seconds = elapsedSeconds(value, now);
+    return seconds == null ? "Unavailable" : ageLabel(seconds);
+  }
+
+  function ageClass(value, now) {
+    const seconds = elapsedSeconds(value, now);
+    if (seconds == null || seconds <= 3 * DAY) return null;
+    return seconds > 2 * WEEK ? "age-red" : "age-yellow";
   }
 
   function formatTime(value) {
@@ -380,7 +413,7 @@
     return groups;
   }
 
-  return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, formatTime, bytes,
+  return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, ageClass, formatTime, bytes,
     badge, diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork, restoreViewState,
     parseRoute, routeHash, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel,
     quotaTone, quotaCountdown, quotaGroups };

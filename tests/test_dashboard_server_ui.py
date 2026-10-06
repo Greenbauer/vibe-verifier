@@ -390,6 +390,60 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
         self.assertEqual([(text(node).strip(), node["attrs"]["aria-pressed"]) for node in buttons],
                          [("SWE1", "false"), ("QAE1", "true")])
 
+    def test_pull_request_age_coarsens_and_colors_by_how_old_it_is(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+const now=Date.parse('2026-10-06T00:00:00Z');
+const at=seconds=>new Date(now-seconds*1000).toISOString();
+const row=seconds=>({label:h.since(at(seconds),now),tone:h.ageClass(at(seconds),now)});
+const day=86400;
+console.log(JSON.stringify({
+  seconds:row(25),
+  minutes:row(4*60+25),
+  hours:row(14*3600+15*60),
+  justUnderADay:row(day-1),
+  oneDay:row(day),
+  dayAndHours:row(day+21*3600),
+  threeDays:row(3*day),
+  justOverThreeDays:row(3*day+1),
+  sevenDays:row(7*day),
+  justOverSevenDays:row(7*day+1),
+  thirtyDays:row(30*day),
+  justOverThirtyDays:row(30*day+1),
+  seventyOneDays:row(71*day+3*3600),
+  twoWeeks:row(14*day),
+  justOverTwoWeeks:row(14*day+1),
+  justUnderAYear:row(365*day-1),
+  oneYear:row(365*day),
+  twoYears:row(800*day),
+  unavailable:{label:h.since('nope',now),tone:h.ageClass(null,now)},
+  jobStillShowsHours:{day:h.duration(36*3600),long:h.duration(49*3600)}
+}));
+''')
+        self.assertEqual(result["seconds"], {"label": "25s", "tone": None})
+        self.assertEqual(result["minutes"], {"label": "4m 25s", "tone": None})
+        self.assertEqual(result["hours"], {"label": "14h 15m", "tone": None})
+        self.assertEqual(result["justUnderADay"], {"label": "23h 59m", "tone": None})
+        self.assertEqual(result["oneDay"], {"label": "1d", "tone": None})
+        self.assertEqual(result["dayAndHours"], {"label": "1d", "tone": None})
+        self.assertEqual(result["threeDays"], {"label": "3d", "tone": None})
+        self.assertEqual(result["justOverThreeDays"], {"label": "3d", "tone": "age-yellow"})
+        self.assertEqual(result["sevenDays"], {"label": "7d", "tone": "age-yellow"})
+        self.assertEqual(result["justOverSevenDays"], {"label": "1w", "tone": "age-yellow"})
+        self.assertEqual(result["thirtyDays"], {"label": "4w", "tone": "age-red"})
+        self.assertEqual(result["justOverThirtyDays"], {"label": "1mo", "tone": "age-red"})
+        self.assertEqual(result["seventyOneDays"], {"label": "2mo", "tone": "age-red"})
+        self.assertEqual(result["twoWeeks"], {"label": "2w", "tone": "age-yellow"})
+        self.assertEqual(result["justOverTwoWeeks"], {"label": "2w", "tone": "age-red"})
+        self.assertEqual(result["justUnderAYear"], {"label": "12mo", "tone": "age-red"})
+        self.assertEqual(result["oneYear"], {"label": "1y", "tone": "age-red"})
+        self.assertEqual(result["twoYears"], {"label": "2y", "tone": "age-red"})
+        self.assertEqual(result["unavailable"], {"label": "Unavailable", "tone": None})
+        self.assertEqual(result["jobStillShowsHours"], {"day": "36h 0m", "long": "2d 1h"})
+        css = (ROOT / "dashboard/static/styles.css").read_text()
+        self.assertIn(".pr-age .age-yellow { color: var(--yellow); }", css)
+        self.assertIn(".pr-age .age-red { color: var(--red); }", css)
+
     def test_pull_request_row_opens_github_instead_of_a_dashboard_page(self):
         result = self.node(r'''
 const fs=require('fs');
@@ -399,9 +453,9 @@ const source=app.slice(app.indexOf('  function prRow('),app.indexOf('  function 
 function el(tag, attrs={}, ...children) {
   return {tag, attrs, children:children.flat().filter(value => value !== null && value !== undefined)};
 }
-const prRow=new Function('el','safeUrl','snapshot','combinedCategory','currentWork','badge','progress','since',
+const prRow=new Function('el','safeUrl','snapshot','combinedCategory','currentWork','badge','progress','since','ageClass',
   source+'return prRow;')(el, safeUrl, {owner:'octocat'}, ()=>'failed', ()=>null,
-  status=>el('span',{},status), ()=>el('div',{class:'progress'}), ()=>'2d');
+  status=>el('span',{},status), ()=>el('div',{class:'progress'}), ()=>'2d', ()=>'age-yellow');
 const pull=(html_url, stale)=>({repository:'octocat/example',number:3,title:'Fix the gate',author:'octocat',
   head_sha:'abcdef1234567890',html_url,attention_reason:'A current-head check failed',
   created_at:'2026-10-01T00:00:00Z',stale});
@@ -427,6 +481,8 @@ console.log(JSON.stringify({
         self.assertNotIn("onclick", linked["attrs"])
         self.assertIn("on GitHub", linked["attrs"]["aria-label"])
         self.assertIn("Fix the gate", text(linked))
+        age = next(node for node in linked["children"] if node["attrs"].get("class") == "pr-age")
+        self.assertEqual(age["children"][0], {"tag": "b", "attrs": {"class": "age-yellow"}, "children": ["2d"]})
         self.assertEqual(result["stale"]["attrs"]["class"], "pr-row stale-row")
         self.assertEqual(result["stale"]["attrs"]["href"], linked["attrs"]["href"])
         for key in ("foreign", "missing"):

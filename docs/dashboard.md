@@ -336,6 +336,12 @@ The dashboard shows source-proven failures, cancellations, waiting jobs, and cur
 The pull request list groups pull requests by repository. A repository with no open pull request
 that matches the filters gets no group. Groups are ordered by their most recently updated pull
 request, newest first; within a group the newest pull request is first and the oldest is last.
+A row's age is how long that pull request has been open. Under a day it shows hours and minutes.
+From a day through seven days it counts whole days, with no hours. Past seven days it counts
+whole weeks, past thirty days whole months, and from a year whole years. The number stays the
+default text color through three days, turns yellow after that, and turns red after two weeks.
+An age of exactly three days or exactly two weeks keeps the younger color. A running step's own
+elapsed time still shows hours.
 A pull request's badge shows its worst current-head check. A skipped check never outranks a passed
 one, so the badge reads Skipped only when every check was skipped.
 The step meter is one line for the whole step total. Each outcome takes a share of that line
@@ -378,7 +384,7 @@ an in-flight refresh. The collector and usage-artifact test files cover the nati
 templates, and `test_dashboard_follow.py` the follower's check-run gate and rollback.
 `tests/test_dashboard_server_ui.py` covers loopback HTTP, proxy and direct routing headers,
 read-only methods, Host/Origin/traversal, XSS-safe JSON and DOM construction, filters, account usage
-math, local assets, the tab icon route, and the approved palette. `tests/test_dashboard_usage_charts.py` covers the usage
+math, pull-request age units and color, local assets, the tab icon route, and the approved palette. `tests/test_dashboard_usage_charts.py` covers the usage
 charts' clock-hour mapping, observed and unobserved hours, usual-day averages, scales, and pace.
 `tests/test_dashboard_usage_quota.py` covers the subscription bars: window labels, pace tick, color,
 reset countdown, and one block per provider. The repository's existing unittest command runs all
