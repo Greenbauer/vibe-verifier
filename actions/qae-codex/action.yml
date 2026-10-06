@@ -172,7 +172,7 @@ runs:
                 refuse("gives %s a value no dotenv quoting can carry" % name)
             lines.append("%s=%s%s%s\n" % (name, quote, value, quote))
         for path, text in ((redact, json.dumps(merged)), (dotenv, "".join(lines))):
-            with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as handle:
+            with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as handle:
                 handle.write(text)
         PY
             ); then
@@ -194,7 +194,10 @@ runs:
       # still records what was typed, and the model could write a value anywhere under the
       # artifacts directory. Every non-image file there gets each value replaced with
       # <secret>NAME</secret> before the workflow posts the verdict or uploads the evidence, and the
-      # value files are removed. Screenshots hold pixels, not text.
+      # value files are removed. A value is also found in the forms a JSON or URL writer leaves it
+      # in (escaped quotes and backslashes, \uXXXX, percent-encoding), and the longest form is
+      # replaced first, so no fragment of one value survives another's replacement. Screenshots
+      # hold pixels, not text.
       if: always()
       shell: bash
       env:
@@ -204,16 +207,23 @@ runs:
         redact="$RUNNER_TEMP/qae-codex-redact.json"
         [ -s "$redact" ] || { rm -f "$RUNNER_TEMP/qae-codex-mcp.env"; exit 0; }
         python3 - "$redact" "$ARTIFACTS" <<'PY'
-        import json, pathlib, sys
-        values = json.loads(pathlib.Path(sys.argv[1]).read_text())
+        import json, pathlib, sys, urllib.parse
+        values = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+        forms = {}
+        for name, value in values.items():
+            tag = b"<secret>%s</secret>" % name.encode()
+            for form in (value, json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1],
+                         urllib.parse.quote(value, safe=""), urllib.parse.quote_plus(value)):
+                forms[form.encode("utf-8")] = tag
+        ordered = sorted(forms.items(), key=lambda item: -len(item[0]))
         root = pathlib.Path(sys.argv[2])
         changed = 0
         for path in (root.rglob("*") if root.is_dir() else ()):
             if not path.is_file() or path.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
                 continue
             data = clean = path.read_bytes()
-            for name, value in values.items():
-                clean = clean.replace(value.encode(), b"<secret>%s</secret>" % name.encode())
+            for form, tag in ordered:
+                clean = clean.replace(form, tag)
             if clean != data:
                 path.write_bytes(clean)
                 changed += 1

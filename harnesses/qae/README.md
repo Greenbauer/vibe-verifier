@@ -210,7 +210,7 @@ hands the explorer only a name for each credential:
 The explorer step passes `secrets-file: ${{ steps.site.outputs.secrets-file }}` to `actions/qae-codex`.
 playwright-mcp then types the value when the explorer enters the name, and shows `<secret>QAE_PASSWORD</secret>`
 in every tool result. Its session log still records what was typed, so after the explorer the action
-replaces every value in each non-image file under `qae-artifacts/` (the session log, the step logs,
+replaces every value (and its JSON-escaped and URL-encoded forms) in each non-image file under `qae-artifacts/` (the session log, the step logs,
 the verdict) and removes its copies; the posted verdict and the uploaded evidence hold no value. Never
 write a value into `site.md` or the prompt: the explorer does not need it, and the action can only
 redact what the file declares. `codex exec --ephemeral` keeps the run's session rollout, which holds

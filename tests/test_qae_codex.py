@@ -270,6 +270,31 @@ class StorageState(unittest.TestCase):
                 for name in ("qae-codex-redact.json", "qae-codex-mcp.env"):
                     self.assertFalse(os.path.exists(os.path.join(self.temp, name)), name + " outlived the redaction")
 
+    def test_escaped_and_encoded_forms_of_a_value_are_redacted_and_no_fragment_survives(self):
+        # A JSON writer (the session log) or a URL leaves a value escaped, so the raw bytes alone
+        # would let `\\"`, `\\\\`, `\\u00e9` or `%40` forms through; and a value that is part of a
+        # longer one must not be replaced first, or the longer one's tail survives.
+        import urllib.parse
+        value = 'pa"ss\\wo @rd\u00e9!'
+        longer = "abc123XYZ-long-tail"
+        result = self.run_step(secrets={"QAE_PASSWORD": value, "QAE_SHORT": "abc123XYZ", "QAE_LONG": longer})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        forms = [value, json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1],
+                 urllib.parse.quote(value, safe=""), urllib.parse.quote_plus(value)]
+        self.assertEqual(len(set(forms)), 5)
+        artifacts = Path(self.work, "qae-artifacts")
+        (artifacts / "session-1").mkdir(parents=True, exist_ok=True)
+        (artifacts / "session-1" / "session.md").write_text(
+            "\n".join('"value": "%s"' % form for form in forms) + "\nlong: %s\n" % longer, encoding="utf-8")
+        redacted = self.redact()
+        self.assertEqual(redacted.returncode, 0, redacted.stdout + redacted.stderr)
+        text = (artifacts / "session-1" / "session.md").read_text(encoding="utf-8")
+        for form in forms:
+            self.assertNotIn(form, text)
+        self.assertEqual(text.count("<secret>QAE_PASSWORD</secret>"), 5, text)
+        self.assertIn("long: <secret>QAE_LONG</secret>\n", text)
+        self.assertNotIn("long-tail", text)
+
     def test_a_malformed_secrets_file_stops_the_run_before_the_model(self):
         cases = {
             "not json": "{",
