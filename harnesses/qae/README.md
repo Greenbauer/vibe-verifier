@@ -305,6 +305,20 @@ same. What differs, and why:
   runner pool. Keep it off any box that must stay credential-free. Pointed at a
   [reachable preview](#a-reachable-preview-instead-of-a-site-on-the-runner), the runner installs and
   builds nothing of the app: it drives the browser against the preview's URL.
+- **More than one QAE job at a time is more than one login.** N parallel explorers need N runners
+  (or N container slots), each with its own Codex home seeded by its own
+  `codex login --device-auth`. Never point two at one store: a refresh rotates the token, and two
+  jobs on one `auth.json` retire each other's session ("refresh token has already been used"). Three
+  limits come with it. Every login on one ChatGPT seat spends that seat's usage, so N runners finish
+  a queue sooner but use it up faster. Each extra runner helps only if the site step can serve N
+  pull requests at once: a preview pipeline that deploys one head at a time keeps the extra runner
+  waiting. And the keepalive must reach every store: give each runner its own name as a second
+  label and run [`codex-keepalive.yml`](codex-keepalive.yml) once per runner, since a job sent to
+  the shared `qae-codex` label lands on only one of them. A runner whose store is not seeded yet
+  must stay offline (or its slot unstarted), or every QAE job routed to it fails at the login check.
+  Cap each runner's memory hard as well as softly (on systemd, `MemoryMax` equal to `MemoryHigh`):
+  with only a soft limit and no swap, one browser tab that grew to 3.7 GB held a runner stalled for
+  hours, long past its job's GitHub timeout, and every queued QAE job waited behind it.
 - **Usage stays numeric.** `actions/qae-codex` consumes `codex exec --json` without printing or
   retaining the JSONL stream, sums only validated `turn.completed.usage` integers, and uploads the
   same dedicated 7-day artifact as the Claude lane. It still writes `qae-artifacts/final.md` for
