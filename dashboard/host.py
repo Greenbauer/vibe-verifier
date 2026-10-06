@@ -37,7 +37,10 @@ ACCESS_TOKENS = "https://api.github.com/app/installations/%d/access_tokens"
 APP = re.compile(r"[A-Za-z0-9.]{1,64}\Z")
 # A GitHub login, an App's ending in [bot]. Both it and the token are written into YAML unquoted.
 LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?(?:\[bot\])?\Z")
-TOKEN = re.compile(r"[A-Za-z0-9_]{1,255}\Z")
+# An installation token: ghs_ plus 36 characters before 2026, and since then about 390 characters that
+# also hold "." and "-" (measured 2026-10-06). Neither breaks a plain YAML scalar after a first
+# character that cannot start a YAML sequence or other syntax.
+TOKEN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,4095}\Z")
 MAX_RESPONSE = 1024 * 1024
 # The owner of the trusted paths. Tests, which cannot run as root, substitute their own uid.
 ROOT_UID = 0
