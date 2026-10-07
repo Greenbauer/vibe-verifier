@@ -387,7 +387,8 @@ an in-flight refresh. The collector and usage-artifact test files cover the nati
 templates, and `test_dashboard_follow.py` the follower's check-run gate and rollback.
 `tests/test_dashboard_server_ui.py` covers loopback HTTP, proxy and direct routing headers,
 read-only methods, Host/Origin/traversal, XSS-safe JSON and DOM construction, filters, account usage
-math, pull-request age units and color, local assets, the tab icon route, and the approved palette. `tests/test_dashboard_usage_charts.py` covers the usage
+math, the class on a row's age number, local assets, the tab icon route, and the approved palette.
+`tests/test_dashboard_pull_age.py` covers pull-request age units and color. `tests/test_dashboard_usage_charts.py` covers the usage
 charts' clock-hour mapping, observed and unobserved hours, usual-day averages, scales, and pace.
 `tests/test_dashboard_usage_quota.py` covers the subscription bars: window labels, pace tick, color,
 reset countdown, and one block per provider. The repository's existing unittest command runs all
