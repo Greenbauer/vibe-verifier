@@ -1,0 +1,54 @@
+{
+  "name": "acme-ci",
+  "scope": "org",
+  "github_url": "https://github.com/acme",
+  "runner_group": "acme-ci",
+  "app": {
+    "client_id": "1000002",
+    "installation_id": 20000002,
+    "key_file": "/etc/acme-ci/app.pem"
+  },
+  "kinds": {
+    "ci": {
+      "set_name": "acme-ci",
+      "labels": [
+        "self-hosted",
+        "acme-ci"
+      ]
+    },
+    "qae": {
+      "set_name": "acme-qae",
+      "labels": [
+        "acme-qae"
+      ],
+      "requires_files": [
+        "/var/lib/acme-ci/codex/auth.json",
+        "/var/lib/acme-ci/codex-2/auth.json"
+      ]
+    },
+    "wait": {
+      "set_name": "acme-wait",
+      "labels": [
+        "self-hosted",
+        "acme-wait"
+      ],
+      "slots": 2,
+      "container_memory_bytes": 1073741824
+    }
+  },
+  "budget": {
+    "slots": 6,
+    "min_runners": 1,
+    "qae_concurrency": 2
+  },
+  "admission": {
+    "container_memory_bytes": 4294967296,
+    "reserve_bytes": 2147483648
+  },
+  "runner": {
+    "name_prefix": "worker1-acme",
+    "work_folder": "/home/runner/_work"
+  },
+  "idle_stop_sec": 300,
+  "warm_max_age_sec": 1200
+}

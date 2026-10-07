@@ -1,0 +1,326 @@
+# shellcheck shell=bash
+# stubs.sh: the system tools the provisioning tests stub on PATH. Sourced by the tests, never run.
+#
+# write_stubs <dir> writes docker, dockerd, apt-get, apt-mark, dpkg-query, systemctl, journalctl,
+# useradd, getent, chown, chgrp, chmod, runuser, stat, mountpoint, mount, umount, mkfs.ext4,
+# mkfs.xfs, cp, truncate, findmnt, nproc, df, ip, nft, iptables, timeout, sleep, curl and gh into
+# <dir>. No real package, mount, unit, container, firewall, network or GitHub call happens. They
+# record every mutation in $CALLLOG and keep their state under $ST; fixtures come from $FX. A
+# mount unit's enable mounts its Where= path; GNU stat -c %u reads a list of root-owned paths;
+# cp --reflink=always is done as a plain copy (neither ext4 nor tmpfs takes one); chmod
+# --reference is done from the reference's mode. The gh stub applies the script's own jq filter to
+# its fixture with the real jq.
+
+write_stubs() {
+  local p="$1"
+  mkdir -p "$p"
+  cat > "$p/docker" <<'SH'
+#!/bin/bash
+echo "docker $*" >> "$CALLLOG"
+case "$1 $2" in
+  "network inspect")
+    if [ "$3" = bridge ]; then echo "172.17.0.1 172.17.0.0/16"; exit 0; fi
+    [ -f "$ST/network-$3" ] || exit 1
+    case "$*" in
+      *enable_icc*) echo "$(cat "$ST/network-$3") ${ICC:-false} 172.20.0.0/16 172.20.0.1" ;;
+      *bridge.name*) cat "$ST/network-$3" ;;
+    esac
+    exit 0 ;;
+  "network create")
+    for a in "$@"; do case "$a" in com.docker.network.bridge.name=*) echo "${a#*=}" > "$ST/network-${*: -1}" ;; esac; done
+    exit 0 ;;
+  "network rm") rm -f "$ST/network-$3"; exit 0 ;;
+  "image inspect")
+    [ "${IMAGE_PRESENT:-1}" = 1 ] || exit 1
+    case "$*" in *--format*) echo "2026-09-25T00:00:00Z" ;; esac
+    exit 0 ;;
+  "info --format")
+    case "$*" in
+      *Runtimes*) if [ -f "$ST/sysbox" ] && [ "${NO_RUNTIME:-0}" != 1 ]; then echo '{"runc":{},"sysbox-runc":{}}'; else echo '{"runc":{}}'; fi ;;
+      *Driver*) echo overlayfs ;;
+    esac
+    exit 0 ;;
+  "run --rm") cat > "$ST/smoke-stdin"; cat "${SMOKE_OUT:-$FX/smoke.out}"; exit 0 ;;
+esac
+exit 0
+SH
+  cat > "$p/dockerd" <<'SH'
+#!/bin/bash
+echo "dockerd $*" >> "$CALLLOG"
+exit "${DOCKERD_RC:-0}"
+SH
+  cat > "$p/apt-get" <<'SH'
+#!/bin/bash
+echo "apt-get $*" >> "$CALLLOG"
+# The Nestybox deb reports its version as 0.7.1.linux (dpkg-query on the machine, 2026-09-26).
+case "$*" in *.deb*) [ "${APT_RC:-0}" = 0 ] && printf '0.7.1.linux\n' > "$ST/sysbox" ;; esac
+case "$*" in *docker-ce=*) [ "${APT_RC:-0}" = 0 ] && touch "$ST/docker-ce" ;; esac
+[ "${DOCKER_RESTARTS:-0}" = 1 ] && touch "$ST/docker-restarted"
+exit "${APT_RC:-0}"
+SH
+  cat > "$p/apt-mark" <<'SH'
+#!/bin/bash
+if [ "$1" = showhold ]; then cat "$ST/holds"; exit 0; fi
+echo "apt-mark $*" >> "$CALLLOG"
+shift
+printf '%s\n' "$@" >> "$ST/holds"
+SH
+  cat > "$p/dpkg-query" <<'SH'
+#!/bin/bash
+case "$2" in
+  *Status-Abbrev*) printf 'ii |linux-image-virtual\n'; printf 'un |linux-generic\n'; exit 0 ;;
+esac
+case "$3" in
+  sysbox-ce) [ -f "$ST/sysbox" ] && { cat "$ST/sysbox"; exit 0; }; exit 1 ;;
+  docker-ce|docker-ce-cli)
+    if [ "${DOCKER_CE_ABSENT:-0}" = 1 ] && [ ! -f "$ST/docker-ce" ]; then exit 1; fi
+    echo "5:29.5.2-1~ubuntu.24.04~noble" ;;
+  containerd.io) echo "2.2.4-1~ubuntu.24.04~noble" ;;
+  linux-image-virtual) echo "6.8.0-142.142" ;;
+  jq|python3-yaml|python3-jwt|python3-cryptography) case " ${HOST_PKGS_ABSENT:-} " in *" $3 "*) exit 1 ;; esac; echo "1.0" ;;
+  *) exit 1 ;;
+esac
+SH
+  # systemctl: unit states live in $ST/state/<unit> (the Sysbox services are active unless
+  # ACTIVE_STATE says otherwise; any other unit is inactive until started). Starting a listener
+  # with WARM_POOL=1 starts a warm slot the way the listener would.
+  cat > "$p/systemctl" <<'SH'
+#!/bin/bash
+echo "systemctl $*" >> "$CALLLOG"
+state_of() {
+  if [ -f "$ST/state/$1" ]; then cat "$ST/state/$1"; return; fi
+  case "$1" in sysbox|sysbox-mgr|sysbox-fs) echo "${ACTIVE_STATE:-active}" ;; *) echo inactive ;; esac
+}
+case "$1" in
+  show)
+    case "$2" in
+      docker) if [ -f "$ST/docker-restarted" ]; then echo 999; else echo 100; fi ;;
+      *.slice)
+        case "$*" in
+          *--value*) echo "${TOP_WEIGHT:-50}" ;;
+          *) printf 'MemoryMax=%s\nMemoryHigh=%s\nCPUQuotaPerSecUSec=8s\nCPUWeight=%s\n' "${SLICE_MEM:-17179869184}" "${SLICE_HIGH:-15032385536}" "${SLICE_WEIGHT:-50}" ;;
+        esac ;;
+    esac ;;
+  is-active) for u in "${@:2}"; do state_of "$u"; done ;;
+  is-enabled) echo "${ENABLED_STATE:-enabled}" ;;
+  start|restart)
+    for u in "${@:2}"; do
+      echo active > "$ST/state/$u"
+      case "$u" in
+        # The token refresh writes the lane user's hosts.yml, as bin/lane-token-refresh.py does.
+        *-token-refresh.service)
+          out="$(sed -n 's/.* --hosts-out \([^ ]*\) .*/\1/p' "$UNITS/$u")"
+          [ -z "$out" ] || { mkdir -p "$(dirname "$out")"; printf 'github.com:\n    oauth_token: fixture-refreshed-token\n' > "$out"; } ;;
+        *-listener.service)
+          if [ "${WARM_POOL:-0}" = 1 ]; then
+            mkdir -p "$RUN_T/ci/2"; printf 'acme ci 9 7002 box-lane-ci-2-1727005000\n' > "$RUN_T/ci/2/job"
+            echo "${WARM_STATE:-active}" > "$ST/state/box-ci-ci@2.service"
+          fi ;;
+      esac
+    done ;;
+  stop) for u in "${@:2}"; do echo inactive > "$ST/state/$u"; done ;;
+  enable)
+    for u in "$@"; do
+      case "$u" in
+        *.mount)
+          [ "${MOUNT_FAIL:-0}" = 1 ] && exit 1
+          sed -n 's/^Where=//p' "$UNITS/$u" >> "$ST/mounts" ;;
+        *.service|*.timer)
+          mkdir -p "$UNITS/multi-user.target.wants"; ln -sf "$UNITS/x" "$UNITS/multi-user.target.wants/$u"
+          case " $* " in *" --now "*) echo active > "$ST/state/$u" ;; esac ;;
+      esac
+    done ;;
+  disable)
+    for u in "$@"; do
+      rm -f "$UNITS/multi-user.target.wants/$u"
+      case " $* " in *" --now "*) case "$u" in *.service|*.timer) echo inactive > "$ST/state/$u" ;; esac ;; esac
+    done ;;
+esac
+exit 0
+SH
+  cat > "$p/journalctl" <<'SH'
+#!/bin/bash
+[ "${JOURNAL_TS:-now}" = none ] && exit 0
+ts="${JOURNAL_TS:-now}"; [ "$ts" = now ] && ts="$(date +%s)"
+echo "$ts.123456 box-1 listener[42]: heartbeat: 1 scale sets served, 1 of 2 slots in use"
+SH
+  cat > "$p/useradd" <<'SH'
+#!/bin/bash
+echo "useradd $*" >> "$CALLLOG"
+echo "${@: -1}" >> "$ST/users"
+SH
+  cat > "$p/getent" <<'SH'
+#!/bin/bash
+[ "$1" = passwd ] && grep -qx -- "$2" "$ST/users" 2>/dev/null && echo "$2:x:998:998::/nonexistent:/usr/sbin/nologin"
+SH
+  cat > "$p/chown" <<'SH'
+#!/bin/bash
+echo "chown $*" >> "$CALLLOG"
+case "$*" in
+  *--reference=*) grep -vxF -- "${@: -1}" "$ST/root-owned" > "$ST/root-owned.new" 2>/dev/null; mv "$ST/root-owned.new" "$ST/root-owned" ;;
+esac
+exit 0
+SH
+  # runuser -u <user> -- <command>: runs it, marking the user it runs as for the gh stub.
+  cat > "$p/runuser" <<'SH'
+#!/bin/bash
+echo "runuser $1 $2" >> "$CALLLOG"
+user="$2"; shift 3
+RUNUSER_AS="$user" exec "$@"
+SH
+  # GNU stat -c %u: 0 for a path listed in $ST/root-owned, 1000 for any other that exists.
+  cat > "$p/stat" <<'SH'
+#!/bin/bash
+[ "$1" = -c ] && [ "$2" = %u ] && [ -e "$3" ] || exit 1
+if grep -qxF -- "$3" "$ST/root-owned" 2>/dev/null; then echo 0; else echo 1000; fi
+SH
+  cat > "$p/chgrp" <<'SH'
+#!/bin/bash
+echo "chgrp $*" >> "$CALLLOG"
+SH
+  cat > "$p/chmod" <<'SH'
+#!/bin/bash
+if [[ "${1:-}" == --reference=* ]]; then
+  mode="$(python3 -c 'import os, sys; print(format(os.stat(sys.argv[1]).st_mode & 0o7777, "o"))' "${1#--reference=}")" || exit 1
+  shift
+  exec /bin/chmod "$mode" "$@"
+fi
+exec /bin/chmod "$@"
+SH
+  cat > "$p/mountpoint" <<'SH'
+#!/bin/bash
+grep -qx -- "${@: -1}" "$ST/mounts"
+SH
+  cat > "$p/mount" <<'SH'
+#!/bin/bash
+echo "mount $*" >> "$CALLLOG"
+echo "${@: -1}" >> "$ST/mounts"
+SH
+  cat > "$p/umount" <<'SH'
+#!/bin/bash
+echo "umount $*" >> "$CALLLOG"
+grep -vx -- "${@: -1}" "$ST/mounts" > "$ST/mounts.new"; mv "$ST/mounts.new" "$ST/mounts"
+SH
+  cat > "$p/mkfs.ext4" <<'SH'
+#!/bin/bash
+echo "mkfs.ext4 $*" >> "$CALLLOG"
+SH
+  cat > "$p/mkfs.xfs" <<'SH'
+#!/bin/bash
+echo "mkfs.xfs $*" >> "$CALLLOG"
+SH
+  cat > "$p/cp" <<'SH'
+#!/bin/bash
+args=(); reflink=0
+for a in "$@"; do case "$a" in --reflink=always) reflink=1 ;; *) args+=("$a") ;; esac; done
+if [ "$reflink" = 1 ]; then
+  echo "cp --reflink=always ${args[*]}" >> "$CALLLOG"
+  [ "${CP_NOREFLINK:-0}" = 1 ] && { echo "cp: failed to clone: Operation not supported" >&2; exit 1; }
+fi
+exec /bin/cp "${args[@]}"
+SH
+  cat > "$p/truncate" <<'SH'
+#!/bin/bash
+echo "truncate $*" >> "$CALLLOG"
+: > "${@: -1}"
+SH
+  cat > "$p/findmnt" <<'SH'
+#!/bin/bash
+case "${@: -1}" in *slot-*) echo " 10G" ;; *store) echo "/dev/loop8 xfs 40G" ;; *) echo "/dev/loop9 ext4 20G" ;; esac
+SH
+  # The host's core count, for the per-slot cpusets.
+  cat > "$p/nproc" <<'SH'
+#!/bin/bash
+echo "${NPROC:-16}"
+SH
+  cat > "$p/df" <<'SH'
+#!/bin/bash
+# Like the real df: a path that does not exist is an error, not a number.
+echo "df ${@: -1}" >> "$CALLLOG"
+[ -e "${@: -1}" ] || { echo "df: ${@: -1}: No such file or directory" >&2; exit 1; }
+printf ' Avail\n  %sG\n' "${DF_FREE:-62}"
+SH
+  cat > "$p/ip" <<'SH'
+#!/bin/bash
+case "$*" in
+  *"route get"*) echo "1.1.1.1 via 172.31.1.1 dev eth0 src 203.0.113.7 uid 0" ;;
+  *tailscale0*) echo "5: tailscale0    inet 100.64.0.9/32 scope global tailscale0" ;;
+esac
+SH
+  # Both lane rules are present for every bridge in FW_BRIDGES unless FW_PRESENT=0.
+  cat > "$p/nft" <<'SH'
+#!/bin/bash
+[ "${FW_PRESENT:-1}" = 1 ] || exit 0
+for b in ${FW_BRIDGES:-box-ci0 own-ci0}; do
+  echo "		iifname \"$b\" ip daddr { 10.0.0.0/8, 172.16.0.0/12 } counter packets 0 bytes 0 reject comment \"ai-fleet-known-ci\""
+done
+exit 0
+SH
+  cat > "$p/iptables" <<'SH'
+#!/bin/bash
+[ "${FW_PRESENT:-1}" = 1 ]
+SH
+  cat > "$p/timeout" <<'SH'
+#!/bin/bash
+shift
+exec "$@"
+SH
+  cat > "$p/sleep" <<'SH'
+#!/bin/bash
+echo "sleep $*" >> "$CALLLOG"
+SH
+  # curl: the host provisioner's two downloads, and the slot helper's API calls. The helper hands
+  # curl its bearer header as a config file on stdin; the stub checks it arrived there.
+  cat > "$p/curl" <<'SH'
+#!/bin/bash
+args=("$@"); out=""; method=GET; token=none
+for ((i = 0; i < ${#args[@]}; i++)); do
+  case "${args[$i]}" in
+    -o) out="${args[$((i+1))]}" ;;
+    -X) method="${args[$((i+1))]}" ;;
+    --config) cfg="$(cat)"; case "$cfg" in *"Bearer ${EXPECTED_TOKEN:-}"*) token=match ;; *) token=mismatch ;; esac ;;
+  esac
+done
+echo "curl $* token=$token" >> "$CALLLOG"
+case "${@: -1}" in
+  *.deb) [ "${CURL_FAIL:-0}" = 1 ] && exit 22; cp "$FX/sysbox.deb" "$out"; exit 0 ;;
+  */linux/ubuntu/gpg) [ "${CURL_FAIL:-0}" = 1 ] && exit 22; cp "${GPG_FIXTURE:-$FX/docker.asc}" "$out"; exit 0 ;;
+esac
+if [ "$method" = POST ]; then
+  printf '%s' "${MINT_BODY:-}" > "$out"
+  printf '%s' "${MINT_STATUS:-201}"
+else
+  printf '%s' "${DELETE_STATUS:-204}"
+fi
+SH
+  cat > "$p/gh" <<'SH'
+#!/bin/bash
+echo "gh $* [GH_CONFIG_DIR=${GH_CONFIG_DIR:-unset} GH_TOKEN=${GH_TOKEN:-unset} as=${RUNUSER_AS:-root}]" >> "$CALLLOG"
+if [ "${GH_WRITES_CONFIG:-0}" = 1 ] && [ -d "${GH_CONFIG_DIR:-/nonexistent}" ] && [ ! -e "$GH_CONFIG_DIR/config.yml" ]; then
+  : > "$GH_CONFIG_DIR/config.yml"
+  [ -n "${RUNUSER_AS:-}" ] || echo "$GH_CONFIG_DIR/config.yml" >> "$ST/root-owned"
+fi
+args=("$@"); endpoint=""; filter=""; method=GET
+for ((i = 1; i < ${#args[@]}; i++)); do
+  case "${args[$i]}" in
+    -X) method="${args[$((i+1))]}"; i=$((i+1)) ;;
+    --jq) filter="${args[$((i+1))]}"; i=$((i+1)) ;;
+    --paginate|--silent) ;;
+    *) [ -z "$endpoint" ] && endpoint="${args[$i]}" ;;
+  esac
+done
+[ "$method" = DELETE ] && exit 0
+case "$endpoint" in
+  */runner-groups) [ "${GH_GROUPS_RC:-0}" = 0 ] || exit 1; fixture="${GROUPS_JSON:-$FX/groups.json}" ;;
+  installation/repositories) [ "${GH_RUNNERS_RC:-0}" = 0 ] || exit 1; fixture="$FX/install-repos.json" ;;
+  */repositories) fixture="${REPOS_JSON:-$FX/repos.json}" ;;
+  repos/*/actions/runners)
+    repo="${endpoint#repos/}"; repo="${repo%/actions/runners}"
+    fixture="$FX/runners-${repo//\//_}.json"; [ -f "$fixture" ] || fixture="$FX/runners-none.json" ;;
+  */actions/runners) [ "${GH_RUNNERS_RC:-0}" = 0 ] || exit 1; fixture="${RUNNERS_JSON:-$FX/runners.json}" ;;
+  *) exit 1 ;;
+esac
+jq -r "$filter" < "$fixture"
+SH
+  chmod +x "$p/"*
+}

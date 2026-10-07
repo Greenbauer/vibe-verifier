@@ -1,0 +1,44 @@
+{
+  "name": "orbit-ci",
+  "scope": "org",
+  "github_url": "https://github.com/orbit-labs",
+  "runner_group": "orbit-ci",
+  "app": {
+    "client_id": "1000003",
+    "installation_id": 20000003,
+    "key_file": "/etc/orbit-ci/app.pem"
+  },
+  "kinds": {
+    "ci": {
+      "set_name": "orbit-ci",
+      "labels": [
+        "self-hosted",
+        "orbit-ci"
+      ]
+    },
+    "wait": {
+      "set_name": "orbit-ci-wait",
+      "labels": [
+        "self-hosted",
+        "orbit-ci-wait"
+      ],
+      "slots": 8,
+      "container_memory_bytes": 1073741824
+    }
+  },
+  "budget": {
+    "slots": 8,
+    "min_runners": 2,
+    "qae_concurrency": 0
+  },
+  "admission": {
+    "container_memory_bytes": 4294967296,
+    "reserve_bytes": 2147483648
+  },
+  "runner": {
+    "name_prefix": "vps1-ci",
+    "work_folder": "/home/runner/_work"
+  },
+  "idle_stop_sec": 300,
+  "warm_max_age_sec": 1200
+}

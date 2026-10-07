@@ -1,0 +1,50 @@
+{
+  "name": "greenbauer-ci",
+  "scope": "user",
+  "github_url": "https://github.com/Greenbauer",
+  "runner_group": "default",
+  "app": {
+    "client_id": "1000001",
+    "installation_id": 20000001,
+    "key_file": "/etc/greenbauer-ci/app.pem"
+  },
+  "kinds": {
+    "ci": {
+      "set_name": "greenbauer-ci",
+      "labels": [
+        "greenbauer-ci"
+      ]
+    },
+    "qae": {
+      "set_name": "greenbauer-qae",
+      "labels": [
+        "greenbauer-qae"
+      ],
+      "requires_files": [
+        "/var/lib/greenbauer-ci/codex/auth.json",
+        "/var/lib/greenbauer-ci/codex-2/auth.json"
+      ]
+    }
+  },
+  "repos": {
+    "exclude": [
+      "scratch"
+    ],
+    "refresh_sec": 600
+  },
+  "budget": {
+    "slots": 6,
+    "min_runners": 0,
+    "qae_concurrency": 2
+  },
+  "admission": {
+    "container_memory_bytes": 4294967296,
+    "reserve_bytes": 2147483648
+  },
+  "runner": {
+    "name_prefix": "worker1-ci",
+    "work_folder": "/home/runner/_work"
+  },
+  "idle_stop_sec": 300,
+  "warm_max_age_sec": 1200
+}
