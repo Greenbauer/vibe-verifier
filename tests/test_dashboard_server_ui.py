@@ -475,6 +475,19 @@ console.log(JSON.stringify({
         self.assertEqual(html.count('data-view="'), 3)
         self.assertNotIn("footer", html.lower())
 
+    def test_workspace_nav_stays_put_while_the_view_scrolls(self):
+        css = (ROOT / "dashboard/static/styles.css").read_text()
+        app = (ROOT / "dashboard/static/app.js").read_text()
+        self.assertIn("html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }", css)
+        self.assertIn(".app { display: flex; flex-direction: column; height: 100%; min-height: 0; }", css)
+        self.assertIn(".shell { display: grid; grid-template-columns: 160px minmax(0, 1fr); flex: 1; min-height: 0; overflow: hidden; }", css)
+        self.assertIn("main { min-width: 0; min-height: 0; overflow: auto; padding: 12px 22px; }", css)
+        self.assertIn(".shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }", css)
+        # A short window used to drop the nav back into the page scroll.
+        self.assertNotIn("min-height: auto", css)
+        self.assertNotIn("top: 102px", css)
+        self.assertIn("content.scrollTo?.(0, 0)", app)
+
 
 if __name__ == "__main__":
     unittest.main()
