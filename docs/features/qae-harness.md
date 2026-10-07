@@ -52,7 +52,6 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - `tests/test_qae_explore.py::test_dependabot_is_the_one_bot_whose_pull_requests_reach_the_explorer`
 - `tests/test_runner.py::test_the_qae_browser_toolchain_installs_from_its_lockfile`
 - `tests/test_qae_explore.py::test_a_re_run_never_reads_an_earlier_attempts_evidence`
-- `tests/test_qae_explore.py::test_the_verify_job_downloads_the_attempt_the_explore_job_ran_in`
 - `tests/test_qae_browser.py::test_where_sudo_needs_no_password_only_the_missing_packages_are_installed`
 - `tests/test_qae_browser.py::test_a_fetch_that_runs_out_of_time_is_tried_once_more_from_the_next_mirror`
 

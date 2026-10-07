@@ -364,31 +364,18 @@ class Applicability(unittest.TestCase):
 
 
 class Evidence(unittest.TestCase):
-    """Each run attempt keeps its own evidence, and the verify job reads the explore job's."""
-
     def test_a_re_run_never_reads_an_earlier_attempts_evidence(self):
-        # The upload runs always, so a failed or cancelled attempt uploads too. Under one name for
-        # every attempt, a consumer's third attempt passed its explore job and the verify job was
-        # handed the cancelled second attempt's artifact (2026-10-07): no step log, no session log.
+        # The upload runs always, so a failed or cancelled attempt uploads too: under one name, a
+        # consumer's third attempt passed and verify was handed the cancelled second's (2026-10-07).
+        # The download follows the explore job's attempt, never the verify job's own: re-running the
+        # verify job alone leaves the evidence in the earlier attempt.
         text = TEMPLATE.read_text()
-        explore = text[text.index("\n  explore:\n"):text.index("\n  verify:\n")]
-        upload = explore[explore.index("- name: Keep the evidence"):]
-        self.assertIn("        if: always()\n", upload)
-        self.assertIn("          name: qae-artifacts-${{ github.run_attempt }}\n          path: qae-artifacts\n", upload)
-        uploads = re.findall(r"uses: actions/upload-artifact@[^\n]*\n        with:\n          name: ([^\n]*)\n", text)
-        self.assertEqual(len(uploads), 2)
-        for name in uploads:
-            self.assertTrue(name.endswith("-${{ github.run_attempt }}"), name)
-
-    def test_the_verify_job_downloads_the_attempt_the_explore_job_ran_in(self):
-        # Not its own attempt: when only the verify job is re-run, the explore job's evidence is an
-        # earlier attempt's, and that job's outputs are the ones it reported then.
-        text = TEMPLATE.read_text()
-        explore = text[text.index("\n  explore:\n"):text.index("\n  verify:\n")]
-        self.assertIn("      attempt: ${{ github.run_attempt }}\n", explore[explore.index("    outputs:\n"):explore.index("    steps:\n")])
-        verify = text[text.index("\n  verify:\n"):]
-        download = verify[verify.index("- uses: actions/download-artifact@"):verify.index("- name: Run the QA gates")]
-        self.assertIn("          name: qae-artifacts-${{ needs.explore.outputs.attempt }}\n          path: qae-artifacts\n", download)
+        explore, verify = text[text.index("\n  explore:\n"):text.index("\n  verify:\n")], text[text.index("\n  verify:\n"):]
+        self.assertIn("      attempt: ${{ github.run_attempt }}\n    steps:\n", explore)
+        self.assertIn("        if: always()\n", explore[explore.index("- name: Keep the evidence"):])
+        self.assertEqual(re.findall(r"^          name: (.*)$", explore, re.MULTILINE),
+                         ["vv-usage-qae-explorer-${{ github.run_attempt }}", "qae-artifacts-${{ github.run_attempt }}"])
+        self.assertEqual(re.findall(r"^          name: (.*)$", verify, re.MULTILINE), ["qae-artifacts-${{ needs.explore.outputs.attempt }}"])
         self.assertNotIn("github.run_attempt", verify)
 
 
