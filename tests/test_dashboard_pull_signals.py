@@ -166,6 +166,38 @@ class GraphQLTransport(unittest.TestCase):
             api.graphql("query { x }", {})
         self.assertEqual(api.calls, 2)
 
+    def test_a_graphql_query_refused_with_points_left_still_pauses_only_graphql(self):
+        refusals = {"points": (("X-Ratelimit-Remaining: 41", "X-Ratelimit-Reset: 700"),
+                               "gh: API rate limit exceeded for installation ID 1."),
+                    "secondary": (("X-Ratelimit-Remaining: 41", "X-Ratelimit-Reset: 700"),
+                                  "gh: You have exceeded a secondary rate limit."),
+                    "retry": (("X-Ratelimit-Remaining: 41", "Retry-After: 30"), "gh: API rate limit exceeded")}
+        outcomes = {}
+        for name, (extra, message) in refusals.items():
+            def runner(command, extra=extra, message=message, **kwargs):
+                if command[3] == "graphql":
+                    return subprocess.CompletedProcess(command, 1, http(403, "{}", extra), message)
+                return subprocess.CompletedProcess(command, 0, http(200, "{}"), "")
+            now = [100]
+            api = GitHubAPI(runner=runner, clock=lambda: now[0])
+            with self.assertRaisesRegex(ApiError, "rate_limited"):
+                api.graphql("query { x }", {})
+            try:
+                rest = api.one("repos/o/r/pulls/1")
+            except ApiError as error:
+                rest = error.code
+            with self.assertRaisesRegex(ApiError, "rate_limited"):
+                api.graphql("query { x }", {})
+            now[0] = 701
+            api.begin()
+            with self.assertRaisesRegex(ApiError, "rate_limited"):
+                api.graphql("query { x }", {})
+            outcomes[name] = (rest, api.backoff_until, api.calls)
+        # The hourly counter in points: REST keeps reading, and GraphQL is asked again only after the reset.
+        self.assertEqual(outcomes["points"], ({}, 0, 1))
+        self.assertEqual(outcomes["secondary"][:2], ("rate_limited", 761))
+        self.assertEqual(outcomes["retry"][:2], ("rate_limited", 761))
+
     def test_graphql_rejects_a_non_object_body_and_obeys_the_budget(self):
         api = GitHubAPI(max_calls=0)
         with self.assertRaisesRegex(ApiError, "request_budget_exhausted"):

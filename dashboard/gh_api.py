@@ -135,7 +135,7 @@ class GitHubAPI:
                 return copy.deepcopy(cached[1])
             code = self._classify_error(result.stderr)
             if code == "rate_limited":
-                self._pause(family, headers, remaining)
+                self._pause(family, headers, remaining == "0")
             raise ApiError(code)
         _, headers, body = _split_response(result.stdout)
         etag = headers.get("etag")
@@ -199,10 +199,10 @@ class GitHubAPI:
                 self.lowest_remaining = int(remaining) if lowest is None else min(lowest, int(remaining))
         return remaining
 
-    def _pause(self, family: str, headers: dict[str, str], remaining: str) -> None:
+    def _pause(self, family: str, headers: dict[str, str], spent: bool) -> None:
         """A spent hourly counter pauses only that family. Anything else pauses every request briefly."""
         try:
-            reset = float(headers["x-ratelimit-reset"]) if remaining == "0" else None
+            reset = float(headers["x-ratelimit-reset"]) if spent else None
         except (KeyError, ValueError):
             reset = None
         with self._lock:
@@ -227,7 +227,11 @@ class GitHubAPI:
         if result.returncode != 0:
             code = self._classify_error(result.stderr)
             if code == "rate_limited":
-                self._pause("graphql", headers, remaining)
+                # GraphQL is metered in points: GitHub refuses a query that costs more than what is left
+                # while the counter still reads above zero (seen 2026-10-07: refused at 41 of 5000).
+                # Only a secondary limit, which says so, is a reason to pause the REST reads too.
+                secondary = "retry-after" in headers or "secondary" in result.stderr.lower()
+                self._pause("graphql", headers, remaining == "0" or not secondary)
             raise ApiError(code)
         return _graphql_body(result.stdout)
 
