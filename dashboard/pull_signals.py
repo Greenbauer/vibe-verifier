@@ -13,10 +13,13 @@ from .util import parse_time
 
 # One page of open pull requests: review threads (resolved, and whether anyone
 # replied) and the newest commits (message, push time, parent count).
+# GitHub prices a query by the page sizes it asks for, not by what comes back: every pull
+# request asked for costs about 1.2 points here, so $count is the number that are open.
+PAGE = 50
 OPEN_PULLS = """
-query($owner: String!, $name: String!, $cursor: String) {
+query($owner: String!, $name: String!, $count: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
-    pullRequests(states: OPEN, first: 50, after: $cursor) {
+    pullRequests(states: OPEN, first: $count, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       nodes {
         number
@@ -235,16 +238,18 @@ def face_fields(current: dict | None, signals: dict | None, *, evidence: bool, d
                      categories=categories, comments=comment_count(current))
 
 
-def load_signals(api, repository: str) -> dict[int, dict]:
-    """Review threads and the latest push for every open pull request. Empty when the read fails."""
+def load_signals(api, repository: str, open_pulls: int) -> dict[int, dict]:
+    """Review threads and the latest push for every open pull request. Empty when the read fails.
+
+    open_pulls is how many the repository has open, which sizes each page."""
     graphql = getattr(api, "graphql", None)
-    if not callable(graphql):
+    if not callable(graphql) or open_pulls < 1:
         return {}
     owner, _, name = repository.partition("/")
     found: dict[int, dict] = {}
     cursor = None
     for _ in range(4):
-        variables = {"owner": owner, "name": name}
+        variables = {"owner": owner, "name": name, "count": min(open_pulls, PAGE)}
         if cursor:
             variables["cursor"] = cursor
         try:

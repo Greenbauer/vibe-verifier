@@ -198,6 +198,39 @@ class GraphQLTransport(unittest.TestCase):
         self.assertEqual(outcomes["secondary"][:2], ("rate_limited", 761))
         self.assertEqual(outcomes["retry"][:2], ("rate_limited", 761))
 
+    def test_graphql_stops_once_less_than_half_its_points_are_left(self):
+        def api_with(remaining, now):
+            ran = []
+
+            def runner(command, **kwargs):
+                ran.append(command[3])
+                extra = ("X-Ratelimit-Remaining: %d" % remaining, "X-Ratelimit-Limit: 5000", "X-Ratelimit-Reset: 700")
+                return subprocess.CompletedProcess(command, 0, http(200, "{}", extra if command[3] == "graphql" else ()), "")
+            return GitHubAPI(runner=runner, clock=lambda: now[0]), ran
+        now = [100]
+        api, ran = api_with(2499, now)
+        self.assertEqual(api.graphql("query { x }", {}), {})
+        with self.assertRaisesRegex(ApiError, "rate_limited"):
+            api.graphql("query { x }", {})
+        # The REST reads go on, nothing global is paused, and the refused read was never sent.
+        self.assertEqual((api.one("repos/o/r/pulls/1"), api.backoff_until, ran), ({}, 0, ["graphql", "repos/o/r/pulls/1"]))
+        now[0] = 701
+        api.begin()
+        self.assertEqual(api.graphql("query { x }", {}), {})
+        api, ran = api_with(2500, [100])
+        self.assertEqual((api.graphql("query { x }", {}), api.graphql("query { x }", {}), ran), ({}, {}, ["graphql"] * 2))
+
+    def test_an_integer_variable_is_typed_and_a_string_is_sent_as_written(self):
+        commands = []
+
+        def runner(command, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0, http(200, "{}"), "")
+        GitHubAPI(runner=runner).graphql("query { x }", {"owner": "123", "count": 3})
+        self.assertEqual(commands[0][6:], ["-f", "owner=123", "-F", "count=3"])
+        with self.assertRaisesRegex(ApiError, "invalid_response"):
+            GitHubAPI(runner=runner).graphql("query { x }", {"count": True})
+
     def test_graphql_rejects_a_non_object_body_and_obeys_the_budget(self):
         api = GitHubAPI(max_calls=0)
         with self.assertRaisesRegex(ApiError, "request_budget_exhausted"):
@@ -313,7 +346,18 @@ class CollectedPull(unittest.TestCase):
         self.assertFalse(row["evidence_available"])
         self.assertEqual(row["push"]["kind"], "bug fix")
         self.assertFalse(row["merge_ready"])
-        self.assertEqual(load_signals(RecordingAPI({}, {}, ApiError("unavailable")), REPO), {})
+        self.assertEqual(load_signals(RecordingAPI({}, {}, ApiError("unavailable")), REPO, 1), {})
+
+    def test_the_read_asks_only_for_the_pull_requests_that_are_open(self):
+        asked = []
+
+        def graphql(query, variables):
+            asked.append((variables["count"], "first: $count" in query))
+            return payload([], [])
+        for open_pulls in (0, 3, 120):
+            load_signals(RecordingAPI({}, {}, graphql), REPO, open_pulls)
+        # None open asks nothing; more than a page asks a page at a time.
+        self.assertEqual(asked, [(3, True), (50, True)])
 
 
 class CommentMark(unittest.TestCase):
