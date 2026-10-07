@@ -422,9 +422,9 @@ const source=app.slice(app.indexOf('  function prRow('),app.indexOf('  function 
 function el(tag, attrs={}, ...children) {
   return {tag, attrs, children:children.flat().filter(value => value !== null && value !== undefined)};
 }
-const prRow=new Function('el','safeUrl','snapshot','combinedCategory','currentWork','badge','progress','since',
+const prRow=new Function('el','safeUrl','snapshot','combinedCategory','currentWork','badge','progress','since','ageClass',
   source+'return prRow;')(el, safeUrl, {owner:'octocat'}, ()=>'failed', ()=>null,
-  status=>el('span',{},status), ()=>el('div',{class:'progress'}), ()=>'2d');
+  status=>el('span',{},status), ()=>el('div',{class:'progress'}), ()=>'2d', ()=>'age-yellow');
 const pull=(html_url, stale)=>({repository:'octocat/example',number:3,title:'Fix the gate',author:'octocat',
   head_sha:'abcdef1234567890',html_url,attention_reason:'A current-head check failed',
   created_at:'2026-10-01T00:00:00Z',stale});
@@ -450,6 +450,8 @@ console.log(JSON.stringify({
         self.assertNotIn("onclick", linked["attrs"])
         self.assertIn("on GitHub", linked["attrs"]["aria-label"])
         self.assertIn("Fix the gate", text(linked))
+        age = next(node for node in linked["children"] if node["attrs"].get("class") == "pr-age")
+        self.assertEqual(age["children"][0], {"tag": "b", "attrs": {"class": "age-yellow"}, "children": ["2d"]})
         self.assertEqual(result["stale"]["attrs"]["class"], "pr-row stale-row")
         self.assertEqual(result["stale"]["attrs"]["href"], linked["attrs"]["href"])
         for key in ("foreign", "missing"):

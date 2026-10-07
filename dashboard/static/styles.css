@@ -135,6 +135,8 @@ a.pr-row { color: inherit; text-decoration: none; cursor: pointer; }
 .pr-identity b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pr-row small, .progress-copy span { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
 .pr-age { text-align: right; font-variant-numeric: tabular-nums; }
+.pr-age .age-yellow { color: var(--yellow); }
+.pr-age .age-red { color: var(--red); }
 .chevron { color: var(--muted); font-size: 18px; }
 .step-meter, .metric-meter { height: 5px; overflow: hidden; border-radius: 5px; background: var(--line); }
 .step-meter { display: flex; gap: 2px; }

@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-  const { BOT_META, element: el, link, safeUrl, duration, since, formatTime, bytes, badge,
+  const { BOT_META, element: el, link, safeUrl, duration, since, ageClass, formatTime, bytes, badge,
     diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork,
     quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
   const content = document.querySelector("#content");
@@ -158,6 +158,7 @@
     const category = combinedCategory(pull);
     const work = currentWork(pull);
     const href = safeUrl(pull.html_url, snapshot.owner);
+    const now = Date.now();
     return el(href ? "a" : "div", {
       class: `pr-row${pull.stale ? " stale-row" : ""}`,
       href, target: href ? "_blank" : null, rel: href ? "noreferrer" : null,
@@ -167,7 +168,7 @@
       el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
     el("span", { class: "pr-work" }, badge(category), el("small", {}, pull.attention_reason)),
     progress(pull),
-    el("span", { class: "pr-age" }, el("b", {}, since(pull.created_at, Date.now())), el("small", {}, work ? `${work.name} · ${duration(work.elapsed)}` : "PR age")),
+    el("span", { class: "pr-age" }, el("b", { class: ageClass(pull.created_at, now) }, since(pull.created_at, now)), el("small", {}, work ? `${work.name} · ${duration(work.elapsed)}` : "PR age")),
     el("span", { class: "chevron", "aria-hidden": "true" }, "›"));
   }
 
