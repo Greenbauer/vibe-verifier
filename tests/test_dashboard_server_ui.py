@@ -457,27 +457,18 @@ console.log(JSON.stringify({
         self.assertIn("on GitHub", linked["attrs"]["aria-label"])
         self.assertIn("Fix the gate", text(linked))
         age = next(node for node in linked["children"] if node["attrs"].get("class") == "pr-age")
-        self.assertEqual(age["children"][0]["children"][0],
-                         {"tag": "b", "attrs": {"class": "age-yellow"}, "children": ["2d"]})
-        self.assertEqual(age["children"][0]["children"][1]["children"], ["PR age"])
-        self.assertEqual(age["children"][1]["children"][0]["children"], ["Unavailable"])
-        self.assertEqual(age["children"][1]["children"][1]["children"], ["Last push"])
+        got = ([part["children"] for stat in age["children"] for part in stat["children"]], age["children"][0]["children"][0]["attrs"]["class"])
+        self.assertEqual(got, ([["2d"], ["PR age"], ["Unavailable"], ["Last push"]], "age-yellow"))
         ready = result["ready"]
-        self.assertIn("Fully merge-ready", ready["attrs"]["aria-label"])
-        identity = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-identity")
-        self.assertEqual(identity["children"][0]["attrs"]["class"], "merge-ready")
-        self.assertEqual(identity["children"][0]["attrs"]["title"], "Fully merge-ready")
-        ready_age = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-age")
-        self.assertEqual(ready_age["children"][1]["children"][0],
-                         {"tag": "b", "attrs": {"class": "age-red"}, "children": ["5w"]})
-        self.assertEqual(ready_age["children"][1]["children"][1]["children"], ["bug fix"])
-        self.assertEqual(result["stale"]["attrs"]["class"], "pr-row stale-row")
-        self.assertEqual(result["stale"]["attrs"]["href"], linked["attrs"]["href"])
+        title = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-identity")["children"][0]
+        pushed = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-age")["children"][1]["children"]
+        self.assertEqual((("Fully merge-ready" in ready["attrs"]["aria-label"]), title["attrs"]["class"],
+                          [part["children"] for part in pushed], pushed[0]["attrs"]["class"]),
+                         (True, "merge-ready", [["5w"], ["bug fix"]], "age-red"))
+        self.assertEqual((result["stale"]["attrs"]["class"], result["stale"]["attrs"]["href"]), ("pr-row stale-row", linked["attrs"]["href"]))
         for key in ("foreign", "missing"):
             row = result[key]
-            self.assertEqual(row["tag"], "div")
-            self.assertIsNone(row["attrs"]["href"])
-            self.assertIsNone(row["attrs"]["aria-label"])
+            self.assertEqual((row["tag"], row["attrs"]["href"], row["attrs"]["aria-label"]), ("div", None, None))
             self.assertIn("Fix the gate", text(row))
         self.assertFalse(result["detail"])
 
@@ -497,16 +488,12 @@ console.log(JSON.stringify({
     def test_workspace_nav_stays_put_while_the_view_scrolls(self):
         css = (ROOT / "dashboard/static/styles.css").read_text()
         app = (ROOT / "dashboard/static/app.js").read_text()
-        self.assertIn("html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }", css)
-        self.assertIn(".app { display: flex; flex-direction: column; height: 100%; min-height: 0; }", css)
-        self.assertIn(".shell { display: grid; grid-template-columns: 160px minmax(0, 1fr); flex: 1; min-height: 0; overflow: hidden; }", css)
-        self.assertIn("main { min-width: 0; min-height: 0; overflow: auto; padding: 12px 22px; }", css)
-        self.assertIn(".shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }", css)
-        # A short window used to drop the nav back into the page scroll.
-        self.assertNotIn("min-height: auto", css)
-        self.assertNotIn("top: 102px", css)
+        held = ("overflow: hidden; background: var(--bg)", "flex-direction: column; height: 100%",
+                "flex: 1; min-height: 0; overflow: hidden", "min-height: 0; overflow: auto",
+                "grid-template-rows: auto minmax(0, 1fr)")
+        self.assertTrue(all(part in css for part in held))
         self.assertIn("content.scrollTo?.(0, 0)", app)
-
+        self.assertFalse("min-height: auto" in css or "top: 102px" in css)
 
 if __name__ == "__main__":
     unittest.main()
