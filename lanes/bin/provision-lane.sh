@@ -39,7 +39,7 @@
 #       copy at container start (README.md, "Disk")
 #   D   <state>/store/trash, where a slot retires its store copy with a rename instead of deleting
 #       it in its stop path, and <name>-store-reaper.timer: a root oneshot (bin/lane-slot.sh reap)
-#       deletes the retired copies one at a time, started by every slot's cleanup and by the timer
+#       deletes the retired copies a few at a time, started by every slot's cleanup and by the timer
 #       every 5 minutes. Before the templates (H), so the trash and the reaper are there before a
 #       slot of a rewritten template can finish
 #   F   the Docker network <name> on the bridge <name>0, inter-container traffic off
@@ -408,10 +408,10 @@ render_reaper_service() {
   cat <<EOF
 # Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
 # The $NAME lane's store reaper (bin/lane-slot.sh reap): deletes the store copies its slots retired
-# into $TRASH_DIR, one at a time under a lock. Every slot's cleanup starts it without waiting
-# (systemctl start --no-block), and $REAPER_TIMER does, so no copy is left there by a start
-# that was missed or by a reboot. No start timeout (a oneshot has none): emptying a backlog is its
-# job, and a killed run would only begin again where it stopped.
+# into $TRASH_DIR, a few at a time under one lock (REAP_JOBS in that script). Every slot's
+# cleanup starts it without waiting (systemctl start --no-block), and $REAPER_TIMER does,
+# so no copy is left there by a start that was missed or by a reboot. No start timeout (a oneshot
+# has none): emptying a backlog is its job, and a killed run would only begin again where it stopped.
 [Unit]
 Description=$NAME lane: delete the store copies its slots retired
 RequiresMountsFor=$STORE_DIR
