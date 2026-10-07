@@ -12,7 +12,7 @@
 #
 # Operator-invoked and dry-run by default: --apply mutates, --check is a read-only report that exits
 # non-zero until the host is converged, --remove plans the teardown (and runs it with --apply).
-# runners-pull.service runs --apply after every change to main.
+# runners-pull.service runs --apply after every change to the kit or to the machine's values.
 #
 # Linux-only by design: Ubuntu 24.04, bash 5, GNU coreutils, util-linux, apt, systemd, rootful
 # Docker. Run it as root from the machine's engine checkout (/opt/runner-lanes/lanes): the
@@ -162,10 +162,10 @@ EOF
 render_pull_service() {
   cat <<EOF
 # Managed by the runner lanes kit (bin/provision-host.sh); do not edit on the machine.
-# Fast-forwards $ENGINE and $CONFIG to their origin/main and, when either moved or the last apply
-# failed, converges this machine: provision-host.sh --apply, provision-lane.sh --apply for every lane
-# of hosts/<host>.yml, then provision-dashboards.sh --apply, <host> being $HOST_FILE
-# (bin/runners-pull.sh).
+# Fast-forwards $ENGINE and $CONFIG to their origin/main and, when the kit (lanes/ in $ENGINE) or
+# the values changed or the last apply failed, converges this machine: provision-host.sh --apply,
+# provision-lane.sh --apply for every lane of hosts/<host>.yml, then provision-dashboards.sh --apply,
+# <host> being $HOST_FILE (bin/runners-pull.sh).
 [Unit]
 Description=runners: update $ENGINE and $CONFIG from origin/main and converge this machine
 Wants=network-online.target
@@ -475,7 +475,7 @@ check_storage() {
 }
 
 check_self_update() {
-  local state named applied heads
+  local state named applied current
   state="$(systemctl is-active "$PULL_TIMER" 2>/dev/null || true)"
   printf 'self_update_timer=%s %s\n' "$PULL_TIMER" "${state:-unknown}"
   [ "$state" = active ] || bad
@@ -486,13 +486,15 @@ check_self_update() {
   named="$(tr -d '[:space:]' < "$HOST_FILE" 2>/dev/null || true)"
   printf 'runners_host=%s\n' "${named:-absent}"
   [ "$named" = "$HOST" ] || bad
-  # bin/runners-pull.sh records the two HEADs it applied, in this form.
+  # bin/runners-pull.sh records what it applied in this form: the kit's tree (lanes/ in the engine
+  # checkout, not the engine's commit, which moves with every merge to the catalog) and the values
+  # checkout's commit.
   applied="$(cat "$PULL_STATE/applied" 2>/dev/null || true)"
-  heads="engine=$(git -C "$ENGINE" rev-parse HEAD 2>/dev/null || echo unknown) config=$(git -C "$CONFIG" rev-parse HEAD 2>/dev/null || echo unknown)"
-  if [ "$applied" = "$heads" ]; then
-    printf 'last_applied=%s (the HEADs of both checkouts)\n' "$applied"
+  current="engine=$(git -C "$ENGINE" rev-parse HEAD:lanes 2>/dev/null || echo unknown) config=$(git -C "$CONFIG" rev-parse HEAD 2>/dev/null || echo unknown)"
+  if [ "$applied" = "$current" ]; then
+    printf 'last_applied=%s (engine: the tree of lanes/ in %s; config: the HEAD of %s)\n' "$applied" "$ENGINE" "$CONFIG"
   else
-    printf 'last_applied=%s checkout_heads=%s (an apply is pending or failing: journalctl -u %s)\n' "${applied:-none}" "$heads" "$PULL_SERVICE"
+    printf 'last_applied=%s current=%s (engine: the tree of lanes/ in %s; config: the HEAD of %s; an apply is pending or failing: journalctl -u %s)\n' "${applied:-none}" "$current" "$ENGINE" "$CONFIG" "$PULL_SERVICE"
   fi
 }
 

@@ -15,11 +15,13 @@
 #   4. when that fast-forward changed this script, runs the new copy in its place, so a change to
 #      what a run applies takes effect on the tick that pulled it;
 #   5. fetches the values checkout's origin with the deploy key and fast-forwards it to origin/main;
-#   6. when either HEAD moved, or no successful apply is recorded for these two HEADs, runs
+#   6. when the kit or the values moved, or no successful apply is recorded for the pair, runs
 #      bin/provision-host.sh <host> --apply, then bin/provision-lane.sh <host> <lane> --apply for
 #      each lane of hosts/<host>.yml, then bin/provision-dashboards.sh <host> --apply, <host> being
-#      the one line of /etc/runners-host;
-#   7. records both HEADs as applied only when every one of them succeeded, so a failure is retried
+#      the one line of /etc/runners-host. The kit is the tree of lanes/ in the engine checkout, not
+#      the engine's commit: a catalog merge that touches nothing under lanes/ fast-forwards the
+#      engine and applies nothing;
+#   7. records the pair as applied only when every one of them succeeded, so a failure is retried
 #      at the next tick. A failed host apply skips the rest; a failed lane stops neither the other
 #      lanes nor the dashboards.
 #
@@ -41,7 +43,7 @@ log() { printf 'runners-pull: %s\n' "$*"; }
 die() { printf 'runners-pull: %s\n' "$*" >&2; exit 1; }
 
 main() {
-  local host checkout engine_before engine_head config_before config_head heads host_yml lanes lane failed=""
+  local host checkout engine_before engine_head kit_before kit_tree config_before config_head record host_yml lanes lane failed=""
   exec 9>"$LOCK"
   if ! flock -n 9; then log "another run holds $LOCK; this tick does nothing"; return 0; fi
   host="$(tr -d '[:space:]' < "$HOST_FILE" 2>/dev/null || true)"
@@ -56,13 +58,14 @@ main() {
     fi
   done
   engine_before="$(git -C "$ENGINE" rev-parse HEAD)"
+  kit_before="$(git -C "$ENGINE" rev-parse HEAD:lanes)"
   config_before="$(git -C "$CONFIG" rev-parse HEAD)"
   # The engine is public: no key is offered for it.
   git -C "$ENGINE" fetch --quiet origin || die "git fetch failed in $ENGINE"
   git -C "$ENGINE" merge --ff-only --quiet origin/main || die "$ENGINE cannot fast-forward to origin/main"
   engine_head="$(git -C "$ENGINE" rev-parse HEAD)"
   if [ "$engine_head" != "$engine_before" ] && ! git -C "$ENGINE" diff --quiet "$engine_before" "$engine_head" -- "$SELF"; then
-    # This run's own steps are the old copy's; the new copy sees these HEADs unapplied and applies them.
+    # This run's own steps are the old copy's; the new copy sees this kit unapplied and applies it.
     log "$SELF changed in ${engine_before:0:12}..${engine_head:0:12}; running the new copy"
     exec "$KIT/bin/runners-pull.sh"
   fi
@@ -70,12 +73,16 @@ main() {
     git -C "$CONFIG" fetch --quiet origin || die "git fetch failed in $CONFIG"
   git -C "$CONFIG" merge --ff-only --quiet origin/main || die "$CONFIG cannot fast-forward to origin/main"
   config_head="$(git -C "$CONFIG" rev-parse HEAD)"
+  # What an apply depends on: the kit's tree, lanes/ in the engine checkout, and the values commit.
+  # An engine commit that leaves lanes/ as it was has the same tree id, so it applies nothing.
+  kit_tree="$(git -C "$ENGINE" rev-parse HEAD:lanes)"
   # bin/provision-host.sh --check reads the record in this form.
-  heads="engine=$engine_head config=$config_head"
-  if [ "$engine_head" = "$engine_before" ] && [ "$config_head" = "$config_before" ] && [ "$(cat "$APPLIED" 2>/dev/null || true)" = "$heads" ]; then
+  record="engine=$kit_tree config=$config_head"
+  if [ "$kit_tree" = "$kit_before" ] && [ "$config_head" = "$config_before" ] && [ "$(cat "$APPLIED" 2>/dev/null || true)" = "$record" ]; then
     return 0
   fi
-  log "engine ${engine_before:0:12} -> ${engine_head:0:12}, values ${config_before:0:12} -> ${config_head:0:12}; converging $host"
+  # The engine's commit range, so a journal reader can find the merge that changed the kit.
+  log "engine ${engine_before:0:12} -> ${engine_head:0:12} (kit tree ${kit_before:0:12} -> ${kit_tree:0:12}), values ${config_before:0:12} -> ${config_head:0:12}; converging $host"
   if ! "$KIT/bin/provision-host.sh" "$host" --apply; then
     die "provision-host.sh $host --apply failed; the lanes were not applied and nothing is recorded (the next tick retries)"
   fi
@@ -87,9 +94,9 @@ main() {
   "$KIT/bin/provision-dashboards.sh" "$host" --apply || failed+="provision-dashboards.sh "
   [ -z "$failed" ] || die "--apply failed for ${failed% }; nothing is recorded (the next tick retries)"
   install -d -m 0755 "$STATE_DIR"
-  printf '%s\n' "$heads" > "$APPLIED.tmp"
+  printf '%s\n' "$record" > "$APPLIED.tmp"
   mv -f "$APPLIED.tmp" "$APPLIED"
-  log "applied engine ${engine_head:0:12} and values ${config_head:0:12} to $host"
+  log "applied engine ${engine_head:0:12} (kit tree ${kit_tree:0:12}) and values ${config_head:0:12} to $host"
 }
 
 # Called from the last line: bash reads a script as it runs, and the fast-forward above may

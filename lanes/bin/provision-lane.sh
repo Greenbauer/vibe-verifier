@@ -15,8 +15,8 @@
 #
 # Operator-invoked and dry-run by default: --apply mutates, --check is a read-only report that exits
 # non-zero until the lane is converged and its smoke proofs pass, --remove plans the teardown (and
-# runs it with --apply). runners-pull.service runs --apply for every lane after every change to
-# either checkout's main.
+# runs it with --apply). runners-pull.service runs --apply for every lane after every change to the
+# kit or to the machine's values.
 # The host phases (bin/provision-host.sh) must have converged first; this script refuses otherwise.
 #
 # Linux-only by design: Ubuntu 24.04, bash 5, GNU coreutils, util-linux, apt, systemd, rootful

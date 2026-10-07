@@ -28,9 +28,11 @@ setup() {
   sed "s/^ARG DOCKER_GPG_SHA256=.*/ARG DOCKER_GPG_SHA256=$(sha "$S/fx/docker.asc")/" "$ROOT/image/Dockerfile" > "$S/repo/image/Dockerfile"
   # The host config: the Sysbox image path is the config's, adopted wherever it lives.
   sed "s#^sysbox: .*#sysbox: {image: $S/imgdir/sysbox.img, disk_gb: 20}#" "$ROOT/examples/hosts/example.yml" > "$S/config/hosts/box.yml"
-  # The machine's two checkouts, as runners-pull leaves them: the engine, a clone with a HEAD, and
-  # the values checkout, a clone of the owner's private repository holding the host file.
-  git init -q "$S/engine" && gitc -C "$S/engine" commit -q --allow-empty -m one
+  # The machine's two checkouts, as runners-pull leaves them: the engine, a clone holding the kit
+  # under lanes/, and the values checkout, a clone of the owner's private repository holding the
+  # host file.
+  mkdir -p "$S/engine/lanes" && printf 'the kit\n' > "$S/engine/lanes/README.md"
+  git init -q "$S/engine" && gitc -C "$S/engine" add -A && gitc -C "$S/engine" commit -q -m one
   git init -q "$S/config" && gitc -C "$S/config" add -A && gitc -C "$S/config" commit -q -m one
   git -C "$S/config" remote add origin git@git.example.invalid:someone/lane-values.git
   printf 'docker-ce\n' > "$S/st/holds"
@@ -54,8 +56,8 @@ run_host() {
 converged() {
   run_host --apply >/dev/null 2>&1
   mkdir -p "$S/etc-runners"; printf 'key\n' > "$S/etc-runners/deploy_key"; printf 'box\n' > "$S/runners-host"
-  # The record bin/runners-pull.sh writes after a successful apply.
-  mkdir -p "$S/pull-state"; printf 'engine=%s config=%s\n' "$(git -C "$S/engine" rev-parse HEAD)" "$(git -C "$S/config" rev-parse HEAD)" > "$S/pull-state/applied"
+  # The record bin/runners-pull.sh writes after a successful apply: the kit's tree and the values commit.
+  mkdir -p "$S/pull-state"; printf 'engine=%s config=%s\n' "$(git -C "$S/engine" rev-parse HEAD:lanes)" "$(git -C "$S/config" rev-parse HEAD)" > "$S/pull-state/applied"
   : > "$CALLLOG"
 }
 
@@ -215,8 +217,8 @@ out="$(run_host --check 2>&1)"; rc=$?
 grep -q "host_packages=present" <<< "$out" && grep -q "packages=sysbox-ce:0.7.1.linux docker-ce:5:29.5.2" <<< "$out" && grep -q "missing_holds=none" <<< "$out" && grep -q "kernel_meta=linux-image-virtual" <<< "$out"; expect $? "--check reports package versions and holds"
 grep -q "docker_runtime_sysbox=yes docker_storage=overlayfs daemon_json_bip=172.17.0.1/16 daemon_json_pools=present" <<< "$out" && grep -q "sysbox_services=sysbox:active sysbox-mgr:active sysbox-fs:active" <<< "$out"; expect $? "--check reports the runtime, the image store, daemon.json and the Sysbox services"
 grep -q "sysbox_fs=mounted (/dev/loop9 ext4 20G)" <<< "$out" && grep -q "disk free=62G sysbox_image=$IMG (20G, sparse)" <<< "$out"; expect $? "--check reports the Sysbox mount and the disk headroom for its image"
-grep -qx "self_update_timer=runners-pull.timer active" <<< "$out" && grep -q "deploy_key=$S/etc-runners/deploy_key present" <<< "$out" && grep -qx "runners_host=box" <<< "$out" && grep -qx "last_applied=engine=$(git -C "$S/engine" rev-parse HEAD) config=$(git -C "$S/config" rev-parse HEAD) (the HEADs of both checkouts)" <<< "$out"
-expect $? "--check reports the self-update timer, the deploy key, the machine's host name and the two HEADs last applied, as runners-pull records them"
+grep -qx "self_update_timer=runners-pull.timer active" <<< "$out" && grep -q "deploy_key=$S/etc-runners/deploy_key present" <<< "$out" && grep -qx "runners_host=box" <<< "$out" && grep -qx "last_applied=engine=$(git -C "$S/engine" rev-parse HEAD:lanes) config=$(git -C "$S/config" rev-parse HEAD) (engine: the tree of lanes/ in $S/engine; config: the HEAD of $S/config)" <<< "$out"
+expect $? "--check reports the self-update timer, the deploy key, the machine's host name and the pair last applied, as runners-pull records it, saying the engine part is the kit's tree"
 { ! grep -qE "$MUTATIONS" "$CALLLOG"; }; expect $? "--check mutates nothing"
 echo inactive > "$S/st/state/runners-pull.timer"
 out="$(run_host --check 2>&1)"; rc=$?
@@ -232,11 +234,17 @@ printf 'box\n' > "$S/runners-host"
 [ "$rc" -ne 0 ] && grep -qx "runners_host=other" <<< "$out"; expect $? "--check fails when /etc/runners-host names another host config"
 gitc -C "$S/config" commit -q --allow-empty -m two
 out="$(run_host --check 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && grep -q "last_applied=.* checkout_heads=engine=.* config=$(git -C "$S/config" rev-parse HEAD) (an apply is pending or failing: journalctl -u runners-pull.service)" <<< "$out"; expect $? "--check says when the values checkout's HEAD has not been applied yet, without failing on it"
-gitc -C "$S/engine" commit -q --allow-empty -m two
-printf 'engine=%s config=%s\n' "$(git -C "$S/engine" rev-parse HEAD~1)" "$(git -C "$S/config" rev-parse HEAD)" > "$S/pull-state/applied"
+[ "$rc" -eq 0 ] && grep -q "last_applied=.* current=engine=.* config=$(git -C "$S/config" rev-parse HEAD) (engine: the tree of lanes/ in $S/engine; config: the HEAD of $S/config; an apply is pending or failing: journalctl -u runners-pull.service)" <<< "$out"; expect $? "--check says when the values checkout's HEAD has not been applied yet, without failing on it"
+# The engine's commit is not what was applied: a catalog commit outside lanes/ leaves the kit applied.
+printf 'engine=%s config=%s\n' "$(git -C "$S/engine" rev-parse HEAD:lanes)" "$(git -C "$S/config" rev-parse HEAD)" > "$S/pull-state/applied"
+mkdir -p "$S/engine/docs" && printf 'elsewhere\n' > "$S/engine/docs/note.md" && gitc -C "$S/engine" add -A && gitc -C "$S/engine" commit -q -m "outside the kit"
 out="$(run_host --check 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && grep -q "last_applied=.* checkout_heads=engine=$(git -C "$S/engine" rev-parse HEAD) config=.* (an apply is pending or failing" <<< "$out"; expect $? "and when the engine's has not"
+[ "$rc" -eq 0 ] && grep -q "last_applied=engine=$(git -C "$S/engine" rev-parse HEAD:lanes) config=.* (engine: the tree of lanes/ in" <<< "$out" && ! grep -q "an apply is pending or failing" <<< "$out"
+expect $? "an engine commit that touches nothing under lanes/ leaves --check reporting the kit as applied"
+kit_before="$(git -C "$S/engine" rev-parse HEAD:lanes)"
+printf 'a kit change\n' >> "$S/engine/lanes/README.md" && gitc -C "$S/engine" add -A && gitc -C "$S/engine" commit -q -m "in the kit"
+out="$(run_host --check 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "last_applied=engine=$kit_before config=.* current=engine=$(git -C "$S/engine" rev-parse HEAD:lanes) config=.* (engine: the tree of lanes/ in .*; an apply is pending or failing" <<< "$out"; expect $? "and when a commit under lanes/ has not"
 printf 'docker-ce\n' > "$S/st/holds.partial"; cp "$S/st/holds" "$S/st/holds.full"; cp "$S/st/holds.partial" "$S/st/holds"
 out="$(run_host --check 2>&1)"; rc=$?
 cp "$S/st/holds.full" "$S/st/holds"

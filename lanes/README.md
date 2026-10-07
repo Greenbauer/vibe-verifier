@@ -247,27 +247,32 @@ dashboards:                            # optional: the Vibe Verifier dashboards 
 
 ## Deploy model
 
-A change reaches a machine by a merge, to either repository: the catalog's `main` for the engine,
+A change reaches a machine by a merge, to either repository: the catalog's `main` for the kit,
 the values repository's `main` for what a machine runs. Each machine converges itself within 5
-minutes. `runners-pull.timer` (written by `provision-host.sh`, every 5 minutes, root) runs
-`bin/runners-pull.sh` from the engine checkout, which takes a lock and refuses, logged and with a
-non-zero exit, when either checkout has local modifications or is not a git checkout. It then
+minutes of a merge that changed the kit or its values. `runners-pull.timer` (written by
+`provision-host.sh`, every 5 minutes, root) runs `bin/runners-pull.sh` from the engine checkout,
+which takes a lock and refuses, logged and with a non-zero exit, when either checkout has local
+modifications or is not a git checkout. It then
 fetches the engine with no credential and fast-forwards `/opt/runner-lanes` to `origin/main`, and
 fetches the values checkout with the read-only deploy key `/etc/runners/deploy_key` and
-fast-forwards `/opt/runner-lanes-config` to its `origin/main`. When either HEAD moved, or no
-successful apply is recorded for these two HEADs, it runs `provision-host.sh <host> --apply`, then
+fast-forwards `/opt/runner-lanes-config` to its `origin/main`. When the kit or the values moved, or
+no successful apply is recorded for the pair, it runs `provision-host.sh <host> --apply`, then
 `provision-lane.sh <host> <lane> --apply` for every lane of `hosts/<host>.yml`, then
 `provision-dashboards.sh <host> --apply`, `<host>` being the one line of `/etc/runners-host`. A
 failed host apply skips the rest; a failed lane stops neither the other lanes nor the dashboards.
-It records both HEADs in `/var/lib/runners/applied` (`engine=<sha> config=<sha>`) only when all of
-them succeeded, so a failure is retried at the next tick. A gate is not a failure. When the
-engine's fast-forward changed `bin/runners-pull.sh` itself, it runs the new copy in its place
-before it fetches the values checkout, so a change to what a pull applies takes effect on the tick
-that pulled it rather than one merge later.
+It records the pair in `/var/lib/runners/applied` only when all of them succeeded, so a failure is
+retried at the next tick. A gate is not a failure. When the engine's fast-forward changed
+`bin/runners-pull.sh` itself, it runs the new copy in its place before it fetches the values
+checkout, so a change to what a pull applies takes effect on the tick that pulled it rather than
+one merge later.
 
-The engine is a clone of the whole catalog, so a merge to the catalog that touches nothing under
-`lanes/` moves its HEAD too, and each machine then applies once more. An apply of a converged
-machine changes nothing: each step is skipped when already converged.
+The kit, for this, is the tree of `lanes/` in the engine checkout
+(`git -C /opt/runner-lanes rev-parse HEAD:lanes`), not the engine's commit. The engine is a clone of
+the whole catalog, and a merge there that touches nothing under `lanes/` fast-forwards the engine,
+leaves that tree id as it was, and applies nothing. The record is
+`engine=<tree id of lanes/> config=<values commit>`, and the line the pull logs when it converges
+names the engine's commit range, so the journal leads to the merge. `provision-host.sh --check`
+prints the same pair.
 
 Never hand-edit a machine: change a repository and merge. Both checkouts are root-owned and the
 pull refuses to move while either has local edits; the units the scripts write say they are managed.
@@ -391,7 +396,7 @@ torn down. The mechanism:
   "Crash safety"), and a job in a slot is not touched. A job that starts after the rewrite uses the
   new template; an apply builds no image.
 - **The record is re-made.** The earlier pull recorded one HEAD in `/var/lib/runners/applied`. That
-  matches nothing this pull compares, so its first tick applies once and records both HEADs.
+  matches nothing this pull compares, so its first tick applies once and records its own pair.
 - **Order.** Clone both checkouts ("Adding a machine", steps 2 to 4; the deploy key the machine
   already has must be added to the values repository), read `provision-host.sh <host>` and each
   `provision-lane.sh <host> <lane>` as dry runs first, then `--apply` the host, each lane and the
@@ -420,8 +425,9 @@ engine's: the two are clones of the same catalog that move by different rules.
 - **What a machine serves** (which dashboards, their ports, configs and lanes) and the dashboard
   kit's unit templates go live through the pull: `runners-pull` runs
   `provision-dashboards.sh --apply` after the lanes. A changed template reaches a machine at its
-  next apply (the next merge to either repository the pull follows, or a run by hand): the
-  dashboard runbook leaves template changes to the host, and the follower does not reload units.
+  next apply (the next change to the kit or to the machine's values, or a run by hand; a template
+  lives outside `lanes/`, so its own merge applies nothing): the dashboard runbook leaves template
+  changes to the host, and the follower does not reload units.
 
 Per dashboard `<name>`, as the runbook lays out: the account `vibe-dashboard-<name>` (system,
 nologin); `/etc/vibe-dashboard/<name>/` (root, 0755) with `dashboard.json` (the account's, 0600: the
