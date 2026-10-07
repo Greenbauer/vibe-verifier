@@ -1,9 +1,11 @@
-# An example machine: one user-scope lane and one org-scope lane, each with a dashboard. Every
-# value is fictional. A real host file lives in the owner's private values repository, as
-# hosts/<host>.yml at its root; the schema and its rules are README.md, "Configuration".
+# An example host file, for a machine that does not exist: one user-scope lane and one org-scope
+# lane, each with a dashboard. The host, the organization, the Apps, their ids and the routes are
+# made up. A real host file lives in the owner's private values repository, as hosts/<host>.yml at
+# its root; the schema and its rules are README.md, "Configuration".
 hostname: worker-1                       # the ssh target the gates print
-# One per machine: Sysbox's per-container data, a sparse image mounted at /var/lib/sysbox.
-sysbox: {image: /var/lib/runners/sysbox.img, disk_gb: 20}
+# One per machine: Sysbox's per-container data, a sparse image mounted at /var/lib/sysbox. Keep it
+# outside /var/lib/runners, which provision-host.sh --remove --apply deletes.
+sysbox: {image: /var/lib/runner-lanes/sysbox.img, disk_gb: 20}
 lanes:
   # A user lane serves every private, non-archived repository of the account its App is installed
   # on, minus `exclude`, each in its `default` runner group: `runs-on: greenbauer-ci`.

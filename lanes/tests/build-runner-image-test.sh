@@ -457,6 +457,21 @@ setup
 LANE_UNDER_TEST=own-ci STATE_UNDER_TEST="" run_build --if-provisioned; rc=$?
 [ "$rc" -eq 0 ] && grep -q "no reflink-capable store at /var/lib/own-ci/store: the own-ci lane's store filesystem" "$TMP/s/out"
 expect $? "without an override the state and store paths derive from the lane name (/var/lib/<lane>)"
+# The image-build timer runs the build with no environment of its own: the host file is the values
+# checkout's hosts/<host>.yml.
+setup
+mkdir -p "$TMP/s/config/hosts"; cp "$TMP/s/host.yml" "$TMP/s/config/hosts/box.yml"
+run_from_values() {  # <host> <lane> args
+  env PATH="$TMP/s/pathbin:$PATH" RUNNERS_ALLOW_NON_ROOT=1 RUNNERS_CONFIG="$TMP/s/config" RUNNERS_BUILD_TODAY="$DAY1" \
+    bash "$TMP/s/bin/build-runner-image.sh" "$@" > "$TMP/s/out" 2>&1
+}
+run_from_values box own-ci --if-provisioned; rc=$?
+[ "$rc" -eq 0 ] && grep -q "no reflink-capable store at /var/lib/own-ci/store: the own-ci lane's store filesystem" "$TMP/s/out"
+expect $? "with no host file named outright, the lane is read from hosts/<host>.yml of the values checkout"
+run_from_values nowhere own-ci --if-provisioned; rc=$?
+[ "$rc" -ne 0 ] && grep -q "cannot read the own-ci lane from $TMP/s/config/hosts/nowhere.yml" "$TMP/s/out" && ! built
+expect $? "and a host that checkout has no file for stops the build, naming the path"
+grep -qx 'HOST_YML="${RUNNERS_HOST_YML:-${RUNNERS_CONFIG:-/opt/runner-lanes-config}/hosts/$HOST.yml}"' "$ROOT/bin/build-runner-image.sh"; expect $? "on a machine that checkout is /opt/runner-lanes-config"
 
 # The tag hashes image/ and this lane's own preload map, never another lane's.
 setup

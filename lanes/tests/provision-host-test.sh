@@ -266,7 +266,7 @@ expect $? "--remove keeps Docker, Sysbox, its filesystem, daemon.json, the holds
 # ---- the kit's own host files: the gates name each one's machine ------------------------------------
 setup
 out="$(HOST_UNDER_TEST=example HOST_YML_UNDER_TEST="$ROOT/examples/hosts/example.yml" run_host 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && grep -q "Phase C: $S/sysbox on its own 20G filesystem (/var/lib/runners/sysbox.img)" <<< "$out" && grep -qF "echo example > $S/runners-host" <<< "$out"
+[ "$rc" -eq 0 ] && grep -q "Phase C: $S/sysbox on its own 20G filesystem (/var/lib/runner-lanes/sysbox.img)" <<< "$out" && grep -qF "echo example > $S/runners-host" <<< "$out"
 expect $? "the example's Sysbox filesystem is the image its host file names, and its gate names the example host config"
 setup
 out="$(HOST_UNDER_TEST=vps-1 HOST_YML_UNDER_TEST="$ROOT/tests/fixtures/hosts/vps-1.yml" run_host 2>&1)"; rc=$?

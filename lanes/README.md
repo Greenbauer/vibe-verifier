@@ -25,7 +25,7 @@ they start with `/`.
 
 | Path | What it is |
 |---|---|
-| `examples/hosts/example.yml` | an example host file, every value fictional: one machine, a user lane and an org lane (with QAE and the wait kind), a dashboard each ("Configuration" below) |
+| `examples/hosts/example.yml` | an example host file, for a machine that does not exist: a user lane and an org lane (with QAE and the wait kind), a dashboard each ("Configuration" below) |
 | `lib/lanes.py` | the command line the bash scripts read a host file through |
 | `lib/lane_load.py`, `lib/lane_model.py`, `lib/lane_render.py` | what it is made of: parsing and validating a host file, the lanes and dashboards as values, and the files and settings rendered from them |
 | `lib/provision.sh` | what the provisioners share (logging, dry-run, file convergence, the Sysbox pin) |
@@ -41,7 +41,7 @@ they start with `/`.
 | `bin/runners-pull.sh` | the machine's self-update: fast-forward both checkouts to `origin/main`, then converge |
 | `listener/` | the scale-set listener (Go); its contract is `listener/README.md` |
 | `image/` | the runner image every lane builds under its own name; `image/README.md` |
-| `tests/` | hermetic tests; `tests/run-all.sh` runs them. `tests/fixtures/hosts/vps-1.yml` is a second, fictional host file the tests read |
+| `tests/` | hermetic tests; `tests/run-all.sh` runs them. `tests/fixtures/hosts/vps-1.yml` is a second made-up host file the tests read |
 
 ## How a lane works
 
@@ -180,7 +180,8 @@ source hash changes.
 
 One file per machine, at `hosts/<host>.yml` in the root of the owner's private values repository;
 `<host>` is the name the machine holds in `/etc/runners-host`. `examples/hosts/example.yml` is a
-complete one with fictional values.
+complete one, for a machine that does not exist. Keep `sysbox.image` outside `/var/lib/runners`:
+that directory holds the pull's record, and `provision-host.sh <host> --remove --apply` deletes it.
 
 ```yaml
 hostname: worker-1                     # the ssh target the gates print
@@ -285,9 +286,9 @@ flock -o /run/<lane>-runner-build.lock bin/build-runner-image.sh <host> <lane> [
 Every one of them, and each timer that runs one, reads the host file from
 `${RUNNERS_HOST_YML:-$RUNNERS_CONFIG/hosts/<host>.yml}`, and the units they write run the kit at
 `$RUNNERS_ENGINE/lanes`. `RUNNERS_ENGINE` is `/opt/runner-lanes` and `RUNNERS_CONFIG` is
-`/opt/runner-lanes-config` when unset. The units and timers run with no environment of their own,
-so a machine keeps its two checkouts at those defaults; the variables are there for the tests, and
-`RUNNERS_HOST_YML` for reading one host file from somewhere else by hand.
+`/opt/runner-lanes-config` when unset. No unit or timer sets any of the three, so a machine keeps
+its two checkouts at those defaults; the variables are there for the tests, and `RUNNERS_HOST_YML`
+for reading one host file from somewhere else by hand.
 
 `provision-lane.sh` refuses to run until the host phases have converged, naming
 `provision-host.sh <host> --apply` (`--remove` still runs). `--apply` ends at OPERATOR ACTION gates it never performs:
@@ -353,7 +354,7 @@ refresh token the server has already retired.
 ## Adding a machine
 
 1. Ubuntu 24.04 amd64. In your private values repository add `hosts/<host>.yml` with its
-   `hostname`, a `sysbox.image` path (for example `/var/lib/runners/sysbox.img`) and its lanes,
+   `hostname`, a `sysbox.image` path (for example `/var/lib/runner-lanes/sysbox.img`) and its lanes,
    starting from `examples/hosts/example.yml`. Merge.
 2. On the machine, as root, clone the engine, which needs no credential:
    `git clone https://github.com/Greenbauer/vibe-verifier.git /opt/runner-lanes`.
@@ -381,9 +382,10 @@ torn down. The mechanism:
 - **The paths differ on purpose.** The two checkouts are at `/opt/runner-lanes` and
   `/opt/runner-lanes-config`, never at the earlier path, so the earlier checkout and the units
   that point into it keep working until an apply from this kit rewrites them.
-- **The first apply rewrites the units.** Every unit this kit manages carries the path of the
-  script it runs, so `--apply` rewrites each one to `/opt/runner-lanes/lanes/bin/...`, reloads
-  systemd, and `runners-pull.service` then runs this kit's pull. It rebuilds each lane's listener
+- **The first apply rewrites the units.** Every file this kit manages opens with a line naming the
+  kit, and each unit that runs a script carries the script's path, so `--apply` rewrites them all,
+  the scripts' paths to `/opt/runner-lanes/lanes/bin/...`, reloads systemd, and
+  `runners-pull.service` then runs this kit's pull. It rebuilds each lane's listener
   once, when the listener's source here differs from what the installed binary was built from, and
   restarts it once; a restarted listener adopts the slots that are running (`listener/README.md`,
   "Crash safety"), and a job in a slot is not touched. A job that starts after the rewrite uses the
@@ -510,6 +512,7 @@ docker run --rm --platform linux/amd64 -v "$PWD":/w -w /w ubuntu:24.04 bash -c \
 
 The tests stub every system tool on PATH; nothing real is installed, mounted, started or called.
 They are Linux-only, like the kit: on a Mac run them in the container above. The catalog's CI
-(`.github/workflows/ci.yml`) runs both on `ubuntu-latest`, as the `lanes` and `lanes-listener`
-jobs, beside the catalog's own gates. The main scripts stay shellcheck-clean:
+(`.github/workflows/ci.yml`) runs both beside the catalog's own gates: the `lanes` job on
+`ubuntu-24.04`, the release the machines run, and the `lanes-listener` job. The main scripts stay
+shellcheck-clean:
 `shellcheck -x lanes/bin/*.sh lanes/lib/provision.sh lanes/image/entrypoint.sh lanes/listener/build.sh`.

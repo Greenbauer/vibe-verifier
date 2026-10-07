@@ -1,5 +1,5 @@
-# A test fixture, every value fictional: a 16-core machine whose one org lane runs ci and wait jobs
-# and no QAE, with eight slots of each. The tests read what the scripts derive from it.
+# A test fixture, for a machine that does not exist: a 16-core host whose one org lane runs ci and
+# wait jobs and no QAE, with eight slots of each. The tests read what the scripts derive from it.
 hostname: vps-1
 sysbox: {image: /var/lib/orbit-ci/sysbox.img, disk_gb: 40}
 lanes:

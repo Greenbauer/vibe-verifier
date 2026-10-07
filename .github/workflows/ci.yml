@@ -35,10 +35,12 @@ jobs:
         uses: ./actions/gates # zizmor: ignore[self-repository]
 
   # The runner-lane kit (lanes/README.md) is Linux-only and has tests of its own, which stub every
-  # system tool on PATH: nothing is installed, mounted or started on the runner.
+  # system tool on PATH: nothing is installed, mounted or started on the runner. Ubuntu 24.04, not
+  # ubuntu-latest: it is the release the kit's machines run, and the pinned PyYAML has wheels for
+  # its python3 (none newer than CPython 3.13).
   lanes:
     name: lanes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
