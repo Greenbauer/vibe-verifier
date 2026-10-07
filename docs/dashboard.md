@@ -302,7 +302,7 @@ The server uses bounded `gh api` pages and JSON fields, never formatted table ou
 PR check suites and check runs for the current head, joins Actions runs by exact head SHA plus check
 suite ID, selects the greatest run attempt for each run ID, and loads jobs from that exact attempt.
 When several runs of one workflow exist on the head (each triggering event starts its own run), only
-the newest copy of each job and check counts toward step totals and attention.
+the newest copy of each job and check counts toward check totals and attention.
 It re-reads the PR head after collection; a race drops the collected evidence instead of attaching
 it to the new revision. Commit statuses and third-party checks remain separate evidence rows.
 
@@ -313,8 +313,8 @@ for every required status check that has not reported and every required workflo
 on the head. A required workflow runs at the SHA its ruleset pinned when the run was triggered, so
 after the pin moves GitHub waits for a new run. The dashboard reads the ruleset's version history
 once per pin to learn when the current pin took effect, and a run created before then does not
-count. An expected row keeps the pull request pending, flags it for attention, and takes one pending
-share on the step line. GitHub serves an organization ruleset's history only to a token with
+count. An expected row keeps the pull request pending, flags it for attention, and takes one waiting
+share on the check line. GitHub serves an organization ruleset's history only to a token with
 organization administration write, which a read-only dashboard should not hold. When the history is
 refused, any run of the required workflow on the head counts, so the pull request keeps its
 evidence; right after a pin moves it can show as passed while GitHub waits for a rerun, and GitHub's
@@ -360,26 +360,27 @@ The title is green when the pull request is fully merge-ready: GitHub's merge st
 is green (skipped checks may sit beside at least one success, and a check that is not required
 still counts), and every review thread is resolved and has a reply. A thread list that did not
 load completely, or a merge state GitHub has not calculated, keeps the title white.
-When the pull request has unresolved review threads, the step line shows a message icon and
+When the pull request has unresolved review threads, the check line shows a message icon and
 that number. The number is a lower bound, with a plus, when more threads exist than the read
 returned. The icon is hidden when every thread is resolved, and when the comment read did not
 succeed, so a missing read is not shown as zero.
 A pull request's badge shows its worst current-head check. A skipped check never outranks a passed
 one, so the badge reads Skipped only when every check was skipped.
-The step meter is one line for the whole step total, taller than the host meters. Each outcome
-takes a share of that line equal to its count, with a gap between shares: green for passed,
-yellow for pending, red for failed, and gray for skipped, cancelled, or unknown. The finished
-count is not written above the line. When one or more CI steps are running, their names are,
-joined in the order GitHub returned them. The badge beside it, not the line, is the worst
-current-head check.
-Reported steps can all be successes while GitHub still shows a check as pending, failed, or
-skipped: a queued or in-progress check has no steps yet, a running job omits steps that have not
-started, and a skipped job comes back with no steps. Each such check or job adds one share of its
-outcome, and each expected required check adds one pending share, so the line cannot be entirely
-green while that work is still open. A passed check adds nothing, because its steps already carry
-that detail. A skipped check whose job already returned a skipped step adds nothing more.
-Elapsed time alone never asserts that a job is stuck. Unknown step totals never render as
-100 percent. A job that has not started yet keeps its run's step total unknown.
+The check meter counts what GitHub's pull request page counts: one share for each check run,
+commit status, and expected required check on the current head. It is one line for the whole
+total, taller than the host meters. Each outcome takes a share of that line equal to its count,
+with a gap between shares: green for passed, yellow for running, dim yellow for waiting, red for
+failed, and gray for skipped, cancelled, or unknown. A check is running when GitHub marks it in
+progress. A queued job, a pending commit status, and an expected required check are all waiting.
+The text above the line names the checks running now, and the step an Actions job is on, and is
+left off when nothing is running. The text under it counts every outcome except passed, or says
+all passed. The badge beside it, not the line, is the worst current-head check.
+A job that has not started has no steps yet, but it is still one waiting check, so the line
+shows as soon as anything reports on the head. A head with no checks at all says so, and never
+renders as complete.
+Under the badge, the row lists the checks that are running now, the longest-running first, each
+with the time it has run. A running Actions job also names the step it is on. The row shows
+three, then counts the rest. Elapsed time alone never asserts that a job is stuck.
 
 ## Data lifecycle and uninstall
 
