@@ -751,7 +751,9 @@ directory (`--artifacts`) and refuses on structural facts, never on the model's 
 record, a request to the site under test that answered 400 or worse or failed outside
 `--allow-request`. With a site declared, Chromium's `Failed to load resource` console line for
 another host is skipped like that host's request; every other console error is still judged. The site is `--site <URL>`, or `--site-file <FILE>`: the URL the explore job
-declared, written by the verify job, where a missing or malformed file is exit 2. The consumer
+declared, written by the verify job, where a missing or malformed file is exit 2. The file may list
+further URLs after the site's, other origins the site is served from (its API on another host), and
+requests and resource errors on those are judged as the site's are. The consumer
 declares only what is environmental. A pull request declares an expected refusal in a criterion's
 own line, `expected-refusal: <status> <path-or-URL>`, read from `--criteria`, where the status is a
 handled refusal (400, 401, 403, 404, 409 or 422): it excuses exactly that status at exactly that URL

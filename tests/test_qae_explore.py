@@ -106,6 +106,30 @@ class WriteScope(unittest.TestCase):
         self.assertIn("CLAUDE.md", result.stdout)
 
 
+class SiteOrigins(unittest.TestCase):
+    """A site step may declare `origins`, further hosts the site is served from: the verify job
+    writes them after the site, and never without one."""
+
+    def site_file(self, site, origins):
+        work = tempfile.mkdtemp(prefix="vv-work-")
+        self.addCleanup(shutil.rmtree, work, True)
+        bin_dir = stub_bin(self, {"gh": "exit 0\n"})
+        result = subprocess.run(["bash", "-e", "-c", verify_inputs_script()], cwd=work, capture_output=True, text=True,
+                                env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x", "PR_NUMBER": "7",
+                                               "REPO": "o/r", "SITE_URL": site, "SITE_ORIGINS": origins, "REFERENCES": "", "TICKET": ""}))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return Path(work, "qae-inputs", "site-url").read_text()
+
+    def test_declared_origins_follow_the_site(self):
+        self.assertEqual(self.site_file("https://site.example", "https://api.example https://files.example").split(),
+                         ["https://site.example", "https://api.example", "https://files.example"])
+
+    def test_an_origin_without_a_site_is_not_read_as_the_site(self):
+        # The gate reads the first URL as the site, so an origin alone must leave the file empty,
+        # which the gate refuses.
+        self.assertEqual(self.site_file("", "https://api.example"), "\n")
+
+
 class SiteUrl(unittest.TestCase):
     """One URL, declared by the site step's `url` output: the prompt names it, the job output carries
     it to the verify job, which writes qae-inputs/site-url, which the manifest's gate line reads."""
@@ -133,8 +157,8 @@ class SiteUrl(unittest.TestCase):
 
     def test_the_declared_url_reaches_the_gate_through_the_verify_job(self):
         text = TEMPLATE.read_text()
-        self.assertIn("    outputs:\n      site-url: ${{ steps.site.outputs.url }}\n", text)
-        self.assertIn("          SITE_URL: ${{ needs.explore.outputs.site-url }}\n", text)
+        self.assertIn("    outputs:\n      site-url: ${{ steps.site.outputs.url }}\n      site-origins: ${{ steps.site.outputs.origins }}\n", text)
+        self.assertIn("          SITE_URL: ${{ needs.explore.outputs.site-url }}\n          SITE_ORIGINS: ${{ needs.explore.outputs.site-origins }}\n", text)
         preview = "https://site-git-feat-team.vercel.app"
         bin_dir = stub_bin(self, {"gh": 'case "$1 $2" in\n'
                                         '  pr*) printf "## Acceptance criteria\\n\\n- The quote page loads\\n" ;;\n'
@@ -144,7 +168,7 @@ class SiteUrl(unittest.TestCase):
         script = verify_inputs_script()
         result = subprocess.run(["bash", "-e", "-c", script], cwd=self.work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
-                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": preview, "REFERENCES": "", "TICKET": ""}))
+                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": preview, "SITE_ORIGINS": "", "REFERENCES": "", "TICKET": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(Path(self.work, "qae-inputs", "site-url").read_text(), preview + "\n")
         # The run's artifacts: the preview answered 500, the local default 404; only the declared site counts.
@@ -351,7 +375,7 @@ class Review(unittest.TestCase):
         result = subprocess.run(["bash", "-e", "-c", verify_inputs_script()], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
                                                "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": "http://localhost:3000",
-                                               "REFERENCES": "", "TICKET": ""}))
+                                               "SITE_ORIGINS": "", "REFERENCES": "", "TICKET": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(Path(work, "qae-inputs", "verdict.md").read_text(), verdict + "\n")
         self.assertEqual(Path(work, "qae-inputs", "changed-files").read_text(), "app/page.tsx\n")

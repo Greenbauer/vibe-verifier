@@ -164,12 +164,40 @@ class QaeArtifacts(unittest.TestCase):
         self.assertIn("request answered 500 outside the allowlist: [GET] %s/api/quote" % preview, result.stdout)
         self.assertNotIn("localhost:3000/gone", result.stdout)
 
+    def test_a_further_declared_origin_is_judged_like_the_site(self):
+        # The shape of a consumer's real run: the page is on one host and its API on another. With
+        # only the site declared, a 401 from the API fails neither the console check nor the network
+        # one. Declared after the site, it fails both, and a third party's 400 is still not judged.
+        site, api = "https://d111111abcdef8.cloudfront.net", "https://abc123.execute-api.us-east-1.amazonaws.com"
+        write(self.root, {
+            "console-1.log": "[   12ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ %s/journeys:0\n"
+                             "[   15ms] [ERROR] Failed to load resource: the server responded with a status of 400 () @ https://third-party.example/:0\n" % api,
+            "session-1/session.md": session_with(CLEAN_REQUESTS + ["[GET] %s/journeys => [401] Unauthorized" % api,
+                                                                   "[POST] https://third-party.example/ => [400] Bad Request"])})
+        inputs = tempfile.mkdtemp(prefix="vv-site-")
+        self.addCleanup(shutil.rmtree, inputs, True)
+        write(inputs, {"site-only": site + "\n", "both": "%s\n%s\n" % (site, api),
+                       "body.md": "## Acceptance criteria\n\n- Signed out, journeys refuse (expected-refusal: 401 %s/journeys)\n" % api,
+                       "relative.md": "## Acceptance criteria\n\n- Signed out, journeys refuse (expected-refusal: 401 /journeys)\n"})
+        alone = self.run_gate("--site-file", os.path.join(inputs, "site-only"))
+        self.assertEqual(alone.returncode, 0, alone.stdout + alone.stderr)
+        both = self.run_gate("--site-file", os.path.join(inputs, "both"))
+        self.assertEqual(both.returncode, 1)
+        self.assertIn("status of 401 () @ %s/journeys:0" % api, both.stdout)
+        self.assertIn("request answered 401 outside the allowlist: [GET] %s/journeys" % api, both.stdout)
+        self.assertNotIn("third-party.example", both.stdout)
+        # A refusal on the further origin is declared by its full URL; a relative path is the site's.
+        declared = self.run_gate("--site-file", os.path.join(inputs, "both"), "--criteria", os.path.join(inputs, "body.md"))
+        self.assertEqual(declared.returncode, 0, declared.stdout + declared.stderr)
+        relative = self.run_gate("--site-file", os.path.join(inputs, "both"), "--criteria", os.path.join(inputs, "relative.md"))
+        self.assertEqual(relative.returncode, 1)
+
     def test_a_missing_empty_or_malformed_site_file_cannot_run_even_under_soak(self):
         # Judging every request instead would pass a run against the wrong site.
         inputs = tempfile.mkdtemp(prefix="vv-site-")
         self.addCleanup(shutil.rmtree, inputs, True)
         malformed = {"empty": "\n", "words": "the preview\n", "path": "/bid-study\n", "bare": "localhost:3000\n",
-                     "scheme": "ftp://example.com\n", "two": "http://localhost:3000\nhttps://elsewhere.example\n"}
+                     "scheme": "ftp://example.com\n", "second": "http://localhost:3000\napi.elsewhere.example\n"}
         write(inputs, malformed)
         for name in ["absent", *malformed]:
             result = self.run_gate("--site-file", os.path.join(inputs, name), "--soak")
