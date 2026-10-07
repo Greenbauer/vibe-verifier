@@ -37,8 +37,11 @@ A criterion's annotations (harnesses/qae/README.md) are held to the run's eviden
 
     [ref: <key>]          refused unless the workflow supplied <key> and the evidence holds that very
                           image at references/<key>.png; a PASS also needs a step line naming
-                          `reference <key>`. A reference is never invented: one that was not supplied
-                          is the operator's to supply (needs-operator-reference)
+                          `reference <key>`, and every such line is a comparison whose screenshot
+                          `qae/ACn-step-k.png` is as wide as the reference, both read from the PNG
+                          header (a 1x reference is as wide as the viewport it shows). A reference is
+                          never invented: one that was not supplied is the operator's to supply
+                          (needs-operator-reference)
     [as: <role>, ...]     a PASS needs, for each role, a step line starting `as <role>:`
     a malformed bracket   refused, so a typo never drops a requirement
 
@@ -58,14 +61,15 @@ import json
 import os
 import re
 
-from _acceptance import (ANCHOR_FORMS, PASS_RE, anchors, annotations, check_lines, criteria, declares_none, resolves,
-                         ticket_items)
+from _acceptance import (ANCHOR_FORMS, PASS_RE, anchors, annotations, check_lines, criteria, declares_none,
+                         named_references, png_size, resolves, ticket_items)
 from _contract import CannotRun, Finding, run_gate, tracked_files
 from _features import add_selection_arguments, describe, selection
 
 GATE = "acceptance-verdict"
 REGRESSION_TOKEN = "regression-check"
 STEP = r"^[ \t]*-[ \t]+step[ \t]+[0-9]+:"
+STEP_LINE = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):(?P<text>.*)$", re.IGNORECASE | re.MULTILINE)
 
 
 def read_input(path, label):
@@ -122,11 +126,38 @@ def reference_finding(item, key, declared, artifacts):
     with open(image, "rb") as handle:
         if hashlib.sha256(handle.read()).hexdigest() != declared[key]:
             return "%s: references/%s.png in the evidence is not the image the workflow supplied" % (item, key)
+    if png_size(image) is None:
+        return "%s: references/%s.png is not a PNG, so the width it is compared at cannot be read" % (item, key)
     return None
 
 
-def step_findings(item, notes, artifacts):
-    """What the step log of a PASSed `item` lacks: a step naming each reference, a step as each role."""
+def comparison_findings(item, key, text, artifacts, width):
+    """Why the step log `text` of a PASSed `item` shows no comparison with reference `key` at the reference's
+    `width` (None when the reference was not supplied, which is a finding of its own)."""
+    steps = [m.group("k") for m in STEP_LINE.finditer(text)
+             if key.casefold() in (named.casefold() for named in named_references(m.group("text")))]
+    if not steps:
+        return ["%s is a PASS, but no step line in qae/%s.md names `reference %s`" % (item, item, key)]
+    if width is None:
+        return []
+    findings = []
+    for k in steps:
+        shot = os.path.join(artifacts, "qae", "%s-step-%s.png" % (item, k))
+        size = png_size(shot) if os.path.isfile(shot) else None
+        if size is None:
+            findings.append("%s is a PASS, but step %s, its comparison with reference %s, has no PNG screenshot "
+                            "qae/%s-step-%s.png to show it was compared at the reference's %d pixels"
+                            % (item, k, key, item, k, width))
+        elif size[0] != width:
+            findings.append("%s is a PASS, but step %s compared with reference %s at %d pixels wide, and the reference "
+                            "is %d: resize the browser to the reference's width before that step's screenshot"
+                            % (item, k, key, size[0], width))
+    return findings
+
+
+def step_findings(item, notes, artifacts, widths):
+    """What the step log of a PASSed `item` lacks: a comparison with each reference, at its width (`widths`,
+    {key: pixels}, holds each reference the workflow supplied), and a step as each role."""
     log = os.path.join(artifacts, "qae", item + ".md")
     if not os.path.isfile(log):
         return ["%s carries annotations, but its step log qae/%s.md is not in the evidence" % (item, item)]
@@ -134,8 +165,7 @@ def step_findings(item, notes, artifacts):
         text = handle.read()
     missing = []
     for key in notes.references:
-        if not re.search(STEP + r".*\breference[ \t]+`?" + re.escape(key) + r"(?![A-Za-z0-9_-])", text, re.I | re.M):
-            missing.append("%s is a PASS, but no step line in qae/%s.md names `reference %s`" % (item, item, key))
+        missing += comparison_findings(item, key, text, artifacts, widths.get(key))
     for role in notes.roles:
         if not re.search(STEP + r"[ \t]*as[ \t]+" + re.escape(role) + r"[ \t]*:", text, re.I | re.M):
             missing.append("%s is a PASS, but no step line in qae/%s.md starts `as %s:`" % (item, item, role))
@@ -152,8 +182,14 @@ def annotation_findings(item, wording, passed, args, declared):
         return why
     if not args.artifacts:
         return why + ["%s carries annotations, which are checked in the run's evidence: give the gate --artifacts" % item]
-    why += filter(None, (reference_finding(item, key, declared, args.artifacts) for key in notes.references))
-    return why + (step_findings(item, notes, args.artifacts) if passed else [])
+    widths = {}
+    for key in notes.references:
+        problem = reference_finding(item, key, declared, args.artifacts)
+        if problem:
+            why.append(problem)
+        else:
+            widths[key] = png_size(os.path.join(args.artifacts, "references", key + ".png"))[0]
+    return why + (step_findings(item, notes, args.artifacts, widths) if passed else [])
 
 
 def regression_findings(args, verdict, tracked):

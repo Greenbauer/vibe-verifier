@@ -40,6 +40,8 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - `tests/test_qae_annotations.py::test_a_reference_the_workflow_did_not_supply_is_the_operators_to_supply`
 - `tests/test_qae_annotations.py::test_a_pass_missing_a_role_is_refused`
 - `tests/test_qae_annotations.py::test_the_declared_digests_reach_the_gate_on_the_manifest_line`
+- `tests/test_qae_annotations.py::test_a_comparison_at_another_width_than_the_reference_is_refused`
+- `tests/test_qae_explore.py::test_the_run_a_fixed_80_cut_off_gets_twice_that`
 - `tests/test_qae_widths.py::test_a_criterion_missing_a_width_is_refused`
 - `tests/test_qae_widths.py::test_a_branch_dropping_the_widths_is_still_told_the_bases`
 - `tests/test_qae_ticket.py::test_a_declared_none_does_not_drop_the_tickets_criteria`
@@ -51,3 +53,4 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - The explore templates must stay byte-identical outside the explorer block, and the inline prompts must equal prompt.md.
 - The verdict is taken only from the workflow's own identity, never from another commenter.
 - A design reference's digest reaches the gate as an explore job output, never as a file the explorer could rewrite; a reference the workflow did not supply is refused, never invented.
+- The Claude lane's `--max-turns` is the qae-inputs step's `max-turns` output, sized to the run's walks; a consumer copy that still passes a fixed number keeps that number.

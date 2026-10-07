@@ -310,8 +310,10 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
   held to its step log `qae/ACn.md` under `--artifacts`. `[ref: <key>]` names a design reference: the
   criterion is refused unless `--references FILE` (the JSON object of key to image sha256 the workflow
   declared; an empty file is none) lists the key and the evidence holds that very image at
-  `references/<key>.png`, and a PASS also needs a step line naming `reference <key>`. A reference the
-  workflow did not supply is the operator's to supply, never invented. `[as: <role>, <role>]` makes a
+  `references/<key>.png`, and a PASS also needs a step line naming `reference <key>`, where every such
+  line is a comparison whose screenshot `qae/ACn-step-k.png` is exactly as wide as the reference (both
+  read from the PNG header). A reference the workflow did not supply is the operator's to supply, never
+  invented. `[as: <role>, <role>]` makes a
   PASS need, for each role, a step line starting `as <role>:`. A bracket that starts like either and
   does not parse is a finding. `bin/vibe-verifier criteria` prints each criterion's annotations after
   its count line.
