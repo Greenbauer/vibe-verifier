@@ -115,12 +115,8 @@ class GitHubAPI:
 
     def _request(self, endpoint: str) -> object:
         family = _limit_family(endpoint)
+        self._reserve(family)
         with self._lock:
-            if self.clock() < max(self.backoff_until, self._family_backoff.get(family, 0.0)):
-                raise ApiError("rate_limited")
-            if self.calls >= self.max_calls:
-                raise ApiError("request_budget_exhausted")
-            self.calls += 1
             cached = self._cache.get(endpoint)
         command = ["gh", "api", "--include", endpoint]
         if cached:
@@ -130,11 +126,7 @@ class GitHubAPI:
         except (OSError, subprocess.TimeoutExpired):
             raise ApiError("unavailable") from None
         status, headers = _split_response(result.stdout)[:2] if result.stdout else (None, {})
-        remaining = headers.get("x-ratelimit-remaining", "")
-        if remaining.isdigit():
-            with self._lock:
-                lowest = self.lowest_remaining
-                self.lowest_remaining = int(remaining) if lowest is None else min(lowest, int(remaining))
+        remaining = self._remember_remaining(headers)
         if result.returncode != 0:
             if cached and status == 304:
                 with self._lock:
@@ -143,18 +135,7 @@ class GitHubAPI:
                 return copy.deepcopy(cached[1])
             code = self._classify_error(result.stderr)
             if code == "rate_limited":
-                try:
-                    reset = float(headers["x-ratelimit-reset"]) if remaining == "0" else None
-                except (KeyError, ValueError):
-                    reset = None
-                with self._lock:
-                    if reset is None:
-                        # A secondary limit or an unexplained refusal: pause everything briefly.
-                        self.backoff_until = max(self.backoff_until, self.clock() + 60)
-                    else:
-                        # A spent hourly counter: only its endpoint family waits for the reset
-                        # GitHub reported, since other families may draw on a different counter.
-                        self._family_backoff[family] = max(self._family_backoff.get(family, 0.0), reset)
+                self._pause(family, headers, remaining)
             raise ApiError(code)
         _, headers, body = _split_response(result.stdout)
         etag = headers.get("etag")
@@ -219,6 +200,7 @@ class GitHubAPI:
         return remaining
 
     def _pause(self, family: str, headers: dict[str, str], remaining: str) -> None:
+        """A spent hourly counter pauses only that family. Anything else pauses every request briefly."""
         try:
             reset = float(headers["x-ratelimit-reset"]) if remaining == "0" else None
         except (KeyError, ValueError):
