@@ -81,8 +81,9 @@ step selects nothing and nothing changes.
   left states unwalked, `regression-skip: <id> -- <those states>`.
 - A FAIL means a step that was walked showed the feature no longer works as its file describes. A
   state that was not reached, or could not be set up, is never a FAIL: it goes on the skip line. On
-  a consumer's live runs (2026-10-07), with features of eight or more states and no bound, the
-  explorer ran out of time and wrote FAILs that named only the states it had not walked.
+  a consumer's live run (2026-10-07), told to walk every numbered step and cited test of three
+  features, the explorer left all three unfinished and wrote FAILs that named only the states it
+  had not walked.
 - `acceptance-verdict` selects the features again itself and refuses a run unless each has exactly one
   `regression-check` line, a PASS whose anchor resolves, and at least one step in its log with its
   screenshot (none is a re-walk that did not happen). It prints the skip lines and judges neither

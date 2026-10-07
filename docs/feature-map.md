@@ -180,9 +180,9 @@ regression-skip: sign-in -- 3, 4, 6
 
 **What a FAIL means.** A step that was walked showed the feature no longer works the way its file
 describes. A state the explorer did not get to, or could not set up, is never a FAIL: it goes on
-the `regression-skip` line. Before this bound the explorer was told to walk a whole file, and on a
-consumer whose features list eight or more states each it ran out of time on three features and
-wrote FAILs that named no defect, only the states it had not reached.
+the `regression-skip` line. Before this bound the explorer was told to walk a whole file, numbered
+steps and cited tests alike, and on a consumer's live run (2026-10-07) it left three features
+unfinished and wrote FAILs that named no defect, only the states it had not walked.
 
 **The pull request's own copy.** `actions/features` copies each selected feature file from the
 explore job's working tree, which holds the pull request's changes, so a pull request that changes

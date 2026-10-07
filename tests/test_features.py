@@ -112,8 +112,8 @@ class Selection(unittest.TestCase):
         self.assertEqual(Path(out, "auth.md").read_text(), head)
 
     def test_the_listing_tells_the_explorer_how_many_states_to_walk_and_which_files_selected_each_feature(self):
-        # A consumer's features list eight or more states each, and an explorer told to walk them all ran out
-        # of time on three features (2026-10-07). The bound is the manifest's, three unless it says otherwise.
+        # An explorer told to walk every numbered step and cited test of three features finished none of them
+        # on a consumer (2026-10-07). The bound is the manifest's, three states unless it says otherwise.
         repo = self.branch({"app/projects/list.ts": "2\n", "app/auth/login.ts": "2\n", "app/auth/reset.ts": "2\n"})
         out = os.path.join(repo, ".git", "qae-inputs", "features")
         self.assertEqual(self.features(repo, "app/projects/list.ts", "app/auth/login.ts", "app/auth/reset.ts", out=out).returncode, 0)
@@ -232,15 +232,15 @@ class RegressionChecks(unittest.TestCase):
         self.assertIn("acceptance-verdict: 1 finding(s), blocking", result.stdout)
 
     def test_states_left_unwalked_are_printed_and_never_a_finding(self):
-        # Two real verdicts on a consumer (2026-10-07) were FAILs that said only that states were not re-walked.
+        # Real verdicts on a consumer (2026-10-07) were FAILs that said only that states were not re-walked.
         # Unwalked states now go on a regression-skip line, which fails nothing, whatever it says.
         skips = ("regression-skip: auth -- 4, 5, 7\n"
-                 "regression-skip: projects -- the download, mobile and signed-out states: out of time, FAIL\n")
+                 "regression-skip: projects -- the export, phone-width and signed-out states: out of time, FAIL\n")
         result = self.rewalk(self.AC + self.AUTH + self.PROJECTS + skips)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("acceptance-verdict: auth: 1 step logged with a screenshot\n"
                       "acceptance-verdict: auth: states not walked, as the explorer reports: 4, 5, 7\n", result.stdout)
-        self.assertIn("projects: states not walked, as the explorer reports: the download, mobile and signed-out states", result.stdout)
+        self.assertIn("projects: states not walked, as the explorer reports: the export, phone-width and signed-out states", result.stdout)
 
     def test_a_feature_with_no_walked_step_is_refused_whatever_its_line_says(self):
         # Zero walked steps is a re-walk that did not happen, not a pass and not a regression: a step line
