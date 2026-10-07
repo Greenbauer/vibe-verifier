@@ -285,7 +285,7 @@ line cannot be sized. No price is inferred.
 Above the charts, each provider is one block (`OpenAI usage`, `Anthropic usage`). The block
 does not name the model or plan. Each window is a bar, shorter windows first, labeled from its
 length (`5 hours`, `7 days`). The fill is green under half and on pace, yellow from half full or when the fill is more than a point
-ahead of an even burn, and red from 90% full or 25 points ahead. A white tick marks the even burn.
+ahead of an even burn, and red from 90% full or 25 points ahead. A white tick, as tall as the bar, hangs under it and marks the even burn. Its top touches the bar.
 The line reads `70% · resets 3d 4h · +16%` (the signed points, omitted within one point of even).
 The hover keeps the clock time of the reset and a reported token allowance. There is no
 primary/fallback account row.
