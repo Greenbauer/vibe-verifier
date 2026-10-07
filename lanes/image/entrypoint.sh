@@ -29,8 +29,9 @@
 # point of the lane's Codex login store, /home/runner/.codex-qae), and the JIT config
 # mounted read-only at /run/jit. /run may come as --tmpfs /run; when it is read-only the entrypoint reads
 # /run/jit first and then mounts a tmpfs over /run itself (root in a Sysbox container may mount),
-# which also hides the config file from the job. The job's reflink snapshot of the preloaded inner
-# Docker store is mounted on /var/lib/docker (bin/lane-slot.sh); the image's own
+# which also hides the config file from the job. The job's inner Docker store is mounted on
+# /var/lib/docker (bin/lane-slot.sh): a reflink snapshot of the preloaded store, or an empty
+# directory for a job of the wait kind, which runs no inner image. The image's own
 # /var/lib/docker is empty, and Sysbox backs it with an empty directory when nothing is mounted.
 #
 # Why the runner is copied per job: the image installs it at /opt/actions-runner (nothing is baked
