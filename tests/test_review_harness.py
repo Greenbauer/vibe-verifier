@@ -18,6 +18,23 @@ TEMPLATE = ROOT / "harnesses" / "review" / "review.yml"
 PROMPT = ROOT / "harnesses" / "review" / "prompt.md"
 
 
+def flaky_gh(directory, failures):
+    """A PATH directory whose `gh` fails `failures` times, then succeeds, logging each call, and whose
+    `sleep` returns at once and logs what it was asked to wait."""
+    os.makedirs(directory, exist_ok=True)
+    scripts = {"gh": '#!/bin/sh\necho call >> "%s/calls"\n[ "$(wc -l < "%s/calls")" -gt %d ]\n' % (directory, directory, failures),
+               "sleep": '#!/bin/sh\necho "$1" >> "%s/sleeps"\n' % directory}
+    for name, body in scripts.items():
+        with open(os.path.join(directory, name), "w") as handle:
+            handle.write(body)
+        os.chmod(os.path.join(directory, name), 0o755)
+    return directory
+
+
+def lines(path):
+    return Path(path).read_text().split() if os.path.exists(path) else []
+
+
 def prompt_block(text):
     match = re.search(r"^( +)(?:prompt|PROMPT): \|\n((?:\1  .*\n|\n)+)", text, re.MULTILINE)
     indent = len(match.group(1)) + 2
@@ -378,6 +395,38 @@ class ReviewTarget(unittest.TestCase):
 
     def test_the_prompt_names_the_pull_request_and_the_repository(self):
         self.assertIn("#${{ github.event.pull_request.number }} of ${{ github.repository }}", PROMPT.read_text())
+
+
+
+class ReceiptPost(unittest.TestCase):
+    """One GitHub 5xx on the receipt post must not throw a finished review away: the post is retried,
+    a bounded number of times, and a post that never lands still fails the job."""
+
+    def post(self, failures):
+        temp = tempfile.mkdtemp(prefix="vv-receipt-")
+        self.addCleanup(__import__("shutil").rmtree, temp, True)
+        result = subprocess.run(["bash", "-c", step_script("Post the receipt", "Collect numeric usage")], capture_output=True, text=True,
+                                env=clean_env({"PATH": flaky_gh(temp, failures) + os.pathsep + os.environ["PATH"], "REVIEW_MODE": "full",
+                                               "GITHUB_RUN_ID": "7", "GH_TOKEN": "x", "PR_NUMBER": "1", "REPO": "o/r", "HEAD_SHA": "a" * 40}))
+        return result, len(lines(os.path.join(temp, "calls"))), lines(os.path.join(temp, "sleeps"))
+
+    def test_a_post_that_fails_twice_then_lands_passes(self):
+        result, calls, sleeps = self.post(2)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((calls, sleeps), (3, ["15", "30"]))
+        self.assertIn("::warning::posting the receipt failed (attempt 2 of 5)", result.stdout)
+
+    def test_a_post_that_never_lands_fails_after_five_tries(self):
+        result, calls, sleeps = self.post(99)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual((calls, sleeps), (5, ["15", "30", "45", "60"]))
+        self.assertIn("::error::the receipt could not be posted after 5 attempts", result.stdout)
+
+    def test_this_repository_runs_the_same_step(self):
+        own = (ROOT / ".github" / "workflows" / "review.yml").read_text()
+        step = TEMPLATE.read_text()
+        step = step[step.index("- name: Post the receipt\n"):step.index("- name: Collect numeric usage\n")]
+        self.assertIn(step, own)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,10 @@ telemetry feed, and a follower that moves the host to newly merged code. The uni
 [`dashboard/systemd/`](../dashboard/systemd/). Each dashboard is a systemd instance `NAME` of at most
 17 characters, so its account name `vibe-dashboard-NAME` fits `useradd`'s limit of 32.
 
+On a machine that runs [runner lanes](../lanes/README.md#dashboards), `lanes/bin/provision-dashboards.sh`
+performs this runbook from the machine's host file, with a loopback guard of its own, and the
+follower below then keeps the dashboards' checkout current.
+
 ## What runs
 
 | Unit | Runs as | When | Writes |

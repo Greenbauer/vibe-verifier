@@ -531,6 +531,8 @@ same. What differs, and why:
   has none, so the model cannot post, push, or read a credential. The workflow posts
   `qae-artifacts/verdict.md` itself after the model finishes, which is why step 4 of the prompt
   reads "do not post anything" in this lane, and why the verify job's author filter still holds.
+  The post is tried up to five times, because one GitHub 5xx would otherwise throw a finished
+  exploration away.
 - **Three settings a non-interactive Codex run needs**, each found on the first spike (2026-09-23,
   zack.land on a laptop): `--sandbox danger-full-access`, because under `workspace-write` Codex
   cancels the browser's navigate and run-code calls client-side while screenshots and snapshots still
@@ -586,7 +588,8 @@ and refuses on structural facts:
 4. a `browser_network_requests` result exists (the prompt asks for one after each criterion; a call
    that saved its result to a file is read from that file, which must be in the evidence), and
    no request to the site under test (`--site-file`, the URL the explore job declared and any further
-   origin after it, or a fixed `--site`) answered 400 or worse or failed, outside `--allow-request` patterns;
+   origin after it, or a fixed `--site`) answered 400 or worse or failed, outside `--allow-request` patterns (a request the browser cancelled
+   itself, `net::ERR_ABORTED`, was never answered and is not judged);
 5. with `--widths`, each criterion's step screenshots include one of each declared width
    ([above](#viewports-themes-and-what-a-criterion-does-not-say)).
 

@@ -351,7 +351,14 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "review-receipt: ${HEAD_SHA} -- ${REVIEW_MODE} -- run ${GITHUB_RUN_ID}"
+          # GitHub answers the odd request with a 5xx. One of those must not throw a finished review
+          # away, so the post is tried five times over about two and a half minutes.
+          for attempt in 1 2 3 4 5; do
+            if gh pr comment "$PR_NUMBER" --repo "$REPO" --body "review-receipt: ${HEAD_SHA} -- ${REVIEW_MODE} -- run ${GITHUB_RUN_ID}"; then exit 0; fi
+            echo "::warning::posting the receipt failed (attempt ${attempt} of 5)"
+            if [ "$attempt" != 5 ]; then sleep $((attempt * 15)); fi
+          done
+          echo "::error::the receipt could not be posted after 5 attempts"; exit 1
       - name: Collect numeric usage
         if: always()
         uses: Greenbauer/vibe-verifier/actions/usage@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
