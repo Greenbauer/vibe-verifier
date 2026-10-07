@@ -187,14 +187,14 @@ a.pr-row { color: inherit; text-decoration: none; cursor: pointer; }
 .quota-lines { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .quota-line { display: grid; grid-template-columns: 72px minmax(80px, 1fr) max-content; gap: 10px; align-items: center; min-width: 0; }
 .quota-label { color: var(--muted); font-size: 12px; }
-.quota-track { position: relative; height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.quota-track { position: relative; height: 6px; border-radius: 999px; background: var(--line); overflow: visible; }
 .quota-fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: inherit; background: var(--green); }
 .quota-fill.tone-warn { background: var(--yellow); }
 .quota-fill.tone-hot { background: var(--red); }
 .quota-delta.tone-ok { color: var(--green); }
 .quota-delta.tone-warn { color: var(--yellow); }
 .quota-delta.tone-hot { color: var(--red); }
-.quota-tick { position: absolute; top: 0; bottom: 0; width: 2px; transform: translateX(-1px); background: #fff; }
+.quota-tick { position: absolute; top: 100%; height: 100%; width: 2px; transform: translateX(-1px); background: #fff; }
 .quota-meta { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
 .quota-meta b { color: var(--ink); font-weight: 600; }
 .pace-note { margin-top: 10px; font-size: 11px; }

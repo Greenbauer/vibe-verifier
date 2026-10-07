@@ -155,6 +155,18 @@ console.log(JSON.stringify({
         self.assertNotIn("gpt-5.4", result["text"])
         self.assertNotIn("Claude", result["text"])
 
+    def test_pace_tick_hangs_under_the_bar_with_its_top_touching(self):
+        css = (ROOT / "dashboard/static/styles.css").read_text()
+        track = css.split(".quota-fill", 1)[0].split(".quota-track", 1)[1]
+        tick = css.split(".quota-meta", 1)[0].split(".quota-tick", 1)[1]
+        self.assertIn("overflow: visible", track)
+        self.assertNotIn("overflow: hidden", track)
+        self.assertIn("top: 100%", tick)
+        self.assertIn("height: 100%", tick)
+        self.assertNotIn("top: 0", tick)
+        self.assertNotIn("bottom: 0", tick)
+        self.assertNotIn("margin", tick)
+
 
 if __name__ == "__main__":
     unittest.main()
