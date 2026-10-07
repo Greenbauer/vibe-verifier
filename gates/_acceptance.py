@@ -95,6 +95,27 @@ def declares_none(text):
     return match.group("reason") if match else None
 
 
+TICKET_NONE = ("the ticket in %s lists no acceptance criteria: its criteria go under a `## Acceptance criteria` "
+               "heading (or the file is a plain list), or it declares `- None: <why>`; an empty file links no ticket")
+
+
+def ticket_items(text, path="qae-inputs/ticket.md"):
+    """(the ticket's criteria as (id, wording) pairs numbered TC1, TC2, ..., why they cannot be read or None).
+
+    A consumer's workflow writes the acceptance criteria of the ticket a pull request implements to a file,
+    read with the same grammar as a PR body. They are graded in addition to the pull request's own, so a
+    pull request cannot drop one from its list. An empty file links no ticket; a ticket that declares
+    `- None: <why>` has none. A non-empty ticket in which no criteria can be found is a problem, never no
+    criteria: a section the reader missed must not drop the ticket's requirements silently.
+    """
+    if not text.strip() or declares_none(text):
+        return [], None
+    items = criteria(text)
+    if not items:
+        return [], TICKET_NONE % path
+    return [("TC%d" % (n + 1), wording) for n, (_, wording) in enumerate(items)], None
+
+
 # `[ref: home-desktop]` and `[as: admin, read-only]` inside a criterion's text, each a comma list. A
 # reference key is the file stem of qae-inputs/references/<key>.png. A role is what a step line names
 # after "as" and before a colon, so it holds no colon, comma or bracket. A bracket that starts like an
@@ -148,17 +169,22 @@ def unrendered(path):
             or name.startswith((".vibe-verifier", "LICENSE")))
 
 
-def not_required(text, changed):
+def not_required(text, changed, ticket=""):
     """Why a pull request needs no browser check, or None when it does.
 
-    `text` is its body and `changed` its changed paths (a rename lists both names). It needs none when
-    it declares `- None: <why>`, or when it lists no criteria and every changed path is one no browser
-    can see. Criteria win over paths: a pull request that lists one is explored whatever it touches.
+    `text` is its body, `changed` its changed paths (a rename lists both names) and `ticket` the text of
+    its ticket's criteria file, when the workflow supplies one. It needs none when it declares
+    `- None: <why>`, or when it lists no criteria and every changed path is one no browser can see. A
+    ticket that lists criteria, or that is not empty and lists none a reader can find, overrides both:
+    the pull request cannot declare its ticket's requirements away. Criteria win over paths: a pull
+    request that lists one is explored whatever it touches.
     An empty path list proves nothing, so it never exempts. A body lists criteria only under an
     `Acceptance criteria` heading: without one, the plain-list reading counts every line of prose as a
     criterion, and a short body with no headings would never be exempt (found on the first consumer
     PR, 2026-10-05).
     """
+    if any(ticket_items(ticket)):
+        return None
     declared = declares_none(text)
     headed = any(CRITERIA_HEADING.match(line) for line in text.splitlines())
     if declared or (headed and criteria(text)) or not changed or not all(map(unrendered, changed)):

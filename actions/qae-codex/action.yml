@@ -21,7 +21,7 @@ inputs:
       A JSON object of credentials the workflow wrote before this step, outside the workspace ($RUNNER_TEMP),
       mapping a NAME (capital letters, digits and underscores) to its value, for example a preview login's
       password. Give the explorer the NAME, never the value: the explorer types a value by entering its NAME
-      (playwright-mcp's --secrets), every tool result shows <secret>NAME</secret> instead, and after the
+      (playwright-mcp's `secrets` setting), every tool result shows <secret>NAME</secret> instead, and after the
       explorer every non-image file under the artifacts directory has each value replaced, because
       playwright-mcp's session log still records what was typed. So neither the posted verdict nor the
       uploaded evidence holds one. A malformed file fails the step before the model runs. Empty (the
@@ -87,8 +87,8 @@ runs:
         # Both files hold credential values: written owner-only outside the workspace, and removed by
         # the redaction step after the explorer.
         redact="$RUNNER_TEMP/qae-codex-redact.json"
-        dotenv="$RUNNER_TEMP/qae-codex-mcp.env"
-        rm -f "$redact" "$dotenv"
+        config="$RUNNER_TEMP/qae-codex-mcp.json"
+        rm -f "$redact" "$config"
         browser=()
         if [ -n "$MCP" ]; then
           # --browser chromium: the build actions/qae-browser installed. playwright-mcp otherwise
@@ -98,10 +98,10 @@ runs:
           args="\"$MCP\",\"--browser\",\"chromium\",\"--headless\",\"--isolated\",\"--output-dir\",\"$ARTIFACTS\",\"--save-session\",\"--viewport-size\",\"1280x800\""
           if [ -n "$STORAGE_STATE" ]; then
             # playwright-mcp's --storage-state loads the file into the isolated browser context, and
-            # --secrets (dotenv) replaces each listed value with <secret>NAME</secret> in every tool
-            # result, saved file and session log, so the cookie never reaches the model through the
-            # browser or the uploaded artifacts. Checked here first, never printed: a file that is not
-            # a cookies-only storage state stops the run before a model session is spent on it.
+            # the `secrets` of its --config file replace each listed value with <secret>NAME</secret>
+            # in every tool result, saved file and session log, so the cookie never reaches the model
+            # through the browser or the uploaded artifacts. Checked here first, never printed: a file
+            # that is not a cookies-only storage state stops the run before a model session is spent on it.
             if ! state=$(python3 - "$STORAGE_STATE" "$redact" <<'PY'
         import json, os, re, sys
         path, redact = sys.argv[1], sys.argv[2]
@@ -137,13 +137,15 @@ runs:
             fi
             args+=",\"--storage-state\",\"$state\""
           fi
-          # The workflow's credentials join the cookie values: one map (for the redaction step after
-          # the explorer) and one dotenv file for playwright-mcp, each value quoted with a quote it
-          # does not contain, since dotenv has no escape for a quote inside a quoted value.
+          # The workflow's credentials join the cookie values: one map for the redaction step after
+          # the explorer, and the same map as the `secrets` of a playwright-mcp config file. A JSON
+          # file carries any value. Its --secrets dotenv file cannot carry one that holds all three
+          # quote characters, and a 24-character generated password with punctuation does that about
+          # once in a hundred.
           if [ -n "$SECRETS_FILE" ] || [ -s "$redact" ]; then
-            if ! out=$(python3 - "$SECRETS_FILE" "$redact" "$dotenv" <<'PY'
+            if ! out=$(python3 - "$SECRETS_FILE" "$redact" "$config" <<'PY'
         import json, os, re, sys
-        given, redact, dotenv = sys.argv[1], sys.argv[2], sys.argv[3]
+        given, redact, config = sys.argv[1], sys.argv[2], sys.argv[3]
         def refuse(why):
             print("::error::the secrets file %s %s (harnesses/qae/README.md)" % (given, why))
             sys.exit(2)
@@ -162,16 +164,10 @@ runs:
             for name, value in named.items():
                 if not re.fullmatch(r"[A-Z][A-Z0-9_]*", name) or name.startswith("VV_COOKIE_"):
                     refuse("names a secret %r; a NAME is capital letters, digits and underscores, not VV_COOKIE_*" % name)
-                if not isinstance(value, str) or not value or "\n" in value or "\r" in value:
-                    refuse("gives %s a value that is not a one-line string" % name)
+                if not isinstance(value, str) or not value:
+                    refuse("gives %s a value that is not a non-empty string" % name)
                 merged[name] = value
-        lines = []
-        for name, value in merged.items():
-            quote = next((q for q in ("'", "`", '"') if q not in value), None)
-            if quote is None or (quote == '"' and ("\\n" in value or "\\r" in value)):
-                refuse("gives %s a value no dotenv quoting can carry" % name)
-            lines.append("%s=%s%s%s\n" % (name, quote, value, quote))
-        for path, text in ((redact, json.dumps(merged)), (dotenv, "".join(lines))):
+        for path, text in ((redact, json.dumps(merged)), (config, json.dumps({"secrets": merged}))):
             with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as handle:
                 handle.write(text)
         PY
@@ -179,7 +175,7 @@ runs:
               echo "$out"
               exit 2
             fi
-            args+=",\"--secrets\",\"$dotenv\""
+            args+=",\"--config\",\"$config\""
           fi
           browser=(-c 'mcp_servers.playwright.command="node"' -c "mcp_servers.playwright.args=[$args]")
         fi
@@ -190,7 +186,7 @@ runs:
           -c 'approval_policy="never"' "${browser[@]}" \
           -o "$ARTIFACTS/final.md" "$(cat "$PROMPT_FILE")" < /dev/null
     - name: Redact the secrets from the artifacts
-      # playwright-mcp's --secrets keeps each value out of the tool results, but its session log
+      # playwright-mcp's secrets keep each value out of the tool results, but its session log
       # still records what was typed, and the model could write a value anywhere under the
       # artifacts directory. Every non-image file there gets each value replaced with
       # <secret>NAME</secret> before the workflow posts the verdict or uploads the evidence, and the
@@ -205,7 +201,7 @@ runs:
       run: |
         set -euo pipefail
         redact="$RUNNER_TEMP/qae-codex-redact.json"
-        [ -s "$redact" ] || { rm -f "$RUNNER_TEMP/qae-codex-mcp.env"; exit 0; }
+        [ -s "$redact" ] || { rm -f "$RUNNER_TEMP/qae-codex-mcp.json"; exit 0; }
         python3 - "$redact" "$ARTIFACTS" <<'PY'
         import json, pathlib, sys, urllib.parse
         values = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
@@ -229,7 +225,7 @@ runs:
                 changed += 1
         print("redacted %d secret value(s) in %d file(s)" % (len(values), changed))
         PY
-        rm -f "$redact" "$RUNNER_TEMP/qae-codex-mcp.env"
+        rm -f "$redact" "$RUNNER_TEMP/qae-codex-mcp.json"
     - name: Keep numeric usage
       if: always() && inputs.mcp != ''
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

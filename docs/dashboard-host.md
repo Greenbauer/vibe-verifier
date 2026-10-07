@@ -80,17 +80,20 @@ LOGIN=example-app[bot]
 ## 3. The GitHub App and its token
 
 Install a GitHub App on the dashboard owner's account, for at least the configured repositories, with
-these repository permissions set to read: Actions, Checks, Contents, Metadata, Pull requests and Commit
-statuses. Keep its private key only in `app.pem`.
+these repository permissions set to read: Actions, Administration, Checks, Contents, Metadata, Pull
+requests and Commit statuses. Administration is what lists the status checks classic branch protection
+requires. Keep its private key only in `app.pem`.
 
 Every ten minutes the token timer runs `bin/vibe-dashboard-host token`. `openssl` signs the App's JWT
 from the key file, so the key never enters the Python process, and the installation token it exchanges
-the JWT for is requested for exactly the configuration's `repositories` and exactly those six read
+the JWT for is requested for exactly the configuration's `repositories` and exactly those seven read
 permissions. The helper refuses a token whose granted permissions or repositories differ from the
 request in any way, and refuses a key file another user can read. It writes the token as
 `gh`'s `hosts.yml` (`oauth_token`, `user` from `LOGIN`, `git_protocol: https`), mode 0600, owned by
-the dashboard account, replacing the old file in one rename. Keep `hosts.yml` the only file in that
-directory; with no `config.yml`, `gh` uses its built-in defaults. A token lives one hour, so ten-minute
+the dashboard account, replacing the old file in one rename. It also writes `config.yml` next to
+it (`version: "1"`, mode 0644, owned by root, no token and no settings). gh 2.93 exits before any
+API call when that file is missing, because it tries to create it and this directory is not writable
+by the dashboard account. A token lives one hour, so ten-minute
 refreshes ride out several missed runs. Because the repository list comes from the dashboard's own
 configuration, which its account owns, only root and that account can widen the token, and the web
 service's sandbox cannot write the file.
