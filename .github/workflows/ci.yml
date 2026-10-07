@@ -34,6 +34,36 @@ jobs:
         # workspace-relative form stays and zizmor's finding is ignored here with this reason.
         uses: ./actions/gates # zizmor: ignore[self-repository]
 
+  # The QAE browser action against a real apt and the pinned Playwright, which its tests stub: it reads
+  # the missing system packages from that Playwright's own report, so a pin bump that changes the
+  # report shows here before a consumer pins it. Then the chromium it installed has to start.
+  qae-browser:
+    name: qae-browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the QAE browser toolchain
+        id: browser
+        uses: ./actions/qae-browser # zizmor: ignore[self-repository]
+      - name: Start the chromium it installed
+        env:
+          MCP: ${{ steps.browser.outputs.mcp }}
+        run: |
+          cd "$(dirname "$MCP")/../.."
+          node -e '
+            const { chromium } = require("playwright");
+            (async () => {
+              const browser = await chromium.launch({ channel: "chromium" });
+              const page = await browser.newPage();
+              await page.setContent("<h1>started</h1>");
+              console.log("chromium", browser.version(), "rendered:", await page.textContent("h1"));
+              await browser.close();
+            })().catch(error => { console.error(error); process.exit(1); });
+          '
+
   # The runner-lane kit (lanes/README.md) is Linux-only and has tests of its own, which stub every
   # system tool on PATH: nothing is installed, mounted or started on the runner. Ubuntu 24.04, not
   # ubuntu-latest: it is the release the kit's machines run, and the pinned PyYAML has wheels for

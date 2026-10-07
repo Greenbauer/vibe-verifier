@@ -363,6 +363,22 @@ class Applicability(unittest.TestCase):
         self.assertIn("        id: gates\n        if: steps.criteria.outputs.declared-none == ''\n", verify[gates:gates + 200])
 
 
+class Evidence(unittest.TestCase):
+    def test_a_re_run_never_reads_an_earlier_attempts_evidence(self):
+        # The upload runs always, so a failed or cancelled attempt uploads too: under one name, a
+        # consumer's third attempt passed and verify was handed the cancelled second's (2026-10-07).
+        # The download follows the explore job's attempt, never the verify job's own: re-running the
+        # verify job alone leaves the evidence in the earlier attempt.
+        text = TEMPLATE.read_text()
+        explore, verify = text[text.index("\n  explore:\n"):text.index("\n  verify:\n")], text[text.index("\n  verify:\n"):]
+        self.assertIn("      attempt: ${{ github.run_attempt }}\n    steps:\n", explore)
+        self.assertIn("        if: always()\n", explore[explore.index("- name: Keep the evidence"):])
+        self.assertEqual(re.findall(r"^          name: (.*)$", explore, re.MULTILINE),
+                         ["vv-usage-qae-explorer-${{ github.run_attempt }}", "qae-artifacts-${{ github.run_attempt }}"])
+        self.assertEqual(re.findall(r"^          name: (.*)$", verify, re.MULTILINE), ["qae-artifacts-${{ needs.explore.outputs.attempt }}"])
+        self.assertNotIn("github.run_attempt", verify)
+
+
 class Review(unittest.TestCase):
     """The verify job posts the one review comment, after the gates, whatever they concluded."""
 
