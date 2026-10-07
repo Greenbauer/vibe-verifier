@@ -238,6 +238,21 @@ SH
 # Like the real df: a path that does not exist is an error, not a number.
 echo "df ${@: -1}" >> "$CALLLOG"
 [ -e "${@: -1}" ] || { echo "df: ${@: -1}: No such file or directory" >&2; exit 1; }
+# The slot helper's reading of the store filesystem (size, free space, inodes, free inodes): half
+# free, or the row STORE_DF_SHORT (a filesystem short of room). With STORE_DF_SHORT_WHILE that row is
+# given only while that directory holds more than STORE_DF_SHORT_ABOVE entries, the way retired
+# copies fill a store until they are deleted. STORE_DF_RC fails the reading.
+case "$*" in
+  *--output=size,avail,itotal,iavail*)
+    [ "${STORE_DF_RC:-0}" = 0 ] || exit "$STORE_DF_RC"
+    row="1000 500 1000 500"
+    if [ -n "${STORE_DF_SHORT:-}" ]; then
+      held="$(ls -A "${STORE_DF_SHORT_WHILE:-/nonexistent}" 2>/dev/null | grep -c .)"
+      { [ -z "${STORE_DF_SHORT_WHILE:-}" ] || [ "$held" -gt "${STORE_DF_SHORT_ABOVE:-0}" ]; } && row="$STORE_DF_SHORT"
+    fi
+    printf '1B-blocks Avail Inodes IFree\n%s\n' "$row"
+    exit 0 ;;
+esac
 printf ' Avail\n  %sG\n' "${DF_FREE:-62}"
 SH
   cat > "$p/ip" <<'SH'

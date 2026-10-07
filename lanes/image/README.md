@@ -7,7 +7,10 @@ example `greenbauer-ci-runner`). `bin/build-runner-image.sh` builds it on the la
 preloads an inner Docker store with the Supabase images the lane's repositories start, so a job
 pulls nothing. The store is not in the image: it is a directory on the lane's XFS store filesystem
 (`/var/lib/<lane name>/store/golden-<tag>`), and every job runs on its own reflink snapshot of it,
-mounted on the container's `/var/lib/docker` (the kit's `README.md`, one directory up, "Disk").
+mounted on the container's `/var/lib/docker` (the kit's `README.md`, one directory up, "Disk"). A
+job of the wait kind, which only polls for another job's result, gets an empty directory there
+instead: the job mode of the entrypoint reads nothing from the store, and the inner dockerd starts
+on an empty data root.
 
 | File | Role |
 |---|---|
@@ -224,7 +227,7 @@ unreferenced image without that label. The build fails unless the committed imag
 | `/var/lib/<lane name>/image.env` holding `KNOWN_CI_IMAGE_TAG=<tag>` | written atomically by the build after the image is committed, verified and tagged, and restored by a converged run when missing or stale |
 | no runner install under `/home/runner` | installed at `/opt/actions-runner`; the per-job copy is made at run time, on the slot |
 | the entrypoint reads `/run/jit` before anything mounts over `/run` | read first; the tmpfs over a read-only `/run` comes after |
-| inner dockerd at its default data root `/var/lib/docker` | `daemon.json` sets no `data-root`; the lane mounts the job's store snapshot there |
+| inner dockerd at its default data root `/var/lib/docker` | `daemon.json` sets no `data-root`; the lane mounts the job's store there (a snapshot of the preloaded store, or a wait job's empty directory) |
 | the config through `ACTIONS_RUNNER_INPUT_JITCONFIG`, the runner as `runner` | yes, via `setpriv` |
 | exit 0 after the one job, non-zero on any failure | see the exit-code table above |
 | `bash`, coreutils, `getent`, `dockerd`, the Supabase CLI | all in the image |

@@ -218,7 +218,27 @@ line_of() { grep -nE -- "$1" "$CALLLOG" | head -n 1 | cut -d: -f1; }
 before() { local a b; a="$(line_of "$1")"; b="$(line_of "$2")"; [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; }
 # True when a line matching $2 falls between the first lines matching $1 and $3.
 between() { local a c; a="$(line_of "$1")"; c="$(line_of "$3")"; [ -n "$a" ] && [ -n "$c" ] && grep -nE -- "$2" "$CALLLOG" | cut -d: -f1 | awk -v a="$a" -v c="$c" '$1 > a && $1 < c { found = 1 } END { exit !found }'; }
+# The same for two lines of a run's own output ($out), matched as fixed strings.
+out_line() { grep -nF -- "$1" <<< "$out" | head -n 1 | cut -d: -f1; }
+out_before() { local a b; a="$(out_line "$1")"; b="$(out_line "$2")"; [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; }
 HELPER="$ROOT/bin/lane-slot.sh"
+# Runs the slot helper the way systemd runs it from a unit this provisioner wrote: nothing in its
+# environment but that unit's own Environment= lines (%i expanded to the instance), the image tag
+# its EnvironmentFile holds, and the stand-ins the stubs need.
+as_unit() {  # <unit file> <instance> <helper arguments...>
+  local unit="$1" n="$2" line envs=()
+  shift 2
+  while IFS= read -r line; do envs+=("${line//%i/$n}"); done < <(sed -n 's/^Environment=//p' "$unit")
+  env -i PATH="$S/pathbin:$PATH" CALLLOG="$CALLLOG" ST="$ST" FX="$FX" UNITS="$UNITS" "${envs[@]}" KNOWN_CI_IMAGE_TAG=tag1 \
+    KNOWN_CI_HARDEN="$S/harden.sh" KNOWN_CI_API=https://api.example.invalid SERVICE_RESULT=success bash "$HELPER" "$@"
+}
+# What the listener writes before it starts a slot unit (listener/README.md, "The run-dir contract").
+listener_files() {  # kind n runner-id
+  mkdir -p "$S/run/$1/$2"
+  printf 'fixture-jit\n' > "$S/run/$1/$2/jit"
+  printf 'acme %s 9 %s box-lane-%s-%s-1727005000\n' "$1" "$3" "$1" "$2" > "$S/run/$1/$2/job"
+}
+trash_count() { find "$STORE/trash" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' '; }
 GHDIR="$TMP/s/state/home/.config/gh"
 STORE_UNIT="$(printf '%s' "${TMP#/}/s/state/store" | sed 's/-/\\x2d/g; s#/#-#g').mount"
 
@@ -251,6 +271,9 @@ out="$(run_org 2>&1)"; rc=$?
 grep -q "DRY-RUN: useradd --system --user-group --home-dir $S/state/home --create-home --shell /usr/sbin/nologin box-ci" <<< "$out" && grep -q "DRY-RUN: install -d -m 0710 $S/state$" <<< "$out"
 expect $? "dry-run plans the org lane's own user, named for the lane, and its 0710 state directory"
 grep -q "DRY-RUN: truncate -s 40G $S/state/store.img" <<< "$out" && grep -q "DRY-RUN: mkfs.xfs -q -m reflink=1 $S/state/store.img" <<< "$out" && grep -qF "DRY-RUN: write $S/units/$STORE_UNIT" <<< "$out"; expect $? "dry-run plans the reflink-capable XFS store filesystem and its mount unit, named the way systemd names one"
+grep -q "DRY-RUN: install -d -m 0700 $STORE/trash$" <<< "$out" && grep -q "DRY-RUN: write $S/units/box-ci-store-reaper.service" <<< "$out" && grep -q "DRY-RUN: write $S/units/box-ci-store-reaper.timer" <<< "$out" \
+  && grep -q "DRY-RUN: systemctl enable --now box-ci-store-reaper.timer" <<< "$out"
+expect $? "dry-run plans the store's trash and the store reaper's unit and timer (Phase D)"
 grep -q "DRY-RUN: docker network create --driver bridge --opt com.docker.network.bridge.name=box-ci0 --opt com.docker.network.bridge.enable_icc=false box-ci" <<< "$out"; expect $? "dry-run plans the lane network on its named bridge with inter-container traffic off"
 grep -q "DRY-RUN: env KNOWN_CI_BRIDGE=box-ci0 $S/harden.sh$" <<< "$out"; expect $? "dry-run plans the lane firewall rules"
 grep -q "DRY-RUN: write $S/units/box-ci-ci@.service" <<< "$out" && grep -q "DRY-RUN: write $S/units/box-ci-qae@.service" <<< "$out" && grep -q "DRY-RUN: write $S/units/box-ci.slice" <<< "$out" && grep -q "DRY-RUN: write $S/units/box.slice" <<< "$out"; expect $? "dry-run plans both slot templates of an org lane with QAE, the slice and its parent"
@@ -264,7 +287,7 @@ expect $? "dry-run plans the listener's build, config and unit, and its start"
 grep -q "DRY-RUN: write $S/units/box-ci-listener-health.timer" <<< "$out" && grep -q "DRY-RUN: systemctl enable --now box-ci-listener-health.timer" <<< "$out"; expect $? "dry-run plans the listener's health timer (Phase M)"
 grep -q "DRY-RUN: write $S/units/box-ci-codex-keepalive.service" <<< "$out" && grep -q "DRY-RUN: systemctl enable --now box-ci-codex-keepalive.timer" <<< "$out"; expect $? "dry-run plans a QAE lane's Codex keepalive timer (Phase N)"
 { ! grep -qE "$MUTATIONS" "$CALLLOG"; }; expect $? "dry-run executes no file-system, unit, network, firewall, build, user or GitHub mutation"
-[ -z "$(ls -A "$S/units")" ] && [ ! -e "$S/state/store.img" ] && [ ! -e "$S/lib" ] && [ ! -e "$S/etc/box-ci/listener.json" ]; expect $? "dry-run writes no file"
+[ -z "$(ls -A "$S/units")" ] && [ ! -e "$S/state/store.img" ] && [ ! -e "$S/lib" ] && [ ! -e "$S/etc/box-ci/listener.json" ] && [ ! -e "$STORE/trash" ]; expect $? "dry-run writes no file"
 { ! grep -q "sysbox" <<< "$(grep -E 'DRY-RUN: (write|truncate|mkfs|systemctl)' <<< "$out")"; }; expect $? "the lane provisioner plans nothing of the host's Sysbox filesystem"
 mv "$S/state" "$S/state.keep"
 chk="$(run_org --check 2>&1)"
@@ -294,6 +317,22 @@ before '^useradd' '^systemctl enable --now box-ci-token-refresh.timer' && before
   && before '^mkfs.xfs' '^docker network create' && before '^docker network create' '^harden bridge=box-ci0' \
   && before '^harden bridge=box-ci0' '^gh api -X DELETE' && before '^gh api -X DELETE' '^build\.sh' && before '^build\.sh' '^systemctl start box-ci-listener.service'
 expect $? "--apply runs user, token, store, network, firewall, units, sweep and the listener in that order"
+# Phase D: the store's trash and the reaper that empties it.
+rs="$S/units/box-ci-store-reaper.service"; rt="$S/units/box-ci-store-reaper.timer"
+[ "$(mode_of "$STORE/trash")" = 700 ] && [ "$(trash_count)" = 0 ] && [ -d "$STORE/golden-tag1" ]; expect $? "Phase D makes the store's trash: an empty 0700 directory inside the store, beside the preloaded store"
+grep -qx "ExecStart=$HELPER reap" "$rs" && grep -qx "Type=oneshot" "$rs" && grep -qx "RequiresMountsFor=$STORE" "$rs" && grep -qx "Environment=KNOWN_CI_NAME=box-ci" "$rs" \
+  && grep -qx "Environment=KNOWN_CI_STORE_DIR=$STORE" "$rs" && ! grep -q "^User=\|^\[Install\]\|^TimeoutStartSec=" "$rs"
+expect $? "the reaper service runs the checkout's slot helper's reap as root, oneshot, on the lane's store, only while that store is mounted, with no start timeout"
+grep -qx "Nice=19" "$rs" && ! grep -q "^Slice=" "$rs" && grep -qx "StartLimitIntervalSec=0" "$rs"
+expect $? "the reaper runs at the lowest CPU priority, outside the lane's slice, and is never refused a start however often the cleanups start it"
+grep -qx "OnBootSec=1min" "$rt" && grep -qx "OnUnitActiveSec=5min" "$rt" && grep -qx "WantedBy=timers.target" "$rt" && grep -qx "systemctl enable --now box-ci-store-reaper.timer" "$CALLLOG" \
+  && ! grep -q "systemctl start.* box-ci-store-reaper.service" "$CALLLOG"
+expect $? "the reaper timer fires a minute after boot and every 5 minutes, and the provisioner starts no reaper itself"
+out_before "RUN: install -d -m 0700 $STORE/trash" "wrote $rs" && out_before "wrote $rt" "RUN: systemctl enable --now box-ci-store-reaper.timer" \
+  && out_before "RUN: systemctl enable --now box-ci-store-reaper.timer" "wrote $S/units/box-ci-ci@.service" && before '^mkfs.xfs' '^systemctl enable --now box-ci-store-reaper.timer'
+expect $? "Phase D follows the store and precedes the slot templates: the trash is made before the reaper's units, and its timer is enabled before any template is written"
+[ "$(sed -n 's/^REAPER_UNIT="\${KNOWN_CI_NAME:-}\(.*\)"$/box-ci\1/p' "$HELPER")" = "$(basename "$rs")" ] && [ "$(sed -n 's/^TRASH_DIR="\$STORE_DIR\(.*\)"$/\1/p' "$HELPER")" = /trash ]
+expect $? "the reaper unit and the trash are where the slot helper derives them: <lane>-store-reaper.service and <store>/trash"
 cu="$S/units/box-ci-ci@.service"; qu="$S/units/box-ci-qae@.service"
 grep -qxF "ExecStart=/usr/bin/docker run --rm --runtime=sysbox-runc --network box-ci --cgroup-parent box-ci.slice --memory 4g --pids-limit 2048 --tmpfs /tmp:size=2g,exec --oom-score-adj 1000 --dns 1.1.1.1 --dns 8.8.8.8 --cpuset-cpus \${KNOWN_CI_CPUSET_%i} -v $S/state/slot-ci-%i:/home/runner -v $STORE/slot-ci-%i:/var/lib/docker -v $S/run/ci/%i/jit:/run/jit:ro --name box-ci-ci-%i box-ci-runner:\${KNOWN_CI_IMAGE_TAG}" "$cu"
 expect $? "ExecStart runs one Sysbox container with the lane's limits and --oom-score-adj 1000, the kind's slot mount, its store snapshot on /var/lib/docker and the listener's read-only JIT file"
@@ -316,7 +355,7 @@ grep -qx "Slice=box-ci.slice" "$cu" && grep -qx "RuntimeMaxSec=4800" "$cu" && gr
 expect $? "the slot unit runs one job per start, is never refused a start, and is killed past warm_max_age_sec + runtime_max_sec on a warm-pool lane"
 { ! grep -q "RestartSec\|RestartSteps\|^\[Install\]\|WantedBy" "$cu"; }; expect $? "the slot template has no restart delay and no [Install]: nothing but the listener starts it"
 grep -qx "TimeoutStopSec=300" "$cu" && grep -qx "TimeoutStopSec=300" "$qu" && ! grep -qx "TimeoutStopSec=60" "$cu"
-expect $? "the slot units give their cleanup 300 s, so a slow store-snapshot delete finishes before the instance is freed (60 s killed 195 of 332 cleanups on one machine, 2026-10-05)"
+expect $? "the slot units give their cleanup 300 s: a store the trash could not take is still deleted in the stop path, and 60 s killed 195 of 332 cleanups that deleted there (one machine, 2026-10-05)"
 grep -qx "ExecStartPre=+$HELPER prepare ci %i" "$cu" && grep -qx "ExecStopPost=+$HELPER cleanup ci %i" "$cu"; expect $? "the slot helper of the machine's checkout prepares and cleans up the instance as root"
 grep -qx "Environment=KNOWN_CI_SCOPE=org" "$cu" && grep -qx "Environment=KNOWN_CI_GH_HOSTS=$GHDIR/hosts.yml" "$cu" && grep -qx "EnvironmentFile=$S/state/image.env" "$cu" && grep -qx "Environment=KNOWN_CI_BRIDGE=box-ci0" "$cu" \
   && ! grep -q "KNOWN_CI_CODEX" "$cu"
@@ -390,6 +429,48 @@ expect $? "an org lane without a warm pool writes its slots' RuntimeMaxSec as ru
 setup
 out="$(BUILD_RC=1 run_org --apply 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && grep -q "the listener build failed" <<< "$out" && [ ! -e "$S/lib/box-ci/listener" ] && ! grep -q 'box-ci-listener.service' "$CALLLOG"; expect $? "a failed build installs nothing and starts nothing"
+
+# ---- the first apply of the store trash on a machine whose lane is running ------------------------
+# The lane as the kit left it before the trash: no trash directory, no reaper units, and slot
+# templates another rendering wrote. Instance ci@1 is on a job: its unit active, its job file and its
+# store copy there.
+setup
+run_org --apply >/dev/null 2>&1
+login_json > "$S/state/codex/auth.json"
+rm -rf "$STORE/trash" "$S/units"/box-ci-store-reaper.* "$S/units/multi-user.target.wants"/box-ci-store-reaper.* "$S/st/state"/box-ci-store-reaper.*
+sed -i 's/^# Managed by the runner lanes kit.*/# Managed by an earlier rendering of the kit./' "$S/units/box-ci-ci@.service" "$S/units/box-ci-qae@.service"
+cp "$S/units/box-ci-ci@.service" "$S/earlier-ci-template"
+mkdir -p "$STORE/slot-ci-1/overlay2"; printf 'live\n' > "$STORE/slot-ci-1/overlay2/file"
+: > "$CALLLOG"
+out="$(run_org --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(mode_of "$STORE/trash")" = 700 ] && [ -f "$S/units/box-ci-store-reaper.service" ] && [ -f "$S/units/box-ci-store-reaper.timer" ] && grep -qx "systemctl enable --now box-ci-store-reaper.timer" "$CALLLOG"
+expect $? "the first apply on a lane that is already running makes the trash and the reaper's unit and timer, and enables the timer"
+out_before "RUN: install -d -m 0700 $STORE/trash" "wrote $S/units/box-ci-store-reaper.service" && out_before "RUN: systemctl enable --now box-ci-store-reaper.timer" "wrote $S/units/box-ci-ci@.service" \
+  && grep -qx "# Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine." "$S/units/box-ci-ci@.service"
+expect $? "first-apply order: the trash exists and the reaper's timer runs before the slot templates are rewritten"
+{ ! grep -qE "^systemctl (start|stop|restart|kill|disable) [^ ]*box-ci-(ci|qae)@|^docker rm|^umount|^mount |^systemctl (restart|stop) box-ci-listener|^mkfs|^truncate" "$CALLLOG"; } \
+  && [ "$(cat "$STORE/slot-ci-1/overlay2/file")" = live ] && [ -f "$S/run/ci/1/job" ] && [ "$(cat "$S/st/state/box-ci-ci@1.service")" = active ] && [ -d "$STORE/golden-tag1" ]
+expect $? "that apply touches nothing that is running: no slot is stopped or restarted, the store is not remounted, the listener is not restarted, and a running job's store copy and job file stay"
+[ "$(sed -n 's/^Environment=\([A-Z0-9_]*\)=.*/\1/p' "$S/units/box-ci-ci@.service" | tr '\n' ' ')" = "KNOWN_CI_NAME KNOWN_CI_SCOPE KNOWN_CI_SLOT_GB KNOWN_CI_BRIDGE KNOWN_CI_GH_HOSTS KNOWN_CI_STATE_DIR KNOWN_CI_STORE_DIR KNOWN_CI_RUN_DIR KNOWN_CI_CPUSET_1 KNOWN_CI_CPUSET_2 " ] \
+  && [ "$(sed -n 's/^Environment=//p' "$S/units/box-ci-ci@.service")" = "$(sed -n 's/^Environment=//p' "$S/earlier-ci-template")" ]
+expect $? "the rewritten slot template sets the variables the template always set and no new one, so a slot started before the apply has all its cleanup reads"
+# The slot that was running finishes after the apply, with the environment of the template it started from.
+: > "$CALLLOG"
+out="$(as_unit "$S/earlier-ci-template" 1 cleanup ci 1 2>&1)"; rc=$?
+entry="$(ls -A "$STORE/trash")"
+[ "$rc" -eq 0 ] && [ ! -e "$STORE/slot-ci-1" ] && [ ! -e "$S/run/ci/1/job" ] && [ "$(trash_count)" = 1 ] && [ "$(cat "$STORE/trash/$entry/overlay2/file")" = live ]
+expect $? "a slot started from the earlier template and finishing after that apply is cleaned up from that template's own environment: its store copy is renamed into the trash and its instance freed"
+started="$(sed -n 's/^systemctl start --no-block //p' "$CALLLOG")"
+[ "$started" = box-ci-store-reaper.service ] && [ -f "$S/units/$started" ]; expect $? "and the reaper its cleanup starts is the unit the provisioner wrote"
+listener_files ci 2 7002
+out="$(as_unit "$S/units/box-ci-ci@.service" 2 prepare ci 2 2>&1)"; rc_prepare=$?
+[ "$rc_prepare" -eq 0 ] && cmp -s "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres" "$STORE/slot-ci-2/overlay2/layer1/diff/usr/bin/postgres"
+expect $? "a slot of the rewritten template is prepared from its own environment: a fresh copy of the preloaded store"
+out="$(as_unit "$S/units/box-ci-ci@.service" 2 cleanup ci 2 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$STORE/slot-ci-2" ] && [ ! -e "$S/run/ci/2/job" ] && [ "$(trash_count)" = 2 ]; expect $? "and cleaned up the same way: its copy joins the first in the trash"
+out="$(as_unit "$S/units/box-ci-store-reaper.service" 0 reap 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 0 ] && [ -d "$STORE/trash" ] && [ "$(cat "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres")" = bin ] && [ "$(grep -c ': deleted ' <<< "$out")" = 2 ]
+expect $? "the reaper, run from its own unit's environment, deletes both retired copies and leaves the preloaded store"
 
 # ---- without its App key: both scopes wait at the same gate ------------------------------------------
 for lane in box-ci own-ci; do
@@ -527,6 +608,8 @@ out="$(run_org --check 2>&1)"; rc=$?
 grep -q "network=box-ci bridge=box-ci0 icc=false subnet=172.20.0.0/16 gateway=172.20.0.1" <<< "$out" && grep -q "firewall docker_user_reject=present input_reject=present" <<< "$out"; expect $? "--check reports the network, its bridge name and both firewall rules"
 grep -q "store_fs=mounted (/dev/loop8 xfs 40G)" <<< "$out" && grep -q "disk free=62G lane_worst_case=60G (store 40G + 2 slots x 10G, all sparse)" <<< "$out"; expect $? "--check reports the store mount and the lane's disk headroom"
 grep -q "store=$STORE/golden-tag1 present" <<< "$out"; expect $? "--check reports the current tag's preloaded store"
+grep -qx "store_trash=$STORE/trash entries=0 oldest_age_s=none" <<< "$out" && grep -qx "store_reaper_timer=box-ci-store-reaper.timer active" <<< "$out" && grep -qx "store_reaper=box-ci-store-reaper.service inactive" <<< "$out"
+expect $? "--check reports the store's trash (empty on a converged lane), the reaper's timer, and the reaper's last run"
 grep -q "slice=box-ci.slice MemoryMax=17179869184 MemoryHigh=15032385536 CPUQuotaPerSecUSec=8s CPUWeight=50" <<< "$out" && grep -q "parent_slice=box.slice CPUWeight=50" <<< "$out"; expect $? "--check reports the slice limits as systemd applies them"
 grep -qx "template=box-ci-ci@.service current running=1" <<< "$out" && grep -qx "template=box-ci-qae@.service current running=none" <<< "$out" && grep -q "always_on_template=absent" <<< "$out"; expect $? "--check reports both templates, the instances running now, and no always-on template"
 grep -q "app_key=$S/etc/box-ci/app.pem present mode=0600" <<< "$out" && ! grep -qF "$KEY_MARKER" <<< "$out"; expect $? "--check reports the App key's presence and mode, never its content"
@@ -588,7 +671,29 @@ printf 'unhealthy 2026-09-29T12:00:00Z credentials: 2 GitHub 401/403 lines in 10
 out="$(run_org --check 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && grep -qx "listener_health=unhealthy 2026-09-29T12:00:00Z credentials: 2 GitHub 401/403 lines in 10 minutes" <<< "$out"; expect $? "--check fails on an unhealthy verdict, printing it"
 rm -f "$S/healthrun/box-ci-listener-health"
-for t in box-ci-listener-health.timer box-ci-token-refresh.timer box-ci-image-build.timer box-ci-codex-keepalive.timer; do
+# The store's trash: its backlog, and a reaper that is stuck.
+trash_age() { sed -n 's/^store_trash=.* oldest_age_s=//p' <<< "$out"; }
+mkdir "$STORE/trash/$(( $(date +%s) - 60 )).slot-ci-1.4242" "$STORE/trash/$(date +%s).slot-wait-2.4243"
+out="$(run_org --check 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qE "^store_trash=$STORE/trash entries=2 oldest_age_s=[0-9]+$" <<< "$out" && [ "$(trash_age)" -ge 60 ] && [ "$(trash_age)" -lt 1800 ] && ! grep -q "store_trash_stale" <<< "$out"
+expect $? "--check reports the trash's backlog and the age of its oldest entry, read from the entry's name, and passes while the reaper keeps up"
+mkdir "$STORE/trash/$(( $(date +%s) - 3600 )).slot-ci-2.4244"
+out="$(run_org --check 2>&1)"; rc=$?
+rm -rf "$STORE/trash"; mkdir -m 0700 "$STORE/trash"
+[ "$rc" -ne 0 ] && grep -qE "^store_trash=$STORE/trash entries=3 oldest_age_s=[0-9]+$" <<< "$out" && [ "$(trash_age)" -ge 3600 ] \
+  && grep -qE "^store_trash_stale=the oldest retired store copy has waited [0-9]+s, past 1800s: the reaper is stuck or behind \(journalctl -u box-ci-store-reaper\.service\)$" <<< "$out"
+expect $? "--check fails when the trash's oldest entry has waited more than 30 minutes: the reaper is stuck or behind"
+echo failed > "$S/st/state/box-ci-store-reaper.service"
+out="$(run_org --check 2>&1)"; rc=$?
+rm -f "$S/st/state/box-ci-store-reaper.service"
+[ "$rc" -ne 0 ] && grep -qx "store_reaper=box-ci-store-reaper.service failed" <<< "$out" \
+  && grep -qx "store_reaper_failed=its last run could not delete a retired store copy (journalctl -u box-ci-store-reaper.service)" <<< "$out"
+expect $? "--check fails when the reaper's last run could not delete a copy"
+rmdir "$STORE/trash"
+out="$(run_org --check 2>&1)"; rc=$?
+mkdir -m 0700 "$STORE/trash"
+[ "$rc" -ne 0 ] && grep -qx "store_trash=$STORE/trash absent (re-run --apply)" <<< "$out"; expect $? "--check fails on a store without its trash directory"
+for t in box-ci-listener-health.timer box-ci-token-refresh.timer box-ci-image-build.timer box-ci-codex-keepalive.timer box-ci-store-reaper.timer; do
   echo inactive > "$S/st/state/$t"
   out="$(run_org --check 2>&1)"; rc=$?
   echo active > "$S/st/state/$t"
@@ -650,8 +755,10 @@ converged_org
 mkdir -p "$S/units/multi-user.target.wants"; ln -sf "$S/units/x" "$S/units/multi-user.target.wants/box-ci@3.service"
 out="$(run_org --remove 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q "DRY-RUN: systemctl disable --now box-ci-listener.service" <<< "$out" && grep -q "DRY-RUN: docker network rm box-ci" <<< "$out" && grep -q "DRY-RUN: $S/lib/box-ci/listener -delete-sets $S/etc/box-ci/listener.json" <<< "$out"; expect $? "--remove alone plans the teardown, the scale sets' deletion included"
+grep -q "DRY-RUN: systemctl disable --now box-ci-store-reaper.timer" <<< "$out" && grep -q "DRY-RUN: systemctl stop box-ci-store-reaper.service" <<< "$out" && grep -q "DRY-RUN: rm -rf $STORE/trash$" <<< "$out"; expect $? "--remove alone plans the store reaper's stop and the emptying of the trash"
 { ! grep -qE "$MUTATIONS" "$CALLLOG"; } && [ -f "$S/units/box-ci-ci@.service" ]; expect $? "--remove alone mutates nothing"
 mkdir -p "$STORE/slot-ci-1" "$STORE/slot-qae-2" "$S/state/slot-ci-1"; echo "$S/state/slot-ci-1" >> "$S/st/mounts"
+mkdir -p "$STORE/trash/1700000100.slot-ci-1.7/overlay2"; printf 'retired\n' > "$STORE/trash/1700000100.slot-ci-1.7/overlay2/file"
 mkdir -p "$S/healthrun"; printf 'ok 2026-09-29T12:00:00Z\n' > "$S/healthrun/box-ci-listener-health"; date +%s > "$S/healthrun/box-ci-listener-health.restarted"
 : > "$CALLLOG"
 out="$(run_org --remove --apply 2>&1)"; rc=$?
@@ -665,13 +772,17 @@ expect $? "--remove disables the Codex keepalive timer before the reload, and le
 grep -qx "systemctl stop box-ci-ci@1.service" "$CALLLOG" && grep -qx "systemctl stop box-ci-qae@2.service" "$CALLLOG" && grep -qx "docker rm -f box-ci-ci-1" "$CALLLOG" && grep -qx "docker rm -f box-ci-qae-2" "$CALLLOG"; expect $? "--remove stops every slot unit of both kinds and removes its container"
 grep -qx "systemctl disable --now box-ci@3.service" "$CALLLOG" && grep -qx "docker rm -f box-ci-3" "$CALLLOG"; expect $? "--remove also stops and disables a leftover always-on instance"
 grep -qx "umount $S/state/slot-ci-1" "$CALLLOG" && [ ! -e "$S/state/slot-ci-1" ] && [ ! -e "$STORE/slot-ci-1" ] && [ ! -e "$STORE/slot-qae-2" ] && [ -d "$STORE/golden-tag1" ] && [ -f "$S/units/$STORE_UNIT" ]; expect $? "--remove unmounts and deletes the slot filesystems and snapshots and leaves the store filesystem and the preloaded store"
+grep -qx "systemctl disable --now box-ci-store-reaper.timer" "$CALLLOG" && before '^systemctl stop box-ci-qae@2.service' '^systemctl disable --now box-ci-store-reaper.timer' \
+  && before '^systemctl disable --now box-ci-store-reaper.timer' '^systemctl stop box-ci-store-reaper.service' && before '^systemctl stop box-ci-store-reaper.service' '^systemctl daemon-reload'
+expect $? "--remove stops the store reaper, its timer first, once every slot has stopped, and before the units are deleted"
+[ ! -e "$STORE/trash" ] && [ -f "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres" ]; expect $? "--remove empties the store's trash and leaves the preloaded store"
 grep -qx "listener -delete-sets $S/etc/box-ci/listener.json" "$CALLLOG" && before '^systemctl stop box-ci-qae@2.service' '^listener -delete-sets'; expect $? "--remove has the listener delete the lane's scale sets, after the slots stopped"
 [ "$(grep -c '^gh api -X DELETE' "$CALLLOG" | tr -d ' ')" = 6 ] && ! grep -q 'runners/50[567]\|runners/510' "$CALLLOG"; expect $? "--remove deregisters every lane registration of both shapes and nothing else"
 for f in box-ci-ci@.service box-ci-qae@.service box-ci-listener.service box-ci.slice box.slice box-ci-token-refresh.service box-ci-token-refresh.timer box-ci-image-build.service box-ci-image-build.timer box-ci-listener-health.service box-ci-listener-health.timer \
-  box-ci-codex-keepalive.service box-ci-codex-keepalive.timer; do
+  box-ci-codex-keepalive.service box-ci-codex-keepalive.timer box-ci-store-reaper.service box-ci-store-reaper.timer; do
   [ ! -e "$S/units/$f" ] || { echo "  left: $f"; false; } || break
 done
-expect $? "--remove deletes every lane unit: templates, listener, slices, token, image-build, health and keepalive units"
+expect $? "--remove deletes every lane unit: templates, listener, slices, token, image-build, health, keepalive and store-reaper units"
 [ ! -e "$S/run" ] && [ ! -e "$S/lib/box-ci/listener" ] && [ ! -e "$S/etc/box-ci/listener.json" ] && [ ! -e "$S/etc/box-ci/codex-config.toml" ] && grep -qx "docker network rm box-ci" "$CALLLOG"; expect $? "--remove deletes the run dir, the listener binary, its config, the tracked Codex config and the network"
 [ ! -e "$S/healthrun/box-ci-listener-health" ] && [ ! -e "$S/healthrun/box-ci-listener-health.restarted" ]; expect $? "--remove deletes the health verdict and its cooldown"
 [ -f "$S/etc/box-ci/app.pem" ] && [ -f "$S/state/codex/auth.json" ] && ! grep -qE '^(apt-get|userdel)' "$CALLLOG" && grep -q "Left in place: the host's Docker and Sysbox, .*the App key ($S/etc/box-ci/app.pem), the lane user box-ci and its Codex stores $S/state/codex" <<< "$out"
@@ -679,10 +790,10 @@ expect $? "--remove keeps the App key, the lane user and its Codex login, and sa
 setup
 printf '{"runner_groups": [{"id": 1, "name": "Default"}]}\n' > "$S/fx/groups-none.json"
 GROUPS_JSON="$S/fx/groups-none.json" run_org --apply >/dev/null 2>&1
-rm -f "$S/units/box-ci-token-refresh.timer" "$S/units/box-ci-image-build.timer" "$S/units/box-ci-codex-keepalive.timer"
+rm -f "$S/units/box-ci-token-refresh.timer" "$S/units/box-ci-image-build.timer" "$S/units/box-ci-codex-keepalive.timer" "$S/units/box-ci-store-reaper.timer"
 : > "$CALLLOG"
 out="$(run_org --remove --apply 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && ! grep -q "listener-health\|token-refresh.timer\|image-build.timer\|codex-keepalive.timer" <<< "$(grep '^systemctl disable' "$CALLLOG")" && [ "$(line_of '^systemctl disable --now box-ci-listener.service')" = 1 ] && grep -qx "docker network rm box-ci" "$CALLLOG"
+[ "$rc" -eq 0 ] && ! grep -q "listener-health\|token-refresh.timer\|image-build.timer\|codex-keepalive.timer\|store-reaper" <<< "$(grep '^systemctl \(disable\|stop\)' "$CALLLOG")" && [ "$(line_of '^systemctl disable --now box-ci-listener.service')" = 1 ] && grep -qx "docker network rm box-ci" "$CALLLOG"
 expect $? "--remove of a lane whose listener and timers never ran disables no unit file that does not exist, and runs to the end"
 
 # ---- qae_concurrency 2: one Codex login store per qae instance -----------------------------------
@@ -799,10 +910,13 @@ STATE_T="$S/two/own-ci/state" RUN_UNDER_TEST="$S/two/own-ci/run" run_user --appl
 [ "$rc_org" -eq 0 ] && [ "$rc_user" -eq 0 ]; expect $? "two lanes apply on one host"
 for f in box-ci-ci@.service box-ci-qae@.service own-ci-ci@.service own-ci-qae@.service box-ci.slice box.slice own-ci.slice own.slice \
   box-ci-listener.service own-ci-listener.service box-ci-token-refresh.timer own-ci-token-refresh.timer box-ci-image-build.timer own-ci-image-build.timer \
-  box-ci-listener-health.timer own-ci-listener-health.timer box-ci-codex-keepalive.timer own-ci-codex-keepalive.timer; do
+  box-ci-listener-health.timer own-ci-listener-health.timer box-ci-codex-keepalive.timer own-ci-codex-keepalive.timer box-ci-store-reaper.timer own-ci-store-reaper.timer; do
   [ -f "$S/units/$f" ] || { echo "  missing: $f"; false; } || break
 done
 expect $? "each lane writes its own templates, slices, listener and timers"
+grep -qx "Environment=KNOWN_CI_STORE_DIR=$S/two/box-ci/state/store" "$S/units/box-ci-store-reaper.service" && grep -qx "Environment=KNOWN_CI_STORE_DIR=$S/two/own-ci/state/store" "$S/units/own-ci-store-reaper.service" \
+  && [ -d "$S/two/box-ci/state/store/trash" ] && [ -d "$S/two/own-ci/state/store/trash" ]
+expect $? "each lane's reaper deletes from the trash of its own store, never another lane's"
 box_store="$(printf '%s' "${S#/}/two/box-ci/state/store" | sed 's/-/\\x2d/g; s#/#-#g').mount"; own_store="$(printf '%s' "${S#/}/two/own-ci/state/store" | sed 's/-/\\x2d/g; s#/#-#g').mount"
 [ -f "$S/units/$box_store" ] && [ -f "$S/units/$own_store" ] && [ "$box_store" != "$own_store" ]; expect $? "each lane mounts its own store filesystem through its own unit"
 grep -qx "Environment=KNOWN_CI_STATE_DIR=$S/two/box-ci/state" "$S/units/box-ci-ci@.service" && grep -qx "Environment=KNOWN_CI_STATE_DIR=$S/two/own-ci/state" "$S/units/own-ci-ci@.service" \
@@ -875,6 +989,8 @@ out="$(run_derived "$S/host.yml" box box-ci --remove 2>&1)"; rc=$?
   && grep -q "DRY-RUN: rm -rf /var/lib/box-ci/slot-1 /var/lib/box-ci/slot-1.img /var/lib/box-ci/store/slot-1" <<< "$out" && grep -q "DRY-RUN: rm -rf /run/box-ci$" <<< "$out" \
   && grep -q "DRY-RUN: rm -f /run/box-ci-listener-health /run/box-ci-listener-health.restarted$" <<< "$out" && grep -q "DRY-RUN: systemctl disable --now box-ci@1.service" <<< "$out"
 expect $? "its slot images, store snapshots, run dir and health verdict live under its name, and --remove covers the retiring <name>@<n> instances too"
+grep -q "DRY-RUN: rm -rf /var/lib/box-ci/store/trash$" <<< "$out" && grep -qx 'TRASH_DIR="$STORE_DIR/trash"' "$ROOT/bin/provision-lane.sh" && grep -qx 'REAPER_SERVICE="$NAME-store-reaper.service"' "$ROOT/bin/provision-lane.sh"
+expect $? "the store's trash is /var/lib/<lane>/store/trash and its reaper <lane>-store-reaper, derived from the lane's name like every other lane path"
 grep -qx 'HEALTH_DIR="${KNOWN_CI_LISTENER_HEALTH_DIR:-/run}"' "$ROOT/bin/listener-health.sh" && grep -qx 'STATE="$HEALTH_DIR/$1-listener-health"' "$ROOT/bin/listener-health.sh"; expect $? "the health verdict path is the one the health check writes"
 # The example host file's gates, with the paths a machine has: the exact key pipe and login commands.
 for lane in greenbauer-ci acme-ci; do
@@ -914,6 +1030,16 @@ expect $? "vps-1's orbit-ci renders orbit-ci-wait@.service: a ci slot's containe
 grep -qx "ExecStartPre=+$ROOT/bin/lane-slot.sh prepare wait %i" "$wu" && grep -qx "ExecStopPost=+$ROOT/bin/lane-slot.sh cleanup wait %i" "$wu" \
   && grep -qx "Slice=orbit-ci.slice" "$wu" && grep -qx "Restart=no" "$wu" && grep -qx "RuntimeMaxSec=4800" "$wu" && grep -qx "TimeoutStopSec=300" "$wu"
 expect $? "the wait template is prepared and cleaned up as the wait kind, one job per start, in the lane's slice, with the lane's runtime and cleanup budgets"
+# A wait slot run from that template: the helper makes the empty store at the path the template
+# mounts on the container's /var/lib/docker, and no copy of the preloaded store.
+listener_files wait 1 7101; : > "$CALLLOG"
+out="$(as_unit "$wu" 1 prepare wait 1 2>&1)"; rc=$?
+wait_store="$(sed -n 's/^ExecStart=.* -v \([^ ]*\):\/var\/lib\/docker .*/\1/p' "$wu" | sed 's/%i/1/')"
+[ "$rc" -eq 0 ] && [ "$wait_store" = "$S/state/store/slot-wait-1" ] && [ -d "$wait_store" ] && [ -z "$(ls -A "$wait_store")" ] && [ "$(mode_of "$wait_store")" = 700 ] && ! grep -q '^cp --reflink' "$CALLLOG"
+expect $? "a wait slot started from its template gets an empty 0700 store at the path the template mounts on /var/lib/docker, and no copy of the preloaded store is made"
+out="$(as_unit "$wu" 1 cleanup wait 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$wait_store" ] && [ ! -e "$S/run/wait/1/job" ] && grep -qx "systemctl start --no-block orbit-ci-store-reaper.service" "$CALLLOG" && [ -f "$S/units/orbit-ci-store-reaper.service" ]
+expect $? "and its cleanup retires that store, starts the lane's reaper and frees the instance"
 # The listener's config is written once the lane's App key is in place (the operator pipes it in).
 install -d -m 0700 "$S/etc/orbit-ci"; printf 'fake-key-marker\n' > "$S/etc/orbit-ci/app.pem"; chmod 0600 "$S/etc/orbit-ci/app.pem"
 HOST_YML_UNDER_TEST="$ROOT/tests/fixtures/hosts/vps-1.yml" run_lane orbit-ci --apply >/dev/null 2>&1

@@ -199,6 +199,10 @@ setup
 run_ep; rc=$?
 stop_dockerd_stub
 [ "$rc" -eq 0 ] && grep -q "the runner ran its job and exited 0" "$TMP/s/out"; expect $? "a runner that ran its job and exited 0 ends the container with 0"
+# A wait slot's inner Docker store is an empty directory (bin/lane-slot.sh), as is every job's on a
+# lane that preloads nothing: the job mode asks nothing of what is under /var/lib/docker.
+[ "$rc" -eq 0 ] && [ -z "$(ls -A "$TMP/s/var-lib-docker")" ] && [ ! -e "$TMP/s/etc/preloaded-images" ] && grep -qx "dockerd " "$CALLLOG" && ! grep -q '^docker image' "$CALLLOG"
+expect $? "a job runs on an empty /var/lib/docker and with no preload manifest: the job mode starts the inner dockerd and neither reads nor requires preloaded images"
 
 setup
 RAN_JOB=0 run_ep; rc=$?
