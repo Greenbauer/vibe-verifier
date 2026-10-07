@@ -34,6 +34,25 @@ def _split_response(stdout: str) -> tuple[int, dict[str, str], str]:
     return status, headers, body
 
 
+def _graphql_command(query: str, variables: dict[str, str]) -> list[str]:
+    command = ["gh", "api", "--include", "graphql", "-f", "query=" + query]
+    for name, value in variables.items():
+        if not name.isidentifier() or not isinstance(value, str):
+            raise ApiError("invalid_response")
+        command.extend(("-f", "%s=%s" % (name, value)))
+    return command
+
+
+def _graphql_body(stdout: str) -> dict:
+    try:
+        value = json.loads(_split_response(stdout)[2])
+    except json.JSONDecodeError:
+        raise ApiError("invalid_response") from None
+    if not isinstance(value, dict):
+        raise ApiError("invalid_response")
+    return value
+
+
 def _limit_family(endpoint: str) -> str:
     """The endpoint's path with its owner, repository, numeric IDs, and SHAs replaced by `*`.
 
@@ -182,6 +201,53 @@ class GitHubAPI:
         if not isinstance(value, dict):
             raise ApiError("invalid_response")
         return value
+
+    def _reserve(self, family: str) -> None:
+        with self._lock:
+            if self.clock() < max(self.backoff_until, self._family_backoff.get(family, 0.0)):
+                raise ApiError("rate_limited")
+            if self.calls >= self.max_calls:
+                raise ApiError("request_budget_exhausted")
+            self.calls += 1
+
+    def _remember_remaining(self, headers: dict[str, str]) -> str:
+        remaining = headers.get("x-ratelimit-remaining", "")
+        if remaining.isdigit():
+            with self._lock:
+                lowest = self.lowest_remaining
+                self.lowest_remaining = int(remaining) if lowest is None else min(lowest, int(remaining))
+        return remaining
+
+    def _pause(self, family: str, headers: dict[str, str], remaining: str) -> None:
+        try:
+            reset = float(headers["x-ratelimit-reset"]) if remaining == "0" else None
+        except (KeyError, ValueError):
+            reset = None
+        with self._lock:
+            if reset is None:
+                self.backoff_until = max(self.backoff_until, self.clock() + 60)
+            else:
+                self._family_backoff[family] = max(self._family_backoff.get(family, 0.0), reset)
+
+    def graphql(self, query: str, variables: dict[str, str]) -> dict:
+        """One GraphQL request. Counts as one budget unit and is not ETag-cached.
+
+        GraphQL is a POST, so a later refresh cannot reuse it with If-None-Match the way REST reads can.
+        """
+        self._reserve("graphql")
+        try:
+            result = self.runner(_graphql_command(query, variables), capture_output=True, text=True,
+                                 timeout=self.timeout)
+        except (OSError, subprocess.TimeoutExpired):
+            raise ApiError("unavailable") from None
+        headers = _split_response(result.stdout)[1] if result.stdout else {}
+        remaining = self._remember_remaining(headers)
+        if result.returncode != 0:
+            code = self._classify_error(result.stderr)
+            if code == "rate_limited":
+                self._pause("graphql", headers, remaining)
+            raise ApiError(code)
+        return _graphql_body(result.stdout)
 
     def rate(self) -> dict:
         value = self.one("rate_limit")

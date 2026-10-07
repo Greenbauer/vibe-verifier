@@ -325,7 +325,7 @@ resolution is not duplicated here. Bot roles sharing a workflow share collection
 history is inspected until the newest five outcomes are known or coverage is explicitly partial.
 Jobs are read for at most a workflow's 50 newest completed runs, so a job name that never runs in
 that workflow reports partial history instead of reading every run of the past week.
-A refresh is capped at 200 REST page requests that cost rate limit; an unchanged answer (HTTP 304) is free
+A refresh is capped at 200 GitHub requests that cost rate limit, counting each REST page and each GraphQL read; an unchanged REST answer (HTTP 304) is free
 and not counted. Active data is cached for 60
 seconds and direct subscription inventory for 300 seconds. The response includes calls used, the
 reported REST limit/remaining/reset values, and the lowest remaining count seen on any response
@@ -344,6 +344,23 @@ whole weeks, past thirty days whole months, and from a year whole years. The num
 default text color through three days, turns yellow after that, and turns red after two weeks.
 An age of exactly three days or exactly two weeks keeps the younger color. A running step's own
 elapsed time still shows hours.
+Beside that age, the same units and colors show when the latest push landed. The label under
+that time is the kind of push: feature, bug fix, refactor, performance, docs, test, chore, ci,
+build, style, revert, work in progress, or update when the commit message has no such prefix.
+A merge of the pull request's base branch is "sync with main" (or "sync with <base>" when the
+base is not main or master). When one push contains several commits, a sync of the base is
+ignored if the push also contains other work, and the label is the kind of the newest other
+commit. The time is the commit's pushed time when GitHub has one, otherwise the commit time.
+If that read fails, the cell says Unavailable.
+The title is green when the pull request is fully merge-ready: GitHub's merge state is clean
+(not a draft, not behind the base, and not blocked or conflicting), every current-head check
+is green (skipped checks may sit beside at least one success, and a check that is not required
+still counts), and every review thread is resolved and has a reply. A thread list that did not
+load completely, or a merge state GitHub has not calculated, keeps the title white.
+When the pull request has comments, the step line shows a message icon and the number of
+unresolved review threads. The number is a lower bound, with a plus, when more threads exist
+than the read returned. The icon is hidden when the comment read did not succeed, so a missing
+read is not shown as zero.
 A pull request's badge shows its worst current-head check. A skipped check never outranks a passed
 one, so the badge reads Skipped only when every check was skipped.
 The step meter is one line for the whole step total. Each outcome takes a share of that line
@@ -388,7 +405,9 @@ templates, and `test_dashboard_follow.py` the follower's check-run gate and roll
 `tests/test_dashboard_server_ui.py` covers loopback HTTP, proxy and direct routing headers,
 read-only methods, Host/Origin/traversal, XSS-safe JSON and DOM construction, filters, account usage
 math, the class on a row's age number, local assets, the tab icon route, and the approved palette.
-`tests/test_dashboard_pull_age.py` covers pull-request age units and color. `tests/test_dashboard_usage_charts.py` covers the usage
+`tests/test_dashboard_pull_age.py` covers pull-request age units and color.
+`tests/test_dashboard_pull_signals.py` covers the latest push's kind and time, merge-ready
+titles, and the unresolved-comment count. `tests/test_dashboard_usage_charts.py` covers the usage
 charts' clock-hour mapping, observed and unobserved hours, usual-day averages, scales, and pace.
 `tests/test_dashboard_usage_quota.py` covers the subscription bars: window labels, pace tick, color,
 reset countdown, and one block per provider. The repository's existing unittest command runs all

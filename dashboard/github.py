@@ -11,6 +11,8 @@ from urllib.parse import quote, urlencode
 
 from .config import BOT_KEYS, BotDefinition, Config
 from .gh_api import ApiError, GitHubAPI
+from .pull_signals import face_fields, load_signals
+from .steps import recent_bot_runs, step_summary
 from .util import category, elapsed_seconds, github_url, iso_time, parse_time, status_category
 
 MAX_WORKERS = 4
@@ -32,35 +34,6 @@ def _time_key(row: dict, *keys: str) -> datetime:
         if value:
             return value
     return datetime.min.replace(tzinfo=timezone.utc)
-
-
-def step_summary(jobs: list[dict]) -> dict:
-    counts = {name: 0 for name in ("success", "failed", "skipped", "cancelled", "pending", "unknown")}
-    total = completed = 0
-    known = bool(jobs)
-    for job in jobs:
-        steps = job.get("steps")
-        # GitHub returns no steps for a skipped job; once a job completes, an empty list means zero steps.
-        if not isinstance(steps, list) or not steps and job.get("status") != "completed":
-            known = False
-            continue
-        for step in steps:
-            state = step["category"]
-            counts[state] += 1
-            total += 1
-            if step.get("status") == "completed":
-                completed += 1
-    return {"known": known, "completed": completed if known else None, "total": total if known else None,
-            "remaining": total - completed if known else None, "counts": counts,
-            "percent": round(completed * 100 / total) if known and total else None}
-
-
-def recent_bot_runs(rows: list[dict], now: datetime, hours: int, limit: int = 5) -> list[dict]:
-    cutoff = now - timedelta(hours=hours)
-    complete = [row for row in rows if row.get("completed_at")
-                and cutoff <= parse_time(row["completed_at"]) <= now]
-    complete.sort(key=lambda row: parse_time(row["completed_at"]), reverse=True)
-    return complete[:limit]
 
 
 # The start of a pin whose ruleset history GitHub refused: every run counts as at the current pin.
@@ -292,7 +265,8 @@ class GitHubCollector:
                 "html_url": github_url(row.get("html_url"), self.config.owner),
                 "subscription": inventory["subscription"]}
 
-    def _pull(self, repository: str, row: dict, inventory: dict, rules: list[dict] = ()) -> dict:
+    def _pull(self, repository: str, row: dict, inventory: dict, rules: list[dict] = (),
+              signals: dict | None = None) -> dict:
         identity = self._pull_identity(repository, row, inventory)
         number, sha = identity["number"], identity["head_sha"]
         if not isinstance(number, int) or not isinstance(sha, str):
@@ -301,15 +275,19 @@ class GitHubCollector:
         statuses = self._statuses(repository, sha)
         runs = self._actions_runs(repository, sha, suites)
         current = self.api.one("repos/%s/pulls/%s" % (repository, number))
+        draft = current.get("draft") if isinstance(current.get("draft"), bool) else identity["draft"]
         if (current.get("head") or {}).get("sha") != sha:
-            return {**identity, "head_sha": (current.get("head") or {}).get("sha"), "head_changed": True,
+            face = face_fields(current, signals, evidence=False, draft=draft, checks=[], statuses=[], expected=[])
+            return {**identity, **face, "head_sha": (current.get("head") or {}).get("sha"), "head_changed": True,
                     "evidence_available": False, "attention": True,
                     "attention_reason": "Head changed while GitHub evidence was loading",
                     "checks": [], "statuses": [], "expected": [], "runs": []}
         checks, runs = self._current_only(checks, runs)
         expected = self._expected(repository, rules, checks + statuses, runs)
         attention, reason = self._attention(checks + statuses, runs, expected)
-        return {**identity, "head_changed": False, "evidence_available": True,
+        face = face_fields(current, signals, evidence=True, draft=draft, checks=checks, statuses=statuses,
+                           expected=expected)
+        return {**identity, **face, "draft": draft, "head_changed": False, "evidence_available": True,
                 "attention": attention, "attention_reason": reason,
                 "checks": checks, "statuses": statuses, "expected": expected, "runs": runs}
 
@@ -320,15 +298,19 @@ class GitHubCollector:
     def _repository(self, repository: str, inventory: dict) -> dict:
         rows = self.api.items(_endpoint("repos/%s/pulls" % repository, state="open", per_page=100))
         pulls, errors, rules = [], [], {}
+        signals = load_signals(self.api, repository) if rows else {}
         for row in rows:
             try:
                 base = (row.get("base") or {}).get("ref")
                 if isinstance(base, str) and base not in rules:
                     rules[base] = self._branch_rules(repository, base)
-                pulls.append(self._pull(repository, row, inventory, rules.get(base, [])))
+                pulls.append(self._pull(repository, row, inventory, rules.get(base, []),
+                                        signals.get(row.get("number"))))
             except ApiError as error:
                 identity = self._pull_identity(repository, row, inventory)
-                pulls.append({**identity, "head_changed": False, "evidence_available": False,
+                face = face_fields(None, signals.get(row.get("number")), evidence=False,
+                                   draft=identity["draft"], checks=[], statuses=[], expected=[])
+                pulls.append({**identity, **face, "head_changed": False, "evidence_available": False,
                               "unavailable": True, "attention": True,
                               "attention_reason": "Current-head evidence is unavailable",
                               "checks": [], "statuses": [], "expected": [], "runs": [],

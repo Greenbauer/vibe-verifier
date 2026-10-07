@@ -418,21 +418,27 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
 const fs=require('fs');
 const {safeUrl}=require('./dashboard/static/helpers.js');
 const app=fs.readFileSync('./dashboard/static/app.js','utf8');
-const source=app.slice(app.indexOf('  function prRow('),app.indexOf('  function renderPulls('));
+const source=app.slice(app.indexOf('  function pushStat('),app.indexOf('  function renderPulls('));
 function el(tag, attrs={}, ...children) {
   return {tag, attrs, children:children.flat().filter(value => value !== null && value !== undefined)};
 }
 const prRow=new Function('el','safeUrl','snapshot','combinedCategory','currentWork','badge','progress','since','ageClass',
   source+'return prRow;')(el, safeUrl, {owner:'octocat'}, ()=>'failed', ()=>null,
-  status=>el('span',{},status), ()=>el('div',{class:'progress'}), ()=>'2d', ()=>'age-yellow');
+  status=>el('span',{},status), ()=>el('div',{class:'progress'}),
+  value=>value==='2026-09-01T00:00:00Z'?'5w':'2d',
+  value=>value==='2026-09-01T00:00:00Z'?'age-red':'age-yellow');
 const pull=(html_url, stale)=>({repository:'octocat/example',number:3,title:'Fix the gate',author:'octocat',
   head_sha:'abcdef1234567890',html_url,attention_reason:'A current-head check failed',
   created_at:'2026-10-01T00:00:00Z',stale});
+const ready=pull('https://github.com/octocat/example/pull/4', false);
+ready.merge_ready=true; ready.title='Ship the gate';
+ready.push={pushed_at:'2026-09-01T00:00:00Z', kind:'bug fix'};
 console.log(JSON.stringify({
   linked:prRow(pull('https://github.com/octocat/example/pull/3', false)),
   stale:prRow(pull('https://github.com/octocat/example/pull/3', true)),
   foreign:prRow(pull('https://github.com/evil/example/pull/3', false)),
   missing:prRow(pull(null, false)),
+  ready:prRow(ready),
   detail:app.includes('function renderDetail(')||app.includes('go("prs",')
 }));
 ''')
@@ -451,7 +457,20 @@ console.log(JSON.stringify({
         self.assertIn("on GitHub", linked["attrs"]["aria-label"])
         self.assertIn("Fix the gate", text(linked))
         age = next(node for node in linked["children"] if node["attrs"].get("class") == "pr-age")
-        self.assertEqual(age["children"][0], {"tag": "b", "attrs": {"class": "age-yellow"}, "children": ["2d"]})
+        self.assertEqual(age["children"][0]["children"][0],
+                         {"tag": "b", "attrs": {"class": "age-yellow"}, "children": ["2d"]})
+        self.assertEqual(age["children"][0]["children"][1]["children"], ["PR age"])
+        self.assertEqual(age["children"][1]["children"][0]["children"], ["Unavailable"])
+        self.assertEqual(age["children"][1]["children"][1]["children"], ["Last push"])
+        ready = result["ready"]
+        self.assertIn("Fully merge-ready", ready["attrs"]["aria-label"])
+        identity = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-identity")
+        self.assertEqual(identity["children"][0]["attrs"]["class"], "merge-ready")
+        self.assertEqual(identity["children"][0]["attrs"]["title"], "Fully merge-ready")
+        ready_age = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-age")
+        self.assertEqual(ready_age["children"][1]["children"][0],
+                         {"tag": "b", "attrs": {"class": "age-red"}, "children": ["5w"]})
+        self.assertEqual(ready_age["children"][1]["children"][1]["children"], ["bug fix"])
         self.assertEqual(result["stale"]["attrs"]["class"], "pr-row stale-row")
         self.assertEqual(result["stale"]["attrs"]["href"], linked["attrs"]["href"])
         for key in ("foreign", "missing"):
