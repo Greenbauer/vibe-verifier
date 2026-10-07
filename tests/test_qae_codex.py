@@ -160,7 +160,7 @@ COOKIE = {"name": "_vercel_jwt", "value": "test-cookie-value.0123456789_abcdef-g
 class StorageState(unittest.TestCase):
     """The action's explore step run as the shell it is, with a stub codex that records the
     playwright-mcp arguments it was handed: the storage state reaches the browser, its cookie values
-    reach playwright-mcp's --secrets redaction, and a file that is not a cookies-only storage state
+    reach playwright-mcp's secrets redaction, and a file that is not a cookies-only storage state
     stops the run before any model session."""
 
     def setUp(self):
@@ -227,11 +227,12 @@ class StorageState(unittest.TestCase):
         other = dict(COOKIE, name="consent", value="all", httpOnly=False)
         result = self.run_step({"cookies": [COOKIE, other], "origins": []})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        secrets = os.path.join(self.temp, "qae-codex-mcp.env")
+        config = os.path.join(self.temp, "qae-codex-mcp.json")
         self.assertEqual(self.browser_args()[10:], ["--storage-state", os.path.realpath(os.path.join(self.work, "state.json")),
-                                                   "--secrets", secrets])
-        self.assertEqual(Path(secrets).read_text(), "VV_COOKIE_1='%s'\nVV_COOKIE_2='all'\n" % COOKIE["value"])
-        self.assertEqual(stat.S_IMODE(os.stat(secrets).st_mode), 0o600)
+                                                   "--config", config])
+        self.assertEqual(json.loads(Path(config).read_text()),
+                         {"secrets": {"VV_COOKIE_1": COOKIE["value"], "VV_COOKIE_2": "all"}})
+        self.assertEqual(stat.S_IMODE(os.stat(config).st_mode), 0o600)
         self.assertNotIn(COOKIE["value"], result.stdout + result.stderr)
 
     def redact(self):
@@ -240,7 +241,8 @@ class StorageState(unittest.TestCase):
                               env=clean_env({"ARTIFACTS": "qae-artifacts", "RUNNER_TEMP": self.temp}))
 
     def test_a_login_reaches_the_browser_by_name_and_is_redacted_from_every_text_artifact(self):
-        cases = {"a quote-free value": "s3cret-Login-Value", "every quote but one": "It's\"a\\nmix"}
+        # A generated password can hold all three quote characters, which a dotenv file cannot carry.
+        cases = {"a quote-free value": "s3cret-Login-Value", "every quote, a hash and a backslash": "It's`a\"#\\mix"}
         for label, value in cases.items():
             with self.subTest(label):
                 for leftover in ("qae-artifacts", "args"):
@@ -250,14 +252,10 @@ class StorageState(unittest.TestCase):
                 result = self.run_step({"cookies": [COOKIE], "origins": []}, secrets={"QAE_TRAVELER_PASSWORD": value},
                                        typed=value)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                dotenv = os.path.join(self.temp, "qae-codex-mcp.env")
-                self.assertEqual(self.browser_args()[-2:], ["--secrets", dotenv])
-                lines = Path(dotenv).read_text().splitlines()
-                self.assertEqual(lines[0], "VV_COOKIE_1='%s'" % COOKIE["value"])
-                self.assertTrue(lines[1].startswith("QAE_TRAVELER_PASSWORD="), lines)
-                quote = lines[1][len("QAE_TRAVELER_PASSWORD=")]
-                self.assertEqual(lines[1], "QAE_TRAVELER_PASSWORD=%s%s%s" % (quote, value, quote))
-                self.assertNotIn(quote, value)
+                config = os.path.join(self.temp, "qae-codex-mcp.json")
+                self.assertEqual(self.browser_args()[-2:], ["--config", config])
+                self.assertEqual(json.loads(Path(config).read_text()),
+                                 {"secrets": {"VV_COOKIE_1": COOKIE["value"], "QAE_TRAVELER_PASSWORD": value}})
                 self.assertNotIn(value, result.stdout + result.stderr)
                 redacted = self.redact()
                 self.assertEqual(redacted.returncode, 0, redacted.stdout + redacted.stderr)
@@ -267,7 +265,7 @@ class StorageState(unittest.TestCase):
                     self.assertNotIn(value, text)
                     self.assertIn("<secret>QAE_TRAVELER_PASSWORD</secret>", text)
                 self.assertEqual(Path(self.work, "qae-artifacts", "qae", "AC1-step-1.png").read_bytes(), b"PNG" + value.encode())
-                for name in ("qae-codex-redact.json", "qae-codex-mcp.env"):
+                for name in ("qae-codex-redact.json", "qae-codex-mcp.json"):
                     self.assertFalse(os.path.exists(os.path.join(self.temp, name)), name + " outlived the redaction")
 
     def test_escaped_and_encoded_forms_of_a_value_are_redacted_and_no_fragment_survives(self):
@@ -303,8 +301,6 @@ class StorageState(unittest.TestCase):
             "a lower-case name": json.dumps({"password": "x"}),
             "a cookie name": json.dumps({"VV_COOKIE_1": "x"}),
             "an empty value": json.dumps({"PASSWORD": ""}),
-            "two lines": json.dumps({"PASSWORD": "a\nb"}),
-            "every quote": json.dumps({"PASSWORD": "'`\""}),
         }
         for label, raw in cases.items():
             with self.subTest(label):
@@ -316,7 +312,7 @@ class StorageState(unittest.TestCase):
     def test_nothing_to_redact_without_secrets(self):
         result = self.run_step()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("--secrets", self.browser_args())
+        self.assertNotIn("--config", self.browser_args())
         redacted = self.redact()
         self.assertEqual((redacted.returncode, redacted.stdout), (0, ""))
 

@@ -326,8 +326,8 @@ cookie with curl, writes the cookie as a Playwright storage state (cookies only)
 workspace, and declares the file as its `storage-state` output next to `url`. On the Codex lane,
 `actions/qae-codex` takes it as `storage-state`: it refuses a file that is not a cookies-only storage
 state before the model runs, starts playwright-mcp with `--storage-state`, and passes every cookie
-value to playwright-mcp's `--secrets`, which replaces it with `<secret>NAME</secret>` in each tool
-result, saved file and session log. Without that, `browser_run_code_unsafe` (a default tool) returns
+value to playwright-mcp's `secrets` (in a `--config` file), which replaces it with
+`<secret>NAME</secret>` in each tool result, saved file and session log. Without that, `browser_run_code_unsafe` (a default tool) returns
 the cookie to the model and the session log uploaded with the artifacts keeps it.
 
 After the preview resolves ([above](#a-reachable-preview-instead-of-a-site-on-the-runner)), with the
@@ -386,7 +386,8 @@ hands the explorer only a name for each credential:
 ```
 
 The explorer step passes `secrets-file: ${{ steps.site.outputs.secrets-file }}` to `actions/qae-codex`.
-playwright-mcp then types the value when the explorer enters the name, and shows `<secret>QAE_PASSWORD</secret>`
+A value can be any non-empty string: the action hands the values to playwright-mcp as the `secrets` of
+a JSON `--config` file, so quotes, `#` and backslashes need no escaping. playwright-mcp then types the value when the explorer enters the name, and shows `<secret>QAE_PASSWORD</secret>`
 in every tool result. Its session log still records what was typed, so after the explorer the action
 replaces every value (and its JSON-escaped and URL-encoded forms) in each non-image file under `qae-artifacts/` (the session log, the step logs,
 the verdict) and removes its copies; the posted verdict and the uploaded evidence hold no value. Never
