@@ -78,9 +78,10 @@ class Criteria(unittest.TestCase):
         output.write_text("")
         result = subprocess.run(["bash", "-e", "-c", action_script("criteria")], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"GITHUB_ACTION_PATH": str(ROOT / "actions" / "criteria"),
-                                               "GITHUB_OUTPUT": str(output), "VV_PATH": "pr-body.md", "VV_CHANGED": ""}))
+                                               "GITHUB_OUTPUT": str(output), "VV_PATH": "pr-body.md", "VV_CHANGED": "",
+                                               "VV_TICKET": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(output.read_text(), "count=2\ndeclared-none=\n")
+        self.assertTrue(output.read_text().startswith("count=2\ndeclared-none=\n"), output.read_text())
         self.assertIn("AC2 roles: admin, read-only", result.stdout)
 
 
@@ -266,7 +267,8 @@ class Template(unittest.TestCase):
         script = step_script(text, "- name: Write the declared inputs", "- name: Run the QA gates")
         result = subprocess.run(["bash", "-e", "-c", script], cwd=verify, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x", "PR_NUMBER": "7",
-                                               "REPO": "o/r", "SITE_URL": "http://localhost:3000", "REFERENCES": declared}))
+                                               "REPO": "o/r", "SITE_URL": "http://localhost:3000", "REFERENCES": declared,
+                                               "TICKET": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(json.loads(Path(verify, "qae-inputs", "references.json").read_text()), DIGESTS)
         line = [entry for entry in MANIFEST.read_text().splitlines() if entry.startswith("acceptance-verdict ")]

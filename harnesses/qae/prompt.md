@@ -4,9 +4,14 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
 (not the pull request): it says how to sign in and what state the site starts in.
 
 1. Read qae-inputs/pr-body.md. The list items under the "## Acceptance criteria" heading are
-   the criteria, numbered AC1, AC2, ... in order. If the only item reads "None: <reason>",
-   this pull request declares it has nothing for a browser to check: write nothing, post
-   nothing, and stop.
+   the criteria, numbered AC1, AC2, ... in order. If qae-inputs/ticket.md is not empty, it holds
+   the acceptance criteria of the ticket this pull request implements, read the same way (under
+   its "## Acceptance criteria" heading, or every list item when it has no headings) and
+   numbered TC1, TC2, ...: they are criteria too, whatever the pull request's own list says.
+   Below, ACn stands for TCn as well (step log qae/TCn.md, screenshots qae/TCn-step-k.png,
+   verdict line acceptance-check: TCn). If the pull request's only item reads "None: <reason>"
+   and the ticket lists no criteria, there is nothing for a browser to check: write nothing,
+   post nothing, and stop.
 2. For each criterion, use the playwright browser tools to do what a user would do to check
    it: navigate, click, read the page. A step is one action that changes what is on screen.
    For every step, first save a screenshot to qae-artifacts/qae/ACn-step-k.png, then append

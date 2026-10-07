@@ -34,6 +34,7 @@ jobs:
       pull-requests: read
     outputs:
       count: ${{ steps.criteria.outputs.count }}
+      ticket: ${{ steps.criteria.outputs.ticket }}
     steps:
       - name: Write the criteria inputs
         # The PR body and its changed paths. A rename lists both names: moving a page into docs/ still
@@ -48,6 +49,12 @@ jobs:
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
           gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --paginate \
             --jq '.[] | .filename, (.previous_filename // empty)' > qae-inputs/changed-files
+      - name: Write the ticket's criteria   # CONSUMER: opt-in; this default links no ticket
+        # The acceptance criteria of the ticket this pull request implements, from your tracker, as a
+        # `## Acceptance criteria` list (harnesses/qae/README.md). The explorer walks them and the gates
+        # require them in addition to the pull request's own, so a pull request cannot drop one. Fetched
+        # here, before any model runs, and passed on as this job's `ticket` output. An empty file links no ticket.
+        run: ': > qae-inputs/ticket.md'
       - name: Read the criteria
         # A PR that declares `- None: <why>`, or lists no criteria and changes only CI configuration or
         # documentation no site renders, needs no browser check; one that lists no criteria and changes
@@ -62,6 +69,7 @@ jobs:
         with:
           path: qae-inputs/pr-body.md
           changed-files: qae-inputs/changed-files
+          ticket: qae-inputs/ticket.md
 
   explore:
     name: qae-explore
@@ -87,15 +95,18 @@ jobs:
           persist-credentials: false
       - name: Write the explorer's input
         # The PR body the prompt points the explorer at (the criteria job already found a criterion in
-        # it), and the changed paths the feature selection reads.
+        # it, or in its ticket), the ticket's criteria as the criteria job read them, and the changed
+        # paths the feature selection reads.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          TICKET: ${{ needs.criteria.outputs.ticket }}
         run: |
           set -euo pipefail
           mkdir -p qae-artifacts/qae qae-inputs
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
+          printf '%s' "$TICKET" > qae-inputs/ticket.md
           gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --paginate \
             --jq '.[] | .filename, (.previous_filename // empty)' > qae-inputs/changed-files
       - name: Select the features to re-walk
@@ -158,9 +169,14 @@ jobs:
             (not the pull request): it says how to sign in and what state the site starts in.
 
             1. Read qae-inputs/pr-body.md. The list items under the "## Acceptance criteria" heading are
-               the criteria, numbered AC1, AC2, ... in order. If the only item reads "None: <reason>",
-               this pull request declares it has nothing for a browser to check: write nothing, post
-               nothing, and stop.
+               the criteria, numbered AC1, AC2, ... in order. If qae-inputs/ticket.md is not empty, it holds
+               the acceptance criteria of the ticket this pull request implements, read the same way (under
+               its "## Acceptance criteria" heading, or every list item when it has no headings) and
+               numbered TC1, TC2, ...: they are criteria too, whatever the pull request's own list says.
+               Below, ACn stands for TCn as well (step log qae/TCn.md, screenshots qae/TCn-step-k.png,
+               verdict line acceptance-check: TCn). If the pull request's only item reads "None: <reason>"
+               and the ticket lists no criteria, there is nothing for a browser to check: write nothing,
+               post nothing, and stop.
             2. For each criterion, use the playwright browser tools to do what a user would do to check
                it: navigate, click, read the page. A step is one action that changes what is on screen.
                For every step, first save a screenshot to qae-artifacts/qae/ACn-step-k.png, then append
@@ -312,6 +328,7 @@ jobs:
           REPO: ${{ github.repository }}
           SITE_URL: ${{ needs.explore.outputs.site-url }}
           REFERENCES: ${{ needs.explore.outputs.references }}
+          TICKET: ${{ needs.criteria.outputs.ticket }}
         run: |
           set -euo pipefail
           mkdir -p qae-inputs
@@ -333,12 +350,15 @@ jobs:
           # The digest of each design reference the explore job's workflow supplied, for the gate's
           # --references. Empty when that job never got that far, which the gate reads as none supplied.
           printf '%s\n' "$REFERENCES" > qae-inputs/references.json
+          # The ticket's criteria as the criteria job read them (empty: no ticket), for the gates' --ticket.
+          printf '%s' "$TICKET" > qae-inputs/ticket.md
       - name: Read the criteria
         id: criteria
         uses: Greenbauer/vibe-verifier/actions/criteria@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
         with:
           path: qae-inputs/pr-body.md
           changed-files: qae-inputs/changed-files
+          ticket: qae-inputs/ticket.md
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: steps.criteria.outputs.count != '0'
         with:
@@ -358,6 +378,7 @@ jobs:
         with:
           criteria: qae-inputs/pr-body.md
           verdict: qae-inputs/verdict.md
+          ticket: qae-inputs/ticket.md
           explore-result: ${{ needs.explore.result }}
           gates-outcome: ${{ steps.gates.outcome }}
           not-required: ${{ steps.criteria.outputs.declared-none }}

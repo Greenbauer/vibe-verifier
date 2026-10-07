@@ -143,7 +143,7 @@ class SiteUrl(unittest.TestCase):
         script = verify_inputs_script()
         result = subprocess.run(["bash", "-e", "-c", script], cwd=self.work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
-                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": preview, "REFERENCES": ""}))
+                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": preview, "REFERENCES": "", "TICKET": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(Path(self.work, "qae-inputs", "site-url").read_text(), preview + "\n")
         # The run's artifacts: the preview answered 500, the local default 404; only the declared site counts.
@@ -233,7 +233,7 @@ class FeatureRewalk(unittest.TestCase):
         script = step_script("- name: Write the explorer's input", "- name: Select the features to re-walk")
         result = subprocess.run(["bash", "-e", "-c", script], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
-                                               "PR_NUMBER": "7", "REPO": "o/r"}))
+                                               "PR_NUMBER": "7", "REPO": "o/r", "TICKET": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(Path(work, "qae-inputs", "changed-files").read_text(), "app/auth/login.ts\napp/old.ts\n")
 
@@ -350,7 +350,7 @@ class Review(unittest.TestCase):
         result = subprocess.run(["bash", "-e", "-c", verify_inputs_script()], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
                                                "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": "http://localhost:3000",
-                                               "REFERENCES": ""}))
+                                               "REFERENCES": "", "TICKET": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(Path(work, "qae-inputs", "verdict.md").read_text(), verdict + "\n")
         self.assertEqual(Path(work, "qae-inputs", "changed-files").read_text(), "app/page.tsx\n")
