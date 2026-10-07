@@ -1,6 +1,7 @@
 #!/bin/bash
 # lane-slot-test.sh: hermetic tests for bin/lane-slot.sh, run as the listener's units run it
-# (prepare|cleanup <kind> <n>) and as the smoke and the image build run it (snapshot|discard).
+# (prepare|cleanup <kind> <n>), as the lane's reaper unit runs it (reap) and as the smoke and the
+# image build run it (snapshot|discard).
 # The system tools are stubs on PATH (tests/lib/stubs.sh); the firewall is a stand-in.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -57,6 +58,26 @@ run_slot() {
 }
 line_of() { grep -nE -- "$1" "$CALLLOG" | head -n 1 | cut -d: -f1; }
 before() { local a b; a="$(line_of "$1")"; b="$(line_of "$2")"; [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; }
+# The store's trash: how many entries it holds, and an entry as a slot names one.
+trash_count() { find "$STORE/trash" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' '; }
+TRASH_NAME='^[0-9]{10}\.slot-(ci|qae|wait)-[0-9]+\.[0-9]+$'
+# rm, recording every call and whether the trash's lock (PROBE_TRASH) is held while it runs. It
+# refuses the path RM_FAIL names, and deletes RM_VANISH first, behind its caller's back.
+REAL_RM="$(command -v rm)"; export REAL_RM
+probe_rm() {
+  cat > "$S/pathbin/rm" <<'SH'
+#!/bin/bash
+echo "rm $*" >> "$CALLLOG"
+target="${*: -1}"
+[ -z "${PROBE_TRASH:-}" ] || flock -n "$PROBE_TRASH" true || echo "trash lock held at rm $target" >> "$CALLLOG"
+[ -z "${RM_VANISH:-}" ] || "$REAL_RM" -rf -- "$RM_VANISH"
+if [ "${RM_FAIL:-}" = "$target" ]; then echo "rm: cannot remove '$target': Operation not permitted" >&2; exit 1; fi
+exec "$REAL_RM" "$@"
+SH
+  chmod +x "$S/pathbin/rm"
+}
+# True when no rm named the store copy or anything in the trash: the copy was renamed, not deleted.
+no_delete_of() { ! grep -qE "^rm .*($STORE/$1|$STORE/trash)( |/|\$)" "$CALLLOG"; }
 
 # ---- prepare <kind> <n> -----------------------------------------------------------------------------
 setup
@@ -138,30 +159,79 @@ out="$(HELPER_SCOPE=user run_slot prepare qae 1 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && grep -q "no Codex store directory at $S/codex" <<< "$out" && ! grep -q '^chown' "$CALLLOG" && [ -f "$S/elsewhere/auth.json" ]
 expect $? "prepare refuses a store that is a link, so no root chown or prune follows it elsewhere"
 
-# The wait kind (an org lane's jobs that only wait for another job's result): a slot
-# prepared exactly like a ci one, on its own slot image and store snapshot, and with no Codex store.
+# The wait kind (an org lane's jobs that only wait for another job's result): a slot prepared like
+# a ci one on its own slot image, with no Codex store, and with an empty inner Docker store: a job
+# that runs no inner image gets no copy of the preloaded store, which nothing would read.
 setup
 listener_files wait 3 acme 4545
+mkdir -p "$STORE/slot-wait-3/left-by-an-earlier-job"
 out="$(env PATH="$S/pathbin:$PATH" KNOWN_CI_NAME=box-ci KNOWN_CI_SCOPE=org KNOWN_CI_SLOT_GB=10 KNOWN_CI_BRIDGE=box-ci0 KNOWN_CI_GH_HOSTS="$S/ghhome/hosts.yml" \
   KNOWN_CI_STATE_DIR="$S/state" KNOWN_CI_RUN_DIR="$S/run" KNOWN_CI_STORE_DIR="$STORE" KNOWN_CI_IMAGE_TAG=tag1 KNOWN_CI_API=https://api.example.invalid KNOWN_CI_HARDEN="$S/harden.sh" \
   bash "$HELPER" prepare wait 3 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -qx "truncate -s 10G $S/state/slot-wait-3.img" "$CALLLOG" && grep -qx "mount -o loop,nodev,nosuid $S/state/slot-wait-3.img $S/state/slot-wait-3" "$CALLLOG" \
   && [ -d "$STORE/slot-wait-3" ] && [ ! -e "$STORE/slot-ci-3" ] && ! grep -q '^chown' "$CALLLOG" && grep -q "runner box-lane-wait-3-1727003000 (id 4545) of acme set 9" <<< "$out"
-expect $? "a wait instance is prepared like a ci one on its own slot image and store snapshot, with no Codex store and none of the QAE variables"
+expect $? "a wait instance is prepared like a ci one on its own slot image, with no Codex store and none of the QAE variables"
+[ -z "$(ls -A "$STORE/slot-wait-3")" ] && [ "$(mode_of "$STORE/slot-wait-3")" = 700 ] && ! grep -q '^cp --reflink' "$CALLLOG" && ! grep -q '^df ' "$CALLLOG" \
+  && grep -q "an empty inner Docker store made (a wait job gets no copy of the preloaded one)" <<< "$out"
+expect $? "a wait slot's prepare makes no copy of the preloaded store: its store is an empty directory, mode 0700, and the store's room is never read for it"
+[ "$(trash_count)" = 1 ] && [[ "$(ls -A "$STORE/trash")" =~ $TRASH_NAME ]] && [ -d "$STORE/trash/$(ls -A "$STORE/trash")/left-by-an-earlier-job" ]
+expect $? "a leftover at a wait slot's store path is retired into the trash, never reused as the next job's store"
 out="$(SERVICE_RESULT=success run_slot cleanup wait 3 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -qx "docker rm -f box-ci-wait-3" "$CALLLOG" && grep -q "curl .*-X DELETE https://api.example.invalid/orgs/acme/actions/runners/4545 token=match" "$CALLLOG" \
   && [ ! -e "$S/run/wait/3/job" ] && [ ! -e "$STORE/slot-wait-3" ] && [ ! -e "$S/state/slot-wait-3.img" ]
-expect $? "and cleaned up like one: container removed, runner deregistered, snapshot, slot image and job file gone"
+expect $? "and cleaned up like one: container removed, runner deregistered, its store, slot image and job file gone"
+env PATH="$S/pathbin:$PATH" KNOWN_CI_STORE_DIR="$STORE" bash "$HELPER" reap >/dev/null 2>&1
+[ "$(trash_count)" = 0 ] && cmp -s "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres" <(printf 'bin\n')
+expect $? "a wait slot's cleanup leaves nothing: after the reaper's pass the trash is empty, and the preloaded store is as it was"
+setup
+listener_files wait 1 acme 4546
+out="$(HELPER_TAG=tag9 run_slot prepare wait 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ -d "$STORE/slot-wait-1" ] && [ ! -e "$STORE/golden-tag9" ]; expect $? "a wait slot needs no preloaded store: its prepare succeeds for an image tag that has none"
 
 # ---- cleanup <kind> <n> -----------------------------------------------------------------------------
-setup
+setup; probe_rm
 listener_files ci 1 acme 4242
 run_slot prepare ci 1 >/dev/null 2>&1; : > "$CALLLOG"
 out="$(SERVICE_RESULT=success run_slot cleanup ci 1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -qx "docker rm -f box-ci-ci-1" "$CALLLOG" && grep -q "curl .*-X DELETE https://api.example.invalid/orgs/acme/actions/runners/4242 token=match" "$CALLLOG"; expect $? "cleanup removes the container and deregisters the job file's runner at the organisation's endpoint"
-grep -qx "umount $S/state/slot-ci-1" "$CALLLOG" && [ ! -e "$S/state/slot-ci-1.img" ] && [ ! -e "$STORE/slot-ci-1" ] && [ ! -e "$S/run/ci/1/jit" ] && [ ! -e "$S/run/ci/1/job" ] && [ ! -e "$S/run/ci/1" ]; expect $? "cleanup unmounts and deletes the slot image, the store snapshot, and the jit and job files"
+grep -qx "umount $S/state/slot-ci-1" "$CALLLOG" && [ ! -e "$S/state/slot-ci-1.img" ] && [ ! -e "$STORE/slot-ci-1" ] && [ ! -e "$S/run/ci/1/jit" ] && [ ! -e "$S/run/ci/1/job" ] && [ ! -e "$S/run/ci/1" ]; expect $? "cleanup unmounts, deletes the slot image and the jit and job files, and leaves no store snapshot at the slot's path"
 [ ! -e "$S/run/ci/1.failures" ]; expect $? "a successful run leaves no failure count"
 { ! grep -qF "$APP_SESSION_MARKER" "$CALLLOG" && ! grep -qF "$APP_SESSION_MARKER" <<< "$out" && ! grep -qF "$JIT_MARKER" "$CALLLOG"; }; expect $? "the installation token reaches curl on stdin, never an argv or a log line"
+# The store copy is not deleted in the stop path: it is renamed into the trash for the reaper.
+entry="$(ls -A "$STORE/trash")"
+[ "$(trash_count)" = 1 ] && [[ "$entry" =~ $TRASH_NAME ]] && [[ "$entry" == *.slot-ci-1.* ]] && cmp -s "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres" "$STORE/trash/$entry/overlay2/layer1/diff/usr/bin/postgres" \
+  && [ -f "$STORE/trash/$entry/image/overlay2/repositories.json" ] && no_delete_of slot-ci-1
+expect $? "cleanup renames the job's store copy into the trash instead of deleting it: whole, under a name that carries the second and the instance"
+grep -qx "systemctl start --no-block box-ci-store-reaper.service" "$CALLLOG" && [ "$(grep -c '^systemctl' "$CALLLOG")" = 1 ] && [ ! -e "$S/run/ci/1/job" ] && [ -d "$STORE/trash/$entry" ]
+expect $? "cleanup starts the lane's reaper without waiting for it, and frees the instance while the copy is still undeleted"
+listener_files ci 1 acme 4243
+run_slot prepare ci 1 >/dev/null 2>&1; SERVICE_RESULT=success run_slot cleanup ci 1 >/dev/null 2>&1
+[ "$(trash_count)" = 2 ] && [ -d "$STORE/trash/$entry" ] && no_delete_of slot-ci-1; expect $? "the next job on that instance retires its copy under a name of its own, beside the first"
+# The kit's first apply on a machine with running slots: a slot that finishes after the machine
+# pulled this helper and before its lane was provisioned again has no trash directory and no reaper
+# unit, and the environment its template always set, which is all run_slot passes.
+setup
+cat > "$S/pathbin/systemctl" <<'SH'
+#!/bin/bash
+echo "systemctl $*" >> "$CALLLOG"
+echo "Failed to start ${*: -1}: Unit ${*: -1} not found." >&2
+exit 5
+SH
+listener_files ci 1 acme 4242
+run_slot prepare ci 1 >/dev/null 2>&1
+[ ! -e "$STORE/trash" ]; expect $? "a prepare with nothing to retire makes no trash directory"
+out="$(SERVICE_RESULT=success run_slot cleanup ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(mode_of "$STORE/trash")" = 700 ] && [ "$(trash_count)" = 1 ] && [ ! -e "$STORE/slot-ci-1" ] && [ ! -e "$S/run/ci/1/job" ] \
+  && grep -q "could not start box-ci-store-reaper.service (bin/provision-lane.sh writes it); its timer, or the next cleanup's start, empties $STORE/trash" <<< "$out" && ! grep -q "not found" <<< "$out"
+expect $? "before the kit's first apply (no trash directory, no reaper unit yet) a cleanup makes the trash, 0700, retires its copy there, says the reaper could not be started, and still frees the instance"
+setup; probe_rm
+listener_files ci 1 acme 4242
+run_slot prepare ci 1 >/dev/null 2>&1
+mkdir -p "$S/elsewhere"; ln -s "$S/elsewhere" "$STORE/trash"; : > "$CALLLOG"
+out="$(SERVICE_RESULT=success run_slot cleanup ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$STORE/slot-ci-1" ] && [ -z "$(ls -A "$S/elsewhere")" ] && grep -qx "rm -rf -- $STORE/slot-ci-1" "$CALLLOG" && ! grep -q '^systemctl' "$CALLLOG" \
+  && grep -q "could not move $STORE/slot-ci-1 into $STORE/trash; deleting it in place" <<< "$out" && [ ! -e "$S/run/ci/1/job" ]
+expect $? "a trash that is a link takes nothing: the copy is deleted in place, as before the trash existed, nothing goes through the link, and the instance is still freed"
 setup
 listener_files ci 2 acme/widgets 4444
 out="$(HELPER_SCOPE=user SERVICE_RESULT=success run_slot cleanup ci 2 2>&1)"; rc=$?
@@ -225,6 +295,117 @@ out="$(run_slot cleanup ci 1 extra 2>&1)"; rc=$?
 [ "$rc" -eq 2 ]; expect $? "an extra argument is refused"
 out="$(run_slot prepare 1 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && grep -q "usage:" <<< "$out"; expect $? "prepare without a kind is refused (only the listener's slots run this helper)"
+
+# ---- the store trash: a leftover copy, and room on the store --------------------------------------
+setup; probe_rm
+listener_files ci 1 acme 4242
+mkdir -p "$STORE/slot-ci-1/overlay2/left-by-a-killed-cleanup"
+out="$(run_slot prepare ci 1 2>&1)"; rc=$?
+entry="$(ls -A "$STORE/trash")"
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 1 ] && [[ "$entry" =~ $TRASH_NAME ]] && [ -d "$STORE/trash/$entry/overlay2/left-by-a-killed-cleanup" ] && no_delete_of slot-ci-1 \
+  && grep -qx "systemctl start --no-block box-ci-store-reaper.service" "$CALLLOG" && before '^systemctl start --no-block' '^cp --reflink=always'
+expect $? "prepare retires a leftover copy into the trash rather than deleting it, and starts the reaper, before it makes the new one"
+[ ! -e "$STORE/slot-ci-1/overlay2/left-by-a-killed-cleanup" ] && cmp -s "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres" "$STORE/slot-ci-1/overlay2/layer1/diff/usr/bin/postgres"
+expect $? "and the job's store is a fresh copy of the preloaded one, with nothing of the leftover in it"
+# Fail closed on disk: retired copies waiting in the trash must not fill the store unseen. The df
+# stand-in reports a store short of room while the trash holds more than STORE_DF_SHORT_ABOVE entries.
+backlog() { local t; for t in "$@"; do mkdir -p "$STORE/trash/$t.slot-ci-2.7/overlay2"; done; }
+setup; probe_rm
+listener_files ci 1 acme 4242
+backlog 1700000300 1700000100 1700000200
+out="$(STORE_DF_SHORT="1000 50 1000 500" STORE_DF_SHORT_WHILE="$STORE/trash" STORE_DF_SHORT_ABOVE=1 run_slot prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(ls -A "$STORE/trash")" = 1700000300.slot-ci-2.7 ] && [ -d "$STORE/slot-ci-1/overlay2/layer1" ] \
+  && before "^rm -rf --one-file-system -- $STORE/trash/1700000100\." "^rm -rf --one-file-system -- $STORE/trash/1700000200\." && before "^rm -rf --one-file-system -- $STORE/trash/1700000200\." '^cp --reflink=always' \
+  && grep -q "the store filesystem at $STORE has under 10% of its space or inodes free and $STORE/trash holds retired copies; deleting from it here, before this job's copy" <<< "$out"
+expect $? "a store short of space with a backlog in the trash: prepare deletes the oldest retired copies itself, one at a time, until there is room, then makes its copy"
+setup; probe_rm
+listener_files ci 1 acme 4242
+backlog 1700000100
+out="$(STORE_DF_SHORT="1000 500 1000 99" STORE_DF_SHORT_WHILE="$STORE/trash" run_slot prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 0 ] && [ -d "$STORE/slot-ci-1/overlay2/layer1" ] && grep -q "deleting from it here" <<< "$out"; expect $? "a store short of inodes is short of room too"
+setup; probe_rm
+listener_files ci 1 acme 4242
+backlog 1700000100
+out="$(STORE_DF_RC=1 run_slot prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 0 ] && [ -d "$STORE/slot-ci-1/overlay2/layer1" ]; expect $? "a reading of the store that cannot be made counts as short: the trash is emptied before the copy"
+setup; probe_rm
+listener_files ci 1 acme 4242
+out="$(STORE_DF_SHORT="1000 50 1000 500" run_slot prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ -d "$STORE/slot-ci-1/overlay2/layer1" ] && ! grep -q "deleting from it here\|refusing" <<< "$out" && ! grep -q "^rm -rf --one-file-system" "$CALLLOG"
+expect $? "a short store with an empty trash is not the backlog's doing: nothing is deleted and the copy is tried as before"
+setup; probe_rm
+listener_files ci 1 acme 4242
+backlog 1700000100
+out="$(RM_FAIL="$STORE/trash/1700000100.slot-ci-2.7" STORE_DF_SHORT="1000 50 1000 500" STORE_DF_SHORT_WHILE="$STORE/trash" run_slot prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && ! grep -q '^cp --reflink' "$CALLLOG" && [ ! -e "$STORE/slot-ci-1" ] \
+  && grep -q "the store is still short of room and $STORE/trash holds copies that could not be deleted; refusing to start a job on it" <<< "$out"
+expect $? "a store still short while the trash holds a copy that will not delete: prepare refuses the job, saying why, and makes no copy"
+setup; probe_rm
+listener_files ci 1 acme 4242
+backlog 1700000100
+exec 9<"$STORE/trash"; flock 9
+out="$(KNOWN_CI_REAP_LOCK_WAIT=1 STORE_DF_SHORT="1000 50 1000 500" STORE_DF_SHORT_WHILE="$STORE/trash" run_slot prepare ci 1 9<&- 2>&1)"; rc=$?
+exec 9<&-
+[ "$rc" -ne 0 ] && ! grep -q '^cp --reflink' "$CALLLOG" && ! grep -q "^rm -rf --one-file-system" "$CALLLOG" && [ -d "$STORE/trash/1700000100.slot-ci-2.7" ] \
+  && grep -q "a reaper has held the lock of $STORE/trash for 1s and the store is still short of room; refusing to start a job on it" <<< "$out"
+expect $? "a store still short while another reaper holds the trash's lock: prepare waits a bounded time, deletes nothing beside it, and refuses the job"
+grep -qx 'STORE_MIN_FREE_PCT="${KNOWN_CI_STORE_MIN_FREE_PCT:-10}"' "$HELPER" && grep -qx 'REAP_LOCK_WAIT="${KNOWN_CI_REAP_LOCK_WAIT:-120}"' "$HELPER"
+expect $? "the store is short of room below a tenth of its space or inodes free, and a prepare waits 120 s for a reaper that holds the lock"
+
+# ---- reap: the lane's store reaper ---------------------------------------------------------------
+# As <lane>-store-reaper.service runs it; it needs the store and nothing else.
+run_reap() { env PATH="$S/pathbin:$PATH" KNOWN_CI_STORE_DIR="$STORE" PROBE_TRASH="$STORE/trash" bash "$HELPER" reap "$@"; }
+setup; probe_rm
+for t in 1700000300 1700000100 1700000200; do mkdir -p "$STORE/trash/$t.slot-ci-1.7/overlay2/layer1"; printf 'x\n' > "$STORE/trash/$t.slot-ci-1.7/overlay2/layer1/file"; done
+mkdir -p "$STORE/slot-ci-2/overlay2"; printf 'live\n' > "$STORE/slot-ci-2/overlay2/file"
+out="$(run_reap 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ -d "$STORE/trash" ] && [ "$(trash_count)" = 0 ]; expect $? "the reaper empties the trash and exits 0, keeping the trash directory itself"
+[ "$(grep '^rm ' "$CALLLOG" | tr '\n' '|')" = "rm -rf --one-file-system -- $STORE/trash/1700000100.slot-ci-1.7|rm -rf --one-file-system -- $STORE/trash/1700000200.slot-ci-1.7|rm -rf --one-file-system -- $STORE/trash/1700000300.slot-ci-1.7|" ]
+expect $? "the reaper deletes one entry at a time, oldest first: one rm for each entry, naming that entry alone by its path inside the trash"
+[ "$(grep -c '^trash lock held at rm ' "$CALLLOG")" = 3 ] && flock -n "$STORE/trash" true; expect $? "it holds the trash's lock during every delete, and frees it when it is done"
+[ "$(cat "$STORE/slot-ci-2/overlay2/file")" = live ] && [ "$(cat "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres")" = bin ] && [ -f "$STORE/golden-tag1/image/overlay2/repositories.json" ]
+expect $? "it never deletes a preloaded golden-* store or a live slot-* copy: only what is inside the trash"
+grep -qE "^lane-slot\[reap\]: deleted 1700000100\.slot-ci-1\.7 in [0-9]+s$" <<< "$out" && [ "$(grep -c ': deleted ' <<< "$out")" = 3 ]; expect $? "it logs each entry it deleted and how long that took"
+setup; probe_rm
+mkdir -p "$STORE/trash/1700000100.slot-ci-1.7" "$STORE/trash/1700000200.slot-ci-1.7" "$STORE/trash/1700000300.slot-ci-1.7"
+out="$(RM_VANISH="$STORE/trash/1700000200.slot-ci-1.7" run_reap 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 0 ] && ! grep -q "^rm .*/1700000200\." "$CALLLOG" && grep -q "^rm .*/1700000300\." "$CALLLOG"
+expect $? "an entry that vanishes after the reaper listed it is skipped: the reaper goes on to the next and exits 0"
+setup; probe_rm
+mkdir -p "$STORE/trash/1700000100.slot-ci-1.7" "$STORE/trash/1700000200.slot-ci-1.7" "$STORE/trash/1700000300.slot-ci-1.7"
+out="$(RM_FAIL="$STORE/trash/1700000100.slot-ci-1.7" run_reap 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && [ "$(ls -A "$STORE/trash")" = 1700000100.slot-ci-1.7 ] && grep -q "could not delete $STORE/trash/1700000100.slot-ci-1.7" <<< "$out"
+expect $? "an entry that will not delete makes the reaper exit 1, after it deleted every other entry"
+setup; probe_rm
+mkdir -p "$STORE/trash/1700000100.slot-ci-1.7"
+exec 9<"$STORE/trash"; flock 9
+out="$(run_reap 9<&- 2>&1)"; rc=$?
+exec 9<&-
+[ "$rc" -eq 0 ] && ! grep -q '^rm ' "$CALLLOG" && [ -d "$STORE/trash/1700000100.slot-ci-1.7" ] && grep -q "another reaper holds the lock of $STORE/trash and deletes what is there; nothing to do" <<< "$out"
+expect $? "a second reaper finds the trash's lock held and exits 0 at once, deleting nothing: never two deletes at a time"
+# Nothing outside the trash: no link is followed out of it, and it takes no path to delete.
+setup; probe_rm
+mkdir -p "$STORE/trash/1700000100.slot-ci-1.7/overlay2" "$STORE/slot-ci-2"; printf 'live\n' > "$STORE/slot-ci-2/file"
+ln -s "$STORE/golden-tag1" "$STORE/trash/1700000100.slot-ci-1.7/overlay2/to-the-golden-store"
+ln -s "$STORE/slot-ci-2" "$STORE/trash/1700000200.to-a-live-copy"
+out="$(run_reap 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 0 ] && [ "$(cat "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres")" = bin ] && [ "$(cat "$STORE/slot-ci-2/file")" = live ]
+expect $? "the reaper follows no link out of the trash: a link inside an entry, and an entry that is itself a link, are removed and what they point to is untouched"
+setup; probe_rm
+mkdir -p "$S/elsewhere/keep"; ln -s "$S/elsewhere" "$STORE/trash"
+out="$(run_reap 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && [ -d "$S/elsewhere/keep" ] && ! grep -q '^rm ' "$CALLLOG" && grep -q "$STORE/trash is a link or not a directory; refusing to delete through it" <<< "$out"
+expect $? "a trash that is a link is refused: the reaper deletes nothing through it and exits 1"
+setup; probe_rm
+mkdir -p "$STORE/trash/1700000100.slot-ci-1.7"
+out="$(run_reap "$STORE/golden-tag1" 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && grep -q "usage:" <<< "$out" && ! grep -q '^rm ' "$CALLLOG" && [ -d "$STORE/golden-tag1" ] && [ -d "$STORE/trash/1700000100.slot-ci-1.7" ]
+expect $? "the reaper takes no path: given one it is refused and deletes nothing, so it cannot be pointed outside the trash"
+setup; probe_rm
+out="$(run_reap 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && [ ! -e "$STORE/trash" ] && ! grep -q '^rm ' "$CALLLOG"; expect $? "with no trash yet the reaper has nothing to do: exit 0, silent, and it makes nothing"
+grep -qx 'TRASH_DIR="$STORE_DIR/trash"' "$HELPER" && grep -qx 'REAPER_UNIT="${KNOWN_CI_NAME:-}-store-reaper.service"' "$HELPER"
+expect $? "the trash is a directory of the store itself, so retiring a copy is a rename inside one filesystem, and the reaper's unit is named for the lane"
 
 # ---- the Codex store lock -------------------------------------------------------------------------
 # chown, recording which store locks under <run>/qae are held while it runs (PROBE_RUN set).
@@ -372,6 +553,7 @@ out="$(run_slot snapshot smoke-42 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && cmp -s "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres" "$STORE/smoke-42/overlay2/layer1/diff/usr/bin/postgres" && ! grep -qE '^(curl|mount|mkfs|truncate)' "$CALLLOG"; expect $? "snapshot <name> makes the same reflink copy at <store>/<name> and touches nothing else"
 out="$(run_slot discard smoke-42 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ ! -e "$STORE/smoke-42" ]; expect $? "discard <name> removes it"
+[ ! -e "$STORE/trash" ] && ! grep -q '^systemctl' "$CALLLOG"; expect $? "the smoke's and the image build's copy is deleted before discard returns: it never goes through the trash, and no reaper is started for it"
 out="$(env -u KNOWN_CI_NAME KNOWN_CI_STORE_DIR="$STORE" KNOWN_CI_IMAGE_TAG=tag1 PATH="$S/pathbin:$PATH" bash "$HELPER" snapshot verify-7 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ -d "$STORE/verify-7" ]; expect $? "snapshot needs only the store directory and the image tag (the image build calls it so)"
 rm -rf "$STORE/verify-7"

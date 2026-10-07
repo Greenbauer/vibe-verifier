@@ -37,6 +37,11 @@
 #       store (golden-<tag>, written by bin/build-runner-image.sh) and the per-job reflink snapshot
 #       of it that each slot mounts on its container's /var/lib/docker, so Sysbox has no store to
 #       copy at container start (README.md, "Disk")
+#   D   <state>/store/trash, where a slot retires its store copy with a rename instead of deleting
+#       it in its stop path, and <name>-store-reaper.timer: a root oneshot (bin/lane-slot.sh reap)
+#       deletes the retired copies one at a time, started by every slot's cleanup and by the timer
+#       every 5 minutes. Before the templates (H), so the trash and the reaper are there before a
+#       slot of a rewritten template can finish
 #   F   the Docker network <name> on the bridge <name>0, inter-container traffic off
 #   G   the lane firewall rules (bin/lane-firewall.sh)
 #   H   <name>.slice (and its root-level ancestor, which systemd derives from the dash) and one slot
@@ -45,7 +50,8 @@
 #       config.toml its jobs get, and a qae template whose job holds its store's lock; with a wait
 #       kind (an org lane's `wait` block: jobs that only poll for another job's result), a template
 #       that differs from the ci one only in its container memory and its instance count,
-#       wait.slots, a budget of its own
+#       wait.slots, a budget of its own (the slot helper gives a wait job an empty inner Docker
+#       store where a ci job gets a snapshot)
 #   I   deletes offline lane registrations no slot is using
 #   J   checks the runner image named by <state>/image.env exists (bin/build-runner-image.sh)
 #   K   the listener: its binary (built with listener/build.sh only when the module's source
@@ -66,9 +72,10 @@
 # lane's repositories.
 #
 # --remove disables the health timer first and the listener next, so nothing restarts what it stops.
-# A Codex keepalive already running finishes. It leaves the host's Docker and Sysbox, the store
-# filesystem with its preloaded stores, the runner image, the App key, the lane's user and its Codex
-# stores, and the (then inert) firewall rules.
+# A Codex keepalive already running finishes. Once every slot has stopped it stops the store reaper
+# and empties the store's trash. It leaves the host's Docker and Sysbox, the store filesystem with
+# its preloaded stores, the runner image, the App key, the lane's user and its Codex stores, and the
+# (then inert) firewall rules.
 # shellcheck disable=SC2153 # the settings are assigned by read_settings (lib/provision.sh)
 set -euo pipefail
 
@@ -170,6 +177,18 @@ HEALTH_SERVICE="$NAME-listener-health.service"
 HEALTH_TIMER="$NAME-listener-health.timer"
 KEEPALIVE_SERVICE="$NAME-codex-keepalive.service"
 KEEPALIVE_TIMER="$NAME-codex-keepalive.timer"
+# Where the slots retire their store copies, and the reaper that deletes them. The slot helper
+# derives both names the same way (bin/lane-slot.sh, TRASH_DIR and REAPER_UNIT), from the store and
+# the lane name alone, so a slot started before this run reaches them too.
+TRASH_DIR="$STORE_DIR/trash"
+REAPER_SERVICE="$NAME-store-reaper.service"
+REAPER_TIMER="$NAME-store-reaper.timer"
+# How old the trash's oldest entry may be before --check calls the reaper stuck. The reaper is
+# started at least every 5 minutes (its timer), and one delete took 9 s alone and at most 121 s
+# when eight ran at once (2026-10-07), so an entry 30 minutes old has waited six timer periods and
+# some fifteen of the slowest deletes: the reaper is failing, wedged, or slower than the lane
+# retires copies.
+TRASH_STALE_SEC=1800
 # The keepalive refreshes a store once it is 10 days old, daily (bin/lane-slot.sh,
 # KEEPALIVE_AFTER_SEC), so a store older than this has missed two of its runs.
 CODEX_STALE_DAYS=12
@@ -376,11 +395,56 @@ Restart=no
 RuntimeMaxSec=$SLOT_RUNTIME_MAX
 # The slot helper's back-off sleeps up to ten minutes inside ExecStartPre.
 TimeoutStartSec=15min
-# Also the cleanup's budget (ExecStopPost). Deleting a store snapshot (270k files) took 20 to over
-# 60 s on a loaded machine (2026-10-05); at 60 s systemd killed 195 of 332 cleanups, whose
-# rm kept running beside the next job's snapshot on the same store while the listener cleared the
-# job file the killed cleanup left behind.
+# Also the cleanup's budget (ExecStopPost). The cleanup renames the job's store into
+# $TRASH_DIR for $REAPER_SERVICE and deletes nothing of it; what can still take minutes is a
+# qae store's lock (120 s) and a store the trash could not take, which is deleted here. Deleting one
+# (270k files) took 20 to over 60 s on a loaded machine (2026-10-05), and at 60 s systemd killed 195
+# of 332 cleanups, whose rm kept running beside the next job's snapshot on the same store.
 TimeoutStopSec=300
+EOF
+}
+
+render_reaper_service() {
+  cat <<EOF
+# Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
+# The $NAME lane's store reaper (bin/lane-slot.sh reap): deletes the store copies its slots retired
+# into $TRASH_DIR, one at a time under a lock. Every slot's cleanup starts it without waiting
+# (systemctl start --no-block), and $REAPER_TIMER does, so no copy is left there by a start
+# that was missed or by a reboot. No start timeout (a oneshot has none): emptying a backlog is its
+# job, and a killed run would only begin again where it stopped.
+[Unit]
+Description=$NAME lane: delete the store copies its slots retired
+RequiresMountsFor=$STORE_DIR
+# Never refuse a start: a cleanup starts it after every job, several times within seconds when jobs
+# end together, and a refused start would leave a copy in the trash until the timer.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+Environment=KNOWN_CI_NAME=$NAME
+Environment=KNOWN_CI_STORE_DIR=$STORE_DIR
+ExecStart=$HELPER reap
+# The lowest CPU priority, so a delete yields to everything else it shares a core with. It runs
+# outside $SLICE on purpose: the lane's CPUQuota and MemoryHigh throttle what is in the slice, and
+# the one thing that gives the store its space back must not stall with the jobs that fill it.
+Nice=19
+EOF
+}
+
+render_reaper_timer() {
+  cat <<EOF
+# Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
+# A minute after boot, then every 5 minutes, counted from the reaper's last activation: the
+# backstop for a copy no cleanup's start reached, not the reaper's usual trigger.
+[Unit]
+Description=$NAME lane: delete retired store copies, every 5 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
 EOF
 }
 
@@ -720,6 +784,20 @@ ensure_store_storage() {
   else
     run_mutation systemctl enable --now "$STORE_MOUNT_UNIT"
   fi
+}
+
+# The trash first, then the reaper's units, then its timer: a slot may retire a copy the moment the
+# directory exists (the helper also makes it on demand), and from the timer's first run on nothing
+# stays there. Nothing here touches a running slot.
+ensure_store_reaper() {
+  log "Phase D: $TRASH_DIR, and $REAPER_TIMER deletes the store copies the slots retire there"
+  [ -x "$HELPER" ] || [ "$APPLY" != "1" ] || die "slot helper not executable at $HELPER (the machine's engine checkout)"
+  ensure_dir "$TRASH_DIR" 0700
+  local changed=""
+  changed+="$(converge_file "$UNIT_DIR/$REAPER_SERVICE" "$(render_reaper_service)")"
+  changed+="$(converge_file "$UNIT_DIR/$REAPER_TIMER" "$(render_reaper_timer)")"
+  [ -z "$changed" ] || run_mutation systemctl daemon-reload
+  run_mutation systemctl enable --now "$REAPER_TIMER"
 }
 
 ensure_network() {
@@ -1066,6 +1144,13 @@ remove_lane() {
     run_mutation systemctl disable --now "$NAME@$slot.service"
     remove_slot_files "$slot"
   done
+  # The reaper only now: each slot stopped above retired its copy into the trash and started it. A
+  # reaper stopped in the middle of a delete leaves part of a copy, which goes with the rest here.
+  if [ -f "$UNIT_DIR/$REAPER_TIMER" ]; then
+    run_mutation systemctl disable --now "$REAPER_TIMER"
+    run_mutation systemctl stop "$REAPER_SERVICE"
+  fi
+  run_mutation rm -rf "$TRASH_DIR"
   if [ -x "$LISTENER_BIN" ] && [ -r "$LISTENER_CONFIG" ]; then
     run_mutation "$LISTENER_BIN" -delete-sets "$LISTENER_CONFIG" || warn "some of the lane's scale sets could not be deleted (the listener logged which); delete them on GitHub"
   else
@@ -1081,7 +1166,7 @@ remove_lane() {
   fi
   local units=("$UNIT_DIR/$LISTENER_UNIT" "$UNIT_DIR/$HEALTH_SERVICE" "$UNIT_DIR/$HEALTH_TIMER" "$UNIT_DIR/$ALWAYS_ON_TEMPLATE" "$UNIT_DIR/$SLICE"
     "$UNIT_DIR/$TOKEN_SERVICE" "$UNIT_DIR/$TOKEN_TIMER" "$UNIT_DIR/$IMAGE_BUILD_SERVICE" "$UNIT_DIR/$IMAGE_BUILD_TIMER"
-    "$UNIT_DIR/$KEEPALIVE_SERVICE" "$UNIT_DIR/$KEEPALIVE_TIMER")
+    "$UNIT_DIR/$KEEPALIVE_SERVICE" "$UNIT_DIR/$KEEPALIVE_TIMER" "$UNIT_DIR/$REAPER_SERVICE" "$UNIT_DIR/$REAPER_TIMER")
   [ -z "$TOP_SLICE" ] || units+=("$UNIT_DIR/$TOP_SLICE")
   for kind in $KINDS; do units+=("$UNIT_DIR/$(template_of "$kind")"); done
   run_mutation rm -f "${units[@]}"
@@ -1138,6 +1223,33 @@ check_storage() {
   printf 'disk free=%sG lane_worst_case=%sG (store %sG + %s slots x %sG, all sparse)\n' "${free:-?}" "$worst" "$STORE_GB" "$((SLOTS + WAIT_SLOTS))" "$SLOT_GB"
   if [ -n "$free" ] && [ "$free" -lt "$worst" ]; then
     warn "the lane's filesystems could grow past the free space on $STATE_DIR (${free}G < ${worst}G)"
+  fi
+  check_store_trash
+}
+
+# The trash's backlog and the reaper that empties it. An entry's name starts with the second it was
+# retired (bin/lane-slot.sh, "The store trash"), so its age is read from the name alone.
+check_store_trash() {
+  local names count oldest age="none" state
+  if [ ! -d "$TRASH_DIR" ] || [ -L "$TRASH_DIR" ]; then
+    printf 'store_trash=%s absent (re-run --apply)\n' "$TRASH_DIR"; bad
+  else
+    names="$(ls -A "$TRASH_DIR" 2>/dev/null)"
+    count="$(grep -c . <<< "$names" || true)"
+    # min keeps the field's own text: an awk that prints a large number in %.6g would not give a second back.
+    oldest="$(awk -F. '$1 ~ /^[0-9]+$/ && (min == "" || $1 + 0 < min + 0) { min = $1 } END { print min }' <<< "$names")"
+    [ -z "$oldest" ] || age=$(( $(date +%s) - oldest ))
+    printf 'store_trash=%s entries=%s oldest_age_s=%s\n' "$TRASH_DIR" "$count" "$age"
+    if [ "$age" != none ] && [ "$age" -gt "$TRASH_STALE_SEC" ]; then
+      printf 'store_trash_stale=the oldest retired store copy has waited %ss, past %ss: the reaper is stuck or behind (journalctl -u %s)\n' "$age" "$TRASH_STALE_SEC" "$REAPER_SERVICE"; bad
+    fi
+  fi
+  check_timer store_reaper_timer "$REAPER_TIMER"
+  # A oneshot is inactive after a run that succeeded (or none yet), failed after one that did not.
+  state="$(systemctl is-active "$REAPER_SERVICE" 2>/dev/null || true)"
+  printf 'store_reaper=%s %s\n' "$REAPER_SERVICE" "${state:-unknown}"
+  if [ "$state" = failed ]; then
+    printf 'store_reaper_failed=its last run could not delete a retired store copy (journalctl -u %s)\n' "$REAPER_SERVICE"; bad
   fi
 }
 
@@ -1421,6 +1533,7 @@ ensure_app_key
 ensure_token_timer
 ensure_image_build_timer
 ensure_store_storage
+ensure_store_reaper
 ensure_network
 ensure_firewall
 resolve_group

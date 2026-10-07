@@ -31,7 +31,7 @@ they start with `/`.
 | `lib/provision.sh` | what the provisioners share (logging, dry-run, file convergence, the Sysbox pin) |
 | `bin/provision-host.sh` | converges what a machine's lanes share, once per machine |
 | `bin/provision-lane.sh` | converges one lane |
-| `bin/lane-slot.sh` | a slot unit's per-job prepare and cleanup, and a QAE lane's Codex login keepalive |
+| `bin/lane-slot.sh` | a slot unit's per-job prepare and cleanup, the lane's store reaper (`reap`), and a QAE lane's Codex login keepalive |
 | `bin/lane-firewall.sh` | asserts a lane's two firewall rules |
 | `bin/lane-smoke.sh` | the in-container proofs `provision-lane.sh --check` runs |
 | `bin/lane-token-refresh.py` | writes a lane user's GitHub App installation token from the lane's key |
@@ -50,14 +50,16 @@ It long-polls the lane's scale sets, and for each job GitHub assigns it mints a 
 writes `/run/<name>/<kind>/<n>/jit` (0400) and `job`, and starts `<name>-<kind>@<n>.service`. The
 slot unit's `ExecStartPre=+bin/lane-slot.sh prepare <kind> <n>` refuses without those files,
 asserts the lane's firewall rules, re-creates the slot's sparse ext4 image and mounts it at
-`/var/lib/<name>/slot-<kind>-<n>`, and makes a reflink snapshot of the preloaded inner Docker store.
+`/var/lib/<name>/slot-<kind>-<n>`, and makes a reflink snapshot of the preloaded inner Docker store
+(for a wait slot an empty store, "Waiting jobs" below).
 `ExecStart` runs one `docker run --rm --runtime=sysbox-runc` with the lane's limits, its own 4-core
 `--cpuset-cpus` (so `nproc` is 4, like a hosted runner), the slot on `/home/runner`, the snapshot on
 `/var/lib/docker` and the JIT file read-only at `/run/jit`. `ExecStopPost=+bin/lane-slot.sh cleanup`
-removes the container, deregisters a runner that never ran its job, deletes the slot image and the
-snapshot, and removes the job file last, which frees the instance; `TimeoutStopSec=300` is its
-budget (deleting a snapshot took over 60 s on a loaded machine, and a killed cleanup left its `rm`
-running beside the next job's snapshot). The templates have
+removes the container, deregisters a runner that never ran its job, deletes the slot image, renames
+the job's store into the store's trash for the lane's reaper ("The store trash" below), and removes
+the job file last, which frees the instance; `TimeoutStopSec=300` is its budget (a store the trash
+cannot take is still deleted there, which took over 60 s on a loaded machine, and a killed cleanup
+left its `rm` running beside the next job's snapshot). The templates have
 `Restart=no` and no `[Install]`: only the listener starts a slot. `RuntimeMaxSec` is
 `runtime_max_sec`, plus `warm_max_age_sec` on a lane with a warm pool, so a warm slot that takes a
 job late still gives it the whole budget. The listener's budget, memory admission, idle stop and
@@ -104,9 +106,41 @@ slot: the kind has its own scale set, slot template `<name>-wait@.service`, `wai
 that never count against `slots`, and a `docker --memory` of `wait.memory` in place of
 `container.memory`. Without it a queue of pollers could hold every `ci` slot while the job they
 waited for queued behind them. The template is the `ci` one in every other respect (image,
-`prepare`, store snapshot, network, firewall, slice, 4-core set, `RuntimeMaxSec`), and there is no
-warm pool. Its containers share the lane's slice cap, so `slice.memory_max` must cover them too:
-mostly page cache, which the cap reclaims first. `--check` counts them in the disk worst case.
+network, firewall, slice, 4-core set, `RuntimeMaxSec`), and there is no warm pool. `prepare` differs
+in one step: a wait slot gets no copy of the preloaded store. A job that polls an API and sleeps
+runs no inner image, the slots turn over constantly, and the copy and its deletion were the
+costliest steps of a slot's reset ("The store trash" below). Its `/var/lib/docker` is an empty
+directory at the path the template has always mounted, `/var/lib/<name>/store/slot-wait-<n>`, made
+by `prepare` and retired by `cleanup`, so the container's mounts and Sysbox's nothing-to-copy start
+are as they were; the inner dockerd starts on an empty data root, as it does in the image build's
+preload, and a wait job that did run an inner container would pull its image like a job on any
+runner without a preload. Its containers share the lane's slice cap, so `slice.memory_max` must
+cover them too: mostly page cache, which the cap reclaims first. `--check` counts them in the disk
+worst case.
+
+**The store trash.** Deleting a job's store copy was the slowest step of a slot's reset, and every
+slot did it in its own stop path. Measured on a live lane, 2026-10-07 (8 `ci`, 8 wait and 2 `qae`
+slots, about 120 jobs an hour): a copy holds about 225,000 inodes, and copying or deleting one
+alone takes 8 and 9 s, but with many running at once a copy took 48 to 63 s and a delete 21 to 121
+s, each delete holding its instance until it finished, so more slots finished no more jobs. So a
+slot never deletes its copy. `cleanup`, and `prepare` when it finds a leftover, rename it to
+`/var/lib/<name>/store/trash/<epoch second>.slot-<kind>-<n>.<pid>`: one rename inside the store
+filesystem, atomic and immediate, under a name no other entry has and that carries the entry's age.
+`<name>-store-reaper.service` (`lane-slot.sh reap`, a root oneshot) deletes the entries one at a
+time, oldest first, holding the trash's lock (an `flock` on the directory itself), until the trash
+is empty; a second reaper finds the lock held and exits. It runs at `Nice=19` and outside the lane's
+slice, so the lane's `CPUQuota` and `MemoryHigh` never stall the one thing that gives the store its
+space back. Every `cleanup` starts it with `systemctl start --no-block`, which does not wait for the
+unit, and `<name>-store-reaper.timer` starts it a minute after boot and every 5 minutes, so no entry
+is left by a start that was missed or by a reboot. It deletes entries of that one directory and
+nothing else: it takes no path, refuses a trash that is a link, `rm` follows no link inside an
+entry, and it stays on the store's filesystem; a `golden-*` store and a live `slot-*` copy are
+never in the trash. The helper makes the trash when it is missing, deletes in place a copy the
+trash cannot take (as every copy was before), and treats a reaper it cannot start as a log line, so
+a slot that finishes between a machine's pull of this kit and its apply is cleaned up all the same.
+Three deletions stay synchronous, being rare: the smoke's and the image build's `snapshot` and
+`discard` (`--check` must leave nothing behind), the image build's pruning of old `golden-*`
+stores, and `--remove`.
 
 **Scopes.** An `org` lane keeps its sets in the organisation runner group `runner_group`, with a
 warm pool of `min_runners` idle registered `ci` slots. Its `ci` set is labelled `self-hosted` and
@@ -151,8 +185,19 @@ Each lane's assertion replaces only its own bridge's rules.
 **Disk.** A job writes only its slot image, its `/tmp` tmpfs and its store snapshot. The lane's
 store filesystem is a sparse XFS image with reflinks (`/var/lib/<name>/store.img`, mounted at
 `/var/lib/<name>/store` with `discard`, `store_disk_gb`): the image build writes the preloaded store
-there once per tag (`golden-<tag>`), and `prepare` gives each job a `cp -a --reflink=always` copy,
-which costs inodes, not a second copy of the data. With the store mounted on `/var/lib/docker`,
+there once per tag (`golden-<tag>`), and `prepare` gives each `ci` and `qae` job a
+`cp -a --reflink=always` copy, which costs inodes, not a second copy of the data (a wait job gets an
+empty directory). A finished job's copy waits in `trash/` there until the reaper deletes it ("The
+store trash" above), and that backlog must not fill the store unseen. Before a `ci` or `qae` copy,
+when the store filesystem has less than 10% of its space or of its inodes free and the trash holds
+entries, `prepare` deletes the oldest ones itself until there is room, waiting at most 120 s for a
+reaper that holds the lock; still short with entries left, it refuses the job with a log line that
+says why, which counts toward the back-off. A short store with an empty trash is not the backlog's
+doing: the copy is tried as before, and fails closed on a full filesystem. `--check` prints
+`store_trash=<dir> entries=<n> oldest_age_s=<seconds>` and fails on an entry that has waited more
+than 30 minutes (six of the timer's periods, and some fifteen of the slowest deletes measured: the
+reaper is failing, wedged or behind), on a reaper whose last run could not delete an entry, and
+while the reaper's timer is not active. With the store mounted on `/var/lib/docker`,
 Sysbox copies nothing at container start (the container's first line about 1 s after `docker run`,
 against 56 to 66 s when Sysbox copied a 5.6 GB store, 2026-09-26). Sysbox's own per-container data
 stays under `/var/lib/sysbox`, the machine's one sparse ext4 image (`sysbox.image`,
@@ -326,7 +371,8 @@ for reading one host file from somewhere else by hand.
 
 To remove a lane, run `provision-lane.sh <host> <lane> --remove --apply` on the machine, then merge
 its deletion from the host file before anything else lands on either `main` (a pull applies every
-lane the file still lists). `--remove` keeps the host's Docker and Sysbox, the store filesystem with its
+lane the file still lists). `--remove` stops the store reaper once every slot has stopped and
+empties the store's trash. It keeps the host's Docker and Sysbox, the store filesystem with its
 preloaded stores, the runner image, the App key, the lane's user and its Codex stores, and the
 (then inert) firewall rules.
 
