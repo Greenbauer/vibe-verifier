@@ -21,7 +21,8 @@ template; the consumer owns `runs-on`, the token secret, and the two catalog pin
    review, and then posts
    `review-receipt: <head sha> -- <mode> -- run <id>` as a PR comment. The receipt step is reached
    only when every step before it succeeded, so an invalid or missing token, a crash, a model error
-   or a broken step leaves no receipt for this head. The one exception is a run in which every
+   or a broken step leaves no receipt for this head. The post itself is tried up to five times,
+   so one GitHub 5xx does not throw a finished review away. The one exception is a run in which every
    configured account proved a rate or usage limit: it passes with a warning and its receipt's mode
    is `limited` (see the rules below). Usage collection and upload run under `always()` so a failed
    review can retain partial statistics without making the review green. These steps follow the receipt:

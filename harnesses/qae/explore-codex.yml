@@ -295,7 +295,15 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -s qae-artifacts/verdict.md ]; then echo "::error::the explorer wrote no qae-artifacts/verdict.md"; exit 1; fi
-          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file qae-artifacts/verdict.md
+          # GitHub answers the odd request with a 5xx. One of those must not throw a finished exploration
+          # away, so the post is tried five times over about two and a half minutes. The verify job reads
+          # the last verdict comment, so a post that landed although it reported failure does no harm.
+          for attempt in 1 2 3 4 5; do
+            if gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file qae-artifacts/verdict.md; then exit 0; fi
+            echo "::warning::posting the verdict failed (attempt ${attempt} of 5)"
+            if [ "$attempt" != 5 ]; then sleep $((attempt * 15)); fi
+          done
+          echo "::error::the verdict could not be posted after 5 attempts"; exit 1
       - name: Enforce the write scope
         # The prompt says "write only under qae-artifacts/", and a prompt is a suggestion. Anything
         # else that changed on the runner, tracked or untracked, fails the job here so it can never
