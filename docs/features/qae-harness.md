@@ -42,6 +42,8 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - `tests/test_qae_annotations.py::test_the_declared_digests_reach_the_gate_on_the_manifest_line`
 - `tests/test_qae_widths.py::test_a_criterion_missing_a_width_is_refused`
 - `tests/test_qae_widths.py::test_a_branch_dropping_the_widths_is_still_told_the_bases`
+- `tests/test_qae_ticket.py::test_a_declared_none_does_not_drop_the_tickets_criteria`
+- `tests/test_qae_ticket.py::test_the_ticket_reaches_the_explorer_and_the_gate`
 - `tests/test_runner.py::test_the_qae_browser_toolchain_installs_from_its_lockfile`
 
 ## Gotchas

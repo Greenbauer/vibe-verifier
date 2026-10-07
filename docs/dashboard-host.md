@@ -90,8 +90,10 @@ the JWT for is requested for exactly the configuration's `repositories` and exac
 permissions. The helper refuses a token whose granted permissions or repositories differ from the
 request in any way, and refuses a key file another user can read. It writes the token as
 `gh`'s `hosts.yml` (`oauth_token`, `user` from `LOGIN`, `git_protocol: https`), mode 0600, owned by
-the dashboard account, replacing the old file in one rename. Keep `hosts.yml` the only file in that
-directory; with no `config.yml`, `gh` uses its built-in defaults. A token lives one hour, so ten-minute
+the dashboard account, replacing the old file in one rename. It also writes `config.yml` next to
+it (`version: "1"`, mode 0644, owned by root, no token and no settings). gh 2.93 exits before any
+API call when that file is missing, because it tries to create it and this directory is not writable
+by the dashboard account. A token lives one hour, so ten-minute
 refreshes ride out several missed runs. Because the repository list comes from the dashboard's own
 configuration, which its account owns, only root and that account can widen the token, and the web
 service's sandbox cannot write the file.

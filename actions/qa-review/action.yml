@@ -7,6 +7,9 @@ inputs:
   verdict:
     description: The explorer's verdict comment, relative to the workspace; empty when there is none.
     default: ""
+  ticket:
+    description: The ticket's criteria the run read, relative to the workspace; empty when the workflow supplies none.
+    default: ""
   explore-result:
     description: The explore job's result (needs.explore.result).
     required: true
@@ -32,6 +35,7 @@ runs:
         VV_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         VV_CRITERIA: ${{ inputs.criteria }}
         VV_VERDICT: ${{ inputs.verdict }}
+        VV_TICKET: ${{ inputs.ticket }}
         VV_EXPLORE: ${{ inputs.explore-result }}
         VV_GATES: ${{ inputs.gates-outcome }}
         VV_NOT_REQUIRED: ${{ inputs.not-required }}
@@ -41,4 +45,5 @@ runs:
               --criteria "$VV_CRITERIA" --explore-result "$VV_EXPLORE" --gates-outcome "$VV_GATES"
               --not-required "$VV_NOT_REQUIRED")
         if [ -n "$VV_VERDICT" ]; then args+=(--verdict "$VV_VERDICT"); fi
+        if [ -n "$VV_TICKET" ]; then args+=(--ticket "$VV_TICKET"); fi
         python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}"
