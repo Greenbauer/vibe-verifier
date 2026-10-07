@@ -39,7 +39,7 @@
   function show() {
     Object.assign(state, VV.parseRoute(location.hash));
     replaceUnknownHash();
-    render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0);
+    render(); content.focus({ preventScroll: true }); window.scrollTo(0, 0); content.scrollTo?.(0, 0);
   }
 
   function announce(message) { announcement.textContent = message; }

@@ -16,6 +16,9 @@ opening a copied link lands on the same view. An empty or unknown hash, includin
 `#/pr/<owner>/<repo>/<number>` link, shows pull requests and is rewritten to `#/prs` in place. The
 hash never reaches the server.
 
+The workspace buttons stay on screen while that view scrolls. A narrow window stacks them in a row
+above the view, and that row stays put as well. Changing views scrolls the view back to the top.
+
 A pull request row opens that pull request on GitHub in a new tab. The address is the pull request's
 `html_url` only when it is an HTTPS `github.com` link under the configured owner. Any other address
 leaves the row as text, not a link.
