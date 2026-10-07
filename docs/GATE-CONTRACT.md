@@ -172,11 +172,15 @@ at a time on 2026-09-22.
   account as the repository are allowed by rule**, which is why `Greenbauer/vibe-verifier/actions/*`
   is not on the list.
 - **Dependabot alerts** (`PUT /repos/{owner}/{repo}/vulnerability-alerts`), covering the npm and
-  GitHub Actions advisory databases. Alerts only, on purpose: there is no `dependabot.yml`, no
-  version updates and no security-update pull requests, because a bump of `claude-code-action` in a
-  consumer would drift its harness copy from the catalog template, a bump of `supabase/setup-cli`
-  would swap a credentialed deploy job onto a composite that installs from npm, and npm bumps touch
-  product files the agent merge grant does not cover. The operator owns the alert signal.
+  GitHub Actions advisory databases. In three of the four that is alerts only, on purpose: there is
+  no `dependabot.yml`, no version updates and no security-update pull requests, because a bump of
+  `claude-code-action` in a consumer would drift its harness copy from the catalog template, a bump of
+  `supabase/setup-cli` would swap a credentialed deploy job onto a composite that installs from npm,
+  and npm bumps touch product files the agent merge grant does not cover. The operator owns the alert
+  signal. The fourth, the QAE pilot, also takes npm security-update pull requests, grouped into one
+  and never version updates: the QAE harness walks each against criteria its workflow supplies, with
+  the site in a container ([Dependency updates](../harnesses/qae/README.md#dependency-updates)), and
+  the merge is still the operator's.
 
 Enforcement reaches an action a workflow never names: a step inside a composite action fails the
 same way. Verified both directions on 2026-09-22 — with `oven-sh/setup-bun` missing from the list
@@ -287,7 +291,8 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
 ```
 
 - `--criteria` is the PR body; the list under its `## Acceptance criteria` heading is the required
-  set, numbered `AC1`, `AC2`, ... in order. A plain file with one criterion per line also works.
+  set, numbered `AC1`, `AC2`, ... in order. A body without that heading lists none, whatever else it
+  holds: read as a plain list, a Dependabot body was 105 criteria, one for each line of a changelog.
 - `--verdict` is the verdict text, normally the QAE's PR comment. Every criterion needs exactly one
   line `acceptance-check: ACn -- PASS -- <evidence>`, and the evidence must carry at least one anchor
   that resolves in the working tree: `<path>::<test title>` with the title verbatim in that file,

@@ -35,9 +35,14 @@ class AcceptanceVerdict(unittest.TestCase):
                    "acceptance-check: AC2 -- PASS -- e2e/signup.spec.ts::accepts a fresh invite\n")
         self.assertEqual(self.run_with(BODY, verdict).returncode, 0)
 
-    def test_plain_list_criteria(self):
+    def test_a_body_without_the_heading_lists_no_criteria(self):
+        # Read as a plain list, each line of a body with no `##` heading was a criterion, and the gate
+        # asked for a verdict on a line of prose. It lists none, which is a finding of its own.
         verdict = "acceptance-check: AC1 -- PASS -- src/lib/invites.ts:3\n"
-        self.assertEqual(self.run_with("# one per line\nexpired invites are rejected\n", verdict).returncode, 0)
+        result = self.run_with("Rejects expired invites.\n\n- expired invites are rejected\n", verdict)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no acceptance criteria found", result.stdout)
+        self.assertNotIn("AC1", result.stdout)
 
     def test_missing_line_fails(self):
         result = self.run_with(BODY, "acceptance-check: AC1 -- PASS -- e2e/signup.spec.ts::rejects an expired invite\n")

@@ -3,7 +3,7 @@
 
 A wired gate: the caller supplies two declared inputs and the working tree is the head.
 
-    --criteria FILE   the PR body (its `## Acceptance criteria` list) or a plain list, one per line
+    --criteria FILE   the PR body: its `## Acceptance criteria` list, and none without that heading
     --verdict FILE    the verdict text, usually the QAE's PR comment
     --artifacts DIR   a second root anchors may resolve in: the run's evidence (step logs, traces)
     --token TOKEN     the marker each check line starts with (default: acceptance-check)
@@ -69,7 +69,7 @@ import json
 import os
 import re
 
-from _acceptance import (ANCHOR_FORMS, anchors, annotations, check_lines, criteria, declares_none,
+from _acceptance import (ANCHOR_FORMS, anchors, annotations, body_criteria, check_lines, declares_none,
                          named_references, png_size, resolves, said, ticket_items, verdict)
 from _contract import CannotRun, Finding, run_gate, tracked_files
 from _features import add_selection_arguments, describe, selection
@@ -256,7 +256,7 @@ def check(args):
         print("%s: nothing to verify, declared: %s" % (GATE, reason))
         return []
     findings = [Finding(problem, args.ticket)] if problem else []
-    wanted = ([] if reason else criteria(criteria_text)) + ticket
+    wanted = ([] if reason else body_criteria(criteria_text)) + ticket
     verdict = read_input(args.verdict, "verdict")
     if not wanted:
         return findings or [Finding("no acceptance criteria found (a `## Acceptance criteria` list, or `- None: <why>`)",
