@@ -43,7 +43,9 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
 4. The network record exists and is clean: at least one `browser_network_requests` result in the
    session log (the explorer is told to call it after each criterion), and no request in any
    such result, or in a `network-*.log` file, answered 400 or worse or failed, outside the
-   allowlist. This encodes the recorded false-PASS lesson: a PASS obtained while the real
+   allowlist. A call may save its result to a file (its `filename` argument); the session log then
+   holds a link and no requests, so that file is read as the result. One the evidence does not hold
+   is a finding: a record nobody can read is not a record. This encodes the recorded false-PASS lesson: a PASS obtained while the real
    endpoint failed is refused here whatever the verdict says.
 5. A refusal is the correct outcome of some criteria (an auth gate answering 401 signed out, a
    server answering 422 to the invalid input the explorer is told to try), so a criterion declares
@@ -81,6 +83,8 @@ TOOL_CALL = re.compile(r"^### Tool call: (?P<name>\S+)\s*$", re.MULTILINE)
 # `3. [GET] http://host/path => [404] Not Found` or `=> [FAILED] net::ERR_...`, as the tool renders it;
 # inside a JSON result the newline is escaped, so the line is matched without anchors.
 REQUEST = re.compile(r"[0-9]+\. \[(?P<method>[A-Z]+)\] (?P<url>\S+) => \[(?P<status>[0-9]{3}|FAILED)\]")
+# What a browser_network_requests call was told to save its result to, in the call's Args block.
+SAVED_TO = re.compile(r'"filename":\s*"(?P<name>[^"\\]+)"')
 REFUSAL = re.compile(r"expected-refusal:[ \t]*(?P<status>[^\s`]+)[ \t]+(?P<target>[^\s`)]+)", re.IGNORECASE)
 REFUSABLE = ("400", "401", "403", "404", "409", "422")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -232,6 +236,28 @@ def console_is_clean(root, allowed, expected, sites):
     return findings
 
 
+def saved_network_records(root, sessions):
+    """The file each browser_network_requests call saved its result to, when it named one. The name
+    is as the explorer gave it, from the workspace (`qae-artifacts/qae/AC1-network.txt`), and is
+    looked up inside the evidence directory, which is all the verify job holds."""
+    files, findings = set(), []
+    evidence = os.path.basename(os.path.normpath(root)) + "/"
+    for session in sessions:
+        calls = TOOL_CALL.split(read(session))
+        for name, body in zip(calls[1::2], calls[2::2]):
+            saved = SAVED_TO.search(body.partition("- Result")[0]) if name == "browser_network_requests" else None
+            if not saved:
+                continue
+            path = os.path.normpath(os.path.join(root, saved.group("name").rpartition(evidence)[2]))
+            if path.startswith(os.path.join(os.path.normpath(root), "")) and os.path.isfile(path):
+                files.add(path)
+            else:
+                findings.append(Finding("network record saved to %s, which the evidence does not hold: save it under the "
+                                        "evidence directory, or call browser_network_requests without a filename"
+                                        % saved.group("name")[:200], relative(session, root)))
+    return sorted(files), findings
+
+
 def session_and_network(root, allowed, sites, expected):
     sessions = sorted(glob.glob(os.path.join(root, "session-*", "session.md")))
     if not sessions:
@@ -244,7 +270,9 @@ def session_and_network(root, allowed, sites, expected):
         findings.append(Finding("the browser was never navigated: no browser_navigate call in the session log"))
     if "browser_network_requests" not in calls:
         findings.append(Finding("no network record: the explorer must call browser_network_requests after each criterion"))
-    sources = sessions + sorted(glob.glob(os.path.join(root, "network-*.log")))
+    saved, unreadable = saved_network_records(root, sessions)
+    findings += unreadable
+    sources = sessions + saved + sorted(glob.glob(os.path.join(root, "network-*.log")))
     seen = set()
     for source in sources:
         for match in REQUEST.finditer(read(source)):

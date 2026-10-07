@@ -561,7 +561,8 @@ and refuses on structural facts:
    `Failed to load resource` line for a host other than the declared site and its further declared
    origins, which is judged (and skipped) like that host's request in 4;
 3. the session log exists (`--save-session`) and shows a `browser_navigate`;
-4. a `browser_network_requests` result exists (the prompt asks for one after each criterion), and
+4. a `browser_network_requests` result exists (the prompt asks for one after each criterion; a call
+   that saved its result to a file is read from that file, which must be in the evidence), and
    no request to the site under test (`--site-file`, the URL the explore job declared and any further
    origin after it, or a fixed `--site`) answered 400 or worse or failed, outside `--allow-request` patterns;
 5. with `--widths`, each criterion's step screenshots include one of each declared width
