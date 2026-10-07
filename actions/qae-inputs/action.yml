@@ -1,0 +1,49 @@
+name: Vibe Verifier QAE inputs
+description: Before the QAE explorer runs, copy the design references the site step supplied into the evidence, list them for the explorer, and declare their digests so the verify job's gate judges the images the workflow supplied; and write the viewport widths the QAE manifest's qae-artifacts line requires, for the explorer.
+inputs:
+  manifest:
+    description: >-
+      The QAE manifest, relative to the workspace. The --widths of its qae-artifacts line (judged from the
+      base) are written to qae-inputs/widths, one per line; without --widths no file is written.
+    default: .vibe-verifier-qae
+  entries:
+    description: >-
+      The QAE gate list itself, one gate per line, in place of `manifest`, as a wrapper passes it to
+      actions/gates. Written outside the repository, so it is never judged from the base.
+    default: ""
+  references:
+    description: Where the site step wrote each design reference as <key>.png, relative to the workspace. Absent or empty supplies none.
+    default: qae-inputs/references
+  evidence:
+    description: The explorer's artifact directory; each reference is copied to its references/<key>.png.
+    default: qae-artifacts
+outputs:
+  references:
+    description: >-
+      The supplied references as one JSON object of key to the sha256 of its image ({} when none). The
+      explore job passes it to the verify job, which writes it to qae-inputs/references.json for
+      acceptance-verdict --references: a step output, because the explorer can write under the evidence
+      directory and must not choose which image a criterion is judged against.
+    value: ${{ steps.prepare.outputs.references }}
+runs:
+  using: composite
+  steps:
+    - name: Prepare the explorer's inputs
+      id: prepare
+      shell: bash
+      env:
+        VV_MANIFEST: ${{ inputs.manifest }}
+        VV_ENTRIES: ${{ inputs.entries }}
+        VV_REFERENCES: ${{ inputs.references }}
+        VV_EVIDENCE: ${{ inputs.evidence }}
+      run: |
+        set -euo pipefail
+        manifest="$VV_MANIFEST"
+        if [ -n "$VV_ENTRIES" ]; then
+          manifest="$RUNNER_TEMP/vibe-verifier-qae-entries"
+          printf '%s\n' "$VV_ENTRIES" > "$manifest"
+        fi
+        digests="$RUNNER_TEMP/vv-reference-digests.json"
+        python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" qae-inputs --manifest "$manifest" --references "$VV_REFERENCES" \
+          --evidence "$VV_EVIDENCE" --listing "$VV_REFERENCES.md" --digests "$digests" --widths-file qae-inputs/widths
+        echo "references=$(cat "$digests")" >> "$GITHUB_OUTPUT"

@@ -132,7 +132,7 @@ class SiteUrl(unittest.TestCase):
 
     def test_the_declared_url_reaches_the_gate_through_the_verify_job(self):
         text = TEMPLATE.read_text()
-        self.assertIn("    outputs:\n      site-url: ${{ steps.site.outputs.url }}\n    steps:\n", text)
+        self.assertIn("    outputs:\n      site-url: ${{ steps.site.outputs.url }}\n", text)
         self.assertIn("          SITE_URL: ${{ needs.explore.outputs.site-url }}\n", text)
         preview = "https://site-git-feat-team.vercel.app"
         bin_dir = stub_bin(self, {"gh": 'case "$1 $2" in\n'
@@ -143,7 +143,7 @@ class SiteUrl(unittest.TestCase):
         script = verify_inputs_script()
         result = subprocess.run(["bash", "-e", "-c", script], cwd=self.work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
-                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": preview}))
+                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": preview, "REFERENCES": "", "TICKET": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(Path(self.work, "qae-inputs", "site-url").read_text(), preview + "\n")
         # The run's artifacts: the preview answered 500, the local default 404; only the declared site counts.
@@ -196,10 +196,53 @@ class Steps(unittest.TestCase):
 
     def test_every_catalog_pin_is_the_placeholder_a_consumer_replaces(self):
         pins = re.findall(r"vibe-verifier/actions/[\w-]+@(\S+)( #[^\n]*)?", TEMPLATE.read_text())
-        self.assertEqual(len(pins), 6)
+        self.assertEqual(len(pins), 8)
         for sha, comment in pins:
             self.assertEqual(sha, "0" * 40)
             self.assertIn("CONSUMER: pin the commit you subscribe to", comment)
+
+
+class FeatureRewalk(unittest.TestCase):
+    """The explore job hands the explorer the features its changes touch (docs/feature-map.md), before the
+    model runs; the verify job's gate re-derives the same selection, so this only informs."""
+
+    def explore(self):
+        text = TEMPLATE.read_text()
+        return text[text.index("\n  explore:\n"):text.index("\n  verify:\n")]
+
+    def test_the_selection_runs_after_the_inputs_and_before_the_explorer(self):
+        explore = self.explore()
+        order = [explore.index(step) for step in ("- name: Write the explorer's input", "- name: Select the features to re-walk",
+                                                  "- name: Explore the acceptance criteria in a real browser")]
+        self.assertEqual(order, sorted(order))
+        step = explore[explore.index("- name: Select the features to re-walk"):explore.index("- uses: actions/setup-node@")]
+        self.assertIn("uses: Greenbauer/vibe-verifier/actions/features@", step)
+        self.assertIn("          changed-files: qae-inputs/changed-files\n", step)
+
+    def test_the_explore_checkout_has_the_base_the_selection_is_judged_from(self):
+        explore = self.explore()
+        checkout = explore[explore.index("- uses: actions/checkout@"):explore.index("- name: Write the explorer's input")]
+        self.assertIn("          fetch-depth: 0\n", checkout)
+        self.assertIn("          persist-credentials: false\n", checkout)
+
+    def test_the_explore_inputs_step_writes_the_changed_paths(self):
+        work = tempfile.mkdtemp(prefix="vv-work-")
+        self.addCleanup(shutil.rmtree, work, True)
+        bin_dir = stub_bin(self, {"gh": 'case "$1" in\n  pr) printf "## Acceptance criteria\\n\\n- x\\n" ;;\n'
+                                        '  api) printf "app/auth/login.ts\\napp/old.ts\\n" ;;\nesac\n'})
+        script = step_script("- name: Write the explorer's input", "- name: Select the features to re-walk")
+        result = subprocess.run(["bash", "-e", "-c", script], cwd=work, capture_output=True, text=True,
+                                env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
+                                               "PR_NUMBER": "7", "REPO": "o/r", "TICKET": ""}))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(Path(work, "qae-inputs", "changed-files").read_text(), "app/auth/login.ts\napp/old.ts\n")
+
+    def test_the_prompt_tells_the_explorer_where_the_features_are_and_how_to_answer(self):
+        prompt = PROMPT.read_text()
+        for phrase in ("If the directory qae-inputs/features/ exists", "qae-artifacts/qae/features/<id>.md",
+                       "qae-artifacts/qae/features/<id>-step-k.png",
+                       "regression-check: <id> -- PASS -- <one sentence> (qae/features/<id>.md::<the step line text>)"):
+            self.assertIn(phrase, prompt)
 
 
 class Applicability(unittest.TestCase):
@@ -233,11 +276,13 @@ class Applicability(unittest.TestCase):
                                  env=clean_env({"CRITERIA_RESULT": result}))
             self.assertEqual(ran.returncode, code, result)
 
-    def test_both_jobs_pass_the_changed_paths_to_the_criteria_action(self):
+    def test_every_job_reads_the_changed_paths_the_same_way(self):
+        # The criteria and verify jobs pass them to the criteria action; the explore job to the feature selection.
         text = TEMPLATE.read_text()
         self.assertEqual(text.count("uses: Greenbauer/vibe-verifier/actions/criteria@"), 2)
-        self.assertEqual(text.count("          changed-files: qae-inputs/changed-files\n"), 2)
-        self.assertEqual(text.count("--jq '.[] | .filename, (.previous_filename // empty)' > qae-inputs/changed-files"), 2)
+        self.assertEqual(text.count("uses: Greenbauer/vibe-verifier/actions/features@"), 1)
+        self.assertEqual(text.count("          changed-files: qae-inputs/changed-files\n"), 3)
+        self.assertEqual(text.count("--jq '.[] | .filename, (.previous_filename // empty)' > qae-inputs/changed-files"), 3)
 
     def test_the_explore_inputs_step_writes_the_body_and_every_changed_name(self):
         work = tempfile.mkdtemp(prefix="vv-work-")
@@ -304,7 +349,8 @@ class Review(unittest.TestCase):
                                         'esac\n' % Path(work, "comments.json")})
         result = subprocess.run(["bash", "-e", "-c", verify_inputs_script()], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
-                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": "http://localhost:3000"}))
+                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": "http://localhost:3000",
+                                               "REFERENCES": "", "TICKET": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(Path(work, "qae-inputs", "verdict.md").read_text(), verdict + "\n")
         self.assertEqual(Path(work, "qae-inputs", "changed-files").read_text(), "app/page.tsx\n")

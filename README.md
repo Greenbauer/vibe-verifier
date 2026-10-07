@@ -136,6 +136,8 @@ Each gate is a command-line program that reads a working tree and its Git histor
 | `cognitive-complexity` | New files with functions over the complexity limit, or changed files with more of them |
 | `max-file-lines` | New files over the line limit, or existing files over it that grew |
 | `repo-rules` | New findings of the repository's own [ast-grep](https://ast-grep.github.io/) rules and of catalog [rule packs](rules/README.md), each with a message saying what to write instead |
+| `universal-checks` | A place in the code that breaks one of the repository's standing rules, `ci/universal-checks.md`: every match of a rule's population (every call shape of an API, say) must conform to it, and a rule whose population matches nothing fails closed. The rules are read at the merge base, so a pull request cannot weaken its own ([format](docs/GATE-CONTRACT.md#universal-checks)) |
+| `feature-map` | A [feature map](docs/feature-map.md) out of step with the code: a surface (route, page, command) no feature owns, a listed surface the code no longer declares, a source glob matching nothing, or a test anchor that does not resolve |
 | `no-duplicate-package-json-keys` | Duplicate keys or invalid JSON in `package.json` |
 | `build-tools-in-devdependencies` | Known development packages listed as runtime dependencies |
 | `branch-name-length` | Branch names longer than the configured limit |
@@ -176,6 +178,8 @@ flowchart LR
 ```
 
 The explorer can navigate and observe. The verifier independently checks that every criterion has a PASS with at least one resolving evidence anchor in the working tree or run artifacts. It checks screenshots for recorded steps, a navigation and network record, and recorded console/request failures outside configured exceptions, including a criterion's declared expected 401/403 refusal. These checks establish evidence shape, not whether the observations prove the criterion's meaning.
+
+With a [feature map](docs/feature-map.md), the explorer can also re-walk the features each pull request's changes touch (at most three, chosen from the map's own source globs with shared files left out), and the verifier then requires an anchored PASS for each of them too.
 
 Review receipts explicitly name a head SHA. QAE instead uses the pull-request workflow checkout and artifacts from the same run; its verdict comment is selected by bot identity, without a SHA/run-ID match. The consumer must supply the intended application revision, and configure the required checks to include explorer failures. See the [revision-binding limits](docs/threat-model.md#revision-binding-limits).
 
@@ -234,9 +238,10 @@ For multiple projects, see [subscribing in CI](docs/GATE-CONTRACT.md#subscribing
 - [Architecture](docs/architecture.md): system layers, trust boundaries, evidence flow, and invariants.
 - [Threat model](docs/threat-model.md): untrusted inputs, mitigations, and residual risks.
 - [Gate contract](docs/GATE-CONTRACT.md): gate interface, manifests, base-policy behavior, CI subscription, wrappers, and extension rules.
+- [Feature maps](docs/feature-map.md): one file per user-facing feature, kept true by the `feature-map` gate.
 - [Review harness](harnesses/review/README.md): revision-bound AI review and workflow receipts.
 - [QAE harness](harnesses/qae/README.md): browser exploration, artifacts, and deterministic acceptance verdicts.
-- [Dashboard](docs/dashboard.md): local read-only verification observability.
+- [Dashboard](docs/dashboard.md): local read-only verification observability, and the [Linux host runbook](docs/dashboard-host.md) that runs it under systemd.
 - [Security policy](SECURITY.md): vulnerability reporting and supported versions.
 
 ## Contribute

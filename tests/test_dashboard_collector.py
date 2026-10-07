@@ -92,6 +92,39 @@ class RemoteSamplerTests(unittest.TestCase):
             with self.assertRaisesRegex(REMOTE.SampleError, "foreign_job_target"):
                 REMOTE.scan_slots("example-ci", "example-ci", 1, states, directory, ("ci",))
 
+    def test_an_organization_scope_job_names_only_the_owner_and_projects_without_a_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            job = Path(directory) / "example-ci" / "ci" / "1" / "job"
+            job.parent.mkdir(parents=True)
+            job.write_text("EXAMPLE-CI ci 2 5386 runner-ci-1\n")
+            states = {"example-ci-ci@1.service": {"ActiveState": "active", "SubState": "running"}}
+            occupied = REMOTE.scan_slots("example-ci", "example-ci", 1, states, directory, ("ci",))
+            self.assertEqual(occupied[0]["state"], "allocated")
+            self.assertIsNone(occupied[0]["target_repository"])
+            self.assertEqual(occupied[0]["runner_id"], 5386)
+            projected = COLLECTOR.project_host(remote_host(occupied), config())
+            self.assertIsNone(projected["slots"]["occupied"][0]["target_repository"])
+            job.write_text("different-owner ci 2 5386 runner-ci-1\n")
+            with self.assertRaisesRegex(REMOTE.SampleError, "foreign_job_target"):
+                REMOTE.scan_slots("example-ci", "example-ci", 1, states, directory, ("ci",))
+        for target in ("example-ci", "different-owner/repo", 7):
+            with self.subTest(target), self.assertRaises(ValueError):
+                COLLECTOR.project_host(remote_host([dict(occupied[0], target_repository=target)]), config())
+
+    def test_every_unknown_reason_the_sampler_reports_survives_projection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            unreadable = Path(directory) / "example-ci" / "ci" / "1" / "job"
+            unreadable.parent.mkdir(parents=True)
+            unreadable.write_text("not a job\n")
+            states = {"example-ci-ci@1.service": {"ActiveState": "active", "SubState": "running"},
+                      "example-ci-ci@2.service": {"ActiveState": "active", "SubState": "running"}}
+            occupied = REMOTE.scan_slots("example-ci", "example-ci", 3, states, directory, ("ci",))
+        self.assertEqual([row["reason"] for row in occupied],
+                         ["job_unreadable", "active_unit_without_job", "unit_state_unavailable"])
+        projected = COLLECTOR.project_host(remote_host(occupied), config())
+        self.assertEqual([row["reason"] for row in projected["slots"]["occupied"]],
+                         ["job_unreadable", "active_unit_without_job", "unit_state_unavailable"])
+
     def test_sixteen_candidate_units_still_use_one_combined_budget(self):
         with tempfile.TemporaryDirectory() as directory:
             states = {}
@@ -356,6 +389,85 @@ class LocalCollectorTests(unittest.TestCase):
             path.write_text(json.dumps(document))
             with self.assertRaisesRegex(ValueError, "invalid fields"):
                 COLLECTOR.load_config(path)
+
+
+def local_config():
+    return COLLECTOR.CollectorConfig(
+        owner="example-ci", host_label="Shared CI host", ssh_argv=(), destination="",
+        listener_config_path="/etc/example-ci/listener.json", lane_name="example-ci",
+        workspace_path="/srv/example-ci/work", codex_home="/var/lib/example-ci/codex")
+
+
+class LocalModeTests(unittest.TestCase):
+    def test_a_host_without_ssh_fields_is_local_and_half_an_ssh_target_is_refused(self):
+        document = {"version": 1, "owner": "example-ci", "host": {
+            "label": "Shared CI host", "listener_config_path": "/etc/example-ci/listener.json",
+            "lane_name": "example-ci", "workspace_path": "/srv/example-ci/work",
+            "codex_home": "/var/lib/example-ci/codex"}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(document))
+            self.assertEqual(COLLECTOR.load_config(path), local_config())
+            document["host"]["destination"] = "example-ci-host"
+            path.write_text(json.dumps(document))
+            with self.assertRaisesRegex(ValueError, "invalid fields"):
+                COLLECTOR.load_config(path)
+            for ssh, destination, error in ((["ssh", "-T"], "example-ci-host", None),
+                                            (["sh", "-c"], "example-ci-host", "must invoke ssh"),
+                                            (["ssh"], "-oProxyCommand=x", "destination is invalid")):
+                document["host"].update(ssh_argv=ssh, destination=destination)
+                path.write_text(json.dumps(document))
+                with self.subTest(error=error):
+                    if error is None:
+                        self.assertEqual(COLLECTOR.load_config(path), config())
+                        continue
+                    with self.assertRaisesRegex(ValueError, error):
+                        COLLECTOR.load_config(path)
+
+    def test_local_mode_samples_in_process_without_ssh(self):
+        payloads = []
+        sampler = {"respond": lambda payload: payloads.append(payload) or {
+            "ok": True, "host": remote_host(), "quota": {"status": "ok", "rate_limits": quota()}}}
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(COLLECTOR.runpy, "run_path", return_value=sampler) as load, \
+                mock.patch.object(COLLECTOR.subprocess, "Popen") as process:
+            output = Path(directory) / "latest.json"
+            self.assertTrue(COLLECTOR.refresh(local_config(), output, now="2026-09-30T12:00:00Z"))
+            saved = json.loads(output.read_text())
+        process.assert_not_called()
+        load.assert_called_once_with(str(ROOT / "dashboard" / "remote_sampler.py"))
+        self.assertEqual(payloads, [{"owner": "example-ci", "listener_config_path": "/etc/example-ci/listener.json",
+                                     "lane_name": "example-ci", "workspace_path": "/srv/example-ci/work",
+                                     "collect_quota": True, "codex_home": "/var/lib/example-ci/codex"}])
+        self.assertTrue(saved["hosts"][0]["available"])
+        self.assertEqual(saved["accounts"][0]["rate_limits"], quota())
+
+    def test_local_failures_keep_the_remote_error_contract(self):
+        for answer, code in (({"ok": False, "error": "listener_identity_mismatch"}, "listener_identity_mismatch"),
+                             ({"ok": False, "error": "cpu_unavailable"}, "remote_failed")):
+            with self.subTest(code=code), mock.patch.object(COLLECTOR.runpy, "run_path",
+                                                            return_value={"respond": lambda _payload: answer}):
+                with self.assertRaises(COLLECTOR.CollectorError) as caught:
+                    COLLECTOR.collect_local(local_config(), False)
+                self.assertEqual(str(caught.exception), code)
+        # The real sampler, run in this process: the configured listener does not exist here.
+        with self.assertRaisesRegex(COLLECTOR.CollectorError, "listener_config_unavailable"):
+            COLLECTOR.collect_local(local_config(), False)
+
+    def test_the_sampler_answers_errors_as_codes_never_raw_text(self):
+        self.assertEqual(REMOTE.respond([]), {"ok": False, "error": "invalid_arguments"})
+        with mock.patch.object(REMOTE, "collect", side_effect=REMOTE.SampleError("foreign_job_target")):
+            self.assertEqual(REMOTE.respond({}), {"ok": False, "error": "foreign_job_target"})
+        with mock.patch.object(REMOTE, "collect", side_effect=KeyError("SECRET_MARKER")):
+            self.assertEqual(REMOTE.respond({}), {"ok": False, "error": "collection_failed"})
+
+    def test_an_ssh_host_still_goes_over_ssh(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(COLLECTOR, "collect_remote", return_value={"host": remote_host()}) as remote, \
+                mock.patch.object(COLLECTOR.runpy, "run_path") as local:
+            COLLECTOR.refresh(config(), Path(directory) / "latest.json", now="2026-09-30T12:00:00Z")
+        remote.assert_called_once_with(config(), True)
+        local.assert_not_called()
 
 
 if __name__ == "__main__":

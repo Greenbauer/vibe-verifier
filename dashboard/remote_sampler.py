@@ -20,7 +20,8 @@ MAX_JOB = 4096
 MAX_PROCESS_OUTPUT = 256 * 1024
 OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 LANE_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
-TARGET_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]{1,100})$")
+# A job targets OWNER/REPO, or only OWNER when an organization-scope scale set assigned it.
+TARGET_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]{0,38})(?:/([A-Za-z0-9._-]{1,100}))?$")
 RUNNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 STATE_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 
@@ -239,7 +240,7 @@ def read_job(path, owner, expected_kind):
     if match.group(1).casefold() != owner.casefold():
         raise SampleError("foreign_job_target")
     return {
-        "target_repository": owner + "/" + match.group(2),
+        "target_repository": owner + "/" + match.group(2) if match.group(2) else None,
         "set_id": set_id,
         "runner_id": runner_id,
         "runner_name": fields[4],
@@ -429,15 +430,25 @@ def collect(payload, run_root="/run", runner=run_bounded, sleeper=time.sleep,
     return {"ok": True, "host": host, "quota": quota}
 
 
+def respond(payload):
+    """collect() as the collector reads it, over SSH or in-process (its local mode): the sample, or
+    an error code and never raw text."""
+    try:
+        if not isinstance(payload, dict):
+            raise SampleError("invalid_arguments")
+        return collect(payload)
+    except SampleError as error:
+        return {"ok": False, "error": str(error)}
+    except Exception:
+        return {"ok": False, "error": "collection_failed"}
+
+
 def main():
     try:
         if len(sys.argv) != 2 or len(sys.argv[1]) > MAX_FILE * 2:
             raise SampleError("invalid_arguments")
         raw = base64.urlsafe_b64decode(sys.argv[1].encode())
-        payload = json.loads(raw.decode("utf-8"))
-        if not isinstance(payload, dict):
-            raise SampleError("invalid_arguments")
-        result = collect(payload)
+        result = respond(json.loads(raw.decode("utf-8")))
     except SampleError as error:
         result = {"ok": False, "error": str(error)}
     except Exception:

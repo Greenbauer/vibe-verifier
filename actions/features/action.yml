@@ -1,0 +1,49 @@
+name: Vibe Verifier features
+description: Pick the features of a feature map that a pull request's changed paths touch, by the selection on the QAE manifest's acceptance-verdict line, and copy their files for the explorer to re-walk.
+inputs:
+  manifest:
+    description: >-
+      The QAE manifest, relative to the workspace. Its acceptance-verdict line (judged from the base) turns
+      the re-walk on with --features and sets the selection; without --features nothing is selected.
+    default: .vibe-verifier-qae
+  entries:
+    description: >-
+      The QAE gate list itself, one gate per line, in place of `manifest`, as a wrapper passes it to
+      actions/gates. Written outside the repository, so it is never judged from the base.
+    default: ""
+  changed-files:
+    description: The pull request's changed paths, one per line, relative to the workspace.
+    required: true
+  out:
+    description: Where each selected feature file is copied, as <id>.md. Not created when nothing is selected.
+    default: qae-inputs/features
+outputs:
+  count:
+    description: How many features were selected. 0 when the re-walk is off or no feature is touched.
+    value: ${{ steps.select.outputs.count }}
+runs:
+  using: composite
+  steps:
+    - name: Select the features to re-walk
+      id: select
+      shell: bash
+      env:
+        VV_MANIFEST: ${{ inputs.manifest }}
+        VV_ENTRIES: ${{ inputs.entries }}
+        VV_CHANGED: ${{ inputs.changed-files }}
+        VV_OUT: ${{ inputs.out }}
+      run: |
+        set -euo pipefail
+        manifest="$VV_MANIFEST"
+        if [ -n "$VV_ENTRIES" ]; then
+          manifest="$RUNNER_TEMP/vibe-verifier-qae-entries"
+          printf '%s\n' "$VV_ENTRIES" > "$manifest"
+        fi
+        out=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" features --manifest "$manifest" \
+          --changed-files "$VV_CHANGED" --out "$VV_OUT")
+        echo "$out"
+        first=${out%%$'\n'*}
+        case "$first" in
+          "features: "[0-9]*) count=${first#features: }; echo "count=${count%% *}" >> "$GITHUB_OUTPUT" ;;
+          *) echo "::error::unexpected output from vibe-verifier features: $first"; exit 2 ;;
+        esac

@@ -1,0 +1,24 @@
+# Samples this machine's CI lane for dashboard NAME and publishes its telemetry, as root. Linux, systemd.
+# Root keeps its capabilities: the sampler reads the lane's job files, systemd state and Codex store, and
+# the published file goes to the dashboard's account. Home is read-only, not hidden: a lane may live there.
+[Unit]
+Description=Refresh the telemetry of Vibe Verifier dashboard %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env -i HOME=/root PYTHONNOUSERSITE=1 PATH=/usr/sbin:/usr/bin:/sbin:/bin /usr/bin/python3 /opt/vibe-verifier/bin/vibe-dashboard-host telemetry --config /etc/vibe-dashboard/%i/dashboard.json --user vibe-dashboard-%i --collector /etc/vibe-dashboard/%i/collector.json --state /var/lib/vibe-dashboard-state/%i/collector.json
+TimeoutStartSec=45
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadWritePaths=/var/lib/vibe-dashboard/%i /var/lib/vibe-dashboard-state/%i
+UMask=0077

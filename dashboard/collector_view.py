@@ -6,6 +6,22 @@ from .collector import project_host, project_rate_limits
 from .util import parse_time, iso_time
 
 
+def _window_label(minutes):
+    if minutes % 1440 == 0:
+        days = minutes // 1440
+        return "1 day" if days == 1 else "%s days" % days
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        return "1 hour" if hours == 1 else "%s hours" % hours
+    return "%s min" % minutes
+
+
+def _model_label(limit_id):
+    if limit_id.isalpha():
+        return limit_id[:1].upper() + limit_id[1:]
+    return limit_id
+
+
 def fresh(section, now):
     observed = parse_time(section.get("observed_at"))
     return (section.get("available") is True and section.get("stale") is False and
@@ -34,8 +50,11 @@ def collector_view(value, config, now):
             if current and row["state"] == "allocated":
                 lane["runner_id"] = row["runner_id"]
                 lane["allocated_at"] = row["allocated_at"]
-                lane["job"] = {"repository": row["target_repository"],
-                               "name": "Runner allocated; job match pending", "url": None}
+                # An organization-scope allocation names no repository; join_runner_jobs then finds
+                # the job by runner ID alone.
+                if row["target_repository"]:
+                    lane["job"] = {"repository": row["target_repository"],
+                                   "name": "Runner allocated; job match pending", "url": None}
             lanes.append(lane)
         listener_up = host["listener"]["state"] == "up"
         for index in range(host["slots"]["remaining_on_demand"]):
@@ -59,19 +78,21 @@ def collector_view(value, config, now):
     usage = {"available": False, "reason": "not_provided"}
     if account.get("observed_at"):
         limits = project_rate_limits(account.get("rate_limits"))
-        windows = []
         from datetime import datetime, timezone
+        accounts = []
         for limit in limits:
+            windows = []
             for window in limit["windows"]:
                 minutes = window["duration_minutes"]
-                duration = "%sd" % (minutes // 1440) if minutes % 1440 == 0 else "%sh" % (minutes / 60)
-                windows.append({"name": "%s · %s" % (limit["limit_id"], duration),
+                windows.append({"name": _window_label(minutes),
                                 "used_percent": window["used_percent"],
                                 "resets_at": iso_time(datetime.fromtimestamp(window["resets_at"], timezone.utc)),
                                 "allowance_tokens": None, "window_minutes": minutes})
+            # Each metered feature is its own plan. A Codex plan's 5-hour and 7-day windows stay together.
+            accounts.append({"id": "collector:%s" % limit["limit_id"], "label": _model_label(limit["limit_id"]),
+                             "provider": "OpenAI", "quota_windows": windows})
         usage = {"available": True, "sampled_at": account["observed_at"], "stale": not fresh(account, now),
-                 "accounts": [{"id": "collector:codex", "label": "Codex subscription", "provider": "OpenAI",
-                               "quota_windows": windows}], "samples": [],
+                 "accounts": accounts, "samples": [],
                  "completeness": "Subscription percentage is account-wide and may include other activity. Per-bot token history starts with captured runs."}
     return {"available": True, "capacity": capacity, "usage": usage,
             "bots": {"available": bool(states), "sampled_at": raw_host.get("observed_at"), "stale": not fresh(raw_host, now), "states": states}}

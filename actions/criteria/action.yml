@@ -9,6 +9,13 @@ inputs:
       The pull request's changed paths, one per line, relative to the workspace. Given, a PR that lists
       no criteria and changes only CI configuration or documentation no site renders needs no check.
     default: ""
+  ticket:
+    description: >-
+      The acceptance criteria of the ticket the pull request implements, written by the consumer's own step,
+      relative to the workspace. Counted in addition to the PR body's (as TC1, TC2, ...), so a PR cannot
+      declare or leave its ticket's requirements away. An empty file links no ticket. Empty (the default)
+      reads none.
+    default: ""
 outputs:
   count:
     description: How many criteria the document lists. 0 when it needs no check, and 0 when it lists none.
@@ -18,6 +25,11 @@ outputs:
       Why no browser check is needed (the reason the document declares, or that every changed path is
       unrendered); empty when one is.
     value: ${{ steps.read.outputs.declared-none }}
+  ticket:
+    description: >-
+      The text of the `ticket` file, unchanged (empty without one), so the jobs after this one judge the
+      ticket this job counted rather than fetching it again.
+    value: ${{ steps.read.outputs.ticket }}
 runs:
   using: composite
   steps:
@@ -27,14 +39,21 @@ runs:
       env:
         VV_PATH: ${{ inputs.path }}
         VV_CHANGED: ${{ inputs.changed-files }}
+        VV_TICKET: ${{ inputs.ticket }}
       run: |
         set -euo pipefail
         args=(criteria "$VV_PATH")
         if [ -n "$VV_CHANGED" ]; then args+=(--changed-files "$VV_CHANGED"); fi
+        if [ -n "$VV_TICKET" ]; then args+=(--ticket "$VV_TICKET"); fi
         out=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}")
         echo "$out"
-        case "$out" in
-          none:*)     echo "count=0" >> "$GITHUB_OUTPUT"; echo "declared-none=${out#none: }" >> "$GITHUB_OUTPUT" ;;
-          criteria:*) echo "count=${out#criteria: }" >> "$GITHUB_OUTPUT"; echo "declared-none=" >> "$GITHUB_OUTPUT" ;;
-          *) echo "::error::unexpected output from vibe-verifier criteria: $out"; exit 2 ;;
+        # The first line decides; the lines after it name each criterion's annotations, for the log.
+        first=${out%%$'\n'*}
+        case "$first" in
+          none:*)     echo "count=0" >> "$GITHUB_OUTPUT"; echo "declared-none=${first#none: }" >> "$GITHUB_OUTPUT" ;;
+          criteria:*) echo "count=${first#criteria: }" >> "$GITHUB_OUTPUT"; echo "declared-none=" >> "$GITHUB_OUTPUT" ;;
+          *) echo "::error::unexpected output from vibe-verifier criteria: $first"; exit 2 ;;
         esac
+        # The ticket's text as a multi-line output, under a delimiter its text cannot hold.
+        delimiter="VV_TICKET_$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+        { echo "ticket<<$delimiter"; if [ -n "$VV_TICKET" ]; then cat "$VV_TICKET"; echo; fi; echo "$delimiter"; } >> "$GITHUB_OUTPUT"

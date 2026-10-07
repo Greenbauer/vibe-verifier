@@ -1,7 +1,8 @@
 (function () {
   "use strict";
-  const { BOT_META, element: el, link, duration, since, formatTime, bytes, badge,
-    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterTone, currentWork } = VV;
+  const { BOT_META, element: el, link, safeUrl, duration, since, formatTime, bytes, badge,
+    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork,
+    quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
   const state = { ...VV.restoreViewState(null), ...VV.parseRoute(location.hash) };
@@ -15,15 +16,15 @@
 
   function rememberView() {
     if (!snapshot) return;
-    const { view, selected, ...preferences } = state;
+    const { view, ...preferences } = state;
     try { sessionStorage.setItem(`vv-dashboard-view:${snapshot.owner}`, JSON.stringify(preferences)); }
     catch (_) { /* Navigation still works when storage is unavailable. */ }
   }
 
   // Every view change sets the URL hash, which adds a history entry; hashchange then draws it.
   // Back and forward fire the same event, so they draw through the same path.
-  function go(view, selected = null) {
-    const hash = VV.routeHash({ view, selected });
+  function go(view) {
+    const hash = VV.routeHash({ view });
     if (location.hash !== hash) location.hash = hash;
     else show();
   }
@@ -117,9 +118,11 @@
   function progress(pull) {
     const totals = stepTotals(pull);
     if (!totals.known) return el("div", { class: "progress-copy" }, el("b", {}, "Step total unavailable"), el("span", {}, "Progress is not shown as complete"));
-    const meter = el("div", { class: `step-meter tone-${meterTone(pull)}`, role: "progressbar", "aria-valuemin": 0,
-      "aria-valuemax": totals.total, "aria-valuenow": totals.completed });
-    meter.append(el("span", { style: `width:${totals.total ? totals.completed / totals.total * 100 : 0}%` }));
+    const meter = el("div", { class: "step-meter", role: "img", "aria-label": meterLabel(totals) });
+    meterSegments(totals).forEach(segment => meter.append(el("span", {
+      class: `seg-${segment.state}`, style: `flex:${segment.count} 1 0`, title: `${segment.count} ${segment.label}`,
+      "aria-hidden": "true"
+    })));
     return el("div", { class: "progress-copy" }, el("b", {}, `${totals.completed}/${totals.total} steps`),
       meter, el("span", {}, `${totals.remaining} remaining`));
   }
@@ -151,20 +154,21 @@
   function prRow(pull) {
     const category = combinedCategory(pull);
     const work = currentWork(pull);
-    const button = el("button", { class: "pr-row", onclick: () => go("prs", `${pull.repository}#${pull.number}`),
-    "aria-label": `Open ${pull.repository} pull request ${pull.number}: ${pull.title}` },
+    const href = safeUrl(pull.html_url, snapshot.owner);
+    return el(href ? "a" : "div", {
+      class: `pr-row${pull.stale ? " stale-row" : ""}`,
+      href, target: href ? "_blank" : null, rel: href ? "noreferrer" : null,
+      "aria-label": href ? `Open ${pull.repository} pull request ${pull.number} on GitHub: ${pull.title}` : null
+    },
     el("span", { class: "pr-identity" }, el("b", {}, pull.title),
       el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
     el("span", { class: "pr-work" }, badge(category), el("small", {}, pull.attention_reason)),
     progress(pull),
     el("span", { class: "pr-age" }, el("b", {}, since(pull.created_at, Date.now())), el("small", {}, work ? `${work.name} · ${duration(work.elapsed)}` : "PR age")),
     el("span", { class: "chevron", "aria-hidden": "true" }, "›"));
-    if (pull.stale) button.classList.add("stale-row");
-    return button;
   }
 
   function renderPulls() {
-    state.selected = null;
     const pulls = flattenPulls(snapshot);
     content.replaceChildren(heading("Pull requests", "Open pull requests and current-head evidence from selected repositories."),
       coverage(), prFilters(pulls), el("div", { class: "list-heading" }, el("span", { id: "pr-count" }),
@@ -173,65 +177,54 @@
     renderPrRows();
   }
 
-  function checkRow(row) {
-    return el("div", { class: "check-row" }, el("span", {}, el("b", {}, row.name), el("small", {}, row.provider)),
-      badge(row.category), el("span", { class: "mono" }, duration(row.elapsed_seconds)),
-      link("Original evidence", row.details_url, snapshot.owner));
-  }
-
-  function timeline(pull) {
-    const jobs = (pull.runs || []).flatMap(run => (run.jobs || []).map(job => ({ ...job, run })));
-    if (!jobs.length) return empty("Actions timing unavailable", "Third-party checks remain listed above. No joined Actions jobs were returned.");
-    const starts = jobs.map(job => Date.parse(job.started_at || job.created_at)).filter(Number.isFinite);
-    const ends = jobs.map(job => Date.parse(job.completed_at) || Date.now()).filter(Number.isFinite);
-    const start = Math.min(...starts), end = Math.max(...ends), span = Math.max(1, end - start);
-    const panel = el("section", { class: "panel" }, el("h2", {}, "Parallel job timeline"),
-      el("p", { class: "muted" }, "Bars share wall-clock time. Job durations are not summed."));
-    jobs.forEach(job => {
-      const began = Date.parse(job.started_at || job.created_at), finished = Date.parse(job.completed_at) || Date.now();
-      const bar = el("span", { class: `timeline-bar status-${job.category}` });
-      bar.style.left = `${Math.max(0, (began - start) / span * 100)}%`;
-      bar.style.width = `${Math.max(1, (finished - began) / span * 100)}%`;
-      const details = el("details", { class: "job-detail", "data-job-id": job.id },
-        el("summary", {}, el("span", {}, job.name), badge(job.category), el("span", { class: "mono" }, duration(job.elapsed_seconds))),
-        el("div", { class: "timeline-track" }, bar),
-        el("p", { class: "muted" }, `Created-to-start: ${duration(job.queue_seconds)} · run attempt ${job.run.attempt}`));
-      (job.steps || []).forEach(step => details.append(el("div", { class: "step-row" }, badge(step.category),
-        el("span", {}, step.name), el("span", { class: "mono" }, duration(step.elapsed_seconds)))));
-      const evidence = link("Open job on GitHub", job.html_url, snapshot.owner);
-      if (evidence) details.append(evidence);
-      panel.append(details);
+  function subscriptionPanel(accounts, now = Date.now()) {
+    const panel = el("section", { class: "panel subscription-panel" });
+    quotaGroups(accounts).forEach(group => {
+      const block = el("div", { class: "subscription-group" });
+      block.append(el("h2", {}, group.title));
+      group.accounts.forEach(account => block.append(quota(account, now)));
+      panel.append(block);
     });
     return panel;
   }
 
-  function renderDetail() {
-    const pull = flattenPulls(snapshot).find(item => `${item.repository}#${item.number}` === state.selected);
-    const back = el("button", { class: "back", onclick: () => go("prs") }, "‹ Pull requests");
-    if (!pull) {
-      content.replaceChildren(back, empty(snapshot.github.refreshing ? "Loading pull request" : "Pull request unavailable",
-        "The selected pull request is not in the current sample. It will appear when available, or you can return to the list."));
-      return;
-    }
-    const header = el("div", { class: "detail-heading" }, el("div", {}, el("h1", {}, pull.title),
-      el("p", { class: "muted" }, `${pull.repository} #${pull.number} · current head ${pull.head_sha ? pull.head_sha.slice(0, 12) : "changed"}`)),
-      link("Open pull request on GitHub", pull.html_url, snapshot.owner, "primary-link"));
-    const evidence = [...(pull.expected || []), ...(pull.checks || []), ...(pull.statuses || [])];
-    const checks = el("section", { class: "panel" }, el("h2", {}, "Current-head checks"), progress(pull));
-    evidence.forEach(row => checks.append(checkRow(row)));
-    if (!evidence.length) checks.append(el("p", { class: "muted" }, "No current-head check evidence is available."));
-    content.replaceChildren(back, header, sourceBanner(pull.attention_reason, pull.attention ? "warning" : ""), checks, timeline(pull));
+  function quota(account, now = Date.now()) {
+    const panel = el("div", { class: "quota-lines" });
+    if (!account.quota_windows.length) return panel.appendChild(el("span", { class: "muted" }, "Quota window unavailable"));
+    account.quota_windows.map((window, index) => ({ window, index })).sort((a, b) => {
+      const left = Number.isFinite(a.window.window_minutes) ? a.window.window_minutes : Infinity;
+      const right = Number.isFinite(b.window.window_minutes) ? b.window.window_minutes : Infinity;
+      return left - right || a.index - b.index;
+    }).forEach(({ window }) => panel.append(quotaLine(window, now)));
+    return panel;
   }
 
-  function quota(account) {
-    const panel = el("div", { class: "quota-row" });
-    if (!account.quota_windows.length) return panel.appendChild(el("span", { class: "muted" }, "Quota window unavailable"));
-    account.quota_windows.forEach(window => panel.append(el("div", { class: "quota" },
-      el("b", {}, window.name), el("span", {}, `${window.used_percent}% used`),
-      el("small", {}, `Resets ${formatTime(window.resets_at)}`),
-      window.allowance_tokens === null ? null :
-        el("small", {}, `${window.allowance_tokens.toLocaleString()} token allowance reported`))));
-    return panel;
+  function quotaLine(window, now) {
+    const label = quotaWindowLabel(window);
+    const used = quotaDisplayPercent(window.used_percent);
+    const pace = quotaPace(window, now);
+    const tone = quotaTone(window.used_percent, pace ? pace.delta : null);
+    const countdown = quotaCountdown(window.resets_at, now);
+    const delta = pace ? quotaDeltaLabel(pace.delta) : null;
+    const usedText = used === null ? "usage unavailable" : `${used}% used`;
+    const detail = [`${label}: ${usedText}`];
+    if (pace) detail.push(quotaPacePhrase(pace));
+    detail.push(`Resets ${formatTime(window.resets_at)}`);
+    if (Number.isFinite(window.allowance_tokens)) detail.push(`${window.allowance_tokens.toLocaleString()} token allowance reported`);
+    const track = el("div", {
+      class: "quota-track", role: "meter", "aria-valuemin": "0", "aria-valuemax": "100",
+      "aria-valuenow": used === null ? "0" : String(used),
+      "aria-label": [usedText, pace ? quotaPacePhrase(pace) : null, countdown].filter(Boolean).join(", ")
+    });
+    if (used) track.append(el("span", { class: `quota-fill tone-${tone}`, style: `width:${used}%` }));
+    if (pace) track.append(el("span", {
+      class: "quota-tick", style: `left:${pace.expected}%`, title: `Even pace: ${Math.round(pace.expected)}% used`
+    }));
+    const meta = [el("b", {}, used === null ? "Unavailable" : `${used}%`)];
+    if (countdown) meta.push(` · ${countdown}`);
+    if (delta) meta.push(" · ", el("span", { class: `quota-delta tone-${tone}` }, delta));
+    return el("div", { class: "quota-line", title: detail.join(". ") },
+      el("span", { class: "quota-label" }, label), track, el("span", { class: "quota-meta" }, ...meta));
   }
 
   function failurePanel() {
@@ -326,12 +319,7 @@
     if (usage?.available) {
       if (usage.stale) content.append(sourceBanner(`Usage telemetry is stale. Last sample: ${formatTime(usage.sampled_at)}.`, "warning"));
       const quotas = usage.accounts.filter(account => account.quota_windows.length);
-      if (quotas.length) {
-        const panel = el("section", { class: "panel subscription-panel" });
-        quotas.forEach(account => panel.append(el("div", { class: "account-heading" },
-          el("h2", {}, account.label), quota(account))));
-        content.append(panel);
-      }
+      if (quotas.length) content.append(subscriptionPanel(quotas));
       content.append(usageCharts(usage), el("p", { class: "muted coverage-note" }, usage.completeness));
     } else content.append(usageCharts({ samples: [], accounts: [] }), sourceBanner("Usage source is unavailable.", "warning"));
     content.append(failurePanel());
@@ -378,14 +366,13 @@
   function render() {
     if (!snapshot) return;
     renderChrome();
-    if (state.selected) renderDetail();
-    else if (state.view === "usage") renderUsage();
+    if (state.view === "usage") renderUsage();
     else if (state.view === "capacity") renderCapacity();
     else renderPulls();
     rememberView();
-    const title = state.selected || { prs: "Pull requests", usage: "Bot usage", capacity: "Capacity" }[state.view];
+    const title = { prs: "Pull requests", usage: "Bot usage", capacity: "Capacity" }[state.view];
     document.title = `${title} · Vibe Verifier`;
-    announce(`Showing ${state.selected ? "pull request detail" : state.view}`);
+    announce(`Showing ${state.view}`);
   }
 
   async function load() {
@@ -397,12 +384,10 @@
       const next = await response.json();
       if (!snapshot) restoreView(next.owner);
       snapshot = next;
-      const openedJobs = [...content.querySelectorAll("details[open]")].map(item => item.dataset.jobId);
       const focused = document.activeElement;
       const filterId = ["pr-search", "repo-filter"].includes(focused?.id) ? focused.id : null;
       const selection = filterId === "pr-search" ? [focused.selectionStart, focused.selectionEnd] : null;
       render();
-      content.querySelectorAll("details[data-job-id]").forEach(item => { item.open = openedJobs.includes(item.dataset.jobId); });
       const replacement = filterId && document.getElementById(filterId);
       if (replacement) {
         replacement.focus({ preventScroll: true });
@@ -414,10 +399,15 @@
     } finally { loading = false; }
   }
 
+  // A load can make the server re-read GitHub, whose hourly budget the signed-in account shares with
+  // everything else it runs. A tab nobody can see skips its refresh and catches up when shown again.
+  function refreshIfVisible() { if (!document.hidden) load(); }
+
   document.querySelectorAll(".sidebar button").forEach(button => button.addEventListener("click", () => go(button.dataset.view)));
   replaceUnknownHash();
   window.addEventListener("hashchange", show);
   window.addEventListener("pagehide", rememberView);
   load();
-  window.setInterval(load, 30000);
+  window.setInterval(refreshIfVisible, 30000);
+  document.addEventListener("visibilitychange", refreshIfVisible);
 })();

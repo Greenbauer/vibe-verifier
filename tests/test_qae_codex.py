@@ -108,7 +108,7 @@ class Template(unittest.TestCase):
         self.assertIn('gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file qae-artifacts/verdict.md', post)
 
     def test_every_catalog_pin_is_the_placeholder_a_consumer_replaces(self):
-        for template, count in ((CODEX, 6), (KEEPALIVE, 1)):
+        for template, count in ((CODEX, 8), (KEEPALIVE, 1)):
             pins = re.findall(r"vibe-verifier/actions/[\w-]+@(\S+)( #[^\n]*)?", template.read_text())
             self.assertEqual(len(pins), count, template.name)
             for sha, comment in pins:

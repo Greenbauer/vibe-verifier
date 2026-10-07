@@ -10,12 +10,15 @@ copied into the live dashboard. Live mode has no built-in data.
 
 ## Navigation, back/forward, and refresh
 
-The current view lives in the URL hash: `#/prs`, `#/usage`, `#/capacity`, or
-`#/pr/<owner>/<repo>/<number>` for one pull request. Every view change adds a browser history
-entry, so the back and forward buttons move between views, and refreshing or opening a copied link
-lands on the same view. A selected PR stays selected while GitHub data loads; an unavailable PR
-shows an explanation and a way back instead of silently switching views. An empty or unknown hash
-shows pull requests and is rewritten to `#/prs` in place. The hash never reaches the server.
+The current view lives in the URL hash: `#/prs`, `#/usage`, or `#/capacity`. Every view change adds
+a browser history entry, so the back and forward buttons move between views, and refreshing or
+opening a copied link lands on the same view. An empty or unknown hash, including an older
+`#/pr/<owner>/<repo>/<number>` link, shows pull requests and is rewritten to `#/prs` in place. The
+hash never reaches the server.
+
+A pull request row opens that pull request on GitHub in a new tab. The address is the pull request's
+`html_url` only when it is an HTTPS `github.com` link under the configured owner. Any other address
+leaves the row as text, not a link.
 
 The search and repository filters, subscription/attention filters, and selected bot are kept in
 the current tab's session storage, scoped to the configured owner, and restored on refresh. They
@@ -26,8 +29,8 @@ covers the routes, history, and storage.
 
 ## Tab icon
 
-The browser tab shows the configured owner's GitHub avatar with the dashboard's green check badge in
-the corner, so the tab names both the owner and this dashboard. The server reads the public avatar
+The browser tab and the header logo show the configured owner's GitHub avatar with the dashboard's
+green check badge in the corner, so they name both the owner and this dashboard. The server reads the public avatar
 from `https://github.com/<owner>.png` on the first request for `/favicon.svg` and inlines it in the
 SVG it serves, so the browser loads nothing from GitHub and the CSP is unchanged. If the avatar
 cannot be read, the icon is the owner's first letter on a color derived from a SHA-256 hash of the
@@ -100,6 +103,13 @@ The log gets one line per update or restart plus anything a dashboard prints. To
 `launchctl bootout gui/$(id -u)/LABEL`, then delete the plist and `~/.vibe-verifier-dashboard`.
 `tests/test_dashboard_follow.py` covers the fast-forward, the restart rule, and restarting a
 dashboard that exited.
+
+On a Linux host the dashboards are systemd units, and the follower runs as root with
+`--unit vibe-dashboard@NAME.service PORT` instead of `--serve`. In that mode it moves only to a `main`
+commit whose GitHub check runs all passed, restarts the units, checks that each dashboard answers
+`/api/dashboard` on its port, and resets to the previous commit when one does not. The
+[Linux host runbook](dashboard-host.md) covers that mode, the units, the root timers that refresh a
+narrowed read-only GitHub token and local telemetry, and the accounts and files they use.
 
 ## Configuration contract
 
@@ -269,6 +279,14 @@ used percent minus the share of the window elapsed, as `12% under pace`, `21% ah
 `on pace` (within one point). It needs only the window's length and reset, so it shows even when the
 line cannot be sized. No price is inferred.
 
+Above the charts, each provider is one block (`OpenAI usage`, `Anthropic usage`). The block
+does not name the model or plan. Each window is a bar, shorter windows first, labeled from its
+length (`5 hours`, `7 days`). The fill is green under half and on pace, yellow from half full or when the fill is more than a point
+ahead of an even burn, and red from 90% full or 25 points ahead. A white tick marks the even burn.
+The line reads `70% · resets 3d 4h · +16%` (the signed points, omitted within one point of even).
+The hover keeps the clock time of the reset and a reported token allowance. There is no
+primary/fallback account row.
+
 Every token sample repeats the owner, account, bot, timestamp, input count, and output count. Any
 cross-owner row rejects the whole file. Samples older than seven days are discarded. The file is
 limited to 2 MiB, 1,024 lanes, 64 accounts, and 20,000 token samples. Sections older than five
@@ -320,11 +338,16 @@ that matches the filters gets no group. Groups are ordered by their most recentl
 request, newest first; within a group the newest pull request is first and the oldest is last.
 A pull request's badge shows its worst current-head check. A skipped check never outranks a passed
 one, so the badge reads Skipped only when every check was skipped.
-The step meter counts finished steps, not passed ones, so its colour carries the verdict: red when
-any check failed, yellow when any check is still pending, green only when every check passed, and
-gray when the result is cancelled, skipped, or unknown.
-Elapsed time alone never asserts that a job is stuck. The Actions timeline uses shared wall-clock
-coordinates for parallel jobs and does not sum their durations. Unknown step totals never render as
+The step meter is one line for the whole step total. Each outcome takes a share of that line
+equal to its count, with a gap between shares: green for passed, yellow for pending, red for
+failed, and gray for skipped, cancelled, or unknown. Finished steps over the total stay in the
+text above the line. The badge beside it, not the line, is the worst current-head check.
+Reported steps can all be successes while GitHub still shows a check as pending or failed: a
+queued or in-progress check has no steps yet, and a running job omits steps that have not
+started. Each such check or job adds one share of its outcome, so the line cannot be entirely
+green while that work is still open. A skipped or passed check adds nothing, because the steps
+already carry that detail.
+Elapsed time alone never asserts that a job is stuck. Unknown step totals never render as
 100 percent. A completed job with no steps, which is how GitHub reports a skipped job, counts as
 zero steps; a job that has not started yet keeps its run's step total unknown.
 
@@ -351,10 +374,14 @@ and subscription uncertainty. `test_dashboard_bot_history.py` covers bounded his
 discovery; `test_dashboard_service.py` covers source timestamps and refresh caching.
 `test_dashboard_live_service.py` covers independently aging quota/history and revocation during
 an in-flight refresh. The collector and usage-artifact test files cover the native source contracts.
+`tests/test_dashboard_host.py` covers the Linux host's token minting, telemetry publishing, and unit
+templates, and `test_dashboard_follow.py` the follower's check-run gate and rollback.
 `tests/test_dashboard_server_ui.py` covers loopback HTTP, proxy and direct routing headers,
 read-only methods, Host/Origin/traversal, XSS-safe JSON and DOM construction, filters, account usage
 math, local assets, the tab icon route, and the approved palette. `tests/test_dashboard_usage_charts.py` covers the usage
-charts' clock-hour mapping, observed and unobserved hours, usual-day averages, scales, and pace. The repository's existing unittest command runs all
+charts' clock-hour mapping, observed and unobserved hours, usual-day averages, scales, and pace.
+`tests/test_dashboard_usage_quota.py` covers the subscription bars: window labels, pace tick, color,
+reset countdown, and one block per provider. The repository's existing unittest command runs all
 of them. Configuration tests cover the strict optional proxy origin and its immutable default.
 
 Live acceptance uses private configuration outside this repository, reconciles displayed PRs and
@@ -364,7 +391,8 @@ configuration or captured telemetry. See [collection/cache behavior](dashboard-d
 [numeric usage artifact contract](USAGE-CONTRACT.md).
 
 The server refreshes GitHub and usage sources in the background; the page retains search focus
-and expanded job details during refresh. Numeric usage artifacts are read
+during refresh. The page asks for new data every 30 seconds while it is visible; a hidden
+tab skips those requests, so it spends no GitHub calls, and loads once when shown again. Numeric usage artifacts are read
 every five minutes through the current GitHub credentials, verified against their run/attempt/head
 and configured workflow, and parsed without extracting files or copying model content. Each scan
 pages through a repository's artifacts, newest first, until a page reaches past seven days, at most

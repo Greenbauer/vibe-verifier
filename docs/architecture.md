@@ -14,7 +14,7 @@ The architecture is organized around seven invariants:
 
 1. **Verification runs have revision context.** Review receipts explicitly name a head SHA. QAE uses the workflow checkout and same-run artifacts; its comment and deployed application have the [binding limits](threat-model.md#revision-binding-limits) described below.
 2. **Cannot verify is not pass.** A gate that cannot establish a verdict returns exit `2` and fails the aggregate run.
-3. **The subject cannot silently weaken its own judge.** When a consumer manifest exists on the base branch, the current pull request is judged using the union of base and head subscriptions, with the base branch's arguments winning for gates present on both sides. The same holds for a repository's own `repo-rules` rule files: a rule on the base branch judges the pull request as the base has it.
+3. **The subject cannot silently weaken its own judge.** When a consumer manifest exists on the base branch, the current pull request is judged using the union of base and head subscriptions, with the base branch's arguments winning for gates present on both sides. The same holds for a repository's own `repo-rules` rule files: a rule on the base branch judges the pull request as the base has it, and for its standing `universal-checks` rules, read at the merge base. A feature map's files select a QAE re-walk the same way: a feature the base has selects by its Surfaces as the base has them.
 4. **Model prose is not a merge credential.** Review and QAE harnesses turn model work into declared inputs that deterministic gates validate.
 5. **Evidence ownership is explicit.** Workflow-owned values such as the current head, review receipt, application URL, and artifact location are separated from model-authored content.
 6. **Supply-chain changes are explicit.** Consumer workflows pin catalog actions by full commit SHA and catalog tooling inventories and propagates stale pins.
@@ -105,8 +105,8 @@ The QAE harness applies the same split to functional behavior.
 
 The pull-request body declares acceptance criteria. A workflow-owned site step declares the application URL. The explorer then uses a browser to exercise each criterion and records:
 
-- step-by-step observations,
-- screenshots,
+- step-by-step observations (once per role a criterion names, and a comparison step for each design reference it names),
+- screenshots (at each viewport width the repository declares, when it declares any),
 - console/network evidence,
 - one verdict line per criterion with an evidence anchor.
 
@@ -146,7 +146,7 @@ When confirmed, it opens pull requests that change the planned workflow pin line
 
 ### 7. Read-only observability
 
-The optional dashboard reads GitHub state and local telemetry through read-only operations. Its HTTP server accepts `GET` only and exposes no mutation controls; the local `gh` login can have broader permissions, so credential scope remains the operator's responsibility.
+The optional dashboard reads GitHub state and local telemetry through read-only operations. Its HTTP server accepts `GET` only and exposes no mutation controls; the local `gh` login can have broader permissions, so credential scope remains the operator's responsibility. On a Linux host, the [host kit](dashboard-host.md) replaces that login with an hour-long GitHub App token that a root timer mints for exactly the configured repositories and read permissions.
 
 It can show:
 
@@ -171,8 +171,9 @@ A recurring pattern is that the workflow declares the values that determine what
 | Review receipt | Workflow step after successful review, a scoped no-change refresh, or a proven rate limit (`limited`) |
 | Review findings | Model |
 | Unresolved thread count | GitHub state captured by workflow |
-| Acceptance criteria | Pull-request body |
+| Acceptance criteria | Pull-request body, plus its ticket's when the consumer workflow supplies them (read once, before any model runs) |
 | Application URL under test | Consumer workflow |
+| Design reference images, and their digests | Consumer workflow (site step), declared by the workflow before the explorer runs |
 | Browser observations/screenshots | Model/browser harness |
 | Acceptance verdict validity | Deterministic gates |
 | Aggregate CI status | Gate runner / GitHub job |

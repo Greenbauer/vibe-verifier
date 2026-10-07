@@ -9,6 +9,7 @@ import math
 import os
 from pathlib import Path
 import re
+import runpy
 import selectors
 import shlex
 import stat
@@ -88,23 +89,24 @@ def load_config(path):
     _exact_keys(data, ("version", "owner", "host"), "config")
     if data["version"] != 1 or not isinstance(data["owner"], str) or not OWNER_RE.fullmatch(data["owner"]):
         raise ValueError("config version or owner is invalid")
-    host = _exact_keys(data["host"], ("label", "ssh_argv", "destination", "listener_config_path",
-                       "lane_name", "workspace_path", "codex_home"), "host")
+    fields = ("label", "listener_config_path", "lane_name", "workspace_path", "codex_home")
+    remote = isinstance(data["host"], dict) and ("ssh_argv" in data["host"] or "destination" in data["host"])
+    host = _exact_keys(data["host"], fields + (("ssh_argv", "destination") if remote else ()), "host")
     if (not isinstance(host["label"], str) or not 1 <= len(host["label"]) <= 100
             or any(ord(char) < 32 for char in host["label"])):
         raise ValueError("host label is invalid")
-    ssh = host["ssh_argv"]
-    if (not isinstance(ssh, list) or not 1 <= len(ssh) <= 32
-            or any(not isinstance(arg, str) or not arg or "\x00" in arg for arg in ssh)
-            or os.path.basename(ssh[0]) != "ssh"):
+    ssh, destination = host.get("ssh_argv", []), host.get("destination", "")
+    if remote and (not isinstance(ssh, list) or not 1 <= len(ssh) <= 32
+                   or any(not isinstance(arg, str) or not arg or "\x00" in arg for arg in ssh)
+                   or os.path.basename(ssh[0]) != "ssh"):
         raise ValueError("ssh_argv must invoke ssh")
-    if not isinstance(host["destination"], str) or not DESTINATION_RE.fullmatch(host["destination"]):
+    if remote and (not isinstance(destination, str) or not DESTINATION_RE.fullmatch(destination)):
         raise ValueError("SSH destination is invalid")
     if not isinstance(host["lane_name"], str) or not LANE_RE.fullmatch(host["lane_name"]):
         raise ValueError("lane name is invalid")
     return CollectorConfig(
         owner=data["owner"], host_label=host["label"], ssh_argv=tuple(ssh),
-        destination=host["destination"], listener_config_path=_absolute(
+        destination=destination, listener_config_path=_absolute(
             host["listener_config_path"], "listener_config_path"), lane_name=host["lane_name"],
         workspace_path=_absolute(host["workspace_path"], "workspace_path"),
         codex_home=_absolute(host["codex_home"], "codex_home"))
@@ -164,15 +166,25 @@ def _run_ssh(command, source, timeout=30):
         process.stdout.close()
         process.stderr.close()
 
+def _payload(config, collect_quota):
+    return {"owner": config.owner, "listener_config_path": config.listener_config_path,
+            "lane_name": config.lane_name, "workspace_path": config.workspace_path,
+            "collect_quota": bool(collect_quota), "codex_home": config.codex_home}
+
+def _checked(response):
+    if not isinstance(response, dict) or response.get("ok") is not True:
+        code = response.get("error") if isinstance(response, dict) else None
+        raise CollectorError(code if code in SAFE_ERRORS else "remote_failed")
+    return response
+
+def collect_local(config, collect_quota):
+    """Local mode: remote_sampler.py, loaded by path (this runs as a script and from the package), runs
+    in this process with no SSH or sudo and answers as it does remotely."""
+    sampler = runpy.run_path(str(Path(__file__).with_name("remote_sampler.py")))
+    return _checked(sampler["respond"](_payload(config, collect_quota)))
+
 def collect_remote(config, collect_quota):
-    payload = {
-        "owner": config.owner,
-        "listener_config_path": config.listener_config_path,
-        "lane_name": config.lane_name,
-        "workspace_path": config.workspace_path,
-        "collect_quota": bool(collect_quota),
-        "codex_home": config.codex_home,
-    }
+    payload = _payload(config, collect_quota)
     encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode()
     remote_command = shlex.join(["sudo", "-n", "python3", "-", encoded])
     command = [*config.ssh_argv, config.destination, remote_command]
@@ -181,10 +193,7 @@ def collect_remote(config, collect_quota):
         response = json.loads(_run_ssh(command, source).decode("utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         raise CollectorError("remote_output_invalid") from None
-    if not isinstance(response, dict) or response.get("ok") is not True:
-        code = response.get("error") if isinstance(response, dict) else None
-        raise CollectorError(code if code in SAFE_ERRORS else "remote_failed")
-    return response
+    return _checked(response)
 
 def _number(value, minimum=0, maximum=None, nullable=False):
     if value is None and nullable:
@@ -205,7 +214,7 @@ def _integer(value, minimum=0, maximum=None, nullable=False):
     return value
 
 def _state(value, choices=None):
-    if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", value):
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", value):
         raise ValueError
     if choices and value not in choices:
         raise ValueError
@@ -240,12 +249,12 @@ def project_host(raw, config):
             item.get("state"), ("allocated", "unknown")), "unit": {
                 "active_state": _state(unit.get("active_state")), "sub_state": _state(unit.get("sub_state"))}}
         if record["state"] == "allocated":
-            match = TARGET_RE.fullmatch(item.get("target_repository", ""))
-            if not match or match.group(1).casefold() != config.owner.casefold():
+            match = TARGET_RE.fullmatch(target) if isinstance(target := item.get("target_repository"), str) else None
+            if target is not None and (not match or match.group(1).casefold() != config.owner.casefold()):
                 raise ValueError
             if not TOKEN_RE.fullmatch(item.get("runner_name", "")) or not _parse_time(item.get("allocated_at")):
                 raise ValueError
-            record.update({"target_repository": config.owner + "/" + match.group(2),
+            record.update({"target_repository": config.owner + "/" + match.group(2) if match else None,
                            "set_id": _integer(item.get("set_id"), 1),
                            "runner_id": _integer(item.get("runner_id"), 1),
                            "runner_name": item["runner_name"], "allocated_at": item["allocated_at"]})
@@ -411,7 +420,7 @@ def atomic_write(path, snapshot):
         raise
 
 
-def refresh(config, output, fetch=collect_remote, now=None):
+def refresh(config, output, fetch=None, now=None):
     now = now or utc_now()
     previous = load_previous(output, config.owner)
     old_host, host_observed, host_attempted = _previous_host(previous, config)
@@ -419,7 +428,7 @@ def refresh(config, output, fetch=collect_remote, now=None):
     due = _quota_due(account_attempted, now)
     response, fetch_error = None, None
     try:
-        response = fetch(config, due)
+        response = (fetch or (collect_remote if config.ssh_argv else collect_local))(config, due)
         host_body = project_host(response.get("host"), config)
         host_ok = True
     except (CollectorError, OSError, TypeError, ValueError) as error:

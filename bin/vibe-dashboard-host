@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Refresh a Linux dashboard host's read token or telemetry, as root (see docs/dashboard-host.md).
+
+Linux-only: the token and telemetry timers in dashboard/systemd/ run it from a root-owned checkout."""
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from dashboard import host  # noqa: E402
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(prog="vibe-dashboard-host", description=__doc__)
+    actions = parser.add_subparsers(dest="action", required=True)
+    token = actions.add_parser("token", help="mint the dashboard's read token into its gh hosts.yml")
+    telemetry = actions.add_parser("telemetry", help="sample this machine and publish the dashboard's telemetry")
+    for action in (token, telemetry):
+        action.add_argument("--config", required=True, help="the dashboard's configuration JSON")
+        action.add_argument("--user", required=True, help="the dashboard's service account")
+    token.add_argument("--app", required=True, help="the GitHub App's client ID or numeric App ID")
+    token.add_argument("--installation", required=True, type=int, help="the App installation to mint for")
+    token.add_argument("--key", required=True, type=Path, help="the App private key (PEM), readable only by root")
+    token.add_argument("--login", required=True, help="the login gh records for the token, such as name[bot]")
+    token.add_argument("--output", required=True, type=Path, help="the hosts.yml in the dashboard's GH_CONFIG_DIR")
+    telemetry.add_argument("--collector", required=True, help="the collector's local-mode configuration JSON")
+    telemetry.add_argument("--state", required=True, type=Path, help="the collector's root-only snapshot")
+    return parser.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    if os.geteuid() != 0:
+        print("vibe-dashboard-host: must run as root", file=sys.stderr)
+        return 2
+    try:
+        if args.action == "token":
+            host.refresh_token(args.config, args.user, args.app, args.installation, args.key, args.login, args.output)
+            return 0
+        if not host.refresh_telemetry(args.config, args.user, args.collector, args.state):
+            print("vibe-dashboard-host: collection failed; published the stale status", file=sys.stderr)
+            return 1
+        return 0
+    except (host.HostError, ValueError, OSError) as error:
+        print("vibe-dashboard-host: %s" % error, file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

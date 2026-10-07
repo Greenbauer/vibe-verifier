@@ -5,13 +5,15 @@ description: Follow a repository's executable code rules (Vibe Verifier's repo-r
 
 # Follow the repository's rules
 
-This repository writes its established patterns as ast-grep rules, and its `repo-rules` gate runs them
-on every pull request. Each rule's message says what to write instead. Prose about the rules is
-generated from the rule files, so the rule files are the source of truth.
+This repository writes its established patterns as ast-grep rules, and Vibe Verifier's `repo-rules`
+gate runs them. Each rule's message says what to write instead. Prose about the rules is generated
+from the rule files, so the rule files are the source of truth.
 
 `<catalog>` below is a clone of Vibe Verifier, ideally at the commit the repository pins (the SHA after
-`vibe-verifier/actions/gates@` in its workflow). `<manifest>` is the gate list, usually `.vibe-verifier`.
-`<base>` is the branch the pull request merges into.
+`vibe-verifier/actions/gates@` in its workflow, or in its organization's CI wrapper). `<manifest>` is
+the gate list: `.vibe-verifier` at the repository root, or, when the repository has none because a CI
+wrapper keeps its list, a temporary file holding the `repo-rules` line from the repository's
+`AGENTS.md` or `CLAUDE.md`. `<base>` is the branch the pull request merges into.
 
 ## Before editing
 

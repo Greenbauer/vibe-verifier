@@ -1,4 +1,4 @@
-"""The acceptance-verdict grammar: criteria, check lines, and evidence anchors.
+"""The acceptance-verdict grammar: criteria, their annotations, check lines, and evidence anchors.
 
 Adapted from the grammar a private predecessor's QAE bots write verdicts in (2026-09). Kept: the PASS token, the marker-line form, and
 the two anchor forms. Dropped: the looser "substantive" and "resolvable token" bars that the
@@ -12,8 +12,14 @@ and an anchor is either `<path>::<test title>`, whose title must appear verbatim
 `<path>:<line>` / `<path>:<start>-<end>`, which must lie inside the file. An anchor names WHERE the
 proof is; a bare file name does not, because a file exists whether or not the assertion cited
 exists inside it.
+
+A criterion's own text may carry annotations a QAE run is held to (harnesses/qae/README.md):
+`[ref: <key>]` names a design reference the workflow supplies, and `[as: <role>, <role>]` the roles
+to walk the criterion as.
 """
+import os
 import re
+import struct
 from typing import NamedTuple
 
 FILE_EXT = r"[cm]?tsx?|[cm]?jsx?|css|scss|html|svelte|vue|astro|md|ya?ml|sql|json|sh|py"
@@ -89,6 +95,65 @@ def declares_none(text):
     return match.group("reason") if match else None
 
 
+TICKET_NONE = ("the ticket in %s lists no acceptance criteria: its criteria go under a `## Acceptance criteria` "
+               "heading (or the file is a plain list), or it declares `- None: <why>`; an empty file links no ticket")
+
+
+def ticket_items(text, path="qae-inputs/ticket.md"):
+    """(the ticket's criteria as (id, wording) pairs numbered TC1, TC2, ..., why they cannot be read or None).
+
+    A consumer's workflow writes the acceptance criteria of the ticket a pull request implements to a file,
+    read with the same grammar as a PR body. They are graded in addition to the pull request's own, so a
+    pull request cannot drop one from its list. An empty file links no ticket; a ticket that declares
+    `- None: <why>` has none. A non-empty ticket in which no criteria can be found is a problem, never no
+    criteria: a section the reader missed must not drop the ticket's requirements silently.
+    """
+    if not text.strip() or declares_none(text):
+        return [], None
+    items = criteria(text)
+    if not items:
+        return [], TICKET_NONE % path
+    return [("TC%d" % (n + 1), wording) for n, (_, wording) in enumerate(items)], None
+
+
+# `[ref: home-desktop]` and `[as: admin, read-only]` inside a criterion's text, each a comma list. A
+# reference key is the file stem of qae-inputs/references/<key>.png. A role is what a step line names
+# after "as" and before a colon, so it holds no colon, comma or bracket. A bracket that starts like an
+# annotation and does not parse is malformed, never skipped: a typo must not drop a requirement silently.
+ANNOTATION = re.compile(r"\[[ \t]*(?P<kind>ref|as)[ \t]*:(?P<value>[^\]]*)\]", re.IGNORECASE)
+REFERENCE_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+ROLE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]*$")
+
+
+class Annotations(NamedTuple):
+    references: list  # reference keys, in written order, deduplicated
+    roles: list       # role names, the same
+    malformed: list   # each bracket that starts like an annotation and does not parse, as written
+
+
+def annotations(wording):
+    """The annotations in one criterion's text."""
+    found = Annotations([], [], [])
+    for match in ANNOTATION.finditer(wording):
+        kind = match.group("kind").casefold()
+        grammar, into = (REFERENCE_KEY, found.references) if kind == "ref" else (ROLE_NAME, found.roles)
+        items = [item.strip() for item in match.group("value").split(",")]
+        if not all(grammar.match(item) for item in items):
+            found.malformed.append(match.group(0))
+            continue
+        into.extend(item for item in dict.fromkeys(items) if item not in into)
+    return found
+
+
+def png_size(path):
+    """(width, height) from a PNG file's header, or None when the file is not a PNG."""
+    with open(path, "rb") as handle:
+        head = handle.read(24)
+    if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return None
+    return struct.unpack(">II", head[16:24])
+
+
 # Paths no browser can see: CI configuration, this catalog's manifests, and documentation a site does
 # not render. Adapted from the no-plan allowlist of a private predecessor's QAE (2026-10), which also
 # exempts every `*.md`; that is narrowed here to the names below, because a `.md` elsewhere can be a
@@ -104,17 +169,22 @@ def unrendered(path):
             or name.startswith((".vibe-verifier", "LICENSE")))
 
 
-def not_required(text, changed):
+def not_required(text, changed, ticket=""):
     """Why a pull request needs no browser check, or None when it does.
 
-    `text` is its body and `changed` its changed paths (a rename lists both names). It needs none when
-    it declares `- None: <why>`, or when it lists no criteria and every changed path is one no browser
-    can see. Criteria win over paths: a pull request that lists one is explored whatever it touches.
+    `text` is its body, `changed` its changed paths (a rename lists both names) and `ticket` the text of
+    its ticket's criteria file, when the workflow supplies one. It needs none when it declares
+    `- None: <why>`, or when it lists no criteria and every changed path is one no browser can see. A
+    ticket that lists criteria, or that is not empty and lists none a reader can find, overrides both:
+    the pull request cannot declare its ticket's requirements away. Criteria win over paths: a pull
+    request that lists one is explored whatever it touches.
     An empty path list proves nothing, so it never exempts. A body lists criteria only under an
     `Acceptance criteria` heading: without one, the plain-list reading counts every line of prose as a
     criterion, and a short body with no headings would never be exempt (found on the first consumer
     PR, 2026-10-05).
     """
+    if any(ticket_items(ticket)):
+        return None
     declared = declares_none(text)
     headed = any(CRITERIA_HEADING.match(line) for line in text.splitlines())
     if declared or (headed and criteria(text)) or not changed or not all(map(unrendered, changed)):
@@ -186,3 +256,50 @@ def anchors(line):
         if key not in seen:
             seen.add(key)
             found.append(anchor)
+
+
+# One whole anchor, as a feature map's Verify bullet holds it between backticks. The backticks bound
+# it, so the path needs no known extension (the extension list above exists to find an anchor inside
+# free prose) and the title runs to the end.
+WHOLE_ANCHOR = re.compile(r"^(?P<path>[^\s`:]+)(?:::(?P<title>.+)|:(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?)$")
+
+
+def parse_anchor(text):
+    """The one anchor `text` is, or None: `<path>::<title>` (a title of MIN_ANCHOR_TITLE characters
+    or more) or `<path>:<line>` / `<path>:<start>-<end>`."""
+    match = WHOLE_ANCHOR.match(text.strip())
+    if not match:
+        return None
+    if match.group("title") is not None:
+        title = match.group("title").strip()
+        return Anchor(match.group("path"), title, 0, 0, text.strip()) if len(title) >= MIN_ANCHOR_TITLE else None
+    first = int(match.group("start"))
+    last = int(match.group("end")) if match.group("end") else first
+    return Anchor(match.group("path"), "", first, last, text.strip())
+
+
+def locate(anchor, repo, tracked, artifacts):
+    """The file an anchor names: a tracked path at the head, else a file under `artifacts`."""
+    if anchor.path in tracked:
+        return os.path.join(repo, anchor.path)
+    if artifacts:
+        candidate = os.path.normpath(os.path.join(artifacts, anchor.path))
+        if candidate.startswith(os.path.normpath(artifacts) + os.sep) and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def resolves(anchor, repo, tracked, artifacts=None):
+    """Why the anchor does not resolve, or None when it does: a tracked path (or one under
+    `artifacts`) whose text holds the title, or whose length holds the line range."""
+    located = locate(anchor, repo, tracked, artifacts)
+    if located is None:
+        return "%s is not in the tree%s" % (anchor.path, " or the artifacts" if artifacts else "")
+    with open(located, encoding="utf-8", errors="replace") as handle:
+        body = handle.read()
+    if anchor.title:
+        return None if anchor.title in body else 'the title "%s" is not in %s' % (anchor.title, anchor.path)
+    length = body.count("\n") + (0 if body.endswith("\n") or not body else 1)
+    if anchor.start < 1 or anchor.end < anchor.start or anchor.end > length:
+        return "%s has %d lines, so %s is outside it" % (anchor.path, length, anchor.raw)
+    return None

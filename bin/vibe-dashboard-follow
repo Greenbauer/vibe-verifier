@@ -1,21 +1,41 @@
 #!/usr/bin/env python3
 """Keep dashboards running on the newest merged code.
 
-Every interval this fetches the branch from origin and fast-forwards this checkout to it. Merged
+Every interval this fetches the branch from origin and moves this checkout forward to it. Merged
 changes to the server's Python restart the dashboards; changes under dashboard/static/ go live
 without a restart, because the server reads those files on every request. A change to this script
-re-runs it. A dashboard that exits is started again. Run it from a checkout nobody edits, under a
-service manager (launchd, systemd) that starts it again if it exits."""
+re-runs it. Run it from a checkout nobody edits, under a service manager that starts it again if it
+exits. Two modes:
+
+--serve CONFIG PORT (any OS; a macOS LaunchAgent): this runs the dashboards as its children,
+fast-forwards to every fetched commit, and starts a dashboard that exits again.
+
+--unit UNIT PORT (Linux, systemd; docs/dashboard-host.md): the dashboards are systemd units and this
+runs as root on a root-owned checkout the web users cannot modify. It moves only to a commit whose
+GitHub check runs all passed, restarts the units, and checks each dashboard answers on its loopback
+port. A commit that fails that check is undone (checkout reset, units restarted on the previous
+commit) and recorded, so it is not tried again until the branch moves past it."""
 
 import argparse
+import http.client
+import json
 import os
+import re
 import signal
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SELF = "bin/vibe-dashboard-follow"
+# This script imports nothing from dashboard/, so a broken merge there cannot stop the rollback.
+PASSING = {"success", "skipped", "neutral"}
+CHECK_RUNS = "https://api.github.com/repos/%s/commits/%s/check-runs?filter=latest&per_page=100"
+GITHUB_ORIGIN = re.compile(r"https://github\.com/([A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+?)(?:\.git)?/?")
+BAD_COMMIT = "vibe-dashboard-bad-commit"  # in the checkout's git directory, which only root writes
+HEALTH_SECONDS = 30
 
 
 def log(message: str) -> None:
@@ -72,15 +92,172 @@ class Dashboards:
         self.processes = [None] * len(self.serves)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(prog="vibe-dashboard-follow", description=__doc__)
-    parser.add_argument("--serve", nargs=2, action="append", required=True, metavar=("CONFIG", "PORT"),
-                        help="a dashboard to run; repeat for several owners")
-    parser.add_argument("--branch", default="main", help="origin branch to follow (default: main)")
-    parser.add_argument("--interval", type=int, default=60, help="seconds between checks (default: 60)")
-    args = parser.parse_args()
+def checks_passed(listing: object) -> bool:
+    """GitHub's check-runs listing for a commit: every run concluded success, skipped or neutral (GitHub
+    sets a conclusion only once a run completes), and at least one succeeded. A missing, partial or
+    malformed listing is not a pass."""
+    try:
+        runs = listing["check_runs"]
+        return (isinstance(runs, list) and listing["total_count"] == len(runs)
+                and any(run["conclusion"] == "success" for run in runs)
+                and all(run["conclusion"] in PASSING for run in runs))
+    except (KeyError, TypeError):
+        return False
+
+
+def github_repository(root: str) -> str:
+    """owner/name of the GitHub repository the checkout fetches from: the checks must be that code's."""
+    url = git(root, "remote", "get-url", "origin")
+    match = GITHUB_ORIGIN.fullmatch(url)
+    if not match:
+        raise ValueError("origin is not an https://github.com/ repository: %s" % url)
+    return match.group(1)
+
+
+class CheckRuns:
+    """Reads a public repository's check runs without a credential.
+
+    Unauthenticated reads share 60 an hour per address, and a 304 saves nothing without an
+    Authorization header (GitHub's REST best practices), so no ETag is kept. The follower asks only
+    while a fetched commit is undecided, at most once an interval, and after GitHub reports the limit
+    spent it asks nothing until the reset GitHub gave."""
+
+    def __init__(self, repository: str, opener=urllib.request.urlopen, clock=time.time):
+        self.repository, self.opener, self.clock = repository, opener, clock
+        self.paused_until = 0
+
+    def __call__(self, sha: str) -> object:
+        """The parsed listing, or None while rate-limited or unavailable."""
+        if self.clock() < self.paused_until:
+            return None
+        request = urllib.request.Request(CHECK_RUNS % (self.repository, sha), headers={
+            "Accept": "application/vnd.github+json", "User-Agent": "vibe-dashboard-follow",
+            "X-GitHub-Api-Version": "2022-11-28"})
+        try:
+            with self.opener(request, timeout=15) as response:
+                self.note(response.headers)
+                return json.loads(response.read(4 * 1024 * 1024))
+        except urllib.error.HTTPError as error:
+            self.note(error.headers)
+            error.close()
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def note(self, headers) -> None:
+        reset = headers.get("X-RateLimit-Reset", "") if headers else ""
+        if headers and headers.get("X-RateLimit-Remaining") == "0" and reset.isdigit():
+            self.paused_until = int(reset)
+
+
+def healthy(port: int, seconds: float = HEALTH_SECONDS) -> bool:
+    """The dashboard on this loopback port answers GET /api/dashboard with 200 and version 1 before the
+    deadline. A restarted server binds within a second or two; its first answer serves cached or
+    loading data, so this does not wait on GitHub."""
+    deadline = time.monotonic() + seconds
+    while True:
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        try:
+            connection.request("GET", "/api/dashboard")
+            response = connection.getresponse()
+            value = json.loads(response.read())
+            if response.status == 200 and isinstance(value, dict) and value.get("version") == 1:
+                return True
+        except (OSError, ValueError, http.client.HTTPException):
+            pass
+        finally:
+            connection.close()
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(1)
+
+
+def systemctl_restart(units: list[str]) -> None:
+    subprocess.run(["systemctl", "restart", *units], capture_output=True, check=True)
+
+
+class Units:
+    """The systemd mode: moves the checkout to green commits and restarts units it does not start itself."""
+
+    def __init__(self, root: str, branch: str, units: list[tuple[str, int]], check_runs,
+                 restart=systemctl_restart, health=healthy):
+        self.root, self.branch, self.units = root, branch, units
+        self.check_runs, self.restart, self.health = check_runs, restart, health
+        self.waiting = None
+
+    def bad_commit_path(self) -> str:
+        return os.path.join(git(self.root, "rev-parse", "--absolute-git-dir"), BAD_COMMIT)
+
+    def bad_commit(self) -> str:
+        try:
+            with open(self.bad_commit_path(), encoding="utf-8") as handle:
+                return handle.read().strip()
+        except FileNotFoundError:
+            return ""
+
+    def restarted(self) -> bool:
+        try:
+            self.restart([unit for unit, _ in self.units])
+        except (OSError, subprocess.CalledProcessError):
+            return False
+        return all(self.health(port) for _, port in self.units)
+
+    def step(self) -> list[str]:
+        """One check; the changed paths when the checkout moved and stayed, else [].
+        Raises CalledProcessError when origin is unreachable or the checkout cannot fast-forward."""
+        git(self.root, "fetch", "--quiet", "origin", self.branch)
+        old, new = git(self.root, "rev-parse", "HEAD"), git(self.root, "rev-parse", "FETCH_HEAD")
+        if new in (old, self.bad_commit()):
+            return []
+        if not checks_passed(self.check_runs(new)):
+            if self.waiting != new:
+                log("%s is not green yet; staying on %s" % (new[:8], old[:8]))
+                self.waiting = new
+            return []
+        git(self.root, "merge", "--ff-only", "--quiet", new)
+        paths = git(self.root, "diff", "--name-only", old, new).splitlines()
+        if needs_restart(paths) and not self.restarted():
+            git(self.root, "reset", "--hard", "--quiet", old)
+            recovered = self.restarted()
+            with open(self.bad_commit_path(), "w", encoding="utf-8") as handle:
+                handle.write(new + "\n")
+            log("%s failed its health check; back on %s%s" % (
+                new[:8], old[:8], "" if recovered else ", which is not healthy either"))
+            return []
+        log("updated %s to %s%s" % (old[:8], new[:8], "; restarted the dashboards" if needs_restart(paths) else ""))
+        return paths
+
+
+def ports(pairs: list[list[str]], parser: argparse.ArgumentParser) -> list[tuple[str, int]]:
+    try:
+        result = [(name, int(port)) for name, port in pairs]
+    except ValueError:
+        parser.error("PORT must be a number")
+    if any(not 1 <= port <= 65535 for _, port in result):
+        parser.error("PORT must be between 1 and 65535")
+    return result
+
+
+def follow_units(args, parser) -> None:
+    try:
+        repository = github_repository(ROOT)
+    except (ValueError, subprocess.CalledProcessError) as error:
+        parser.error(str(error))
+    units = Units(ROOT, args.branch, ports(args.unit, parser), CheckRuns(repository))
+    while True:
+        time.sleep(args.interval)
+        try:
+            paths = units.step()
+        except subprocess.CalledProcessError as error:
+            log("could not update, still serving the current code: %s" % (error.stderr or "").strip())
+            continue
+        if SELF in paths:
+            log("this script changed; running the new copy")
+            os.execv(sys.executable, [sys.executable, *sys.argv])
+
+
+def follow_serves(args) -> None:
     dashboards = Dashboards([tuple(serve) for serve in args.serve])
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
         dashboards.start()
         while True:
@@ -101,6 +278,25 @@ def main() -> int:
                 dashboards.start()
     finally:
         dashboards.stop()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="vibe-dashboard-follow", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--serve", nargs=2, action="append", metavar=("CONFIG", "PORT"),
+                      help="a dashboard to run; repeat for several owners")
+    mode.add_argument("--unit", nargs=2, action="append", metavar=("UNIT", "PORT"),
+                      help="Linux, systemd: a dashboard unit to restart and the loopback port it serves; repeat")
+    parser.add_argument("--branch", default="main", help="origin branch to follow (default: main)")
+    parser.add_argument("--interval", type=int, default=60, help="seconds between checks (default: 60)")
+    args = parser.parse_args()
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    if args.unit:
+        follow_units(args, parser)
+    else:
+        follow_serves(args)
+    return 0
 
 
 if __name__ == "__main__":

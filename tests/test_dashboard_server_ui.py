@@ -79,7 +79,7 @@ class ServerSecurity(unittest.TestCase):
         self.assertEqual(json.loads(body)["owner"], "octocat")
         self.assertNotIn("access-control-allow-origin", headers)
 
-    def test_favicon_is_served_same_origin_and_linked_from_the_page(self):
+    def test_favicon_is_served_same_origin_and_used_as_tab_icon_and_header_logo(self):
         status, headers, body = self.request("GET", "/favicon.svg")
         self.assertEqual(status, 200)
         self.assertEqual(headers["content-type"], "image/svg+xml")
@@ -87,6 +87,7 @@ class ServerSecurity(unittest.TestCase):
         self.assertIn(b">O</text>", body)
         _, _, page = self.request("GET", "/")
         self.assertIn(b'<link rel="icon" href="/favicon.svg" type="image/svg+xml">', page)
+        self.assertIn(b'<img class="brand-mark" src="/favicon.svg" alt="">', page)
 
     def test_untrusted_host_and_origin_are_rejected(self):
         self.assertEqual(self.request("GET", "/", {"Host": "example.invalid"})[0], 421)
@@ -243,25 +244,84 @@ console.log(JSON.stringify([h.combinedCategory(pr('success','skipped')),h.combin
 ''')
         self.assertEqual(result, ["success", "skipped", "failed", "pending"])
 
-    def test_step_meter_is_green_only_when_every_check_passed(self):
+    def test_step_meter_segments_keep_each_outcome_share(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
-const pr=(...c)=>({checks:c.map(category=>({category}))});
-console.log(JSON.stringify([pr('success','success'),pr('success','skipped'),pr('success','failed','pending'),
- pr('success','pending'),pr('cancelled','pending'),pr('unknown','pending'),
- pr('success','cancelled'),pr('unknown'),pr('skipped','skipped')].map(h.meterTone)));
+const counts=(extra)=>({success:0,failed:0,skipped:0,cancelled:0,pending:0,unknown:0,...extra});
+const totals=(extra, fields)=>({known:true,completed:8,total:10,remaining:2,counts:counts(extra),...fields});
+const mixed=h.meterSegments(totals({success:6,pending:2,failed:1,skipped:1}));
+console.log(JSON.stringify({
+ mixed:mixed.map(segment=>[segment.state,segment.count]),
+ failedStaysASlice:h.meterSegments(totals({success:60,failed:4})).map(segment=>segment.state),
+ gray:h.meterSegments(totals({skipped:2,cancelled:1,unknown:1})).map(segment=>segment.state),
+ empty:h.meterSegments(totals({})),
+ unknown:h.meterSegments({known:false,total:null,counts:null}),
+ zero:h.meterSegments({known:true,total:0,counts:counts({})}),
+ label:h.meterLabel(totals({success:6,pending:2,failed:1,skipped:1}))
+}));
 ''')
-        self.assertEqual(result, ["success", "success", "failed", "pending", "pending", "pending",
-                                  "neutral", "neutral", "neutral"])
+        self.assertEqual(result["mixed"], [["success", 6], ["pending", 2], ["failed", 1], ["skipped", 1]])
+        self.assertEqual(result["failedStaysASlice"], ["success", "failed"])
+        self.assertEqual(result["gray"], ["skipped", "cancelled", "unknown"])
+        self.assertEqual(result["empty"], [])
+        self.assertEqual(result["unknown"], [])
+        self.assertEqual(result["zero"], [])
+        self.assertEqual(result["label"], "6 succeeded, 2 pending, 1 failed, 1 skipped of 10 steps")
+
+    def test_step_totals_sum_outcome_counts_across_runs(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+const summary=(completed,total,counts)=>({known:true,completed,total,remaining:total-completed,counts});
+const pull={runs:[
+ {step_summary:summary(3,4,{success:1,failed:0,skipped:1,cancelled:1,pending:1,unknown:0})},
+ {step_summary:summary(2,2,{success:2,failed:0,skipped:0,cancelled:0,pending:0,unknown:0})}]};
+const missing={runs:[{step_summary:{known:true,completed:1,total:1,remaining:0}}]};
+console.log(JSON.stringify({sum:h.stepTotals(pull),missing:h.stepTotals(missing).counts}));
+''')
+        self.assertEqual(result["sum"]["completed"], 5)
+        self.assertEqual(result["sum"]["total"], 6)
+        self.assertEqual(result["sum"]["remaining"], 1)
+        self.assertEqual(result["sum"]["counts"], {"success": 3, "failed": 0, "skipped": 1,
+                                                    "cancelled": 1, "pending": 1, "unknown": 0})
+        self.assertEqual(result["missing"], {"success": 0, "failed": 0, "skipped": 0,
+                                              "cancelled": 0, "pending": 0, "unknown": 0})
 
     def test_an_expected_required_check_keeps_the_pr_pending_and_its_steps_unknown(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
 const pr={checks:[{category:'success'}],expected:[{category:'pending'}],
- runs:[{step_summary:{known:true,completed:83,total:83,remaining:0}}]};
-console.log(JSON.stringify([h.combinedCategory(pr),h.stepTotals(pr).known]));
+ runs:[{step_summary:{known:true,completed:83,total:83,remaining:0,counts:{success:83}}}]};
+console.log(JSON.stringify([h.combinedCategory(pr),h.stepTotals(pr).known,h.stepTotals(pr).counts]));
 ''')
-        self.assertEqual(result, ["pending", False])
+        self.assertEqual(result, ["pending", False, None])
+
+    def test_a_green_step_list_stays_open_while_github_still_has_a_pending_check(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+const steps={known:true,completed:273,total:273,remaining:0,counts:{success:273,failed:0,skipped:0,cancelled:0,pending:0,unknown:0}};
+const pending={runs:[{suite_id:7,step_summary:steps,jobs:[{name:'test',status:'completed',category:'success',steps:[{category:'success',status:'completed'}]}]}],
+ checks:[{name:'deploy',suite_id:8,category:'pending'}],statuses:[],expected:[]};
+const covered={runs:[{suite_id:7,step_summary:{known:true,completed:3,total:4,remaining:1,counts:{success:3,failed:0,skipped:0,cancelled:0,pending:1,unknown:0}},
+ jobs:[{name:'test',status:'in_progress',category:'pending',steps:[{category:'success',status:'completed'},{category:'pending',status:'in_progress'}]}]}],
+ checks:[{name:'test',suite_id:7,category:'pending'}]};
+const running={runs:[{suite_id:7,step_summary:steps,jobs:[{name:'test',status:'in_progress',category:'pending',steps:[{category:'success',status:'completed'}]}]}],
+ checks:[],statuses:[],expected:[]};
+const failed={runs:[{suite_id:7,step_summary:steps,jobs:[{name:'test',status:'completed',category:'success',steps:[{category:'success',status:'completed'}]}]}],
+ checks:[{name:'lint',suite_id:9,category:'failed'}],statuses:[],expected:[]};
+const passed={runs:[{suite_id:7,step_summary:steps,jobs:[]}],checks:[{name:'lint',category:'success'}],statuses:[],expected:[]};
+console.log(JSON.stringify({
+ pending:[h.stepTotals(pending).counts.pending,h.stepTotals(pending).remaining,h.stepTotals(pending).total],
+ covered:h.stepTotals(covered).counts.pending,
+ running:h.stepTotals(running).counts.pending,
+ failed:[h.stepTotals(failed).counts.failed,h.stepTotals(failed).remaining],
+ passed:h.stepTotals(passed).total
+}));
+''')
+        self.assertEqual(result["pending"], [1, 1, 274])
+        self.assertEqual(result["covered"], 1)
+        self.assertEqual(result["running"], 1)
+        self.assertEqual(result["failed"], [1, 0])
+        self.assertEqual(result["passed"], 273)
 
     def test_disk_meter_reports_used_space_not_free_space(self):
         result = self.node(r'''
@@ -329,6 +389,53 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
         buttons = [node for node in nodes(result["pressed"]) if node["tag"] == "button"]
         self.assertEqual([(text(node).strip(), node["attrs"]["aria-pressed"]) for node in buttons],
                          [("SWE1", "false"), ("QAE1", "true")])
+
+    def test_pull_request_row_opens_github_instead_of_a_dashboard_page(self):
+        result = self.node(r'''
+const fs=require('fs');
+const {safeUrl}=require('./dashboard/static/helpers.js');
+const app=fs.readFileSync('./dashboard/static/app.js','utf8');
+const source=app.slice(app.indexOf('  function prRow('),app.indexOf('  function renderPulls('));
+function el(tag, attrs={}, ...children) {
+  return {tag, attrs, children:children.flat().filter(value => value !== null && value !== undefined)};
+}
+const prRow=new Function('el','safeUrl','snapshot','combinedCategory','currentWork','badge','progress','since',
+  source+'return prRow;')(el, safeUrl, {owner:'octocat'}, ()=>'failed', ()=>null,
+  status=>el('span',{},status), ()=>el('div',{class:'progress'}), ()=>'2d');
+const pull=(html_url, stale)=>({repository:'octocat/example',number:3,title:'Fix the gate',author:'octocat',
+  head_sha:'abcdef1234567890',html_url,attention_reason:'A current-head check failed',
+  created_at:'2026-10-01T00:00:00Z',stale});
+console.log(JSON.stringify({
+  linked:prRow(pull('https://github.com/octocat/example/pull/3', false)),
+  stale:prRow(pull('https://github.com/octocat/example/pull/3', true)),
+  foreign:prRow(pull('https://github.com/evil/example/pull/3', false)),
+  missing:prRow(pull(null, false)),
+  detail:app.includes('function renderDetail(')||app.includes('go("prs",')
+}));
+''')
+
+        def text(node):
+            if isinstance(node, str):
+                return node
+            return " ".join(text(child) for child in node.get("children", []))
+
+        linked = result["linked"]
+        self.assertEqual(linked["tag"], "a")
+        self.assertEqual(linked["attrs"]["href"], "https://github.com/octocat/example/pull/3")
+        self.assertEqual(linked["attrs"]["target"], "_blank")
+        self.assertEqual(linked["attrs"]["rel"], "noreferrer")
+        self.assertNotIn("onclick", linked["attrs"])
+        self.assertIn("on GitHub", linked["attrs"]["aria-label"])
+        self.assertIn("Fix the gate", text(linked))
+        self.assertEqual(result["stale"]["attrs"]["class"], "pr-row stale-row")
+        self.assertEqual(result["stale"]["attrs"]["href"], linked["attrs"]["href"])
+        for key in ("foreign", "missing"):
+            row = result[key]
+            self.assertEqual(row["tag"], "div")
+            self.assertIsNone(row["attrs"]["href"])
+            self.assertIsNone(row["attrs"]["aria-label"])
+            self.assertIn("Fix the gate", text(row))
+        self.assertFalse(result["detail"])
 
     def test_ui_uses_text_nodes_and_the_approved_local_palette(self):
         app = (ROOT / "dashboard/static/app.js").read_text()

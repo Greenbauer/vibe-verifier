@@ -68,11 +68,39 @@ class QaeArtifacts(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("step 2 has no screenshot (expected qae/AC1-step-2.png)", result.stdout)
 
+    def test_a_feature_re_walk_step_needs_its_screenshot_too(self):
+        # A re-walk (docs/feature-map.md) logs each feature under qae/features/, beside its screenshots.
+        write(self.root, {"qae/features/sign-in.md": "- step 1: signed in -> the dashboard\n- step 2: signed out -> the login page\n",
+                          "qae/features/sign-in-step-1.png": "png"})
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("qae/features/sign-in.md: step 2 has no screenshot (expected qae/features/sign-in-step-2.png)", result.stdout)
+        write(self.root, {"qae/features/sign-in-step-2.png": "png"})
+        self.assertEqual(self.run_gate().returncode, 0)
+
+    def test_feature_logs_do_not_stand_in_for_the_criteria_logs(self):
+        shutil.rmtree(os.path.join(self.root, "qae"))
+        write(self.root, {"qae/features/sign-in.md": "- step 1: signed in -> the dashboard\n", "qae/features/sign-in-step-1.png": "png"})
+        self.assertIn("no step logs under qae/", self.run_gate().stdout)
+
     def test_no_step_logs_fails(self):
         shutil.rmtree(os.path.join(self.root, "qae"))
         result = self.run_gate()
         self.assertEqual(result.returncode, 1)
         self.assertIn("no step logs", result.stdout)
+
+    def test_a_resource_error_on_another_host_is_not_judged_once_the_site_is_declared(self):
+        # Cognito answers a refused refresh with 400, and Chromium logs that on the console.
+        # The network record already ignores that host when a site is declared. The console
+        # line for the same response does too. A resource error on the site itself still fails.
+        write(self.root, {"console-1.log": "[   12ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ https://cognito-idp.us-east-1.amazonaws.com/:0\n"})
+        self.assertEqual(self.run_gate().returncode, 1)
+        scoped = self.run_gate("--site", "http://localhost:3000")
+        self.assertEqual(scoped.returncode, 0, scoped.stdout + scoped.stderr)
+        write(self.root, {"console-1.log": "[   12ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:3000/api/journeys:0\n"})
+        on_site = self.run_gate("--site", "http://localhost:3000")
+        self.assertEqual(on_site.returncode, 1)
+        self.assertIn("status of 400 (Bad Request) @ http://localhost:3000/api/journeys:0", on_site.stdout)
 
     def test_console_error_fails_unless_allowlisted(self):
         write(self.root, {"console-1.log": "[   606ms] [ERROR] Failed to load resource: 404 @ http://localhost:3000/_vercel/insights/script.js:0\n"})
@@ -224,10 +252,17 @@ class QaeArtifacts(unittest.TestCase):
             self.assertIn("request answered %s outside the allowlist" % status, result.stdout)
             self.assertIn("status of %s () @" % status, result.stdout)
 
-    def test_only_401_or_403_can_be_declared_and_a_path_needs_a_site(self):
+    def test_an_expected_422_for_an_invalid_input_passes(self):
+        # The invalid input the explorer is told to try, which this server refuses with a handled 422.
+        result = self.refusal_run("An empty name is refused with a message (expected-refusal: 422 /api/profile)",
+                                  ("422", "/api/profile"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_only_a_handled_refusal_can_be_declared_and_a_path_needs_a_site(self):
         result = self.refusal_run("The import endpoint fails (expected-refusal: 500 /api/import)", ("500", "/api/import"))
         self.assertEqual(result.returncode, 1)
-        self.assertIn("AC1 declares expected-refusal 500: only 401 or 403 can be expected", result.stdout)
+        self.assertIn("AC1 declares expected-refusal 500: only a handled refusal (400, 401, 403, 404, 409, 422) can be expected",
+                      result.stdout)
         inputs = tempfile.mkdtemp(prefix="vv-refusal-")
         self.addCleanup(shutil.rmtree, inputs, True)
         write(inputs, {"body.md": "## Acceptance criteria\n\n- Signed out refused (expected-refusal: 401 /api/quotes)\n"})

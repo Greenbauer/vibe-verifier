@@ -16,7 +16,7 @@
     offline: "Offline", allocated: "Allocated"
   };
 
-  // Filters and the selected bot, saved per tab. Where you are (view, PR) lives in the URL instead.
+  // Filters and the selected bot, saved per tab. Where you are lives in the URL instead.
   function restoreViewState(raw) {
     const state = { query: "", repository: "all", subscribed: false, attention: false, failureBot: null };
     let saved;
@@ -32,17 +32,15 @@
   }
 
   // The URL hash is the one record of the current view, so refresh, back and forward, and a copied
-  // link all land in the same place: #/prs, #/usage, #/capacity, or #/pr/<owner>/<repo>/<number>.
-  // GitHub owner and repository names are only letters, digits, ".", "-" and "_", so no escaping.
+  // link all land in the same place: #/prs, #/usage, or #/capacity. A pull request opens on GitHub,
+  // so an older #/pr/<owner>/<repo>/<number> hash is not a view and falls back to the list.
   function parseRoute(hash) {
-    const pull = /^#\/pr\/([\w.-]+)\/([\w.-]+)\/(\d+)$/.exec(hash || "");
-    if (pull) return { view: "prs", selected: `${pull[1]}/${pull[2]}#${pull[3]}` };
     const view = /^#\/(\w+)$/.exec(hash || "")?.[1];
-    return { view: ["prs", "usage", "capacity"].includes(view) ? view : "prs", selected: null };
+    return { view: ["prs", "usage", "capacity"].includes(view) ? view : "prs" };
   }
 
   function routeHash(route) {
-    return route.selected ? `#/pr/${route.selected.replace("#", "/")}` : `#/${route.view}`;
+    return `#/${route.view}`;
   }
 
   function element(tag, attrs, ...children) {
@@ -153,18 +151,99 @@
     return result.sort((a, b) => b.activity - a.activity || a.repository.localeCompare(b.repository));
   }
 
+  // GitHub's status ring draws one slice per outcome, sized by that outcome's share.
+  // The step line uses the same buckets, left to right: passed, pending, failed, then the gray ones.
+  const METER_STATES = ["success", "pending", "failed", "skipped", "cancelled", "unknown"];
+
+  function emptyStepCounts() {
+    return { success: 0, failed: 0, skipped: 0, cancelled: 0, pending: 0, unknown: 0 };
+  }
+
+  function countsOnTheMeter(row) {
+    return !!row && row.category !== "success" && row.category !== "skipped" && METER_STATES.includes(row.category);
+  }
+
+  function meterKey(suite, name, category) {
+    return `${suite == null ? "*" : suite}\0${name}\0${category}`;
+  }
+
+  // A step GitHub has already returned for this job. Pending steps that have not started are absent.
+  function shownBySteps(pull, name, suite, category) {
+    for (const run of pull.runs || []) {
+      if (suite != null && run.suite_id != null && run.suite_id !== suite) continue;
+      for (const job of run.jobs || []) {
+        if (job.name === name && (job.steps || []).some(step => step.category === category)) return true;
+      }
+    }
+    return false;
+  }
+
+  function addCheckGaps(pull, gaps, seen) {
+    for (const row of [...(pull.checks || []), ...(pull.statuses || [])]) {
+      if (!countsOnTheMeter(row)) continue;
+      seen.add(meterKey(row.suite_id, row.name, row.category));
+      if (!shownBySteps(pull, row.name, row.suite_id, row.category)) gaps[row.category] += 1;
+    }
+  }
+
+  function addJobGaps(pull, gaps, seen) {
+    for (const run of pull.runs || []) {
+      for (const job of run.jobs || []) {
+        if (!countsOnTheMeter(job) || shownBySteps(pull, job.name, run.suite_id, job.category)) continue;
+        if (seen.has(meterKey(run.suite_id, job.name, job.category)) || seen.has(meterKey(null, job.name, job.category))) continue;
+        gaps[job.category] += 1;
+      }
+    }
+  }
+
+  // Reported steps can all be successes while GitHub still shows a pending or failed check.
+  function ciGaps(pull) {
+    const gaps = emptyStepCounts();
+    const seen = new Set();
+    addCheckGaps(pull, gaps, seen);
+    addJobGaps(pull, gaps, seen);
+    return gaps;
+  }
+
+  function applyGaps(total, gaps) {
+    const counts = { ...total.counts };
+    let added = 0;
+    let open = 0;
+    for (const state of METER_STATES) {
+      const count = gaps[state] || 0;
+      counts[state] += count;
+      added += count;
+      if (state === "pending" || state === "unknown") open += count;
+    }
+    if (!added) return total;
+    return {
+      known: true,
+      completed: total.completed + added - open,
+      total: total.total + added,
+      remaining: total.remaining + open,
+      counts
+    };
+  }
+
   function stepTotals(pull) {
     const summaries = (pull.runs || []).map(run => run.step_summary);
     // A required workflow that has not started yet has no step count, so the total stays unknown.
     if (!summaries.length || (pull.expected || []).length || summaries.some(summary => !summary || !summary.known)) {
-      return { known: false, completed: null, total: null, remaining: null };
+      return { known: false, completed: null, total: null, remaining: null, counts: null };
     }
-    return summaries.reduce((total, summary) => ({
-      known: true,
-      completed: total.completed + summary.completed,
-      total: total.total + summary.total,
-      remaining: total.remaining + summary.remaining
-    }), { known: true, completed: 0, total: 0, remaining: 0 });
+    const summed = summaries.reduce((total, summary) => {
+      const counts = { ...total.counts };
+      const incoming = summary.counts || {};
+      METER_STATES.forEach(state => { counts[state] += Number(incoming[state]) || 0; });
+      return {
+        known: true,
+        completed: total.completed + summary.completed,
+        total: total.total + summary.total,
+        remaining: total.remaining + summary.remaining,
+        counts
+      };
+    }, { known: true, completed: 0, total: 0, remaining: 0, counts: emptyStepCounts() });
+    return applyGaps(summed, ciGaps(pull));
   }
 
   function combinedCategory(pull) {
@@ -174,13 +253,20 @@
     return order.find(value => categories.includes(value)) || "unknown";
   }
 
-  // The step meter counts steps that finished, not steps that passed, so its colour carries the verdict:
-  // red on any failure, yellow on any pending check, green only when every check passed, gray otherwise.
-  function meterTone(pull) {
-    const categories = [...(pull.checks || []), ...(pull.statuses || []), ...(pull.expected || [])].map(row => row.category);
-    if (categories.includes("failed")) return "failed";
-    if (categories.includes("pending")) return "pending";
-    return combinedCategory(pull) === "success" ? "success" : "neutral";
+  function meterSegments(totals) {
+    if (!totals || !totals.known || !totals.total || !totals.counts) return [];
+    return METER_STATES.flatMap(state => {
+      const count = Number(totals.counts[state]) || 0;
+      return count > 0 ? [{ state, count, label: STATUS_LABELS[state] }] : [];
+    });
+  }
+
+  function meterLabel(totals) {
+    const segments = meterSegments(totals);
+    if (!totals || !totals.known) return "Step total unavailable";
+    if (!segments.length) return `${totals.completed} of ${totals.total} steps`;
+    const parts = segments.map(segment => `${segment.count} ${segment.label.toLowerCase()}`);
+    return `${parts.join(", ")} of ${totals.total} steps`;
   }
 
   function currentWork(pull) {
@@ -194,7 +280,108 @@
     return null;
   }
 
+  // A quota window is named from its length, so a 5-hour limit and a 7-day limit read as such
+  // whatever the source called them. A name is kept when the length was not reported.
+  function quotaWindowLabel(window) {
+    const minutes = window.window_minutes;
+    if (!Number.isFinite(minutes) || minutes <= 0) return window.name || "Window";
+    if (minutes % 1440 === 0) {
+      const days = minutes / 1440;
+      return days === 1 ? "1 day" : `${days} days`;
+    }
+    if (minutes % 60 === 0) {
+      const hours = minutes / 60;
+      return hours === 1 ? "1 hour" : `${hours} hours`;
+    }
+    return `${minutes} min`;
+  }
+
+  function quotaDisplayPercent(used) {
+    if (!Number.isFinite(used)) return null;
+    return Math.round(Math.min(100, Math.max(0, used)));
+  }
+
+  // Points the fill sits ahead of an even burn. Same comparison as the plan pace line:
+  // used percent minus the share of the window already elapsed. Null until the window has started.
+  function quotaPace(window, now) {
+    const minutes = window.window_minutes;
+    const used = window.used_percent;
+    const reset = Date.parse(window.resets_at);
+    if (!Number.isFinite(minutes) || minutes <= 0 || !Number.isFinite(used) || !Number.isFinite(reset)) return null;
+    const remaining = (reset - now) / 1000;
+    if (remaining <= 0) return null;
+    const elapsed = 1 - remaining / (minutes * 60);
+    if (!(elapsed > 0 && elapsed <= 1)) return null;
+    return { expected: elapsed * 100, delta: Math.min(used, 100) - elapsed * 100 };
+  }
+
+  function quotaPacePhrase(pace) {
+    const even = Math.round(pace.expected);
+    const points = Math.round(Math.abs(pace.delta));
+    const noun = points === 1 ? "point" : "points";
+    if (pace.delta > 1) return `${points} ${noun} ahead of an even ${even}% burn`;
+    if (pace.delta < -1) return `${points} ${noun} behind an even ${even}% burn`;
+    return `on pace with an even ${even}% burn`;
+  }
+
+  // Shown only once the fill is more than a point off an even burn.
+  function quotaDeltaLabel(delta) {
+    if (!Number.isFinite(delta) || Math.abs(delta) <= 1) return null;
+    const points = Math.round(delta);
+    if (points === 0) return null;
+    return `${points > 0 ? "+" : ""}${points}%`;
+  }
+
+  // Green while there is room and the burn is not ahead. Yellow from half full, or from being
+  // ahead of an even burn. Red from 90% full or 25 points ahead.
+  function quotaTone(usedPercent, delta) {
+    const used = quotaDisplayPercent(usedPercent);
+    if (used === null) return "ok";
+    if (used >= 90 || (Number.isFinite(delta) && delta >= 25)) return "hot";
+    if (used >= 50 || (Number.isFinite(delta) && delta > 1)) return "warn";
+    return "ok";
+  }
+
+  function quotaCountdown(resetsAt, now) {
+    const reset = Date.parse(resetsAt);
+    if (!Number.isFinite(reset)) return null;
+    const minutes = Math.floor((reset - now) / 60000);
+    if (minutes <= 0) return "reset";
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    const mins = minutes % 60;
+    if (days > 0) return hours > 0 ? `resets ${days}d ${hours}h` : `resets ${days}d`;
+    if (hours > 0) return mins > 0 ? `resets ${hours}h ${mins}m` : `resets ${hours}h`;
+    return `resets ${minutes}m`;
+  }
+
+  const QUOTA_PROVIDERS = { openai: "OpenAI", anthropic: "Anthropic" };
+
+  function quotaGroupTitle(provider, account) {
+    const name = (provider || "").trim();
+    if (!name) return account.label || "Subscription";
+    const mapped = QUOTA_PROVIDERS[name.toLowerCase()] || name;
+    return /usage$/i.test(mapped) ? mapped : `${mapped} usage`;
+  }
+
+  // One block per provider. Accounts that share a provider are models of that subscription.
+  function quotaGroups(accounts) {
+    const groups = [];
+    accounts.forEach(account => {
+      const provider = typeof account.provider === "string" ? account.provider.trim() : "";
+      const key = provider.toLowerCase() || `label:${(account.label || account.id || "").toLowerCase()}`;
+      let group = groups.find(item => item.key === key);
+      if (!group) {
+        group = { key, title: quotaGroupTitle(provider, account), accounts: [] };
+        groups.push(group);
+      }
+      group.accounts.push(account);
+    });
+    return groups;
+  }
+
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, formatTime, bytes,
-    badge, diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterTone, currentWork, restoreViewState,
-    parseRoute, routeHash };
+    badge, diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork, restoreViewState,
+    parseRoute, routeHash, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel,
+    quotaTone, quotaCountdown, quotaGroups };
 });
