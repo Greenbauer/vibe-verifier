@@ -175,7 +175,7 @@ class QaeArtifacts(unittest.TestCase):
         # The shape of a consumer's real run: the page is on one host and its API on another. With
         # only the site declared, a 401 from the API fails neither the console check nor the network
         # one. Declared after the site, it fails both, and a third party's 400 is still not judged.
-        site, api = "https://d111111abcdef8.cloudfront.net", "https://abc123.execute-api.us-east-1.amazonaws.com"
+        site, api = "https://d111111abcdef8.cloudfront.net", "https://abc123.execute-api.us-east-1.amazonaws.com/preview"
         write(self.root, {
             "console-1.log": "[   12ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ %s/journeys:0\n"
                              "[   15ms] [ERROR] Failed to load resource: the server responded with a status of 400 () @ https://third-party.example/:0\n" % api,
@@ -193,11 +193,14 @@ class QaeArtifacts(unittest.TestCase):
         self.assertIn("status of 401 () @ %s/journeys:0" % api, both.stdout)
         self.assertIn("request answered 401 outside the allowlist: [GET] %s/journeys" % api, both.stdout)
         self.assertNotIn("third-party.example", both.stdout)
-        # A refusal on the further origin is declared by its full URL; a relative path is the site's.
-        declared = self.run_gate("--site-file", os.path.join(inputs, "both"), "--criteria", os.path.join(inputs, "body.md"))
-        self.assertEqual(declared.returncode, 0, declared.stdout + declared.stderr)
-        relative = self.run_gate("--site-file", os.path.join(inputs, "both"), "--criteria", os.path.join(inputs, "relative.md"))
-        self.assertEqual(relative.returncode, 1)
+        # A refusal on the further origin is declared by its full URL, or by a path: a pull request
+        # cannot know a per-preview host, so a path is appended to each further origin as declared.
+        for criteria in ("body.md", "relative.md"):
+            declared = self.run_gate("--site-file", os.path.join(inputs, "both"), "--criteria", os.path.join(inputs, criteria))
+            self.assertEqual(declared.returncode, 0, criteria + declared.stdout + declared.stderr)
+        write(inputs, {"other.md": "## Acceptance criteria\n\n- Signed out, crews refuse (expected-refusal: 401 /crews)\n"})
+        other = self.run_gate("--site-file", os.path.join(inputs, "both"), "--criteria", os.path.join(inputs, "other.md"))
+        self.assertEqual(other.returncode, 1)
 
     def test_a_missing_empty_or_malformed_site_file_cannot_run_even_under_soak(self):
         # Judging every request instead would pass a run against the wrong site.

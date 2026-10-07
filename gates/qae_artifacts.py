@@ -19,7 +19,7 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
                              manifest edit; a missing, empty or malformed file cannot run. A file
                              may list further URLs after the first, one per line: other origins
                              the site itself is served from (its API on another host), judged
-                             exactly as the site is. Relative paths resolve against the first
+                             exactly as the site is, base path included (an API stage)
     --widths N[,N...]        viewport widths in pixels (opt-in, the repository's choice): each
                              criterion's step screenshots must include one of each width (see 6)
     --ticket FILE            the criteria of the ticket the pull request implements (TC1, TC2, ...):
@@ -53,8 +53,9 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    The declaration is read from the criteria file the workflow fetched, never from the explorer,
    and only from a criterion's own line (an HTML comment does not count). It excuses that status at
    that URL and nothing else: the request in the network record, and Chromium's `Failed to load
-   resource: ... status of 401` console line for it. A path resolves against the site, a URL is
-   taken as written, and either must match the request's URL exactly (query included, fragment
+   resource: ... status of 401` console line for it. A path resolves against the site, and is
+   appended to each further declared origin (whose host a pull request cannot know when every
+   preview gets its own), a URL is taken as written, and either must match the request's URL exactly (query included, fragment
    dropped). A 5xx, another status, another URL, and any other console error still fail, and a
    declaration of any status but a handled refusal (400, 401, 403, 404, 409 or 422), or a path with
    no site to resolve it, is a finding.
@@ -183,7 +184,7 @@ def exact(url):
     return urllib.parse.urldefrag(url)[0]
 
 
-def expected_refusals(items, site):
+def expected_refusals(items, sites):
     """The (status, URL) pairs the criteria `items` ((id, wording) pairs) declare expected, and findings
     for any declaration that cannot be honoured as written."""
     expected, findings = set(), []
@@ -195,8 +196,9 @@ def expected_refusals(items, site):
                                         % (ac, status, ", ".join(REFUSABLE))))
             elif urllib.parse.urlsplit(target).scheme in ("http", "https"):
                 expected.add((status, exact(target)))
-            elif target.startswith("/") and site:
-                expected.add((status, exact(urllib.parse.urljoin(site, target))))
+            elif target.startswith("/") and sites:
+                expected.add((status, exact(urllib.parse.urljoin(sites[0], target))))
+                expected.update((status, exact(origin.rstrip("/") + target)) for origin in sites[1:])
             else:
                 findings.append(Finding("%s declares expected-refusal at %s: write a path starting with / (resolved against "
                                         "the site under test, which needs --site or --site-file) or an http(s) URL" % (ac, target)))
@@ -335,7 +337,7 @@ def check(args):
     console_allow = [re.compile(pattern) for pattern in (args.allow_console or [])]
     request_allow = [re.compile(pattern) for pattern in (args.allow_request or [])]
     items = ([] if reason else criteria(HTML_COMMENT.sub("", body))) + ticket
-    expected, declared = expected_refusals(items, sites[0] if sites else None)
+    expected, declared = expected_refusals(items, sites)
     return (declared
             + steps_have_screenshots(root)
             + (widths_findings(root, args.widths) if args.widths else [])
