@@ -295,7 +295,7 @@ AmbientCapabilities=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 MemoryMax=512M
 CPUQuota=100%
-TasksMax=64
+TasksMax=256
 UMask=0077""".splitlines()
 ROOT_SANDBOX = """NoNewPrivileges=yes
 ProtectSystem=strict
