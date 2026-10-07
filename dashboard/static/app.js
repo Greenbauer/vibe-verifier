@@ -134,8 +134,7 @@
     const mark = unresolvedMark(pull);
     if (!mark) return null;
     return el("span", {
-      class: `comment-mark${mark.unresolved ? "" : " is-clear"}`,
-      title: mark.title, "aria-label": mark.title
+      class: "comment-mark", title: mark.title, "aria-label": mark.title
     }, messageIcon(), mark.shown);
   }
 

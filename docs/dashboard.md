@@ -360,10 +360,10 @@ The title is green when the pull request is fully merge-ready: GitHub's merge st
 is green (skipped checks may sit beside at least one success, and a check that is not required
 still counts), and every review thread is resolved and has a reply. A thread list that did not
 load completely, or a merge state GitHub has not calculated, keeps the title white.
-When the pull request has comments, the step line shows a message icon and the number of
-unresolved review threads. The number is a lower bound, with a plus, when more threads exist
-than the read returned. The icon is hidden when the comment read did not succeed, so a missing
-read is not shown as zero.
+When the pull request has unresolved review threads, the step line shows a message icon and
+that number. The number is a lower bound, with a plus, when more threads exist than the read
+returned. The icon is hidden when every thread is resolved, and when the comment read did not
+succeed, so a missing read is not shown as zero.
 A pull request's badge shows its worst current-head check. A skipped check never outranks a passed
 one, so the badge reads Skipped only when every check was skipped.
 The step meter is one line for the whole step total. Each outcome takes a share of that line

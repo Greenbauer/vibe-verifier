@@ -328,13 +328,13 @@
     return null;
   }
 
-  // A message icon is shown only when this pull request has comments and the unresolved
-  // count was actually read. A missing read stays hidden, so it cannot look like zero.
+  // A message icon is shown only when at least one review thread is still unresolved.
+  // Zero, and a read that never arrived, stay hidden.
   function unresolvedMark(pull) {
     const unresolved = pull.unresolved_comments;
     const threads = Number.isInteger(pull.review_threads) ? pull.review_threads : 0;
     const comments = Number.isInteger(pull.comment_count) ? pull.comment_count : 0;
-    if (!Number.isInteger(unresolved) || unresolved < 0 || threads + comments <= 0) return null;
+    if (!Number.isInteger(unresolved) || unresolved < 1 || threads + comments <= 0) return null;
     const complete = pull.comments_complete !== false;
     const noun = unresolved === 1 && complete ? "unresolved comment" : "unresolved comments";
     return {

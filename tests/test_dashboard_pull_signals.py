@@ -326,12 +326,13 @@ const unknown=progress({unresolved_comments:1, review_threads:1, comments_comple
 console.log(JSON.stringify({
   open: marks(open).map(item=>({class:item.attrs.class, title:item.attrs.title, text:text(item)})),
   none: marks(none).length,
-  clear: marks(clear).map(item=>({class:item.attrs.class, text:text(item)})),
+  clear: marks(clear).length,
   partial: marks(partial).map(text),
   unknown: marks(unknown).map(text),
   besideMeter: open.children.some(item=>item.attrs&&item.attrs.class==='progress-meter-row' && marks(item).length===1),
   hidden: helpers.unresolvedMark({unresolved_comments:null, review_threads:null, comment_count:null}),
   noComments: helpers.unresolvedMark({unresolved_comments:0, review_threads:0, comment_count:0}),
+  resolved: helpers.unresolvedMark({unresolved_comments:0, review_threads:4, comments_complete:true, comment_count:6}),
   negative: helpers.unresolvedMark({unresolved_comments:-1, review_threads:1, comment_count:1})
 }));
 '''
@@ -340,17 +341,18 @@ console.log(JSON.stringify({
         parsed = json.loads(result.stdout)
         self.assertEqual(parsed["open"], [{"class": "comment-mark", "title": "2 unresolved comments", "text": ["2"]}])
         self.assertEqual(parsed["none"], 0)
-        self.assertEqual(parsed["clear"], [{"class": "comment-mark is-clear", "text": ["0"]}])
+        self.assertEqual(parsed["clear"], 0)
         self.assertEqual(parsed["partial"], [["2+"]])
         self.assertEqual(parsed["unknown"], [["1"]])
         self.assertTrue(parsed["besideMeter"])
         self.assertIsNone(parsed["hidden"])
         self.assertIsNone(parsed["noComments"])
+        self.assertIsNone(parsed["resolved"])
         self.assertIsNone(parsed["negative"])
         css = (ROOT_UI / "dashboard/static/styles.css").read_text()
         self.assertIn(".pr-identity b.merge-ready { color: var(--green); }", css)
         self.assertIn(".progress-copy .comment-mark {", css)
-        self.assertIn(".progress-copy .comment-mark.is-clear { color: var(--muted); }", css)
+        self.assertNotIn("comment-mark.is-clear", css)
 
 
 if __name__ == "__main__":

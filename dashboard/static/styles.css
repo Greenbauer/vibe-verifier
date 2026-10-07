@@ -150,7 +150,6 @@ a.pr-row { color: inherit; text-decoration: none; cursor: pointer; }
 .progress-meter-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .progress-meter-row .step-meter { flex: 1 1 auto; min-width: 48px; }
 .progress-copy .comment-mark { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px; color: var(--yellow); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 1; }
-.progress-copy .comment-mark.is-clear { color: var(--muted); }
 .comment-icon { width: 13px; height: 13px; display: block; }
 .chevron { color: var(--muted); font-size: 18px; }
 .step-meter, .metric-meter { height: 5px; overflow: hidden; border-radius: 5px; background: var(--line); }
