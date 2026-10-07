@@ -45,9 +45,9 @@ def collector_view(value, config, now):
         lanes = []
         for row in host["slots"]["occupied"]:
             lane = {"id": "%s-%s" % (row["kind"], row["index"]),
-                    "state": "allocated" if current and row["state"] == "allocated" else "unknown",
+                    "state": "allocated" if row["state"] == "allocated" else "unknown",
                     "registered": None, "labels": [row["kind"]]}
-            if current and row["state"] == "allocated":
+            if row["state"] == "allocated":
                 lane["runner_id"] = row["runner_id"]
                 lane["allocated_at"] = row["allocated_at"]
                 # An organization-scope allocation names no repository; join_runner_jobs then finds
@@ -59,8 +59,8 @@ def collector_view(value, config, now):
         listener_up = host["listener"]["state"] == "up"
         for index in range(host["slots"]["remaining_on_demand"]):
             lanes.append({"id": "on-demand-%s" % (index + 1),
-                          "state": "provisionable" if current and listener_up else "unknown",
-                          "registered": False if current else None, "labels": []})
+                          "state": "provisionable" if listener_up else "unknown",
+                          "registered": False, "labels": []})
         capacity = {"available": True, "sampled_at": raw_host["observed_at"], "stale": not current,
                     "host": {"cpu_percent": host["cpu"]["busy_percent"],
                              "memory_used_bytes": host["memory"]["total_bytes"] - host["memory"]["available_bytes"],
@@ -69,12 +69,11 @@ def collector_view(value, config, now):
                              "workspace_disk_total_bytes": host["workspace"]["total_bytes"]},
                     "limits": {**host["lane_limits"], "slots": host["slots"]["limit"],
                                "qae_concurrency": host["slots"]["qae_concurrency"]},
-                    "listener_state": host["listener"]["state"] if current else "unknown", "lanes": lanes}
-        if current:
-            qae_allocated = any(row["kind"] == "qae" for row in host["slots"]["occupied"])
-            state = "down" if host["listener"]["state"] == "down" else "idle" if listener_up and not qae_allocated else "unknown"
-            states.append({"owner": config.owner, "bot": "explorer", "state": state,
-                           "detail": "Owner's QAE runner listener"})
+                    "listener_state": host["listener"]["state"], "lanes": lanes}
+        qae_allocated = any(row["kind"] == "qae" for row in host["slots"]["occupied"])
+        state = "down" if host["listener"]["state"] == "down" else "idle" if listener_up and not qae_allocated else "unknown"
+        states.append({"owner": config.owner, "bot": "explorer", "state": state,
+                       "detail": "Owner's QAE runner listener"})
     usage = {"available": False, "reason": "not_provided"}
     if account.get("observed_at"):
         limits = project_rate_limits(account.get("rate_limits"))
@@ -101,11 +100,11 @@ def collector_view(value, config, now):
 def join_runner_jobs(telemetry, github):
     """An allocation becomes busy only when GitHub confirms a matching active runner."""
     capacity = telemetry.get("capacity", {})
-    if not capacity.get("available") or capacity.get("stale"):
+    if not capacity.get("available"):
         return
     jobs = {}
     for repository in github.get("repositories", []):
-        if repository.get("stale") or repository.get("unavailable"):
+        if repository.get("unavailable"):
             continue
         for pull in repository.get("pulls", []):
             for run in pull.get("runs", []):
