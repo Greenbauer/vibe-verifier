@@ -11,7 +11,7 @@
   };
   const STATUS_LABELS = {
     success: "Succeeded", failed: "Failed", skipped: "Skipped", cancelled: "Cancelled",
-    pending: "Pending", unknown: "Unknown", working: "Working", idle: "Idle",
+    pending: "Pending", running: "Running", waiting: "Waiting", unknown: "Unknown", working: "Working", idle: "Idle",
     paused: "Paused", down: "Down", ready: "Ready", busy: "Busy", provisionable: "On demand",
     offline: "Offline", allocated: "Allocated"
   };
@@ -184,114 +184,23 @@
     return result.sort((a, b) => b.activity - a.activity || a.repository.localeCompare(b.repository));
   }
 
-  // GitHub's status ring draws one slice per outcome, sized by that outcome's share.
-  // The step line uses the same buckets, left to right: passed, pending, failed, then the gray ones.
-  const METER_STATES = ["success", "pending", "failed", "skipped", "cancelled", "unknown"];
+  // GitHub's pull request page counts checks: one per check run, commit status and expected required check.
+  // The check line uses the same buckets, left to right: passed, running, waiting, failed, then the gray ones.
+  const METER_STATES = ["success", "running", "waiting", "failed", "skipped", "cancelled", "unknown"];
 
-  function emptyStepCounts() {
-    return { success: 0, failed: 0, skipped: 0, cancelled: 0, pending: 0, unknown: 0 };
+  // GitHub marks a started check in_progress. A queued job, a pending status and an expected check all wait.
+  function checkState(row) {
+    if (row.category === "pending") return row.status === "in_progress" ? "running" : "waiting";
+    return METER_STATES.includes(row.category) ? row.category : "unknown";
   }
 
-  function countsOnTheMeter(row) {
-    // A passed check's steps already carry that outcome. A skipped check does not: GitHub returns no steps for it.
-    return !!row && row.category !== "success" && METER_STATES.includes(row.category);
-  }
-
-  function meterKey(suite, name, category) {
-    return `${suite == null ? "*" : suite}\0${name}\0${category}`;
-  }
-
-  // A step GitHub has already returned for this job. Pending steps that have not started are absent.
-  function shownBySteps(pull, name, suite, category) {
-    for (const run of pull.runs || []) {
-      if (suite != null && run.suite_id != null && run.suite_id !== suite) continue;
-      for (const job of run.jobs || []) {
-        if (job.name === name && (job.steps || []).some(step => step.category === category)) return true;
-      }
-    }
-    return false;
-  }
-
-  function addCheckGaps(pull, gaps, seen) {
-    for (const row of [...(pull.checks || []), ...(pull.statuses || [])]) {
-      if (!countsOnTheMeter(row)) continue;
-      seen.add(meterKey(row.suite_id, row.name, row.category));
-      if (!shownBySteps(pull, row.name, row.suite_id, row.category)) gaps[row.category] += 1;
-    }
-  }
-
-  function addJobGaps(pull, gaps, seen) {
-    for (const run of pull.runs || []) {
-      for (const job of run.jobs || []) {
-        if (!countsOnTheMeter(job) || shownBySteps(pull, job.name, run.suite_id, job.category)) continue;
-        if (seen.has(meterKey(run.suite_id, job.name, job.category)) || seen.has(meterKey(null, job.name, job.category))) continue;
-        gaps[job.category] += 1;
-      }
-    }
-  }
-
-  function addExpectedGaps(pull, gaps, seen) {
-    for (const row of pull.expected || []) {
-      if (!countsOnTheMeter(row) || seen.has(meterKey(null, row.name, row.category))) continue;
-      seen.add(meterKey(null, row.name, row.category));
-      gaps[row.category] += 1;
-    }
-  }
-
-  // Reported steps can all be successes while GitHub still shows a pending, failed, or skipped check.
-  function ciGaps(pull) {
-    const gaps = emptyStepCounts();
-    const seen = new Set();
-    addCheckGaps(pull, gaps, seen);
-    addJobGaps(pull, gaps, seen);
-    addExpectedGaps(pull, gaps, seen);
-    return gaps;
-  }
-
-  function applyGaps(total, gaps) {
-    const counts = { ...total.counts };
-    let added = 0;
-    let open = 0;
-    for (const state of METER_STATES) {
-      const count = gaps[state] || 0;
-      counts[state] += count;
-      added += count;
-      if (state === "pending" || state === "unknown") open += count;
-    }
-    if (!added) return total;
-    return {
-      known: true,
-      completed: total.completed + added - open,
-      total: total.total + added,
-      remaining: total.remaining + open,
-      counts
-    };
-  }
-
-  function stepTotals(pull) {
-    const summaries = (pull.runs || []).map(run => run.step_summary);
-    // A job that has not started returns no steps, so its run's total stays unknown.
-    if (summaries.some(summary => !summary || !summary.known)) {
-      return { known: false, completed: null, total: null, remaining: null, counts: null };
-    }
-    const summed = summaries.reduce((total, summary) => {
-      const counts = { ...total.counts };
-      const incoming = summary.counts || {};
-      METER_STATES.forEach(state => { counts[state] += Number(incoming[state]) || 0; });
-      return {
-        known: true,
-        completed: total.completed + summary.completed,
-        total: total.total + summary.total,
-        remaining: total.remaining + summary.remaining,
-        counts
-      };
-    }, { known: true, completed: 0, total: 0, remaining: 0, counts: emptyStepCounts() });
-    const totals = applyGaps(summed, ciGaps(pull));
-    // No runs and no checks is not a finished pull request.
-    if (!summaries.length && !totals.total) {
-      return { known: false, completed: null, total: null, remaining: null, counts: null };
-    }
-    return totals;
+  function checkTotals(pull) {
+    const counts = Object.fromEntries(METER_STATES.map(state => [state, 0]));
+    const rows = [...(pull.checks || []), ...(pull.statuses || []), ...(pull.expected || [])];
+    rows.forEach(row => { counts[checkState(row)] += 1; });
+    const open = counts.running + counts.waiting + counts.unknown;
+    // A head with no checks is not a finished pull request.
+    return { known: rows.length > 0, completed: rows.length - open, total: rows.length, remaining: open, counts };
   }
 
   function combinedCategory(pull) {
@@ -311,21 +220,19 @@
 
   function meterLabel(totals) {
     const segments = meterSegments(totals);
-    if (!totals || !totals.known) return "Step total unavailable";
-    if (!segments.length) return `${totals.completed} of ${totals.total} steps`;
+    if (!totals || !totals.known) return "No checks reported";
     const parts = segments.map(segment => `${segment.count} ${segment.label.toLowerCase()}`);
-    return `${parts.join(", ")} of ${totals.total} steps`;
+    return `${parts.join(", ")} of ${totals.total} checks`;
   }
 
-  function currentWork(pull) {
-    for (const run of pull.runs || []) {
-      for (const job of run.jobs || []) {
-        const step = (job.steps || []).find(row => row.status === "in_progress");
-        if (step) return { name: `${job.name}: ${step.name}`, elapsed: step.elapsed_seconds };
-        if (job.category === "pending") return { name: job.name, elapsed: job.elapsed_seconds };
-      }
-    }
-    return null;
+  // Every check GitHub marks in progress. An Actions job shares its check run's id, so its running step names the work.
+  function runningWork(pull) {
+    const jobs = new Map((pull.runs || []).flatMap(run => (run.jobs || []).map(job => [job.id, job])));
+    return (pull.checks || []).filter(row => row.status === "in_progress").map(row => {
+      const step = ((jobs.get(row.id) || {}).steps || []).find(item => item.status === "in_progress");
+      return step ? { name: `${row.name}: ${step.name}`, elapsed: step.elapsed_seconds }
+        : { name: row.name, elapsed: row.elapsed_seconds };
+    });
   }
 
   // A message icon is shown only when this pull request has comments and the unresolved
@@ -445,7 +352,7 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, ageClass, formatTime, bytes,
-    badge, diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork, unresolvedMark, restoreViewState,
+    badge, diskUsage, flattenPulls, filterPulls, groupPulls, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, restoreViewState,
     parseRoute, routeHash, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel,
     quotaTone, quotaCountdown, quotaGroups };
 });

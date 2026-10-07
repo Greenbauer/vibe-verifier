@@ -303,11 +303,9 @@ function createElementNS(ns, tag) {
   return node;
 }
 global.document={createElementNS};
-const progress=new Function('el','stepTotals','meterSegments','meterLabel','unresolvedMark', slice+'return progress;')(
-  el, helpers.stepTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark);
-const runs=[{step_summary:{known:true, completed:4, total:4, remaining:0,
-  counts:{success:4, failed:0, skipped:0, cancelled:0, pending:0, unknown:0}}}];
-const base={runs, checks:[], statuses:[], expected:[]};
+const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark', slice+'return progress;')(
+  el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark);
+const base={runs:[], checks:[{name:'test', category:'success', status:'completed'}], statuses:[], expected:[]};
 function marks(node) {
   const found=[];
   (function walk(item) {
