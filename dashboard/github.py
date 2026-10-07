@@ -233,68 +233,9 @@ class GitHubCollector:
                            "step_summary": step_summary(jobs)})
         return sorted(result, key=lambda row: _time_key(row, "started_at", "created_at"), reverse=True)
 
-    def _pin_since(self, repository: str, rule: dict, workflow: dict) -> datetime | None:
-        """When the ruleset started requiring this workflow at its current pinned SHA.
-
-        A required workflow runs at the SHA pinned when its triggering event fired, so after the pin
-        moves GitHub waits for a new run and ignores older ones. A given pin's start never changes,
-        so it is cached until the pin moves."""
-        key = (rule.get("ruleset_id"), workflow.get("path"), workflow.get("repository_id"))
-        sha = workflow.get("sha")
-        cached = self._pins.get(key)
-        if cached and cached[0] == sha:
-            return cached[1]
-        if rule.get("ruleset_source_type") == "Organization":
-            base = "orgs/%s/rulesets/%s/history" % (rule.get("ruleset_source"), key[0])
-        else:
-            base = "repos/%s/rulesets/%s/history" % (repository, key[0])
-        since = None
-        try:
-            versions = self.api.items(_endpoint(base, per_page=100))
-        except ApiError as error:
-            # GitHub serves an organization ruleset's history only with organization administration
-            # write, which a read-only dashboard token should not hold. Without it the pin's start is
-            # unknown, so any run of the required workflow counts, as it did before the pin was read.
-            if error.code != "forbidden":
-                raise
-            self._pins[key] = (sha, PIN_UNKNOWN)
-            return PIN_UNKNOWN
-        for version in sorted(versions, key=lambda row: _time_key(row, "updated_at"), reverse=True):
-            state = self.api.one("%s/%s" % (base, version.get("version_id"))).get("state") or {}
-            pins = {(pinned.get("path"), pinned.get("repository_id")): pinned.get("sha")
-                    for old in state.get("rules") or [] if old.get("type") == "workflows"
-                    for pinned in (old.get("parameters") or {}).get("workflows") or []}
-            if pins.get(key[1:]) != sha:
-                break
-            since = parse_time(version.get("updated_at"))
-        if since:
-            self._pins[key] = (sha, since)
-        return since
-
     def _expected(self, repository: str, rules: list[dict], evidence: list[dict], runs: list[dict]) -> list[dict]:
-        """Checks the base branch's rulesets require that have not reported on this head.
-
-        GitHub lists these as "Expected" without creating a check run for them, so they are absent
-        from the evidence above. A required workflow run from before its pin moved does not count."""
-        reported = {row["name"] for row in evidence}
-        missing = []
-        for rule in rules:
-            parameters = rule.get("parameters") or {}
-            if rule.get("type") == "required_status_checks":
-                missing += [(item["context"], "Required status check")
-                            for item in parameters.get("required_status_checks") or []
-                            if item["context"] not in reported]
-            elif rule.get("type") == "workflows":
-                for workflow in parameters.get("workflows") or []:
-                    path = workflow["path"]
-                    matching = [run for run in runs if run["required_workflow"] and run["path"] == path]
-                    since = self._pin_since(repository, rule, workflow) if matching else None
-                    if not any(since and _time_key(run, "created_at") >= since for run in matching):
-                        missing.append((matching[0]["name"] if matching else path.rsplit("/", 1)[-1],
-                                        "Required workflow, not run at its current pin"))
-        return [{"id": None, "suite_id": None, "name": name[:200], "provider": provider, "status": "expected",
-                 "conclusion": None, "category": "pending", "started_at": None, "completed_at": None,
-                 "elapsed_seconds": None, "details_url": None} for name, provider in missing]
+        from .required_checks import expected_rows
+        return expected_rows(self, repository, rules, evidence, runs)
 
     @staticmethod
     def _current_only(checks: list[dict], runs: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -373,18 +314,8 @@ class GitHubCollector:
                 "checks": checks, "statuses": statuses, "expected": expected, "runs": runs}
 
     def _branch_rules(self, repository: str, base: str) -> list[dict]:
-        """The rules GitHub enforces on a base branch, or none where GitHub refuses to list them.
-
-        Branch rules need only metadata read, which every dashboard token has, so a 403 here means the
-        repository's plan has no rulesets (a private repository on a free personal account). Nothing can
-        be required there, and the pull requests' own evidence is still readable."""
-        try:
-            return self.api.items(_endpoint("repos/%s/rules/branches/%s" % (repository, quote(base, safe="")),
-                                            per_page=100))
-        except ApiError as error:
-            if error.code == "forbidden":
-                return []
-            raise
+        from .required_checks import branch_rules
+        return branch_rules(self.api, repository, base)
 
     def _repository(self, repository: str, inventory: dict) -> dict:
         rows = self.api.items(_endpoint("repos/%s/pulls" % repository, state="open", per_page=100))
