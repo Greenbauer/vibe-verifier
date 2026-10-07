@@ -30,6 +30,13 @@ SESSION = """### Tool call: browser_navigate
 """
 
 
+def session_saving_to(filename):
+    """A session whose network call saved its result to `filename`, as playwright-mcp records it:
+    the result is a link to the file and holds no request."""
+    return SESSION.replace("```json\n{}\n```", "```json\n%s\n```" % json.dumps({"static": False, "filename": filename}, indent=2)) \
+        % json.dumps({"result": "- [Network](%s)" % filename})
+
+
 def session_with(requests):
     return SESSION % json.dumps({"result": "\n".join("%d. %s" % (n + 1, line) for n, line in enumerate(requests))})
 
@@ -168,7 +175,7 @@ class QaeArtifacts(unittest.TestCase):
         # The shape of a consumer's real run: the page is on one host and its API on another. With
         # only the site declared, a 401 from the API fails neither the console check nor the network
         # one. Declared after the site, it fails both, and a third party's 400 is still not judged.
-        site, api = "https://d111111abcdef8.cloudfront.net", "https://abc123.execute-api.us-east-1.amazonaws.com"
+        site, api = "https://d111111abcdef8.cloudfront.net", "https://abc123.execute-api.us-east-1.amazonaws.com/preview"
         write(self.root, {
             "console-1.log": "[   12ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ %s/journeys:0\n"
                              "[   15ms] [ERROR] Failed to load resource: the server responded with a status of 400 () @ https://third-party.example/:0\n" % api,
@@ -186,11 +193,14 @@ class QaeArtifacts(unittest.TestCase):
         self.assertIn("status of 401 () @ %s/journeys:0" % api, both.stdout)
         self.assertIn("request answered 401 outside the allowlist: [GET] %s/journeys" % api, both.stdout)
         self.assertNotIn("third-party.example", both.stdout)
-        # A refusal on the further origin is declared by its full URL; a relative path is the site's.
-        declared = self.run_gate("--site-file", os.path.join(inputs, "both"), "--criteria", os.path.join(inputs, "body.md"))
-        self.assertEqual(declared.returncode, 0, declared.stdout + declared.stderr)
-        relative = self.run_gate("--site-file", os.path.join(inputs, "both"), "--criteria", os.path.join(inputs, "relative.md"))
-        self.assertEqual(relative.returncode, 1)
+        # A refusal on the further origin is declared by its full URL, or by a path: a pull request
+        # cannot know a per-preview host, so a path is appended to each further origin as declared.
+        for criteria in ("body.md", "relative.md"):
+            declared = self.run_gate("--site-file", os.path.join(inputs, "both"), "--criteria", os.path.join(inputs, criteria))
+            self.assertEqual(declared.returncode, 0, criteria + declared.stdout + declared.stderr)
+        write(inputs, {"other.md": "## Acceptance criteria\n\n- Signed out, crews refuse (expected-refusal: 401 /crews)\n"})
+        other = self.run_gate("--site-file", os.path.join(inputs, "both"), "--criteria", os.path.join(inputs, "other.md"))
+        self.assertEqual(other.returncode, 1)
 
     def test_a_missing_empty_or_malformed_site_file_cannot_run_even_under_soak(self):
         # Judging every request instead would pass a run against the wrong site.
@@ -208,6 +218,27 @@ class QaeArtifacts(unittest.TestCase):
         result = self.run_gate("--site", "http://localhost:3000", "--site-file", "qae-inputs/site-url")
         self.assertEqual(result.returncode, 2)
         self.assertIn("not allowed with", result.stderr)
+
+    def test_a_network_record_saved_to_a_file_is_read_from_that_file(self):
+        # The shape of a consumer's real runs: every network call named a file under the evidence
+        # directory, so the session log held links only and the check passed having read nothing.
+        evidence = os.path.basename(self.root)
+        saved = "\n".join("%d. %s" % (n, line) for n, line in enumerate(CLEAN_REQUESTS, 1))
+        write(self.root, {"session-1/session.md": session_saving_to(evidence + "/qae/AC1-network.txt"),
+                          "qae/AC1-network.txt": saved + "\n"})
+        self.assertEqual(self.run_gate().returncode, 0)
+        write(self.root, {"qae/AC1-network.txt": saved + "\n3. [POST] http://localhost:3000/api/quote => [500] Internal Server Error\n"})
+        result = self.run_gate("--site", "http://localhost:3000")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("request answered 500 outside the allowlist: [POST] http://localhost:3000/api/quote", result.stdout)
+        self.assertIn("qae/AC1-network.txt", result.stdout)
+
+    def test_a_network_record_saved_where_the_evidence_does_not_hold_it_fails(self):
+        for filename in ("%s/qae/AC1-network.txt" % os.path.basename(self.root), "/tmp/AC1-network.txt", "../AC1-network.txt"):
+            write(self.root, {"session-1/session.md": session_saving_to(filename)})
+            result = self.run_gate()
+            self.assertEqual(result.returncode, 1, filename)
+            self.assertIn("network record saved to %s, which the evidence does not hold" % filename, result.stdout)
 
     def test_network_log_files_are_read_too(self):
         write(self.root, {"network-1.log": "1. [GET] http://localhost:3000/missing => [404] Not Found\n"})

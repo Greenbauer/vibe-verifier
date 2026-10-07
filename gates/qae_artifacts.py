@@ -19,7 +19,7 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
                              manifest edit; a missing, empty or malformed file cannot run. A file
                              may list further URLs after the first, one per line: other origins
                              the site itself is served from (its API on another host), judged
-                             exactly as the site is. Relative paths resolve against the first
+                             exactly as the site is, base path included (an API stage)
     --widths N[,N...]        viewport widths in pixels (opt-in, the repository's choice): each
                              criterion's step screenshots must include one of each width (see 6)
     --ticket FILE            the criteria of the ticket the pull request implements (TC1, TC2, ...):
@@ -43,7 +43,9 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
 4. The network record exists and is clean: at least one `browser_network_requests` result in the
    session log (the explorer is told to call it after each criterion), and no request in any
    such result, or in a `network-*.log` file, answered 400 or worse or failed, outside the
-   allowlist. This encodes the recorded false-PASS lesson: a PASS obtained while the real
+   allowlist. A call may save its result to a file (its `filename` argument); the session log then
+   holds a link and no requests, so that file is read as the result. One the evidence does not hold
+   is a finding: a record nobody can read is not a record. This encodes the recorded false-PASS lesson: a PASS obtained while the real
    endpoint failed is refused here whatever the verdict says.
 5. A refusal is the correct outcome of some criteria (an auth gate answering 401 signed out, a
    server answering 422 to the invalid input the explorer is told to try), so a criterion declares
@@ -51,8 +53,9 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    The declaration is read from the criteria file the workflow fetched, never from the explorer,
    and only from a criterion's own line (an HTML comment does not count). It excuses that status at
    that URL and nothing else: the request in the network record, and Chromium's `Failed to load
-   resource: ... status of 401` console line for it. A path resolves against the site, a URL is
-   taken as written, and either must match the request's URL exactly (query included, fragment
+   resource: ... status of 401` console line for it. A path resolves against the site, and is
+   appended to each further declared origin (whose host a pull request cannot know when every
+   preview gets its own), a URL is taken as written, and either must match the request's URL exactly (query included, fragment
    dropped). A 5xx, another status, another URL, and any other console error still fail, and a
    declaration of any status but a handled refusal (400, 401, 403, 404, 409 or 422), or a path with
    no site to resolve it, is a finding.
@@ -81,6 +84,8 @@ TOOL_CALL = re.compile(r"^### Tool call: (?P<name>\S+)\s*$", re.MULTILINE)
 # `3. [GET] http://host/path => [404] Not Found` or `=> [FAILED] net::ERR_...`, as the tool renders it;
 # inside a JSON result the newline is escaped, so the line is matched without anchors.
 REQUEST = re.compile(r"[0-9]+\. \[(?P<method>[A-Z]+)\] (?P<url>\S+) => \[(?P<status>[0-9]{3}|FAILED)\]")
+# What a browser_network_requests call was told to save its result to, in the call's Args block.
+SAVED_TO = re.compile(r'"filename":\s*"(?P<name>[^"\\]+)"')
 REFUSAL = re.compile(r"expected-refusal:[ \t]*(?P<status>[^\s`]+)[ \t]+(?P<target>[^\s`)]+)", re.IGNORECASE)
 REFUSABLE = ("400", "401", "403", "404", "409", "422")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -179,7 +184,7 @@ def exact(url):
     return urllib.parse.urldefrag(url)[0]
 
 
-def expected_refusals(items, site):
+def expected_refusals(items, sites):
     """The (status, URL) pairs the criteria `items` ((id, wording) pairs) declare expected, and findings
     for any declaration that cannot be honoured as written."""
     expected, findings = set(), []
@@ -191,8 +196,9 @@ def expected_refusals(items, site):
                                         % (ac, status, ", ".join(REFUSABLE))))
             elif urllib.parse.urlsplit(target).scheme in ("http", "https"):
                 expected.add((status, exact(target)))
-            elif target.startswith("/") and site:
-                expected.add((status, exact(urllib.parse.urljoin(site, target))))
+            elif target.startswith("/") and sites:
+                expected.add((status, exact(urllib.parse.urljoin(sites[0], target))))
+                expected.update((status, exact(origin.rstrip("/") + target)) for origin in sites[1:])
             else:
                 findings.append(Finding("%s declares expected-refusal at %s: write a path starting with / (resolved against "
                                         "the site under test, which needs --site or --site-file) or an http(s) URL" % (ac, target)))
@@ -232,6 +238,28 @@ def console_is_clean(root, allowed, expected, sites):
     return findings
 
 
+def saved_network_records(root, sessions):
+    """The file each browser_network_requests call saved its result to, when it named one. The name
+    is as the explorer gave it, from the workspace (`qae-artifacts/qae/AC1-network.txt`), and is
+    looked up inside the evidence directory, which is all the verify job holds."""
+    files, findings = set(), []
+    evidence = os.path.basename(os.path.normpath(root)) + "/"
+    for session in sessions:
+        calls = TOOL_CALL.split(read(session))
+        for name, body in zip(calls[1::2], calls[2::2]):
+            saved = SAVED_TO.search(body.partition("- Result")[0]) if name == "browser_network_requests" else None
+            if not saved:
+                continue
+            path = os.path.normpath(os.path.join(root, saved.group("name").rpartition(evidence)[2]))
+            if path.startswith(os.path.join(os.path.normpath(root), "")) and os.path.isfile(path):
+                files.add(path)
+            else:
+                findings.append(Finding("network record saved to %s, which the evidence does not hold: save it under the "
+                                        "evidence directory, or call browser_network_requests without a filename"
+                                        % saved.group("name")[:200], relative(session, root)))
+    return sorted(files), findings
+
+
 def session_and_network(root, allowed, sites, expected):
     sessions = sorted(glob.glob(os.path.join(root, "session-*", "session.md")))
     if not sessions:
@@ -244,7 +272,9 @@ def session_and_network(root, allowed, sites, expected):
         findings.append(Finding("the browser was never navigated: no browser_navigate call in the session log"))
     if "browser_network_requests" not in calls:
         findings.append(Finding("no network record: the explorer must call browser_network_requests after each criterion"))
-    sources = sessions + sorted(glob.glob(os.path.join(root, "network-*.log")))
+    saved, unreadable = saved_network_records(root, sessions)
+    findings += unreadable
+    sources = sessions + saved + sorted(glob.glob(os.path.join(root, "network-*.log")))
     seen = set()
     for source in sources:
         for match in REQUEST.finditer(read(source)):
@@ -307,7 +337,7 @@ def check(args):
     console_allow = [re.compile(pattern) for pattern in (args.allow_console or [])]
     request_allow = [re.compile(pattern) for pattern in (args.allow_request or [])]
     items = ([] if reason else criteria(HTML_COMMENT.sub("", body))) + ticket
-    expected, declared = expected_refusals(items, sites[0] if sites else None)
+    expected, declared = expected_refusals(items, sites)
     return (declared
             + steps_have_screenshots(root)
             + (widths_findings(root, args.widths) if args.widths else [])

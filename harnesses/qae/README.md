@@ -561,7 +561,8 @@ and refuses on structural facts:
    `Failed to load resource` line for a host other than the declared site and its further declared
    origins, which is judged (and skipped) like that host's request in 4;
 3. the session log exists (`--save-session`) and shows a `browser_navigate`;
-4. a `browser_network_requests` result exists (the prompt asks for one after each criterion), and
+4. a `browser_network_requests` result exists (the prompt asks for one after each criterion; a call
+   that saved its result to a file is read from that file, which must be in the evidence), and
    no request to the site under test (`--site-file`, the URL the explore job declared and any further
    origin after it, or a fixed `--site`) answered 400 or worse or failed, outside `--allow-request` patterns;
 5. with `--widths`, each criterion's step screenshots include one of each declared width
@@ -587,7 +588,7 @@ The gate reads the declaration from the criteria file the verify job fetched, ne
 explorer's artifacts, and it excuses exactly that status at exactly that URL for that run: the
 request in the network record and Chromium's `Failed to load resource: ... status of 401` console
 line for it. Only a handled refusal can be declared: 401 or 403 (an auth gate), 400, 404, 409 or 422
-(a server refusing the invalid input the explorer is told to try). A path resolves against the site under test; an `http(s)` URL is taken as
+(a server refusing the invalid input the explorer is told to try). A path resolves against the site under test, and is appended to each further declared origin (so a refusal on an API with a per-preview host can be declared); an `http(s)` URL is taken as
 written; the match is exact, query included. A 5xx at the same URL, the same 401 at any other URL,
 and every other console error still fail, and a declaration of another status, or a path with no
 site, is itself a finding. Because the declaration is a criterion, the explorer must still show the
