@@ -22,7 +22,7 @@ On an Ubuntu 24.04 machine, clone this catalog to `/opt/runner-lanes` and your p
 - `lanes/tests/lane-slot-test.sh::prepare refuses, touching nothing, when the listener wrote no job for the instance`
 - `lanes/tests/lane-slot-test.sh::cleanup renames the job's store copy into the trash instead of deleting it: whole, under a name that carries the second and the instance`
 - `lanes/tests/lane-slot-test.sh::a wait slot's prepare makes no copy of the preloaded store: its store is an empty directory, mode 0700, and the store's room is never read for it`
-- `lanes/tests/lane-slot-test.sh::the reaper deletes one entry at a time, oldest first: one rm for each entry, naming that entry alone by its path inside the trash`
+- `lanes/tests/lane-slot-test.sh::the reaper deletes three entries at a time: with seven waiting, three deletes run together and never more than three`
 - `lanes/tests/lane-firewall-test.sh::DOCKER-USER rejects the lane bridge to RFC1918, CGNAT and link-local`
 - `lanes/tests/runner-entrypoint-test.sh::the JIT config is in no command's argv and in none of the entrypoint's output`
 - `lanes/tests/test_lanes.py::an invalid file exits 3 with the reason`

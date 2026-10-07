@@ -47,9 +47,10 @@
 #   outcome; removes jit and idle-stop, and the job file LAST, because its absence is what frees the
 #   instance for the listener.
 # reap
-#   deletes what the slots retired into <store>/trash: one entry at a time, oldest first, holding
-#   the trash's lock, until the trash is empty. A second reaper finds the lock held and exits 0. It
-#   deletes entries of that one directory and nothing else: it refuses a trash that is a link, rm
+#   deletes what the slots retired into <store>/trash: up to REAP_JOBS entries at a time (three),
+#   oldest first, holding the trash's lock, until the trash is empty. A second reaper finds the lock
+#   held and exits 0, so a lane never runs more than those few deletes at once. It deletes
+#   entries of that one directory and nothing else: it refuses a trash that is a link, rm
 #   follows no link inside an entry, and it stays on the store's filesystem. Exits 1 when an entry
 #   could not be deleted. <lane>-store-reaper.service runs it, started by every cleanup and by
 #   <lane>-store-reaper.timer (every 5 minutes, and after boot). Needs only the store, as snapshot
@@ -74,7 +75,7 @@
 # instance until it finished. So a slot never deletes its copy. prepare (a leftover) and cleanup
 # rename it to <store>/trash/<epoch second>.slot-<kind>-<n>.<pid>: one rename inside one filesystem,
 # so atomic and immediate, under a name no other entry has and that carries the entry's age. The
-# reaper deletes it later, one at a time. A copy the trash cannot take (the directory cannot be
+# reaper deletes it later, a few at a time. A copy the trash cannot take (the directory cannot be
 # made, it is a link, or the rename fails) is deleted in place, as it was before.
 # Fail closed on disk: a backlog must not fill the store unseen. Before a ci or qae copy, when the
 # store filesystem has less than STORE_MIN_FREE_PCT of its space or of its inodes free (a reading
@@ -197,6 +198,13 @@ STORE_MIN_FREE_PCT="${KNOWN_CI_STORE_MIN_FREE_PCT:-10}"
 # lock; only on top of the longest back-off (10 minutes) can the start time out, which is one more
 # failed run of an instance that was already failing.
 REAP_LOCK_WAIT="${KNOWN_CI_REAP_LOCK_WAIT:-120}"
+# How many entries the reaper deletes at once. Not one: one at a time took 25 to 36 s a delete
+# beside a live lane's copies and left the disk half idle (6,400 small writes a second, 13,700 when
+# saturated), which is about 2 a minute against the 2.3 full copies a minute that lane retires by
+# day, so the trash did not drain (2026-10-07). Not eight: that many ran at once when every slot
+# deleted in its own stop path, the disk saturated, and each took 21 to 121 s. Three at a time keep
+# pace with that lane as long as a batch of three finishes within 78 s.
+REAP_JOBS="${KNOWN_CI_REAP_JOBS:-3}"
 
 INSTANCE="$KIND-$SLOT"
 SLOT_RUN="$RUN_DIR/$KIND/$SLOT"
@@ -277,8 +285,8 @@ start_reaper() {
 # retire_store <path>: gets a store copy out of the way ("The store trash" above). A slot's
 # (prepare, cleanup) is renamed into the trash for the reaper; one the trash cannot take, and the
 # smoke's and the image build's (snapshot, discard), is deleted here before this returns. That
-# removal is serial: a parallel rm -rf gained nothing on the loop device (9 s either way,
-# 2026-09-26).
+# removal is serial: a parallel rm -rf of one copy gained nothing on the loop device (9 s either
+# way, 2026-09-26).
 retire_store() {
   local path="$1"
   [ -e "$path" ] || [ -L "$path" ] || return 0
@@ -303,16 +311,33 @@ snapshot() {
 
 discard() { retire_store "$SNAPSHOT"; }
 
-# reap_trash <lock wait> [<enough> ...]: deletes the trash's entries one at a time, oldest first
-# (their names start with the second they were retired), holding the trash's lock: an flock on the
+# reap_entry <entry>: one entry's delete, which reap_trash runs in the background. rm removes a
+# link, never what it points to, and --one-file-system keeps it from descending into anything
+# mounted inside an entry.
+reap_entry() {
+  local entry="$1" started="$SECONDS"
+  if rm -rf --one-file-system -- "$entry"; then
+    log "deleted ${entry##*/} in $((SECONDS - started))s"
+  else
+    log "could not delete $entry"
+    return 1
+  fi
+}
+
+# reap_trash <lock wait> [<enough> ...]: deletes the trash's entries oldest first (their names
+# start with the second they were retired), REAP_JOBS at a time: it starts that many deletes, waits
+# for all of them, and starts the next. It holds the trash's lock throughout: an flock on the
 # directory itself, so the lock needs no file of its own and is gone with its holder. It waits at
 # most <lock wait> seconds for the lock (0: not at all) and returns 75 when it stays held. Given an
-# <enough> command, it stops as soon as that succeeds. An entry can arrive while it works, so it
-# lists the trash again until a pass deletes nothing. Returns 1 when an entry could not be deleted,
-# or when the trash is not a directory of the store's own.
+# <enough> command, it starts no further delete once that succeeds, and waits for those under way.
+# An entry can arrive while it works, so it lists the trash again until a pass deletes nothing.
+# Returns 1 when an entry could not be deleted, when REAP_JOBS is not a positive number, or when the
+# trash is not a directory of the store's own.
 reap_trash() {
-  local wait="$1" fd entry entries progressed failed=0 started
+  local wait="$1" fd entry entries pid pids progressed failed=0 enough
   shift
+  # A count that is no number would never fill a batch, and every entry would be deleted at once.
+  [[ "$REAP_JOBS" =~ ^[1-9][0-9]*$ ]] || { log "KNOWN_CI_REAP_JOBS must be a positive number, got '$REAP_JOBS'"; return 1; }
   if [ -L "$TRASH_DIR" ] || { [ -e "$TRASH_DIR" ] && [ ! -d "$TRASH_DIR" ]; }; then
     log "$TRASH_DIR is a link or not a directory; refusing to delete through it"
     return 1
@@ -326,24 +351,26 @@ reap_trash() {
   while :; do
     progressed=0
     failed=0
+    enough=0
+    pids=()
     # Only the trash's own entries, by their full path: nothing outside it is ever named.
     mapfile -d '' -t entries < <(find "$TRASH_DIR" -mindepth 1 -maxdepth 1 -print0 | LC_ALL=C sort -z)
-    for entry in "${entries[@]}"; do
-      if [ "$#" -gt 0 ] && "$@"; then break 2; fi
+    # A last, empty round collects the deletes still under way after the last entry.
+    for entry in "${entries[@]}" ""; do
+      if [ -z "$entry" ] || [ "${#pids[@]}" -ge "$REAP_JOBS" ]; then
+        for pid in "${pids[@]}"; do
+          if wait "$pid"; then progressed=1; else failed=$((failed + 1)); fi
+        done
+        pids=()
+      fi
+      [ -n "$entry" ] && [ "$enough" = 0 ] || continue
+      if [ "$#" -gt 0 ] && "$@"; then enough=1; continue; fi
       # Gone since the listing (--remove, or a hand): nothing to delete.
       [ -e "$entry" ] || [ -L "$entry" ] || continue
-      started="$SECONDS"
-      # rm removes a link, never what it points to, and --one-file-system keeps it from descending
-      # into anything mounted inside an entry.
-      if rm -rf --one-file-system -- "$entry"; then
-        progressed=1
-        log "deleted ${entry##*/} in $((SECONDS - started))s"
-      else
-        failed=$((failed + 1))
-        log "could not delete $entry"
-      fi
+      reap_entry "$entry" &
+      pids+=("$!")
     done
-    [ "$progressed" = 1 ] || break
+    [ "$enough" = 0 ] && [ "$progressed" = 1 ] || break
   done
   exec {fd}<&-
   [ "$failed" -eq 0 ]

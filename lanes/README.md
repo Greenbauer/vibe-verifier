@@ -126,9 +126,13 @@ s, each delete holding its instance until it finished, so more slots finished no
 slot never deletes its copy. `cleanup`, and `prepare` when it finds a leftover, rename it to
 `/var/lib/<name>/store/trash/<epoch second>.slot-<kind>-<n>.<pid>`: one rename inside the store
 filesystem, atomic and immediate, under a name no other entry has and that carries the entry's age.
-`<name>-store-reaper.service` (`lane-slot.sh reap`, a root oneshot) deletes the entries one at a
+`<name>-store-reaper.service` (`lane-slot.sh reap`, a root oneshot) deletes the entries three at a
 time, oldest first, holding the trash's lock (an `flock` on the directory itself), until the trash
-is empty; a second reaper finds the lock held and exits. It runs at `Nice=19` and outside the lane's
+is empty; a second reaper finds the lock held and exits, so a lane never runs more than those three
+deletes at once. Three, not one: one at a time took 25 to 36 s a delete beside that lane's copies
+and left the disk half idle, about 2 a minute against the 2.3 copies a minute the lane retires by
+day, so the trash did not drain. And not eight, which is what every slot deleting in its own stop
+path came to (`KNOWN_CI_REAP_JOBS` in `lane-slot.sh`). It runs at `Nice=19` and outside the lane's
 slice, so the lane's `CPUQuota` and `MemoryHigh` never stall the one thing that gives the store its
 space back. Every `cleanup` starts it with `systemctl start --no-block`, which does not wait for the
 unit, and `<name>-store-reaper.timer` starts it a minute after boot and every 5 minutes, so no entry
