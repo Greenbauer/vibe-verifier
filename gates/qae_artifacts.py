@@ -11,7 +11,9 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
                              exactly that status at exactly that URL expected for this run (see 5)
     --allow-console REGEX    console errors matching this are expected (repeatable)
     --allow-request REGEX    requests whose URL matches this are not judged (repeatable)
-    --site URL-PREFIX        judge only requests to this origin (default: every request)
+    --site URL-PREFIX        judge only this origin: a request elsewhere is skipped, and so is
+                             Chromium's "Failed to load resource" line for that other host
+                             (default: every request and every resource error)
     --site-file FILE         the same, read from a file the workflow wrote: one http(s) URL, the
                              one the explore job declared, so a preview's URL reaches the gate
                              without a manifest edit; a missing, empty or malformed file cannot run
@@ -26,6 +28,8 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    non-empty `qae/ACn-step-k.png`. A step without a picture is a claim, not evidence. A feature
    re-walk's log, `qae/features/<id>.md`, is held to the same rule (`qae/features/<id>-step-k.png`).
 2. The console holds no error outside the allowlist: every `[ERROR]` line in `console-*.log`.
+   A `Failed to load resource` line for a host other than the declared site is not judged, the
+   same way a third-party request is not. Any other console error still is.
 3. The session log exists (`session-*/session.md`, written by `--save-session`) and shows the
    browser was driven: at least one `browser_navigate` call.
 4. The network record exists and is clean: at least one `browser_network_requests` result in the
@@ -178,7 +182,7 @@ def expected_refusals(items, site):
     return expected, findings
 
 
-def console_is_clean(root, allowed, expected):
+def console_is_clean(root, allowed, expected, site):
     findings, seen = [], set()
     for log in sorted(glob.glob(os.path.join(root, "console-*.log"))):
         for number, line in enumerate(read(log).splitlines(), 1):
@@ -189,6 +193,8 @@ def console_is_clean(root, allowed, expected):
             if any(pattern.search(message) for pattern in allowed) or message in seen:
                 continue
             refused = RESOURCE_ERROR.match(message)
+            if refused and site and not refused.group("url").startswith(site):
+                continue
             if refused and (refused.group("status"), exact(refused.group("url"))) in expected:
                 continue
             seen.add(message)
@@ -270,7 +276,7 @@ def check(args):
     return (declared
             + steps_have_screenshots(root)
             + (widths_findings(root, args.widths) if args.widths else [])
-            + console_is_clean(root, console_allow, expected)
+            + console_is_clean(root, console_allow, expected, site)
             + session_and_network(root, request_allow, site, expected))
 
 
