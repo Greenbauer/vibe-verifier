@@ -25,8 +25,10 @@ from typing import NamedTuple
 FILE_EXT = r"[cm]?tsx?|[cm]?jsx?|css|scss|html|svelte|vue|astro|md|ya?ml|sql|json|sh|py"
 # `- PASS -`, `-- PASS --`, or the en/em dash forms the fleet bots write.
 DASH = r"(?:—|–|-{1,2})"
-PASS_RE = re.compile(DASH + r"[ \t]*PASS\b", re.IGNORECASE)
-FAIL_RE = re.compile(DASH + r"[ \t]*FAIL\b", re.IGNORECASE)
+# The verdict is the first field after `<token>: <id>`, never a word further along: evidence is prose a model
+# wrote, and a FAIL whose prose quotes "- PASS" must stay a FAIL.
+VERDICT_RE = re.compile(r"^[ \t]*(?:[-*+][ \t]+(?:\[[xX]\][ \t]+)?)?[\w-]+:[ \t]*\S+[ \t]*" + DASH
+                        + r"[ \t]*(PASS|FAIL)\b", re.IGNORECASE)
 ANCHOR_HEAD_RE = re.compile(
     r"(?P<path>\.?[A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:" + FILE_EXT + r"))"
     r"(?:::|:(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?(?![0-9A-Za-z]))"
@@ -228,9 +230,15 @@ def said(line, token):
     return re.sub(r"^[ \t]*" + DASH + r"[ \t]*", "", rest).strip()
 
 
+def verdict(line):
+    """"PASS" or "FAIL" when that is the line's first field after its id, else None."""
+    match = VERDICT_RE.match(line)
+    return match.group(1).upper() if match else None
+
+
 def evidence_text(line):
-    match = PASS_RE.search(line)
-    return line[match.end():].lstrip(" \t:-–—") if match else ""
+    match = VERDICT_RE.match(line)
+    return line[match.end():].lstrip(" \t:-–—") if match and match.group(1).upper() == "PASS" else ""
 
 
 def _title(text, start):

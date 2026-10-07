@@ -292,6 +292,8 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
   line `acceptance-check: ACn -- PASS -- <evidence>`, and the evidence must carry at least one anchor
   that resolves in the working tree: `<path>::<test title>` with the title verbatim in that file,
   or `<path>:<line>` / `<path>:<start>-<end>` inside the file's length.
+  The verdict is the first field after the id: a `FAIL` whose evidence quotes the word PASS stays a
+  FAIL. The same holds for `regression-check` lines.
 - `--artifacts DIR` adds a second root anchors may resolve in: the run's own evidence. Browser
   evidence is never a file in the tree, so an explorer writes one step log per criterion into that
   directory (`qae/AC1.md`, one line per step and what was seen) and anchors to a line of it

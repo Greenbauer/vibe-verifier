@@ -69,8 +69,8 @@ import json
 import os
 import re
 
-from _acceptance import (ANCHOR_FORMS, FAIL_RE, PASS_RE, anchors, annotations, check_lines, criteria, declares_none,
-                         named_references, png_size, resolves, said, ticket_items)
+from _acceptance import (ANCHOR_FORMS, anchors, annotations, check_lines, criteria, declares_none,
+                         named_references, png_size, resolves, said, ticket_items, verdict)
 from _contract import CannotRun, Finding, run_gate, tracked_files
 from _features import add_selection_arguments, describe, selection
 
@@ -95,7 +95,7 @@ def line_finding(item, wording, carried, token, repo, tracked, artifacts):
     if len(carried) != 1:
         return "%s has %d check lines; exactly one is allowed" % (item, len(carried))
     line = carried[0]
-    if not PASS_RE.search(line):
+    if verdict(line) != "PASS":
         return "%s is not a PASS: %s" % (item, line.strip())
     found = anchors(line)
     if not found:
@@ -219,7 +219,7 @@ def regression_finding(fid, path, carried, walked, repo, tracked, artifacts):
     if len(carried) == 1 and not walked:
         return ("%s was not re-walked: its step log qae/features/%s.md holds no `- step k:` line with its screenshot "
                 "qae/features/%s-step-k.png, so its line stands on nothing" % (fid, fid, fid))
-    if len(carried) == 1 and FAIL_RE.search(carried[0]) and not PASS_RE.search(carried[0]):
+    if len(carried) == 1 and verdict(carried[0]) == "FAIL":
         return ("%s is a FAIL: %s. A step the explorer walked no longer matches %s: fix the regression or, if this pull "
                 "request means to change that behaviour, update %s in this pull request, since the re-walk reads the "
                 "pull request's own copy of it" % (fid, carried[0].strip(), path, path))

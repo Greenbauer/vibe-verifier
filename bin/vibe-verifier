@@ -145,8 +145,8 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATES = os.path.join(ROOT, "gates")
 sys.path.insert(0, GATES)
-from _acceptance import (PASS_RE, REFERENCE_KEY, annotations, check_lines, criteria as read_criteria,  # noqa: E402
-                         declares_none, not_required, png_size, said, ticket_items)
+from _acceptance import (REFERENCE_KEY, annotations, check_lines, criteria as read_criteria,  # noqa: E402
+                         declares_none, not_required, png_size, said, ticket_items, verdict)
 from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
 from _features import add_selection_arguments, describe, selection  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
@@ -1123,7 +1123,7 @@ def review_criteria(criteria_text, verdict_text, ticket_text=""):
 
 
 def explorer_said(carried):
-    return "no verdict" if len(carried) != 1 else "explorer says PASS" if PASS_RE.search(carried[0]) else "explorer says FAIL"
+    return "no verdict" if len(carried) != 1 else "explorer says PASS" if verdict(carried[0]) == "PASS" else "explorer says FAIL"
 
 
 def review_body(state, args):

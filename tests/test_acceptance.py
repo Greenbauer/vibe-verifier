@@ -59,6 +59,14 @@ class AcceptanceVerdict(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("AC1 is not a PASS", result.stdout)
 
+    def test_a_fail_whose_evidence_quotes_a_pass_stays_a_fail(self):
+        # The verdict is the first field after the id. Evidence is prose, and prose can quote "- PASS".
+        verdict = ("acceptance-check: AC1 -- FAIL -- the banner still reads 'invite - PASS' (e2e/signup.spec.ts::rejects an expired invite)\n"
+                   "acceptance-check: AC2 -- PASS -- e2e/signup.spec.ts::accepts a fresh invite\n")
+        result = self.run_with(BODY, verdict)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("AC1 is not a PASS", result.stdout)
+
     def test_unchecked_box_reads_as_missing(self):
         verdict = ("- [ ] acceptance-check: AC1 -- PASS -- e2e/signup.spec.ts::rejects an expired invite\n"
                    "acceptance-check: AC2 -- PASS -- e2e/signup.spec.ts::accepts a fresh invite\n")
