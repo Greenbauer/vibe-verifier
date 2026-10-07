@@ -220,6 +220,12 @@ class RegressionChecks(unittest.TestCase):
         neither = self.AUTH.replace("PASS -- still signs in", "PARTIAL -- two of eight states")
         self.assertIn("auth is not a PASS: regression-check: auth -- PARTIAL", self.rewalk(self.AC + neither + self.PROJECTS).stdout)
 
+    def test_a_fail_whose_prose_quotes_a_pass_stays_a_fail(self):
+        quoted = self.AUTH.replace("PASS -- still signs in", "FAIL -- the page shows 'check - PASS' but never signs in")
+        result = self.rewalk(self.AC + quoted + self.PROJECTS)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("auth is a FAIL: regression-check: auth -- FAIL", result.stdout)
+
     def test_a_fail_says_to_fix_the_regression_or_update_the_feature_file(self):
         # A step that contradicts the feature file because the pull request means the new behaviour is fixed by
         # updating the file in that pull request: the explorer reads the pull request's own copy of it.
