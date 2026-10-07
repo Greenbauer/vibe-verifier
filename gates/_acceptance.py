@@ -60,7 +60,8 @@ def criteria(text):
     how a PR body is sectioned): only the list items under its `## Acceptance criteria` heading
     count, up to the next heading, and a document without that heading has none. A plain list (no
     such headings): every list item, or every non-empty line that is not a `#` comment, is one
-    criterion.
+    criterion. The plain list is for a ticket's criteria file; a pull request body is read with
+    body_criteria(), which never takes it for one.
     """
     lines = text.splitlines()
     heading = re.compile(r"^#{2,6}[ \t]+")
@@ -83,6 +84,21 @@ def criteria(text):
             elif line.strip() and not line.lstrip().startswith("#"):
                 items.append(line.strip())
     return [("AC%d" % (n + 1), wording) for n, wording in enumerate(items)]
+
+
+def body_criteria(text):
+    """The criteria a pull request body lists: those under its `Acceptance criteria` heading, and none in
+    a body without that heading (a lone `- None: <why>` still declares none).
+
+    criteria() reads any text with no `##` heading as a plain list, one criterion a line, which is right
+    for a ticket's criteria file and wrong for a body: a Dependabot body is prose and HTML with no
+    Markdown heading, and one was read as 105 criteria, a verdict demanded for each line of a changelog
+    (a consumer's security updates, 2026-10-06). Every reader of a body goes through here, so the job
+    that decides whether to explore and the gates that judge count the same criteria.
+    """
+    if declares_none(text) or any(CRITERIA_HEADING.match(line) for line in text.splitlines()):
+        return criteria(text)
+    return []
 
 
 def declares_none(text):
@@ -193,15 +209,13 @@ def not_required(text, changed, ticket=""):
     the pull request cannot declare its ticket's requirements away. Criteria win over paths: a pull
     request that lists one is explored whatever it touches.
     An empty path list proves nothing, so it never exempts. A body lists criteria only under an
-    `Acceptance criteria` heading: without one, the plain-list reading counts every line of prose as a
-    criterion, and a short body with no headings would never be exempt (found on the first consumer
-    PR, 2026-10-05).
+    `Acceptance criteria` heading (body_criteria): read as a plain list, a short body with no headings
+    would never be exempt (found on the first consumer PR, 2026-10-05).
     """
     if any(ticket_items(ticket)):
         return None
     declared = declares_none(text)
-    headed = any(CRITERIA_HEADING.match(line) for line in text.splitlines())
-    if declared or (headed and criteria(text)) or not changed or not all(map(unrendered, changed)):
+    if declared or body_criteria(text) or not changed or not all(map(unrendered, changed)):
         return declared
     return "every changed file (%d) is CI configuration or documentation no site renders" % len(changed)
 

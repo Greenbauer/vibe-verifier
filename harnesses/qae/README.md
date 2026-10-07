@@ -300,12 +300,111 @@ them disagree, as it already could for the gates. A pull request needs no browse
 Neither applies when the workflow supplies [ticket criteria](#the-tickets-criteria) (or a non-empty ticket
 in which none can be found): the ticket's requirements are checked whatever the pull request declares.
 Criteria win over paths: a pull request that lists one is explored whatever it touches. One that lists
-none and changes anything else still fails, because it has not said what to check. The list is
+none and changes anything else still fails, because it has not said what to check, unless its workflow
+supplies criteria for it, as for a [dependency update](#dependency-updates). The list is
 adapted from the no-plan allowlist of a private predecessor's QAE, narrowed from every `*.md` to those
 names because a markdown file elsewhere can be a page the site renders. A repository whose site renders
 `docs/` lists criteria on those pull requests, and the review comment shows every skip, so a wrong one
 is visible. When nothing needs checking, the explore job builds nothing and the verify job runs no
 gate.
+
+## Dependency updates
+
+A Dependabot pull request could not go green on a Claude-lane consumer, for three reasons, all seen on
+one consumer's four security updates (2026-10-06):
+
+- **The explorer refused the run.** `claude-code-action` stops a run a bot started unless
+  `allowed_bots` names the bot. The template names `dependabot[bot]` and no other: `*` would let any
+  App that can open a pull request start the explorer with a body it wrote.
+- **The run had no model token.** A run Dependabot starts reads the Dependabot secret store, never
+  the Actions one (its log says `Secret source: Dependabot`), so `CLAUDE_CODE_OAUTH_TOKEN` is empty
+  there until the repository adds it to that store. The workflow's `permissions:` apply to that run's
+  `GITHUB_TOKEN` as to any other, so the verdict and the review comment are still posted.
+- **The body says nothing to check.** It has no `## Acceptance criteria` section, so it lists no
+  criteria and the verdict gate refuses it. (Read as a plain list it was 105 of them, one for each
+  line of a changelog; a body is read by its heading only since then.)
+
+Folding each update into a pull request a person pushes and describes works, and does not scale. A
+dependency update is not skipped either: it is the pull request most likely to break a page nobody
+edited. A consumer that takes them does three things, in this order.
+
+**1. Start the site in a container.** GitHub keeps the two secret stores apart so that a dependency
+update, third-party code nobody has read, cannot reach a repository's secrets. The template's site
+step installs, builds and serves on the runner itself, as the user the explorer step then runs as
+with the token in its environment: an install script, or the server still running beside it, can read
+it from there. Every pull request that changes a dependency has that exposure; a Dependabot one
+changes nothing else. So the install, the build and the server go in a container that is given the
+tracked files read-only and nothing else: no secret, no token, an unprivileged user with no
+capabilities, and one published port. In place of `npm ci` and the template's site step (node stays,
+for the browser toolchain; drop `cache: npm`, which restores a directory the runner no longer uses):
+
+```yaml
+      - name: Build and start the site under test   # CONSUMER
+        id: site
+        env:
+          IMAGE: node:24-bookworm-slim@sha256:<the digest you pin>
+        run: |
+          set -euo pipefail
+          mkdir -p qae-artifacts/qae qae-inputs
+          src="$RUNNER_TEMP/qae-site"
+          mkdir -p "$src"
+          git archive HEAD | tar -x -C "$src"
+          docker run --detach --name qae-site --user node --cap-drop ALL --security-opt no-new-privileges \
+            --publish 3000:3000 --volume "$src:/src:ro" --env NEXT_TELEMETRY_DISABLED=1 \
+            "$IMAGE" sh -ec 'cp -R /src /home/node/site && cd /home/node/site && npm ci && npm run build && exec npm start'
+          (docker logs --follow qae-site > qae-artifacts/server.log 2>&1 &)
+          for i in $(seq 1 120); do
+            if curl -fsS http://localhost:3000/ > /dev/null 2>&1; then
+              echo "site up after ${i} tries"; echo "url=http://localhost:3000" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            if [ "$(docker inspect --format '{{.State.Running}}' qae-site)" != true ]; then
+              echo "::error::the site's container stopped before the site answered"; tail -50 qae-artifacts/server.log; exit 1
+            fi
+            sleep 5
+          done
+          echo "::error::site did not answer on http://localhost:3000 within 10 minutes"; tail -50 qae-artifacts/server.log; exit 1
+```
+
+The copy is `git archive` of the checkout, so the container sees the tracked files of the revision
+under test and nothing the runner holds. What the site needs to be whole goes in the same container:
+the pilot's contact form sends mail, so its step also starts a small SMTP sink there, which accepts
+every message and keeps none, and the send is a criterion instead of a 500.
+
+**2. Add the token to the Dependabot store**, and only after step 1:
+`gh secret set CLAUDE_CODE_OAUTH_TOKEN --app dependabot`. It is the one secret that store needs.
+What stays exposed: the container shares a kernel with the runner, and the explorer reads the pull
+request body, which on a Dependabot pull request quotes the release notes of the package. Those are
+untrusted text like any body, under the same [tool rules and write scope](#rules-the-harness-obeys-each-from-a-real-run).
+
+**3. Supply the criteria.** The [ticket's criteria](#the-tickets-criteria) step is where a workflow
+states what a pull request is held to when its body cannot. For a pull request that changes only the
+package manifest and its lockfile, the pilot writes a file of its own, read from the base branch so
+the pull request cannot rewrite what it is judged against:
+
+```yaml
+      - name: Write the ticket's criteria   # CONSUMER
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          : > qae-inputs/ticket.md
+          other=$(grep -cvxE 'package(-lock)?\.json' qae-inputs/changed-files || true)
+          if [ -s qae-inputs/changed-files ] && [ "$other" = 0 ]; then
+            gh api "repos/$REPO/contents/.github/qae-dependency-criteria.md?ref=$BASE_SHA" \
+              -H 'Accept: application/vnd.github.raw' > qae-inputs/ticket.md
+            if [ ! -s qae-inputs/ticket.md ]; then echo "::error::.github/qae-dependency-criteria.md is empty at $BASE_SHA"; exit 1; fi
+          fi
+```
+
+The file is a `## Acceptance criteria` list of what must still work when only dependencies moved: the
+pages that render, a design reference, the form that sends. They are graded as `TC1`, `TC2`, ... like
+any ticket's, the decision is by changed path and not by author, so the same change made by hand is
+held to them too, and a pull request that also lists criteria of its own is held to both.
+
+A `.github/dependabot.yml` that groups security updates (`applies-to: security-updates`) makes
+several advisories one pull request and one walk; it changes nothing above.
 
 ## The QA review comment
 

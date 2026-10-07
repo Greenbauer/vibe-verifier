@@ -22,6 +22,12 @@ TEMPLATE = ROOT / "harnesses" / "qae" / "explore.yml"
 MANIFEST = ROOT / "harnesses" / "qae" / "manifest"
 BODY = "## Why\n\nx\n\n## Acceptance criteria\n\n- The cart shows its total\n"
 NONE = "## Why\n\nx\n\n## Acceptance criteria\n\n- None: a refactor with no visible change\n"
+# The shape of a Dependabot body: prose, HTML and a bullet list, and no Markdown heading.
+DEPENDABOT = ("Bumps [sharp](https://github.com/lovell/sharp) from 0.35.4 to 0.35.5.\n<details>\n"
+              "<summary>Release notes</summary>\n<blockquote>\n<h2>v0.35.5</h2>\n<ul>\n"
+              "<li>Add upper bounds check on length of <code>linear</code> arrays.</li>\n</ul>\n</blockquote>\n"
+              "</details>\n\nYou can trigger Dependabot actions by commenting on this PR:\n"
+              "- `@dependabot rebase` will rebase this PR\n- `@dependabot recreate` will recreate this PR\n")
 TICKET = ("# Show prices in euros\n\n## Context\n\nCustomers in the EU asked.\n\n## Acceptance criteria\n\n"
           "- Prices show in euros\n- The checkout total matches the cart [as: shopper]\n")
 VERDICT = ("acceptance-check: AC1 -- PASS -- shown (qae/AC1.md::step 1: opened /cart -> a total)\n"
@@ -59,6 +65,15 @@ class Criteria(unittest.TestCase):
         self.assertEqual(self.run_criteria(NONE, TICKET, "app/shop.tsx").stdout, "criteria: 2\nTC2 roles: shopper\n")
         # No criteria of its own and only unrendered paths would need no check, but the ticket lists two.
         self.assertEqual(self.run_criteria("## Why\n\ndocs\n", TICKET, "README.md").stdout.splitlines()[0], "criteria: 2")
+
+    def test_a_dependency_update_is_held_to_the_criteria_its_workflow_supplies_and_to_no_line_of_its_body(self):
+        # A consumer's workflow supplies default criteria for a pull request that changes only the package
+        # manifest. The body has no `Acceptance criteria` heading, so it lists none: read as a plain list
+        # it was one criterion a line (105 on a real one), which no explorer could ever answer.
+        result = self.run_criteria(DEPENDABOT, TICKET, "package.json", "package-lock.json")
+        self.assertEqual(result.stdout, "criteria: 2\nTC2 roles: shopper\n")
+        # Without them it lists none on a path the site serves: nothing is explored, and the gate refuses it.
+        self.assertEqual(self.run_criteria(DEPENDABOT, "", "package-lock.json").stdout, "criteria: 0\n")
 
     def test_an_empty_ticket_links_none_and_a_ticket_that_declares_none_has_none(self):
         self.assertEqual(self.run_criteria(NONE, "").stdout, "none: a refactor with no visible change\n")
@@ -111,6 +126,21 @@ class Gates(unittest.TestCase):
         result = self.verdict_gate()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.artifacts_gate().returncode, 0)
+
+    def test_a_dependency_update_passes_on_its_supplied_criteria_alone(self):
+        ticket_only = "\n".join(VERDICT.splitlines()[1:]) + "\n"
+        result = self.verdict_gate(DEPENDABOT, TICKET, ticket_only)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.artifacts_gate(DEPENDABOT, TICKET).returncode, 0)
+        # and still needs every one of them: no ticket criterion is excused with the body's lines
+        result = self.verdict_gate(DEPENDABOT, TICKET, ticket_only.splitlines()[0] + "\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("TC2 has no `acceptance-check: TC2` line", result.stdout)
+        self.assertNotIn("AC1", result.stdout)
+        # with no supplied criteria it has none at all, which the gate refuses
+        result = self.verdict_gate(DEPENDABOT, "", "")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no acceptance criteria found", result.stdout)
 
     def test_a_ticket_criterion_without_its_pass_is_refused(self):
         result = self.verdict_gate(BODY, TICKET, VERDICT.replace("TC1 -- PASS", "TC1 -- FAIL"))
