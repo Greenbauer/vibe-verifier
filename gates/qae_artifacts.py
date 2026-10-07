@@ -77,7 +77,7 @@ import os
 import re
 import urllib.parse
 
-from _acceptance import criteria, declares_none, named_references, png_size, ticket_items
+from _acceptance import body_criteria, declares_none, named_references, png_size, ticket_items
 from _contract import CannotRun, Finding, run_gate
 
 GATE = "qae-artifacts"
@@ -350,7 +350,7 @@ def check(args):
     sites = declared_sites(args.site_file) if args.site_file else [args.site] if args.site else []
     console_allow = [re.compile(pattern) for pattern in (args.allow_console or [])]
     request_allow = [re.compile(pattern) for pattern in (args.allow_request or [])]
-    items = ([] if reason else criteria(HTML_COMMENT.sub("", body))) + ticket
+    items = ([] if reason else body_criteria(HTML_COMMENT.sub("", body))) + ticket
     expected, declared = expected_refusals(items, sites)
     return (declared
             + steps_have_screenshots(root)

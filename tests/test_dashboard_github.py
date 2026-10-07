@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from dashboard.config import BotDefinition, Config
 from dashboard.gh_api import ApiError, GitHubAPI
 from dashboard.github import GitHubCollector
-from dashboard.steps import recent_bot_runs, step_summary
+from dashboard.bot_runs import recent_bot_runs
 from dashboard.service import DashboardService
 
 
@@ -113,25 +113,6 @@ class CurrentHeadJoin(unittest.TestCase):
         self.assertEqual(result["statuses"][0]["name"], "legacy/status")
         self.assertNotIn(("items", f"repos/{REPO}/actions/runs/11/attempts/1/jobs?per_page=100", "jobs"), api.calls)
 
-    def test_step_counts_keep_skipped_cancelled_pending_and_unknown_separate(self):
-        result = GitHubCollector(config(), joined_api(), clock=lambda: NOW)._pull(
-            REPO, pull_row(), {"subscription": "subscribed"})
-        summary = result["runs"][0]["step_summary"]
-        self.assertEqual((summary["completed"], summary["total"], summary["remaining"], summary["percent"]), (3, 4, 1, 75))
-        self.assertEqual(summary["counts"], {"success": 1, "failed": 0, "skipped": 1,
-                                              "cancelled": 1, "pending": 1, "unknown": 0})
-        unknown = step_summary([{"steps": None}])
-        self.assertFalse(unknown["known"])
-        self.assertIsNone(unknown["percent"])
-
-    def test_a_skipped_job_with_no_steps_keeps_the_run_total_known(self):
-        steps = [{"status": "completed", "category": "success"}]
-        summary = step_summary([{"status": "completed", "steps": steps},
-                                {"status": "completed", "conclusion": "skipped", "steps": []}])
-        self.assertTrue(summary["known"])
-        self.assertEqual((summary["completed"], summary["total"], summary["percent"]), (1, 1, 100))
-        self.assertFalse(step_summary([{"status": "queued", "steps": []}])["known"])
-
     def test_a_head_change_drops_all_old_evidence_instead_of_showing_it_as_current(self):
         result = GitHubCollector(config(), joined_api("b" * 40), clock=lambda: NOW)._pull(
             REPO, pull_row(), {"subscription": "subscribed"})
@@ -193,8 +174,6 @@ class CurrentHeadJoin(unittest.TestCase):
         result = GitHubCollector(config(), api, clock=lambda: NOW)._pull(REPO, pull_row(), {"subscription": "subscribed"})
         self.assertEqual(sorted(run["id"] for run in result["runs"]), [11, 13])
         self.assertEqual(sorted(row["id"] for row in result["checks"] if row["name"] == "test"), [31, 33])
-        summary = [run["step_summary"] for run in result["runs"] if run["id"] == 11][0]
-        self.assertEqual((summary["completed"], summary["total"]), (3, 4))
         self.assertEqual(sum("/check-runs" in call[1] for call in api.calls), 1)
 
     def test_check_runs_come_from_one_head_listing_and_only_from_this_heads_suites(self):

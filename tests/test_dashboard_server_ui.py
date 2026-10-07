@@ -202,13 +202,13 @@ class BrowserHelpers(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
-    def test_filters_step_unknowns_and_urls_are_pure(self):
+    def test_filters_check_unknowns_and_urls_are_pure(self):
         source = r'''
 const h=require('./dashboard/static/helpers.js');
 const pulls=[{repository:'octocat/example',number:1,title:'Safe',author:'octocat',subscription:'subscribed',attention:true},
              {repository:'octocat/other',number:2,title:'Quiet',author:'octocat',subscription:'unknown',attention:false}];
 const filtered=h.filterPulls(pulls,{query:'safe',repository:'all',subscribed:true,attention:true});
-const unknown=h.stepTotals({runs:[{step_summary:{known:false}}]});
+const unknown=h.checkTotals({runs:[{jobs:[{status:'queued',steps:[]}]}]});
 console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,
  safe:h.safeUrl('https://github.com/octocat/example/pull/1','octocat'),
  unsafe:h.safeUrl('https://github.com/example/foreign/pull/1','octocat')}));
@@ -216,7 +216,7 @@ console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,
         result = self.node(source)
         self.assertEqual(result["filtered"], [1])
         self.assertFalse(result["unknown"]["known"])
-        self.assertIsNone(result["unknown"]["total"])
+        self.assertEqual(result["unknown"]["total"], 0)
         self.assertTrue(result["safe"].startswith("https://github.com/octocat/"))
         self.assertIsNone(result["unsafe"])
 
@@ -244,107 +244,83 @@ console.log(JSON.stringify([h.combinedCategory(pr('success','skipped')),h.combin
 ''')
         self.assertEqual(result, ["success", "skipped", "failed", "pending"])
 
-    def test_step_meter_segments_keep_each_outcome_share(self):
+    def test_check_meter_segments_keep_each_outcome_share(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
-const counts=(extra)=>({success:0,failed:0,skipped:0,cancelled:0,pending:0,unknown:0,...extra});
+const counts=(extra)=>({success:0,running:0,waiting:0,failed:0,skipped:0,cancelled:0,unknown:0,...extra});
 const totals=(extra, fields)=>({known:true,completed:8,total:10,remaining:2,counts:counts(extra),...fields});
-const mixed=h.meterSegments(totals({success:6,pending:2,failed:1,skipped:1}));
+const mixed=h.meterSegments(totals({success:6,running:1,waiting:1,failed:1,skipped:1}));
 console.log(JSON.stringify({
  mixed:mixed.map(segment=>[segment.state,segment.count]),
  failedStaysASlice:h.meterSegments(totals({success:60,failed:4})).map(segment=>segment.state),
  gray:h.meterSegments(totals({skipped:2,cancelled:1,unknown:1})).map(segment=>segment.state),
  empty:h.meterSegments(totals({})),
- unknown:h.meterSegments({known:false,total:null,counts:null}),
- zero:h.meterSegments({known:true,total:0,counts:counts({})}),
- label:h.meterLabel(totals({success:6,pending:2,failed:1,skipped:1}))
+ unknown:h.meterSegments(h.checkTotals({})),
+ label:h.meterLabel(totals({success:6,running:1,waiting:1,failed:1,skipped:1})),
+ none:h.meterLabel(h.checkTotals({}))
 }));
 ''')
-        self.assertEqual(result["mixed"], [["success", 6], ["pending", 2], ["failed", 1], ["skipped", 1]])
+        self.assertEqual(result["mixed"], [["success", 6], ["running", 1], ["waiting", 1], ["failed", 1], ["skipped", 1]])
         self.assertEqual(result["failedStaysASlice"], ["success", "failed"])
         self.assertEqual(result["gray"], ["skipped", "cancelled", "unknown"])
         self.assertEqual(result["empty"], [])
         self.assertEqual(result["unknown"], [])
-        self.assertEqual(result["zero"], [])
-        self.assertEqual(result["label"], "6 succeeded, 2 pending, 1 failed, 1 skipped of 10 steps")
+        self.assertEqual(result["label"], "6 succeeded, 1 running, 1 waiting, 1 failed, 1 skipped of 10 checks")
+        self.assertEqual(result["none"], "No checks reported")
 
-    def test_step_totals_sum_outcome_counts_across_runs(self):
+    def test_check_totals_take_one_share_per_check_status_and_expected_row(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
-const summary=(completed,total,counts)=>({known:true,completed,total,remaining:total-completed,counts});
-const pull={runs:[
- {step_summary:summary(3,4,{success:1,failed:0,skipped:1,cancelled:1,pending:1,unknown:0})},
- {step_summary:summary(2,2,{success:2,failed:0,skipped:0,cancelled:0,pending:0,unknown:0})}]};
-const missing={runs:[{step_summary:{known:true,completed:1,total:1,remaining:0}}]};
-console.log(JSON.stringify({sum:h.stepTotals(pull),missing:h.stepTotals(missing).counts}));
+const check=(category,status)=>({name:category,category,status});
+const pull={checks:[check('success','completed'),check('success','completed'),check('pending','in_progress'),
+  check('pending','queued'),check('failed','completed'),check('skipped','completed'),check('cancelled','completed'),
+  check('odd','completed')],
+ statuses:[{name:'deploy',category:'pending',status:'pending'},{name:'legacy',category:'success',status:'success'}],
+ expected:[{name:'qae-verify',category:'pending',status:'expected'}]};
+console.log(JSON.stringify(h.checkTotals(pull)));
 ''')
-        self.assertEqual(result["sum"]["completed"], 5)
-        self.assertEqual(result["sum"]["total"], 6)
-        self.assertEqual(result["sum"]["remaining"], 1)
-        self.assertEqual(result["sum"]["counts"], {"success": 3, "failed": 0, "skipped": 1,
-                                                    "cancelled": 1, "pending": 1, "unknown": 0})
-        self.assertEqual(result["missing"], {"success": 0, "failed": 0, "skipped": 0,
-                                              "cancelled": 0, "pending": 0, "unknown": 0})
+        self.assertEqual(result, {"known": True, "completed": 6, "total": 11, "remaining": 5,
+                                  "counts": {"success": 3, "running": 1, "waiting": 3, "failed": 1,
+                                             "skipped": 1, "cancelled": 1, "unknown": 1}})
+
+    def test_a_queued_job_with_no_steps_still_shows_the_check_line(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+const pull={runs:[{jobs:[{id:1,name:'build',status:'completed',steps:[{status:'completed'}]},
+                         {id:2,name:'review',status:'queued',steps:[]}]},
+                  {status:'completed',jobs:[]}],
+ checks:[{id:1,name:'build',category:'success',status:'completed'},{id:2,name:'review',category:'pending',status:'queued'}]};
+const totals=h.checkTotals(pull);
+console.log(JSON.stringify([totals.known,totals.completed,totals.total,totals.counts.waiting,
+ h.meterSegments(totals).map(segment=>segment.state)]));
+''')
+        self.assertEqual(result, [True, 1, 2, 1, ["success", "waiting"]])
 
     def test_an_expected_required_check_keeps_the_pr_pending_and_takes_one_share(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
-const counts={success:83,failed:0,skipped:0,cancelled:0,pending:0,unknown:0};
-const pr={checks:[{category:'success'}],expected:[{name:'qae-verify',category:'pending'}],
- runs:[{step_summary:{known:true,completed:83,total:83,remaining:0,counts}}]};
-const none=h.stepTotals({runs:[],expected:[],checks:[]});
-const only=h.stepTotals({runs:[],checks:[],statuses:[],expected:[{name:'lint',category:'pending'}]});
-const totals=h.stepTotals(pr);
-console.log(JSON.stringify([h.combinedCategory(pr),totals.known,totals.completed,totals.total,totals.remaining,totals.counts.pending,none.known,only.total,only.counts.pending]));
+const pr={checks:[{category:'success'}],expected:[{name:'qae-verify',category:'pending',status:'expected'}]};
+const none=h.checkTotals({runs:[],expected:[],checks:[]});
+const totals=h.checkTotals(pr);
+console.log(JSON.stringify([h.combinedCategory(pr),totals.known,totals.completed,totals.total,totals.remaining,totals.counts.waiting,none.known]));
 ''')
-        self.assertEqual(result, ["pending", True, 83, 84, 1, 1, False, 1, 1])
+        self.assertEqual(result, ["pending", True, 1, 2, 1, 1, False])
 
-    def test_a_skipped_check_with_no_steps_takes_one_share_and_a_shown_one_does_not(self):
+    def test_running_work_names_each_check_in_progress_with_its_current_step(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
-const base={success:2,failed:0,skipped:0,cancelled:0,pending:0,unknown:0};
-const missing={runs:[{suite_id:7,step_summary:{known:true,completed:2,total:2,remaining:0,counts:base},
- jobs:[{name:'build',category:'success',steps:[{category:'success'}]}]}],
- checks:[{name:'provision-dispatch',suite_id:8,category:'skipped'}],statuses:[],expected:[]};
-const shownCounts={success:0,failed:0,skipped:1,cancelled:0,pending:0,unknown:0};
-const shown={runs:[{suite_id:7,step_summary:{known:true,completed:1,total:1,remaining:0,counts:shownCounts},
- jobs:[{name:'provision-dispatch',category:'skipped',steps:[{category:'skipped'}]}]}],
- checks:[{name:'provision-dispatch',suite_id:7,category:'skipped'}],statuses:[],expected:[]};
-console.log(JSON.stringify({
- missing:[h.stepTotals(missing).counts.skipped,h.stepTotals(missing).total],
- shown:[h.stepTotals(shown).counts.skipped,h.stepTotals(shown).total]
-}));
+const pull={runs:[{jobs:[
+  {id:1,name:'test',status:'in_progress',steps:[{name:'Set up',status:'completed'},
+    {name:'Run unit tests',status:'in_progress',elapsed_seconds:95},{name:'Post',status:'pending'}]},
+  {id:2,name:'lint',status:'queued',steps:[]},
+  {id:3,name:'build',status:'in_progress',steps:[]}]}],
+ checks:[{id:1,name:'test',status:'in_progress',elapsed_seconds:300},{id:2,name:'lint',status:'queued'},
+  {id:3,name:'build',status:'in_progress',elapsed_seconds:12},{id:9,name:'Vercel',status:'in_progress',elapsed_seconds:40},
+  {id:4,name:'done',status:'completed'}]};
+console.log(JSON.stringify([h.runningWork(pull),h.runningWork({})]));
 ''')
-        self.assertEqual(result["missing"], [1, 3])
-        self.assertEqual(result["shown"], [1, 1])
-
-    def test_a_green_step_list_stays_open_while_github_still_has_a_pending_check(self):
-        result = self.node(r'''
-const h=require('./dashboard/static/helpers.js');
-const steps={known:true,completed:273,total:273,remaining:0,counts:{success:273,failed:0,skipped:0,cancelled:0,pending:0,unknown:0}};
-const pending={runs:[{suite_id:7,step_summary:steps,jobs:[{name:'test',status:'completed',category:'success',steps:[{category:'success',status:'completed'}]}]}],
- checks:[{name:'deploy',suite_id:8,category:'pending'}],statuses:[],expected:[]};
-const covered={runs:[{suite_id:7,step_summary:{known:true,completed:3,total:4,remaining:1,counts:{success:3,failed:0,skipped:0,cancelled:0,pending:1,unknown:0}},
- jobs:[{name:'test',status:'in_progress',category:'pending',steps:[{category:'success',status:'completed'},{category:'pending',status:'in_progress'}]}]}],
- checks:[{name:'test',suite_id:7,category:'pending'}]};
-const running={runs:[{suite_id:7,step_summary:steps,jobs:[{name:'test',status:'in_progress',category:'pending',steps:[{category:'success',status:'completed'}]}]}],
- checks:[],statuses:[],expected:[]};
-const failed={runs:[{suite_id:7,step_summary:steps,jobs:[{name:'test',status:'completed',category:'success',steps:[{category:'success',status:'completed'}]}]}],
- checks:[{name:'lint',suite_id:9,category:'failed'}],statuses:[],expected:[]};
-const passed={runs:[{suite_id:7,step_summary:steps,jobs:[]}],checks:[{name:'lint',category:'success'}],statuses:[],expected:[]};
-console.log(JSON.stringify({
- pending:[h.stepTotals(pending).counts.pending,h.stepTotals(pending).remaining,h.stepTotals(pending).total],
- covered:h.stepTotals(covered).counts.pending,
- running:h.stepTotals(running).counts.pending,
- failed:[h.stepTotals(failed).counts.failed,h.stepTotals(failed).remaining],
- passed:h.stepTotals(passed).total
-}));
-''')
-        self.assertEqual(result["pending"], [1, 1, 274])
-        self.assertEqual(result["covered"], 1)
-        self.assertEqual(result["running"], 1)
-        self.assertEqual(result["failed"], [1, 0])
-        self.assertEqual(result["passed"], 273)
+        self.assertEqual(result, [[{"name": "test: Run unit tests", "elapsed": 95}, {"name": "build", "elapsed": 12},
+                                   {"name": "Vercel", "elapsed": 40}], []])
 
     def test_disk_meter_reports_used_space_not_free_space(self):
         result = self.node(r'''
@@ -422,23 +398,26 @@ const source=app.slice(app.indexOf('  function pushStat('),app.indexOf('  functi
 function el(tag, attrs={}, ...children) {
   return {tag, attrs, children:children.flat().filter(value => value !== null && value !== undefined)};
 }
-const prRow=new Function('el','safeUrl','snapshot','combinedCategory','currentWork','badge','progress','since','ageClass',
-  source+'return prRow;')(el, safeUrl, {owner:'octocat'}, ()=>'failed', ()=>null,
+const prRow=new Function('el','safeUrl','snapshot','combinedCategory','runningWork','badge','progress','since','ageClass','duration',
+  source+'return prRow;')(el, safeUrl, {owner:'octocat'}, ()=>'failed', pull=>pull.running||[],
   status=>el('span',{},status), ()=>el('div',{class:'progress'}),
   value=>value==='2026-09-01T00:00:00Z'?'5w':'2d',
-  value=>value==='2026-09-01T00:00:00Z'?'age-red':'age-yellow');
+  value=>value==='2026-09-01T00:00:00Z'?'age-red':'age-yellow', seconds=>seconds+'s');
 const pull=(html_url, stale)=>({repository:'octocat/example',number:3,title:'Fix the gate',author:'octocat',
   head_sha:'abcdef1234567890',html_url,attention_reason:'A current-head check failed',
   created_at:'2026-10-01T00:00:00Z',stale});
 const ready=pull('https://github.com/octocat/example/pull/4', false);
 ready.merge_ready=true; ready.title='Ship the gate';
 ready.push={pushed_at:'2026-09-01T00:00:00Z', kind:'bug fix'};
+const busy=pull('https://github.com/octocat/example/pull/5', false);
+busy.running=[{name:'lint',elapsed:5},{name:'test: Run unit tests',elapsed:95},{name:'build',elapsed:40},{name:'deploy',elapsed:1}];
 console.log(JSON.stringify({
   linked:prRow(pull('https://github.com/octocat/example/pull/3', false)),
   stale:prRow(pull('https://github.com/octocat/example/pull/3', true)),
   foreign:prRow(pull('https://github.com/evil/example/pull/3', false)),
   missing:prRow(pull(null, false)),
   ready:prRow(ready),
+  busy:prRow(busy).children.find(node=>node.attrs.class==='pr-work').children.slice(1).map(node=>[node.attrs.class||'',node.children[0]]),
   detail:app.includes('function renderDetail(')||app.includes('go("prs",')
 }));
 ''')
@@ -459,6 +438,9 @@ console.log(JSON.stringify({
         age = next(node for node in linked["children"] if node["attrs"].get("class") == "pr-age")
         got = ([part["children"] for stat in age["children"] for part in stat["children"]], age["children"][0]["children"][0]["attrs"]["class"])
         self.assertEqual(got, ([["2d"], ["PR age"], ["Unavailable"], ["Last push"]], "age-yellow"))
+        self.assertEqual([text(node) for node in linked["children"][1]["children"][1:]], ["A current-head check failed"])
+        self.assertEqual(result["busy"], [["", "A current-head check failed"], ["running-now", "test: Run unit tests · 95s"],
+                                          ["running-now", "build · 40s"], ["running-now", "lint · 5s"], ["", "+1 more running"]])
         ready = result["ready"]
         title = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-identity")["children"][0]
         pushed = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-age")["children"][1]["children"]

@@ -166,6 +166,38 @@ class GraphQLTransport(unittest.TestCase):
             api.graphql("query { x }", {})
         self.assertEqual(api.calls, 2)
 
+    def test_a_graphql_query_refused_with_points_left_still_pauses_only_graphql(self):
+        refusals = {"points": (("X-Ratelimit-Remaining: 41", "X-Ratelimit-Reset: 700"),
+                               "gh: API rate limit exceeded for installation ID 1."),
+                    "secondary": (("X-Ratelimit-Remaining: 41", "X-Ratelimit-Reset: 700"),
+                                  "gh: You have exceeded a secondary rate limit."),
+                    "retry": (("X-Ratelimit-Remaining: 41", "Retry-After: 30"), "gh: API rate limit exceeded")}
+        outcomes = {}
+        for name, (extra, message) in refusals.items():
+            def runner(command, extra=extra, message=message, **kwargs):
+                if command[3] == "graphql":
+                    return subprocess.CompletedProcess(command, 1, http(403, "{}", extra), message)
+                return subprocess.CompletedProcess(command, 0, http(200, "{}"), "")
+            now = [100]
+            api = GitHubAPI(runner=runner, clock=lambda: now[0])
+            with self.assertRaisesRegex(ApiError, "rate_limited"):
+                api.graphql("query { x }", {})
+            try:
+                rest = api.one("repos/o/r/pulls/1")
+            except ApiError as error:
+                rest = error.code
+            with self.assertRaisesRegex(ApiError, "rate_limited"):
+                api.graphql("query { x }", {})
+            now[0] = 701
+            api.begin()
+            with self.assertRaisesRegex(ApiError, "rate_limited"):
+                api.graphql("query { x }", {})
+            outcomes[name] = (rest, api.backoff_until, api.calls)
+        # The hourly counter in points: REST keeps reading, and GraphQL is asked again only after the reset.
+        self.assertEqual(outcomes["points"], ({}, 0, 1))
+        self.assertEqual(outcomes["secondary"][:2], ("rate_limited", 761))
+        self.assertEqual(outcomes["retry"][:2], ("rate_limited", 761))
+
     def test_graphql_rejects_a_non_object_body_and_obeys_the_budget(self):
         api = GitHubAPI(max_calls=0)
         with self.assertRaisesRegex(ApiError, "request_budget_exhausted"):
@@ -303,11 +335,9 @@ function createElementNS(ns, tag) {
   return node;
 }
 global.document={createElementNS};
-const progress=new Function('el','stepTotals','meterSegments','meterLabel','unresolvedMark', slice+'return progress;')(
-  el, helpers.stepTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark);
-const runs=[{step_summary:{known:true, completed:4, total:4, remaining:0,
-  counts:{success:4, failed:0, skipped:0, cancelled:0, pending:0, unknown:0}}}];
-const base={runs, checks:[], statuses:[], expected:[]};
+const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','runningWork', slice+'return progress;')(
+  el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark, helpers.runningWork);
+const base={runs:[], checks:[{name:'test', category:'success', status:'completed'}], statuses:[], expected:[]};
 function marks(node) {
   const found=[];
   (function walk(item) {
@@ -323,16 +353,32 @@ const none=progress(base);
 const clear=progress({...base, unresolved_comments:0, review_threads:2, comments_complete:true, comment_count:2});
 const partial=progress({...base, unresolved_comments:2, review_threads:100, comments_complete:false, comment_count:100});
 const unknown=progress({unresolved_comments:1, review_threads:1, comments_complete:true, comment_count:1});
+function headings(node) {
+  const found=[];
+  (function walk(item) {
+    if (!item || typeof item==='string') return;
+    if (item.tag==='b') found.push((item.children||[]).filter(child=>typeof child==='string').join(''));
+    (item.children||[]).forEach(walk);
+  })(node);
+  return found;
+}
+const running=progress({...base, checks:[
+  {id:1, name:'test', status:'in_progress', category:'pending'},
+  {id:2, name:'lint', status:'completed', category:'success'}
+], runs:[{jobs:[{id:1, steps:[{name:'Build', status:'in_progress'}]}]}]});
 console.log(JSON.stringify({
   open: marks(open).map(item=>({class:item.attrs.class, title:item.attrs.title, text:text(item)})),
   none: marks(none).length,
-  clear: marks(clear).map(item=>({class:item.attrs.class, text:text(item)})),
+  clear: marks(clear).length,
   partial: marks(partial).map(text),
   unknown: marks(unknown).map(text),
   besideMeter: open.children.some(item=>item.attrs&&item.attrs.class==='progress-meter-row' && marks(item).length===1),
   hidden: helpers.unresolvedMark({unresolved_comments:null, review_threads:null, comment_count:null}),
   noComments: helpers.unresolvedMark({unresolved_comments:0, review_threads:0, comment_count:0}),
-  negative: helpers.unresolvedMark({unresolved_comments:-1, review_threads:1, comment_count:1})
+  resolved: helpers.unresolvedMark({unresolved_comments:0, review_threads:4, comments_complete:true, comment_count:6}),
+  negative: helpers.unresolvedMark({unresolved_comments:-1, review_threads:1, comment_count:1}),
+  idleHeadings: headings(none),
+  runningHeadings: headings(running)
 }));
 '''
         result = subprocess.run(["node", "-e", source], cwd=ROOT_UI, capture_output=True, text=True)
@@ -340,17 +386,21 @@ console.log(JSON.stringify({
         parsed = json.loads(result.stdout)
         self.assertEqual(parsed["open"], [{"class": "comment-mark", "title": "2 unresolved comments", "text": ["2"]}])
         self.assertEqual(parsed["none"], 0)
-        self.assertEqual(parsed["clear"], [{"class": "comment-mark is-clear", "text": ["0"]}])
+        self.assertEqual(parsed["clear"], 0)
         self.assertEqual(parsed["partial"], [["2+"]])
         self.assertEqual(parsed["unknown"], [["1"]])
         self.assertTrue(parsed["besideMeter"])
         self.assertIsNone(parsed["hidden"])
         self.assertIsNone(parsed["noComments"])
+        self.assertIsNone(parsed["resolved"])
         self.assertIsNone(parsed["negative"])
+        self.assertEqual(parsed["idleHeadings"], [])
+        self.assertEqual(parsed["runningHeadings"], ["test: Build"])
         css = (ROOT_UI / "dashboard/static/styles.css").read_text()
         self.assertIn(".pr-identity b.merge-ready { color: var(--green); }", css)
         self.assertIn(".progress-copy .comment-mark {", css)
-        self.assertIn(".progress-copy .comment-mark.is-clear { color: var(--muted); }", css)
+        self.assertNotIn("comment-mark.is-clear", css)
+        self.assertIn(".check-meter { height: 8px;", css)
 
 
 if __name__ == "__main__":

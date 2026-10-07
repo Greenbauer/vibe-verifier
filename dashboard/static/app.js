@@ -1,7 +1,7 @@
 (function () {
   "use strict";
   const { BOT_META, element: el, link, safeUrl, duration, since, ageClass, formatTime, bytes, badge,
-    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork, unresolvedMark,
+    diskUsage, flattenPulls, filterPulls, groupPulls, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark,
     quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
@@ -134,24 +134,33 @@
     const mark = unresolvedMark(pull);
     if (!mark) return null;
     return el("span", {
-      class: `comment-mark${mark.unresolved ? "" : " is-clear"}`,
-      title: mark.title, "aria-label": mark.title
+      class: "comment-mark", title: mark.title, "aria-label": mark.title
     }, messageIcon(), mark.shown);
   }
 
+  function runningHeading(pull) {
+    const names = runningWork(pull).map(work => work.name).filter(Boolean);
+    if (!names.length) return null;
+    const label = names.join(" · ");
+    return el("b", { class: "running-steps", title: label }, label);
+  }
+
   function progress(pull) {
-    const totals = stepTotals(pull);
+    const totals = checkTotals(pull);
     const mark = commentMark(pull);
     if (!totals.known) return el("div", { class: "progress-copy" },
-      el("div", { class: "progress-meter-row" }, el("b", {}, "Step total unavailable"), mark),
+      el("div", { class: "progress-meter-row" }, el("b", {}, "No checks reported"), mark),
       el("span", {}, "Progress is not shown as complete"));
-    const meter = el("div", { class: "step-meter", role: "img", "aria-label": meterLabel(totals) });
-    meterSegments(totals).forEach(segment => meter.append(el("span", {
+    const segments = meterSegments(totals);
+    const meter = el("div", { class: "check-meter", role: "img", "aria-label": meterLabel(totals) });
+    segments.forEach(segment => meter.append(el("span", {
       class: `seg-${segment.state}`, style: `flex:${segment.count} 1 0`, title: `${segment.count} ${segment.label}`,
       "aria-hidden": "true"
     })));
-    return el("div", { class: "progress-copy" }, el("b", {}, `${totals.completed}/${totals.total} steps`),
-      el("div", { class: "progress-meter-row" }, meter, mark), el("span", {}, `${totals.remaining} remaining`));
+    const open = segments.filter(segment => segment.state !== "success")
+      .map(segment => `${segment.count} ${segment.label.toLowerCase()}`);
+    return el("div", { class: "progress-copy" }, runningHeading(pull),
+      el("div", { class: "progress-meter-row" }, meter, mark), el("span", {}, open.join(" · ") || "All passed"));
   }
 
   function renderPrRows() {
@@ -188,9 +197,20 @@
       el("small", {}, push.kind));
   }
 
+  // The checks running right now, longest first, as GitHub lists them on the pull request.
+  function runningNow(pull) {
+    const RUNNING_SHOWN = 3;
+    const running = runningWork(pull).sort((a, b) => (b.elapsed || 0) - (a.elapsed || 0));
+    const lines = running.slice(0, RUNNING_SHOWN).map(work => {
+      const text = `${work.name} · ${duration(work.elapsed)}`;
+      return el("small", { class: "running-now", title: text }, text);
+    });
+    if (running.length > RUNNING_SHOWN) lines.push(el("small", {}, `+${running.length - RUNNING_SHOWN} more running`));
+    return lines;
+  }
+
   function prRow(pull) {
     const category = combinedCategory(pull);
-    const work = currentWork(pull);
     const href = safeUrl(pull.html_url, snapshot.owner);
     const now = Date.now();
     const opened = href ? `Open ${pull.repository} pull request ${pull.number} on GitHub: ${pull.title}` : null;
@@ -202,11 +222,11 @@
     el("span", { class: "pr-identity" },
       el("b", { class: pull.merge_ready ? "merge-ready" : null, title: pull.merge_ready ? "Fully merge-ready" : null }, pull.title),
       el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
-    el("span", { class: "pr-work" }, badge(category), el("small", {}, pull.attention_reason)),
+    el("span", { class: "pr-work" }, badge(category), el("small", {}, pull.attention_reason), runningNow(pull)),
     progress(pull),
     el("span", { class: "pr-age" },
       el("span", { class: "age-stat" }, el("b", { class: ageClass(pull.created_at, now) }, since(pull.created_at, now)),
-        el("small", {}, work ? `${work.name} · ${duration(work.elapsed)}` : "PR age")),
+        el("small", {}, "PR age")),
       pushStat(pull, now)),
     el("span", { class: "chevron", "aria-hidden": "true" }, "›"));
   }
@@ -215,7 +235,7 @@
     const pulls = flattenPulls(snapshot);
     content.replaceChildren(heading("Pull requests", "Open pull requests and current-head evidence from selected repositories."),
       coverage(), prFilters(pulls), el("div", { class: "list-heading" }, el("span", { id: "pr-count" }),
-        el("span", {}, "Current work"), el("span", {}, "Steps"), el("span", {}, "Age")),
+        el("span", {}, "Current work"), el("span", {}, "Checks"), el("span", {}, "Age")),
       el("div", { id: "pr-rows", class: "pr-groups" }));
     renderPrRows();
   }

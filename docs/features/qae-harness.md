@@ -48,12 +48,15 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - `tests/test_qae_widths.py::test_a_branch_dropping_the_widths_is_still_told_the_bases`
 - `tests/test_qae_ticket.py::test_a_declared_none_does_not_drop_the_tickets_criteria`
 - `tests/test_qae_ticket.py::test_the_ticket_reaches_the_explorer_and_the_gate`
+- `tests/test_qae_ticket.py::test_a_dependency_update_passes_on_its_supplied_criteria_alone`
+- `tests/test_qae_explore.py::test_dependabot_is_the_one_bot_whose_pull_requests_reach_the_explorer`
 - `tests/test_runner.py::test_the_qae_browser_toolchain_installs_from_its_lockfile`
 
 ## Gotchas
 
 - The explore templates must stay byte-identical outside the explorer block, and the inline prompts must equal prompt.md.
 - The verdict is taken only from the workflow's own identity, never from another commenter.
+- A pull request body lists criteria only under its `Acceptance criteria` heading; the plain-list reading is for a ticket's criteria file. A Dependabot body has no such heading, so its criteria are the ones the consumer's workflow supplies.
 - A design reference's digest reaches the gate as an explore job output, never as a file the explorer could rewrite; a reference the workflow did not supply is refused, never invented.
 - The Claude lane's `--max-turns` is the qae-inputs step's `max-turns` output, sized to the run's walks; a consumer copy that still passes a fixed number keeps that number.
 - A feature re-walk covers at most `--max-states` states of each feature. A `regression-check` FAIL means a walked step broke; a state not reached goes on a `regression-skip` line, which no gate judges. A consumer copy with the older prompt still tells the explorer to walk every state.
