@@ -172,6 +172,12 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          # The action refuses a run a bot started unless the bot is named here. Dependabot is the one
+          # bot whose pull requests are walked; never '*', which lets any App that can open one start
+          # the explorer. A Dependabot run reads the Dependabot secret store, not the Actions one, so
+          # the token above is empty there until the repository adds it to that store, which it does
+          # only once the site runs in a container (harnesses/qae/README.md, "Dependency updates").
+          allowed_bots: dependabot[bot]
           prompt: |
             You are the QAE for pull request #${{ github.event.pull_request.number }} of ${{ github.repository }}.
             The site built from this PR is running at ${{ steps.site.outputs.url }}.
