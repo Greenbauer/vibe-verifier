@@ -360,20 +360,21 @@ The title is green when the pull request is fully merge-ready: GitHub's merge st
 is green (skipped checks may sit beside at least one success, and a check that is not required
 still counts), and every review thread is resolved and has a reply. A thread list that did not
 load completely, or a merge state GitHub has not calculated, keeps the title white.
-When the pull request has comments, the check line shows a message icon and the number of
-unresolved review threads. The number is a lower bound, with a plus, when more threads exist
-than the read returned. The icon is hidden when the comment read did not succeed, so a missing
-read is not shown as zero.
+When the pull request has unresolved review threads, the check line shows a message icon and
+that number. The number is a lower bound, with a plus, when more threads exist than the read
+returned. The icon is hidden when every thread is resolved, and when the comment read did not
+succeed, so a missing read is not shown as zero.
 A pull request's badge shows its worst current-head check. A skipped check never outranks a passed
 one, so the badge reads Skipped only when every check was skipped.
 The check meter counts what GitHub's pull request page counts: one share for each check run,
 commit status, and expected required check on the current head. It is one line for the whole
-total. Each outcome takes a share of that line equal to its count, with a gap between shares:
-green for passed, yellow for running, dim yellow for waiting, red for failed, and gray for
-skipped, cancelled, or unknown. A check is running when GitHub marks it in progress. A queued
-job, a pending commit status, and an expected required check are all waiting. The text above the
-line is finished checks over the total, and the text under it counts every outcome except
-passed, or says all passed. The badge beside it, not the line, is the worst current-head check.
+total, taller than the host meters. Each outcome takes a share of that line equal to its count,
+with a gap between shares: green for passed, yellow for running, dim yellow for waiting, red for
+failed, and gray for skipped, cancelled, or unknown. A check is running when GitHub marks it in
+progress. A queued job, a pending commit status, and an expected required check are all waiting.
+The text above the line names the checks running now, and the step an Actions job is on, and is
+left off when nothing is running. The text under it counts every outcome except passed, or says
+all passed. The badge beside it, not the line, is the worst current-head check.
 A job that has not started has no steps yet, but it is still one waiting check, so the line
 shows as soon as anything reports on the head. A head with no checks at all says so, and never
 renders as complete.

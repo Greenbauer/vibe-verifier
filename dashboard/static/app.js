@@ -134,9 +134,15 @@
     const mark = unresolvedMark(pull);
     if (!mark) return null;
     return el("span", {
-      class: `comment-mark${mark.unresolved ? "" : " is-clear"}`,
-      title: mark.title, "aria-label": mark.title
+      class: "comment-mark", title: mark.title, "aria-label": mark.title
     }, messageIcon(), mark.shown);
+  }
+
+  function runningHeading(pull) {
+    const names = runningWork(pull).map(work => work.name).filter(Boolean);
+    if (!names.length) return null;
+    const label = names.join(" · ");
+    return el("b", { class: "running-steps", title: label }, label);
   }
 
   function progress(pull) {
@@ -153,7 +159,7 @@
     })));
     const open = segments.filter(segment => segment.state !== "success")
       .map(segment => `${segment.count} ${segment.label.toLowerCase()}`);
-    return el("div", { class: "progress-copy" }, el("b", {}, `${totals.completed}/${totals.total} checks`),
+    return el("div", { class: "progress-copy" }, runningHeading(pull),
       el("div", { class: "progress-meter-row" }, meter, mark), el("span", {}, open.join(" · ") || "All passed"));
   }
 

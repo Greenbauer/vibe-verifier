@@ -303,8 +303,8 @@ function createElementNS(ns, tag) {
   return node;
 }
 global.document={createElementNS};
-const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark', slice+'return progress;')(
-  el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark);
+const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','runningWork', slice+'return progress;')(
+  el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark, helpers.runningWork);
 const base={runs:[], checks:[{name:'test', category:'success', status:'completed'}], statuses:[], expected:[]};
 function marks(node) {
   const found=[];
@@ -321,16 +321,32 @@ const none=progress(base);
 const clear=progress({...base, unresolved_comments:0, review_threads:2, comments_complete:true, comment_count:2});
 const partial=progress({...base, unresolved_comments:2, review_threads:100, comments_complete:false, comment_count:100});
 const unknown=progress({unresolved_comments:1, review_threads:1, comments_complete:true, comment_count:1});
+function headings(node) {
+  const found=[];
+  (function walk(item) {
+    if (!item || typeof item==='string') return;
+    if (item.tag==='b') found.push((item.children||[]).filter(child=>typeof child==='string').join(''));
+    (item.children||[]).forEach(walk);
+  })(node);
+  return found;
+}
+const running=progress({...base, checks:[
+  {id:1, name:'test', status:'in_progress', category:'pending'},
+  {id:2, name:'lint', status:'completed', category:'success'}
+], runs:[{jobs:[{id:1, steps:[{name:'Build', status:'in_progress'}]}]}]});
 console.log(JSON.stringify({
   open: marks(open).map(item=>({class:item.attrs.class, title:item.attrs.title, text:text(item)})),
   none: marks(none).length,
-  clear: marks(clear).map(item=>({class:item.attrs.class, text:text(item)})),
+  clear: marks(clear).length,
   partial: marks(partial).map(text),
   unknown: marks(unknown).map(text),
   besideMeter: open.children.some(item=>item.attrs&&item.attrs.class==='progress-meter-row' && marks(item).length===1),
   hidden: helpers.unresolvedMark({unresolved_comments:null, review_threads:null, comment_count:null}),
   noComments: helpers.unresolvedMark({unresolved_comments:0, review_threads:0, comment_count:0}),
-  negative: helpers.unresolvedMark({unresolved_comments:-1, review_threads:1, comment_count:1})
+  resolved: helpers.unresolvedMark({unresolved_comments:0, review_threads:4, comments_complete:true, comment_count:6}),
+  negative: helpers.unresolvedMark({unresolved_comments:-1, review_threads:1, comment_count:1}),
+  idleHeadings: headings(none),
+  runningHeadings: headings(running)
 }));
 '''
         result = subprocess.run(["node", "-e", source], cwd=ROOT_UI, capture_output=True, text=True)
@@ -338,17 +354,21 @@ console.log(JSON.stringify({
         parsed = json.loads(result.stdout)
         self.assertEqual(parsed["open"], [{"class": "comment-mark", "title": "2 unresolved comments", "text": ["2"]}])
         self.assertEqual(parsed["none"], 0)
-        self.assertEqual(parsed["clear"], [{"class": "comment-mark is-clear", "text": ["0"]}])
+        self.assertEqual(parsed["clear"], 0)
         self.assertEqual(parsed["partial"], [["2+"]])
         self.assertEqual(parsed["unknown"], [["1"]])
         self.assertTrue(parsed["besideMeter"])
         self.assertIsNone(parsed["hidden"])
         self.assertIsNone(parsed["noComments"])
+        self.assertIsNone(parsed["resolved"])
         self.assertIsNone(parsed["negative"])
+        self.assertEqual(parsed["idleHeadings"], [])
+        self.assertEqual(parsed["runningHeadings"], ["test: Build"])
         css = (ROOT_UI / "dashboard/static/styles.css").read_text()
         self.assertIn(".pr-identity b.merge-ready { color: var(--green); }", css)
         self.assertIn(".progress-copy .comment-mark {", css)
-        self.assertIn(".progress-copy .comment-mark.is-clear { color: var(--muted); }", css)
+        self.assertNotIn("comment-mark.is-clear", css)
+        self.assertIn(".check-meter { height: 8px;", css)
 
 
 if __name__ == "__main__":
