@@ -17,12 +17,59 @@ runs:
         dir=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" tool qae-browser)
         echo "mcp=$dir/node_modules/@playwright/mcp/cli.js" >> "$GITHUB_OUTPUT"
         # chromium comes from the Playwright build the lockfile pins, so the browser matches the mcp.
+        playwright="$dir/node_modules/.bin/playwright"
+        "$playwright" install chromium
         # Its system packages are installed here only where this job can install them: as root, or
         # through passwordless sudo, as on GitHub's hosted runners. A self-hosted runner whose user
         # cannot sudo carries them already (harnesses/qae/README.md, "What the runner needs"), and
         # asking would stop the job at a password prompt.
-        if [ "$(id -u)" = 0 ] || sudo -n true 2>/dev/null; then
-          "$dir/node_modules/.bin/playwright" install --with-deps chromium
-        else
-          "$dir/node_modules/.bin/playwright" install chromium
+        if [ "$(id -u)" != 0 ] && ! sudo -n true 2>/dev/null; then exit 0; fi
+        root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }
+        # The packages apt would install for chromium, one a line, from Playwright's own simulation
+        # (`apt-get install -s` over the list it pins). `playwright install --with-deps` instead
+        # refreshes every package list and re-installs that whole list on each run, upgrades
+        # included, for the few packages a hosted runner lacks (nine fonts on ubuntu-24.04,
+        # 2026-10-07). Fails when apt could not say, as on a machine with no package lists yet.
+        missing() {
+          local report
+          if report=$("$playwright" install-deps --dry-run chromium 2>&1); then return 0; fi
+          printf '%s\n' "$report" | sed -n '/^Missing system dependencies (/,$ s/^  \([a-z0-9][a-z0-9.+-]*\)$/\1/p' | grep .
+        }
+        # The package lists, then the archives of the packages named, within $1 seconds. apt's own
+        # timeouts end a stalled transfer, never a slow one, and a hosted runner's first mirror has
+        # served 90 kB/s for minutes (a consumer's runs, 2026-10-06 and 2026-10-07: 165 s, 295 s,
+        # 402 s, and one cancelled past 20 minutes, for a step that takes 20 s). Download only, so the
+        # bound never interrupts dpkg.
+        fetch() {
+          local seconds=$1; shift
+          # shellcheck disable=SC2016  # "$@" is the inner shell's: the package names
+          root timeout -k 10 "$seconds" sh -c 'apt-get update && apt-get install -y --no-install-recommends --download-only "$@"' sh "$@"
+        }
+        # One more try for a fetch that failed or ran out of time, without the first mirror where the
+        # machine lists more than one: a hosted runner's apt reads its mirrors from this file, each
+        # line with its priority, so the next one is reached only by leaving the first out. The file
+        # is put back as it was.
+        mirrors=/etc/apt/apt-mirrors.txt
+        fetch_bounded() {
+          if fetch 90 "$@"; then return 0; fi
+          echo "::warning::apt did not fetch within 90 s; trying once more, from the next mirror where this machine lists one"
+          local kept=""
+          if [ -f "$mirrors" ] && [ "$(grep -c . "$mirrors")" -gt 1 ]; then
+            kept=$(mktemp)
+            cp "$mirrors" "$kept"
+            sed 1d "$kept" | root tee "$mirrors" > /dev/null
+          fi
+          local status=0
+          fetch 300 "$@" || status=$?
+          if [ -n "$kept" ]; then root cp "$kept" "$mirrors"; rm -f "$kept"; fi
+          return "$status"
+        }
+        if ! packages=$(missing); then
+          fetch_bounded || { echo "::error::apt could not fetch its package lists, on either try"; exit 1; }
+          packages=$(missing) || { echo "::error::Playwright could not say which system packages chromium lacks"; "$playwright" install-deps --dry-run chromium || true; exit 1; }
         fi
+        if [ -z "$packages" ]; then echo "chromium's system packages are all installed"; exit 0; fi
+        # shellcheck disable=SC2086  # one package name a word
+        fetch_bounded $packages || { echo "::error::apt could not fetch chromium's system packages, on either try"; exit 1; }
+        # shellcheck disable=SC2086
+        root apt-get install -y --no-install-recommends $packages
