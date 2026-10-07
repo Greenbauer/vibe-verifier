@@ -34,12 +34,13 @@ def _split_response(stdout: str) -> tuple[int, dict[str, str], str]:
     return status, headers, body
 
 
-def _graphql_command(query: str, variables: dict[str, str]) -> list[str]:
+def _graphql_command(query: str, variables: dict[str, str | int]) -> list[str]:
     command = ["gh", "api", "--include", "graphql", "-f", "query=" + query]
     for name, value in variables.items():
-        if not name.isidentifier() or not isinstance(value, str):
+        if not name.isidentifier() or isinstance(value, bool) or not isinstance(value, (str, int)):
             raise ApiError("invalid_response")
-        command.extend(("-f", "%s=%s" % (name, value)))
+        # -f sends a string as written; -F is gh's typed form, used only for an integer.
+        command.extend(("-f" if isinstance(value, str) else "-F", "%s=%s" % (name, value)))
     return command
 
 
@@ -211,7 +212,21 @@ class GitHubAPI:
             else:
                 self._family_backoff[family] = max(self._family_backoff.get(family, 0.0), reset)
 
-    def graphql(self, query: str, variables: dict[str, str]) -> dict:
+    def _keep_graphql_reserve(self, headers: dict[str, str]) -> None:
+        """Stop asking GraphQL until its counter resets once less than half of it is left.
+
+        The token's points are shared with everything else that uses the same App (seen 2026-10-07:
+        a watched dashboard left 24 of 5000), and those users need them more than this page does."""
+        try:
+            remaining, limit, reset = (float(headers["x-ratelimit-" + name])
+                                       for name in ("remaining", "limit", "reset"))
+        except (KeyError, ValueError):
+            return
+        if remaining * 2 < limit:
+            with self._lock:
+                self._family_backoff["graphql"] = max(self._family_backoff.get("graphql", 0.0), reset)
+
+    def graphql(self, query: str, variables: dict[str, str | int]) -> dict:
         """One GraphQL request. Counts as one budget unit and is not ETag-cached.
 
         GraphQL is a POST, so a later refresh cannot reuse it with If-None-Match the way REST reads can.
@@ -233,6 +248,7 @@ class GitHubAPI:
                 secondary = "retry-after" in headers or "secondary" in result.stderr.lower()
                 self._pause("graphql", headers, remaining == "0" or not secondary)
             raise ApiError(code)
+        self._keep_graphql_reserve(headers)
         return _graphql_body(result.stdout)
 
     def rate(self) -> dict:

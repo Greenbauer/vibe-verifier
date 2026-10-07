@@ -297,7 +297,7 @@ class GitHubCollector:
     def _repository(self, repository: str, inventory: dict) -> dict:
         rows = self.api.items(_endpoint("repos/%s/pulls" % repository, state="open", per_page=100))
         pulls, errors, rules = [], [], {}
-        signals = load_signals(self.api, repository) if rows else {}
+        signals = load_signals(self.api, repository, len(rows))
         for row in rows:
             try:
                 base = (row.get("base") or {}).get("ref")
