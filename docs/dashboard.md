@@ -345,8 +345,7 @@ A row's age is how long that pull request has been open. Under a day it shows ho
 From a day through seven days it counts whole days, with no hours. Past seven days it counts
 whole weeks, past thirty days whole months, and from a year whole years. The number stays the
 default text color through three days, turns yellow after that, and turns red after two weeks.
-An age of exactly three days or exactly two weeks keeps the younger color. A running step's own
-elapsed time still shows hours.
+An age of exactly three days or exactly two weeks keeps the younger color.
 Beside that age, the same units and colors show when the latest push landed. The label under
 that time is the kind of push: feature, bug fix, refactor, performance, docs, test, chore, ci,
 build, style, revert, work in progress, or update when the commit message has no such prefix.
@@ -378,9 +377,8 @@ all passed. The badge beside it, not the line, is the worst current-head check.
 A job that has not started has no steps yet, but it is still one waiting check, so the line
 shows as soon as anything reports on the head. A head with no checks at all says so, and never
 renders as complete.
-Under the badge, the row lists the checks that are running now, the longest-running first, each
-with the time it has run. A running Actions job also names the step it is on. The row shows
-three, then counts the rest. Elapsed time alone never asserts that a job is stuck.
+Running checks are named in that one place: under the badge the row gives only the reason for
+the badge. Elapsed time alone never asserts that a job is stuck.
 
 ## Data lifecycle and uninstall
 
