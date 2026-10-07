@@ -121,7 +121,11 @@ class Host(unittest.TestCase):
                                                  "    git_protocol: https\n" % ("a" * 36))
         info = self.hosts.stat()
         self.assertEqual((stat.S_IMODE(info.st_mode), info.st_uid), (0o600, os.getuid()))
-        self.assertEqual(sorted(path.name for path in self.hosts.parent.iterdir()), ["hosts.yml"])
+        config = self.hosts.parent / "config.yml"
+        self.assertEqual(config.read_text(), 'version: "1"\n')
+        config_info = config.stat()
+        self.assertEqual((stat.S_IMODE(config_info.st_mode), config_info.st_uid), (0o644, host.ROOT_UID))
+        self.assertEqual(sorted(path.name for path in self.hosts.parent.iterdir()), ["config.yml", "hosts.yml"])
 
     def test_a_grant_wider_narrower_or_malformed_fails_closed_and_keeps_the_old_token(self):
         self.hosts.write_text("old\n")
