@@ -1,7 +1,7 @@
 (function () {
   "use strict";
   const { BOT_META, element: el, link, safeUrl, duration, since, ageClass, formatTime, bytes, badge,
-    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork,
+    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork, unresolvedMark,
     quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
@@ -118,16 +118,40 @@
     return el("div", { class: "toolbar" }, search, select, check("Subscribed only", "subscribed"), check("Needs attention", "attention"));
   }
 
+  function messageIcon() {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "comment-icon");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("fill", "currentColor");
+    path.setAttribute("d", "M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.458 1.458 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.75.75 0 0 1 .53-.22h4.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z");
+    svg.append(path);
+    return svg;
+  }
+
+  function commentMark(pull) {
+    const mark = unresolvedMark(pull);
+    if (!mark) return null;
+    return el("span", {
+      class: `comment-mark${mark.unresolved ? "" : " is-clear"}`,
+      title: mark.title, "aria-label": mark.title
+    }, messageIcon(), mark.shown);
+  }
+
   function progress(pull) {
     const totals = stepTotals(pull);
-    if (!totals.known) return el("div", { class: "progress-copy" }, el("b", {}, "Step total unavailable"), el("span", {}, "Progress is not shown as complete"));
+    const mark = commentMark(pull);
+    if (!totals.known) return el("div", { class: "progress-copy" },
+      el("div", { class: "progress-meter-row" }, el("b", {}, "Step total unavailable"), mark),
+      el("span", {}, "Progress is not shown as complete"));
     const meter = el("div", { class: "step-meter", role: "img", "aria-label": meterLabel(totals) });
     meterSegments(totals).forEach(segment => meter.append(el("span", {
       class: `seg-${segment.state}`, style: `flex:${segment.count} 1 0`, title: `${segment.count} ${segment.label}`,
       "aria-hidden": "true"
     })));
     return el("div", { class: "progress-copy" }, el("b", {}, `${totals.completed}/${totals.total} steps`),
-      meter, el("span", {}, `${totals.remaining} remaining`));
+      el("div", { class: "progress-meter-row" }, meter, mark), el("span", {}, `${totals.remaining} remaining`));
   }
 
   function renderPrRows() {
@@ -154,21 +178,36 @@
     });
   }
 
+  function pushStat(pull, now) {
+    const push = pull.push;
+    if (!push || typeof push.pushed_at !== "string" || typeof push.kind !== "string" || !push.kind) {
+      return el("span", { class: "age-stat" }, el("b", {}, "Unavailable"), el("small", {}, "Last push"));
+    }
+    return el("span", { class: "age-stat" },
+      el("b", { class: ageClass(push.pushed_at, now) }, since(push.pushed_at, now)),
+      el("small", {}, push.kind));
+  }
+
   function prRow(pull) {
     const category = combinedCategory(pull);
     const work = currentWork(pull);
     const href = safeUrl(pull.html_url, snapshot.owner);
     const now = Date.now();
+    const opened = href ? `Open ${pull.repository} pull request ${pull.number} on GitHub: ${pull.title}` : null;
     return el(href ? "a" : "div", {
       class: `pr-row${pull.stale ? " stale-row" : ""}`,
       href, target: href ? "_blank" : null, rel: href ? "noreferrer" : null,
-      "aria-label": href ? `Open ${pull.repository} pull request ${pull.number} on GitHub: ${pull.title}` : null
+      "aria-label": opened ? opened + (pull.merge_ready ? ". Fully merge-ready" : "") : null
     },
-    el("span", { class: "pr-identity" }, el("b", {}, pull.title),
+    el("span", { class: "pr-identity" },
+      el("b", { class: pull.merge_ready ? "merge-ready" : null, title: pull.merge_ready ? "Fully merge-ready" : null }, pull.title),
       el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
     el("span", { class: "pr-work" }, badge(category), el("small", {}, pull.attention_reason)),
     progress(pull),
-    el("span", { class: "pr-age" }, el("b", { class: ageClass(pull.created_at, now) }, since(pull.created_at, now)), el("small", {}, work ? `${work.name} · ${duration(work.elapsed)}` : "PR age")),
+    el("span", { class: "pr-age" },
+      el("span", { class: "age-stat" }, el("b", { class: ageClass(pull.created_at, now) }, since(pull.created_at, now)),
+        el("small", {}, work ? `${work.name} · ${duration(work.elapsed)}` : "PR age")),
+      pushStat(pull, now)),
     el("span", { class: "chevron", "aria-hidden": "true" }, "›"));
   }
 

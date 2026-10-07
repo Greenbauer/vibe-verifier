@@ -8,7 +8,8 @@ from datetime import datetime, timedelta, timezone
 
 from dashboard.config import BotDefinition, Config
 from dashboard.gh_api import ApiError, GitHubAPI
-from dashboard.github import GitHubCollector, recent_bot_runs, step_summary
+from dashboard.github import GitHubCollector
+from dashboard.steps import recent_bot_runs, step_summary
 from dashboard.service import DashboardService
 
 
