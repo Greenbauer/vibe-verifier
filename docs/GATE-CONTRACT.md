@@ -747,7 +747,8 @@ The harness's second gate, `qae-artifacts`, is the adjudicator: it reads the run
 directory (`--artifacts`) and refuses on structural facts, never on the model's prose: a step
 (of a criterion, or of a re-walked feature under `qae/features/`) without its screenshot, a console error outside `--allow-console`, a missing session or network
 record, a request to the site under test that answered 400 or worse or failed outside
-`--allow-request`. The site is `--site <URL>`, or `--site-file <FILE>`: the URL the explore job
+`--allow-request`. With a site declared, Chromium's `Failed to load resource` console line for
+another host is skipped like that host's request; every other console error is still judged. The site is `--site <URL>`, or `--site-file <FILE>`: the URL the explore job
 declared, written by the verify job, where a missing or malformed file is exit 2. The consumer
 declares only what is environmental. A pull request declares an expected refusal in a criterion's
 own line, `expected-refusal: <status> <path-or-URL>`, read from `--criteria`, where the status is a

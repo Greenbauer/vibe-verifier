@@ -515,7 +515,9 @@ is the model judging meaning, and not the same way twice. So the second gate in 
 and refuses on structural facts:
 
 1. every `- step k:` line in a step log has a non-empty `qae/ACn-step-k.png`;
-2. no `[ERROR]` in any `console-*.log` outside `--allow-console` patterns;
+2. no `[ERROR]` in any `console-*.log` outside `--allow-console` patterns, except Chromium's
+   `Failed to load resource` line for a host other than the declared site, which is judged (and
+   skipped) like that host's request in 4;
 3. the session log exists (`--save-session`) and shows a `browser_navigate`;
 4. a `browser_network_requests` result exists (the prompt asks for one after each criterion), and
    no request to the site under test (`--site-file`, the URL the explore job declared, or a fixed
