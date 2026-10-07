@@ -360,7 +360,8 @@ Elapsed time alone never asserts that a job is stuck. Unknown step totals never 
   to remove the installation.
 - Tab icon: the owner's public avatar, read once and held only in memory until the process stops.
 - GitHub cache: created from server-side reads, replaced by scoped source identity, held only in
-  memory, expired on source failure, and deleted when the process stops.
+  memory, kept and marked stale on a transient source failure, cleared when access is revoked, and
+  deleted when the process stops.
 - Telemetry: created and atomically replaced by an optional collector, read only by this process,
   bounded to a current snapshot plus seven days of samples, and unavailable when deleted.
 - GitHub records: never created, updated, or deleted by this dashboard. There are no retry, cancel,
