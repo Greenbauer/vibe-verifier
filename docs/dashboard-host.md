@@ -20,8 +20,10 @@ follower below then keeps the dashboards' checkout current.
 | `vibe-dashboard-follow.service` | root | every 60 seconds | the checkout at `/opt/vibe-verifier` |
 
 The web service runs with an empty capability set, no new privileges, a read-only file system, private
-`/tmp` and devices, IPv4, IPv6 and Unix sockets only, 512 MiB of memory, one CPU and 64 tasks, from an
-`env -i` environment. The root units keep the same file-system sandbox but not an empty capability set:
+`/tmp` and devices, IPv4, IPv6 and Unix sockets only, 512 MiB of memory, one CPU and 256 tasks, from an
+`env -i` environment. The task limit leaves room for a refresh: it runs four `gh` calls at once, each
+with about fifteen threads, beside the web server's own. At 64 the service ran out, and a page request
+that arrived during a refresh got no thread and failed. The root units keep the same file-system sandbox but not an empty capability set:
 they read the dashboard account's 0600 files and the CI lane's, and hand files to that account. Every
 unit's command line starts from `env -i` with `PYTHONNOUSERSITE=1`, so no inherited variable or user
 site directory reaches it.

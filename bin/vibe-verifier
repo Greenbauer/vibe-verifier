@@ -72,9 +72,9 @@ is installed (installing it first when the cache does not have that lockfile's d
 workflow step can run a pinned toolchain the same way a gate does. Exit 2 when there is no such
 toolchain or the install fails.
 
-`criteria <file> [--changed-files FILE]` reads a PR body (or any criteria document) with the
-acceptance-verdict grammar. Its first line is `none: <reason>` when it needs no browser check, else
-`criteria: <n>`. It needs none when it declares `- None: <why>`, or, given the pull request's
+`criteria <file> [--changed-files FILE]` reads a PR body with the acceptance-verdict grammar: its
+criteria are the list under its `Acceptance criteria` heading, and a body without that heading lists
+none. Its first line is `none: <reason>` when it needs no browser check, else `criteria: <n>`. It needs none when it declares `- None: <why>`, or, given the pull request's
 changed paths one per line, when it lists no criteria and every path is CI configuration or
 documentation no site renders. A harness uses it to skip work, so the decision is made by the same
 code in the job that explores and the job that judges. After `criteria: <n>` it prints one line per
@@ -145,7 +145,7 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATES = os.path.join(ROOT, "gates")
 sys.path.insert(0, GATES)
-from _acceptance import (REFERENCE_KEY, annotations, check_lines, criteria as read_criteria,  # noqa: E402
+from _acceptance import (REFERENCE_KEY, annotations, body_criteria as read_criteria, check_lines,  # noqa: E402
                          declares_none, not_required, png_size, said, ticket_items, verdict)
 from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
 from _features import add_selection_arguments, describe, selection  # noqa: E402
