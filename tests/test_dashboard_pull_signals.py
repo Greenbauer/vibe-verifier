@@ -303,8 +303,8 @@ function createElementNS(ns, tag) {
   return node;
 }
 global.document={createElementNS};
-const progress=new Function('el','stepTotals','meterSegments','meterLabel','unresolvedMark', slice+'return progress;')(
-  el, helpers.stepTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark);
+const progress=new Function('el','stepTotals','meterSegments','meterLabel','unresolvedMark','runningStepNames', slice+'return progress;')(
+  el, helpers.stepTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark, helpers.runningStepNames);
 const runs=[{step_summary:{known:true, completed:4, total:4, remaining:0,
   counts:{success:4, failed:0, skipped:0, cancelled:0, pending:0, unknown:0}}}];
 const base={runs, checks:[], statuses:[], expected:[]};
@@ -323,6 +323,19 @@ const none=progress(base);
 const clear=progress({...base, unresolved_comments:0, review_threads:2, comments_complete:true, comment_count:2});
 const partial=progress({...base, unresolved_comments:2, review_threads:100, comments_complete:false, comment_count:100});
 const unknown=progress({unresolved_comments:1, review_threads:1, comments_complete:true, comment_count:1});
+function headings(node) {
+  const found=[];
+  (function walk(item) {
+    if (!item || typeof item==='string') return;
+    if (item.tag==='b') found.push(text(item).join(''));
+    (item.children||[]).forEach(walk);
+  })(node);
+  return found;
+}
+const running=progress({...base, runs:[{...runs[0], jobs:[
+  {steps:[{name:'Build', status:'in_progress'},{name:'Lint', status:'completed'}]},
+  {steps:[{name:'Walk', status:'in_progress'}]}
+]}]});
 console.log(JSON.stringify({
   open: marks(open).map(item=>({class:item.attrs.class, title:item.attrs.title, text:text(item)})),
   none: marks(none).length,
@@ -333,7 +346,10 @@ console.log(JSON.stringify({
   hidden: helpers.unresolvedMark({unresolved_comments:null, review_threads:null, comment_count:null}),
   noComments: helpers.unresolvedMark({unresolved_comments:0, review_threads:0, comment_count:0}),
   resolved: helpers.unresolvedMark({unresolved_comments:0, review_threads:4, comments_complete:true, comment_count:6}),
-  negative: helpers.unresolvedMark({unresolved_comments:-1, review_threads:1, comment_count:1})
+  negative: helpers.unresolvedMark({unresolved_comments:-1, review_threads:1, comment_count:1}),
+  idleHeadings: headings(none),
+  runningHeadings: headings(running),
+  names: helpers.runningStepNames({runs:[{jobs:[{steps:[{name:'Build', status:'in_progress'},{status:'in_progress'},{name:'Done', status:'completed'}]}]}]})
 }));
 '''
         result = subprocess.run(["node", "-e", source], cwd=ROOT_UI, capture_output=True, text=True)
@@ -353,6 +369,10 @@ console.log(JSON.stringify({
         self.assertIn(".pr-identity b.merge-ready { color: var(--green); }", css)
         self.assertIn(".progress-copy .comment-mark {", css)
         self.assertNotIn("comment-mark.is-clear", css)
+        self.assertEqual(parsed["idleHeadings"], [])
+        self.assertEqual(parsed["runningHeadings"], ["Build · Walk"])
+        self.assertEqual(parsed["names"], ["Build"])
+        self.assertIn(".step-meter { height: 8px;", css)
 
 
 if __name__ == "__main__":

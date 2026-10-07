@@ -1,7 +1,7 @@
 (function () {
   "use strict";
   const { BOT_META, element: el, link, safeUrl, duration, since, ageClass, formatTime, bytes, badge,
-    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork, unresolvedMark,
+    diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork, runningStepNames, unresolvedMark,
     quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
@@ -138,18 +138,26 @@
     }, messageIcon(), mark.shown);
   }
 
+  function runningHeading(pull) {
+    const names = runningStepNames(pull);
+    if (!names.length) return null;
+    const label = names.join(" · ");
+    return el("b", { class: "running-steps", title: label }, label);
+  }
+
   function progress(pull) {
     const totals = stepTotals(pull);
     const mark = commentMark(pull);
-    if (!totals.known) return el("div", { class: "progress-copy" },
-      el("div", { class: "progress-meter-row" }, el("b", {}, "Step total unavailable"), mark),
+    const heading = runningHeading(pull);
+    if (!totals.known) return el("div", { class: "progress-copy" }, heading,
+      el("div", { class: "progress-meter-row" }, heading ? null : el("b", {}, "Step total unavailable"), mark),
       el("span", {}, "Progress is not shown as complete"));
     const meter = el("div", { class: "step-meter", role: "img", "aria-label": meterLabel(totals) });
     meterSegments(totals).forEach(segment => meter.append(el("span", {
       class: `seg-${segment.state}`, style: `flex:${segment.count} 1 0`, title: `${segment.count} ${segment.label}`,
       "aria-hidden": "true"
     })));
-    return el("div", { class: "progress-copy" }, el("b", {}, `${totals.completed}/${totals.total} steps`),
+    return el("div", { class: "progress-copy" }, heading,
       el("div", { class: "progress-meter-row" }, meter, mark), el("span", {}, `${totals.remaining} remaining`));
   }
 

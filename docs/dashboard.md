@@ -366,10 +366,12 @@ returned. The icon is hidden when every thread is resolved, and when the comment
 succeed, so a missing read is not shown as zero.
 A pull request's badge shows its worst current-head check. A skipped check never outranks a passed
 one, so the badge reads Skipped only when every check was skipped.
-The step meter is one line for the whole step total. Each outcome takes a share of that line
-equal to its count, with a gap between shares: green for passed, yellow for pending, red for
-failed, and gray for skipped, cancelled, or unknown. Finished steps over the total stay in the
-text above the line. The badge beside it, not the line, is the worst current-head check.
+The step meter is one line for the whole step total, taller than the host meters. Each outcome
+takes a share of that line equal to its count, with a gap between shares: green for passed,
+yellow for pending, red for failed, and gray for skipped, cancelled, or unknown. The finished
+count is not written above the line. When one or more CI steps are running, their names are,
+joined in the order GitHub returned them. The badge beside it, not the line, is the worst
+current-head check.
 Reported steps can all be successes while GitHub still shows a check as pending, failed, or
 skipped: a queued or in-progress check has no steps yet, a running job omits steps that have not
 started, and a skipped job comes back with no steps. Each such check or job adds one share of its

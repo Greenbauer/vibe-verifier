@@ -328,6 +328,19 @@
     return null;
   }
 
+  // Names of CI steps that are running now, in the order GitHub returned them.
+  function runningStepNames(pull) {
+    const names = [];
+    for (const run of pull.runs || []) {
+      for (const job of run.jobs || []) {
+        for (const step of job.steps || []) {
+          if (step.status === "in_progress" && step.name) names.push(String(step.name));
+        }
+      }
+    }
+    return names;
+  }
+
   // A message icon is shown only when at least one review thread is still unresolved.
   // Zero, and a read that never arrived, stay hidden.
   function unresolvedMark(pull) {
@@ -445,7 +458,7 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, ageClass, formatTime, bytes,
-    badge, diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork, unresolvedMark, restoreViewState,
+    badge, diskUsage, flattenPulls, filterPulls, groupPulls, stepTotals, combinedCategory, meterSegments, meterLabel, currentWork, runningStepNames, unresolvedMark, restoreViewState,
     parseRoute, routeHash, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel,
     quotaTone, quotaCountdown, quotaGroups };
 });
