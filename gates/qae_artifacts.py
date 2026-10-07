@@ -182,6 +182,16 @@ def expected_refusals(items, site):
     return expected, findings
 
 
+def resource_error_is_excused(message, expected, site):
+    """True for Chromium's `Failed to load resource` line when its URL is on a host other than the
+    declared site (judged like the request it reports), or is a refusal this run declared."""
+    refused = RESOURCE_ERROR.match(message)
+    if not refused:
+        return False
+    url = refused.group("url")
+    return bool(site and not url.startswith(site)) or (refused.group("status"), exact(url)) in expected
+
+
 def console_is_clean(root, allowed, expected, site):
     findings, seen = [], set()
     for log in sorted(glob.glob(os.path.join(root, "console-*.log"))):
@@ -192,10 +202,7 @@ def console_is_clean(root, allowed, expected, site):
             message = match.group("message")
             if any(pattern.search(message) for pattern in allowed) or message in seen:
                 continue
-            refused = RESOURCE_ERROR.match(message)
-            if refused and site and not refused.group("url").startswith(site):
-                continue
-            if refused and (refused.group("status"), exact(refused.group("url"))) in expected:
+            if resource_error_is_excused(message, expected, site):
                 continue
             seen.add(message)
             findings.append(Finding("console error outside the allowlist: %s" % message[:200], relative(log, root), number))
