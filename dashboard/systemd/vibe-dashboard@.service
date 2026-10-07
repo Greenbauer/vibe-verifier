@@ -29,7 +29,9 @@ AmbientCapabilities=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 MemoryMax=512M
 CPUQuota=100%
-TasksMax=64
+# A refresh runs four gh calls at once and each is a Go program with about fifteen threads, so 64
+# left the web server no thread for a page request. 256 still stops a runaway.
+TasksMax=256
 UMask=0077
 
 [Install]
