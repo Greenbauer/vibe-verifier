@@ -145,6 +145,16 @@ def annotations(wording):
     return found
 
 
+# A step line that names `reference <key>` is a comparison with that design reference
+# (harnesses/qae/prompt.md): its screenshot is what was compared, at the reference's width.
+REFERENCE_NAMED = re.compile(r"\breference[ \t]+`?(?P<key>[A-Za-z0-9][A-Za-z0-9_-]*)", re.IGNORECASE)
+
+
+def named_references(line):
+    """The reference keys one step line names, as written, in written order."""
+    return [match.group("key") for match in REFERENCE_NAMED.finditer(line)]
+
+
 def png_size(path):
     """(width, height) from a PNG file's header, or None when the file is not a PNG."""
     with open(path, "rb") as handle:

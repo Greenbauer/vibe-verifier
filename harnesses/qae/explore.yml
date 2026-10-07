@@ -148,6 +148,8 @@ jobs:
         # judges the image the workflow supplied, never one the explorer wrote. None supplied is none copied.
         # The --widths of the manifest's qae-artifacts line (judged from the base) go to qae-inputs/widths,
         # the viewport widths the explorer checks each criterion at and the gate requires; none, no file.
+        # Its `max-turns` output is the explorer's turn cap, sized to the criteria, roles, widths and
+        # features it walks (harnesses/qae/README.md); the Claude lane passes it as --max-turns.
         id: references
         uses: Greenbauer/vibe-verifier/actions/qae-inputs@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
       - name: Install the browser toolchain from the catalog's lockfile
@@ -157,6 +159,8 @@ jobs:
         id: browser
         uses: Greenbauer/vibe-verifier/actions/qae-browser@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
       - name: Explore the acceptance criteria in a real browser
+        # --max-turns is the turn cap the references step sized to this run's walks: a fixed 80 cut off
+        # a correct run of two criteria at two widths (harnesses/qae/README.md, "The turn cap").
         id: explorer
         uses: anthropics/claude-code-action@e58dfa55559035499a4982426bb73605e8b5ad8e # v1.0.105
         with:
@@ -189,10 +193,13 @@ jobs:
                browser_console_messages once more, so the record of what the site did is saved with the run.
                A criterion may carry annotations in square brackets, and a gate checks its step log for them:
                - [ref: <key>] names a design reference, qae-inputs/references/<key>.png, which this repository's
-                 workflow supplied; qae-inputs/references.md lists each with its width. Open the image, reach the
-                 same screen and state with the browser resized to that width, save the screenshot, and compare the
-                 two by looking. Log the comparison as a step that names the reference:
+                 workflow supplied; qae-inputs/references.md lists each with its width. Open the image and reach the
+                 same screen and state with the browser resized to that width. The comparison is a step of its own:
+                 first save its screenshot to qae-artifacts/qae/ACn-step-k.png with the browser still at the
+                 reference's width, then compare the two by looking and log that step, naming the reference:
                    - step k: compared with reference <key> -> <what matches and what differs>
+                 A gate fails the run when that step has no screenshot, or one not as wide as the reference, so
+                 name the reference in that step only.
                  A control present in one image and not the other is a difference, never a match. FAIL the criterion
                  on a structural difference (a missing or extra control, a different layout, a different state),
                  never on pixel noise (anti-aliasing, font rendering, real data in place of sample data). If the
@@ -210,12 +217,14 @@ jobs:
                every theme as well.
                Beyond what a criterion says, on the screen it is about: use every action control the criterion
                touches through to its end state (a save that is saved, not a button that is only shown); after
-               saving anything, reload the page and check that the values you entered are still there; and try one
-               invalid input (an empty required field, a malformed value) and check that the site answers with a
-               handled error, not a crash or a blank page. Prefer an input the page refuses before sending
-               anything: a request the site answers with 400 or worse fails the run unless the criterion declares
-               it (expected-refusal: <status> <path>). Log each as a step of that criterion; any of them that fails
-               makes the criterion a FAIL.
+               saving anything, reload the page and check that the values you entered are still there; and, only
+               when that screen has a form or another input, try one invalid input in it (an empty required field,
+               a malformed value) and check that the site answers with a handled error, not a crash or a blank page.
+               Never navigate to a URL that neither the criterion names nor the site links to: an invented page is
+               not an input, and its 404 fails the run. Prefer an input the page refuses before sending anything: a
+               request the site answers with 400 or worse fails the run unless the criterion's own text declares it
+               (expected-refusal: <status> <path>), and writing that in a step line declares nothing. Log each as a
+               step of that criterion; any of them that fails makes the criterion a FAIL.
                If the directory qae-inputs/features/ exists, each <id>.md in it describes a feature this pull
                request's changes touch. After the criteria, re-walk each one the same way: get there as its
                Reach section says, then check what its Verify section says a user would see (its numbered
@@ -238,7 +247,7 @@ jobs:
             Write only under qae-artifacts/. Do not change any other file.
           claude_args: >-
             --model claude-opus-4-7
-            --max-turns 80
+            --max-turns ${{ steps.references.outputs.max-turns }}
             --mcp-config '{"mcpServers":{"playwright":{"command":"node","args":["${{ steps.browser.outputs.mcp }}","--browser","chromium","--headless","--isolated","--output-dir","qae-artifacts","--save-session","--viewport-size","1280x800"]}}}'
             --allowed-tools "mcp__playwright,Read(qae-inputs/**),Read(qae-artifacts/**),Edit(qae-artifacts/**),Bash(mkdir:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --body-file qae-artifacts/verdict.md)"
             # Read and Edit rules are the only file rules Claude Code consults (a Write(path) rule is

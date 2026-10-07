@@ -90,6 +90,7 @@ class QaeInputs(unittest.TestCase):
     the explorer, and its digest declared as the step's output."""
 
     def run_action(self, work):
+        write(work, {"qae-inputs/pr-body.md": BODY})
         output = Path(work, "github-output")
         output.write_text("")
         result = subprocess.run(["bash", "-e", "-c", action_script("qae-inputs")], cwd=work, capture_output=True, text=True,
@@ -106,7 +107,7 @@ class QaeInputs(unittest.TestCase):
         result, output = self.run_action(work)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("references: 1\nhome-desktop: 1440x900\n", result.stdout)
-        self.assertEqual(output, "references=%s\n" % json.dumps(DIGESTS))
+        self.assertEqual(output, "references=%s\nmax-turns=130\n" % json.dumps(DIGESTS))
         self.assertEqual(Path(work, "qae-artifacts", "references", "home-desktop.png").read_bytes(), HOME)
         self.assertIn("- home-desktop: qae-inputs/references/home-desktop.png, 1440 pixels wide (1440 x 900)",
                       Path(work, "qae-inputs", "references.md").read_text())
@@ -115,7 +116,7 @@ class QaeInputs(unittest.TestCase):
         work = workdir(self)
         result, output = self.run_action(work)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(output, "references={}\n")
+        self.assertEqual(output, "references={}\nmax-turns=130\n")
         self.assertFalse(os.path.exists(os.path.join(work, "qae-artifacts")))
         self.assertFalse(os.path.exists(os.path.join(work, "qae-inputs", "references.md")))
 
@@ -140,6 +141,8 @@ class Gate(unittest.TestCase):
         write(self.artifacts, {"qae/AC1.md": LOG_AC1, "qae/AC2.md": LOG_AC2})
         os.makedirs(os.path.join(self.artifacts, "references"))
         Path(self.artifacts, "references", "home-desktop.png").write_bytes(HOME)
+        for step in (1, 2):
+            Path(self.artifacts, "qae", "AC1-step-%d.png" % step).write_bytes(png(1440))
 
     def run_gate(self, body=BODY, verdict=VERDICT, references=DIGESTS, *extra):
         write(self.inputs, {"pr-body.md": body, "verdict.md": verdict})
@@ -182,6 +185,27 @@ class Gate(unittest.TestCase):
         result = self.run_gate(BODY, verdict)
         self.assertEqual(result.returncode, 1)
         self.assertIn("AC1 is a PASS, but no step line in qae/AC1.md names `reference home-desktop`", result.stdout)
+
+    def test_a_comparison_at_another_width_than_the_reference_is_refused(self):
+        # A consumer's live run (2026-10-07) compared a 375-pixel mobile reference with a 1280-pixel screenshot.
+        Path(self.artifacts, "qae", "AC1-step-2.png").write_bytes(png(1280))
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("AC1 is a PASS, but step 2 compared with reference home-desktop at 1280 pixels wide, and the "
+                      "reference is 1440: resize the browser to the reference's width before that step's screenshot",
+                      result.stdout)
+        # Every step line naming the reference is a comparison, so one at the right width does not excuse another.
+        write(self.artifacts, {"qae/AC1.md": LOG_AC1 + "- step 3: compared with reference home-desktop -> same nav\n"})
+        Path(self.artifacts, "qae", "AC1-step-2.png").write_bytes(png(1440))
+        Path(self.artifacts, "qae", "AC1-step-3.png").write_bytes(png(375))
+        self.assertIn("step 3 compared with reference home-desktop at 375 pixels wide", self.run_gate().stdout)
+
+    def test_a_comparison_without_its_screenshot_is_refused(self):
+        os.remove(os.path.join(self.artifacts, "qae", "AC1-step-2.png"))
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("AC1 is a PASS, but step 2, its comparison with reference home-desktop, has no PNG screenshot "
+                      "qae/AC1-step-2.png to show it was compared at the reference's 1440 pixels", result.stdout)
 
     def test_a_pass_missing_a_role_is_refused(self):
         write(self.artifacts, {"qae/AC2.md": LOG_AC2.replace("as read-only: ", "")})
@@ -231,6 +255,15 @@ class Template(unittest.TestCase):
     """The template copies the references after the site step and before the explorer, and the digests
     reach the gate as a declared input, never through the explorer's artifacts."""
 
+    def test_the_prompt_makes_the_comparison_a_step_whose_screenshot_comes_first(self):
+        # The explorer logged a comparison without saving its screenshot, and compared a mobile reference at
+        # 1280 (a consumer's live runs, 2026-10-07): the saving, the width and the logging are one sentence.
+        prompt = (ROOT / "harnesses" / "qae" / "prompt.md").read_text()
+        self.assertIn("The comparison is a step of its own:\n     first save its screenshot to "
+                      "qae-artifacts/qae/ACn-step-k.png with the browser still at the\n     reference's width, then compare "
+                      "the two by looking and log that step, naming the reference:\n", prompt)
+        self.assertIn("A gate fails the run when that step has no screenshot, or one not as wide as the reference", prompt)
+
     def test_the_references_step_runs_after_the_site_step_and_before_the_explorer(self):
         text = TEMPLATE.read_text()
         explore = text[text.index("\n  explore:\n"):text.index("\n  verify:\n")]
@@ -245,6 +278,7 @@ class Template(unittest.TestCase):
         work = workdir(self)
         os.makedirs(os.path.join(work, "qae-inputs", "references"))
         Path(work, "qae-inputs", "references", "home-desktop.png").write_bytes(HOME)
+        write(work, {"qae-inputs/pr-body.md": BODY})
         output = Path(work, "github-output")
         output.write_text("")
         prepare = subprocess.run(["bash", "-e", "-c", action_script("qae-inputs")], cwd=work, capture_output=True, text=True,
@@ -252,11 +286,12 @@ class Template(unittest.TestCase):
                                                 "RUNNER_TEMP": work, "VV_REFERENCES": "qae-inputs/references",
                                                 "VV_EVIDENCE": "qae-artifacts", "VV_MANIFEST": "", "VV_ENTRIES": ""}))
         self.assertEqual(prepare.returncode, 0, prepare.stdout + prepare.stderr)
-        declared = output.read_text().split("=", 1)[1].strip()
+        declared = output.read_text().splitlines()[0].split("=", 1)[1]
         # The verify job's runner has none of the explore job's files: only the output and the artifact.
         verify = workdir(self)
         shutil.copytree(os.path.join(work, "qae-artifacts"), os.path.join(verify, "qae-artifacts"))
         write(verify, {"qae-artifacts/qae/AC1.md": LOG_AC1, "qae-artifacts/qae/AC2.md": LOG_AC2})
+        Path(verify, "qae-artifacts", "qae", "AC1-step-2.png").write_bytes(png(1440))
         bin_dir = workdir(self)
         Path(bin_dir, "gh").write_text('#!/bin/sh\ncase "$1 $2" in\n  pr*) cat "%s" ;;\n  *pulls*) printf "app/page.tsx\\n" ;;\n'
                                        '  api*) cat "%s" ;;\nesac\n' % (Path(work, "body.md"), Path(work, "comments.json")))

@@ -68,6 +68,19 @@ class QaeArtifacts(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("step 2 has no screenshot (expected qae/AC1-step-2.png)", result.stdout)
 
+    def test_a_reference_comparison_without_its_screenshot_names_the_comparison(self):
+        # A consumer's live run (2026-10-07): the explorer read the reference and its last screenshot, then logged
+        # the comparison as step 5 of a ticket criterion without saving step 5's own screenshot, twice.
+        write(self.root, {"qae/TC2.md": "- step 1: resized to 375 and loaded / -> the menu button\n"
+                                        "- step 2: compared with reference home-mobile -> matches: the menu button and hero\n",
+                          "qae/TC2-step-1.png": "png"})
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("qae/TC2.md: step 2, the comparison with reference home-mobile, has no screenshot (expected "
+                      "qae/TC2-step-2.png): a comparison is a step, so save its screenshot, at the reference's width, "
+                      "before writing its line", result.stdout)
+        self.assertNotIn("step 1", result.stdout)
+
     def test_a_feature_re_walk_step_needs_its_screenshot_too(self):
         # A re-walk (docs/feature-map.md) logs each feature under qae/features/, beside its screenshots.
         write(self.root, {"qae/features/sign-in.md": "- step 1: signed in -> the dashboard\n- step 2: signed out -> the login page\n",

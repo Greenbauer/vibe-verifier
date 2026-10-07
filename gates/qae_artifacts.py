@@ -27,6 +27,8 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
 1. Every step in every step log has its screenshot: `qae/ACn.md` line `- step k:` needs a
    non-empty `qae/ACn-step-k.png`. A step without a picture is a claim, not evidence. A feature
    re-walk's log, `qae/features/<id>.md`, is held to the same rule (`qae/features/<id>-step-k.png`).
+   A step line naming `reference <key>` is a comparison with that design reference, and its finding
+   says so: the explorer once logged one without saving its screenshot.
 2. The console holds no error outside the allowlist: every `[ERROR]` line in `console-*.log`.
    A `Failed to load resource` line for a host other than the declared site is not judged, the
    same way a third-party request is not. Any other console error still is.
@@ -63,7 +65,7 @@ import os
 import re
 import urllib.parse
 
-from _acceptance import criteria, declares_none, png_size, ticket_items
+from _acceptance import criteria, declares_none, named_references, png_size, ticket_items
 from _contract import CannotRun, Finding, run_gate
 
 GATE = "qae-artifacts"
@@ -113,8 +115,17 @@ def screenshot_findings(root, logs):
                 continue
             shot = os.path.join(os.path.dirname(log), "%s-step-%s.png" % (stem, match.group("k")))
             if not os.path.isfile(shot) or os.path.getsize(shot) == 0:
-                findings.append(Finding("step %s has no screenshot (expected %s)" % (match.group("k"), relative(shot, root)), relative(log, root)))
+                findings.append(Finding(missing_screenshot(match.group("k"), line, relative(shot, root)), relative(log, root)))
     return findings
+
+
+def missing_screenshot(k, line, shot):
+    """The finding for step k, whose screenshot `shot` is missing; a comparison with a reference says so."""
+    named = named_references(line)
+    if not named:
+        return "step %s has no screenshot (expected %s)" % (k, shot)
+    return ("step %s, the comparison with reference %s, has no screenshot (expected %s): a comparison is a step, so "
+            "save its screenshot, at the reference's width, before writing its line" % (k, ", ".join(named), shot))
 
 
 def screenshot_widths(root, log):

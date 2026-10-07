@@ -87,17 +87,22 @@ it cannot drop its ticket's requirements; an empty file links no ticket. Exit 2 
 read.
 
 `qae-inputs [--manifest FILE] [--widths-file FILE] [--references DIR] [--evidence DIR] [--listing FILE]
-[--digests FILE]` prepares what the QAE explorer and its gates read from the site step's supplies and
-the QAE manifest, before the explorer runs. Each design reference `<key>.png` the site step wrote to DIR
-(default qae-inputs/references) is copied to `<evidence>/references/<key>.png` (default qae-artifacts),
-listed with its size in FILE (default qae-inputs/references.md) for the explorer, and its sha256 written
-to the digests file as one JSON object, which the workflow declares as an output so the gate judges the
-image the workflow supplied and never one the explorer wrote. Given the manifest, the `--widths` of its
-qae-artifacts line (judged from the base, like a run) are written one per line to the widths file
-(default qae-inputs/widths), so the explorer checks each criterion at the widths the gate will require;
-no such option writes no file. It prints `references: <n>`, one `<key>: <width>x<height>` line each, and
-`widths: <list>` (or `widths: none`). Exit 2 when a supplied file is not a PNG or its name is not a
-reference key, or the manifest cannot be read.
+[--digests FILE] [--turns FILE [--criteria FILE] [--ticket FILE] [--features DIR]]` prepares what the QAE
+explorer and its gates read from the site step's supplies and the QAE manifest, before the explorer runs.
+Each design reference `<key>.png` the site step wrote to DIR (default qae-inputs/references) is copied
+to `<evidence>/references/<key>.png` (default qae-artifacts), listed with its size in FILE (default
+qae-inputs/references.md) for the explorer, and its sha256 written to the digests file as one JSON object,
+which the workflow declares as an output so the gate judges the image the workflow supplied and never one
+the explorer wrote. Given the manifest, the `--widths` of its qae-artifacts line (judged from the base,
+like a run) are written one per line to the widths file (default qae-inputs/widths), so the explorer
+checks each criterion at the widths the gate will require; no such option writes no file. With
+`--turns FILE` it also writes the explorer's turn cap there, sized to its walks: each criterion of the PR
+body (`--criteria`, default qae-inputs/pr-body.md) and of the ticket (`--ticket`, default
+qae-inputs/ticket.md; absent is none) once per role it names and per width, plus each feature to re-walk
+(`--features`, default qae-inputs/features). It prints `references: <n>`, one
+`<key>: <width>x<height>` line each, `widths: <list>` (or `widths: none`) and, with `--turns`,
+`max turns: <n> (<walks> walks)`. Exit 2 when a supplied file is not a PNG or its name is not a reference
+key, or the manifest or the criteria file cannot be read.
 
 `features --manifest FILE --changed-files FILE [--out DIR]` reads the manifest's acceptance-verdict
 line (judged from the base, like a run) and, when it has `--features`, prints which features of that
@@ -944,10 +949,39 @@ def manifest_widths(args):
         sys.exit(fail("the qae-artifacts line in %s has a malformed --widths" % args.manifest))
 
 
+# The Claude lane's turn cap (claude-code-action's --max-turns), sized to what the explorer walks: one walk is
+# one criterion at one viewport width as one role, or one feature re-walk. A fixed 80 cut off a correct run on
+# a consumer (2026-10-07: two criteria at two widths took 54 turns, then more than 80 on a re-run of the same
+# head). Its other runs took 18 and 34 turns for two criteria at one width, 39 for three, 44 for one criterion
+# at two widths with a form, and 60 for two criteria at two widths. 40 plus 30 a walk is at least twice each of
+# those, and twice the 80 the cut-off run stopped at. 80 stays the floor and 240 bounds it: at the slowest turn
+# measured there (4.5 seconds) 240 turns end inside the explore job's 30 minutes.
+TURNS_BASE, TURNS_PER_WALK, TURNS_FLOOR, TURNS_CEILING = 40, 30, 80, 240
+
+
+def explorer_turns(criteria_text, ticket_text, widths, features):
+    """(walks, turn cap) for the criteria of a PR body and its ticket, at each of `widths`, plus `features` re-walks."""
+    items = ([] if declares_none(criteria_text) else read_criteria(criteria_text)) + ticket_items(ticket_text)[0]
+    walks = sum(max(1, len(annotations(wording).roles)) for _, wording in items) * max(1, len(widths)) + features
+    return walks, min(TURNS_CEILING, max(TURNS_FLOOR, TURNS_BASE + TURNS_PER_WALK * walks))
+
+
 def qae_inputs_command(args):
     """Copy each supplied design reference into the evidence, list it for the explorer, declare its digest,
-    and write the widths the manifest's qae-artifacts line requires."""
+    write the widths the manifest's qae-artifacts line requires and, asked, the explorer's turn cap."""
     widths = manifest_widths(args)
+    turns = None
+    if args.turns:
+        try:
+            criteria_text = read_text(args.criteria)
+            ticket_text = read_text(args.ticket) if os.path.isfile(args.ticket) else ""
+        except OSError as error:
+            return fail("could not read %s" % error)
+        names = os.listdir(args.features) if os.path.isdir(args.features) else []
+        features = len([name for name in names if name.endswith(".md")])
+        turns = explorer_turns(criteria_text, ticket_text, widths, features)
+        with open(args.turns, "w", encoding="utf-8") as handle:
+            handle.write("%d\n" % turns[1])
     if widths:
         os.makedirs(os.path.dirname(args.widths_file) or ".", exist_ok=True)
         with open(args.widths_file, "w", encoding="utf-8") as handle:
@@ -978,7 +1012,8 @@ def qae_inputs_command(args):
         with open(args.digests, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(digests, sort_keys=True) + "\n")
     print("\n".join(["references: %d" % len(found)] + ["%s: %dx%d" % (key, *size) for key, (_, size) in sorted(found.items())]
-                    + ["widths: %s" % (", ".join(map(str, widths)) or "none")]))
+                    + ["widths: %s" % (", ".join(map(str, widths)) or "none")]
+                    + (["max turns: %d (%d walks)" % (turns[1], turns[0])] if turns else [])))
     return 0
 
 
@@ -1154,6 +1189,13 @@ def main():
                         "from the base, are written to --widths-file")
     inputs.add_argument("--widths-file", default="qae-inputs/widths", metavar="FILE",
                         help="where the widths go, one per line (default: qae-inputs/widths)")
+    inputs.add_argument("--turns", metavar="FILE", help="write the explorer's turn cap here, sized to its walks")
+    inputs.add_argument("--criteria", default="qae-inputs/pr-body.md", metavar="FILE",
+                        help="with --turns, the PR body whose criteria are walked (default: qae-inputs/pr-body.md)")
+    inputs.add_argument("--ticket", default="qae-inputs/ticket.md", metavar="FILE",
+                        help="with --turns, the ticket's criteria, when the file exists (default: qae-inputs/ticket.md)")
+    inputs.add_argument("--features", default="qae-inputs/features", metavar="DIR",
+                        help="with --turns, the features to re-walk, one <id>.md each (default: qae-inputs/features)")
     inputs.add_argument("--repo", default=".")
     inputs.add_argument("--base-ref", default=None)
     rewalk = commands.add_parser("features", help="the features a pull request's changed paths touch, by the selection "

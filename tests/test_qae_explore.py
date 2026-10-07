@@ -12,7 +12,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, clean_env, commit, git, write
+from helpers import ROOT, clean_env, commit, git, make_repo, write
+from test_qae_annotations import action_script
 from test_qae_artifacts import CLEAN_REQUESTS, session_with
 from test_review_harness import prompt_block
 
@@ -354,6 +355,65 @@ class Review(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(Path(work, "qae-inputs", "verdict.md").read_text(), verdict + "\n")
         self.assertEqual(Path(work, "qae-inputs", "changed-files").read_text(), "app/page.tsx\n")
+
+
+class TurnCap(unittest.TestCase):
+    """The Claude lane's --max-turns, sized by actions/qae-inputs to what the explorer walks: each criterion
+    of the pull request and its ticket once per role it names and per width, plus each feature re-walk.
+    40 plus 30 a walk, never below 80 nor above 240 (bin/vibe-verifier, TURNS_BASE)."""
+
+    def run_action(self, files, widths=None):
+        manifest = "qae-artifacts --artifacts qae-artifacts%s\n" % (" --widths " + widths if widths else "")
+        repo = make_repo(self, {".vibe-verifier-qae": manifest})
+        write(repo, files)
+        output = Path(repo, ".git", "github-output")
+        output.write_text("")
+        result = subprocess.run(["bash", "-e", "-c", action_script("qae-inputs")], cwd=repo, capture_output=True, text=True,
+                                env=clean_env({"GITHUB_ACTION_PATH": str(ROOT / "actions" / "qae-inputs"), "GITHUB_OUTPUT": str(output),
+                                               "RUNNER_TEMP": os.path.join(repo, ".git"), "VV_MANIFEST": ".vibe-verifier-qae",
+                                               "VV_ENTRIES": "", "VV_REFERENCES": "qae-inputs/references",
+                                               "VV_EVIDENCE": "qae-artifacts"}))
+        return result, output.read_text()
+
+    def cap(self, files, widths=None):
+        result, output = self.run_action(files, widths)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return int(re.search(r"^max-turns=([0-9]+)$", output, re.MULTILINE).group(1)), result.stdout
+
+    def test_the_run_a_fixed_80_cut_off_gets_twice_that(self):
+        # A consumer's live run (2026-10-07): a pull request declaring None, its ticket's two criteria (one naming a
+        # design reference) at two widths. It took 54 turns, then ran out at 80 on a re-run of the same head.
+        ticket = ("## Acceptance criteria\n\n- The portfolio page lists its sections\n"
+                  "- At 375 pixels wide, the home page matches its mobile design reference [ref: home-mobile]\n")
+        turns, stdout = self.cap({"qae-inputs/pr-body.md": "## Acceptance criteria\n\n- None: a workflow change\n",
+                                  "qae-inputs/ticket.md": ticket}, "1280,375")
+        self.assertEqual(turns, 160)
+        self.assertIn("max turns: 160 (4 walks)", stdout)
+
+    def test_each_role_and_each_feature_to_re_walk_is_a_walk(self):
+        turns, _ = self.cap({"qae-inputs/pr-body.md": "## Acceptance criteria\n\n- Only an admin deletes [as: admin, read-only]\n",
+                             "qae-inputs/features/sign-in.md": "# Sign-in\n"}, "1280,375")
+        self.assertEqual(turns, 40 + 30 * (2 * 2 + 1))
+
+    def test_a_run_with_one_walk_keeps_the_floor_of_80(self):
+        self.assertEqual(self.cap({"qae-inputs/pr-body.md": "## Acceptance criteria\n\n- The home page loads\n"})[0], 80)
+
+    def test_the_cap_is_bounded_whatever_the_body_lists(self):
+        body = "## Acceptance criteria\n\n" + "".join("- Criterion %d holds\n" % n for n in range(12))
+        self.assertEqual(self.cap({"qae-inputs/pr-body.md": body}, "1280,375")[0], 240)
+
+    def test_without_the_pr_body_the_cap_cannot_be_sized(self):
+        result, output = self.run_action({"README.md": "x\n"})
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("could not read", result.stderr)
+        self.assertEqual(output, "")
+
+    def test_the_claude_lane_passes_the_cap_to_the_explorer(self):
+        text = TEMPLATE.read_text()
+        self.assertIn("            --max-turns ${{ steps.references.outputs.max-turns }}\n", text)
+        self.assertNotIn("--max-turns 8", text)
+        self.assertIn("        id: references\n        uses: Greenbauer/vibe-verifier/actions/qae-inputs@", text)
+        self.assertIn("    value: ${{ steps.prepare.outputs.max-turns }}\n", (ROOT / "actions" / "qae-inputs" / "action.yml").read_text())
 
 
 if __name__ == "__main__":

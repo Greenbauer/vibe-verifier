@@ -16,6 +16,7 @@ from test_qae_artifacts import CLEAN_REQUESTS, session_with
 MANIFEST = ROOT / "harnesses" / "qae" / "manifest"
 QAE = ("acceptance-verdict --criteria qae-inputs/pr-body.md --verdict qae-inputs/verdict.md --artifacts qae-artifacts\n"
        "qae-artifacts --artifacts qae-artifacts --criteria qae-inputs/pr-body.md --site-file qae-inputs/site-url --widths 1280,375\n")
+BODY = "## Acceptance criteria\n\n- The home page shows its navigation\n- The portfolio page lists its sections\n"
 
 
 class Gate(unittest.TestCase):
@@ -70,6 +71,7 @@ class QaeInputs(unittest.TestCase):
     """The explorer is told the widths the gate will require, from the same line, judged from the base."""
 
     def run_action(self, repo, manifest=".vibe-verifier-qae", entries=""):
+        write(repo, {"qae-inputs/pr-body.md": BODY})
         output = Path(repo, ".git", "github-output")
         output.write_text("")
         result = subprocess.run(["bash", "-e", "-c", action_script("qae-inputs")], cwd=repo, capture_output=True, text=True,
@@ -89,7 +91,8 @@ class QaeInputs(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.widths(repo), "1280\n375\n")
         self.assertIn("widths: 1280, 375", result.stdout)
-        self.assertEqual(output, "references={}\n")
+        # Two criteria at two widths are four walks: the turn cap grows with them (bin/vibe-verifier TURNS_BASE).
+        self.assertEqual(output, "references={}\nmax-turns=160\n")
 
     def test_no_widths_option_writes_no_file(self):
         repo = make_repo(self, {".vibe-verifier-qae": QAE.replace(" --widths 1280,375", "")})
@@ -125,7 +128,11 @@ class Template(unittest.TestCase):
         self.assertIn("--widths", MANIFEST.read_text())
         prompt = (ROOT / "harnesses" / "qae" / "prompt.md").read_text()
         for phrase in ("If qae-inputs/widths exists", "check every criterion's end state at\n   each of them",
-                       "every theme as well", "reload the page", "try one\n   invalid input"):
+                       "every theme as well", "reload the page",
+                       "only\n   when that screen has a form or another input, try one invalid input in it",
+                       "Never navigate to a URL that neither the criterion names nor the site links to",
+                       "unless the criterion's own text declares it\n   (expected-refusal: <status> <path>), and writing that in "
+                       "a step line declares nothing"):
             self.assertIn(phrase, prompt)
 
     def test_the_explore_step_passes_no_manifest_input_so_the_default_is_the_qae_manifest(self):

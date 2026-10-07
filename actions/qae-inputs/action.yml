@@ -1,5 +1,5 @@
 name: Vibe Verifier QAE inputs
-description: Before the QAE explorer runs, copy the design references the site step supplied into the evidence, list them for the explorer, and declare their digests so the verify job's gate judges the images the workflow supplied; and write the viewport widths the QAE manifest's qae-artifacts line requires, for the explorer.
+description: Before the QAE explorer runs, copy the design references the site step supplied into the evidence, list them for the explorer, and declare their digests so the verify job's gate judges the images the workflow supplied; write the viewport widths the QAE manifest's qae-artifacts line requires, for the explorer; and declare the explorer's turn cap, sized to what it walks.
 inputs:
   manifest:
     description: >-
@@ -25,6 +25,14 @@ outputs:
       acceptance-verdict --references: a step output, because the explorer can write under the evidence
       directory and must not choose which image a criterion is judged against.
     value: ${{ steps.prepare.outputs.references }}
+  max-turns:
+    description: >-
+      The explorer's turn cap, for claude-code-action's --max-turns on the Claude lane (the Codex CLI takes
+      no such limit; its job's timeout bounds it). One walk is one criterion of qae-inputs/pr-body.md or
+      qae-inputs/ticket.md at one width of qae-inputs/widths as one role it names, or one feature in
+      qae-inputs/features/; the cap is 40 plus 30 a walk, never below 80 nor above 240 (the numbers behind
+      it: TURNS_BASE in bin/vibe-verifier). The explore job writes those inputs before this step runs.
+    value: ${{ steps.prepare.outputs.max-turns }}
 runs:
   using: composite
   steps:
@@ -44,6 +52,9 @@ runs:
           printf '%s\n' "$VV_ENTRIES" > "$manifest"
         fi
         digests="$RUNNER_TEMP/vv-reference-digests.json"
+        turns="$RUNNER_TEMP/vv-explorer-turns"
         python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" qae-inputs --manifest "$manifest" --references "$VV_REFERENCES" \
-          --evidence "$VV_EVIDENCE" --listing "$VV_REFERENCES.md" --digests "$digests" --widths-file qae-inputs/widths
+          --evidence "$VV_EVIDENCE" --listing "$VV_REFERENCES.md" --digests "$digests" --widths-file qae-inputs/widths \
+          --turns "$turns"
         echo "references=$(cat "$digests")" >> "$GITHUB_OUTPUT"
+        echo "max-turns=$(cat "$turns")" >> "$GITHUB_OUTPUT"

@@ -31,7 +31,8 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
    base, picks the [features to re-walk](#re-walking-the-features-a-pull-request-touches) when that is
    on, builds and starts the PR's site on the runner (or resolves its preview), copies the design
    references the site step supplied into the evidence, installs the browser, and runs
-   `claude-code-action` with [`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) as its browser. The prompt
+   `claude-code-action` with [`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) as its browser,
+   under a [turn cap](#the-turn-cap) sized to the run. The prompt
    ([`prompt.md`](prompt.md)) tells the model to walk each criterion under the PR body's
    `## Acceptance criteria` heading, append one line per action to `qae-artifacts/qae/ACn.md`
    (`- step k: <what you did> -> <what you saw>`), save a screenshot per step, then write
@@ -112,18 +113,24 @@ holds a mockup beside the page.
   what was compared, lists each with its width in `qae-inputs/references.md` for the explorer, and
   declares each image's sha256 as the explore job's `references` output, which the verify job writes to
   `qae-inputs/references.json` for `acceptance-verdict --references`.
-- The explorer opens the image, reaches the same screen and state with the browser resized to that
-  width, saves the screenshot and compares the two, logging a step that names `reference <key>`. A
-  control present in one image and not the other is a difference, never a match: it FAILs a structural
-  mismatch (a missing or extra control, a different layout, a different state) and never pixel noise.
+- The explorer opens the image and reaches the same screen and state with the browser resized to that
+  width. The comparison is a step of its own: it saves that step's screenshot first, still at the
+  reference's width, then compares the two and logs the step, naming `reference <key>` (and names it in
+  no other step). A control present in one image and not the other is a difference, never a match: it
+  FAILs a structural mismatch (a missing or extra control, a different layout, a different state) and
+  never pixel noise. Both halves come from a consumer's live runs (2026-10-07): an explorer logged the
+  comparison without saving its screenshot, twice, and another compared a 375-pixel mobile reference
+  with a 1280-pixel screenshot.
 - The gate refuses the criterion when the workflow supplied no such image: a reference is the
   operator's to supply (needs-operator-reference) and never one the explorer invents, so the criterion
   cannot pass until the site step supplies it. It also refuses an evidence copy whose sha256 is not the
   declared one (the explorer can write under `qae-artifacts/`, so the digest travels as a step output,
   [like the site URL](#rules-the-harness-obeys-each-from-a-real-run)), and a PASS whose step log
-  `qae/ACn.md` has no step line naming `reference <key>`. Whether the two images match is the
-  explorer's judgment, in that step line and its screenshot; the gate holds that the comparison
-  happened, against the image the workflow supplied.
+  `qae/ACn.md` has no step line naming `reference <key>`, or one whose screenshot `qae/ACn-step-k.png`
+  is missing or not exactly as wide as the reference (both widths read from the PNG header). Whether the
+  two images match is the explorer's judgment, in that step line and its screenshot; the gate holds
+  that the comparison happened, at the reference's width, against the image the workflow supplied.
+  `qae-artifacts` names a comparison step whose screenshot is missing as the comparison it is.
 
 **`[as: <role>, <role>]`** walks the criterion once per role.
 
@@ -217,14 +224,42 @@ not readable from its header.
 
 **Beyond the criteria**, on each criterion's screen, the explorer also uses every action control the
 criterion touches through to its end state (a save that is saved, not a button that is only shown),
-reloads after a save to check the entered values persisted, and tries one invalid input, expecting a
-handled error rather than a crash or a blank page. Each is a step of that criterion, with its
-screenshot, and any that fails makes the criterion a FAIL. No gate checks them: what counts as every
-control a criterion touches, or as a handled error, is judgment. Two structural checks still apply.
-A save that answered 400 or worse fails the network check, and so does the invalid input's request,
-if it reaches the server, unless the criterion declares that refusal
-(`expected-refusal: 422 /api/profile`, [below](#the-adjudicator-the-artifacts-decide-not-the-prose)).
-The explorer is told to prefer an invalid input the page refuses before sending anything.
+reloads after a save to check the entered values persisted, and, only when that screen has a form or
+another input, tries one invalid input in it, expecting a handled error rather than a crash or a blank
+page. Each is a step of that criterion, with its screenshot, and any that fails makes the criterion a
+FAIL. No gate checks them: what counts as every control a criterion touches, or as a handled error, is
+judgment. Two structural checks still apply. A save that answered 400 or worse fails the network check,
+and so does the invalid input's request, if it reaches the server, unless the criterion declares that
+refusal in its own text (`expected-refusal: 422 /api/profile`,
+[below](#the-adjudicator-the-artifacts-decide-not-the-prose)); the same words in a step line declare
+nothing. The explorer is told to prefer an invalid input the page refuses before sending anything, and
+never to navigate to a URL that neither the criterion names nor the site links to: on a consumer's live
+run (2026-10-07) "try one invalid input" on a criterion with no form sent it to an invented URL, whose
+404 the network check refused.
+
+## The turn cap
+
+On the Claude lane `claude-code-action` stops the explorer at `--max-turns`, and a run that stops there
+fails the explore job even when the site is correct. A fixed 80 did that on a consumer (2026-10-07): two
+ticket criteria at two widths took 54 turns, then more than 80 on a re-run of the same head. So the
+template's `Prepare the explorer's references and widths` step
+([`actions/qae-inputs`](../../actions/qae-inputs/action.yml)) sizes the cap to the run and declares it as
+its `max-turns` output, which the explorer step passes as `--max-turns`:
+
+- One walk is one criterion (the pull request's or [its ticket's](#the-tickets-criteria)) at one width
+  of `qae-inputs/widths` as one role it names in `[as: ...]`, or one feature in `qae-inputs/features/`.
+  Themes are not counted: whether a site has two is prose in `qae-inputs/site.md`, not a fact the step
+  can read.
+- The cap is 40 plus 30 a walk, never below 80 and never above 240. Measured on that consumer, the runs
+  took 18 to 39 turns for two or three criteria at one width, 44 for one criterion at two widths with a
+  form, and 54 to 60 for two criteria at two widths: the cap is at least twice each, and twice the 80
+  the cut-off run stopped at. The slowest turn there took 4.5 seconds, so 240 turns still end inside the
+  explore job's 30 minutes.
+- A run that reaches the cap still fails the job: the cap bounds a runaway, it does not pass one.
+
+The Codex lane has no such cap: the pinned Codex CLI's `exec` takes no turn limit, and the job's
+`timeout-minutes` bounds it. A consumer's copy made before the cap was sized still passes
+`--max-turns 80`, and keeps that cap until it copies the template's explorer line.
 
 ## Which pull requests need a check
 
@@ -515,7 +550,8 @@ is the model judging meaning, and not the same way twice. So the second gate in 
 [`qae-artifacts`](../../gates/qae_artifacts.py), reads what playwright-mcp and the explorer saved
 and refuses on structural facts:
 
-1. every `- step k:` line in a step log has a non-empty `qae/ACn-step-k.png`;
+1. every `- step k:` line in a step log has a non-empty `qae/ACn-step-k.png` (a step naming
+   `reference <key>` is reported as that comparison);
 2. no `[ERROR]` in any `console-*.log` outside `--allow-console` patterns, except Chromium's
    `Failed to load resource` line for a host other than the declared site, which is judged (and
    skipped) like that host's request in 4;
