@@ -36,6 +36,8 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - `tests/test_qae_artifacts.py::test_a_step_without_a_screenshot_fails`
 - `tests/test_criteria.py::test_a_pull_request_that_changes_only_unrendered_paths_needs_no_check`
 - `tests/test_features.py::test_a_selected_feature_without_its_line_is_refused`
+- `tests/test_features.py::test_states_left_unwalked_are_printed_and_never_a_finding`
+- `tests/test_features.py::test_a_feature_with_no_walked_step_is_refused_whatever_its_line_says`
 - `tests/test_qa_review.py::test_changes_needed_lists_each_criterion_as_the_explorer_judged_it`
 - `tests/test_qae_annotations.py::test_a_reference_the_workflow_did_not_supply_is_the_operators_to_supply`
 - `tests/test_qae_annotations.py::test_a_pass_missing_a_role_is_refused`
@@ -54,3 +56,4 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - The verdict is taken only from the workflow's own identity, never from another commenter.
 - A design reference's digest reaches the gate as an explore job output, never as a file the explorer could rewrite; a reference the workflow did not supply is refused, never invented.
 - The Claude lane's `--max-turns` is the qae-inputs step's `max-turns` output, sized to the run's walks; a consumer copy that still passes a fixed number keeps that number.
+- A feature re-walk covers at most `--max-states` states of each feature. A `regression-check` FAIL means a walked step broke; a state not reached goes on a `regression-skip` line, which no gate judges. A consumer copy with the older prompt still tells the explorer to walk every state.

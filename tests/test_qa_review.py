@@ -96,6 +96,17 @@ class QaReview(unittest.TestCase):
         self.verdict = self.file("verdict.md", VERDICT)
         self.assertNotIn("re-walked", self.posted(gates="failure"))
 
+    def test_a_re_walk_names_the_states_the_explorer_left_unwalked(self):
+        # A re-walk covers at most a few states of a feature, so "re-walked" alone would overstate it. A
+        # skip line with no check line is a feature that was not re-walked: the gate's log names it.
+        self.verdict = self.file("verdict.md", VERDICT + "regression-check: sign-in -- PASS -- still signs in "
+                                                         "(qae/features/sign-in.md::step 1: signed in -> the dashboard)\n"
+                                                         "regression-skip: sign-in -- 4, 5, 7\n"
+                                                         "regression-skip: billing -- 1, 2\n")
+        body = self.posted(gates="failure")
+        self.assertIn("- Feature `sign-in` re-walked, explorer says PASS (not walked: 4, 5, 7)\n", body)
+        self.assertNotIn("billing", body)
+
     def test_changes_needed_lists_each_criterion_as_the_explorer_judged_it(self):
         body = self.posted(gates="failure")
         self.assertEqual(body.splitlines()[1], "## QA review: changes needed ❌")

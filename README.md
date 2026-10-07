@@ -179,7 +179,7 @@ flowchart LR
 
 The explorer can navigate and observe. The verifier independently checks that every criterion has a PASS with at least one resolving evidence anchor in the working tree or run artifacts. It checks screenshots for recorded steps, a navigation and network record, and recorded console/request failures outside configured exceptions, including a criterion's declared expected 401/403 refusal. These checks establish evidence shape, not whether the observations prove the criterion's meaning.
 
-With a [feature map](docs/feature-map.md), the explorer can also re-walk the features each pull request's changes touch (at most three, chosen from the map's own source globs with shared files left out), and the verifier then requires an anchored PASS for each of them too.
+With a [feature map](docs/feature-map.md), the explorer can also re-walk the features each pull request's changes touch (at most three, chosen from the map's own source globs with shared files left out, and at most three states of each), and the verifier then requires an anchored PASS over at least one walked step for each of them too. A state it did not walk is reported, never failed.
 
 Review receipts explicitly name a head SHA. QAE instead uses the pull-request workflow checkout and artifacts from the same run; its verdict comment is selected by bot identity, without a SHA/run-ID match. The consumer must supply the intended application revision, and configure the required checks to include explorer failures. See the [revision-binding limits](docs/threat-model.md#revision-binding-limits).
 

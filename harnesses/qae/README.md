@@ -59,7 +59,8 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
 ## Re-walking the features a pull request touches
 
 Opt-in, for a repository with a [feature map](../../docs/feature-map.md): the explorer also re-walks
-each feature the pull request's changed paths touch, and the verify job requires a PASS for each.
+a few states of each feature the pull request's changed paths touch, and the verify job requires a
+PASS for each, over at least one step that was walked.
 Turn it on by adding `--features docs/features --changed-files qae-inputs/changed-files` to the
 `acceptance-verdict` line of `.vibe-verifier-qae` (the line is judged from the base, so the next pull
 request is the first one re-walked). Without that, the explore job's `Select the features to re-walk`
@@ -67,15 +68,33 @@ step selects nothing and nothing changes.
 
 - The explore job's step runs [`actions/features`](../../actions/features/action.yml): the features
   whose own source globs match a changed path, a path more than `--shared-over` (default 2) features
-  list counting for none, at most `--max-features` (default 3), each feature judged by its file at
-  the base. It copies each to `qae-inputs/features/<id>.md`. The checkout has the base for this
-  (`fetch-depth: 0`).
-- The explorer re-walks each after the criteria, logs it to `qae/features/<id>.md` with a screenshot
-  per step, and adds `regression-check: <id> -- PASS|FAIL -- <sentence> (qae/features/<id>.md::<step>)`
-  to its verdict.
+  list counting for none, at most `--max-features` (default 3), each feature selected by its file at
+  the base. The checkout has the base for this (`fetch-depth: 0`). It copies each to
+  `qae-inputs/features/<id>.md` as the working tree has it, so a pull request that updates a feature
+  file is re-walked against its own Reach and Verify, and writes `qae-inputs/features.md`: how many
+  states of each feature to walk (`--max-states`, default 3) and the changed paths that selected each.
+- After the criteria the explorer walks at most that many states of each feature (a state is a
+  numbered step of the file's Verify section), first those closest to its changed paths, and one
+  state of every feature before a second of any. It logs them to `qae/features/<id>.md` with a
+  screenshot per step and adds two lines to its verdict:
+  `regression-check: <id> -- PASS|FAIL -- <sentence> (qae/features/<id>.md::<step>)` and, when it
+  left states unwalked, `regression-skip: <id> -- <those states>`.
+- A FAIL means a step that was walked showed the feature no longer works as its file describes. A
+  state that was not reached, or could not be set up, is never a FAIL: it goes on the skip line. On
+  a consumer's live run (2026-10-07), told to walk every numbered step and cited test of three
+  features, the explorer left all three unfinished and wrote FAILs that named only the states it
+  had not walked.
 - `acceptance-verdict` selects the features again itself and refuses a run unless each has exactly one
-  such line, a PASS whose anchor resolves; `qae-artifacts` checks the feature step logs' screenshots
-  like the criteria's; the review comment lists each re-walked feature.
+  `regression-check` line, a PASS whose anchor resolves, and at least one step in its log with its
+  screenshot (none is a re-walk that did not happen). It prints the skip lines and judges neither
+  them nor how many states were walked. Its finding for a FAIL says how to clear it: fix the
+  regression or, when the pull request means the new behaviour, update the feature file in that
+  pull request. `qae-artifacts` checks the feature step logs' screenshots like the criteria's; the
+  review comment lists each re-walked feature and the states left unwalked.
+
+A consumer whose workflow was copied before the bound keeps the old prompt, which tells the explorer
+to walk every state: bump the pins, then copy the template's re-walk paragraph and step 3 (the prompt
+is inline in the workflow), or the explorer still FAILs a feature it could not finish.
 
 A wrapper passes its gate list to `actions/features` as `entries:`, as it does to `actions/gates`.
 
@@ -227,8 +246,9 @@ criterion touches through to its end state (a save that is saved, not a button t
 reloads after a save to check the entered values persisted, and, only when that screen has a form or
 another input, tries one invalid input in it, expecting a handled error rather than a crash or a blank
 page. Each is a step of that criterion, with its screenshot, and any that fails makes the criterion a
-FAIL. No gate checks them: what counts as every control a criterion touches, or as a handled error, is
-judgment. Two structural checks still apply. A save that answered 400 or worse fails the network check,
+FAIL. They are for criteria only: a [re-walked feature](#re-walking-the-features-a-pull-request-touches)
+is checked for what its states say. No gate checks them: what counts as every control a criterion
+touches, or as a handled error, is judgment. Two structural checks still apply. A save that answered 400 or worse fails the network check,
 and so does the invalid input's request, if it reaches the server, unless the criterion declares that
 refusal in its own text (`expected-refusal: 422 /api/profile`,
 [below](#the-adjudicator-the-artifacts-decide-not-the-prose)); the same words in a step line declare
@@ -247,7 +267,9 @@ template's `Prepare the explorer's references and widths` step
 its `max-turns` output, which the explorer step passes as `--max-turns`:
 
 - One walk is one criterion (the pull request's or [its ticket's](#the-tickets-criteria)) at one width
-  of `qae-inputs/widths` as one role it names in `[as: ...]`, or one feature in `qae-inputs/features/`.
+  of `qae-inputs/widths` as one role it names in `[as: ...]`, or up to three states of one feature in
+  `qae-inputs/features/`: one walk a feature at the default `--max-states 3`, and one more for each
+  three states above that. No run has measured the turns a state takes, so that proportion is a guess.
   Themes are not counted: whether a site has two is prose in `qae-inputs/site.md`, not a fact the step
   can read.
 - The cap is 40 plus 30 a walk, never below 80 and never above 240. Measured on that consumer, the runs

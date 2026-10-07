@@ -99,18 +99,22 @@ checks each criterion at the widths the gate will require; no such option writes
 `--turns FILE` it also writes the explorer's turn cap there, sized to its walks: each criterion of the PR
 body (`--criteria`, default qae-inputs/pr-body.md) and of the ticket (`--ticket`, default
 qae-inputs/ticket.md; absent is none) once per role it names and per width, plus each feature to re-walk
-(`--features`, default qae-inputs/features). It prints `references: <n>`, one
+(`--features`, default qae-inputs/features), which is one walk per three states the manifest's
+acceptance-verdict line lets the explorer walk of it (`--max-states`, default 3). It prints `references: <n>`, one
 `<key>: <width>x<height>` line each, `widths: <list>` (or `widths: none`) and, with `--turns`,
 `max turns: <n> (<walks> walks)`. Exit 2 when a supplied file is not a PNG or its name is not a reference
 key, or the manifest or the criteria file cannot be read.
 
-`features --manifest FILE --changed-files FILE [--out DIR]` reads the manifest's acceptance-verdict
-line (judged from the base, like a run) and, when it has `--features`, prints which features of that
-feature map the changed paths touch: the same selection the gate requires a `regression-check:` line
-for (gates/_features.py). Its first line is `features: <n>`; with `--out` it copies each selected
-feature file, as the head has it, to `<DIR>/<id>.md` for a QAE explorer to read. A line without
-`--features` prints `features: 0` and the reason. Exit 2 when the manifest, the changed paths or the
-map cannot be read.
+`features --manifest FILE --changed-files FILE [--out DIR [--listing FILE]]` reads the manifest's
+acceptance-verdict line (judged from the base, like a run) and, when it has `--features`, prints which
+features of that feature map the changed paths touch: the same selection the gate requires a
+`regression-check:` line for (gates/_features.py). Its first line is `features: <n>`; with `--out` it
+copies each selected feature file, as the working tree has it (the pull request's own copy, so one that
+updates a feature is re-walked against its updated Reach and Verify), to `<DIR>/<id>.md` for a QAE
+explorer to read, and with `--listing` writes the list the explorer reads beside them: the most states to
+walk of each feature (the line's `--max-states`, default 3) and the changed paths that selected each. A
+line without `--features` prints `features: 0` and the reason. Exit 2 when the manifest, the changed
+paths or the map cannot be read.
 
 `rules-doc` renders the Markdown block that lists every rule the manifest's `repo-rules` lines enable
 (their packs and rule directories, read from the working tree): each rule's id, whether it blocks or
@@ -142,7 +146,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATES = os.path.join(ROOT, "gates")
 sys.path.insert(0, GATES)
 from _acceptance import (PASS_RE, REFERENCE_KEY, annotations, check_lines, criteria as read_criteria,  # noqa: E402
-                         declares_none, not_required, png_size, ticket_items)
+                         declares_none, not_required, png_size, said, ticket_items)
 from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
 from _features import add_selection_arguments, describe, selection  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
@@ -950,19 +954,24 @@ def manifest_widths(args):
 
 
 # The Claude lane's turn cap (claude-code-action's --max-turns), sized to what the explorer walks: one walk is
-# one criterion at one viewport width as one role, or one feature re-walk. A fixed 80 cut off a correct run on
+# one criterion at one viewport width as one role, or up to three states of one feature's re-walk (three is the
+# default --max-states; more states add walks in proportion, which is an assumption: no run has measured the
+# turns one state takes). A fixed 80 cut off a correct run on
 # a consumer (2026-10-07: two criteria at two widths took 54 turns, then more than 80 on a re-run of the same
 # head). Its other runs took 18 and 34 turns for two criteria at one width, 39 for three, 44 for one criterion
 # at two widths with a form, and 60 for two criteria at two widths. 40 plus 30 a walk is at least twice each of
 # those, and twice the 80 the cut-off run stopped at. 80 stays the floor and 240 bounds it: at the slowest turn
 # measured there (4.5 seconds) 240 turns end inside the explore job's 30 minutes.
 TURNS_BASE, TURNS_PER_WALK, TURNS_FLOOR, TURNS_CEILING = 40, 30, 80, 240
+STATES_PER_WALK = 3
 
 
-def explorer_turns(criteria_text, ticket_text, widths, features):
-    """(walks, turn cap) for the criteria of a PR body and its ticket, at each of `widths`, plus `features` re-walks."""
+def explorer_turns(criteria_text, ticket_text, widths, features, states):
+    """(walks, turn cap) for the criteria of a PR body and its ticket, at each of `widths`, plus `features`
+    re-walks of at most `states` states each."""
     items = ([] if declares_none(criteria_text) else read_criteria(criteria_text)) + ticket_items(ticket_text)[0]
-    walks = sum(max(1, len(annotations(wording).roles)) for _, wording in items) * max(1, len(widths)) + features
+    walks = (sum(max(1, len(annotations(wording).roles)) for _, wording in items) * max(1, len(widths))
+             + features * -(-states // STATES_PER_WALK))
     return walks, min(TURNS_CEILING, max(TURNS_FLOOR, TURNS_BASE + TURNS_PER_WALK * walks))
 
 
@@ -979,7 +988,8 @@ def qae_inputs_command(args):
             return fail("could not read %s" % error)
         names = os.listdir(args.features) if os.path.isdir(args.features) else []
         features = len([name for name in names if name.endswith(".md")])
-        turns = explorer_turns(criteria_text, ticket_text, widths, features)
+        options = selection_options(args) if args.manifest and features else None
+        turns = explorer_turns(criteria_text, ticket_text, widths, features, options.max_states if options else STATES_PER_WALK)
         with open(args.turns, "w", encoding="utf-8") as handle:
             handle.write("%d\n" % turns[1])
     if widths:
@@ -1017,16 +1027,32 @@ def qae_inputs_command(args):
     return 0
 
 
-def features_command(args):
-    """The features the acceptance-verdict line's selection picks for these changed paths."""
-    # The notice goes to stderr: a workflow reads this command's first line as `features: <n>`.
+def selection_options(args):
+    """The selection options on the manifest's acceptance-verdict line, judged from the base; None when the
+    manifest has no such line."""
+    # The notice goes to stderr: a workflow reads the first line of `features` as `features: <n>`.
     lines = [gate_args for gate, gate_args in judged_entries(args, notice=sys.stderr) if gate == "acceptance-verdict"]
     parser = argparse.ArgumentParser(prog="acceptance-verdict", add_help=False)
     add_selection_arguments(parser)
     try:
-        options = parser.parse_known_args(lines[0])[0] if lines else None
+        return parser.parse_known_args(lines[0])[0] if lines else None
     except SystemExit:
-        return fail("the acceptance-verdict line in %s has a malformed selection option" % args.manifest)
+        sys.exit(fail("the acceptance-verdict line in %s has a malformed selection option" % args.manifest))
+
+
+def features_listing(chosen, states, out):
+    """What the explorer reads beside the feature files in `out`: how many states to walk of each, and the
+    changed paths that selected each, which say where in the feature to look first."""
+    lines = ["# Features to re-walk", "",
+             "Each feature below is described in %s/<id>.md, as this pull request has that file. Walk at most %d "
+             "state%s of each, first the states closest to the changed files listed for it."
+             % (out, states, "" if states == 1 else "s"), ""]
+    return "\n".join(lines + ["- %s: %s" % (fid, ", ".join(paths)) for fid, paths in chosen.selected]) + "\n"
+
+
+def features_command(args):
+    """The features the acceptance-verdict line's selection picks for these changed paths."""
+    options = selection_options(args)
     if not options or not options.features:
         print("features: 0 (the re-walk is off: %s has no acceptance-verdict line with --features)" % args.manifest)
         return 0
@@ -1040,6 +1066,9 @@ def features_command(args):
         os.makedirs(args.out, exist_ok=True)
         for fid, _ in chosen.selected:
             shutil.copyfile(os.path.join(args.repo, features[fid].path), os.path.join(args.out, fid + ".md"))
+        if args.listing:
+            with open(args.listing, "w", encoding="utf-8") as handle:
+                handle.write(features_listing(chosen, options.max_states, args.out))
     return 0
 
 
@@ -1085,8 +1114,11 @@ def review_criteria(criteria_text, verdict_text, ticket_text=""):
         rows.append("- %s%s, %s: %s" % (item, source, explorer_said(lines.get(item.casefold(), [])), wording))
     # A feature re-walk (docs/feature-map.md) adds one line per feature; which features were required is
     # the gate's to decide, so this lists what the explorer wrote and the gate's log names any missing.
+    # A re-walk is partial by design, so the states the explorer says it left unwalked are listed too.
+    skipped = check_lines(verdict_text, "regression-skip")
     for fid, carried in check_lines(verdict_text, "regression-check").items():
-        rows.append("- Feature `%s` re-walked, %s" % (fid, explorer_said(carried)))
+        unwalked = "; ".join(said(line, "regression-skip") for line in skipped.get(fid, []))
+        rows.append("- Feature `%s` re-walked, %s%s" % (fid, explorer_said(carried), unwalked and " (not walked: %s)" % unwalked))
     return rows
 
 
@@ -1205,6 +1237,8 @@ def main():
     rewalk.add_argument("--base-ref", default=None)
     rewalk.add_argument("--changed-files", required=True, metavar="FILE", help="the pull request's changed paths, one per line")
     rewalk.add_argument("--out", metavar="DIR", help="copy each selected feature file here as <id>.md")
+    rewalk.add_argument("--listing", metavar="FILE", help="with --out, write the list the explorer reads here: the most "
+                        "states to walk of each feature and the changed paths that selected each")
     doc = commands.add_parser("rules-doc", help="print, or write into a file, the generated block listing the rules "
                               "the manifest's repo-rules lines enable")
     doc.add_argument("--repo", default=".")
