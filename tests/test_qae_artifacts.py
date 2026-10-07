@@ -89,6 +89,19 @@ class QaeArtifacts(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("no step logs", result.stdout)
 
+    def test_a_resource_error_on_another_host_is_not_judged_once_the_site_is_declared(self):
+        # Cognito answers a refused refresh with 400, and Chromium logs that on the console.
+        # The network record already ignores that host when a site is declared. The console
+        # line for the same response does too. A resource error on the site itself still fails.
+        write(self.root, {"console-1.log": "[   12ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ https://cognito-idp.us-east-1.amazonaws.com/:0\n"})
+        self.assertEqual(self.run_gate().returncode, 1)
+        scoped = self.run_gate("--site", "http://localhost:3000")
+        self.assertEqual(scoped.returncode, 0, scoped.stdout + scoped.stderr)
+        write(self.root, {"console-1.log": "[   12ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:3000/api/journeys:0\n"})
+        on_site = self.run_gate("--site", "http://localhost:3000")
+        self.assertEqual(on_site.returncode, 1)
+        self.assertIn("status of 400 (Bad Request) @ http://localhost:3000/api/journeys:0", on_site.stdout)
+
     def test_console_error_fails_unless_allowlisted(self):
         write(self.root, {"console-1.log": "[   606ms] [ERROR] Failed to load resource: 404 @ http://localhost:3000/_vercel/insights/script.js:0\n"})
         result = self.run_gate()
