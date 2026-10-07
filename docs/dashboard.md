@@ -333,7 +333,7 @@ and not counted. Active data is cached for 60
 seconds and direct subscription inventory for 300 seconds. The response includes calls used, the
 reported REST limit/remaining/reset values, and the lowest remaining count seen on any response
 (`lowest_remaining`; GitHub meters some endpoint families against a separate counter that the reported
-values omit). A spent counter pauses only its endpoint family until its reset. GraphQL is metered in points, so GitHub refuses a query that costs more than what is left while the counter still reads above zero; that pauses only the GraphQL reads, and the checks keep loading. The token's GraphQL points are shared with everything else that uses the same App, so once a response shows less than half of them left the dashboard stops its GraphQL reads until the counter resets; the latest push, merge-ready title and comment count are blank until then. Rate limits and source errors return partial or briefly
+values omit). A spent counter pauses only its endpoint family until its reset. GraphQL is metered in points, so GitHub refuses a query that costs more than what is left while the counter still reads above zero; that pauses only the GraphQL reads, and the checks keep loading. Rate limits and source errors return partial or briefly
 stale data without advancing its successful sample timestamp. Authentication or access revocation
 clears derived repository data immediately. A rate limit, timeout, or sample older than three minutes keeps the last pull requests and bot rows and marks them stale. The page does the same when its own refresh fails: it keeps the last snapshot and says the refresh failed.
 
