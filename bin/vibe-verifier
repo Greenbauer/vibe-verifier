@@ -79,8 +79,12 @@ changed paths one per line, when it lists no criteria and every path is CI confi
 documentation no site renders. A harness uses it to skip work, so the decision is made by the same
 code in the job that explores and the job that judges. After `criteria: <n>` it prints one line per
 annotation a criterion carries (`AC2 references: home-desktop`, `AC3 roles: admin, read-only`,
-`AC4 malformed: [ref: ]`), read the way the acceptance-verdict gate reads them. Exit 2 when a file
-cannot be read.
+`AC4 malformed: [ref: ]`), read the way the acceptance-verdict gate reads them. With `--ticket FILE`,
+the criteria of the ticket the pull request implements (written by the consumer's workflow) count too,
+as TC1, TC2, ...: a ticket that lists criteria, or a non-empty one in which none can be found (printed
+as `ticket: ...`, and refused by the gate), makes a check needed whatever the pull request declares, so
+it cannot drop its ticket's requirements; an empty file links no ticket. Exit 2 when a file cannot be
+read.
 
 `qae-inputs [--manifest FILE] [--widths-file FILE] [--references DIR] [--evidence DIR] [--listing FILE]
 [--digests FILE]` prepares what the QAE explorer and its gates read from the site step's supplies and
@@ -133,7 +137,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATES = os.path.join(ROOT, "gates")
 sys.path.insert(0, GATES)
 from _acceptance import (PASS_RE, REFERENCE_KEY, annotations, check_lines, criteria as read_criteria,  # noqa: E402
-                         not_required, png_size)
+                         declares_none, not_required, png_size, ticket_items)
 from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
 from _features import add_selection_arguments, describe, selection  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
@@ -907,14 +911,18 @@ def criteria_command(args):
     try:
         text = read_text(args.file)
         changed = [line for line in read_text(args.changed_files).splitlines() if line] if args.changed_files else None
+        ticket_text = read_text(args.ticket) if args.ticket else ""
     except OSError as error:
         return fail("could not read %s" % error)
-    reason = not_required(text, changed)
+    reason = not_required(text, changed, ticket_text)
     if reason:
         print("none: %s" % reason)
         return 0
-    wanted = read_criteria(text)
+    ticket, problem = ticket_items(ticket_text, args.ticket)
+    wanted = ([] if declares_none(text) else read_criteria(text)) + ticket
     print("criteria: %d" % len(wanted))
+    if problem:
+        print("ticket: %s" % problem)
     for item, wording in wanted:
         notes = annotations(wording)
         for label, values in (("references", notes.references), ("roles", notes.roles), ("malformed", notes.malformed)):
@@ -1029,15 +1037,17 @@ def review_state(args):
     return "passed" if args.gates_outcome == "success" else "changes-needed"
 
 
-def review_criteria(criteria_text, verdict_text):
-    wanted = read_criteria(criteria_text)
+def review_criteria(criteria_text, verdict_text, ticket_text=""):
+    ticket, problem = ticket_items(ticket_text)
+    wanted = ([] if declares_none(criteria_text) and (ticket or problem) else read_criteria(criteria_text)) + ticket
+    rows = ["The ticket's criteria could not be read: %s." % problem] if problem else []
     if not wanted:
-        return ["The pull request lists no acceptance criteria. Add a `## Acceptance criteria` list, or "
-                "`- None: <why>` when nothing on the site changes."]
+        return rows or ["The pull request lists no acceptance criteria. Add a `## Acceptance criteria` list, or "
+                        "`- None: <why>` when nothing on the site changes."]
     lines = check_lines(verdict_text, "acceptance-check")
-    rows = []
     for item, wording in wanted:
-        rows.append("- %s, %s: %s" % (item, explorer_said(lines.get(item.casefold(), [])), wording))
+        source = " (from the ticket)" if item.startswith("TC") else ""
+        rows.append("- %s%s, %s: %s" % (item, source, explorer_said(lines.get(item.casefold(), [])), wording))
     # A feature re-walk (docs/feature-map.md) adds one line per feature; which features were required is
     # the gate's to decide, so this lists what the explorer wrote and the gate's log names any missing.
     for fid, carried in check_lines(verdict_text, "regression-check").items():
@@ -1065,7 +1075,8 @@ def review_body(state, args):
                      "The QA gates refused %s. Their findings are in the qae-verify job's log." % head)
         lines.append("")
         verdict = read_text(args.verdict) if args.verdict and os.path.isfile(args.verdict) else ""
-        lines += review_criteria(read_text(args.criteria), verdict)
+        ticket = read_text(args.ticket) if args.ticket and os.path.isfile(args.ticket) else ""
+        lines += review_criteria(read_text(args.criteria), verdict, ticket)
     lines += ["", "[The run and its evidence](%s)" % args.run_url]
     return "\n".join(lines) + "\n"
 
@@ -1128,6 +1139,8 @@ def main():
     reader = commands.add_parser("criteria", help="read a criteria document: prints `none: <reason>` or `criteria: <n>`")
     reader.add_argument("file", help="the PR body or criteria document")
     reader.add_argument("--changed-files", metavar="FILE", help="the pull request's changed paths, one per line")
+    reader.add_argument("--ticket", metavar="FILE", help="the criteria of the ticket the pull request implements, "
+                        "counted as TC1, TC2, ... in addition to its own (empty: no ticket)")
     inputs = commands.add_parser("qae-inputs", help="copy the site step's design references into the QAE evidence, "
                                  "list them for the explorer and write their digests")
     inputs.add_argument("--references", default="qae-inputs/references", metavar="DIR",
@@ -1162,6 +1175,7 @@ def main():
     review.add_argument("--run-url", required=True, metavar="URL")
     review.add_argument("--criteria", required=True, metavar="FILE", help="the PR body the run read")
     review.add_argument("--verdict", metavar="FILE", help="the explorer's verdict comment, when there is one")
+    review.add_argument("--ticket", metavar="FILE", help="the ticket's criteria the run read, when the workflow supplies them")
     review.add_argument("--explore-result", required=True, help="the explore job's result (success, skipped, failure, cancelled)")
     review.add_argument("--gates-outcome", default="", help="the gates step's outcome (success, failure, skipped)")
     review.add_argument("--not-required", default="", metavar="REASON", help="why no browser check is needed; empty when one is")
