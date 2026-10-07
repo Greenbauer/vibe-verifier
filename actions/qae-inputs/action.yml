@@ -29,9 +29,10 @@ outputs:
     description: >-
       The explorer's turn cap, for claude-code-action's --max-turns on the Claude lane (the Codex CLI takes
       no such limit; its job's timeout bounds it). One walk is one criterion of qae-inputs/pr-body.md or
-      qae-inputs/ticket.md at one width of qae-inputs/widths as one role it names, or one feature in
-      qae-inputs/features/; the cap is 40 plus 30 a walk, never below 80 nor above 240 (the numbers behind
-      it: TURNS_BASE in bin/vibe-verifier). The explore job writes those inputs before this step runs.
+      qae-inputs/ticket.md at one width of qae-inputs/widths as one role it names, or up to three states of
+      one feature in qae-inputs/features/ (the acceptance-verdict line's --max-states, default 3, is how many
+      states of each are walked); the cap is 40 plus 30 a walk, never below 80 nor above 240 (the numbers
+      behind it: TURNS_BASE in bin/vibe-verifier). The explore job writes those inputs before this step runs.
     value: ${{ steps.prepare.outputs.max-turns }}
 runs:
   using: composite

@@ -2,6 +2,7 @@
 # The three input files are written by the verify job before the gate runs; the artifacts come from the explore job.
 # To re-walk the features each pull request touches (docs/feature-map.md), add to it:
 #   --features docs/features --changed-files qae-inputs/changed-files
+# The explorer then walks at most three states of each feature; --max-states N changes that.
 # --references is the digest of each design reference the site step supplied: a criterion naming [ref: <key>]
 # is refused unless the workflow supplied that image (harnesses/qae/README.md).
 # --ticket is the criteria of the ticket the pull request implements, which the explore template's criteria job writes

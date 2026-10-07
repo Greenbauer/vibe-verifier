@@ -269,6 +269,27 @@ class FeatureRewalk(unittest.TestCase):
                        "regression-check: <id> -- PASS -- <one sentence> (qae/features/<id>.md::<the step line text>)"):
             self.assertIn(phrase, prompt)
 
+    def test_the_prompt_bounds_the_re_walk_and_keeps_a_fail_for_a_step_that_was_walked(self):
+        # The gate reads these tokens and file names, so the prompt and the gate must name the same ones: the
+        # list actions/features writes, the skip line the gate prints, and what a FAIL may and may not mean.
+        prompt = " ".join(PROMPT.read_text().split())
+        for phrase in ("as this pull request has that file",
+                       "Walk at most as many states of each feature as qae-inputs/features.md says (three when that file is absent)",
+                       "walk one state of every feature before a second state of any",
+                       "and nothing more: the checks beyond a criterion, above, are for criteria only",
+                       "is not a failure: log no step for it and name it on the feature's regression-skip line",
+                       "FAIL only when a step you walked showed that the feature no longer works the way its file describes, "
+                       "never because states were left unwalked or time ran out",
+                       "regression-skip: <id> -- <the states not walked, for example 4, 5, 7>",
+                       "A feature of which you walked no state gets its regression-skip line and no regression-check line"):
+            self.assertIn(phrase, prompt)
+        step = self.explore()
+        step = step[step.index("- name: Select the features to re-walk"):step.index("- uses: actions/setup-node@")]
+        self.assertIn("qae-inputs/features.md tells the explorer how many states of each to walk (--max-states, default 3)", step)
+        action = (ROOT / "actions" / "features" / "action.yml").read_text()
+        self.assertIn('--out "$VV_OUT" --listing "$VV_OUT.md"', action)
+        self.assertIn("    default: qae-inputs/features\n", action)
+
 
 class Applicability(unittest.TestCase):
     """A pull request that needs no browser check builds nothing and is not judged, and both jobs
@@ -386,8 +407,8 @@ class TurnCap(unittest.TestCase):
     of the pull request and its ticket once per role it names and per width, plus each feature re-walk.
     40 plus 30 a walk, never below 80 nor above 240 (bin/vibe-verifier, TURNS_BASE)."""
 
-    def run_action(self, files, widths=None):
-        manifest = "qae-artifacts --artifacts qae-artifacts%s\n" % (" --widths " + widths if widths else "")
+    def run_action(self, files, widths=None, verdict_line=""):
+        manifest = verdict_line + "qae-artifacts --artifacts qae-artifacts%s\n" % (" --widths " + widths if widths else "")
         repo = make_repo(self, {".vibe-verifier-qae": manifest})
         write(repo, files)
         output = Path(repo, ".git", "github-output")
@@ -399,8 +420,8 @@ class TurnCap(unittest.TestCase):
                                                "VV_EVIDENCE": "qae-artifacts"}))
         return result, output.read_text()
 
-    def cap(self, files, widths=None):
-        result, output = self.run_action(files, widths)
+    def cap(self, files, widths=None, verdict_line=""):
+        result, output = self.run_action(files, widths, verdict_line)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return int(re.search(r"^max-turns=([0-9]+)$", output, re.MULTILINE).group(1)), result.stdout
 
@@ -418,6 +439,16 @@ class TurnCap(unittest.TestCase):
         turns, _ = self.cap({"qae-inputs/pr-body.md": "## Acceptance criteria\n\n- Only an admin deletes [as: admin, read-only]\n",
                              "qae-inputs/features/sign-in.md": "# Sign-in\n"}, "1280,375")
         self.assertEqual(turns, 40 + 30 * (2 * 2 + 1))
+
+    def test_a_feature_is_one_walk_for_each_three_states_the_manifest_lets_the_explorer_walk(self):
+        # One criterion and two features: three walks at the default three states a feature, as before the bound.
+        files = {"qae-inputs/pr-body.md": "## Acceptance criteria\n\n- The home page loads\n",
+                 "qae-inputs/features/sign-in.md": "# Sign-in\n", "qae-inputs/features/projects.md": "# Projects\n"}
+        line = "acceptance-verdict --criteria a --verdict b --features docs/features --changed-files c%s\n"
+        for states, walks in (("", 3), (" --max-states 1", 3), (" --max-states 3", 3), (" --max-states 4", 5), (" --max-states 6", 5)):
+            turns, stdout = self.cap(files, verdict_line=line % states)
+            self.assertEqual(turns, 40 + 30 * walks, states)
+            self.assertIn("(%d walks)" % walks, stdout)
 
     def test_a_run_with_one_walk_keeps_the_floor_of_80(self):
         self.assertEqual(self.cap({"qae-inputs/pr-body.md": "## Acceptance criteria\n\n- The home page loads\n"})[0], 80)

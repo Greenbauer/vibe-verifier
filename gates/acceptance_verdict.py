@@ -20,14 +20,22 @@ The feature re-walk (opt-in, docs/feature-map.md):
 
     --features DIR        the feature map: every feature the pull request's changes touch also needs
                           exactly one `regression-check: <id> -- PASS -- <evidence>` line, held to
-                          the same anchor rule
+                          the same anchor rule, and at least one walked step in the run's evidence:
+                          a `- step k:` line of `qae/features/<id>.md` under --artifacts (required
+                          with --features) with its screenshot `qae/features/<id>-step-k.png`
     --changed-files FILE  the pull request's changed paths, one per line (required with --features)
     --max-features N      at most N features are re-walked (default 3)
     --shared-over N       a changed file more than N features list selects none (default 2)
+    --max-states N        the explorer walks at most N of each feature's Verify states (default 3).
+                          The explore job tells the explorer; the gate requires one walked step, not N
 
 The gate selects those features itself, from these arguments (judged from the base like any
 manifest line) and the map, never from what the explorer says it re-walked: a feature the explorer
-skipped has no line and is refused.
+skipped has no line and is refused. A re-walk is partial by design, so a state the explorer did not
+walk is never a finding: it names them on a `regression-skip: <id> -- <states>` line, which the gate
+prints and does not judge. A FAIL is a finding, and says a step that was walked no longer matches
+the feature file: the pull request fixes the regression or, when it means the new behaviour, updates
+the file. A feature with a line and no walked step was not re-walked, which is a finding too.
 
 A criterion's annotations (harnesses/qae/README.md) are held to the run's evidence, its step log
 `qae/ACn.md` under --artifacts:
@@ -61,13 +69,14 @@ import json
 import os
 import re
 
-from _acceptance import (ANCHOR_FORMS, PASS_RE, anchors, annotations, check_lines, criteria, declares_none,
-                         named_references, png_size, resolves, ticket_items)
+from _acceptance import (ANCHOR_FORMS, FAIL_RE, PASS_RE, anchors, annotations, check_lines, criteria, declares_none,
+                         named_references, png_size, resolves, said, ticket_items)
 from _contract import CannotRun, Finding, run_gate, tracked_files
 from _features import add_selection_arguments, describe, selection
 
 GATE = "acceptance-verdict"
 REGRESSION_TOKEN = "regression-check"
+SKIP_TOKEN = "regression-skip"
 STEP = r"^[ \t]*-[ \t]+step[ \t]+[0-9]+:"
 STEP_LINE = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):(?P<text>.*)$", re.IGNORECASE | re.MULTILINE)
 
@@ -192,16 +201,48 @@ def annotation_findings(item, wording, passed, args, declared):
     return why + (step_findings(item, notes, args.artifacts, widths) if passed else [])
 
 
+def walked_steps(artifacts, fid):
+    """How many steps of feature `fid`'s re-walk are on record: the `- step k:` lines of its step log
+    qae/features/<id>.md whose screenshot qae/features/<id>-step-k.png is a non-empty file."""
+    directory = os.path.join(artifacts, "qae", "features")
+    log = os.path.join(directory, fid + ".md")
+    if not os.path.isfile(log):
+        return 0
+    with open(log, encoding="utf-8", errors="replace") as handle:
+        shots = [os.path.join(directory, "%s-step-%s.png" % (fid, m.group("k"))) for m in STEP_LINE.finditer(handle.read())]
+    return sum(1 for shot in shots if os.path.isfile(shot) and os.path.getsize(shot) > 0)
+
+
+def regression_finding(fid, path, carried, walked, repo, tracked, artifacts):
+    """Why the re-walk of feature `fid` (its file `path`) is not one anchored PASS over at least one walked step,
+    or None. `carried` is its regression-check lines and `walked` how many of its steps are on record."""
+    if len(carried) == 1 and not walked:
+        return ("%s was not re-walked: its step log qae/features/%s.md holds no `- step k:` line with its screenshot "
+                "qae/features/%s-step-k.png, so its line stands on nothing" % (fid, fid, fid))
+    if len(carried) == 1 and FAIL_RE.search(carried[0]) and not PASS_RE.search(carried[0]):
+        return ("%s is a FAIL: %s. A step the explorer walked no longer matches %s: fix the regression or, if this pull "
+                "request means to change that behaviour, update %s in this pull request, since the re-walk reads the "
+                "pull request's own copy of it" % (fid, carried[0].strip(), path, path))
+    return line_finding(fid, path, carried, REGRESSION_TOKEN, repo, tracked, artifacts)
+
+
 def regression_findings(args, verdict, tracked):
-    """One finding per feature the changes touch whose regression-check line is missing or not an anchored PASS."""
+    """One finding per feature the changes touch whose re-walk is not an anchored PASS over a walked step. What the
+    explorer left unwalked (its regression-skip lines) is printed and never judged."""
+    if not args.artifacts:
+        raise CannotRun("--features needs --artifacts, the run's evidence: each re-walk's step log is read there")
     chosen, features = selection(args.repo, args, args.base_ref)
     for line in describe(chosen) or ["re-walk: no feature's source globs match a changed file"]:
         print("%s: %s" % (GATE, line))
-    lines = check_lines(verdict, REGRESSION_TOKEN)
+    lines, skipped = check_lines(verdict, REGRESSION_TOKEN), check_lines(verdict, SKIP_TOKEN)
     findings = []
     for fid, _ in chosen.selected:
-        why = line_finding(fid, features[fid].path, lines.get(fid.casefold(), []), REGRESSION_TOKEN,
-                           args.repo, tracked, args.artifacts)
+        walked = walked_steps(args.artifacts, fid)
+        print("%s: %s: %d step%s logged with a screenshot" % (GATE, fid, walked, "" if walked == 1 else "s"))
+        for line in skipped.get(fid.casefold(), []):
+            print("%s: %s: states not walked, as the explorer reports: %s" % (GATE, fid, said(line, SKIP_TOKEN)))
+        why = regression_finding(fid, features[fid].path, lines.get(fid.casefold(), []), walked,
+                                 args.repo, tracked, args.artifacts)
         if why:
             findings.append(Finding(why))
     return findings

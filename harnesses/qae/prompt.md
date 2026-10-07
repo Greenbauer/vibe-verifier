@@ -57,20 +57,34 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
    (expected-refusal: <status> <path>), and writing that in a step line declares nothing. Log each as a
    step of that criterion; any of them that fails makes the criterion a FAIL.
    If the directory qae-inputs/features/ exists, each <id>.md in it describes a feature this pull
-   request's changes touch. After the criteria, re-walk each one the same way: get there as its
-   Reach section says, then check what its Verify section says a user would see (its numbered
-   steps, and what each cited test title describes), first setting up whatever state a step
-   needs (who is signed in, which record exists). Its step log is qae-artifacts/qae/features/<id>.md
-   and each step's screenshot qae-artifacts/qae/features/<id>-step-k.png, under the same rules.
-3. Write qae-artifacts/verdict.md with exactly one line per criterion, then one per re-walked
+   request's changes touch, as this pull request has that file. After the criteria, re-walk each
+   one in part. A feature's states are the numbered steps of its Verify section (in a file with
+   none, what each cited test title describes). Walk at most as many states of each feature as
+   qae-inputs/features.md says (three when that file is absent). It also lists the changed files
+   that selected each feature: walk first the states closest to those files, and walk one state
+   of every feature before a second state of any, so that no feature is left unwalked. To walk a
+   state, get there as the Reach section says, set up whatever the state needs (who is signed in,
+   which record exists), and check what the file says a user would see, and nothing more: the
+   checks beyond a criterion, above, are for criteria only. Log its steps as you do a criterion's:
+   the feature's step log is qae-artifacts/qae/features/<id>.md and each step's screenshot
+   qae-artifacts/qae/features/<id>-step-k.png, under the same rules. A state you did not get to,
+   or could not set up in this environment (no such record, no sign-in for that role), is not a
+   failure: log no step for it and name it on the feature's regression-skip line.
+3. Write qae-artifacts/verdict.md with exactly one line per criterion, then the lines of each
    feature, nothing else:
      acceptance-check: ACn -- PASS -- <one sentence> (qae/ACn.md::<the step line text that showed it, exactly as written after "- ">)
    or, when the criterion did not hold or you could not check it:
      acceptance-check: ACn -- FAIL -- <what happened> (qae/ACn.md::<the step line text>)
-   and for each re-walked feature, FAIL when it no longer works the way its file describes:
+   and for each feature of which you walked a state, one line. FAIL only when a step you walked
+   showed that the feature no longer works the way its file describes, never because states were
+   left unwalked or time ran out; otherwise PASS:
      regression-check: <id> -- PASS -- <one sentence> (qae/features/<id>.md::<the step line text>)
      regression-check: <id> -- FAIL -- <what broke> (qae/features/<id>.md::<the step line text>)
-   Never write PASS for anything you did not see in the browser. The text after :: must be
+   then, for each feature with a state you did not walk, one line naming those states by their
+   numbers in its Verify section (or by test title):
+     regression-skip: <id> -- <the states not walked, for example 4, 5, 7>
+   A feature of which you walked no state gets its regression-skip line and no regression-check
+   line. Never write PASS for anything you did not see in the browser. The text after :: must be
    copied verbatim from the step log line, because a gate checks that it is there.
 4. Post the verdict as a pull request comment, with exactly this command (no other form is allowed):
      gh pr comment PR_NUMBER --body-file qae-artifacts/verdict.md

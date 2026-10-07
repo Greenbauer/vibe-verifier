@@ -24,7 +24,9 @@ from typing import NamedTuple
 
 FILE_EXT = r"[cm]?tsx?|[cm]?jsx?|css|scss|html|svelte|vue|astro|md|ya?ml|sql|json|sh|py"
 # `- PASS -`, `-- PASS --`, or the en/em dash forms the fleet bots write.
-PASS_RE = re.compile(r"(?:—|–|-{1,2})[ \t]*PASS\b", re.IGNORECASE)
+DASH = r"(?:—|–|-{1,2})"
+PASS_RE = re.compile(DASH + r"[ \t]*PASS\b", re.IGNORECASE)
+FAIL_RE = re.compile(DASH + r"[ \t]*FAIL\b", re.IGNORECASE)
 ANCHOR_HEAD_RE = re.compile(
     r"(?P<path>\.?[A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:" + FILE_EXT + r"))"
     r"(?:::|:(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?(?![0-9A-Za-z]))"
@@ -218,6 +220,12 @@ def check_lines(verdict, token):
         if match:
             found.setdefault(match.group(1).casefold(), []).append(line)
     return found
+
+
+def said(line, token):
+    """What a `<token>: <id> -- <text>` line says after its id and dash, for a log a person reads. Never parsed."""
+    rest = line[marker_re(token).match(line).end():]
+    return re.sub(r"^[ \t]*" + DASH + r"[ \t]*", "", rest).strip()
 
 
 def evidence_text(line):

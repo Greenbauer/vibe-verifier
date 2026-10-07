@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, clean_env, commit, gate, git, make_repo, runner, write
+from helpers import ROOT, clean_env, commit, gate, git, make_repo, png, runner, write
 
 
 def feature(title, *globs, verify="- `test/app.test.ts::the app starts and answers`"):
@@ -52,7 +52,7 @@ class Selection(unittest.TestCase):
 
     def features(self, repo, *paths, out=None, manifest=".vibe-verifier-qae"):
         args = ["features", "--repo", repo, "--manifest", os.path.join(repo, manifest), "--changed-files", self.changed(repo, *paths)]
-        return runner(*args, *(["--out", out] if out else []))
+        return runner(*args, *(["--out", out, "--listing", out + ".md"] if out else []))
 
     def test_features_whose_globs_match_are_picked_best_first(self):
         repo = self.branch({"app/projects/list.ts": "2\n", "app/auth/login.ts": "2\n", "app/auth/reset.ts": "2\n"})
@@ -99,6 +99,39 @@ class Selection(unittest.TestCase):
         none = os.path.join(repo, ".git", "nothing")
         self.assertEqual(self.features(repo, "README.md", out=none).stdout, "features: 0\n")
         self.assertFalse(os.path.exists(none))  # the explorer's prompt keys on the directory existing
+        self.assertFalse(os.path.exists(none + ".md"))
+
+    def test_a_pull_request_that_updates_a_feature_is_re_walked_against_its_own_description(self):
+        # The selection reads the base's Surfaces (login.ts is auth's only by the base's glob); the explorer
+        # reads the pull request's Reach and Verify, so a change of behaviour lands with its feature file.
+        head = feature("Sign-in", "app/auth/reset.ts", verify="1. Sign in as the test user: the welcome page opens.")
+        repo = self.branch({"docs/features/auth.md": head, "app/auth/login.ts": "2\n"})
+        out = os.path.join(repo, ".git", "qae-inputs", "features")
+        result = self.features(repo, "docs/features/auth.md", "app/auth/login.ts", out=out)
+        self.assertEqual(result.stdout, "features: 1\nre-walk: auth (1 changed file)\n")
+        self.assertEqual(Path(out, "auth.md").read_text(), head)
+
+    def test_the_listing_tells_the_explorer_how_many_states_to_walk_and_which_files_selected_each_feature(self):
+        # A consumer's features list eight or more states each, and an explorer told to walk them all ran out
+        # of time on three features (2026-10-07). The bound is the manifest's, three unless it says otherwise.
+        repo = self.branch({"app/projects/list.ts": "2\n", "app/auth/login.ts": "2\n", "app/auth/reset.ts": "2\n"})
+        out = os.path.join(repo, ".git", "qae-inputs", "features")
+        self.assertEqual(self.features(repo, "app/projects/list.ts", "app/auth/login.ts", "app/auth/reset.ts", out=out).returncode, 0)
+        listing = Path(out + ".md").read_text()
+        self.assertIn("Walk at most 3 states of each, first the states closest to the changed files listed for it.", listing)
+        self.assertTrue(listing.endswith("\n- auth: app/auth/login.ts, app/auth/reset.ts\n- projects: app/projects/list.ts\n"), listing)
+        self.assertEqual(sorted(os.listdir(out)), ["auth.md", "projects.md"])  # the list sits beside the files, not among them
+
+    def test_max_states_is_the_bases_and_one_or_more(self):
+        one = dict(BASE, **{".vibe-verifier-qae": QAE.replace("\n", " --max-states 1\n")})
+        repo = self.branch({"app/auth/login.ts": "2\n", ".vibe-verifier-qae": QAE.replace("\n", " --max-states 9\n")}, base=one)
+        out = os.path.join(repo, ".git", "qae-inputs", "features")
+        self.assertEqual(self.features(repo, "app/auth/login.ts", out=out).returncode, 0)
+        self.assertIn("Walk at most 1 state of each,", Path(out + ".md").read_text())
+        none = self.branch({"app/auth/login.ts": "2\n"}, base=dict(BASE, **{".vibe-verifier-qae": QAE.replace("\n", " --max-states 0\n")}))
+        result = self.features(none, "app/auth/login.ts")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--max-states must be 1 or more", result.stderr)
 
     def test_off_unless_the_base_line_has_features(self):
         without = QAE.replace(" --features docs/features --changed-files qae-inputs/changed-files", "")
@@ -129,7 +162,8 @@ class Selection(unittest.TestCase):
 
 
 class RegressionChecks(unittest.TestCase):
-    """acceptance-verdict --features: one anchored PASS per feature the changes touch, selected by the gate."""
+    """acceptance-verdict --features: one anchored PASS over at least one walked step per feature the changes touch,
+    selected by the gate. A re-walk is partial: what was left unwalked is printed, never judged."""
 
     BODY = "## Acceptance criteria\n\n- The login form shows an error on a wrong password\n"
     AC = "acceptance-check: AC1 -- PASS -- shown (qae/AC1.md::step 1: wrong password -> an error)\n"
@@ -146,6 +180,11 @@ class RegressionChecks(unittest.TestCase):
             "qae-artifacts/qae/features/auth.md": "- step 1: signed in as the test user -> the dashboard\n",
             "qae-artifacts/qae/features/projects.md": "- step 1: opened /projects -> two projects listed\n",
         })
+        for fid in ("auth", "projects"):
+            self.shot(fid).write_bytes(png(1280))
+
+    def shot(self, fid, step=1):
+        return Path(self.work, "qae-artifacts", "qae", "features", "%s-step-%d.png" % (fid, step))
 
     def verdict(self, text, *extra, body=None):
         write(self.work, {"verdict.md": text, "pr-body.md": body or self.BODY})
@@ -174,10 +213,55 @@ class RegressionChecks(unittest.TestCase):
         failed = self.AUTH.replace("PASS -- still signs in", "FAIL -- the dashboard never opened")
         result = self.rewalk(self.AC + failed + "regression-check: projects -- PASS -- it looked fine\n")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("auth is not a PASS: regression-check: auth -- FAIL", result.stdout)
+        self.assertIn("auth is a FAIL: regression-check: auth -- FAIL", result.stdout)
         self.assertIn("projects has no anchor", result.stdout)
         dangling = self.PROJECTS.replace("two projects listed)", "three projects listed)")
         self.assertIn("projects: no anchor resolves at the head", self.rewalk(self.AC + self.AUTH + dangling).stdout)
+        neither = self.AUTH.replace("PASS -- still signs in", "PARTIAL -- two of eight states")
+        self.assertIn("auth is not a PASS: regression-check: auth -- PARTIAL", self.rewalk(self.AC + neither + self.PROJECTS).stdout)
+
+    def test_a_fail_says_to_fix_the_regression_or_update_the_feature_file(self):
+        # A step that contradicts the feature file because the pull request means the new behaviour is fixed by
+        # updating the file in that pull request: the explorer reads the pull request's own copy of it.
+        failed = self.AUTH.replace("PASS -- still signs in", "FAIL -- sign-in now lands on /welcome")
+        result = self.rewalk(self.AC + failed + self.PROJECTS)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("A step the explorer walked no longer matches docs/features/auth.md: fix the regression or, if this "
+                      "pull request means to change that behaviour, update docs/features/auth.md in this pull request",
+                      result.stdout)
+        self.assertIn("acceptance-verdict: 1 finding(s), blocking", result.stdout)
+
+    def test_states_left_unwalked_are_printed_and_never_a_finding(self):
+        # Two real verdicts on a consumer (2026-10-07) were FAILs that said only that states were not re-walked.
+        # Unwalked states now go on a regression-skip line, which fails nothing, whatever it says.
+        skips = ("regression-skip: auth -- 4, 5, 7\n"
+                 "regression-skip: projects -- the download, mobile and signed-out states: out of time, FAIL\n")
+        result = self.rewalk(self.AC + self.AUTH + self.PROJECTS + skips)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("acceptance-verdict: auth: 1 step logged with a screenshot\n"
+                      "acceptance-verdict: auth: states not walked, as the explorer reports: 4, 5, 7\n", result.stdout)
+        self.assertIn("projects: states not walked, as the explorer reports: the download, mobile and signed-out states", result.stdout)
+
+    def test_a_feature_with_no_walked_step_is_refused_whatever_its_line_says(self):
+        # Zero walked steps is a re-walk that did not happen, not a pass and not a regression: a step line
+        # without its screenshot, an empty screenshot and a missing step log all count for nothing.
+        self.shot("auth").unlink()
+        self.shot("projects").write_bytes(b"")
+        result = self.rewalk(self.AC + self.AUTH + self.PROJECTS.replace("PASS -- listed", "FAIL -- ran out of time"))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("acceptance-verdict: auth: 0 steps logged with a screenshot", result.stdout)
+        for fid in ("auth", "projects"):
+            self.assertIn("%s was not re-walked: its step log qae/features/%s.md holds no `- step k:` line with its "
+                          "screenshot" % (fid, fid), result.stdout)
+        self.assertNotIn("is a FAIL", result.stdout)
+        os.remove(os.path.join(self.work, "qae-artifacts", "qae", "features", "auth.md"))
+        self.assertIn("auth was not re-walked", self.rewalk(self.AC + self.AUTH + self.PROJECTS).stdout)
+
+    def test_a_skip_line_never_stands_in_for_the_check_line(self):
+        result = self.rewalk(self.AC + self.AUTH + "regression-skip: projects -- 1, 2, 3\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("projects has no `regression-check: projects` line (docs/features/projects.md)", result.stdout)
+        self.assertIn("projects: states not walked, as the explorer reports: 1, 2, 3", result.stdout)
 
     def test_only_the_gate_decides_which_features_were_required(self):
         # A line for a feature nobody selected changes nothing; a criteria failure still counts.
@@ -196,6 +280,16 @@ class RegressionChecks(unittest.TestCase):
         result = self.verdict(self.AC + self.AUTH + self.PROJECTS, "--features", "docs/features", "--soak")
         self.assertEqual(result.returncode, 2)
         self.assertIn("--features needs --changed-files", result.stderr)
+
+    def test_features_without_the_evidence_cannot_run(self):
+        # The walked steps are read from the run's evidence, so a line without --artifacts judges nothing.
+        write(self.work, {"verdict.md": self.AC.replace("qae/AC1.md::step 1: wrong password -> an error", "test/app.test.ts:1"),
+                          "pr-body.md": self.BODY})
+        result = gate("acceptance-verdict", self.repo, "--criteria", os.path.join(self.work, "pr-body.md"),
+                      "--verdict", os.path.join(self.work, "verdict.md"), "--features", "docs/features",
+                      "--changed-files", os.path.join(self.work, "changed-files"), "--soak")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--features needs --artifacts", result.stderr)
 
 
 class Action(unittest.TestCase):
@@ -220,6 +314,7 @@ class Action(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(output, "count=1\n")
         self.assertTrue(os.path.isfile(os.path.join(repo, "qae-inputs", "features", "auth.md")))
+        self.assertIn("- auth: app/auth/login.ts\n", Path(repo, "qae-inputs", "features.md").read_text())
 
     def test_off_is_a_count_of_zero_and_a_wrapper_passes_its_list(self):
         repo = make_repo(self, dict(BASE, **{".vibe-verifier-qae": "acceptance-verdict --criteria a --verdict b\n"}))

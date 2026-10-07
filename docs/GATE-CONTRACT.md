@@ -300,12 +300,20 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
 - The gate never judges whether the evidence covers the criterion's meaning. It refuses a PASS that
   points at nothing, which is the floor; a PASS that points at the wrong real thing is a review
   concern.
-- `--features DIR` with `--changed-files FILE` (optional `--max-features N`, default 3, and
-  `--shared-over N`, default 2) adds the [feature re-walk](feature-map.md#re-walking-the-features-a-pull-request-touches):
+- `--features DIR` with `--changed-files FILE` and `--artifacts DIR` (optional `--max-features N`,
+  default 3, `--shared-over N`, default 2, and `--max-states N`, default 3) adds the
+  [feature re-walk](feature-map.md#re-walking-the-features-a-pull-request-touches):
   every feature of that map whose source globs match a changed path (a path more than N features list
-  counts for none; each feature judged by its file at the base) needs exactly one
-  `regression-check: <id> -- PASS -- <evidence>` line, held to the same anchor rule. The gate selects
-  them itself; `bin/vibe-verifier features` prints the same selection for the explore job.
+  counts for none; each feature selected by its file at the base) needs exactly one
+  `regression-check: <id> -- PASS -- <evidence>` line, held to the same anchor rule, and at least one
+  walked step in the evidence: a `- step k:` line of `qae/features/<id>.md` with its screenshot
+  `qae/features/<id>-step-k.png`. The gate selects them itself; `bin/vibe-verifier features` prints the
+  same selection for the explore job, and tells the explorer to walk at most `--max-states` states of
+  each. A re-walk is partial by design: a `regression-skip: <id> -- <states>` line names what the
+  explorer left unwalked, and the gate prints it and never judges it. A FAIL is a finding that says a
+  walked step no longer matches the feature file, and how to clear it: fix the regression, or update
+  the file in the pull request when it means the new behaviour. Without `--artifacts` the re-walk
+  cannot be judged: exit 2.
 - A criterion's own text may carry [annotations](../harnesses/qae/README.md#design-references-and-roles),
   held to its step log `qae/ACn.md` under `--artifacts`. `[ref: <key>]` names a design reference: the
   criterion is refused unless `--references FILE` (the JSON object of key to image sha256 the workflow

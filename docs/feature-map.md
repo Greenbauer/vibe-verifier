@@ -64,7 +64,9 @@ Signed out, open `/login`. Create Account goes to `/signup`; Forgot password goe
   verbatim in that file) or `` - `path:line` `` / `` - `path:start-end` ``, the anchor forms the
   acceptance gate reads, and browser steps as a numbered list. Write each step so it sets up the
   state it checks (which user is signed in, which record exists first): a re-walk that never creates
-  the state a bug needs never meets the bug.
+  the state a bug needs never meets the bug. Each numbered step is one state of the feature, and a
+  [re-walk](#re-walking-the-features-a-pull-request-touches) covers a few of them, not all, so a step
+  must stand on its own, without the steps before it.
 - **Gotchas** are the traps a change or a verification run tends to hit.
 
 Every top-level `- ` bullet under Surfaces and Verify must have one of the shapes above. A bullet
@@ -124,8 +126,9 @@ has to bring up to date.
 ## Re-walking the features a pull request touches
 
 The [QAE harness](../harnesses/qae/README.md) can re-walk, in the same browser session as the
-acceptance criteria and on the same application, every feature a pull request's changes touch, and
-the verify job refuses the run unless each one has an anchored PASS.
+acceptance criteria and on the same application, a few states of every feature a pull request's
+changes touch, and the verify job refuses the run unless each one has an anchored PASS over at
+least one step that was walked.
 
 **Which features.** A feature is touched when one of its own `source:` globs matches a changed path
 (both names of a rename). Two rules keep the selection narrow, both read from the map and nothing
@@ -150,33 +153,68 @@ acceptance-verdict --criteria qae-inputs/pr-body.md --verdict qae-inputs/verdict
 
 and use a QAE template ([`explore.yml`](../harnesses/qae/explore.yml) or
 [`explore-codex.yml`](../harnesses/qae/explore-codex.yml)) that has the `Select the features to
-re-walk` step. Optional: `--max-features N`, `--shared-over N`. The line is judged from the base, so
-the pull request that adds it is not re-walked and the next one is, and one that removes it still is.
+re-walk` step. Optional: `--max-features N`, `--shared-over N`, `--max-states N`. The line is judged
+from the base, so the pull request that adds it is not re-walked and the next one is, and one that
+removes it still is.
 
 **What happens.** The explore job runs `actions/features` (`bin/vibe-verifier features`), which
-copies each selected feature file to `qae-inputs/features/<id>.md`. The explorer re-walks each after
-the criteria (Reach to get there, Verify for what to check, setting up the state each step needs)
-and records it like a criterion: `qae/features/<id>.md` with a screenshot per step. It adds one line
-per feature to its verdict:
+copies each selected feature file to `qae-inputs/features/<id>.md` and writes
+`qae-inputs/features.md`: how many states of each feature to walk, and the changed paths that
+selected each. After the criteria the explorer re-walks each feature in part:
+
+- A feature's states are the numbered steps of its Verify section (in a file with none, what each
+  cited test title describes). The explorer walks at most `--max-states` of them per feature
+  (default 3): first the states closest to the feature's changed paths, and one state of every
+  feature before a second state of any, so that none is left out when time runs short. Which
+  states are closest is the explorer's judgment; the number is the manifest's.
+- It checks what the state says and nothing more: the checks it adds to a criterion (a reload
+  after a save, an invalid input) are not part of a re-walk, so a state that needs one says so.
+- It records each walked state like a criterion: `qae/features/<id>.md` with a screenshot per step.
+- It adds to its verdict one `regression-check` line per feature, and one `regression-skip` line
+  naming the states it did not walk:
 
 ```
 regression-check: sign-in -- PASS -- still signs in (qae/features/sign-in.md::step 2: signed in as the test user -> the dashboard)
+regression-skip: sign-in -- 3, 4, 6
 ```
 
-The verify job's `acceptance-verdict` makes the selection again itself, from its own arguments and
-the map, and requires exactly one such line per selected feature, a PASS whose anchor resolves: a
-missing line, a FAIL, or a PASS that points at nothing is a finding. It never takes the explorer's
-word for which features were selected. `qae-artifacts` holds the feature step logs to the same
-screenshot rule as the criteria's, and the QA review comment lists each re-walked feature with the
-word the explorer wrote.
+**What a FAIL means.** A step that was walked showed the feature no longer works the way its file
+describes. A state the explorer did not get to, or could not set up, is never a FAIL: it goes on
+the `regression-skip` line. Before this bound the explorer was told to walk a whole file, and on a
+consumer whose features list eight or more states each it ran out of time on three features and
+wrote FAILs that named no defect, only the states it had not reached.
+
+**The pull request's own copy.** `actions/features` copies each selected feature file from the
+explore job's working tree, which holds the pull request's changes, so a pull request that changes
+how a feature behaves and updates the feature's Reach and Verify in the same change is re-walked
+against its own description. Only the selection reads the base (the Surfaces, above). So when a
+walked step contradicts the file because the pull request means the new behaviour, the fix is to
+update the file in that pull request, and the gate's FAIL finding says so.
+
+**What the gate requires.** The verify job's `acceptance-verdict` makes the selection again itself,
+from its own arguments and the map, and never takes the explorer's word for which features were
+selected. For each selected feature it requires:
+
+- exactly one `regression-check` line, a PASS whose anchor resolves. A missing line, a FAIL, or a
+  PASS that points at nothing is a finding;
+- at least one walked step in the evidence: a `- step k:` line in `qae/features/<id>.md` whose
+  screenshot `qae/features/<id>-step-k.png` is there. A feature with a line and no walked step was
+  not re-walked, which is a finding, never a pass. (`--features` therefore needs `--artifacts`.)
+
+It prints how many steps were walked and each `regression-skip` line, and judges neither the
+number of states nor what the skip line says: nothing the gate decides is read from the
+explorer's prose. `qae-artifacts` holds the feature step logs to the same screenshot rule as the
+criteria's, and the QA review comment lists each re-walked feature with the word the explorer
+wrote and the states it left unwalked.
 
 **Limits.** The re-walk runs when the explorer runs, that is on a pull request that lists acceptance
 criteria. One that declares `- None: <why>` is not explored, so it is not re-walked either: the
 declaration is a claim the review weighs against the diff. A change made only in shared files
 selects no feature, so list each feature's own files, not only the shared ones it runs through
 (run over 30 past pull requests of the pilot, the rule picked 0 to 3 features each, and two fixes
-made wholly in shared files picked none). And an anchored PASS proves a step was logged and
-photographed, not that the feature is right.
+made wholly in shared files picked none). A re-walk covers at most `--max-states` states of a
+feature, so a regression in a state it did not walk passes unseen; the skip line says which those
+were. And an anchored PASS proves a step was logged and photographed, not that the feature is right.
 
 ## Creating, updating and retiring features
 
@@ -197,7 +235,9 @@ happen, because the code change alone leaves the map wrong.
   test a feature cites updates that feature in the same change. The gate forces each one: a renamed
   route is a stale listing and an unowned surface, a moved file leaves its glob matching nothing,
   and a renamed test leaves its anchor dangling. When the behaviour changes, its Reach, Verify steps
-  and Gotchas change with it; the gate cannot see that, so the review does.
+  and Gotchas change with it; the `feature-map` gate cannot see that, so the review does, and with
+  the re-walk on, a walked step that no longer matches the file fails the run until the pull
+  request updates it.
 - **Retire.** A pull request that removes a feature from the product deletes its file and its index
   row. The gate forces this too: the removed surfaces are stale listings, the removed files leave the
   globs matching nothing, and the removed tests leave the anchors dangling. A feature folded into
