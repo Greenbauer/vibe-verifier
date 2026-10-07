@@ -193,7 +193,8 @@
   }
 
   function countsOnTheMeter(row) {
-    return !!row && row.category !== "success" && row.category !== "skipped" && METER_STATES.includes(row.category);
+    // A passed check's steps already carry that outcome. A skipped check does not: GitHub returns no steps for it.
+    return !!row && row.category !== "success" && METER_STATES.includes(row.category);
   }
 
   function meterKey(suite, name, category) {
@@ -229,12 +230,21 @@
     }
   }
 
-  // Reported steps can all be successes while GitHub still shows a pending or failed check.
+  function addExpectedGaps(pull, gaps, seen) {
+    for (const row of pull.expected || []) {
+      if (!countsOnTheMeter(row) || seen.has(meterKey(null, row.name, row.category))) continue;
+      seen.add(meterKey(null, row.name, row.category));
+      gaps[row.category] += 1;
+    }
+  }
+
+  // Reported steps can all be successes while GitHub still shows a pending, failed, or skipped check.
   function ciGaps(pull) {
     const gaps = emptyStepCounts();
     const seen = new Set();
     addCheckGaps(pull, gaps, seen);
     addJobGaps(pull, gaps, seen);
+    addExpectedGaps(pull, gaps, seen);
     return gaps;
   }
 
@@ -260,8 +270,8 @@
 
   function stepTotals(pull) {
     const summaries = (pull.runs || []).map(run => run.step_summary);
-    // A required workflow that has not started yet has no step count, so the total stays unknown.
-    if (!summaries.length || (pull.expected || []).length || summaries.some(summary => !summary || !summary.known)) {
+    // A job that has not started returns no steps, so its run's total stays unknown.
+    if (summaries.some(summary => !summary || !summary.known)) {
       return { known: false, completed: null, total: null, remaining: null, counts: null };
     }
     const summed = summaries.reduce((total, summary) => {
@@ -276,7 +286,12 @@
         counts
       };
     }, { known: true, completed: 0, total: 0, remaining: 0, counts: emptyStepCounts() });
-    return applyGaps(summed, ciGaps(pull));
+    const totals = applyGaps(summed, ciGaps(pull));
+    // No runs and no checks is not a finished pull request.
+    if (!summaries.length && !totals.total) {
+      return { known: false, completed: null, total: null, remaining: null, counts: null };
+    }
+    return totals;
   }
 
   function combinedCategory(pull) {

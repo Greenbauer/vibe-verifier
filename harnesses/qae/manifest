@@ -2,11 +2,16 @@
 # The three input files are written by the verify job before the gate runs; the artifacts come from the explore job.
 # To re-walk the features each pull request touches (docs/feature-map.md), add to it:
 #   --features docs/features --changed-files qae-inputs/changed-files
+# The explorer then walks at most three states of each feature; --max-states N changes that.
 # --references is the digest of each design reference the site step supplied: a criterion naming [ref: <key>]
 # is refused unless the workflow supplied that image (harnesses/qae/README.md).
-acceptance-verdict --criteria qae-inputs/pr-body.md --verdict qae-inputs/verdict.md --artifacts qae-artifacts --references qae-inputs/references.json
+# --ticket is the criteria of the ticket the pull request implements, which the explore template's criteria job writes
+# (empty unless the consumer's step fetches them): each needs its own PASS, so a pull request cannot drop one.
+acceptance-verdict --criteria qae-inputs/pr-body.md --verdict qae-inputs/verdict.md --artifacts qae-artifacts --references qae-inputs/references.json --ticket qae-inputs/ticket.md
 # The adjudicator: screenshots per step, console and network clean outside what this repo declares expected.
 # Declare only what is environmental (for example an analytics script that only exists on the host platform).
 # A refusal one pull request expects (an auth gate's 401) is declared in its criterion, `expected-refusal: 401 /path`, not here.
 # --site-file is the URL the explore job's site step declared, local or a preview; --site <URL> fixes one instead.
-qae-artifacts --artifacts qae-artifacts --criteria qae-inputs/pr-body.md --site-file qae-inputs/site-url
+# To check every criterion at more than one viewport width, add for example --widths 1280,375: each criterion's step
+# screenshots must then include one of each width, and the explorer is told the same widths (qae-inputs/widths).
+qae-artifacts --artifacts qae-artifacts --criteria qae-inputs/pr-body.md --site-file qae-inputs/site-url --ticket qae-inputs/ticket.md

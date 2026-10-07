@@ -252,7 +252,7 @@ fills with how much is in use, so a fuller bar means less headroom; disk used is
 Displayed agent state comes from an explicit identity mapping. Aggregate CI mappings use GitHub
 activity: active jobs prove working, and a complete active scan permits idle. Runner listener
 health never establishes agent health. Persistent SWE/QAE identities use their own runtime state
-and history, including paused; missing or stale runtime state is unknown. Numbered identities cannot
+and history, including paused. A missing runtime is unknown. A stale one keeps its last state and is marked stale. Numbered identities cannot
 be mapped to aggregate CI job roles. Recent history uses structural run outcomes and timestamps.
 Unavailable or incomplete history is labeled separately from a complete history with no failures.
 
@@ -290,7 +290,7 @@ primary/fallback account row.
 Every token sample repeats the owner, account, bot, timestamp, input count, and output count. Any
 cross-owner row rejects the whole file. Samples older than seven days are discarded. The file is
 limited to 2 MiB, 1,024 lanes, 64 accounts, and 20,000 token samples. Sections older than five
-minutes are visibly stale, and stale runner assignments/readiness become unknown. Invalid, missing, unsafe-permission, or mixed-owner files are unavailable,
+minutes are visibly stale. The last lane state and job stay on screen with that stale mark. Invalid, missing, unsafe-permission, or mixed-owner files are unavailable,
 not zero.
 
 ## GitHub behavior and limits
@@ -303,19 +303,21 @@ the newest copy of each job and check counts toward step totals and attention.
 It re-reads the PR head after collection; a race drops the collected evidence instead of attaching
 it to the new revision. Commit statuses and third-party checks remain separate evidence rows.
 
-GitHub lists a check the base branch's rulesets require as "Expected" without creating a check run
-for it, so the dashboard reads the rules for each pull request's base branch and adds an expected
-row for every required status check that has not reported and every required workflow that has not
-run on the head. A required workflow runs at the SHA its ruleset pinned when the run was triggered,
-so after the pin moves GitHub waits for a new run. The dashboard reads the ruleset's version history
+GitHub lists a check the base branch requires as "Expected" without creating a check run for it.
+The dashboard reads the rulesets for each pull request's base branch, and the classic branch
+protection required status checks, which that rules read does not return. It adds an expected row
+for every required status check that has not reported and every required workflow that has not run
+on the head. A required workflow runs at the SHA its ruleset pinned when the run was triggered, so
+after the pin moves GitHub waits for a new run. The dashboard reads the ruleset's version history
 once per pin to learn when the current pin took effect, and a run created before then does not
-count. An expected row keeps the pull request pending, flags it for attention, and keeps its step
-total unknown. GitHub serves an organization ruleset's history only to a token with organization
-administration write, which a read-only dashboard should not hold. When the history is refused,
-any run of the required workflow on the head counts, so the pull request keeps its evidence; right
-after a pin moves it can show as passed while GitHub waits for a rerun, and GitHub's merge box
-still enforces the rule. A required workflow that never ran on the head is still expected.
-Classic branch protection is not read.
+count. An expected row keeps the pull request pending, flags it for attention, and takes one pending
+share on the step line. GitHub serves an organization ruleset's history only to a token with
+organization administration write, which a read-only dashboard should not hold. When the history is
+refused, any run of the required workflow on the head counts, so the pull request keeps its
+evidence; right after a pin moves it can show as passed while GitHub waits for a rerun, and GitHub's
+merge box still enforces the rule. A required workflow that never ran on the head is still expected.
+Classic protection needs Administration read. A token without it, or a branch with no classic
+protection, leaves those checks out and still shows the pull request's other evidence.
 
 Direct manifest or workflow evidence reports `subscribed`. An installation subscribed only through
 an organization wrapper or ruleset reports `unknown` in this pilot, not `false`; wrapper/ruleset
@@ -330,7 +332,7 @@ reported REST limit/remaining/reset values, and the lowest remaining count seen 
 (`lowest_remaining`; GitHub meters some endpoint families against a separate counter that the reported
 values omit). A spent counter pauses only its endpoint family until its reset. Rate limits and source errors return partial or briefly
 stale data without advancing its successful sample timestamp. Authentication or access revocation
-clears derived repository data immediately; transient stale data expires after three minutes.
+clears derived repository data immediately. A rate limit, timeout, or sample older than three minutes keeps the last pull requests and bot rows and marks them stale. The page does the same when its own refresh fails: it keeps the last snapshot and says the refresh failed.
 
 The dashboard shows source-proven failures, cancellations, waiting jobs, and current elapsed times.
 The pull request list groups pull requests by repository. A repository with no open pull request
@@ -348,14 +350,14 @@ The step meter is one line for the whole step total. Each outcome takes a share 
 equal to its count, with a gap between shares: green for passed, yellow for pending, red for
 failed, and gray for skipped, cancelled, or unknown. Finished steps over the total stay in the
 text above the line. The badge beside it, not the line, is the worst current-head check.
-Reported steps can all be successes while GitHub still shows a check as pending or failed: a
-queued or in-progress check has no steps yet, and a running job omits steps that have not
-started. Each such check or job adds one share of its outcome, so the line cannot be entirely
-green while that work is still open. A skipped or passed check adds nothing, because the steps
-already carry that detail.
+Reported steps can all be successes while GitHub still shows a check as pending, failed, or
+skipped: a queued or in-progress check has no steps yet, a running job omits steps that have not
+started, and a skipped job comes back with no steps. Each such check or job adds one share of its
+outcome, and each expected required check adds one pending share, so the line cannot be entirely
+green while that work is still open. A passed check adds nothing, because its steps already carry
+that detail. A skipped check whose job already returned a skipped step adds nothing more.
 Elapsed time alone never asserts that a job is stuck. Unknown step totals never render as
-100 percent. A completed job with no steps, which is how GitHub reports a skipped job, counts as
-zero steps; a job that has not started yet keeps its run's step total unknown.
+100 percent. A job that has not started yet keeps its run's step total unknown.
 
 ## Data lifecycle and uninstall
 
@@ -364,7 +366,8 @@ zero steps; a job that has not started yet keeps its run's step total unknown.
   to remove the installation.
 - Tab icon: the owner's public avatar, read once and held only in memory until the process stops.
 - GitHub cache: created from server-side reads, replaced by scoped source identity, held only in
-  memory, expired on source failure, and deleted when the process stops.
+  memory, kept and marked stale on a transient source failure, cleared when access is revoked, and
+  deleted when the process stops.
 - Telemetry: created and atomically replaced by an optional collector, read only by this process,
   bounded to a current snapshot plus seven days of samples, and unavailable when deleted.
 - GitHub records: never created, updated, or deleted by this dashboard. There are no retry, cancel,
@@ -398,7 +401,8 @@ configuration or captured telemetry. See [collection/cache behavior](dashboard-d
 
 The server refreshes GitHub and usage sources in the background; the page retains search focus
 during refresh. The page asks for new data every 30 seconds while it is visible; a hidden
-tab skips those requests, so it spends no GitHub calls, and loads once when shown again. Numeric usage artifacts are read
+tab skips those requests, so it spends no GitHub calls, and loads once when shown again. If that
+request fails, the page keeps the last snapshot and says the refresh failed. Numeric usage artifacts are read
 every five minutes through the current GitHub credentials, verified against their run/attempt/head
 and configured workflow, and parsed without extracting files or copying model content. Each scan
 pages through a repository's artifacts, newest first, until a page reaches past seven days, at most

@@ -1,10 +1,11 @@
 name: Vibe Verifier features
-description: Pick the features of a feature map that a pull request's changed paths touch, by the selection on the QAE manifest's acceptance-verdict line, and copy their files for the explorer to re-walk.
+description: Pick the features of a feature map that a pull request's changed paths touch, by the selection on the QAE manifest's acceptance-verdict line, and copy their files for the explorer to re-walk, with a list of how many states to walk of each and the changed paths that selected it.
 inputs:
   manifest:
     description: >-
       The QAE manifest, relative to the workspace. Its acceptance-verdict line (judged from the base) turns
-      the re-walk on with --features and sets the selection; without --features nothing is selected.
+      the re-walk on with --features and sets the selection and, with --max-states (default 3), how many
+      states of each feature the explorer walks; without --features nothing is selected.
     default: .vibe-verifier-qae
   entries:
     description: >-
@@ -15,7 +16,10 @@ inputs:
     description: The pull request's changed paths, one per line, relative to the workspace.
     required: true
   out:
-    description: Where each selected feature file is copied, as <id>.md. Not created when nothing is selected.
+    description: >-
+      Where each selected feature file is copied, as <id>.md, as the checkout has it (the pull request's own
+      copy). The list the explorer reads is written beside it as <out>.md. Neither is created when nothing
+      is selected.
     default: qae-inputs/features
 outputs:
   count:
@@ -40,7 +44,7 @@ runs:
           printf '%s\n' "$VV_ENTRIES" > "$manifest"
         fi
         out=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" features --manifest "$manifest" \
-          --changed-files "$VV_CHANGED" --out "$VV_OUT")
+          --changed-files "$VV_CHANGED" --out "$VV_OUT" --listing "$VV_OUT.md")
         echo "$out"
         first=${out%%$'\n'*}
         case "$first" in

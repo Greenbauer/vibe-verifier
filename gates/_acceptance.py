@@ -24,7 +24,9 @@ from typing import NamedTuple
 
 FILE_EXT = r"[cm]?tsx?|[cm]?jsx?|css|scss|html|svelte|vue|astro|md|ya?ml|sql|json|sh|py"
 # `- PASS -`, `-- PASS --`, or the en/em dash forms the fleet bots write.
-PASS_RE = re.compile(r"(?:—|–|-{1,2})[ \t]*PASS\b", re.IGNORECASE)
+DASH = r"(?:—|–|-{1,2})"
+PASS_RE = re.compile(DASH + r"[ \t]*PASS\b", re.IGNORECASE)
+FAIL_RE = re.compile(DASH + r"[ \t]*FAIL\b", re.IGNORECASE)
 ANCHOR_HEAD_RE = re.compile(
     r"(?P<path>\.?[A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:" + FILE_EXT + r"))"
     r"(?:::|:(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?(?![0-9A-Za-z]))"
@@ -95,6 +97,27 @@ def declares_none(text):
     return match.group("reason") if match else None
 
 
+TICKET_NONE = ("the ticket in %s lists no acceptance criteria: its criteria go under a `## Acceptance criteria` "
+               "heading (or the file is a plain list), or it declares `- None: <why>`; an empty file links no ticket")
+
+
+def ticket_items(text, path="qae-inputs/ticket.md"):
+    """(the ticket's criteria as (id, wording) pairs numbered TC1, TC2, ..., why they cannot be read or None).
+
+    A consumer's workflow writes the acceptance criteria of the ticket a pull request implements to a file,
+    read with the same grammar as a PR body. They are graded in addition to the pull request's own, so a
+    pull request cannot drop one from its list. An empty file links no ticket; a ticket that declares
+    `- None: <why>` has none. A non-empty ticket in which no criteria can be found is a problem, never no
+    criteria: a section the reader missed must not drop the ticket's requirements silently.
+    """
+    if not text.strip() or declares_none(text):
+        return [], None
+    items = criteria(text)
+    if not items:
+        return [], TICKET_NONE % path
+    return [("TC%d" % (n + 1), wording) for n, (_, wording) in enumerate(items)], None
+
+
 # `[ref: home-desktop]` and `[as: admin, read-only]` inside a criterion's text, each a comma list. A
 # reference key is the file stem of qae-inputs/references/<key>.png. A role is what a step line names
 # after "as" and before a colon, so it holds no colon, comma or bracket. A bracket that starts like an
@@ -124,6 +147,16 @@ def annotations(wording):
     return found
 
 
+# A step line that names `reference <key>` is a comparison with that design reference
+# (harnesses/qae/prompt.md): its screenshot is what was compared, at the reference's width.
+REFERENCE_NAMED = re.compile(r"\breference[ \t]+`?(?P<key>[A-Za-z0-9][A-Za-z0-9_-]*)", re.IGNORECASE)
+
+
+def named_references(line):
+    """The reference keys one step line names, as written, in written order."""
+    return [match.group("key") for match in REFERENCE_NAMED.finditer(line)]
+
+
 def png_size(path):
     """(width, height) from a PNG file's header, or None when the file is not a PNG."""
     with open(path, "rb") as handle:
@@ -148,17 +181,22 @@ def unrendered(path):
             or name.startswith((".vibe-verifier", "LICENSE")))
 
 
-def not_required(text, changed):
+def not_required(text, changed, ticket=""):
     """Why a pull request needs no browser check, or None when it does.
 
-    `text` is its body and `changed` its changed paths (a rename lists both names). It needs none when
-    it declares `- None: <why>`, or when it lists no criteria and every changed path is one no browser
-    can see. Criteria win over paths: a pull request that lists one is explored whatever it touches.
+    `text` is its body, `changed` its changed paths (a rename lists both names) and `ticket` the text of
+    its ticket's criteria file, when the workflow supplies one. It needs none when it declares
+    `- None: <why>`, or when it lists no criteria and every changed path is one no browser can see. A
+    ticket that lists criteria, or that is not empty and lists none a reader can find, overrides both:
+    the pull request cannot declare its ticket's requirements away. Criteria win over paths: a pull
+    request that lists one is explored whatever it touches.
     An empty path list proves nothing, so it never exempts. A body lists criteria only under an
     `Acceptance criteria` heading: without one, the plain-list reading counts every line of prose as a
     criterion, and a short body with no headings would never be exempt (found on the first consumer
     PR, 2026-10-05).
     """
+    if any(ticket_items(ticket)):
+        return None
     declared = declares_none(text)
     headed = any(CRITERIA_HEADING.match(line) for line in text.splitlines())
     if declared or (headed and criteria(text)) or not changed or not all(map(unrendered, changed)):
@@ -182,6 +220,12 @@ def check_lines(verdict, token):
         if match:
             found.setdefault(match.group(1).casefold(), []).append(line)
     return found
+
+
+def said(line, token):
+    """What a `<token>: <id> -- <text>` line says after its id and dash, for a log a person reads. Never parsed."""
+    rest = line[marker_re(token).match(line).end():]
+    return re.sub(r"^[ \t]*" + DASH + r"[ \t]*", "", rest).strip()
 
 
 def evidence_text(line):

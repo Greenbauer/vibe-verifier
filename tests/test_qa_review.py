@@ -51,10 +51,11 @@ class QaReview(unittest.TestCase):
     def writes(self):
         return [c for c in self.calls() if c["method"] != "GET"]
 
-    def review(self, explore="success", gates="success", not_required="", verdict=True):
+    def review(self, explore="success", gates="success", not_required="", verdict=True, ticket=None):
         args = ["qa-review", "--repo", "acme/site", "--pr", "7", "--head", HEAD, "--run-url", RUN,
                 "--criteria", self.criteria, "--explore-result", explore, "--gates-outcome", gates,
                 "--not-required", not_required]
+        args += ["--ticket", ticket] if ticket else []
         return runner(*args, *(["--verdict", self.verdict] if verdict else []), env=self.env)
 
     def posted(self, **kwargs):
@@ -75,6 +76,17 @@ class QaReview(unittest.TestCase):
         self.assertIn("- AC1, explorer says PASS: The home page loads\n", body)
         self.assertIn("[The run and its evidence](%s)" % RUN, body)
 
+    def test_the_tickets_criteria_are_listed_after_the_pull_requests(self):
+        # The workflow supplies the ticket's criteria (harnesses/qae/README.md); a None in the body cannot hide them.
+        ticket = self.file("ticket.md", "## Acceptance criteria\n\n- Prices show in euros\n")
+        self.verdict = self.file("verdict.md", VERDICT + "acceptance-check: TC1 -- PASS -- euros (qae/TC1.md::step 1: x)\n")
+        body = self.posted(ticket=ticket)
+        self.assertIn("- AC2, explorer says FAIL: The menu opens\n- TC1 (from the ticket), explorer says PASS: Prices show in euros\n", body)
+        self.criteria = self.file("pr-body.md", "## Acceptance criteria\n\n- None: a refactor\n")
+        body = self.posted(ticket=ticket)
+        self.assertIn("- TC1 (from the ticket), explorer says PASS", body)
+        self.assertNotIn("None: a refactor", body)
+
     def test_a_re_walked_feature_is_listed_as_the_explorer_judged_it(self):
         # docs/feature-map.md: the explorer adds one regression-check line per feature it re-walked.
         self.verdict = self.file("verdict.md", VERDICT + "regression-check: sign-in -- FAIL -- the dashboard never opened "
@@ -83,6 +95,17 @@ class QaReview(unittest.TestCase):
         self.assertIn("- AC2, explorer says FAIL: The menu opens\n- Feature `sign-in` re-walked, explorer says FAIL\n", body)
         self.verdict = self.file("verdict.md", VERDICT)
         self.assertNotIn("re-walked", self.posted(gates="failure"))
+
+    def test_a_re_walk_names_the_states_the_explorer_left_unwalked(self):
+        # A re-walk covers at most a few states of a feature, so "re-walked" alone would overstate it. A
+        # skip line with no check line is a feature that was not re-walked: the gate's log names it.
+        self.verdict = self.file("verdict.md", VERDICT + "regression-check: sign-in -- PASS -- still signs in "
+                                                         "(qae/features/sign-in.md::step 1: signed in -> the dashboard)\n"
+                                                         "regression-skip: sign-in -- 4, 5, 7\n"
+                                                         "regression-skip: billing -- 1, 2\n")
+        body = self.posted(gates="failure")
+        self.assertIn("- Feature `sign-in` re-walked, explorer says PASS (not walked: 4, 5, 7)\n", body)
+        self.assertNotIn("billing", body)
 
     def test_changes_needed_lists_each_criterion_as_the_explorer_judged_it(self):
         body = self.posted(gates="failure")
@@ -193,7 +216,7 @@ class QaReview(unittest.TestCase):
         action_path = ROOT / "actions" / "qa-review"
         env = clean_env(dict(self.env, GITHUB_ACTION_PATH=str(action_path), GH_TOKEN="x", VV_REPO="acme/site",
                              VV_PR="7", VV_HEAD=HEAD, VV_RUN=RUN, VV_CRITERIA=self.criteria, VV_VERDICT=self.verdict,
-                             VV_EXPLORE="success", VV_GATES="failure", VV_NOT_REQUIRED=""))
+                             VV_TICKET="", VV_EXPLORE="success", VV_GATES="failure", VV_NOT_REQUIRED=""))
         result = subprocess.run(["bash", "-e", "-c", script], capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         body = self.writes()[0]["body"]["body"]

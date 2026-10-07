@@ -31,13 +31,16 @@ from .config import load_config
 from .telemetry import read_telemetry
 
 READ_PERMISSIONS = dict.fromkeys(
-    ("actions", "checks", "contents", "metadata", "pull_requests", "statuses"), "read")
+    ("actions", "administration", "checks", "contents", "metadata", "pull_requests", "statuses"), "read")
 ACCESS_TOKENS = "https://api.github.com/app/installations/%d/access_tokens"
 # A client ID (Iv1.0123abcd, Iv23li...) or a numeric App ID; GitHub accepts either as the JWT issuer.
 APP = re.compile(r"[A-Za-z0-9.]{1,64}\Z")
 # A GitHub login, an App's ending in [bot]. Both it and the token are written into YAML unquoted.
 LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?(?:\[bot\])?\Z")
-TOKEN = re.compile(r"[A-Za-z0-9_]{1,255}\Z")
+# An installation token: ghs_ plus 36 characters before 2026, and since then about 390 characters that
+# also hold "." and "-" (measured 2026-10-06). Neither breaks a plain YAML scalar after a first
+# character that cannot start a YAML sequence or other syntax.
+TOKEN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,4095}\Z")
 MAX_RESPONSE = 1024 * 1024
 # The owner of the trusted paths. Tests, which cannot run as root, substitute their own uid.
 ROOT_UID = 0
@@ -61,8 +64,8 @@ def _root_secret(path: Path) -> None:
         raise HostError("%s must be a regular file only root can read" % path)
 
 
-def publish(path: Path, data: bytes, owner: tuple[int, int], validate=None) -> None:
-    """Atomically replace path with data, mode 0600, owned by owner (the dashboard user).
+def publish(path: Path, data: bytes, owner: tuple[int, int], validate=None, mode: int = 0o600) -> None:
+    """Atomically replace path with data, owned by owner. mode defaults to 0600.
 
     The directory must be root's and writable by no one else, so the reader cannot swap the file
     between root writing and renaming it; mode and owner are set on the open descriptor, never by
@@ -74,7 +77,7 @@ def publish(path: Path, data: bytes, owner: tuple[int, int], validate=None) -> N
         raise HostError("%s must be a directory only root can write" % directory)
     fd, draft = tempfile.mkstemp(prefix="." + path.name + ".", dir=directory)
     try:
-        os.fchmod(fd, 0o600)
+        os.fchmod(fd, mode)
         view = memoryview(data)
         while view:
             view = view[os.write(fd, view):]
@@ -156,6 +159,10 @@ def refresh_token(config_path: str, user: str, app: str, installation: int, key:
              "permissions": READ_PERMISSIONS}
     token = granted_token(mint(app_jwt(app, key), installation, scope, opener), config.repositories)
     publish(output, hosts_yml(token, login).encode(), owner)
+    # gh 2.93 treats hosts.yml with no config.yml as a migration and exits before any API call
+    # unless it can create that file. This directory is writable only by root, and the web service
+    # has no writable path, so root leaves a settings-free marker the account can read but not change.
+    publish(output.parent / "config.yml", b'version: "1"\n', (ROOT_UID, os.getgid()), mode=0o644)
 
 
 def refresh_telemetry(config_path: str, user: str, collector_path: str, state: Path) -> bool:

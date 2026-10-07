@@ -107,7 +107,7 @@ class CacheFreshness(unittest.TestCase):
         self.assertEqual(github["bots"]["roles"]["reviewer"]["state"], "unknown")
         self.assertEqual(collector.cleared, 1)
 
-    def test_transient_grace_expires_private_rows_even_without_another_source_call(self):
+    def test_a_late_sample_keeps_the_last_rows_and_marks_them_stale(self):
         wall = MutableClock(NOW)
         mono = MutableClock(0)
         collector = FakeCollector([source_sample(NOW), ApiError("unavailable")])
@@ -116,13 +116,16 @@ class CacheFreshness(unittest.TestCase):
         wall.value = NOW + timedelta(seconds=30)
         stale = service.snapshot(force=True)["github"]
         self.assertEqual(stale["repositories"][0]["pulls"], [{"number": 1}])
+        self.assertTrue(stale["repositories"][0]["stale"])
         wall.value = NOW + timedelta(seconds=181)
-        expired = service.snapshot()["github"]
-        self.assertEqual(expired["repositories"][0]["pulls"], [])
-        self.assertEqual(expired["coverage"]["readable"], 0)
-        self.assertEqual(expired["coverage"]["inventory"], {})
-        self.assertEqual(expired["bots"]["roles"]["reviewer"]["recent_7d"], [])
-        self.assertEqual(expired["bots"]["roles"]["reviewer"]["state"], "unknown")
+        kept = service.snapshot()["github"]
+        self.assertEqual(kept["repositories"][0]["pulls"], [{"number": 1}])
+        self.assertTrue(kept["repositories"][0]["stale"])
+        self.assertTrue(kept["stale"])
+        self.assertEqual(kept["coverage"]["readable"], 1)
+        self.assertEqual(kept["coverage"]["inventory"], {REPO: {"subscription": "subscribed"}})
+        self.assertEqual(len(kept["bots"]["roles"]["reviewer"]["recent_7d"]), 1)
+        self.assertEqual(kept["bots"]["roles"]["reviewer"]["state"], "working")
 
     def test_history_windows_use_the_current_clock_on_cache_hits(self):
         wall = MutableClock(NOW)

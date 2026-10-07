@@ -300,21 +300,38 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
 - The gate never judges whether the evidence covers the criterion's meaning. It refuses a PASS that
   points at nothing, which is the floor; a PASS that points at the wrong real thing is a review
   concern.
-- `--features DIR` with `--changed-files FILE` (optional `--max-features N`, default 3, and
-  `--shared-over N`, default 2) adds the [feature re-walk](feature-map.md#re-walking-the-features-a-pull-request-touches):
+- `--features DIR` with `--changed-files FILE` and `--artifacts DIR` (optional `--max-features N`,
+  default 3, `--shared-over N`, default 2, and `--max-states N`, default 3) adds the
+  [feature re-walk](feature-map.md#re-walking-the-features-a-pull-request-touches):
   every feature of that map whose source globs match a changed path (a path more than N features list
-  counts for none; each feature judged by its file at the base) needs exactly one
-  `regression-check: <id> -- PASS -- <evidence>` line, held to the same anchor rule. The gate selects
-  them itself; `bin/vibe-verifier features` prints the same selection for the explore job.
+  counts for none; each feature selected by its file at the base) needs exactly one
+  `regression-check: <id> -- PASS -- <evidence>` line, held to the same anchor rule, and at least one
+  walked step in the evidence: a `- step k:` line of `qae/features/<id>.md` with its screenshot
+  `qae/features/<id>-step-k.png`. The gate selects them itself; `bin/vibe-verifier features` prints the
+  same selection for the explore job, and tells the explorer to walk at most `--max-states` states of
+  each. A re-walk is partial by design: a `regression-skip: <id> -- <states>` line names what the
+  explorer left unwalked, and the gate prints it and never judges it. A FAIL is a finding that says a
+  walked step no longer matches the feature file, and how to clear it: fix the regression, or update
+  the file in the pull request when it means the new behaviour. Without `--artifacts` the re-walk
+  cannot be judged: exit 2.
 - A criterion's own text may carry [annotations](../harnesses/qae/README.md#design-references-and-roles),
   held to its step log `qae/ACn.md` under `--artifacts`. `[ref: <key>]` names a design reference: the
   criterion is refused unless `--references FILE` (the JSON object of key to image sha256 the workflow
   declared; an empty file is none) lists the key and the evidence holds that very image at
-  `references/<key>.png`, and a PASS also needs a step line naming `reference <key>`. A reference the
-  workflow did not supply is the operator's to supply, never invented. `[as: <role>, <role>]` makes a
+  `references/<key>.png`, and a PASS also needs a step line naming `reference <key>`, where every such
+  line is a comparison whose screenshot `qae/ACn-step-k.png` is exactly as wide as the reference (both
+  read from the PNG header). A reference the workflow did not supply is the operator's to supply, never
+  invented. `[as: <role>, <role>]` makes a
   PASS need, for each role, a step line starting `as <role>:`. A bracket that starts like either and
   does not parse is a finding. `bin/vibe-verifier criteria` prints each criterion's annotations after
   its count line.
+- `--ticket FILE` (opt-in) is the acceptance criteria of the ticket the pull request implements,
+  written by the consumer's workflow with the PR body's grammar
+  ([the harness](../harnesses/qae/README.md#the-tickets-criteria)). Each is `TC1`, `TC2`, ... and needs
+  its own anchored PASS, in addition to the pull request's; a `- None:` in the PR body does not drop
+  them. An empty file links no ticket, a ticket that declares `- None: <why>` has none, and a non-empty
+  one in which no criteria can be found is a finding. `bin/vibe-verifier criteria --ticket FILE` counts
+  them the same way.
 - A missing input file is exit 2. A criteria file with no criteria is a finding: a repository that
   subscribes has decided its PRs state them.
 - A pull request with nothing to check says so, in the same section: one item reading
@@ -652,6 +669,53 @@ repo-rules --rules lint/rules --pack example --soak
   leaves the block stale, so its pull request needs the block regenerated, which `apply-down` (pin
   lines only) does not do.
 
+### Universal checks
+
+A rule of the form "every X goes through Y" was once graded by a lint the pull request itself wrote,
+as a list of the forms its ticket happened to name; calls in other forms survived. `universal-checks`
+reads the rule's definition from outside the pull request: the repository's `ci/universal-checks.md`
+(`--rules PATH` names another) as the merge base of the base ref and HEAD has it.
+
+```
+# ci/universal-checks.md
+Universal checks:
+- `\.(?:route|waitForResponse|waitForRequest)\s*\(` in `e2e/*.spec.ts` conforms to `apiPath\(`
+- `(?<!function )\bapiPath\(` in `e2e/helpers.ts` conforms to `^`
+```
+
+- **One rule per bullet** under a `Universal checks:` heading (up to three `#`, bold, any case,
+  optional colon); a wrapped bullet joins the one above it. Every match of the population regex in a
+  tracked file the glob selects is a member. A member ending in a call, or followed by one, is graded
+  on the call argument its match ends in: for a call-shape population the first argument (the matcher,
+  not the handler body), and a population that consumes leading arguments
+  (`\.on\(\s*"response"\s*,`) grades the next one. Any other member is graded on the rest of its
+  line. It conforms when that text matches the conforms regex, whose alternatives are the exemptions.
+- **Write the population as every place the rule governs**, by the shape of the code that does the
+  governed thing (for a rule about an API, every method of it that can do that thing), never by the
+  wrong forms someone happened to mention. A rule that a helper stays in use lists its calls in the
+  files that must call it and conforms to `^`: if the calls go, the population is empty and the rule
+  fails.
+- Regexes are Python `re` with MULTILINE. The glob is `fnmatch` over the repository-relative path, so
+  `*` also crosses `/`, as in the rule files this grammar was ported from. Comments in the `//` and
+  `/* */` forms are blanked first, so a match inside one is not a member, and string, template and
+  regex literals are skipped when finding an argument; a comment in another language's form still
+  counts.
+- **Judged from the merge base.** A pull request that edits, weakens or deletes a rule is still judged
+  by the rule as the merge base has it. When the head's copy of the file differs (or the base has
+  none), it is graded too, so a rule a pull request adds is proven before it merges, and a malformed
+  copy cannot merge and then break every later pull request. A rule that lands on the default branch
+  after a pull request branched reaches that pull request when it updates from the base.
+- **Fails closed.** Exit 1 for each member that does not conform, at its line. Exit 2, which `--soak`
+  never masks, when no copy of the file exists at the merge base or the head; when a copy parses to no
+  rule, holds a malformed rule or a heading with none under it, or has a backticked bullet outside a
+  section (a note between bullets ends the section above it); when a regex does not compile; when a
+  glob matches no tracked file; and when a population matches nothing. An empty population is a typo
+  or a rule whose code is gone, never a pass. To retire a rule, remove its line first and merge, then
+  delete the code it governed; to rename what it governs, widen the rule to accept both names, then
+  rename, then narrow it.
+- It sees text, not meaning: whether the author named every code shape of the API is the author's
+  reading, and a rule pairing two things (an import with its use) needs a test of its own.
+
 ## Feature map
 
 `feature-map` keeps a [feature map](feature-map.md) (one Markdown file per user-facing feature under
@@ -693,11 +757,21 @@ The harness's second gate, `qae-artifacts`, is the adjudicator: it reads the run
 directory (`--artifacts`) and refuses on structural facts, never on the model's prose: a step
 (of a criterion, or of a re-walked feature under `qae/features/`) without its screenshot, a console error outside `--allow-console`, a missing session or network
 record, a request to the site under test that answered 400 or worse or failed outside
-`--allow-request`. The site is `--site <URL>`, or `--site-file <FILE>`: the URL the explore job
-declared, written by the verify job, where a missing or malformed file is exit 2. The consumer
+`--allow-request`. With a site declared, Chromium's `Failed to load resource` console line for
+another host is skipped like that host's request; every other console error is still judged. The site is `--site <URL>`, or `--site-file <FILE>`: the URL the explore job
+declared, written by the verify job, where a missing or malformed file is exit 2. A network call that
+saved its result to a file is read from that file, and one the evidence does not hold is a finding. The file may list
+further URLs after the site's, other origins the site is served from (its API on another host), and
+requests and resource errors on those are judged as the site's are. The consumer
 declares only what is environmental. A pull request declares an expected refusal in a criterion's
-own line, `expected-refusal: <401|403> <path-or-URL>`, read from `--criteria`: it excuses exactly
-that status at exactly that URL for that run, and nothing else.
+own line, `expected-refusal: <status> <path-or-URL>`, read from `--criteria`, where the status is a
+handled refusal (400, 401, 403, 404, 409 or 422): it excuses exactly that status at exactly that URL
+for that run, and nothing else. With `--widths N[,N...]` (opt-in) each criterion's step screenshots
+must include one of each width, read from the PNG header; the explore job tells the explorer the same
+widths, from the same manifest line as the base has it, in `qae-inputs/widths`. With `--ticket FILE`
+the ticket's criteria (`qae/TCn.md` logs) are held to the same rules, their `expected-refusal:`
+declarations count, and a pull request that declares `- None:` is still judged when its ticket lists
+criteria.
 
 The second harness is the review harness in [`harnesses/review/`](../harnesses/review/README.md).
 Its wired gate, `review-receipt`, reads three declared files: the newest

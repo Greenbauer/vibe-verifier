@@ -184,6 +184,8 @@ def add_selection_arguments(parser):
                         help="re-walk at most this many features (default: 3)")
     parser.add_argument("--shared-over", metavar="N", type=int, default=2,
                         help="a changed file more than N features list is shared and selects none (default: 2)")
+    parser.add_argument("--max-states", metavar="N", type=int, default=3,
+                        help="the explorer walks at most this many of each feature's Verify states (default: 3)")
 
 
 def selection(repo, args, base_ref=None):
@@ -193,8 +195,8 @@ def selection(repo, args, base_ref=None):
     `base_ref` must resolve."""
     if not args.changed_files or not os.path.isfile(args.changed_files):
         raise CannotRun("--features needs --changed-files, a readable file of changed paths: %s" % (args.changed_files or "(none given)"))
-    if args.max_features < 1 or args.shared_over < 1:
-        raise CannotRun("--max-features and --shared-over must be 1 or more")
+    if min(args.max_features, args.shared_over, args.max_states) < 1:
+        raise CannotRun("--max-features, --shared-over and --max-states must be 1 or more")
     with open(args.changed_files, encoding="utf-8", errors="replace") as handle:
         changed = [line.strip() for line in handle if line.strip()]
     tracked = subprocess.run(["git", "-C", repo, "ls-files", "-z"], capture_output=True, text=True)

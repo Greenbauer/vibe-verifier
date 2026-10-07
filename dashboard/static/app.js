@@ -8,6 +8,7 @@
   const state = { ...VV.restoreViewState(null), ...VV.parseRoute(location.hash) };
   let snapshot = null;
   let loading = false;
+  let refreshFailed = false;
 
   function restoreView(owner) {
     try { Object.assign(state, VV.restoreViewState(sessionStorage.getItem(`vv-dashboard-view:${owner}`))); }
@@ -55,7 +56,8 @@
   function renderChrome() {
     document.querySelector("#owner").textContent = snapshot.owner;
     const sampled = snapshot.github.sampled_at;
-    document.querySelector("#source-stamp").textContent = sampled ? `GitHub sampled ${formatTime(sampled)}${snapshot.github.refreshing ? " · refreshing" : ""}` : snapshot.github.refreshing ? "Fetching GitHub data…" : "GitHub unavailable";
+    const flags = [snapshot.github.stale ? "stale" : "", snapshot.github.refreshing ? "refreshing" : ""].filter(Boolean);
+    document.querySelector("#source-stamp").textContent = sampled ? `GitHub sampled ${formatTime(sampled)}${flags.length ? ` · ${flags.join(" · ")}` : ""}` : snapshot.github.refreshing ? "Fetching GitHub data…" : "GitHub unavailable";
     document.querySelectorAll(".sidebar button").forEach(button => {
       if (button.dataset.view === state.view) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
@@ -98,8 +100,9 @@
   function coverage() {
     const value = snapshot.github.coverage;
     const errors = snapshot.github.errors || [];
+    const stale = Boolean(snapshot.github.stale);
     const text = `${value.label}: ${value.selected}. ${value.readable} read successfully in this sample.`;
-    return sourceBanner(text + (errors.length ? " Some GitHub data is unavailable or stale." : ""), errors.length ? "warning" : "");
+    return sourceBanner(text + (errors.length || stale ? " Some GitHub data is unavailable or stale." : ""), errors.length || stale ? "warning" : "");
   }
 
   function prFilters(pulls) {
@@ -373,6 +376,7 @@
     rememberView();
     const title = { prs: "Pull requests", usage: "Bot usage", capacity: "Capacity" }[state.view];
     document.title = `${title} · Vibe Verifier`;
+    if (refreshFailed) content.prepend(sourceBanner("Could not refresh. Showing the last sample.", "warning"));
     announce(`Showing ${state.view}`);
   }
 
@@ -384,6 +388,7 @@
       if (!response.ok) throw new Error("source unavailable");
       const next = await response.json();
       if (!snapshot) restoreView(next.owner);
+      refreshFailed = false;
       snapshot = next;
       const focused = document.activeElement;
       const filterId = ["pr-search", "repo-filter"].includes(focused?.id) ? focused.id : null;
@@ -395,8 +400,12 @@
         if (selection) replacement.setSelectionRange(...selection);
       }
     } catch (_) {
-      content.replaceChildren(empty("Dashboard unavailable", "The local read-only source could not be loaded."));
-      document.querySelector("#bot-strip").replaceChildren(el("span", { class: "muted" }, "Bot status unavailable"));
+      refreshFailed = true;
+      if (snapshot) render();
+      else {
+        content.replaceChildren(empty("Dashboard unavailable", "The local read-only source could not be loaded."));
+        document.querySelector("#bot-strip").replaceChildren(el("span", { class: "muted" }, "Bot status unavailable"));
+      }
     } finally { loading = false; }
   }
 

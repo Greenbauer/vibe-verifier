@@ -22,7 +22,8 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
 `criteria@`, `gates@` and `qa-review@` in verify) are inventoried and bumped by `consumers` and
 `apply-down` exactly like the stub's.
 
-1. **criteria** reads the PR body and its changed paths with `actions/criteria`, on any runner: it
+1. **criteria** reads the PR body, its changed paths and, when the consumer supplies them,
+   [its ticket's criteria](#the-tickets-criteria) with `actions/criteria`, on any runner: it
    holds no model login, checks out nothing and builds nothing. Its `count` output decides whether
    the explore job starts at all, so on the Codex lane a pull request with nothing to walk never
    queues for, or holds, the one runner with the login.
@@ -30,7 +31,8 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
    base, picks the [features to re-walk](#re-walking-the-features-a-pull-request-touches) when that is
    on, builds and starts the PR's site on the runner (or resolves its preview), copies the design
    references the site step supplied into the evidence, installs the browser, and runs
-   `claude-code-action` with [`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) as its browser. The prompt
+   `claude-code-action` with [`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) as its browser,
+   under a [turn cap](#the-turn-cap) sized to the run. The prompt
    ([`prompt.md`](prompt.md)) tells the model to walk each criterion under the PR body's
    `## Acceptance criteria` heading, append one line per action to `qae-artifacts/qae/ACn.md`
    (`- step k: <what you did> -> <what you saw>`), save a screenshot per step, then write
@@ -57,7 +59,8 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
 ## Re-walking the features a pull request touches
 
 Opt-in, for a repository with a [feature map](../../docs/feature-map.md): the explorer also re-walks
-each feature the pull request's changed paths touch, and the verify job requires a PASS for each.
+a few states of each feature the pull request's changed paths touch, and the verify job requires a
+PASS for each, over at least one step that was walked.
 Turn it on by adding `--features docs/features --changed-files qae-inputs/changed-files` to the
 `acceptance-verdict` line of `.vibe-verifier-qae` (the line is judged from the base, so the next pull
 request is the first one re-walked). Without that, the explore job's `Select the features to re-walk`
@@ -65,15 +68,33 @@ step selects nothing and nothing changes.
 
 - The explore job's step runs [`actions/features`](../../actions/features/action.yml): the features
   whose own source globs match a changed path, a path more than `--shared-over` (default 2) features
-  list counting for none, at most `--max-features` (default 3), each feature judged by its file at
-  the base. It copies each to `qae-inputs/features/<id>.md`. The checkout has the base for this
-  (`fetch-depth: 0`).
-- The explorer re-walks each after the criteria, logs it to `qae/features/<id>.md` with a screenshot
-  per step, and adds `regression-check: <id> -- PASS|FAIL -- <sentence> (qae/features/<id>.md::<step>)`
-  to its verdict.
+  list counting for none, at most `--max-features` (default 3), each feature selected by its file at
+  the base. The checkout has the base for this (`fetch-depth: 0`). It copies each to
+  `qae-inputs/features/<id>.md` as the working tree has it, so a pull request that updates a feature
+  file is re-walked against its own Reach and Verify, and writes `qae-inputs/features.md`: how many
+  states of each feature to walk (`--max-states`, default 3) and the changed paths that selected each.
+- After the criteria the explorer walks at most that many states of each feature (a state is a
+  numbered step of the file's Verify section), first those closest to its changed paths, and one
+  state of every feature before a second of any. It logs them to `qae/features/<id>.md` with a
+  screenshot per step and adds two lines to its verdict:
+  `regression-check: <id> -- PASS|FAIL -- <sentence> (qae/features/<id>.md::<step>)` and, when it
+  left states unwalked, `regression-skip: <id> -- <those states>`.
+- A FAIL means a step that was walked showed the feature no longer works as its file describes. A
+  state that was not reached, or could not be set up, is never a FAIL: it goes on the skip line. On
+  a consumer's live run (2026-10-07), told to walk every numbered step and cited test of three
+  features, the explorer left all three unfinished and wrote FAILs that named only the states it
+  had not walked.
 - `acceptance-verdict` selects the features again itself and refuses a run unless each has exactly one
-  such line, a PASS whose anchor resolves; `qae-artifacts` checks the feature step logs' screenshots
-  like the criteria's; the review comment lists each re-walked feature.
+  `regression-check` line, a PASS whose anchor resolves, and at least one step in its log with its
+  screenshot (none is a re-walk that did not happen). It prints the skip lines and judges neither
+  them nor how many states were walked. Its finding for a FAIL says how to clear it: fix the
+  regression or, when the pull request means the new behaviour, update the feature file in that
+  pull request. `qae-artifacts` checks the feature step logs' screenshots like the criteria's; the
+  review comment lists each re-walked feature and the states left unwalked.
+
+A consumer whose workflow was copied before the bound keeps the old prompt, which tells the explorer
+to walk every state: bump the pins, then copy the template's re-walk paragraph and step 3 (the prompt
+is inline in the workflow), or the explorer still FAILs a feature it could not finish.
 
 A wrapper passes its gate list to `actions/features` as `entries:`, as it does to `actions/gates`.
 
@@ -105,24 +126,30 @@ holds a mockup beside the page.
               git show "$base:$path" > "qae-inputs/references/${path##*/}"
             done
   ```
-- The template's `Keep the design references with the evidence` step
+- The template's `Prepare the explorer's references and widths` step
   ([`actions/qae-inputs`](../../actions/qae-inputs/action.yml)) runs after the site step and before the
   explorer. It copies each image to `qae-artifacts/references/<key>.png`, so the uploaded evidence holds
   what was compared, lists each with its width in `qae-inputs/references.md` for the explorer, and
   declares each image's sha256 as the explore job's `references` output, which the verify job writes to
   `qae-inputs/references.json` for `acceptance-verdict --references`.
-- The explorer opens the image, reaches the same screen and state with the browser resized to that
-  width, saves the screenshot and compares the two, logging a step that names `reference <key>`. A
-  control present in one image and not the other is a difference, never a match: it FAILs a structural
-  mismatch (a missing or extra control, a different layout, a different state) and never pixel noise.
+- The explorer opens the image and reaches the same screen and state with the browser resized to that
+  width. The comparison is a step of its own: it saves that step's screenshot first, still at the
+  reference's width, then compares the two and logs the step, naming `reference <key>` (and names it in
+  no other step). A control present in one image and not the other is a difference, never a match: it
+  FAILs a structural mismatch (a missing or extra control, a different layout, a different state) and
+  never pixel noise. Both halves come from a consumer's live runs (2026-10-07): an explorer logged the
+  comparison without saving its screenshot, twice, and another compared a 375-pixel mobile reference
+  with a 1280-pixel screenshot.
 - The gate refuses the criterion when the workflow supplied no such image: a reference is the
   operator's to supply (needs-operator-reference) and never one the explorer invents, so the criterion
   cannot pass until the site step supplies it. It also refuses an evidence copy whose sha256 is not the
   declared one (the explorer can write under `qae-artifacts/`, so the digest travels as a step output,
   [like the site URL](#rules-the-harness-obeys-each-from-a-real-run)), and a PASS whose step log
-  `qae/ACn.md` has no step line naming `reference <key>`. Whether the two images match is the
-  explorer's judgment, in that step line and its screenshot; the gate holds that the comparison
-  happened, against the image the workflow supplied.
+  `qae/ACn.md` has no step line naming `reference <key>`, or one whose screenshot `qae/ACn-step-k.png`
+  is missing or not exactly as wide as the reference (both widths read from the PNG header). Whether the
+  two images match is the explorer's judgment, in that step line and its screenshot; the gate holds
+  that the comparison happened, at the reference's width, against the image the workflow supplied.
+  `qae-artifacts` names a comparison step whose screenshot is missing as the comparison it is.
 
 **`[as: <role>, <role>]`** walks the criterion once per role.
 
@@ -136,12 +163,125 @@ holds a mockup beside the page.
   names. That a refused path was really refused is the explorer's judgment, in those lines and their
   screenshots.
 
-To adopt them, copy the template's `Keep the design references with the evidence` step and its
+To adopt them, copy the template's `Prepare the explorer's references and widths` step and its
 plumbing (the explore job's `references` output, the verify job's `REFERENCES` line), add
 `--references qae-inputs/references.json` to the acceptance-verdict line of `.vibe-verifier-qae`
 (judged from the base, so it applies from the next pull request), and have the site step supply the
 images and the role sign-ins. A criterion naming a reference in a repository whose manifest line
 lacks `--references` is refused with that instruction.
+
+## The ticket's criteria
+
+Opt-in. A pull request's own `## Acceptance criteria` list is written by whoever opened it, so a
+requirement its ticket states can go missing from it, or the list can be `- None:`. A consumer whose
+pull requests implement tickets in a tracker can supply the ticket's criteria, and the harness then
+holds the pull request to them as well.
+
+- The criteria job's `Write the ticket's criteria` step is the consumer's. Its default writes an empty
+  `qae-inputs/ticket.md`, which links no ticket. Replace it with a step that writes the acceptance
+  criteria of the ticket the pull request implements, read with the PR body's grammar: a
+  `## Acceptance criteria` list (a ticket body that has that section can be written as it is), or a
+  plain list with no headings. For tickets that are GitHub issues linked as `Closes #123` (the job
+  then needs `issues: read`):
+
+  ```yaml
+        - name: Write the ticket's criteria   # CONSUMER
+          env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            REPO: ${{ github.repository }}
+          run: |
+            set -euo pipefail
+            issue=$(grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?) #[0-9]+' qae-inputs/pr-body.md | head -1 | grep -oE '[0-9]+' || true)
+            if [ -n "$issue" ]; then gh issue view "$issue" --repo "$REPO" --json body --jq .body > qae-inputs/ticket.md
+            else : > qae-inputs/ticket.md; fi
+  ```
+
+  Any other tracker works the same way: find the ticket's key in the branch name or the PR body, fetch
+  it with a token the step holds (a repository secret; the criteria job runs no model), and write its
+  criteria. Fail the step when a linked ticket cannot be fetched, so a broken lookup never reads as "no
+  ticket".
+- `actions/criteria` counts the ticket's criteria as TC1, TC2, ... in addition to the PR body's, and
+  passes the file's text on as the criteria job's `ticket` output. The explore and verify jobs write
+  `qae-inputs/ticket.md` from that output, so every job judges the text the criteria job read, before
+  any model ran.
+- A ticket that lists criteria needs a check whatever the pull request says: a `- None:` declaration or
+  a list that leaves one out does not drop it. A ticket that declares `- None: <why>` has none. A
+  non-empty ticket in which no criteria can be found (a bold "Acceptance criteria:" line in place of a
+  heading, say) is a finding, never "no criteria", so a section the reader missed cannot drop the
+  ticket's requirements silently.
+- The explorer walks each ticket criterion like the pull request's, with its step log `qae/TCn.md`,
+  its screenshots `qae/TCn-step-k.png` and a line `acceptance-check: TCn -- ...`; `[ref:]`, `[as:]`,
+  the widths and `expected-refusal:` apply to it the same way. `acceptance-verdict --ticket` requires
+  its anchored PASS, `qae-artifacts --ticket` holds its log to the screenshot and width rules, and the
+  QA review comment lists it, marked "from the ticket".
+- The manifest template's two gate lines carry `--ticket qae-inputs/ticket.md`, a file the template
+  always writes (empty without a ticket). A consumer adopting it copies the step, the job output and
+  the two lines that write the file. A ticket split across several pull requests is graded whole on
+  each, so write only the criteria the pull request owns, or link the sub-ticket.
+
+The ticket's text is untrusted input to the explorer, like the PR body: the same tool rules and write
+scope hold.
+
+## Viewports, themes, and what a criterion does not say
+
+**Widths** are opt-in and the consumer's choice: add `--widths 1280,375` (any widths, in pixels) to the
+qae-artifacts line of `.vibe-verifier-qae`.
+
+- The explore job's `Prepare the explorer's references and widths` step
+  ([`actions/qae-inputs`](../../actions/qae-inputs/action.yml)) reads that line as the base has it and
+  writes the widths, one per line, to `qae-inputs/widths`. The explorer checks every criterion's end
+  state at each width, with the browser resized to it, as a step with its own screenshot.
+- `qae-artifacts` refuses a criterion whose step screenshots (`qae/ACn-step-k.png`) include none of a
+  declared width, read from each PNG's header (a browser screenshot is as wide as its viewport), and a
+  step screenshot that is not a PNG. Feature re-walk logs are not held to it.
+- The widths live in the manifest and nowhere else, so the explorer and the gate cannot disagree. The
+  line is judged from the base: a pull request that adds or drops `--widths` changes the next one.
+
+**Themes**: when `qae-inputs/site.md` says the site has more than one theme (light and dark), the
+explorer checks each end state in every theme. No gate checks it: which theme a screenshot shows is
+not readable from its header.
+
+**Beyond the criteria**, on each criterion's screen, the explorer also uses every action control the
+criterion touches through to its end state (a save that is saved, not a button that is only shown),
+reloads after a save to check the entered values persisted, and, only when that screen has a form or
+another input, tries one invalid input in it, expecting a handled error rather than a crash or a blank
+page. Each is a step of that criterion, with its screenshot, and any that fails makes the criterion a
+FAIL. They are for criteria only: a [re-walked feature](#re-walking-the-features-a-pull-request-touches)
+is checked for what its states say. No gate checks them: what counts as every control a criterion
+touches, or as a handled error, is judgment. Two structural checks still apply. A save that answered 400 or worse fails the network check,
+and so does the invalid input's request, if it reaches the server, unless the criterion declares that
+refusal in its own text (`expected-refusal: 422 /api/profile`,
+[below](#the-adjudicator-the-artifacts-decide-not-the-prose)); the same words in a step line declare
+nothing. The explorer is told to prefer an invalid input the page refuses before sending anything, and
+never to navigate to a URL that neither the criterion names nor the site links to: on a consumer's live
+run (2026-10-07) "try one invalid input" on a criterion with no form sent it to an invented URL, whose
+404 the network check refused.
+
+## The turn cap
+
+On the Claude lane `claude-code-action` stops the explorer at `--max-turns`, and a run that stops there
+fails the explore job even when the site is correct. A fixed 80 did that on a consumer (2026-10-07): two
+ticket criteria at two widths took 54 turns, then more than 80 on a re-run of the same head. So the
+template's `Prepare the explorer's references and widths` step
+([`actions/qae-inputs`](../../actions/qae-inputs/action.yml)) sizes the cap to the run and declares it as
+its `max-turns` output, which the explorer step passes as `--max-turns`:
+
+- One walk is one criterion (the pull request's or [its ticket's](#the-tickets-criteria)) at one width
+  of `qae-inputs/widths` as one role it names in `[as: ...]`, or up to three states of one feature in
+  `qae-inputs/features/`: one walk a feature at the default `--max-states 3`, and one more for each
+  three states above that. No run has measured the turns a state takes, so that proportion is a guess.
+  Themes are not counted: whether a site has two is prose in `qae-inputs/site.md`, not a fact the step
+  can read.
+- The cap is 40 plus 30 a walk, never below 80 and never above 240. Measured on that consumer, the runs
+  took 18 to 39 turns for two or three criteria at one width, 44 for one criterion at two widths with a
+  form, and 54 to 60 for two criteria at two widths: the cap is at least twice each, and twice the 80
+  the cut-off run stopped at. The slowest turn there took 4.5 seconds, so 240 turns still end inside the
+  explore job's 30 minutes.
+- A run that reaches the cap still fails the job: the cap bounds a runaway, it does not pass one.
+
+The Codex lane has no such cap: the pinned Codex CLI's `exec` takes no turn limit, and the job's
+`timeout-minutes` bounds it. A consumer's copy made before the cap was sized still passes
+`--max-turns 80`, and keeps that cap until it copies the template's explorer line.
 
 ## Which pull requests need a check
 
@@ -157,6 +297,8 @@ them disagree, as it already could for the gates. A pull request needs no browse
   `README.md`, `CLAUDE.md`, `AGENTS.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`,
   `CODEOWNERS`, `.gitignore`, `.gitattributes` or `.editorconfig` at any depth.
 
+Neither applies when the workflow supplies [ticket criteria](#the-tickets-criteria) (or a non-empty ticket
+in which none can be found): the ticket's requirements are checked whatever the pull request declares.
 Criteria win over paths: a pull request that lists one is explored whatever it touches. One that lists
 none and changes anything else still fails, because it has not said what to check. The list is
 adapted from the no-plan allowlist of a private predecessor's QAE, narrowed from every `*.md` to those
@@ -188,7 +330,11 @@ read-only, so the review step cannot post there and fails the verify job.
 
 ## A reachable preview instead of a site on the runner
 
-The site step has two shapes, and both end by writing `url=<the site>` to `$GITHUB_OUTPUT`. The
+The site step has two shapes, and both end by writing `url=<the site>` to `$GITHUB_OUTPUT`. A site
+whose API answers on another host (a static front end and an API gateway, say) also writes
+`origins=<that host's URL>`, space-separated when there is more than one. The gate then judges
+requests to those hosts, and the console's `Failed to load resource` lines for them, exactly as it
+judges the site's; without it, a 401 or 500 from the API is on a host the gate skips. The
 template's builds and starts the site on the runner and declares `http://localhost:3000`. A
 repository whose pull requests already get a reachable preview builds nothing on the runner: it drops
 `npm ci` and `cache: npm` (node stays, for the browser toolchain), grants the explore job
@@ -241,8 +387,8 @@ cookie with curl, writes the cookie as a Playwright storage state (cookies only)
 workspace, and declares the file as its `storage-state` output next to `url`. On the Codex lane,
 `actions/qae-codex` takes it as `storage-state`: it refuses a file that is not a cookies-only storage
 state before the model runs, starts playwright-mcp with `--storage-state`, and passes every cookie
-value to playwright-mcp's `--secrets`, which replaces it with `<secret>NAME</secret>` in each tool
-result, saved file and session log. Without that, `browser_run_code_unsafe` (a default tool) returns
+value to playwright-mcp's `secrets` (in a `--config` file), which replaces it with
+`<secret>NAME</secret>` in each tool result, saved file and session log. Without that, `browser_run_code_unsafe` (a default tool) returns
 the cookie to the model and the session log uploaded with the artifacts keeps it.
 
 After the preview resolves ([above](#a-reachable-preview-instead-of-a-site-on-the-runner)), with the
@@ -301,7 +447,8 @@ hands the explorer only a name for each credential:
 ```
 
 The explorer step passes `secrets-file: ${{ steps.site.outputs.secrets-file }}` to `actions/qae-codex`.
-playwright-mcp then types the value when the explorer enters the name, and shows `<secret>QAE_PASSWORD</secret>`
+A value can be any non-empty string: the action hands the values to playwright-mcp as the `secrets` of
+a JSON `--config` file, so quotes, `#` and backslashes need no escaping. playwright-mcp then types the value when the explorer enters the name, and shows `<secret>QAE_PASSWORD</secret>`
 in every tool result. Its session log still records what was typed, so after the explorer the action
 replaces every value (and its JSON-escaped and URL-encoded forms) in each non-image file under `qae-artifacts/` (the session log, the step logs,
 the verdict) and removes its copies; the posted verdict and the uploaded evidence hold no value. Never
@@ -342,7 +489,8 @@ everything the model read, off the runner.
 - **Declared inputs, never operated infrastructure.** The harness needs a URL it can reach, and the
   workflow declares it, never the pull request's files and never the model: the site step's `url`
   output is named in the prompt, and the explore job passes it on as its `site-url` output to the
-  verify job, which writes `qae-inputs/site-url` for `qae-artifacts --site-file`. It is a step output
+  verify job, which writes `qae-inputs/site-url` for `qae-artifacts --site-file`. Further origins the
+  step declared (`origins`) travel the same way, as `site-origins`, into the same file. It is a step output
   and not a file in the artifact because the explorer writes under `qae-artifacts/`, and it must not
   choose which site the gate judges. The digests of the [design references](#design-references-and-roles)
   travel the same way, as the explore job's `references` output, for the same reason. The pilot
@@ -429,12 +577,18 @@ is the model judging meaning, and not the same way twice. So the second gate in 
 [`qae-artifacts`](../../gates/qae_artifacts.py), reads what playwright-mcp and the explorer saved
 and refuses on structural facts:
 
-1. every `- step k:` line in a step log has a non-empty `qae/ACn-step-k.png`;
-2. no `[ERROR]` in any `console-*.log` outside `--allow-console` patterns;
+1. every `- step k:` line in a step log has a non-empty `qae/ACn-step-k.png` (a step naming
+   `reference <key>` is reported as that comparison);
+2. no `[ERROR]` in any `console-*.log` outside `--allow-console` patterns, except Chromium's
+   `Failed to load resource` line for a host other than the declared site and its further declared
+   origins, which is judged (and skipped) like that host's request in 4;
 3. the session log exists (`--save-session`) and shows a `browser_navigate`;
-4. a `browser_network_requests` result exists (the prompt asks for one after each criterion), and
-   no request to the site under test (`--site-file`, the URL the explore job declared, or a fixed
-   `--site`) answered 400 or worse or failed, outside `--allow-request` patterns.
+4. a `browser_network_requests` result exists (the prompt asks for one after each criterion; a call
+   that saved its result to a file is read from that file, which must be in the evidence), and
+   no request to the site under test (`--site-file`, the URL the explore job declared and any further
+   origin after it, or a fixed `--site`) answered 400 or worse or failed, outside `--allow-request` patterns;
+5. with `--widths`, each criterion's step screenshots include one of each declared width
+   ([above](#viewports-themes-and-what-a-criterion-does-not-say)).
 
 Run against the pilot's real first-run artifacts with no allowlist it found three things: the
 second step of AC2 had no screenshot, the analytics 404, and no network record. The consumer
@@ -453,9 +607,10 @@ browser) is declared in that criterion instead, on its own line in `## Acceptanc
 ```
 
 The gate reads the declaration from the criteria file the verify job fetched, never from the
-explorer's artifacts, and it excuses exactly that status (401 or 403 only) at exactly that URL for
-that run: the request in the network record and Chromium's `Failed to load resource: ... status of
-401` console line for it. A path resolves against the site under test; an `http(s)` URL is taken as
+explorer's artifacts, and it excuses exactly that status at exactly that URL for that run: the
+request in the network record and Chromium's `Failed to load resource: ... status of 401` console
+line for it. Only a handled refusal can be declared: 401 or 403 (an auth gate), 400, 404, 409 or 422
+(a server refusing the invalid input the explorer is told to try). A path resolves against the site under test, and is appended to each further declared origin (so a refusal on an API with a per-preview host can be declared); an `http(s)` URL is taken as
 written; the match is exact, query included. A 5xx at the same URL, the same 401 at any other URL,
 and every other console error still fail, and a declaration of another status, or a path with no
 site, is itself a finding. Because the declaration is a criterion, the explorer must still show the

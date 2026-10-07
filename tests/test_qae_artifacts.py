@@ -30,6 +30,13 @@ SESSION = """### Tool call: browser_navigate
 """
 
 
+def session_saving_to(filename):
+    """A session whose network call saved its result to `filename`, as playwright-mcp records it:
+    the result is a link to the file and holds no request."""
+    return SESSION.replace("```json\n{}\n```", "```json\n%s\n```" % json.dumps({"static": False, "filename": filename}, indent=2)) \
+        % json.dumps({"result": "- [Network](%s)" % filename})
+
+
 def session_with(requests):
     return SESSION % json.dumps({"result": "\n".join("%d. %s" % (n + 1, line) for n, line in enumerate(requests))})
 
@@ -68,6 +75,19 @@ class QaeArtifacts(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("step 2 has no screenshot (expected qae/AC1-step-2.png)", result.stdout)
 
+    def test_a_reference_comparison_without_its_screenshot_names_the_comparison(self):
+        # A consumer's live run (2026-10-07): the explorer read the reference and its last screenshot, then logged
+        # the comparison as step 5 of a ticket criterion without saving step 5's own screenshot, twice.
+        write(self.root, {"qae/TC2.md": "- step 1: resized to 375 and loaded / -> the menu button\n"
+                                        "- step 2: compared with reference home-mobile -> matches: the menu button and hero\n",
+                          "qae/TC2-step-1.png": "png"})
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("qae/TC2.md: step 2, the comparison with reference home-mobile, has no screenshot (expected "
+                      "qae/TC2-step-2.png): a comparison is a step, so save its screenshot, at the reference's width, "
+                      "before writing its line", result.stdout)
+        self.assertNotIn("step 1", result.stdout)
+
     def test_a_feature_re_walk_step_needs_its_screenshot_too(self):
         # A re-walk (docs/feature-map.md) logs each feature under qae/features/, beside its screenshots.
         write(self.root, {"qae/features/sign-in.md": "- step 1: signed in -> the dashboard\n- step 2: signed out -> the login page\n",
@@ -88,6 +108,19 @@ class QaeArtifacts(unittest.TestCase):
         result = self.run_gate()
         self.assertEqual(result.returncode, 1)
         self.assertIn("no step logs", result.stdout)
+
+    def test_a_resource_error_on_another_host_is_not_judged_once_the_site_is_declared(self):
+        # Cognito answers a refused refresh with 400, and Chromium logs that on the console.
+        # The network record already ignores that host when a site is declared. The console
+        # line for the same response does too. A resource error on the site itself still fails.
+        write(self.root, {"console-1.log": "[   12ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ https://cognito-idp.us-east-1.amazonaws.com/:0\n"})
+        self.assertEqual(self.run_gate().returncode, 1)
+        scoped = self.run_gate("--site", "http://localhost:3000")
+        self.assertEqual(scoped.returncode, 0, scoped.stdout + scoped.stderr)
+        write(self.root, {"console-1.log": "[   12ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:3000/api/journeys:0\n"})
+        on_site = self.run_gate("--site", "http://localhost:3000")
+        self.assertEqual(on_site.returncode, 1)
+        self.assertIn("status of 400 (Bad Request) @ http://localhost:3000/api/journeys:0", on_site.stdout)
 
     def test_console_error_fails_unless_allowlisted(self):
         write(self.root, {"console-1.log": "[   606ms] [ERROR] Failed to load resource: 404 @ http://localhost:3000/_vercel/insights/script.js:0\n"})
@@ -138,12 +171,43 @@ class QaeArtifacts(unittest.TestCase):
         self.assertIn("request answered 500 outside the allowlist: [GET] %s/api/quote" % preview, result.stdout)
         self.assertNotIn("localhost:3000/gone", result.stdout)
 
+    def test_a_further_declared_origin_is_judged_like_the_site(self):
+        # The shape of a consumer's real run: the page is on one host and its API on another. With
+        # only the site declared, a 401 from the API fails neither the console check nor the network
+        # one. Declared after the site, it fails both, and a third party's 400 is still not judged.
+        site, api = "https://d111111abcdef8.cloudfront.net", "https://abc123.execute-api.us-east-1.amazonaws.com/preview"
+        write(self.root, {
+            "console-1.log": "[   12ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ %s/journeys:0\n"
+                             "[   15ms] [ERROR] Failed to load resource: the server responded with a status of 400 () @ https://third-party.example/:0\n" % api,
+            "session-1/session.md": session_with(CLEAN_REQUESTS + ["[GET] %s/journeys => [401] Unauthorized" % api,
+                                                                   "[POST] https://third-party.example/ => [400] Bad Request"])})
+        inputs = tempfile.mkdtemp(prefix="vv-site-")
+        self.addCleanup(shutil.rmtree, inputs, True)
+        write(inputs, {"site-only": site + "\n", "both": "%s\n%s\n" % (site, api),
+                       "body.md": "## Acceptance criteria\n\n- Signed out, journeys refuse (expected-refusal: 401 %s/journeys)\n" % api,
+                       "relative.md": "## Acceptance criteria\n\n- Signed out, journeys refuse (expected-refusal: 401 /journeys)\n"})
+        alone = self.run_gate("--site-file", os.path.join(inputs, "site-only"))
+        self.assertEqual(alone.returncode, 0, alone.stdout + alone.stderr)
+        both = self.run_gate("--site-file", os.path.join(inputs, "both"))
+        self.assertEqual(both.returncode, 1)
+        self.assertIn("status of 401 () @ %s/journeys:0" % api, both.stdout)
+        self.assertIn("request answered 401 outside the allowlist: [GET] %s/journeys" % api, both.stdout)
+        self.assertNotIn("third-party.example", both.stdout)
+        # A refusal on the further origin is declared by its full URL, or by a path: a pull request
+        # cannot know a per-preview host, so a path is appended to each further origin as declared.
+        for criteria in ("body.md", "relative.md"):
+            declared = self.run_gate("--site-file", os.path.join(inputs, "both"), "--criteria", os.path.join(inputs, criteria))
+            self.assertEqual(declared.returncode, 0, criteria + declared.stdout + declared.stderr)
+        write(inputs, {"other.md": "## Acceptance criteria\n\n- Signed out, crews refuse (expected-refusal: 401 /crews)\n"})
+        other = self.run_gate("--site-file", os.path.join(inputs, "both"), "--criteria", os.path.join(inputs, "other.md"))
+        self.assertEqual(other.returncode, 1)
+
     def test_a_missing_empty_or_malformed_site_file_cannot_run_even_under_soak(self):
         # Judging every request instead would pass a run against the wrong site.
         inputs = tempfile.mkdtemp(prefix="vv-site-")
         self.addCleanup(shutil.rmtree, inputs, True)
         malformed = {"empty": "\n", "words": "the preview\n", "path": "/bid-study\n", "bare": "localhost:3000\n",
-                     "scheme": "ftp://example.com\n", "two": "http://localhost:3000\nhttps://elsewhere.example\n"}
+                     "scheme": "ftp://example.com\n", "second": "http://localhost:3000\napi.elsewhere.example\n"}
         write(inputs, malformed)
         for name in ["absent", *malformed]:
             result = self.run_gate("--site-file", os.path.join(inputs, name), "--soak")
@@ -154,6 +218,27 @@ class QaeArtifacts(unittest.TestCase):
         result = self.run_gate("--site", "http://localhost:3000", "--site-file", "qae-inputs/site-url")
         self.assertEqual(result.returncode, 2)
         self.assertIn("not allowed with", result.stderr)
+
+    def test_a_network_record_saved_to_a_file_is_read_from_that_file(self):
+        # The shape of a consumer's real runs: every network call named a file under the evidence
+        # directory, so the session log held links only and the check passed having read nothing.
+        evidence = os.path.basename(self.root)
+        saved = "\n".join("%d. %s" % (n, line) for n, line in enumerate(CLEAN_REQUESTS, 1))
+        write(self.root, {"session-1/session.md": session_saving_to(evidence + "/qae/AC1-network.txt"),
+                          "qae/AC1-network.txt": saved + "\n"})
+        self.assertEqual(self.run_gate().returncode, 0)
+        write(self.root, {"qae/AC1-network.txt": saved + "\n3. [POST] http://localhost:3000/api/quote => [500] Internal Server Error\n"})
+        result = self.run_gate("--site", "http://localhost:3000")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("request answered 500 outside the allowlist: [POST] http://localhost:3000/api/quote", result.stdout)
+        self.assertIn("qae/AC1-network.txt", result.stdout)
+
+    def test_a_network_record_saved_where_the_evidence_does_not_hold_it_fails(self):
+        for filename in ("%s/qae/AC1-network.txt" % os.path.basename(self.root), "/tmp/AC1-network.txt", "../AC1-network.txt"):
+            write(self.root, {"session-1/session.md": session_saving_to(filename)})
+            result = self.run_gate()
+            self.assertEqual(result.returncode, 1, filename)
+            self.assertIn("network record saved to %s, which the evidence does not hold" % filename, result.stdout)
 
     def test_network_log_files_are_read_too(self):
         write(self.root, {"network-1.log": "1. [GET] http://localhost:3000/missing => [404] Not Found\n"})
@@ -239,10 +324,17 @@ class QaeArtifacts(unittest.TestCase):
             self.assertIn("request answered %s outside the allowlist" % status, result.stdout)
             self.assertIn("status of %s () @" % status, result.stdout)
 
-    def test_only_401_or_403_can_be_declared_and_a_path_needs_a_site(self):
+    def test_an_expected_422_for_an_invalid_input_passes(self):
+        # The invalid input the explorer is told to try, which this server refuses with a handled 422.
+        result = self.refusal_run("An empty name is refused with a message (expected-refusal: 422 /api/profile)",
+                                  ("422", "/api/profile"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_only_a_handled_refusal_can_be_declared_and_a_path_needs_a_site(self):
         result = self.refusal_run("The import endpoint fails (expected-refusal: 500 /api/import)", ("500", "/api/import"))
         self.assertEqual(result.returncode, 1)
-        self.assertIn("AC1 declares expected-refusal 500: only 401 or 403 can be expected", result.stdout)
+        self.assertIn("AC1 declares expected-refusal 500: only a handled refusal (400, 401, 403, 404, 409, 422) can be expected",
+                      result.stdout)
         inputs = tempfile.mkdtemp(prefix="vv-refusal-")
         self.addCleanup(shutil.rmtree, inputs, True)
         write(inputs, {"body.md": "## Acceptance criteria\n\n- Signed out refused (expected-refusal: 401 /api/quotes)\n"})

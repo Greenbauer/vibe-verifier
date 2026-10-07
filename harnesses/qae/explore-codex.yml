@@ -38,6 +38,7 @@ jobs:
       pull-requests: read
     outputs:
       count: ${{ steps.criteria.outputs.count }}
+      ticket: ${{ steps.criteria.outputs.ticket }}
     steps:
       - name: Write the criteria inputs
         # The PR body and its changed paths. A rename lists both names: moving a page into docs/ still
@@ -52,6 +53,12 @@ jobs:
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
           gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --paginate \
             --jq '.[] | .filename, (.previous_filename // empty)' > qae-inputs/changed-files
+      - name: Write the ticket's criteria   # CONSUMER: opt-in; this default links no ticket
+        # The acceptance criteria of the ticket this pull request implements, from your tracker, as a
+        # `## Acceptance criteria` list (harnesses/qae/README.md). The explorer walks them and the gates
+        # require them in addition to the pull request's own, so a pull request cannot drop one. Fetched
+        # here, before any model runs, and passed on as this job's `ticket` output. An empty file links no ticket.
+        run: ': > qae-inputs/ticket.md'
       - name: Read the criteria
         # A PR that declares `- None: <why>`, or lists no criteria and changes only CI configuration or
         # documentation no site renders, needs no browser check; one that lists no criteria and changes
@@ -66,6 +73,7 @@ jobs:
         with:
           path: qae-inputs/pr-body.md
           changed-files: qae-inputs/changed-files
+          ticket: qae-inputs/ticket.md
 
   explore:
     name: qae-explore
@@ -76,11 +84,13 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    # The URL under test, as the site step declared it, and the digest of each design reference it
+    # The URL under test and any further origin the site is served from, as the site step declared
+    # them, and the digest of each design reference it
     # supplied, for the verify job's gates. Step outputs: the explorer runs later and cannot change them,
     # and nothing reads them from the pull request.
     outputs:
       site-url: ${{ steps.site.outputs.url }}
+      site-origins: ${{ steps.site.outputs.origins }}
       references: ${{ steps.references.outputs.references }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -91,23 +101,28 @@ jobs:
           persist-credentials: false
       - name: Write the explorer's input
         # The PR body the prompt points the explorer at (the criteria job already found a criterion in
-        # it), and the changed paths the feature selection reads.
+        # it, or in its ticket), the ticket's criteria as the criteria job read them, and the changed
+        # paths the feature selection reads.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          TICKET: ${{ needs.criteria.outputs.ticket }}
         run: |
           set -euo pipefail
           mkdir -p qae-artifacts/qae qae-inputs
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
+          printf '%s' "$TICKET" > qae-inputs/ticket.md
           gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --paginate \
             --jq '.[] | .filename, (.previous_filename // empty)' > qae-inputs/changed-files
       - name: Select the features to re-walk
         # Off unless the acceptance-verdict line in .vibe-verifier-qae has --features (docs/feature-map.md).
-        # Then each feature whose source globs match a changed path is copied to qae-inputs/features/<id>.md
-        # for the explorer to re-walk after the criteria: a path more than --shared-over features list
-        # counts for none, and at most --max-features are picked. The verify job's gate makes the same
-        # selection itself and requires one regression-check line per feature, so this step only informs.
+        # Then each feature whose source globs match a changed path is copied to qae-inputs/features/<id>.md,
+        # as this checkout has it, for the explorer to re-walk in part after the criteria: a path more than
+        # --shared-over features list counts for none, and at most --max-features are picked.
+        # qae-inputs/features.md tells the explorer how many states of each to walk (--max-states, default 3)
+        # and which changed paths selected it. The verify job's gate makes the same selection itself and
+        # requires one regression-check line and one walked step per feature, so this step only informs.
         uses: Greenbauer/vibe-verifier/actions/features@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
         with:
           changed-files: qae-inputs/changed-files
@@ -119,7 +134,9 @@ jobs:
       - name: Build and start the site under test   # CONSUMER: your build and start; leave the URL answering
         # Ends by declaring the URL under test as this step's `url` output: the explorer's prompt names
         # it and the verify job's gate judges requests to it. A repository with a reachable preview
-        # builds nothing here and resolves that preview's URL instead (harnesses/qae/README.md).
+        # builds nothing here and resolves that preview's URL instead (harnesses/qae/README.md). A site
+        # whose API answers on another host also declares `origins`, that host's URL (more than one:
+        # space-separated), and the gate judges requests to it exactly as it judges the site's.
         id: site
         env:
           NEXT_TELEMETRY_DISABLED: '1'
@@ -133,12 +150,16 @@ jobs:
             sleep 2
           done
           echo "::error::site did not answer on http://localhost:3000 within 120s"; tail -50 qae-artifacts/server.log; exit 1
-      - name: Keep the design references with the evidence
+      - name: Prepare the explorer's references and widths
         # A criterion naming `[ref: <key>]` is compared with qae-inputs/references/<key>.png, which the site
         # step supplies (harnesses/qae/README.md). Each is copied into qae-artifacts/references/ before the
         # explorer runs, so the evidence holds what it was compared with, and listed with its width in
         # qae-inputs/references.md. Its digest goes out as the `references` output, so the verify job's gate
         # judges the image the workflow supplied, never one the explorer wrote. None supplied is none copied.
+        # The --widths of the manifest's qae-artifacts line (judged from the base) go to qae-inputs/widths,
+        # the viewport widths the explorer checks each criterion at and the gate requires; none, no file.
+        # Its `max-turns` output is the explorer's turn cap, sized to the criteria, roles, widths and
+        # features it walks (harnesses/qae/README.md); the Claude lane passes it as --max-turns.
         id: references
         uses: Greenbauer/vibe-verifier/actions/qae-inputs@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
       - name: Install the browser toolchain from the catalog's lockfile
@@ -162,9 +183,14 @@ jobs:
             (not the pull request): it says how to sign in and what state the site starts in.
 
             1. Read qae-inputs/pr-body.md. The list items under the "## Acceptance criteria" heading are
-               the criteria, numbered AC1, AC2, ... in order. If the only item reads "None: <reason>",
-               this pull request declares it has nothing for a browser to check: write nothing, post
-               nothing, and stop.
+               the criteria, numbered AC1, AC2, ... in order. If qae-inputs/ticket.md is not empty, it holds
+               the acceptance criteria of the ticket this pull request implements, read the same way (under
+               its "## Acceptance criteria" heading, or every list item when it has no headings) and
+               numbered TC1, TC2, ...: they are criteria too, whatever the pull request's own list says.
+               Below, ACn stands for TCn as well (step log qae/TCn.md, screenshots qae/TCn-step-k.png,
+               verdict line acceptance-check: TCn). If the pull request's only item reads "None: <reason>"
+               and the ticket lists no criteria, there is nothing for a browser to check: write nothing,
+               post nothing, and stop.
             2. For each criterion, use the playwright browser tools to do what a user would do to check
                it: navigate, click, read the page. A step is one action that changes what is on screen.
                For every step, first save a screenshot to qae-artifacts/qae/ACn-step-k.png, then append
@@ -177,10 +203,13 @@ jobs:
                browser_console_messages once more, so the record of what the site did is saved with the run.
                A criterion may carry annotations in square brackets, and a gate checks its step log for them:
                - [ref: <key>] names a design reference, qae-inputs/references/<key>.png, which this repository's
-                 workflow supplied; qae-inputs/references.md lists each with its width. Open the image, reach the
-                 same screen and state with the browser resized to that width, save the screenshot, and compare the
-                 two by looking. Log the comparison as a step that names the reference:
+                 workflow supplied; qae-inputs/references.md lists each with its width. Open the image and reach the
+                 same screen and state with the browser resized to that width. The comparison is a step of its own:
+                 first save its screenshot to qae-artifacts/qae/ACn-step-k.png with the browser still at the
+                 reference's width, then compare the two by looking and log that step, naming the reference:
                    - step k: compared with reference <key> -> <what matches and what differs>
+                 A gate fails the run when that step has no screenshot, or one not as wide as the reference, so
+                 name the reference in that step only.
                  A control present in one image and not the other is a difference, never a match. FAIL the criterion
                  on a structural difference (a missing or extra control, a different layout, a different state),
                  never on pixel noise (anti-aliasing, font rendering, real data in place of sample data). If the
@@ -191,21 +220,50 @@ jobs:
                    - step k: as <role>: <what you did> -> <what you saw>
                  As each role, check that what the role may do works, that what it may not do is refused, and that
                  controls it must not use are not shown.
+               If qae-inputs/widths exists, it lists viewport widths in pixels, one per line, and a gate checks that
+               each criterion's step screenshots include one at each width: check every criterion's end state at
+               each of them, with the browser resized to that width, as a step with its own screenshot. If
+               qae-inputs/site.md says the site has more than one theme (light and dark), check each end state in
+               every theme as well.
+               Beyond what a criterion says, on the screen it is about: use every action control the criterion
+               touches through to its end state (a save that is saved, not a button that is only shown); after
+               saving anything, reload the page and check that the values you entered are still there; and, only
+               when that screen has a form or another input, try one invalid input in it (an empty required field,
+               a malformed value) and check that the site answers with a handled error, not a crash or a blank page.
+               Never navigate to a URL that neither the criterion names nor the site links to: an invented page is
+               not an input, and its 404 fails the run. Prefer an input the page refuses before sending anything: a
+               request the site answers with 400 or worse fails the run unless the criterion's own text declares it
+               (expected-refusal: <status> <path>), and writing that in a step line declares nothing. Log each as a
+               step of that criterion; any of them that fails makes the criterion a FAIL.
                If the directory qae-inputs/features/ exists, each <id>.md in it describes a feature this pull
-               request's changes touch. After the criteria, re-walk each one the same way: get there as its
-               Reach section says, then check what its Verify section says a user would see (its numbered
-               steps, and what each cited test title describes), first setting up whatever state a step
-               needs (who is signed in, which record exists). Its step log is qae-artifacts/qae/features/<id>.md
-               and each step's screenshot qae-artifacts/qae/features/<id>-step-k.png, under the same rules.
-            3. Write qae-artifacts/verdict.md with exactly one line per criterion, then one per re-walked
+               request's changes touch, as this pull request has that file. After the criteria, re-walk each
+               one in part. A feature's states are the numbered steps of its Verify section (in a file with
+               none, what each cited test title describes). Walk at most as many states of each feature as
+               qae-inputs/features.md says (three when that file is absent). It also lists the changed files
+               that selected each feature: walk first the states closest to those files, and walk one state
+               of every feature before a second state of any, so that no feature is left unwalked. To walk a
+               state, get there as the Reach section says, set up whatever the state needs (who is signed in,
+               which record exists), and check what the file says a user would see, and nothing more: the
+               checks beyond a criterion, above, are for criteria only. Log its steps as you do a criterion's:
+               the feature's step log is qae-artifacts/qae/features/<id>.md and each step's screenshot
+               qae-artifacts/qae/features/<id>-step-k.png, under the same rules. A state you did not get to,
+               or could not set up in this environment (no such record, no sign-in for that role), is not a
+               failure: log no step for it and name it on the feature's regression-skip line.
+            3. Write qae-artifacts/verdict.md with exactly one line per criterion, then the lines of each
                feature, nothing else:
                  acceptance-check: ACn -- PASS -- <one sentence> (qae/ACn.md::<the step line text that showed it, exactly as written after "- ">)
                or, when the criterion did not hold or you could not check it:
                  acceptance-check: ACn -- FAIL -- <what happened> (qae/ACn.md::<the step line text>)
-               and for each re-walked feature, FAIL when it no longer works the way its file describes:
+               and for each feature of which you walked a state, one line. FAIL only when a step you walked
+               showed that the feature no longer works the way its file describes, never because states were
+               left unwalked or time ran out; otherwise PASS:
                  regression-check: <id> -- PASS -- <one sentence> (qae/features/<id>.md::<the step line text>)
                  regression-check: <id> -- FAIL -- <what broke> (qae/features/<id>.md::<the step line text>)
-               Never write PASS for anything you did not see in the browser. The text after :: must be
+               then, for each feature with a state you did not walk, one line naming those states by their
+               numbers in its Verify section (or by test title):
+                 regression-skip: <id> -- <the states not walked, for example 4, 5, 7>
+               A feature of which you walked no state gets its regression-skip line and no regression-check
+               line. Never write PASS for anything you did not see in the browser. The text after :: must be
                copied verbatim from the step log line, because a gate checks that it is there.
             4. Do not post anything: this repository's workflow posts qae-artifacts/verdict.md as the pull
                request comment after you finish.
@@ -301,7 +359,9 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           SITE_URL: ${{ needs.explore.outputs.site-url }}
+          SITE_ORIGINS: ${{ needs.explore.outputs.site-origins }}
           REFERENCES: ${{ needs.explore.outputs.references }}
+          TICKET: ${{ needs.criteria.outputs.ticket }}
         run: |
           set -euo pipefail
           mkdir -p qae-inputs
@@ -318,17 +378,22 @@ jobs:
             | jq -r -s '[.[][] | select(.user.login == "github-actions[bot]") | select(.body | startswith("<!-- vibe-verifier:qa-review -->") | not) | select(.body | contains("acceptance-check:"))] | last | .body // ""' > qae-inputs/verdict.md
           echo "verdict lines: $(grep -c 'acceptance-check:' qae-inputs/verdict.md || true)"
           # The URL the explore job's site step declared, for the gate's --site-file. Empty when that
-          # step never declared one, and the gate refuses an empty file.
+          # step never declared one, and the gate refuses an empty file. Further origins the step
+          # declared follow the site, which stays first: the gate reads the first URL as the site.
           printf '%s\n' "$SITE_URL" > qae-inputs/site-url
+          if [ -n "$SITE_URL" ] && [ -n "$SITE_ORIGINS" ]; then printf '%s\n' "$SITE_ORIGINS" >> qae-inputs/site-url; fi
           # The digest of each design reference the explore job's workflow supplied, for the gate's
           # --references. Empty when that job never got that far, which the gate reads as none supplied.
           printf '%s\n' "$REFERENCES" > qae-inputs/references.json
+          # The ticket's criteria as the criteria job read them (empty: no ticket), for the gates' --ticket.
+          printf '%s' "$TICKET" > qae-inputs/ticket.md
       - name: Read the criteria
         id: criteria
         uses: Greenbauer/vibe-verifier/actions/criteria@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
         with:
           path: qae-inputs/pr-body.md
           changed-files: qae-inputs/changed-files
+          ticket: qae-inputs/ticket.md
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: steps.criteria.outputs.count != '0'
         with:
@@ -348,6 +413,7 @@ jobs:
         with:
           criteria: qae-inputs/pr-body.md
           verdict: qae-inputs/verdict.md
+          ticket: qae-inputs/ticket.md
           explore-result: ${{ needs.explore.result }}
           gates-outcome: ${{ steps.gates.outcome }}
           not-required: ${{ steps.criteria.outputs.declared-none }}

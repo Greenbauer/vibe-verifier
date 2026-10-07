@@ -68,7 +68,7 @@ class Runner(unittest.TestCase):
         self.assertEqual(runner("list").stdout.split(),
                          ["acceptance-verdict", "actionlint", "branch-name-length", "build-tools-in-devdependencies", "changed-code-mutation",
                           "cognitive-complexity", "feature-map", "gitleaks", "max-file-lines", "new-source-has-test", "no-duplicate-package-json-keys",
-                          "qae-artifacts", "repo-rules", "review-receipt", "zizmor"])
+                          "qae-artifacts", "repo-rules", "review-receipt", "universal-checks", "zizmor"])
 
 
 if __name__ == "__main__":
