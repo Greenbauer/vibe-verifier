@@ -182,6 +182,7 @@ case "$1" in
     id="${entry%% *}"; echo "${COMMIT_CMD:-[]}" > "$S/cmd/${id#sha256:}" ;;
   tag) cp "$S/tags/$2" "$S/tags/$3" ;;
   rm) rm -f "$S/ctr/$3" ;;
+  builder) [ "${BUILDER_PRUNE_FAILS:-0}" = 1 ] && { echo "error during connect" >&2; exit 1; } ;;
 esac
 exit 0
 SH
@@ -233,7 +234,7 @@ image_env() { cat "$TMP/s/state/image.env" 2>/dev/null; }
 dated() { tags | grep -E '^[0-9]{8}-[0-9a-f]{12}$'; }
 id_of() { awk '{print $1}' "$TMP/s/docker/tags/${IMG:-box-ci-runner}:$1" 2>/dev/null; }
 tagfile() { printf '%s/docker/tags/%s:%s' "$TMP/s" "${IMG:-box-ci-runner}" "$1"; }
-built() { grep -qE '^docker (build|commit)' "$CALLLOG"; }
+built() { grep -qE '^docker (build|commit) ' "$CALLLOG"; }  # the two subcommands, not `docker builder`
 in_order() {  # the arguments occur in the call log in this order (as a subsequence)
   local prev=0 n
   for pat in "$@"; do
@@ -317,6 +318,11 @@ grep -q "pruned box-ci-runner:$T1" "$TMP/s/out" || grep -q "pruned box-ci-runner
 mkdir -p "$STORE/golden-20250101-cccccccccccc" "$STORE/golden-20261016-${T1#*-}.new"; : > "$CALLLOG"
 TODAY=20261016 run_build --refresh; rc=$?
 [ "$rc" -eq 0 ] && ! built && [ ! -e "$STORE/golden-20250101-cccccccccccc" ] && [ ! -e "$STORE/golden-20261016-${T1#*-}.new" ] && [ -d "$STORE/golden-20261016-${T1#*-}" ]; expect $? "a store without an image and an unfinished store are pruned; the current one stays"
+in_order "docker image ls" "docker builder prune --force --filter until=168h" && grep -q "pruned build cache unused for 168h" "$TMP/s/out"; expect $? "after the tags, the build drops Docker build-cache records unused for a week, so nothing else has to"
+[ "$(grep -c '^docker builder prune' "$CALLLOG")" = 1 ] && ! grep -qE '^docker (image|system|volume|container) prune' "$CALLLOG"; expect $? "that is the only prune it runs: no image, volume, container or system prune of the machine"
+: > "$CALLLOG"
+BUILDER_PRUNE_FAILS=1 TODAY=20261016 run_build --refresh; rc=$?
+[ "$rc" -eq 0 ] && grep -q "WARN could not prune the Docker build cache" "$TMP/s/out" && [ "$(id_of current)" = "$(id_of "20261016-${T1#*-}")" ]; expect $? "a build-cache prune that fails is a warning: the run succeeds and current stays"
 # An image built before the store existed is among the newest three but no slot can run it:
 # prepare fails closed without a store. It goes at the next build.
 printf 'sha256:%064d 2026-12-31T00:00:00Z\n' 77 > "$(tagfile 20261231-eeeeeeeeeeee)"

@@ -162,7 +162,11 @@ committed image:
    the new image on a snapshot of the new store), and keeps the newest three dated tags (plus
    whichever one `current` names) with their stores; a dated tag without its store (no slot can
    run it) is pruned whatever its age, and so is a store whose tag has no image, or an unfinished
-   one. An image tag without its store is not converged on: the build untags it and builds again.
+   one. Last it runs `docker builder prune --force --filter until=168h`: the base build's layers
+   stay in Docker's build cache after their tags are removed, and the build clears what it left
+   rather than rely on another job on the machine. That is the machine's whole build cache, unused
+   for a week; a failure there is a warning. An image tag without its store is not converged on:
+   the build untags it and builds again.
 
 The preload and the lane's smoke run the CLI with `SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io`,
 the value `supabase/setup-cli` exports for every later step of a job, so the store holds the tags
