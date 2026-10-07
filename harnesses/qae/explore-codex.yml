@@ -84,11 +84,13 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    # The URL under test, as the site step declared it, and the digest of each design reference it
+    # The URL under test and any further origin the site is served from, as the site step declared
+    # them, and the digest of each design reference it
     # supplied, for the verify job's gates. Step outputs: the explorer runs later and cannot change them,
     # and nothing reads them from the pull request.
     outputs:
       site-url: ${{ steps.site.outputs.url }}
+      site-origins: ${{ steps.site.outputs.origins }}
       references: ${{ steps.references.outputs.references }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -130,7 +132,9 @@ jobs:
       - name: Build and start the site under test   # CONSUMER: your build and start; leave the URL answering
         # Ends by declaring the URL under test as this step's `url` output: the explorer's prompt names
         # it and the verify job's gate judges requests to it. A repository with a reachable preview
-        # builds nothing here and resolves that preview's URL instead (harnesses/qae/README.md).
+        # builds nothing here and resolves that preview's URL instead (harnesses/qae/README.md). A site
+        # whose API answers on another host also declares `origins`, that host's URL (more than one:
+        # space-separated), and the gate judges requests to it exactly as it judges the site's.
         id: site
         env:
           NEXT_TELEMETRY_DISABLED: '1'
@@ -339,6 +343,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           SITE_URL: ${{ needs.explore.outputs.site-url }}
+          SITE_ORIGINS: ${{ needs.explore.outputs.site-origins }}
           REFERENCES: ${{ needs.explore.outputs.references }}
           TICKET: ${{ needs.criteria.outputs.ticket }}
         run: |
@@ -357,8 +362,10 @@ jobs:
             | jq -r -s '[.[][] | select(.user.login == "github-actions[bot]") | select(.body | startswith("<!-- vibe-verifier:qa-review -->") | not) | select(.body | contains("acceptance-check:"))] | last | .body // ""' > qae-inputs/verdict.md
           echo "verdict lines: $(grep -c 'acceptance-check:' qae-inputs/verdict.md || true)"
           # The URL the explore job's site step declared, for the gate's --site-file. Empty when that
-          # step never declared one, and the gate refuses an empty file.
+          # step never declared one, and the gate refuses an empty file. Further origins the step
+          # declared follow the site, which stays first: the gate reads the first URL as the site.
           printf '%s\n' "$SITE_URL" > qae-inputs/site-url
+          if [ -n "$SITE_URL" ] && [ -n "$SITE_ORIGINS" ]; then printf '%s\n' "$SITE_ORIGINS" >> qae-inputs/site-url; fi
           # The digest of each design reference the explore job's workflow supplied, for the gate's
           # --references. Empty when that job never got that far, which the gate reads as none supplied.
           printf '%s\n' "$REFERENCES" > qae-inputs/references.json

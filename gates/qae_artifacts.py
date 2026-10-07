@@ -14,9 +14,12 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
     --site URL-PREFIX        judge only this origin: a request elsewhere is skipped, and so is
                              Chromium's "Failed to load resource" line for that other host
                              (default: every request and every resource error)
-    --site-file FILE         the same, read from a file the workflow wrote: one http(s) URL, the
-                             one the explore job declared, so a preview's URL reaches the gate
-                             without a manifest edit; a missing, empty or malformed file cannot run
+    --site-file FILE         the same, read from a file the workflow wrote: the http(s) URL the
+                             explore job declared, so a preview's URL reaches the gate without a
+                             manifest edit; a missing, empty or malformed file cannot run. A file
+                             may list further URLs after the first, one per line: other origins
+                             the site itself is served from (its API on another host), judged
+                             exactly as the site is. Relative paths resolve against the first
     --widths N[,N...]        viewport widths in pixels (opt-in, the repository's choice): each
                              criterion's step screenshots must include one of each width (see 6)
     --ticket FILE            the criteria of the ticket the pull request implements (TC1, TC2, ...):
@@ -30,8 +33,11 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    A step line naming `reference <key>` is a comparison with that design reference, and its finding
    says so: the explorer once logged one without saving its screenshot.
 2. The console holds no error outside the allowlist: every `[ERROR]` line in `console-*.log`.
-   A `Failed to load resource` line for a host other than the declared site is not judged, the
-   same way a third-party request is not. Any other console error still is.
+   A `Failed to load resource` line for a host other than the declared site and its further
+   declared origins is not judged, the same way a third-party request is not. Any other console
+   error still is. A site whose API answers on another host declares that host too, or a 401 or 500
+   from it reaches neither this check nor the network one (a signed-out page was once caught only by
+   this line).
 3. The session log exists (`session-*/session.md`, written by `--save-session`) and shows the
    browser was driven: at least one `browser_navigate` call.
 4. The network record exists and is clean: at least one `browser_network_requests` result in the
@@ -57,7 +63,7 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    from this line as the base has it. Feature re-walk logs are not held to it.
 
 Exit 2 when the artifact directory is missing, or a --site-file is missing or holds anything but
-one http(s) URL: nothing was adjudicated.
+http(s) URLs: nothing was adjudicated.
 """
 import argparse
 import glob
@@ -193,17 +199,23 @@ def expected_refusals(items, site):
     return expected, findings
 
 
-def resource_error_is_excused(message, expected, site):
-    """True for Chromium's `Failed to load resource` line when its URL is on a host other than the
-    declared site (judged like the request it reports), or is a refusal this run declared."""
+def judged(url, sites):
+    """True when `url` is on an origin this run judges: the declared site or a further origin it
+    declared, and every URL when none is declared."""
+    return not sites or any(url.startswith(site) for site in sites)
+
+
+def resource_error_is_excused(message, expected, sites):
+    """True for Chromium's `Failed to load resource` line when its URL is on a host this run does
+    not judge (like the request it reports), or is a refusal this run declared."""
     refused = RESOURCE_ERROR.match(message)
     if not refused:
         return False
     url = refused.group("url")
-    return bool(site and not url.startswith(site)) or (refused.group("status"), exact(url)) in expected
+    return not judged(url, sites) or (refused.group("status"), exact(url)) in expected
 
 
-def console_is_clean(root, allowed, expected, site):
+def console_is_clean(root, allowed, expected, sites):
     findings, seen = [], set()
     for log in sorted(glob.glob(os.path.join(root, "console-*.log"))):
         for number, line in enumerate(read(log).splitlines(), 1):
@@ -213,14 +225,14 @@ def console_is_clean(root, allowed, expected, site):
             message = match.group("message")
             if any(pattern.search(message) for pattern in allowed) or message in seen:
                 continue
-            if resource_error_is_excused(message, expected, site):
+            if resource_error_is_excused(message, expected, sites):
                 continue
             seen.add(message)
             findings.append(Finding("console error outside the allowlist: %s" % message[:200], relative(log, root), number))
     return findings
 
 
-def session_and_network(root, allowed, site, expected):
+def session_and_network(root, allowed, sites, expected):
     sessions = sorted(glob.glob(os.path.join(root, "session-*", "session.md")))
     if not sessions:
         return [Finding("no session log (run playwright-mcp with --save-session so every tool call is on record)")]
@@ -237,7 +249,7 @@ def session_and_network(root, allowed, site, expected):
     for source in sources:
         for match in REQUEST.finditer(read(source)):
             url, status = match.group("url"), match.group("status")
-            if site and not url.startswith(site):
+            if not judged(url, sites):
                 continue
             if any(pattern.search(url) for pattern in allowed):
                 continue
@@ -253,16 +265,21 @@ def session_and_network(root, allowed, site, expected):
     return findings
 
 
-def declared_site(path):
-    """The one http(s) URL the workflow wrote to `path`. Anything else means the declared input is
-    wrong, and judging every request instead would pass a run against the wrong site."""
+def is_origin(word):
+    parts = urllib.parse.urlsplit(word)
+    return parts.scheme in ("http", "https") and bool(parts.netloc)
+
+
+def declared_sites(path):
+    """The http(s) URLs the workflow wrote to `path`: the site under test first, then any further
+    origin it is served from. Anything else means the declared input is wrong, and judging every
+    request instead would pass a run against the wrong site."""
     if not os.path.isfile(path):
         raise CannotRun("site file not found: %s" % path)
     words = read(path).split()
-    parts = urllib.parse.urlsplit(words[0]) if len(words) == 1 else None
-    if not parts or parts.scheme not in ("http", "https") or not parts.netloc:
-        raise CannotRun("site file %s does not hold one http(s) URL: %r" % (path, " ".join(words)[:200]))
-    return words[0]
+    if not words or not all(is_origin(word) for word in words):
+        raise CannotRun("site file %s does not hold http(s) URLs only: %r" % (path, " ".join(words)[:200]))
+    return words
 
 
 def read_declared(path, label):
@@ -286,16 +303,16 @@ def check(args):
         return []
     # Resolved only once something is being judged: a pull request that declares None runs no
     # explorer, so its site step may never have declared a URL, and that must not fail it.
-    site = declared_site(args.site_file) if args.site_file else args.site
+    sites = declared_sites(args.site_file) if args.site_file else [args.site] if args.site else []
     console_allow = [re.compile(pattern) for pattern in (args.allow_console or [])]
     request_allow = [re.compile(pattern) for pattern in (args.allow_request or [])]
     items = ([] if reason else criteria(HTML_COMMENT.sub("", body))) + ticket
-    expected, declared = expected_refusals(items, site)
+    expected, declared = expected_refusals(items, sites[0] if sites else None)
     return (declared
             + steps_have_screenshots(root)
             + (widths_findings(root, args.widths) if args.widths else [])
-            + console_is_clean(root, console_allow, expected, site)
-            + session_and_network(root, request_allow, site, expected))
+            + console_is_clean(root, console_allow, expected, sites)
+            + session_and_network(root, request_allow, sites, expected))
 
 
 def add_arguments(parser):

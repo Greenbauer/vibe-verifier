@@ -302,7 +302,7 @@ class Template(unittest.TestCase):
         script = step_script(text, "- name: Write the declared inputs", "- name: Run the QA gates")
         result = subprocess.run(["bash", "-e", "-c", script], cwd=verify, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x", "PR_NUMBER": "7",
-                                               "REPO": "o/r", "SITE_URL": "http://localhost:3000", "REFERENCES": declared,
+                                               "REPO": "o/r", "SITE_URL": "http://localhost:3000", "SITE_ORIGINS": "", "REFERENCES": declared,
                                                "TICKET": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(json.loads(Path(verify, "qae-inputs", "references.json").read_text()), DIGESTS)

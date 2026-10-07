@@ -308,7 +308,11 @@ read-only, so the review step cannot post there and fails the verify job.
 
 ## A reachable preview instead of a site on the runner
 
-The site step has two shapes, and both end by writing `url=<the site>` to `$GITHUB_OUTPUT`. The
+The site step has two shapes, and both end by writing `url=<the site>` to `$GITHUB_OUTPUT`. A site
+whose API answers on another host (a static front end and an API gateway, say) also writes
+`origins=<that host's URL>`, space-separated when there is more than one. The gate then judges
+requests to those hosts, and the console's `Failed to load resource` lines for them, exactly as it
+judges the site's; without it, a 401 or 500 from the API is on a host the gate skips. The
 template's builds and starts the site on the runner and declares `http://localhost:3000`. A
 repository whose pull requests already get a reachable preview builds nothing on the runner: it drops
 `npm ci` and `cache: npm` (node stays, for the browser toolchain), grants the explore job
@@ -463,7 +467,8 @@ everything the model read, off the runner.
 - **Declared inputs, never operated infrastructure.** The harness needs a URL it can reach, and the
   workflow declares it, never the pull request's files and never the model: the site step's `url`
   output is named in the prompt, and the explore job passes it on as its `site-url` output to the
-  verify job, which writes `qae-inputs/site-url` for `qae-artifacts --site-file`. It is a step output
+  verify job, which writes `qae-inputs/site-url` for `qae-artifacts --site-file`. Further origins the
+  step declared (`origins`) travel the same way, as `site-origins`, into the same file. It is a step output
   and not a file in the artifact because the explorer writes under `qae-artifacts/`, and it must not
   choose which site the gate judges. The digests of the [design references](#design-references-and-roles)
   travel the same way, as the explore job's `references` output, for the same reason. The pilot
@@ -553,12 +558,12 @@ and refuses on structural facts:
 1. every `- step k:` line in a step log has a non-empty `qae/ACn-step-k.png` (a step naming
    `reference <key>` is reported as that comparison);
 2. no `[ERROR]` in any `console-*.log` outside `--allow-console` patterns, except Chromium's
-   `Failed to load resource` line for a host other than the declared site, which is judged (and
-   skipped) like that host's request in 4;
+   `Failed to load resource` line for a host other than the declared site and its further declared
+   origins, which is judged (and skipped) like that host's request in 4;
 3. the session log exists (`--save-session`) and shows a `browser_navigate`;
 4. a `browser_network_requests` result exists (the prompt asks for one after each criterion), and
-   no request to the site under test (`--site-file`, the URL the explore job declared, or a fixed
-   `--site`) answered 400 or worse or failed, outside `--allow-request` patterns;
+   no request to the site under test (`--site-file`, the URL the explore job declared and any further
+   origin after it, or a fixed `--site`) answered 400 or worse or failed, outside `--allow-request` patterns;
 5. with `--widths`, each criterion's step screenshots include one of each declared width
    ([above](#viewports-themes-and-what-a-criterion-does-not-say)).
 
