@@ -303,19 +303,21 @@ the newest copy of each job and check counts toward step totals and attention.
 It re-reads the PR head after collection; a race drops the collected evidence instead of attaching
 it to the new revision. Commit statuses and third-party checks remain separate evidence rows.
 
-GitHub lists a check the base branch's rulesets require as "Expected" without creating a check run
-for it, so the dashboard reads the rules for each pull request's base branch and adds an expected
-row for every required status check that has not reported and every required workflow that has not
-run on the head. A required workflow runs at the SHA its ruleset pinned when the run was triggered,
-so after the pin moves GitHub waits for a new run. The dashboard reads the ruleset's version history
+GitHub lists a check the base branch requires as "Expected" without creating a check run for it.
+The dashboard reads the rulesets for each pull request's base branch, and the classic branch
+protection required status checks, which that rules read does not return. It adds an expected row
+for every required status check that has not reported and every required workflow that has not run
+on the head. A required workflow runs at the SHA its ruleset pinned when the run was triggered, so
+after the pin moves GitHub waits for a new run. The dashboard reads the ruleset's version history
 once per pin to learn when the current pin took effect, and a run created before then does not
-count. An expected row keeps the pull request pending, flags it for attention, and keeps its step
-total unknown. GitHub serves an organization ruleset's history only to a token with organization
-administration write, which a read-only dashboard should not hold. When the history is refused,
-any run of the required workflow on the head counts, so the pull request keeps its evidence; right
-after a pin moves it can show as passed while GitHub waits for a rerun, and GitHub's merge box
-still enforces the rule. A required workflow that never ran on the head is still expected.
-Classic branch protection is not read.
+count. An expected row keeps the pull request pending, flags it for attention, and takes one pending
+share on the step line. GitHub serves an organization ruleset's history only to a token with
+organization administration write, which a read-only dashboard should not hold. When the history is
+refused, any run of the required workflow on the head counts, so the pull request keeps its
+evidence; right after a pin moves it can show as passed while GitHub waits for a rerun, and GitHub's
+merge box still enforces the rule. A required workflow that never ran on the head is still expected.
+Classic protection needs Administration read. A token without it, or a branch with no classic
+protection, leaves those checks out and still shows the pull request's other evidence.
 
 Direct manifest or workflow evidence reports `subscribed`. An installation subscribed only through
 an organization wrapper or ruleset reports `unknown` in this pilot, not `false`; wrapper/ruleset
@@ -342,14 +344,14 @@ The step meter is one line for the whole step total. Each outcome takes a share 
 equal to its count, with a gap between shares: green for passed, yellow for pending, red for
 failed, and gray for skipped, cancelled, or unknown. Finished steps over the total stay in the
 text above the line. The badge beside it, not the line, is the worst current-head check.
-Reported steps can all be successes while GitHub still shows a check as pending or failed: a
-queued or in-progress check has no steps yet, and a running job omits steps that have not
-started. Each such check or job adds one share of its outcome, so the line cannot be entirely
-green while that work is still open. A skipped or passed check adds nothing, because the steps
-already carry that detail.
+Reported steps can all be successes while GitHub still shows a check as pending, failed, or
+skipped: a queued or in-progress check has no steps yet, a running job omits steps that have not
+started, and a skipped job comes back with no steps. Each such check or job adds one share of its
+outcome, and each expected required check adds one pending share, so the line cannot be entirely
+green while that work is still open. A passed check adds nothing, because its steps already carry
+that detail. A skipped check whose job already returned a skipped step adds nothing more.
 Elapsed time alone never asserts that a job is stuck. Unknown step totals never render as
-100 percent. A completed job with no steps, which is how GitHub reports a skipped job, counts as
-zero steps; a job that has not started yet keeps its run's step total unknown.
+100 percent. A job that has not started yet keeps its run's step total unknown.
 
 ## Data lifecycle and uninstall
 

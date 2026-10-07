@@ -31,7 +31,7 @@ from .config import load_config
 from .telemetry import read_telemetry
 
 READ_PERMISSIONS = dict.fromkeys(
-    ("actions", "checks", "contents", "metadata", "pull_requests", "statuses"), "read")
+    ("actions", "administration", "checks", "contents", "metadata", "pull_requests", "statuses"), "read")
 ACCESS_TOKENS = "https://api.github.com/app/installations/%d/access_tokens"
 # A client ID (Iv1.0123abcd, Iv23li...) or a numeric App ID; GitHub accepts either as the JWT issuer.
 APP = re.compile(r"[A-Za-z0-9.]{1,64}\Z")
