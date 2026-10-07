@@ -1,0 +1,47 @@
+# A test fixture, every value fictional: a 16-core machine whose one org lane runs ci and wait jobs
+# and no QAE, with eight slots of each. The tests read what the scripts derive from it.
+hostname: vps-1
+sysbox: {image: /var/lib/orbit-ci/sysbox.img, disk_gb: 40}
+lanes:
+  - name: orbit-ci
+    scope: org
+    owner: orbit-labs
+    runner_group: orbit-ci
+    repos: [api, ci, web]
+    labels: {ci: orbit-ci}
+    wait: {label: orbit-ci-wait, slots: 8, memory: 1g}
+    app: {id: 1000003, installation_id: 20000003, key_file: /etc/orbit-ci/app.pem, login: orbit-lane-app}
+    slots: 8
+    min_runners: 2
+    name_prefix: vps1-ci
+    image: orbit-ci-runner
+    preload:
+      api: packages/database/supabase
+      ci: "-"
+      web: supabase
+    slice: {memory_max: 20G, memory_high: 18G, cpu_quota: "1200%", cpu_weight: 50}
+    container: {memory: 4g, pids: 2048, tmp_size: 2g}
+    runtime_max_sec: 3600
+    warm_max_age_sec: 1200
+    slot_disk_gb: 10
+    store_disk_gb: 40
+    check_ports: [22, 54321, 54322]
+dashboards:
+  - name: orbit
+    lane: orbit-ci
+    port: 8766
+    config:
+      version: 1
+      owner: orbit-labs
+      repositories:
+        - orbit-labs/api
+        - orbit-labs/ci
+        - orbit-labs/web
+      bots:
+        reviewer: {workflow: review.yml, jobs: [review]}
+        explorer: {workflow: qae.yml, jobs: [qae-explore]}
+        verifier: {workflow: qae.yml, jobs: [qae-verify]}
+      proxy_origin: https://vps-1.example.ts.net:8444
+      agents:
+        - {id: ci-swe, name: SWE, role: swe, workflow_role: reviewer}
+        - {id: ci-qae, name: QAE, role: qae, workflow_role: explorer}

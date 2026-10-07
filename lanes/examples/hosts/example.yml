@@ -1,0 +1,96 @@
+# An example machine: one user-scope lane and one org-scope lane, each with a dashboard. Every
+# value is fictional. A real host file lives in the owner's private values repository, as
+# hosts/<host>.yml at its root; the schema and its rules are README.md, "Configuration".
+hostname: worker-1                       # the ssh target the gates print
+# One per machine: Sysbox's per-container data, a sparse image mounted at /var/lib/sysbox.
+sysbox: {image: /var/lib/runners/sysbox.img, disk_gb: 20}
+lanes:
+  # A user lane serves every private, non-archived repository of the account its App is installed
+  # on, minus `exclude`, each in its `default` runner group: `runs-on: greenbauer-ci`.
+  - name: greenbauer-ci
+    scope: user
+    owner: Greenbauer
+    labels: {ci: greenbauer-ci, qae: greenbauer-qae}
+    exclude: [scratch]
+    app: {id: 1000001, installation_id: 20000001, key_file: /etc/greenbauer-ci/app.pem, login: example-lane-app}
+    # With labels.qae: QAE instance 1's Codex store; instance 2's is /var/lib/greenbauer-ci/codex-2.
+    codex_store: /var/lib/greenbauer-ci/codex
+    slots: 6
+    qae_concurrency: 2
+    name_prefix: worker1-ci
+    image: greenbauer-ci-runner
+    # No repository is listed, so this lane's image preloads nothing.
+    preload: {}
+    slice: {memory_max: 16G, memory_high: 14G, cpu_quota: "1000%", cpu_weight: 50}
+    container: {memory: 4g, pids: 2048, tmp_size: 2g}
+    runtime_max_sec: 3600
+    slot_disk_gb: 6
+    store_disk_gb: 20
+    # The host ports the smoke proves a slot cannot reach.
+    check_ports: [22, 3101, 54329]
+  # An org lane serves the repositories of its organisation runner group, with a warm pool:
+  # `runs-on: [self-hosted, acme-ci]`.
+  - name: acme-ci
+    scope: org
+    owner: acme
+    runner_group: acme-ci
+    repos: [webapp, docs]
+    labels: {ci: acme-ci, qae: acme-qae}
+    # Jobs that only wait for another job's result take these slots, never the ci ones:
+    # `runs-on: [self-hosted, acme-wait]`.
+    wait: {label: acme-wait, slots: 2, memory: 1g}
+    app: {id: 1000002, installation_id: 20000002, key_file: /etc/acme-ci/app.pem, login: acme-lane-app}
+    codex_store: /var/lib/acme-ci/codex
+    slots: 6
+    min_runners: 1
+    qae_concurrency: 2
+    name_prefix: worker1-acme
+    image: acme-ci-runner
+    # One entry per repository in `repos`: where it keeps its Supabase project, or "-" for none.
+    preload: {webapp: supabase, docs: "-"}
+    slice: {memory_max: 16G, memory_high: 14G, cpu_quota: "1000%", cpu_weight: 50}
+    container: {memory: 4g, pids: 2048, tmp_size: 2g}
+    runtime_max_sec: 3600
+    warm_max_age_sec: 1200
+    slot_disk_gb: 8
+    store_disk_gb: 10
+    check_ports: [22, 3101, 54329]
+# The Vibe Verifier dashboards this machine serves on loopback (bin/provision-dashboards.sh,
+# README.md "Dashboards"). `config` is the dashboard's own configuration, less telemetry_file.
+dashboards:
+  - name: greenbauer
+    lane: greenbauer-ci
+    port: 8765
+    # The account whose SSH forward carries the HTTPS route to the port.
+    bridge_account: dashboard-forward
+    config:
+      version: 1
+      owner: Greenbauer
+      repositories:
+        - Greenbauer/vibe-verifier
+      bots:
+        reviewer: {workflow: review.yml, jobs: [review]}
+        explorer: {workflow: qae-explore.yml, jobs: [qae-explore]}
+        verifier: {workflow: qae-explore.yml, jobs: [qae-verify]}
+      proxy_origin: https://worker-1.example.ts.net:8443
+      agents:
+        - {id: ci-swe, name: SWE, role: swe, workflow_role: reviewer}
+        - {id: ci-qae, name: QAE, role: qae, workflow_role: explorer}
+  # No bridge account: the HTTPS route's proxy runs as root on this machine.
+  - name: acme
+    lane: acme-ci
+    port: 8766
+    config:
+      version: 1
+      owner: acme
+      repositories:
+        - acme/webapp
+        - acme/docs
+      bots:
+        reviewer: {workflow: review.yml, jobs: [review]}
+        explorer: {workflow: qae.yml, jobs: [qae-explore]}
+        verifier: {workflow: qae.yml, jobs: [qae-verify]}
+      proxy_origin: https://worker-1.example.ts.net:8444
+      agents:
+        - {id: ci-swe, name: SWE, role: swe, workflow_role: reviewer}
+        - {id: ci-qae, name: QAE, role: qae, workflow_role: explorer}

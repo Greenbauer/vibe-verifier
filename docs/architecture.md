@@ -160,6 +160,14 @@ Missing or inaccessible data stays unavailable rather than becoming zero or succ
 
 See [`dashboard.md`](dashboard.md).
 
+### 8. Self-hosted runner lanes (optional)
+
+Where a consumer's jobs run is its own `runs-on:` choice, and no gate depends on it. For an owner who runs them on a machine of their own, [`lanes/`](../lanes/README.md) is a kit that provisions disposable-container lanes on an Ubuntu host: a scale-set listener keeps a GitHub runner scale set per kind of job and starts one systemd slot per job GitHub assigns, and the slot runs one Sysbox container that takes that job and exits. A job reaches neither the host's Docker socket nor its private networks, and nothing it wrote survives into the next job.
+
+The kit is infrastructure, not a verification layer: it changes nothing about what a gate decides. It also holds no owner's values. A machine has two checkouts, the engine (a clone of this catalog, fetched anonymously) and the values (the owner's private repository, whose `hosts/<host>.yml` names the machine's lanes, GitHub Apps and repositories, fetched with a read-only deploy key), and a root timer keeps both on their `main` and converges the machine. The same kit can install the [dashboard host kit](dashboard-host.md) on that machine, fed by a lane's telemetry.
+
+See [`lanes/README.md`](../lanes/README.md).
+
 ## Evidence ownership
 
 A recurring pattern is that the workflow declares the values that determine what is being judged, while the model supplies observations about that subject.

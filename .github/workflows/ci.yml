@@ -2,7 +2,7 @@ name: CI
 
 # Tests every gate and the runner, then runs this repository's own manifest through
 # the composite action, which is the only place that action executes before a
-# consumer exists.
+# consumer exists. The lanes jobs run the runner-lane kit's own suites (lanes/README.md).
 
 on:
   pull_request:
@@ -33,3 +33,34 @@ jobs:
         # 1.7.12, the latest release, rejects as an invalid ref. Until actionlint learns it, the
         # workspace-relative form stays and zizmor's finding is ignored here with this reason.
         uses: ./actions/gates # zizmor: ignore[self-repository]
+
+  # The runner-lane kit (lanes/README.md) is Linux-only and has tests of its own, which stub every
+  # system tool on PATH: nothing is installed, mounted or started on the runner.
+  lanes:
+    name: lanes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Hermetic tests
+        # bash 5, jq, git and flock are the runner's; PyYAML comes from the committed requirements
+        # file, by digest, into a throwaway environment whose python3 the tests run.
+        run: |
+          python3 -m venv "$RUNNER_TEMP/lanes-venv"
+          "$RUNNER_TEMP/lanes-venv/bin/python" -m pip install --quiet --disable-pip-version-check \
+            --require-hashes --only-binary :all: --no-deps -r lanes/tests/requirements.txt
+          PATH="$RUNNER_TEMP/lanes-venv/bin:$PATH" lanes/tests/run-all.sh
+
+  lanes-listener:
+    name: lanes-listener
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: gofmt, go vet and go test
+        # In the Go image the machines build the listener with, pinned by digest in build.sh.
+        run: lanes/listener/build.sh test

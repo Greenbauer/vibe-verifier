@@ -79,6 +79,7 @@ The full rules are in the [gate contract](docs/GATE-CONTRACT.md).
 | Commit-SHA pin inventory and propagation | ✓ |
 | Local read-only verification dashboard | ✓ |
 | Numeric model-usage and runner-capacity telemetry | Optional |
+| Disposable-container self-hosted runner lanes | Optional |
 
 ## Get started
 
@@ -216,6 +217,10 @@ The optional [local CI dashboard](docs/dashboard.md) gives a read-only view of s
 
 It binds to loopback, can optionally sit behind a trusted private HTTPS proxy, accepts `GET` only, has no merge/retry/cancel/publish controls, and does not change the gate runner. Missing telemetry stays unavailable rather than becoming zero; stale and partial samples retain explicit status and timestamps.
 
+## Self-hosted runner lanes
+
+The optional [runner-lane kit](lanes/README.md) runs each CI job in its own disposable Sysbox container on a Linux machine you own. A small listener keeps a GitHub runner scale set per kind of job and starts one container for each job GitHub assigns it; the container takes that one job and exits, and nothing it did survives into the next. The kit is the engine only: which machine, organization, GitHub App and repositories a lane serves is a host file in your own private repository, and a machine keeps both checkouts on their `main` by itself. No gate depends on it, and where a consumer's jobs run stays that consumer's `runs-on:` choice.
+
 ## Built from real CI failures
 
 The verification contracts have been tightened in response to failures observed in live consumers, including:
@@ -242,6 +247,7 @@ For multiple projects, see [subscribing in CI](docs/GATE-CONTRACT.md#subscribing
 - [Review harness](harnesses/review/README.md): revision-bound AI review and workflow receipts.
 - [QAE harness](harnesses/qae/README.md): browser exploration, artifacts, and deterministic acceptance verdicts.
 - [Dashboard](docs/dashboard.md): local read-only verification observability, and the [Linux host runbook](docs/dashboard-host.md) that runs it under systemd.
+- [Runner lanes](lanes/README.md): the design and operator's manual of the self-hosted runner-lane kit, with an [example host file](lanes/examples/hosts/example.yml).
 - [Security policy](SECURITY.md): vulnerability reporting and supported versions.
 
 ## Contribute
