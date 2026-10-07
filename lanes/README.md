@@ -158,6 +158,9 @@ against 56 to 66 s when Sysbox copied a 5.6 GB store, 2026-09-26). Sysbox's own 
 stays under `/var/lib/sysbox`, the machine's one sparse ext4 image (`sysbox.image`,
 `var-lib-sysbox.mount` with `discard`, required by `sysbox-mgr`). `--check` prints each lane's
 worst case (store plus `slots` plus `wait.slots`, times `slot_disk_gb`) and the Sysbox image against the free space.
+On the host's own Docker a lane leaves only its runner image: the image build keeps the newest three
+dated tags and, after every run, drops the Docker build-cache records unused for a week
+(`image/README.md`), so a lane needs no other job on the machine to prune behind it.
 
 **The runner image contract.** `/var/lib/<name>/image.env` holds `KNOWN_CI_IMAGE_TAG=<tag>` for
 `<image>:<tag>`, and its preloaded store is `/var/lib/<name>/store/golden-<tag>`; the units read

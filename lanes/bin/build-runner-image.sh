@@ -62,7 +62,8 @@
 #   6. tag the image <image>:current and write KNOWN_CI_IMAGE_TAG=<tag> to
 #      /var/lib/<lane name>/image.env, which the lane's units read at every start; then prune dated
 #      tags beyond the newest three and every dated tag without its store (never the one current
-#      names), every base-* tag, and every store whose tag has no image.
+#      names), every base-* tag, every store whose tag has no image, and the Docker build cache
+#      records unused for a week, so the lane's builds leave nothing for another job to clean up.
 # Any failure exits non-zero with the reason, removes the build container, this run's partial tags
 # and its store, and leaves current where it was.
 #
@@ -82,6 +83,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTEXT="$REPO_ROOT/image"
 SLOT_HELPER="$REPO_ROOT/bin/lane-slot.sh"
 KEEP=3
+# Build-cache records unused for this long are dropped after every run (a week: the timer's period).
+CACHE_MAX_AGE=168h
 ENTRYPOINT_JSON='["/usr/local/bin/known-ci-entrypoint"]'
 PRELOAD_DIR=/opt/known-ci/preload
 MANIFEST=/etc/known-ci-runner/preloaded-images
@@ -210,6 +213,16 @@ prune() {
     esac
     rm -rf "$dir" && log "pruned store $dir"
   done
+  # The base build leaves its layers in Docker's build cache, and the layers of a tag removed above
+  # stay there with nothing sharing them. Nothing else on the machine is trusted to clear them, so
+  # the build drops every cache record unused for a week (the timer's own period): the next build
+  # re-creates what it needs. It is the machine's whole build cache, not only this lane's, and a
+  # cache is all it is. A failure is a warning: the image is already built and current.
+  if docker builder prune --force --filter "until=$CACHE_MAX_AGE" >/dev/null 2>&1; then
+    log "pruned build cache unused for $CACHE_MAX_AGE"
+  else
+    log "WARN could not prune the Docker build cache (docker builder prune)"
+  fi
 }
 
 # Exit 0 with a note under --if-provisioned (the timer), fail otherwise (a direct caller).
