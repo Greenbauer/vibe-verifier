@@ -41,7 +41,9 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
    outside `qae-artifacts/` and `qae-inputs/` changed on the runner; the config paths
    `claude-code-action` itself resets to the base branch before the model runs (`CLAUDE.md`,
    `.claude/`, `.mcp.json` and a few more) are excused only while they still match the base.
-   Everything under `qae-artifacts/` is uploaded, always. A separate 7-day artifact named
+   Everything under `qae-artifacts/` is uploaded, always, as the artifact
+   `qae-artifacts-<run_attempt>`: a failed or cancelled attempt uploads too, and under one name for
+   every attempt a re-run's verify job was handed an earlier attempt's evidence. A separate 7-day artifact named
    `vv-usage-qae-explorer-<run_attempt>` contains only the numeric `usage.json`; an explorer that
    did not finish is recorded as unavailable or partial, never as zero. A run whose explore job was
    skipped (no criterion) uploads none.
@@ -50,7 +52,9 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
    writes the declared inputs (the PR body; its changed paths; the newest
    `acceptance-check:` comment posted by the explore job's own identity, skipping the QA review
    comment; the site URL the explore job declared, in `qae-inputs/site-url`), reads the criteria with
-   the same action, downloads the artifacts when there was a criterion to explore, and runs the
+   the same action, downloads the artifacts when there was a criterion to explore (those of the
+   attempt the explore job ran in, which that job reports as its `attempt` output: this attempt's on
+   a full re-run, an earlier one's when only the verify job is re-run), and runs the
    [`acceptance-verdict`](../../gates/acceptance_verdict.py) gate through the composite action with
    the manifest [`manifest`](manifest) (`.vibe-verifier-qae` in the consumer), unless the pull request
    needs no check ([below](#which-pull-requests-need-a-check)). Last, whatever happened before it,
@@ -606,6 +610,27 @@ everything the model read, off the runner.
   review comment states the skip. A bare `- None`, or an absent section on a PR that changes the
   site, still fails.
   Found the first time apply-down opened a pin-bump PR and the gate refused it, correctly.
+- **Each attempt keeps its own evidence.** The explore job uploads `qae-artifacts/` always, so a
+  failed or cancelled attempt uploads too, and a run's attempts share one artifact namespace. Under
+  one name for every attempt, a consumer's third attempt passed its explore job and its verify job
+  was handed the cancelled second attempt's artifact: no step log, no session log, both gates red on
+  a correct run, and no re-run could ever pass (2026-10-07). The artifact is named
+  `qae-artifacts-<run_attempt>`, and the verify job downloads the attempt the explore job reports as
+  its `attempt` output, never its own: re-running the verify job alone leaves the explore job, and
+  its evidence, in the earlier attempt.
+- **The browser step asks apt only for what is missing, within a bound.** `playwright install
+  --with-deps` refreshes every package list and re-installs Playwright's whole package list on each
+  run, for the nine font packages a GitHub-hosted `ubuntu-24.04` runner lacks (every library chromium
+  loads is already there; the fonts change what a screenshot shows, so they stay). That step takes
+  about 20 s and took 165 s, 295 s, 402 s and past 20 minutes on four runs of two days, with the
+  runner's first apt mirror serving about 90 kB/s (2026-10-06 and 2026-10-07): apt's own timeouts
+  end a stalled transfer, never a slow one. `actions/qae-browser` installs chromium, asks
+  Playwright's own simulation (`install-deps --dry-run`) which packages apt would install, and
+  fetches only those: within 90 s, then once more within 300 s without the machine's first mirror
+  where it lists more than one (a hosted runner's `/etc/apt/apt-mirrors.txt`, put back afterwards).
+  The bound covers downloads only, so it never interrupts dpkg. A fetch that fails twice fails the
+  step. Measured on hosted runners with the first mirror held to 73 kB/s: 117 s, against 14 s with
+  it healthy.
 
 ## The explorer on Codex: the OpenAI subscription, with the login on the runner
 

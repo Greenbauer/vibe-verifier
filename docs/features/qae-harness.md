@@ -51,6 +51,10 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - `tests/test_qae_ticket.py::test_a_dependency_update_passes_on_its_supplied_criteria_alone`
 - `tests/test_qae_explore.py::test_dependabot_is_the_one_bot_whose_pull_requests_reach_the_explorer`
 - `tests/test_runner.py::test_the_qae_browser_toolchain_installs_from_its_lockfile`
+- `tests/test_qae_explore.py::test_a_re_run_never_reads_an_earlier_attempts_evidence`
+- `tests/test_qae_explore.py::test_the_verify_job_downloads_the_attempt_the_explore_job_ran_in`
+- `tests/test_qae_browser.py::test_where_sudo_needs_no_password_only_the_missing_packages_are_installed`
+- `tests/test_qae_browser.py::test_a_fetch_that_runs_out_of_time_is_tried_once_more_from_the_next_mirror`
 
 ## Gotchas
 
@@ -60,3 +64,5 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - A design reference's digest reaches the gate as an explore job output, never as a file the explorer could rewrite; a reference the workflow did not supply is refused, never invented.
 - The Claude lane's `--max-turns` is the qae-inputs step's `max-turns` output, sized to the run's walks; a consumer copy that still passes a fixed number keeps that number.
 - A feature re-walk covers at most `--max-states` states of each feature. A `regression-check` FAIL means a walked step broke; a state not reached goes on a `regression-skip` line, which no gate judges. A consumer copy with the older prompt still tells the explorer to walk every state.
+- The evidence artifact is `qae-artifacts-<run_attempt>`, and the verify job downloads the attempt the explore job reports as its `attempt` output. A consumer copy that still names it `qae-artifacts` in both jobs hands a re-run's verify job whichever attempt's artifact GitHub returns.
+- `actions/qae-browser` reads the names of the missing system packages from the pinned Playwright's `install-deps --dry-run` report. A Playwright bump that changes that report fails the step (never reads as nothing missing), and the catalog's `qae-browser` CI job is where that shows first.
