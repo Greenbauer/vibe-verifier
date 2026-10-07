@@ -45,7 +45,10 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    such result, or in a `network-*.log` file, answered 400 or worse or failed, outside the
    allowlist. A call may save its result to a file (its `filename` argument); the session log then
    holds a link and no requests, so that file is read as the result. One the evidence does not hold
-   is a finding: a record nobody can read is not a record. This encodes the recorded false-PASS lesson: a PASS obtained while the real
+   is a finding: a record nobody can read is not a record. A request the browser cancelled itself
+   (`[FAILED] net::ERR_ABORTED`: the explorer navigated away before it returned, or the page aborted
+   its own fetch) was never answered by the site, so it is not judged; every other failed request
+   is. This encodes the recorded false-PASS lesson: a PASS obtained while the real
    endpoint failed is refused here whatever the verdict says.
 5. A refusal is the correct outcome of some criteria (an auth gate answering 401 signed out, a
    server answering 422 to the invalid input the explorer is told to try), so a criterion declares
@@ -83,7 +86,9 @@ CONSOLE_ERROR = re.compile(r"^\[\s*[0-9]+ms\]\s+\[ERROR\]\s+(?P<message>.*)$")
 TOOL_CALL = re.compile(r"^### Tool call: (?P<name>\S+)\s*$", re.MULTILINE)
 # `3. [GET] http://host/path => [404] Not Found` or `=> [FAILED] net::ERR_...`, as the tool renders it;
 # inside a JSON result the newline is escaped, so the line is matched without anchors.
-REQUEST = re.compile(r"[0-9]+\. \[(?P<method>[A-Z]+)\] (?P<url>\S+) => \[(?P<status>[0-9]{3}|FAILED)\]")
+REQUEST = re.compile(r"[0-9]+\. \[(?P<method>[A-Z]+)\] (?P<url>\S+) => \[(?P<status>[0-9]{3}|FAILED)\](?: (?P<reason>net::[A-Z0-9_]+))?")
+# The browser's own cancellation of a request: the page navigated away, or aborted its fetch.
+CANCELLED = "net::ERR_ABORTED"
 # What a browser_network_requests call was told to save its result to, in the call's Args block.
 SAVED_TO = re.compile(r'"filename":\s*"(?P<name>[^"\\]+)"')
 REFUSAL = re.compile(r"expected-refusal:[ \t]*(?P<status>[^\s`]+)[ \t]+(?P<target>[^\s`)]+)", re.IGNORECASE)
@@ -238,6 +243,15 @@ def console_is_clean(root, allowed, expected, sites):
     return findings
 
 
+def site_failed(request):
+    """True when the request the REQUEST match holds is the site's failure: it answered 400 or worse,
+    or failed outright. One the browser cancelled itself was never answered, and is not."""
+    status = request.group("status")
+    if status == "FAILED":
+        return request.group("reason") != CANCELLED
+    return int(status) >= 400
+
+
 def saved_network_records(root, sessions):
     """The file each browser_network_requests call saved its result to, when it named one. The name
     is as the explorer gave it, from the workspace (`qae-artifacts/qae/AC1-network.txt`), and is
@@ -283,7 +297,7 @@ def session_and_network(root, allowed, sites, expected):
                 continue
             if any(pattern.search(url) for pattern in allowed):
                 continue
-            if status != "FAILED" and int(status) < 400:
+            if not site_failed(match):
                 continue
             if (status, exact(url)) in expected:
                 continue
