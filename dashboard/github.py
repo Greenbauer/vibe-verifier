@@ -12,7 +12,7 @@ from urllib.parse import quote, urlencode
 from .config import BOT_KEYS, BotDefinition, Config
 from .gh_api import ApiError, GitHubAPI
 from .pull_signals import face_fields, load_signals
-from .steps import recent_bot_runs, step_summary
+from .bot_runs import recent_bot_runs
 from .util import category, elapsed_seconds, github_url, iso_time, parse_time, status_category
 
 MAX_WORKERS = 4
@@ -202,8 +202,7 @@ class GitHubCollector:
                                                               row.get("updated_at") if row.get("status") == "completed" else None,
                                                               self.clock()),
                            "html_url": github_url(row.get("html_url"), self.config.owner), "jobs": jobs,
-                           "required_workflow": "/actions/required_workflows/" in str(row.get("workflow_url") or ""),
-                           "step_summary": step_summary(jobs)})
+                           "required_workflow": "/actions/required_workflows/" in str(row.get("workflow_url") or "")})
         return sorted(result, key=lambda row: _time_key(row, "started_at", "created_at"), reverse=True)
 
     def _expected(self, repository: str, rules: list[dict], evidence: list[dict], runs: list[dict]) -> list[dict]:
@@ -236,7 +235,7 @@ class GitHubCollector:
         for run_index, run in enumerate(runs):
             run_jobs = [job for index, (owner, job) in enumerate(jobs) if owner == run_index and index in keep]
             if run_jobs or not run["jobs"]:
-                current.append({**run, "jobs": run_jobs, "step_summary": step_summary(run_jobs)})
+                current.append({**run, "jobs": run_jobs})
         return checks, current
 
     @staticmethod
