@@ -42,7 +42,7 @@ Add `agents` beside `capacity` and `usage` in the owner-scoped telemetry file:
 This is the `agents` section, not a complete telemetry file. IDs must match the private
 configuration. States are working, idle, paused, down, or unknown. Send at most five latest
 completed runs from seven days, with success, failed, or cancelled categories. Unknown fields,
-foreign IDs, raw logs, and oversized histories are rejected. Agent state expires to unknown after
-five minutes; observed outcomes retain their timestamps. Usage samples use this same configured
+foreign IDs, raw logs, and oversized histories are rejected. Agent state older than five
+minutes stays as last observed and is marked stale; observed outcomes retain their timestamps. Usage samples use this same configured
 agent ID in `bot`; unrelated CI artifacts never become a numbered agent's tokens. Runtime-only
 rosters do not request CI usage artifacts.

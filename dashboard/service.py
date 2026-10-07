@@ -49,8 +49,9 @@ class DashboardService:
         sampled = parse_time(sampled_at)
         return sampled is not None and now - sampled <= timedelta(seconds=STALE_GRACE_SECONDS)
 
-    def _stale_allowed(self, row: dict, code: str, now: datetime) -> bool:
-        return code in TRANSIENT and self._within_grace(row.get("sampled_at"), now)
+    def _stale_allowed(self, row: dict, code: str, _now: datetime) -> bool:
+        # A transient miss keeps the last observation. Age marks it stale; it does not delete it.
+        return code in TRANSIENT and bool(row.get("sampled_at"))
 
     def _merge(self, fresh: dict, previous: dict | None, now: datetime) -> dict:
         current = {row["repository"]: row for row in fresh["repositories"]}
@@ -82,14 +83,12 @@ class DashboardService:
                 "pulls": [], "errors": [{"code": code}], "sampled_at": None,
                 "stale": False, "unavailable": True}
 
-    def _mark_transient(self, previous: dict, code: str, now: datetime) -> dict:
+    def _mark_transient(self, previous: dict, code: str, _now: datetime) -> dict:
         github = copy.deepcopy(previous)
-        github["partial"], github["errors"] = True, [{"code": code}]
-        for index, row in enumerate(github.get("repositories", [])):
-            if self._stale_allowed(row, code, now):
+        github["partial"], github["stale"], github["errors"] = True, True, [{"code": code}]
+        for row in github.get("repositories", []):
+            if row.get("sampled_at"):
                 row["stale"], row["source_error"] = True, code
-            else:
-                github["repositories"][index] = self._unavailable_repository(row.get("repository"), code)
         for role in github.get("bots", {}).get("roles", {}).values():
             role["stale"], role["source_error"] = True, code
         github.setdefault("bots", {})["partial"] = True
@@ -152,40 +151,30 @@ class DashboardService:
         self._perform_refresh(now_mono, now)
 
     def _expire(self, github: dict, now: datetime) -> dict:
-        expired_repository = False
-        for index, row in enumerate(github.get("repositories", [])):
+        """Mark observations past the grace window stale and keep their last rows."""
+        for row in github.get("repositories", []):
+            if row.get("unavailable"):
+                continue
             if row.get("sampled_at") and not self._within_grace(row.get("sampled_at"), now):
-                github["repositories"][index] = self._unavailable_repository(
-                    row.get("repository"), row.get("source_error", "stale"))
-                expired_repository = True
-        if expired_repository:
-            github.get("coverage", {})["inventory"] = {}
-            github["partial"] = True
+                row["stale"] = True
+                github["partial"] = True
         github.get("coverage", {})["readable"] = sum(
             not row.get("unavailable") for row in github.get("repositories", []))
         for role in github.get("bots", {}).get("roles", {}).values():
-            source_current = not role.get("stale") and self._within_grace(role.get("sampled_at"), now)
-            history_current = self._within_grace(role.get("history_sampled_at", role.get("sampled_at")), now)
-            role["active"] = ([row for row in role.get("active", []) if row.get("status") == "in_progress"]
-                              if source_current else [])
-            if history_current:
-                role["recent_2h"] = recent_bot_runs(role.get("recent_2h", []), now, 2)
-                role["recent_7d"] = recent_bot_runs(role.get("recent_7d", []), now, 168)
-            else:
-                role["recent_2h"], role["recent_7d"] = [], []
+            aged = any(stamp and not self._within_grace(stamp, now)
+                       for stamp in (role.get("sampled_at"), role.get("history_sampled_at")))
+            if aged:
+                role["stale"] = True
+                github.setdefault("bots", {})["partial"] = True
+                github["partial"] = True
+            role["recent_2h"] = recent_bot_runs(role.get("recent_2h", []), now, 2)
+            role["recent_7d"] = recent_bot_runs(role.get("recent_7d", []), now, 168)
             history = role["recent_7d"]
             role["latest_failure"] = history[0] if history and history[0].get("category") == "failed" else None
-            if role["active"]:
+            if role.get("active"):
                 role["state"] = "working"
-            elif not source_current:
-                role["state"], role["state_source"] = "unknown", "unavailable"
-                role.setdefault("coverage", {})["active"] = "unavailable"
-                github.setdefault("bots", {})["partial"] = True
-                github["partial"] = True
-            if not history_current:
-                role.setdefault("coverage", {})["history"] = "unavailable"
-                github.setdefault("bots", {})["partial"] = True
-                github["partial"] = True
+        github["stale"] = any(row.get("stale") for row in github.get("repositories", [])) or any(
+            role.get("stale") for role in github.get("bots", {}).get("roles", {}).values())
         return github
 
     def _merge_bot_states(self, github: dict, telemetry: dict) -> None:
@@ -203,8 +192,15 @@ class DashboardService:
                 result["state_detail"] = states[role].get("detail")
             elif result.get("state") == "idle":
                 result["state_source"] = "github_actions"
-            else:
+            elif role in states:
+                result["state"], result["state_source"] = states[role]["state"], "telemetry"
+                result["state_detail"] = states[role].get("detail")
+                result["stale"] = True
+            elif result.get("state") in (None, "unknown"):
                 result["state"], result["state_source"] = "unknown", "unavailable"
+        if any(role.get("stale") for role in roles.values()):
+            github["stale"] = True
+            github["partial"] = True
 
     def snapshot(self, *, force: bool = False, nonblocking: bool = False) -> dict:
         now_mono, now = self.monotonic(), self.wall_clock().astimezone(timezone.utc)

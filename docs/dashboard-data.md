@@ -39,7 +39,7 @@ Only a job whose GitHub status is `in_progress` makes a bot `working`. A queued 
 - Successful GitHub snapshots are reused for 60 seconds.
 - Subscription inventory is reused for five minutes. Reusing it does not reset its age.
 - Fully completed job lists are cached by repository, run ID, and run attempt until the run is seven days old. Active or partly completed jobs are never placed in that cache.
-- Transient failures may reuse source rows for at most 180 seconds from their source timestamp. Cached rows, coverage counts, and bot histories are expired using the current clock on every snapshot read.
+- Transient failures keep the last repository rows and bot history and mark them stale. Age does the same after 180 seconds: the rows stay, `stale` becomes true, and the two-hour and seven-day history windows still drop runs by their own timestamps. A failed page refresh keeps the last snapshot on screen.
 - Authentication, permission, and missing-resource failures do not reuse private cached rows. Completed-job and inventory caches are cleared when those failures are observed. Usage readers are replaced on the same errors, including nested repository or bot-source errors; an in-flight reader from before revocation cannot publish its result.
 - Numeric usage history retains its own `history_sampled_at` and `history_stale` fields alongside independently sampled quota. It becomes stale after five minutes on every snapshot read, including while a refresh is running. Fresh quota does not refresh the history timestamp, and a stale-history notice remains visible in source coverage.
 

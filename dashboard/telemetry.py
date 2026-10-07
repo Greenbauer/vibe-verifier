@@ -134,10 +134,6 @@ def _capacity(value: object, config: Config, now: datetime) -> dict:
         raise TelemetryError("capacity section is invalid")
     sampled_at, stale = _section_time(value, now)
     lanes = _lanes(value.get("lanes", []), config)
-    if stale:
-        for lane in lanes:
-            lane.update(state="unknown", registered=None)
-            lane.pop("job", None)
     return {"available": True, "sampled_at": sampled_at, "stale": stale,
             "host": _host(value.get("host")), "lanes": lanes}
 
