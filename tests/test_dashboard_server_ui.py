@@ -398,26 +398,23 @@ const source=app.slice(app.indexOf('  function pushStat('),app.indexOf('  functi
 function el(tag, attrs={}, ...children) {
   return {tag, attrs, children:children.flat().filter(value => value !== null && value !== undefined)};
 }
-const prRow=new Function('el','safeUrl','snapshot','combinedCategory','runningWork','badge','progress','since','ageClass','duration',
-  source+'return prRow;')(el, safeUrl, {owner:'octocat'}, ()=>'failed', pull=>pull.running||[],
+const prRow=new Function('el','safeUrl','snapshot','combinedCategory','badge','progress','since','ageClass',
+  source+'return prRow;')(el, safeUrl, {owner:'octocat'}, ()=>'failed',
   status=>el('span',{},status), ()=>el('div',{class:'progress'}),
   value=>value==='2026-09-01T00:00:00Z'?'5w':'2d',
-  value=>value==='2026-09-01T00:00:00Z'?'age-red':'age-yellow', seconds=>seconds+'s');
+  value=>value==='2026-09-01T00:00:00Z'?'age-red':'age-yellow');
 const pull=(html_url, stale)=>({repository:'octocat/example',number:3,title:'Fix the gate',author:'octocat',
   head_sha:'abcdef1234567890',html_url,attention_reason:'A current-head check failed',
   created_at:'2026-10-01T00:00:00Z',stale});
 const ready=pull('https://github.com/octocat/example/pull/4', false);
 ready.merge_ready=true; ready.title='Ship the gate';
 ready.push={pushed_at:'2026-09-01T00:00:00Z', kind:'bug fix'};
-const busy=pull('https://github.com/octocat/example/pull/5', false);
-busy.running=[{name:'lint',elapsed:5},{name:'test: Run unit tests',elapsed:95},{name:'build',elapsed:40},{name:'deploy',elapsed:1}];
 console.log(JSON.stringify({
   linked:prRow(pull('https://github.com/octocat/example/pull/3', false)),
   stale:prRow(pull('https://github.com/octocat/example/pull/3', true)),
   foreign:prRow(pull('https://github.com/evil/example/pull/3', false)),
   missing:prRow(pull(null, false)),
   ready:prRow(ready),
-  busy:prRow(busy).children.find(node=>node.attrs.class==='pr-work').children.slice(1).map(node=>[node.attrs.class||'',node.children[0]]),
   detail:app.includes('function renderDetail(')||app.includes('go("prs",')
 }));
 ''')
@@ -439,8 +436,6 @@ console.log(JSON.stringify({
         got = ([part["children"] for stat in age["children"] for part in stat["children"]], age["children"][0]["children"][0]["attrs"]["class"])
         self.assertEqual(got, ([["2d"], ["PR age"], ["Unavailable"], ["Last push"]], "age-yellow"))
         self.assertEqual([text(node) for node in linked["children"][1]["children"][1:]], ["A current-head check failed"])
-        self.assertEqual(result["busy"], [["", "A current-head check failed"], ["running-now", "test: Run unit tests · 95s"],
-                                          ["running-now", "build · 40s"], ["running-now", "lint · 5s"], ["", "+1 more running"]])
         ready = result["ready"]
         title = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-identity")["children"][0]
         pushed = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-age")["children"][1]["children"]

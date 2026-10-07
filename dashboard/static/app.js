@@ -197,18 +197,6 @@
       el("small", {}, push.kind));
   }
 
-  // The checks running right now, longest first, as GitHub lists them on the pull request.
-  function runningNow(pull) {
-    const RUNNING_SHOWN = 3;
-    const running = runningWork(pull).sort((a, b) => (b.elapsed || 0) - (a.elapsed || 0));
-    const lines = running.slice(0, RUNNING_SHOWN).map(work => {
-      const text = `${work.name} · ${duration(work.elapsed)}`;
-      return el("small", { class: "running-now", title: text }, text);
-    });
-    if (running.length > RUNNING_SHOWN) lines.push(el("small", {}, `+${running.length - RUNNING_SHOWN} more running`));
-    return lines;
-  }
-
   function prRow(pull) {
     const category = combinedCategory(pull);
     const href = safeUrl(pull.html_url, snapshot.owner);
@@ -222,7 +210,7 @@
     el("span", { class: "pr-identity" },
       el("b", { class: pull.merge_ready ? "merge-ready" : null, title: pull.merge_ready ? "Fully merge-ready" : null }, pull.title),
       el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
-    el("span", { class: "pr-work" }, badge(category), el("small", {}, pull.attention_reason), runningNow(pull)),
+    el("span", { class: "pr-work" }, badge(category), el("small", {}, pull.attention_reason)),
     progress(pull),
     el("span", { class: "pr-age" },
       el("span", { class: "age-stat" }, el("b", { class: ageClass(pull.created_at, now) }, since(pull.created_at, now)),
