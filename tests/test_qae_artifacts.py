@@ -151,6 +151,17 @@ class QaeArtifacts(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("answered FAILED", result.stdout)
 
+    def test_a_request_the_browser_cancelled_is_not_the_sites_failure(self):
+        # The shape of a consumer's real run: the explorer left a page before its background fetch
+        # returned, so the browser cancelled the request. The site never answered it.
+        write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + ["[GET] http://localhost:3000/api/map-routes => [FAILED] net::ERR_ABORTED"])})
+        result = self.run_gate("--site", "http://localhost:3000")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # Every other failure still counts, as does one with no reason recorded.
+        for reason in (" net::ERR_CONNECTION_REFUSED", " net::ERR_FAILED", " Unknown error", ""):
+            write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + ["[GET] http://localhost:3000/api/map-routes => [FAILED]" + reason])})
+            self.assertEqual(self.run_gate("--site", "http://localhost:3000").returncode, 1, reason)
+
     def test_site_filter_ignores_third_party_requests(self):
         write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + ["[GET] https://fonts.example.com/x.woff2 => [404] Not Found"])})
         self.assertEqual(self.run_gate().returncode, 1)

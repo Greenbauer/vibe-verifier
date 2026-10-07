@@ -588,7 +588,8 @@ and refuses on structural facts:
 4. a `browser_network_requests` result exists (the prompt asks for one after each criterion; a call
    that saved its result to a file is read from that file, which must be in the evidence), and
    no request to the site under test (`--site-file`, the URL the explore job declared and any further
-   origin after it, or a fixed `--site`) answered 400 or worse or failed, outside `--allow-request` patterns;
+   origin after it, or a fixed `--site`) answered 400 or worse or failed, outside `--allow-request` patterns (a request the browser cancelled
+   itself, `net::ERR_ABORTED`, was never answered and is not judged);
 5. with `--widths`, each criterion's step screenshots include one of each declared width
    ([above](#viewports-themes-and-what-a-criterion-does-not-say)).
 
