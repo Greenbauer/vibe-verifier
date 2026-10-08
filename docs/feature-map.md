@@ -115,13 +115,49 @@ With no `--surface` the gate checks anchors and source globs and says plainly th
 not checked: an advisory finding (a warning annotation on GitHub) and a run summary row reading
 `PASS (completeness not checked)`. A surface no feature owns passes unseen there.
 
-It cannot run (exit 2, which `--soak` never masks) when the map has no feature file, or a `--surface`
-is malformed, matches no tracked file, or finds no surface: an extractor that reads nothing checks
-nothing, and a pattern that stopped matching after a reformat would otherwise pass every map.
+It cannot run (exit 2, which `--soak` never masks) when a `--surface` is malformed, matches no
+tracked file, or finds no surface: an extractor that reads nothing checks nothing, and a pattern
+that stopped matching after a reformat would otherwise pass every map.
 
 The line's arguments are judged from the base like any manifest line, so a pull request cannot drop
 a `--surface` to pass. The map itself is judged at the head, because the map is what a pull request
 has to bring up to date.
+
+### A head with no map
+
+When the head has no feature file, the gate asks the base (`--base-ref`, resolved as
+[every gate resolves it](GATE-CONTRACT.md#base-ref-resolution)) what happened. It decides from the
+commits alone:
+
+| The merge bases of the base and the head | The base | What it means | Result |
+|---|---|---|---|
+| none has a feature file | has feature files | the branch predates the map: the map landed on the base after the branch left it | pass, labelled `not checked` |
+| one has feature files | either | the pull request removed the map | exit 2 |
+| none has a feature file | has none | the subscription has no map | exit 2 |
+
+- **The branch predates the map.** A pull request opened before the map merged did nothing wrong,
+  and until it takes the base it has no map to keep true. The gate passes, checks nothing (not the
+  `--surface` lines either: the files they read may be as new as the map), and says so: an advisory
+  finding that names the base to take, and a run summary row reading
+  `PASS (not checked: the branch predates the feature map)`, never a bare `PASS`. Once the branch
+  merges or rebases onto the base it has the map, and the whole map is judged against its code like
+  any other.
+- **The pull request removed the map.** Exit 2, as a missing map always was, and the message now
+  says the map was removed. It is not a finding, because `--soak` reports findings and passes: a
+  soaked gate would let the removal merge, and from then on no run on the base could judge
+  anything. To stop keeping a map, first merge a change that removes what reads it (the
+  `feature-map` line, the `--features` option), then delete the map. After a criss-cross merge the
+  base and the head have several merge bases; the map counts as removed when any of them has it.
+- **Nothing tells the two apart.** No base resolves, the base and the head share no merge base (a
+  shallow clone: check out with `fetch-depth: 0`), or the base has no map either. Exit 2, as
+  before. So is a run whose environment names a base (`$VIBE_VERIFIER_BASE_REF`, `$GITHUB_BASE_REF`)
+  that the checkout does not have: other gates fall through to `main` there, and this pass must
+  not rest on a guess. A pull request that brings the first map is none of these: its head has a
+  map, and it is judged on that map whatever the base has.
+
+Before this rule every missing map was exit 2. A consumer added the gate to its gate list right
+after its map merged (2026-10-08), and each pull request already open went red until it took the
+base branch, through `--soak` too.
 
 ## Re-walking the features a pull request touches
 
@@ -144,6 +180,13 @@ A feature file the base has selects by its Surfaces as the base has them, and on
 adds selects by its own, like a rule file under `repo-rules`: a pull request cannot take a feature
 out of its own re-walk by narrowing its globs or listing a file in more features. A feature the pull
 request deletes is retired and selects nothing.
+
+**A head with no map.** The selection follows [the gate's rule](#a-head-with-no-map). On a branch
+that predates the map, `bin/vibe-verifier features` prints `features: 0` and the reason, the
+explorer re-walks nothing, and `acceptance-verdict` asks for no `regression-check` line and labels
+its pass `re-walk not run: the branch predates the feature map`. Features are re-walked once the
+branch takes the base. Every other head with no feature file is exit 2 in both, as it always was: a
+pull request that removed the map (the message says so), and a missing map nothing explains.
 
 **Turning it on.** Add the selection to the `acceptance-verdict` line of `.vibe-verifier-qae`:
 

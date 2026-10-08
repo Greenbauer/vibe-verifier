@@ -129,8 +129,10 @@ copies each selected feature file, as the working tree has it (the pull request'
 updates a feature is re-walked against its updated Reach and Verify), to `<DIR>/<id>.md` for a QAE
 explorer to read, and with `--listing` writes the list the explorer reads beside them: the most states to
 walk of each feature (the line's `--max-states`, default 3) and the changed paths that selected each. A
-line without `--features` prints `features: 0` and the reason. Exit 2 when the manifest, the changed
-paths or the map cannot be read.
+line without `--features` prints `features: 0` and the reason, and so does a branch that predates the
+map (no feature file at the head or at its merge base with the base, and some at the base): it has no
+feature to re-walk until it takes the base. Exit 2 when the manifest, the changed paths or the map
+cannot be read, which includes every other head with no feature file.
 
 `rules-doc` renders the Markdown block that lists every rule the manifest's `repo-rules` lines enable
 (their packs and rule directories, read from the working tree): each rule's id, whether it blocks or

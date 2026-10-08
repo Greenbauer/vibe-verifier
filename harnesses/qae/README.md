@@ -107,6 +107,14 @@ is inline in the workflow), or the explorer still FAILs a feature it could not f
 
 A wrapper passes its gate list to `actions/features` as `entries:`, as it does to `actions/gates`.
 
+A pull request opened before the map landed on the base has no feature file at its head. It is not
+failed for that: the selection step prints `features: 0` and the reason, the explorer re-walks
+nothing, and `acceptance-verdict` passes with its row labelled
+`re-walk not run: the branch predates the feature map`. Its features are re-walked once it takes
+the base branch. Every other head with no feature file fails both steps (exit 2), a pull request
+that removed the map included. The rule is in
+[docs/feature-map.md](../../docs/feature-map.md#a-head-with-no-map).
+
 ## Design references and roles
 
 A criterion may carry two annotations, in square brackets inside its own text. `bin/vibe-verifier

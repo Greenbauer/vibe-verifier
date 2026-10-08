@@ -298,6 +298,62 @@ class RegressionChecks(unittest.TestCase):
         self.assertIn("--features needs --artifacts", result.stderr)
 
 
+class NoMapAtTheHead(unittest.TestCase):
+    """The re-walk on a head with no feature file, by the feature-map gate's rule: a branch cut before the
+    map landed is not failed for it, and one that removed the map is."""
+
+    WITHOUT = QAE.replace(" --features docs/features --changed-files qae-inputs/changed-files", "")
+    MAP = sorted(path for path in BASE if path.startswith("docs/features/"))
+
+    def run_both(self, repo):
+        """(`vibe-verifier features`, `acceptance-verdict --features`, the note the gate left for the run's
+        summary) for a pull request that changed app/auth/login.ts and whose one criterion passed."""
+        work = os.path.join(repo, ".git", "work")
+        write(work, {"changed-files": "app/auth/login.ts\n", "pr-body.md": RegressionChecks.BODY,
+                     "verdict.md": RegressionChecks.AC, "qae-artifacts/qae/AC1.md": "- step 1: wrong password -> an error\n",
+                     "note": ""})
+        listed = runner("features", "--repo", repo, "--manifest", os.path.join(repo, ".vibe-verifier-qae"),
+                        "--changed-files", os.path.join(work, "changed-files"), "--out", os.path.join(work, "features"))
+        judged = gate("acceptance-verdict", repo, "--criteria", os.path.join(work, "pr-body.md"),
+                      "--verdict", os.path.join(work, "verdict.md"), "--artifacts", os.path.join(work, "qae-artifacts"),
+                      "--features", "docs/features", "--changed-files", os.path.join(work, "changed-files"),
+                      env={"VIBE_VERIFIER_QUALIFIER": os.path.join(work, "note")})
+        return listed, judged, Path(work, "note").read_text()
+
+    def test_a_branch_that_predates_the_map_is_not_re_walked_and_not_failed(self):
+        # Until 2026-10-08 both answered `no feature files in docs/features/`, exit 2, on every pull request
+        # opened before the map and the re-walk landed on main.
+        repo = make_repo(self, dict({path: text for path, text in BASE.items() if path not in self.MAP},
+                                    **{".vibe-verifier-qae": self.WITHOUT}))
+        git(repo, "checkout", "-q", "-b", "feat")
+        commit(repo, {"app/auth/login.ts": "2\n"})
+        git(repo, "checkout", "-q", "main")
+        commit(repo, BASE, "add the map and turn the re-walk on")
+        git(repo, "checkout", "-q", "feat")
+        listed, judged, note = self.run_both(repo)
+        why = (r"not re-walked: this branch has no feature map because it predates it \(docs/features/ has no feature "
+               r"file here or at the merge base [0-9a-f]{12}, and main has 4\)\. Features are re-walked once the branch takes main\n")
+        self.assertEqual(listed.returncode, 0, listed.stdout + listed.stderr)
+        self.assertRegex(listed.stdout, "^features: 0\n" + why + "$")
+        self.assertFalse(os.path.exists(os.path.join(repo, ".git", "work", "features")))
+        self.assertEqual(judged.returncode, 0, judged.stdout + judged.stderr)
+        self.assertRegex(judged.stdout, "^acceptance-verdict: " + why + "$")
+        self.assertEqual(note, "re-walk not run: the branch predates the feature map")
+
+    def test_a_pull_request_that_removes_the_map_cannot_be_re_walked(self):
+        repo = make_repo(self, BASE)
+        git(repo, "checkout", "-q", "-b", "feat")
+        git(repo, "rm", "-q", *self.MAP)
+        commit(repo, {"app/auth/login.ts": "2\n"})
+        listed, judged, note = self.run_both(repo)
+        why = (r"the feature map was removed: docs/features/ has no feature file at the head, and the merge base "
+               r"[0-9a-f]{12} has 4\. Restore it\. To stop keeping a map, first merge a change that removes what reads it "
+               r"\(the feature-map line, the --features option\), then delete the map\n$")
+        self.assertEqual((listed.returncode, judged.returncode, note), (2, 2, ""), listed.stderr + judged.stderr)
+        self.assertRegex(listed.stderr, "vibe-verifier: features: " + why)
+        self.assertRegex(judged.stderr, "^acceptance-verdict could not run: " + why)
+
+
 class Action(unittest.TestCase):
     """actions/features runs the command and hands the explore job its count."""
 
