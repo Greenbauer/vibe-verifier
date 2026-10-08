@@ -13,6 +13,13 @@ LANE_RUNNER = re.compile(
     r"^(?P<prefix>[A-Za-z0-9][A-Za-z0-9-]*)-(?P<kind>ci|qae|wait)-(?P<instance>[1-9][0-9]*)-(?P<epoch>[0-9]+)\Z")
 
 
+def runner_name(value: object) -> str | None:
+    """A runner name the jobs API can be trusted to have sent, or None."""
+    if isinstance(value, str) and value.isascii() and value.isprintable() and 0 < len(value) <= 128:
+        return value
+    return None
+
+
 def qae_instance(runner_name: object) -> int | None:
     """The QAE lane instance in a runner name, or None when the name is not one."""
     if not isinstance(runner_name, str):

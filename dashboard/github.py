@@ -12,7 +12,7 @@ from urllib.parse import quote, urlencode
 from .config import BOT_KEYS, BotDefinition, Config
 from .gh_api import ApiError, GitHubAPI
 from .pull_signals import face_fields, load_signals
-from .bot_runs import recent_bot_runs
+from .bot_runs import recent_bot_runs, runner_name
 from .util import category, elapsed_seconds, github_url, iso_time, parse_time, status_category
 
 MAX_WORKERS = 4
@@ -26,12 +26,6 @@ HISTORY_RUN_LIMIT = 50
 def _endpoint(path: str, **query: object) -> str:
     values = {name: str(value) for name, value in query.items() if value is not None}
     return path + ("?" + urlencode(values) if values else "")
-
-
-def _runner_name(value: object) -> str | None:
-    if isinstance(value, str) and value.isascii() and value.isprintable() and 0 < len(value) <= 128:
-        return value
-    return None
 
 
 def _time_key(row: dict, *keys: str) -> datetime:
@@ -174,7 +168,7 @@ class GitHubCollector:
                          "queue_seconds": elapsed_seconds(row.get("created_at"), row.get("started_at"), self.clock()),
                          "elapsed_seconds": elapsed_seconds(row.get("started_at"), row.get("completed_at"), self.clock()),
                          "html_url": github_url(row.get("html_url"), self.config.owner),
-                         "runner_id": row.get("runner_id"), "runner_name": _runner_name(row.get("runner_name")),
+                         "runner_id": row.get("runner_id"), "runner_name": runner_name(row.get("runner_name")),
                          "steps": self._clean_steps(row.get("steps"))})
         with self._job_lock:
             self._jobs[key] = jobs
