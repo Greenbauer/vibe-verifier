@@ -6,13 +6,15 @@ one sha256 per platform, one release URL. Resolution order, all fail closed with
 1. a binary of that name on PATH whose `version` output is exactly the pinned version;
 2. the cached pinned binary under $VIBE_VERIFIER_TOOLS (default ~/.cache/vibe-verifier/tools);
 3. a download of the pinned release asset, verified against its sha256 before anything is
-   extracted, then cached. No network, an unsupported platform, or a digest that does not match
-   is "could not run" (exit 2), never a pass.
+   extracted, then cached. A fetch the release host fails in passing (429, 5xx, a dropped or timed
+   out connection) is tried FETCH_ATTEMPTS times in all. No network, an unsupported platform, or a
+   digest that does not match is "could not run" (exit 2), never a pass.
 
 The pin lives in the catalog, so a consumer takes a new tool version the way it takes a new gate:
 by bumping its action pin.
 """
 import hashlib
+import http.client
 import io
 import os
 import platform
@@ -23,6 +25,8 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -116,6 +120,19 @@ def _member(archive, asset, name):
         return bundle.extractfile(member).read() if member else None
 
 
+FETCH_ATTEMPTS = 3
+FETCH_BACKOFF = 2  # seconds before the second attempt, doubled before each one after
+
+
+def _transient(error):
+    """Whether a failed fetch may succeed on another try: the release host answered 429 or 5xx, or the
+    connection failed (refused, reset, timed out, cut short). Any other status, such as 404 or 403, is
+    the host's answer, and a ValueError is a URL urllib cannot parse: neither changes on a second try."""
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code == 429 or error.code >= 500
+    return not isinstance(error, ValueError)
+
+
 def _download(name, tool, target):
     key = (platform.system(), platform.machine())
     if key not in tool["assets"]:
@@ -127,12 +144,17 @@ def _download(name, tool, target):
         os.makedirs(os.path.dirname(target), exist_ok=True)
     except OSError as error:
         raise CannotRun("cannot write the tool cache %s: %s" % (os.path.dirname(target), error))
-    try:
-        with urllib.request.urlopen(url, timeout=60) as response:
-            data = response.read()
-    except (OSError, ValueError) as error:
-        raise CannotRun("could not fetch %s %s (%s): %s; install it on PATH or set VIBE_VERIFIER_TOOLS to a cache that has it"
-                        % (name, tool["version"], url, error))
+    for attempt in range(1, FETCH_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                data = response.read()
+            break
+        except (OSError, ValueError, http.client.HTTPException) as error:  # HTTPException: a body cut short
+            if attempt == FETCH_ATTEMPTS or not _transient(error):
+                raise CannotRun("could not fetch %s %s (%s) after %d attempt%s: %s; install it on PATH or set "
+                                "VIBE_VERIFIER_TOOLS to a cache that has it"
+                                % (name, tool["version"], url, attempt, "" if attempt == 1 else "s", error))
+            time.sleep(FETCH_BACKOFF * 2 ** (attempt - 1))
     actual = hashlib.sha256(data).hexdigest()
     if actual != digest:
         raise CannotRun("%s does not match its pinned sha256 (got %s, pinned %s); refusing to run it" % (asset, actual, digest))

@@ -30,7 +30,7 @@
 #   G  the dashboards, their timers and the follower started (a dashboard restarted when its files or
 #      template changed); each must answer GET /api/dashboard with 200 and "version": 1 from its own
 #      unit within 30 seconds, or the run fails with that unit's state
-# A dashboard the host file no longer declares is removed (units, files, account). A lane whose App key
+# A dashboard the host file no longer declares is removed (units, files, cache, account). A lane whose App key
 # is absent stops its dashboard at an OPERATOR ACTION gate. --remove removes every dashboard, the
 # follower, the guard and the templates, and leaves /opt/vibe-verifier, the retired legacy install
 # (unit files, accounts, data, SSH bridge, HTTPS routes) and the lanes.
@@ -43,13 +43,16 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO_ROOT/lib/provision.sh"
 
 # Every path is overridable only so the hermetic test can run unprivileged. The unit templates read
-# /etc/vibe-dashboard/<name>, /var/lib/vibe-dashboard/<name> and /var/lib/vibe-dashboard-state/<name>.
+# /etc/vibe-dashboard/<name>, /var/lib/vibe-dashboard/<name> and /var/lib/vibe-dashboard-state/<name>,
+# and the web unit's CacheDirectory= makes systemd create /var/cache/vibe-dashboard-<name>, where a
+# dashboard keeps its last reading across a restart. Nothing here creates it; removal deletes it.
 UNIT_DIR="${RUNNERS_UNIT_DIR:-/etc/systemd/system}"
 VV="${RUNNERS_VV_CHECKOUT:-/opt/vibe-verifier}"
 VV_URL="https://github.com/Greenbauer/vibe-verifier.git"
 ETC_BASE="${RUNNERS_DASHBOARD_ETC:-/etc/vibe-dashboard}"
 DATA_BASE="${RUNNERS_DASHBOARD_DATA:-/var/lib/vibe-dashboard}"
 STATE_BASE="${RUNNERS_DASHBOARD_STATE:-/var/lib/vibe-dashboard-state}"
+CACHE_BASE="${RUNNERS_DASHBOARD_CACHE:-/var/cache}"
 GUARD_FILE="${RUNNERS_DASHBOARD_GUARD:-/etc/runners-dashboard-guard.nft}"
 CRON_DIR="${RUNNERS_CRON_DIR:-/etc/cron.d}"
 LEGACY_LOCK_DIR="${RUNNERS_LEGACY_LOCK_DIR:-/run}"
@@ -391,12 +394,14 @@ print_gates() {
 # ---- remove ----------------------------------------------------------------------------------------
 remove_dashboard() {  # $1: name
   local name="$1"
-  log "Remove: dashboard $name (its units, $ETC_BASE/$name, $DATA_BASE/$name, $STATE_BASE/$name and vibe-dashboard-$name)"
+  log "Remove: dashboard $name (its units, $ETC_BASE/$name, $DATA_BASE/$name, $STATE_BASE/$name, $CACHE_BASE/vibe-dashboard-$name and vibe-dashboard-$name)"
   if [ -f "$UNIT_DIR/vibe-dashboard@.service" ]; then
     run_mutation systemctl disable --now "$(web "$name")" "vibe-dashboard-token@$name.timer" "vibe-dashboard-telemetry@$name.timer"
     run_mutation systemctl stop "vibe-dashboard-token@$name.service" "vibe-dashboard-telemetry@$name.service"
   fi
-  run_mutation rm -rf "$ETC_BASE/$name" "$DATA_BASE/$name" "$STATE_BASE/$name"
+  # The cache holds what the dashboard last read of private repositories, owned by the account
+  # deleted below: left behind, the next account to get that uid could read it.
+  run_mutation rm -rf "$ETC_BASE/$name" "$DATA_BASE/$name" "$STATE_BASE/$name" "$CACHE_BASE/vibe-dashboard-$name"
   ! getent passwd "vibe-dashboard-$name" >/dev/null || run_mutation userdel "vibe-dashboard-$name"
 }
 
