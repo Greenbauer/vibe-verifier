@@ -283,6 +283,7 @@ lanes:
     warm_max_age_sec: <int>            # optional, 1200 when absent
     slot_disk_gb: <int>
     store_disk_gb: <int>
+    store_fs: xfs | btrfs              # optional, xfs when absent: the store's filesystem ("Disk")
     check_ports: [..]                  # the host ports the smoke proves a slot cannot reach
 dashboards:                            # optional: the Vibe Verifier dashboards ("Dashboards" below)
   - name: <name>                       # the instance: account vibe-dashboard-<name>, /etc/vibe-dashboard/<name>
@@ -305,6 +306,7 @@ dashboards:                            # optional: the Vibe Verifier dashboards 
   pattern; paths are absolute, plain and free of `..`; sizes use systemd's suffixes in `slice` and
   docker's in `container`; `cpu_weight` is 1..10000; ports are 1..65535 without duplicates;
 - on a lane with a warm pool, `warm_max_age_sec` is below `runtime_max_sec`;
+- `store_fs` is `xfs` or `btrfs`;
 - `preload` directories are plain relative paths named `supabase`; an org lane has exactly one
   `preload` entry per repository in `repos` (`"-"` for one without a Supabase project), so a
   repository added to the lane cannot silently cold-pull;

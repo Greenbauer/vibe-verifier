@@ -28,6 +28,8 @@ lanes:
     runtime_max_sec: 3600
     slot_disk_gb: 6
     store_disk_gb: 20
+    # store_fs: btrfs  # optional, xfs when absent. On btrfs a job's store is a snapshot of the
+    # preloaded one, not a copy. An existing xfs store is converted by an explicit command (README.md).
     # The host ports the smoke proves a slot cannot reach.
     check_ports: [22, 3101, 54329]
   # An org lane serves the repositories of its organisation runner group, with a warm pool:
