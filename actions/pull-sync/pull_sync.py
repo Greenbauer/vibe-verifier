@@ -15,11 +15,17 @@ runners can take:
   - ready: not a draft, and every check on its head passed. Updated first, oldest first.
   - stale: any other pull request, once its head commit is older than --stale-hours. An update is
     itself a head commit, so a pull request that is not ready is updated at most that often.
-  - slots: at most --max-in-flight pull requests of a repository may have checks running at once,
-    counting the ones people pushed. A candidate with no free slot waits for a later run.
+  - slots: at most --max-in-flight pull requests of a repository may hold a slot at once, counting
+    the ones people pushed. A pull request holds one while any check on its head is unfinished, and
+    while its head commit is newer than --quiet-minutes (its checks may not have registered yet).
+    A candidate with no free slot waits for a later run.
 
 Each update is GitHub's own "update branch" (a merge of the default branch into the head), sent
 with the head this run judged, so a push that lands in between makes GitHub refuse it.
+
+GitHub works out whether a pull request merges cleanly only when asked, so the first read after a
+merge answers UNKNOWN for all of them. Asking is what starts the work: the run reads again, up to
+three more times --settle-seconds apart, and leaves alone whatever is still unknown after that.
 
 A dry run unless --act is given: it prints the plan and writes nothing. Reads and writes go through
 `gh` with the token in GH_TOKEN. The token must not be a workflow's GITHUB_TOKEN: an update made
@@ -33,20 +39,21 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
 OPT_OUT_LABEL = "no-auto-sync"
 CONFLICT_LABEL = "sync-conflict"
-# A check that has not finished: GitHub's rollup says PENDING, or EXPECTED for one not yet reported.
-RUNNING = ("PENDING", "EXPECTED")
-# Below this many remaining API points nothing is written: the token's budget is usually shared.
-BUDGET_FLOOR = 300
+# The states of a check that has not finished. The rollup's own state cannot say this: it turns
+# FAILURE at the first failed check, while the rest of that head's checks are still running.
+UNFINISHED = {"IN_PROGRESS", "PENDING", "QUEUED", "WAITING", "EXPECTED"}
+# How many more times a repository is read while GitHub has not said whether a pull request merges.
+SETTLE_READS = 3
 
 DEFAULT_BRANCH = "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){defaultBranchRef{name}}}"
 # `headRef.compare(headRef: $base).aheadBy` is how many commits the base has that the head lacks.
 PULLS = """query($owner:String!,$name:String!,$base:String!){
-  rateLimit{remaining}
   repository(owner:$owner,name:$name){
     pullRequests(states:OPEN,first:100,orderBy:{field:CREATED_AT,direction:ASC}){
       pageInfo{hasNextPage}
@@ -54,7 +61,8 @@ PULLS = """query($owner:String!,$name:String!,$base:String!){
         number isDraft isCrossRepository mergeable updatedAt baseRefName headRefOid
         labels(first:100){nodes{name}}
         headRef{compare(headRef:$base){aheadBy}}
-        commits(last:1){nodes{commit{committedDate statusCheckRollup{state}}}}
+        commits(last:1){nodes{commit{committedDate statusCheckRollup{state contexts(first:1){
+          checkRunCountsByState{state count} statusContextCountsByState{state count}}}}}}
       }
     }
   }
@@ -96,7 +104,7 @@ def graphql(query, **variables):
 
 
 def read(repo):
-    """The default branch, every open pull request, and the token's remaining API points."""
+    """The default branch and every open pull request."""
     owner, _, name = repo.partition("/")
     default = graphql(DEFAULT_BRANCH, owner=owner, name=name)["repository"]["defaultBranchRef"]
     if not default:
@@ -105,7 +113,17 @@ def read(repo):
     pulls = data["repository"]["pullRequests"]
     if pulls["pageInfo"]["hasNextPage"]:
         raise CannotRead("%s has more than 100 open pull requests" % repo)
-    return default["name"], pulls["nodes"], data["rateLimit"]["remaining"]
+    return default["name"], pulls["nodes"]
+
+
+def read_settled(repo, settle_seconds):
+    """`read`, again while GitHub has not said whether a pull request this run would judge merges."""
+    for reads_left in range(SETTLE_READS, -1, -1):
+        base, pulls = read(repo)
+        unknown = any(pull["mergeable"] == "UNKNOWN" and not out_of_scope(pull, base) for pull in pulls)
+        if not unknown or not reads_left:
+            return base, pulls
+        time.sleep(settle_seconds)
 
 
 def when(stamp):
@@ -118,6 +136,20 @@ def head_commit(pull):
 
 def checks(pull):
     return (head_commit(pull)["statusCheckRollup"] or {}).get("state", "")
+
+
+def running(pull):
+    """Whether any check on the head has not finished."""
+    rollup = head_commit(pull)["statusCheckRollup"]
+    if not rollup:
+        return False
+    counts = rollup["contexts"]["checkRunCountsByState"] + rollup["contexts"]["statusContextCountsByState"]
+    return any(row["count"] for row in counts if row["state"] in UNFINISHED)
+
+
+def holds_slot(pull, now, quiet):
+    """Checks are running on its head, or the head is so new that they may not have registered."""
+    return running(pull) or now - when(head_commit(pull)["committedDate"]) < quiet
 
 
 def labels(pull):
@@ -134,6 +166,8 @@ def out_of_scope(pull, base):
         return "into %s, not %s" % (pull["baseRefName"], base)
     if not pull["headRef"]:
         return "its head branch is gone"
+    if not pull["headRef"]["compare"]:
+        return "GitHub could not compare it with " + base
     return ""
 
 
@@ -160,7 +194,7 @@ def judge(pull, base, now, quiet, stale):
         return Line(number, "skip", "up to date", label=unlabel)
     if pull["mergeable"] != "MERGEABLE":
         return Line(number, "skip", "GitHub has not said whether it merges cleanly")
-    if checks(pull) in RUNNING:
+    if running(pull):
         return Line(number, "skip", "checks running", label=unlabel)
     if now - when(pull["updatedAt"]) < quiet:
         return Line(number, "skip", "changed in the last %d minutes" % (quiet.total_seconds() // 60), label=unlabel)
@@ -171,9 +205,9 @@ def judge(pull, base, now, quiet, stale):
 
 
 def plan(pulls, base, now, max_in_flight, quiet, stale):
-    """Every pull request's row, and how many slots were free. Ready candidates take slots first,
-    then stale ones; within each, the order GitHub listed them in (oldest pull request first)."""
-    in_flight = sum(1 for pull in pulls if checks(pull) in RUNNING)
+    """Every pull request's row, how many hold a slot, and how many slots were free. Ready candidates
+    take slots first, then stale ones; within each, the order GitHub listed them in (oldest first)."""
+    in_flight = sum(1 for pull in pulls if holds_slot(pull, now, quiet))
     free = max(0, max_in_flight - in_flight)
     lines = [judge(pull, base, now, quiet, stale) for pull in pulls]
     candidates = sorted((line for line in lines if line.action == "sync"), key=lambda line: not line.ready)
@@ -210,24 +244,21 @@ def describe(line):
 def sync(repo, args):
     """Plan one repository, print the plan, and write it when acting. Returns the exit code."""
     try:
-        base, pulls, remaining = read(repo)
+        base, pulls = read_settled(repo, args.settle_seconds)
     except CannotRead as error:
         print("pull-sync: cannot read %s: %s" % (repo, error), file=sys.stderr)
         return 2
     lines, in_flight, free = plan(pulls, base, datetime.now(timezone.utc), args.max_in_flight,
                                   timedelta(minutes=args.quiet_minutes), timedelta(hours=args.stale_hours))
-    acting = args.act and remaining >= BUDGET_FLOOR
-    mode = "acting" if acting else "dry run, nothing written"
-    if args.act and not acting:
-        mode = "nothing written: %d API points left, under the floor of %d" % (remaining, BUDGET_FLOOR)
-    print("%s: %d open, %d with checks running, %d free slot(s) (%s)" % (repo, len(pulls), in_flight, free, mode))
+    mode = "acting" if args.act else "dry run, nothing written"
+    print("%s: %d open, %d holding a slot, %d free slot(s) (%s)" % (repo, len(pulls), in_flight, free, mode))
     failures = []
     for line in lines:
         print(describe(line))
-        if acting:
+        if args.act:
             failures += write(repo, line)
     for failure in failures:
-        print("pull-sync: %s %s" % (repo, failure), file=sys.stderr)
+        print("pull-sync: %s: %s" % (repo, failure), file=sys.stderr)
     return 1 if failures else 0
 
 
@@ -237,11 +268,14 @@ def main():
                         help="owner/name; repeat it to sync several repositories, each on its own slots")
     parser.add_argument("--act", action="store_true", help="write the plan; without it, a dry run")
     parser.add_argument("--max-in-flight", type=int, default=2,
-                        help="pull requests of one repository that may have checks running at once (default 2)")
+                        help="pull requests of one repository that may hold a slot at once (default 2)")
     parser.add_argument("--quiet-minutes", type=int, default=30,
                         help="leave alone a pull request that changed this recently (default 30)")
     parser.add_argument("--stale-hours", type=int, default=24,
                         help="update a pull request that is not ready once its head is this old (default 24)")
+    parser.add_argument("--settle-seconds", type=int, default=10,
+                        help="wait this long before reading again while GitHub has not said whether a "
+                             "pull request merges cleanly (default 10)")
     args = parser.parse_args()
     # Every repository is planned even when one cannot be read; the worst outcome is the exit code.
     return max(sync(repo, args) for repo in args.repo)

@@ -11,7 +11,7 @@ inputs:
     description: Write the plan. Anything but true prints it and writes nothing.
     default: "false"
   max-in-flight:
-    description: Pull requests of one repository that may have checks running at once, counting the ones people pushed.
+    description: Pull requests of one repository that may hold a slot (checks running, or a head too new for them to have registered) at once, counting the ones people pushed.
     default: "2"
   quiet-minutes:
     description: Leave alone a pull request that changed this recently.
@@ -34,6 +34,7 @@ runs:
       run: |
         set -euo pipefail
         args=(--max-in-flight "$MAX_IN_FLIGHT" --quiet-minutes "$QUIET_MINUTES" --stale-hours "$STALE_HOURS")
+        set -f   # the list is split on spaces and new lines, never expanded as file names
         for repo in $REPOS; do args+=(--repo "$repo"); done
         [ "$ACT" = true ] && args+=(--act)
         python3 "$GITHUB_ACTION_PATH/pull_sync.py" "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
