@@ -202,8 +202,8 @@ console.log(JSON.stringify({drawn,names:cards.map(card=>card.children[0].childre
         self.assertEqual([row["pace"] for row in bots], [None, None])
         self.assertEqual(everyone["pace"], 3600)
         self.assertEqual(everyone["maximum"], 3600)
-        self.assertEqual(result["note"], "Flat line on All bots: 4k tokens an hour uses the rest of ChatGPT subscription "
-                                         "(7d, 40% used) exactly when it resets RESET.")
+        self.assertEqual(result["note"], "Flat line on All bots: 4k tokens an hour is the even pace of ChatGPT subscription "
+                                         "(7d, 40% used), the same as the tick, through RESET.")
         self.assertIn("940 tokens since the window began made 40% of it, so it holds about 2k", result["noteTitle"])
         self.assertIn("keep their current share", result["noteTitle"])
         self.assertEqual(result["missing"], "No flat pace line: the plan shows 0% used, so its size cannot be measured yet.")
@@ -252,6 +252,40 @@ console.log(JSON.stringify({
 """.replace("SOURCE", json.dumps(source)))
         self.assertEqual(result["names"], ["QAE 1", "QAE 2", "QAE 3", "All bots"])
         self.assertEqual(result["usual"], [True, True, True, True])
+
+    def test_all_bots_counts_and_names_tokens_on_no_roster_row(self):
+        app = (ROOT / "dashboard/static/app.js").read_text()
+        source = re.search(r"\n(  function usageCharts\([\s\S]*?)\n  function renderUsage\(", app).group(1)
+        result = node(r"""
+const make=tag=>({tag,attrs:{},children:[],style:{},setAttribute(k,v){this.attrs[k]=v;},append(...c){this.children.push(...c);}});
+global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
+const VVCharts=require('./dashboard/static/charts.js');
+const {BOT_META}=require('./dashboard/static/helpers.js');
+function el(tag,attrs={},...children){
+  const node={tag,attrs,children:children.flat().filter(value=>value!==null&&value!==undefined)};
+  node.append=(...items)=>node.children.push(...items); return node;
+}
+const text=node=>typeof node==='string'?node:(node.children||[]).map(text).join(' ');
+const snapshot={agents:{rows:[
+  {id:'ci-qae-1',name:'QAE 1',role:'qae'},
+  {id:'ci-qae-2',name:'QAE 2',role:'qae'},
+  {id:'ci-qae-3',name:'QAE 3',role:'qae'}]}};
+const at=hours=>new Date(Date.now()-hours*3600000).toISOString();
+const usage={available:true,samples:[
+  {account:'a',bot:'ci-qae-1',timestamp:at(1),input_tokens:100,output_tokens:0},
+  {account:'a',bot:'explorer',timestamp:at(1),input_tokens:40,output_tokens:7}],
+  pace:{tokens_per_hour:null,reason:'unused',delta_points:null}};
+const build=new Function('el','BOT_META','VVCharts','snapshot',SOURCE+'\nreturn usageCharts;');
+const cards=build(el,BOT_META,VVCharts,snapshot)(usage).children[2].children;
+const all=cards[3];
+const totals=all.children.find(child=>child.attrs&&child.attrs.class==='burn-totals');
+console.log(JSON.stringify({names:cards.map(card=>text(card.children[0].children[0].children[0]).split(' · ')[0]),
+  all:text(all),title:totals.attrs.title}));
+""".replace("SOURCE", json.dumps(source)))
+        self.assertEqual(result["names"], ["QAE 1", "QAE 2", "QAE 3", "All bots"])
+        self.assertIn("147", result["all"])
+        self.assertIn("47 not on a numbered bot", result["all"])
+        self.assertIn("47 tokens are not on a numbered bot", result["title"])
 
 
 if __name__ == "__main__":

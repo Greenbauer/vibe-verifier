@@ -111,8 +111,12 @@ def _plain_card(agent, active, recent_2h, recent_7d, samples, coverage, known):
     return row, _tagged(loose_samples, agent.id)
 
 
+def _loose_samples(samples):
+    return [sample for sample in samples if _sample_instance(sample) is None]
+
+
 def _explorer_rows(agent, github, usage, concurrency):
-    """One QAE card per lane instance. A run with no instance stays on the plain name."""
+    """One QAE card per reported lane instance. With no instance count, activity with no instance stays on the plain name."""
     source = github.get("bots", {}).get("roles", {}).get(agent.workflow_role, {})
     coverage = source.get("coverage") or {"history": "unavailable"}
     active, recent_2h, recent_7d = _lists(source)
@@ -120,6 +124,11 @@ def _explorer_rows(agent, github, usage, concurrency):
     numbers = _instance_numbers(active, recent_2h, recent_7d, samples, concurrency)
     known = coverage.get("active") == "complete"
     rows, taken = _instance_cards(agent, numbers, active, recent_2h, recent_7d, samples, coverage, known)
+    # A reported instance count is the whole roster. Tokens with no instance stay in the samples
+    # (bot left as the workflow role) so All bots can count them without a plain QAE card.
+    if concurrency:
+        taken.extend(_loose_samples(samples))
+        return rows, taken
     plain, plain_taken = _plain_card(agent, active, recent_2h, recent_7d, samples, coverage, known)
     if plain:
         rows.append(plain)
