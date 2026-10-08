@@ -23,10 +23,12 @@ Add `cognitive-complexity` and `max-file-lines` to `.vibe-verifier`.
 - `tests/test_complexity.py::test_a_lower_ranked_function_that_gets_worse_fails`
 - `tests/test_complexity.py::test_the_base_is_the_merge_base_not_the_base_branchs_tip`
 - `tests/test_complexity.py::test_a_long_file_that_shrank_or_was_untouched_passes_and_one_that_grew_fails`
+- `tests/test_complexity.py::test_an_inline_eslint_disable_does_not_hide_a_function`
 
 ## Gotchas
 
 - A moved file is compared with itself at its old path, so a move never blocks.
 - A file whose over-limit costs got worse is a finding even when its count of them is unchanged. Costs are compared by rank (highest first), not by function name, so the finding lists every over-limit function in the file and the message carries both cost lists.
-- `cognitive-complexity` compares with the merge base, so an improvement that landed on the base branch after the pull request started is not held against it. `max-file-lines` still reads the base branch's tip.
+- Both gates compare with the merge base, so a change that landed on the base branch after the pull request started (a function improved, a file shortened) is not held against it.
+- `cognitive-complexity` ignores inline eslint comments (`eslint-disable`, `/* eslint rule: off */`) as it ignores bulk suppressions: a suppressed function still counts.
 - Splitting one over-limit function into two that are both still over the limit raises the count and is a finding: finish the split so each part is under the limit.

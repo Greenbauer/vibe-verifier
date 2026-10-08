@@ -146,6 +146,26 @@ class CognitiveComplexity(unittest.TestCase):
         with self.assertRaises(CannotRun):
             cognitive_complexity.cost("Function is too complex.")
 
+    def test_an_inline_eslint_disable_does_not_hide_a_function(self):
+        # The gate measures with its own config; a comment in the file is the repository's suppression, not the gate's.
+        for directive in ("// eslint-disable-next-line sonarjs/cognitive-complexity\n", "/* eslint-disable */\n",
+                          "/* eslint sonarjs/cognitive-complexity: off */\n"):
+            with self.subTest(directive=directive.strip()):
+                repo = branch_with(self, {"README.md": "x\n"}, {"src/a.ts": directive + fn("f1", 0)})
+                result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("0 at the base, 1 now", result.stdout)
+        # A comment eslint 9 rejects outright used to stop the gate (exit 2) on any file carrying it; now it is not read.
+        repo = branch_with(self, {"README.md": "x\n"}, {"src/a.ts": "/* eslint-env node */\n" + fn("f1", 0)})
+        result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        # And a function that gets worse under one is still a function that got worse.
+        hidden = "// eslint-disable-next-line sonarjs/cognitive-complexity\n"
+        repo = branch_with(self, {"src/a.ts": hidden + fn("f1", 0)}, {"src/a.ts": hidden + fn("f1", 1)})
+        result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("[27] at the base, [32] now", result.stdout)
+
     def test_untouched_files_and_tests_are_not_measured_unless_all(self):
         repo = branch_with(self, {"src/a.ts": TANGLED, "src/a.test.ts": TANGLED}, {"README.md": "y\n"})
         self.assertEqual(gate("cognitive-complexity", repo, "--base-ref", "HEAD~1").returncode, 0)
@@ -344,6 +364,30 @@ class MaxFileLines(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("601 lines, over the 500 allowed (600 at the base)", result.stdout)
         self.assertNotIn("other.ts", result.stdout)
+
+    def test_the_base_is_the_merge_base_not_the_base_branchs_tip(self):
+        # The branch changes one line of a 600-line file. Meanwhile main shrinks it to 550. Against main's tip the
+        # branch would look as if it had grown the file by 50 lines; against where it started, it grew nothing.
+        repo = make_repo(self, {"src/big.ts": self.long(600)})
+        git(repo, "checkout", "-q", "-b", "feat/x")
+        commit(repo, {"src/big.ts": self.long(599) + "export const last = 0;\n"}, "touch")
+        git(repo, "checkout", "-q", "main")
+        commit(repo, {"src/big.ts": self.long(550)}, "shrink on main")
+        git(repo, "checkout", "-q", "feat/x")
+        result = gate("max-file-lines", repo, "--base-ref", "main")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # Whether the file existed is asked of the merge base too: main deleting it does not make it new here.
+        git(repo, "checkout", "-q", "main")
+        git(repo, "rm", "-q", "src/big.ts")
+        git(repo, "commit", "-q", "-m", "delete it on main")
+        git(repo, "checkout", "-q", "feat/x")
+        result = gate("max-file-lines", repo, "--base-ref", "main")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # And real growth on the branch is still measured from where it started.
+        commit(repo, {"src/big.ts": self.long(610)}, "grow")
+        result = gate("max-file-lines", repo, "--base-ref", "main")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("610 lines, over the 500 allowed (600 at the base)", result.stdout)
 
     def test_python_files_count_by_default(self):
         repo = branch_with(self, {"README.md": "x\n"}, {"pkg/big.py": "x = 1\n" * 501})

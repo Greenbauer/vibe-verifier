@@ -435,7 +435,7 @@ the venv.
 `cognitive-complexity` and `max-file-lines` judge the source files a pull request changed, against
 the same files at the base: a file is a finding only when it has more functions over the
 complexity limit than it had (or is new and has any), when its over-limit costs got worse, or
-when it is over the line cap and grew. "Worse" compares the file's over-limit costs, sorted
+when it is over the line cap and grew since the merge base. "Worse" compares the file's over-limit costs, sorted
 highest first, with the merge base's at the same rank: each must be no higher. That judges the
 file's costs, not named functions, because eslint does not name them: a function that grows
 fails the file unless a costlier one in it dropped far enough to take the lower rank, and a file
@@ -448,7 +448,8 @@ audit or to decide a first subscription. `cognitive-complexity` runs eslint on i
 an empty suppressions file, so a repository's `eslint.config.*` and `eslint-suppressions.json`
 (eslint's bulk suppressions) are for its own lint and never reach the gate: a suppressed count is
 not the base the ratchet compares with, and entries for rules the gate does not run would
-otherwise fail every run as unused. Python files go to complexipy, whose `# noqa: complexipy` and
+otherwise fail every run as unused. Inline eslint comments (`eslint-disable`, `/* eslint rule: off */`)
+are ignored the same way (`--no-inline-config`). Python files go to complexipy, whose `# noqa: complexipy` and
 `# complexipy: ignore` comments are neutralized before measuring for the same reason. Both gates
 measure JS, TS and Python files by default; `--source` narrows them.
 
