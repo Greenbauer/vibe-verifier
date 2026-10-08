@@ -374,8 +374,11 @@ maintenance. A gate may depend on such a binary, on these terms, all in
 - **Resolution fails closed.** A binary of that name on PATH is used only if it reports exactly the
   pinned version; otherwise the cache (`$VIBE_VERIFIER_TOOLS`, default `~/.cache/vibe-verifier/tools`);
   otherwise the pinned release asset is downloaded, verified against its sha256 before anything is
-  extracted, and cached. No network, an unsupported platform, a digest mismatch or an unwritable cache
-  is exit 2, never a pass. `--soak` cannot mask any of it.
+  extracted, and cached. A fetch the release host fails in passing (HTTP 429 or 5xx, a refused, reset,
+  timed out or cut short connection) is tried three times in all, 2 then 4 seconds apart; any other
+  status, such as 404 or 403, is an answer and fails at once, and a digest mismatch is never fetched
+  again. No network, an unsupported platform, a digest mismatch or an unwritable cache is exit 2, never
+  a pass, and the fetch error says how many attempts were made. `--soak` cannot mask any of it.
 - **The gate owns the invocation.** Flags, scope and output parsing are the gate's, tested against the
   real binary and against a stand-in for the edges.
 
