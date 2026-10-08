@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from .config import REPOSITORY, coverage_label
 from .gh_api import ApiError
 from .github import CHECKS_NOT_LOADED, _endpoint
+from .head_state import head_key, note_detail_time, remember_pull, rollup_category, stored_or_new
 from .pull_signals import face_fields, load_signals
 from .util import iso_time
 
@@ -29,6 +30,9 @@ class OwnerSet:
         pull = {**identity, **face, "head_changed": False, "evidence_available": False, "attention": True,
                 "attention_reason": CHECKS_NOT_LOADED if budget else "Current-head evidence is unavailable",
                 "checks": [], "statuses": [], "expected": [], "runs": [], "source_error": code}
+        overall = rollup_category(self._heads.get(head_key(repository, row.get("number"))))
+        if overall:
+            pull["rollup_category"] = overall
         if not budget:
             pull["unavailable"] = True
         return pull
@@ -41,8 +45,10 @@ class OwnerSet:
 
     def _note_pull_error(self, repository: str, row: dict, inventory: dict, signals: dict, error: ApiError,
                          pulls: list, errors: list) -> bool:
-        pulls.append(self._unloaded_pull(repository, row, inventory, error.code, signals.get(row.get("number"))))
-        errors.append({"pull": row.get("number"), "code": error.code})
+        pull = self._stored_or_blank(repository, row, inventory, error.code, signals.get(row.get("number")))
+        pulls.append(pull)
+        if not pull.get("evidence_available"):
+            errors.append({"pull": row.get("number"), "code": error.code})
         return error.code == "request_budget_exhausted"
 
     def _detail_repository(self, repository: str, rows: list[dict], inventory: dict) -> tuple[dict, bool]:
@@ -56,7 +62,9 @@ class OwnerSet:
                     repository, row, inventory, signals, ApiError("request_budget_exhausted"), pulls, errors)
                 continue
             try:
-                pulls.append(self._one_pull(repository, row, inventory, rules, signals))
+                pull = self._one_pull(repository, row, inventory, rules, signals)
+                remember_pull(self, head_key(repository, row.get("number")), pull)
+                pulls.append(pull)
             except ApiError as error:
                 stopped = self._note_pull_error(repository, row, inventory, signals, error, pulls, errors)
         return {"repository": repository, **inventory, "pulls": pulls, "errors": errors}, stopped
@@ -230,9 +238,10 @@ class OwnerSet:
 
     def _not_loaded_repository(self, repository: str, rows: list[dict], inventory: dict) -> dict:
         known = inventory or {"subscription": "unknown"}
-        return {"repository": repository, **known, "sampled_at": iso_time(self.clock()),
-                "pulls": [self._unloaded_pull(repository, row, known, "request_budget_exhausted") for row in rows],
-                "errors": [{"pull": row.get("number"), "code": "request_budget_exhausted"} for row in rows]}
+        pulls = [self._stored_or_blank(repository, row, known, "request_budget_exhausted") for row in rows]
+        return {"repository": repository, **known, "sampled_at": iso_time(self.clock()), "pulls": pulls,
+                "errors": [{"pull": pull.get("number"), "code": pull.get("source_error")}
+                           for pull in pulls if pull.get("source_error")]}
 
     def _remember(self, names) -> None:
         keep = set(names)
@@ -343,7 +352,82 @@ class OwnerSet:
         self._detailed_at[repository] = self.clock()
         return False
 
-    def _detail_all(self, listings, inventory, inventories, by_repository, errors, budget_hit) -> bool:
+    def _sample_heads(self, count: int) -> None:
+        from .head_state import sample_heads
+        try:
+            sample_heads(self, count)
+        except ApiError:
+            self._heads, self._heads_ok = {}, False
+
+    def _stored_or_blank(self, repository, row, inventory, code, signals=None):
+        known = inventory if isinstance(inventory, dict) and "subscription" in inventory else self._cached_or_unknown(repository, inventory)
+        return stored_or_new(self, repository, row, code, lambda: self._unloaded_pull(repository, row, known, code, signals))
+
+    def _take_inventory(self, repository, inventory, inventories, errors) -> bool:
+        """False when this repository cannot be detailed. True when the budget is spent."""
+        try:
+            inventories[repository] = self._known_inventory(repository, inventory)
+        except ApiError as error:
+            errors.append({"repository": repository, "code": error.code})
+            return error.code == "request_budget_exhausted"
+        self._attempted_at[repository] = self.clock()
+        return False
+
+    def _detail_queued(self, repository, row, inventory, inventories, rules, signals, counts, errors, key):
+        if repository not in inventories and self._take_inventory(repository, inventory, inventories, errors):
+            return None, True
+        if repository not in inventories:
+            return None, False
+        if repository not in signals:
+            signals[repository] = load_signals(self.api, repository, counts[repository])
+        try:
+            pull = self._one_pull(repository, row, inventories[repository], rules, signals[repository])
+        except ApiError as error:
+            errors.append({"pull": row.get("number"), "code": error.code})
+            return None, error.code == "request_budget_exhausted"
+        remember_pull(self, key, pull)
+        return pull, False
+
+    def _pack_heads(self, built, inventory, inventories, by_repository) -> None:
+        for repository, pulls in built.items():
+            known = inventories.get(repository) or self._cached_or_unknown(repository, inventory)
+            by_repository[repository] = {"repository": repository, **known, "pulls": pulls,
+                                         "errors": [{"pull": pull.get("number"), "code": pull.get("source_error")}
+                                                    for pull in pulls if pull.get("source_error")],
+                                         "sampled_at": iso_time(self.clock())}
+            note_detail_time(self, repository, pulls)
+
+    def _place_queued(self, repository, row, kind, key, inventory, inventories, rules, signals, counts, errors, blocked, budget_hit):
+        if repository in blocked:
+            return None, budget_hit
+        if budget_hit or self.api.calls >= self.api.max_calls:
+            return self._stored_or_blank(repository, row, inventory, "request_budget_exhausted"), True
+        pull, stopped = self._detail_queued(
+            repository, row, inventory, inventories, rules, signals, counts, errors, key)
+        if pull is None and repository not in inventories and not stopped:
+            blocked.add(repository)
+            return None, budget_hit
+        if pull is None:
+            pull = self._stored_or_blank(repository, row, inventory, "request_budget_exhausted")
+        return pull, budget_hit or stopped
+
+    def _detail_changed_first(self, listings, inventory, inventories, by_repository, errors, budget_hit) -> bool:
+        from .head_state import queue_pulls
+        built: dict[str, list] = {}
+        signals, rules, blocked = {}, {}, set()
+        counts = {name: len(rows) for name, rows in listings.items()}
+        pending = [name for name, rows in listings.items() if rows]
+        rank = {name: index for index, name in enumerate(self._by_need(pending))}
+        queued = queue_pulls(listings, self._detail, self._heads, self._urgent, rank)
+        for repository, row, kind, key in queued:
+            pull, budget_hit = self._place_queued(
+                repository, row, kind, key, inventory, inventories, rules, signals, counts, errors, blocked, budget_hit)
+            if pull is not None:
+                built.setdefault(repository, []).append(pull)
+        self._pack_heads(built, inventory, inventories, by_repository)
+        return budget_hit
+
+    def _detail_in_order(self, listings, inventory, inventories, by_repository, errors, budget_hit) -> bool:
         pending = [name for name, rows in listings.items() if rows]
         for repository in self._by_need(pending):
             if budget_hit:
@@ -353,32 +437,44 @@ class OwnerSet:
             budget_hit = self._detail_one(repository, listings[repository], inventory, inventories, by_repository, errors)
         return budget_hit
 
+    def _detail_all(self, listings, inventory, inventories, by_repository, errors, budget_hit) -> bool:
+        if self._heads_ok:
+            return self._detail_changed_first(listings, inventory, inventories, by_repository, errors, budget_hit)
+        return self._detail_in_order(listings, inventory, inventories, by_repository, errors, budget_hit)
+
     def _finish(self, now, names, rate, errors, inventories, by_repository, budget_hit) -> dict:
         if budget_hit:
             errors.append({"code": "request_budget_exhausted"})
         bots = self._bots(self.clock(), by_repository, names)
         repository_rows = [by_repository[name] for name in names if name in by_repository]
+        from .head_state import reading_from
+        reading = reading_from(self, now)
         return {"owner": self.config.owner, "sampled_at": iso_time(now), "repositories": repository_rows,
-                "repository_names": list(names),
+                "repository_names": list(names), "heads_sampled_at": reading["sampled_at"],
+                "head_reading": reading,
                 "coverage": {"selected": len(names), "readable": len(repository_rows),
                              "label": coverage_label(self.config), "inventory": inventories},
                 "bots": bots, "errors": errors, "partial": bool(errors) or bots["partial"],
                 "api": {**rate, "calls": self.api.calls, "lowest_remaining": self.api.lowest_remaining,
-                        "max_calls": self.api.max_calls}}
+                        "max_calls": self.api.max_calls, "head_calls": reading["calls"],
+                        "graphql_points": reading["points"], "head_calls_per_hour": reading["calls_per_hour"],
+                        "graphql_points_per_hour": reading["points_per_hour"],
+                        "beat_seconds": reading["beat_seconds"]}}
 
     def collect(self, inventory: dict[str, dict] | None = None) -> dict:
         """List every repository's open pull requests before any run or job detail.
 
         Detail is then spent on the repositories that have gone longest without it, so a busy
-        head of the list cannot starve the tail on every pass. A pull request that was listed
-        but not detailed stays visible with its checks not loaded yet. `repositories: all`
-        learns the set, and which of it has an open pull request, before that, and does not
-        read a repository the search says is empty."""
+        head of the list cannot starve the tail on every pass. A pull request already read
+        keeps that reading when this pass does not reach it. `repositories: all` learns the
+        set, and which of it has an open pull request, before that, and does not read a
+        repository the search says is empty."""
         now = self.clock().astimezone(timezone.utc)
         with self._job_lock:
             self._jobs = {}
         self._prune_job_cache(now)
         self.api.begin()
+        self._read_now = set()
         rate = self.api.rate()
         names, open_names = self._scope()
         self._remember(names)
@@ -388,5 +484,6 @@ class OwnerSet:
         for repository, rows in listings.items():
             budget_hit = self._store_empty(
                 repository, rows, open_names, inventory, budget_hit, errors, inventories, by_repository, now)
+        self._sample_heads(sum(len(rows) for rows in listings.values()))
         budget_hit = self._detail_all(listings, inventory, inventories, by_repository, errors, budget_hit)
         return self._finish(now, names, rate, errors, inventories, by_repository, budget_hit)

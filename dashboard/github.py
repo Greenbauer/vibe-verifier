@@ -61,6 +61,12 @@ class GitHubCollector(OwnerSet):
         self._attempted_at: dict[str, datetime] = {}
         self._listing: str | None = None
         self._kind: str | None = None
+        # Last detailed pull, and pull requests whose head or rollup has since changed.
+        self._detail: dict[tuple, dict] = {}
+        self._urgent: set[tuple] = set()
+        self._heads: dict = {}
+        self._heads_ok = False
+        self._read_now: set[tuple] = set()
 
     def clear_private_cache(self) -> None:
         with self._job_lock:
@@ -70,6 +76,11 @@ class GitHubCollector(OwnerSet):
             self._pins.clear()
         self._detailed_at.clear()
         self._attempted_at.clear()
+        self._detail.clear()
+        self._urgent.clear()
+        self._heads = {}
+        self._heads_ok = False
+        self._read_now = set()
         self._listing = None
         self._kind = None
         self.api.clear_cache()
@@ -303,7 +314,7 @@ class GitHubCollector(OwnerSet):
         face = face_fields(current, signals, evidence=True, draft=draft, checks=checks, statuses=statuses,
                            expected=expected, rules=rules)
         return {**identity, **face, "draft": draft, "head_changed": False, "evidence_available": True,
-                "attention": attention, "attention_reason": reason,
+                "attention": attention, "attention_reason": reason, "checks_sampled_at": iso_time(self.clock()),
                 "checks": checks, "statuses": statuses, "expected": expected, "runs": runs}
 
     def _branch_rules(self, repository: str, base: str) -> list[dict]:
