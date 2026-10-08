@@ -14,8 +14,8 @@ deterministic verification are not separate agents. An owner who lists a reviewe
 - An explicit CI workflow mapping may show one SWE, or one QAE split into lane instances
   (QAE 1, QAE 2, and so on), from that workflow's jobs. It does not claim a numbered persistent
   agent. When the host reports `qae_concurrency`, the roster is exactly those instances and no
-  plain QAE. Tokens with no instance still count in All bots, which states how many are
-  unattributed. With no instance count, a run whose runner name is not a lane instance stays on
+  plain QAE. Tokens with no instance still count in All bots, which states how many of its
+  last 24 hours are unattributed. With no instance count, a run whose runner name is not a lane instance stays on
   the unnumbered QAE, shown only when it has activity. Deterministic checks remain in PR progress.
 - Keep the combined usage chart and individual agent charts, distinct SWE/QAE colors,
   owner isolation, and the existing runner/PR views. Verify a populated browser and tests.
