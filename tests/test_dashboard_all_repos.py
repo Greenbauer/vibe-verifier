@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from dashboard.config import BotDefinition, Config
 from dashboard.gh_api import ApiError
 from dashboard.github import CHECKS_NOT_LOADED, GitHubCollector
+from dashboard.owner_set import OwnerSet
 from dashboard.service import DashboardService
 from dashboard.usage_artifacts import UsageArtifacts
 
@@ -117,6 +118,9 @@ def pulls_of(result):
 
 
 class BudgetFairness(unittest.TestCase):
+    def test_collection_comes_from_the_owner_set(self):
+        self.assertIs(GitHubCollector.collect, OwnerSet.collect)
+
     def test_a_short_budget_lists_every_pull_and_rotates_detail(self):
         names = tuple("octocat/r%s" % index for index in range(4))
         api = BudgetAPI(1 + 4 + 5, {name: [pull(name, 1)] for name in names}, [])
