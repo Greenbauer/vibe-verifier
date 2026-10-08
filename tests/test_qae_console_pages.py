@@ -69,13 +69,14 @@ class Server:
 
 
 class Explorer:
-    """A playwright-mcp process started with the harness's arguments, spoken to over stdio."""
+    """A playwright-mcp process started with the harness's arguments, spoken to over stdio. `more` is
+    what a lane adds after them (the Codex lane's --config and its hook, tests/test_qae_secret_names.py)."""
 
-    def __init__(self, test, artifacts):
+    def __init__(self, test, artifacts, more=()):
         self.calls = 0
         self.process = subprocess.Popen(
             ["node", os.environ["QAE_MCP"], "--browser", "chromium", "--headless", "--isolated", "--output-dir", "qae-artifacts",
-             "--save-session", "--viewport-size", "1280x800", "--init-page", os.environ.get("QAE_CONSOLE_PAGES", str(HOOK))],
+             "--save-session", "--viewport-size", "1280x800", "--init-page", os.environ.get("QAE_CONSOLE_PAGES", str(HOOK)), *more],
             cwd=os.path.dirname(artifacts), stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         test.addCleanup(self.close)
         self.send("initialize", {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}})

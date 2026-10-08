@@ -37,7 +37,7 @@ jobs:
   # The QAE browser action against a real apt and the pinned Playwright, which its tests stub: it reads
   # the missing system packages from that Playwright's own report, so a pin bump that changes the
   # report shows here before a consumer pins it. Then the chromium it installed has to start, and
-  # the harness's page record has to work in the playwright-mcp it installed.
+  # the harness's two page hooks have to work in the playwright-mcp it installed.
   qae-browser:
     name: qae-browser
     runs-on: ubuntu-latest
@@ -75,6 +75,16 @@ jobs:
         run: |
           test -f "$QAE_MCP" && test -f "$QAE_CONSOLE_PAGES"
           python3 -m unittest discover -s tests -p 'test_qae_console_pages.py' -v
+      - name: Type a secret's value for its name however it is entered, with the playwright-mcp it installed
+        # The secret names hook wraps that build's own Frame, ElementHandle and Keyboard classes, so
+        # a pin bump that renames one shows here. The test signs in to a site on a local port the way
+        # the run that failed did (browser_run_code_unsafe, the name as the password) and runs the
+        # qae-artifacts gate on the result, with the hook and without it. Skips without QAE_MCP.
+        env:
+          QAE_MCP: ${{ steps.browser.outputs.mcp }}
+        run: |
+          test -f "$QAE_MCP"
+          python3 -m unittest discover -s tests -p 'test_qae_secret_names.py' -v
 
   # The runner-lane kit (lanes/README.md) is Linux-only and has tests of its own, which stub every
   # system tool on PATH: nothing is installed, mounted or started on the runner. Ubuntu 24.04, not
