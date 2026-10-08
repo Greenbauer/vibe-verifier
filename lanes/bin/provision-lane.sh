@@ -1475,14 +1475,14 @@ convert_store() {
   log "Convert: $STORE_DIR from XFS to btrfs (a new ${STORE_GB}G image at $STORE_IMG; the XFS image is kept as $OLD_STORE_IMG)"
   tags="$(carried_stores)"
   for tag in $tags; do
-    size="$(du -sx -BG "$(store_dir "$tag")" 2>/dev/null | cut -f1 | tr -dc '0-9')"
+    size="$(du -sx -BG "$(store_dir "$tag")" 2>/dev/null | cut -f1 | tr -dc '0-9' || true)"
     log "  carries over $(store_dir "$tag") (${size:-?}G)"
     need=$((need + ${size:-0}))
     [ "$tag" != "$(image_tag)" ] || current="$tag"
   done
   [ -n "$tags" ] || log "  no preloaded store to carry over: the lane needs an image build afterwards (the gate --apply prints)"
   # What the copies write, and 1G over: btrfs keeps two copies of its metadata on a single device.
-  free="$(df -BG --output=avail "$STATE_DIR" 2>/dev/null | tail -n 1 | tr -dc '0-9')"
+  free="$(df -BG --output=avail "$STATE_DIR" 2>/dev/null | tail -n 1 | tr -dc '0-9' || true)"
   [ -n "$free" ] && [ "$free" -ge "$need" ] \
     || die "the conversion writes about ${need}G beside the XFS image, which stays, and the filesystem under $STATE_DIR has ${free:-?}G free. Nothing was changed."
   log "  needs about ${need}G of the ${free}G free under $STATE_DIR"

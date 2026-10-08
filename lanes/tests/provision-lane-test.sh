@@ -1325,7 +1325,7 @@ out="$(BTRFS_SNAPSHOT_RC=1 run_convert --apply 2>&1)"; rc=$?
   && grep -qx "btrfs subvolume create $STORE/golden-tag9.new" "$CALLLOG" && [ "$(cat "$STORE/golden-tag9/overlay2/file")" = nine ] && lane_resumed
 expect $? "when the copied store takes no snapshot, the finished btrfs store is dropped, the XFS store put back and the listener restarted: the check is the last word"
 conversion_fixture
-out="$(MOUNT_RO_RC=32 run_convert --apply 2>&1)"; rc=$?
+out="$(MOUNT_RC=32 run_convert --apply 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && xfs_store_back && lane_resumed && ! grep -q '^btrfs subvolume create' "$CALLLOG"; expect $? "when the XFS image cannot be mounted beside the new store, the XFS store is put back"
 conversion_fixture
 out="$(MOUNT_STOP_RC=1 run_convert --apply 2>&1)"; rc=$?

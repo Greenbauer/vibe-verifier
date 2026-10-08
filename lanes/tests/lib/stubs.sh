@@ -13,7 +13,8 @@
 # and blkid answer from there, or STORE_FSTYPE (xfs when unset) for a store nothing mounted. The
 # files of an image a mkfs stand-in made follow it: they are in its mount point while it is mounted
 # and nowhere a test's lane looks while it is not (stub-image), so a store that is unmounted, has
-# its image renamed and is mounted elsewhere shows there what it held. btrfs
+# its image renamed and is mounted elsewhere shows there what it held. MOUNT_RC fails mount with
+# that status (it then mounts nothing). btrfs
 # keeps subvolumes as directories whose inode it lists in $ST/subvolumes, so one stays a subvolume
 # when it is renamed; a snapshot is a plain copy, and a delete follows a link as the real one does. The gh stub applies the script's own jq filter to
 # its fixture with the real jq.
@@ -231,7 +232,7 @@ SH
   cat > "$p/mount" <<'SH'
 #!/bin/bash
 echo "mount $*" >> "$CALLLOG"
-[ "${MOUNT_RO_RC:-0}" = 0 ] || case "$*" in *loop,ro*) echo "mount: wrong fs type, bad superblock" >&2; exit "$MOUNT_RO_RC" ;; esac
+[ "${MOUNT_RC:-0}" = 0 ] || exit "$MOUNT_RC"
 echo "${@: -1}" >> "$ST/mounts"
 image="${*: -2:1}"
 case "$(head -n 1 "$image" 2>/dev/null)" in xfs|btrfs) echo "${@: -1} $(head -n 1 "$image")" >> "$ST/mount-types" ;; esac
