@@ -172,7 +172,7 @@ unchanged. Direct local reads use no forwarded headers and retain the local HTTP
 
 The [optional Linux collector](dashboard-collector.md) atomically replaces the telemetry file.
 Its native host/account format is validated and adapted by `dashboard/collector_view.py`, retaining
-source timestamps, combined CI/QAE slot limits, and separate lane caps. It reads only the configured
+source timestamps, combined CI/QAE slot limits, the wait pool when the lane has one, and separate lane caps. It reads only the configured
 owner’s assignments and aggregate host resources. The dashboard never writes telemetry.
 Other collectors can use this version 1 shape:
 
@@ -246,9 +246,12 @@ Other collectors can use this version 1 shape:
 Lane `state` is one of `busy`, `allocated`, `ready`, `provisionable`, `offline`, or `unknown`. `registered` is a
 separate `true`, `false`, or `null` fact because an allocated on-demand lane can have no idle runner.
 A busy lane must include a same-owner job or a positive GitHub `runner_id` with confirmed
-registration. The latter shows busy with unmatched job details until a current owner-scoped
-PR job matches the runner ID. Registration alone never implies ready or busy. An allocated lane without a matched job shows its repository
-and pending-match message without a job link. The host panel is always labeled `SHARED HOST`; its values
+registration. The Capacity page shows a slot that holds a runner as occupied. When the host recorded
+the job, that lane is `busy` and names the job and repository even if no open pull request carries
+it, and links the job when the record has a run id and a job id. A missing record falls back to the
+current-head pull-request match. `registered: null` is omitted: this source never knows registration,
+so the page does not call it unknown. An allocated lane that names a repository but has no host
+record shows that repository and a pending-match message without a job link. The host panel is always labeled `SHARED HOST`; its values
 are aggregate CPU sampled percent, memory bytes, and workspace-filesystem bytes. Every host meter
 fills with how much is in use, so a fuller bar means less headroom; disk used is total minus free.
 

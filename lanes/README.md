@@ -47,8 +47,10 @@ they start with `/`.
 
 **One container per job.** `<name>-listener.service` runs the listener on `/etc/<name>/listener.json`.
 It long-polls the lane's scale sets, and for each job GitHub assigns it mints a just-in-time runner,
-writes `/run/<name>/<kind>/<n>/jit` (0400) and `job`, and starts `<name>-<kind>@<n>.service`. The
-slot unit's `ExecStartPre=+bin/lane-slot.sh prepare <kind> <n>` refuses without those files,
+writes `/run/<name>/<kind>/<n>/jit` (0400) and `job`, and starts `<name>-<kind>@<n>.service`. When
+that job starts it also writes `assignment` in the same directory (the job's repository and name).
+The slot's cleanup removes `jit` and `job`; the listener removes `assignment` once the unit is
+inactive. The slot unit's `ExecStartPre=+bin/lane-slot.sh prepare <kind> <n>` refuses without those files,
 asserts the lane's firewall rules, re-creates the slot's sparse ext4 image and mounts it at
 `/var/lib/<name>/slot-<kind>-<n>`, and makes a reflink snapshot of the preloaded inner Docker store
 (for a wait slot an empty store, "Waiting jobs" below).

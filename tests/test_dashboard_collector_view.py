@@ -107,3 +107,41 @@ class CollectorIntegration(unittest.TestCase):
         join_runner_jobs(telemetry, {'repositories': [{'repository': 'example-ci/repo', 'pulls': [{'runs': [{'jobs': [job]}]}]}]})
         self.assertEqual(lane['state'], 'busy')
         self.assertEqual(lane['job'], {'repository': 'example-ci/repo', 'name': 'Build', 'url': job['html_url']})
+
+    def test_a_host_job_shows_without_a_pull_request_and_a_missing_record_falls_back(self):
+        def slot(kind, index, runner_id, job=None):
+            row = {'kind': kind, 'index': index, 'state': 'allocated',
+                   'unit': {'active_state': 'active', 'sub_state': 'running'},
+                   'target_repository': None, 'set_id': 2, 'runner_id': runner_id,
+                   'runner_name': 'runner-%s-%s' % (kind, index), 'allocated_at': STAMP}
+            if job:
+                row.update(job)
+            return row
+        host = remote_host([
+            slot('ci', 1, 42, {'job_name': 'Default branch', 'job_repository': 'example-ci/widgets',
+                               'job_url': 'https://github.com/example-ci/widgets/actions/runs/9/job/8'}),
+            slot('ci', 2, 43),
+            slot('wait', 1, 70, {'job_name': 'Wait for preview', 'job_repository': 'example-ci/widgets'}),
+        ])
+        host['slots']['wait_limit'] = 8
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'telemetry.json'
+            refresh(config(), path, fetch=lambda *_: {'host': host, 'quota': {'status': 'ok', 'rate_limits': quota()}}, now=STAMP)
+            telemetry = read_telemetry(Config('example-ci', ('example-ci/widgets',), {}, path), NOW)
+        lanes = {lane['id']: lane for lane in telemetry['capacity']['lanes']}
+        self.assertEqual(telemetry['capacity']['limits']['wait_slots'], 8)
+        self.assertEqual(lanes['ci-1']['state'], 'busy')
+        self.assertEqual(lanes['ci-1']['job']['name'], 'Default branch')
+        self.assertEqual(lanes['ci-1']['job']['repository'], 'example-ci/widgets')
+        self.assertIsNone(lanes['ci-2'].get('job'))
+        self.assertEqual(lanes['wait-1']['job']['name'], 'Wait for preview')
+        self.assertEqual(sum(lane['state'] == 'provisionable' for lane in telemetry['capacity']['lanes']), 6)
+        github_job = {'runner_id': 43, 'status': 'in_progress', 'name': 'Older run',
+                      'html_url': 'https://github.com/example-ci/widgets/actions/runs/3/job/4'}
+        join_runner_jobs(telemetry, {'repositories': [{'repository': 'example-ci/widgets', 'pulls': []}]})
+        self.assertEqual(lanes['ci-1']['job']['name'], 'Default branch')
+        self.assertEqual(lanes['ci-2']['state'], 'allocated')
+        join_runner_jobs(telemetry, {'repositories': [{'repository': 'example-ci/widgets', 'pulls': [{'runs': [{'jobs': [github_job]}]}]}]})
+        self.assertEqual(lanes['ci-1']['job']['name'], 'Default branch')
+        self.assertEqual(lanes['ci-2']['state'], 'busy')
+        self.assertEqual(lanes['ci-2']['job']['name'], 'Older run')

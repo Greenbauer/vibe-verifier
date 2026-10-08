@@ -13,7 +13,7 @@
     success: "Succeeded", failed: "Failed", skipped: "Skipped", cancelled: "Cancelled",
     pending: "Pending", running: "Running", waiting: "Waiting", unknown: "Unknown", working: "Working", idle: "Idle",
     paused: "Paused", down: "Down", ready: "Ready", busy: "Busy", provisionable: "On demand",
-    offline: "Offline", allocated: "Allocated"
+    offline: "Offline", allocated: "Occupied"
   };
 
   // Filters and the selected bot, saved per tab. Where you are lives in the URL instead.

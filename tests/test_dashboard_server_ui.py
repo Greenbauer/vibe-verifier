@@ -449,6 +449,74 @@ console.log(JSON.stringify({
             self.assertIn("Fix the gate", text(row))
         self.assertFalse(result["detail"])
 
+    def test_a_held_slot_reads_as_occupied_and_a_job_name_stays_text(self):
+        result = self.node(r"""
+const fs=require('fs');
+const app=fs.readFileSync('./dashboard/static/app.js','utf8');
+const match=app.match(/  function renderCapacity\(\) \{([\s\S]*?)\n  \}\n\n  function render\(\)/);
+if (!match) throw new Error('renderCapacity not found');
+function el(tag, attrs={}, ...children) {
+  const node={tag, attrs, children:children.flat().filter(value => value !== null && value !== undefined)};
+  node.append=(...items) => node.children.push(...items.flat().filter(value => value !== null && value !== undefined));
+  node.prepend=(...items) => node.children.unshift(...items.flat().filter(value => value !== null && value !== undefined));
+  node.querySelector=(selector) => {
+    const cls=selector.slice(1);
+    const walk=(item) => {
+      if (!item || typeof item === 'string') return null;
+      if ((item.attrs.class || '').split(' ').includes(cls)) return item;
+      for (const child of item.children || []) { const found=walk(child); if (found) return found; }
+      return null;
+    };
+    return walk(node);
+  };
+  return node;
+}
+const badge=(status) => el('span', {class:`badge status-${status}`}, status);
+const link=(label, url) => url ? el('a', {href:url}, label) : null;
+const content={children:[], replaceChildren(...nodes){ this.children=nodes.flat(); }, append(...nodes){ this.children.push(...nodes.flat()); }};
+const snapshot={owner:'example', telemetry:{available:true, capacity:{
+  available:true, stale:false, sampled_at:'2026-10-08T03:18:00Z',
+  host:{cpu_percent:10, memory_used_bytes:1, memory_total_bytes:2, workspace_disk_free_bytes:1, workspace_disk_total_bytes:2},
+  limits:{slots:8, wait_slots:8, qae_concurrency:2, cpu_quota_cores:4, memory_max_bytes:100},
+  lanes:[
+    {id:'ci-1', state:'busy', registered:null, labels:['ci'], job:{repository:'example/widgets', name:'<img src=x>', url:'https://github.com/example/widgets/actions/runs/9/job/8'}},
+    {id:'wait-3', state:'busy', registered:null, labels:['wait'], job:{repository:'example/widgets', name:'Wait for preview', url:null}},
+    {id:'ci-2', state:'allocated', registered:null, labels:['ci']},
+    {id:'on-demand-1', state:'provisionable', registered:false, labels:[]}
+  ]}}};
+const heading=(title) => el('h1', {}, title);
+const metric=(label, value) => el('div', {}, label, String(value));
+const renderCapacity=new Function('content','snapshot','heading','empty','sourceBanner','el','formatTime','bytes','diskUsage','badge','link','metric',
+  match[1] + '\nreturn content;');
+renderCapacity(content, snapshot, heading, ()=>el('p'), ()=>null, el, value=>value, value=>String(value),
+  ()=>({used:1,total:2,percent:50}), badge, link, metric);
+function text(node) {
+  if (typeof node === 'string') return node;
+  return (node.children || []).map(text).join(' ');
+}
+function tags(node) {
+  if (!node || typeof node === 'string') return [];
+  return [node.tag, ...(node.children || []).flatMap(tags)];
+}
+const lanes=content.children[content.children.length - 1];
+const cards=lanes.querySelector('.lane-grid').children;
+console.log(JSON.stringify({
+  limits:text(lanes.children[0]),
+  cards:cards.map(card => ({text:text(card), tags:tags(card)}))
+}));
+""")
+        self.assertIn("8 shared CI/QAE slots · 8 wait slots", result["limits"])
+        self.assertNotIn("Registration unknown", json.dumps(result))
+        busy, wait, held, free = result["cards"]
+        self.assertIn("<img src=x>", busy["text"])
+        self.assertNotIn("img", busy["tags"])
+        self.assertIn("Wait for preview", wait["text"])
+        self.assertIn("example/widgets", wait["text"])
+        self.assertIn("Occupied; no job recorded for this slot", held["text"])
+        self.assertNotIn("No current same-owner job", held["text"])
+        self.assertIn("No runner registered", free["text"])
+        self.assertNotIn("Registration unknown", free["text"])
+
     def test_ui_uses_text_nodes_and_the_approved_local_palette(self):
         app = (ROOT / "dashboard/static/app.js").read_text()
         helpers = (ROOT / "dashboard/static/helpers.js").read_text()

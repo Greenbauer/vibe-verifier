@@ -78,7 +78,7 @@ class RemoteSamplerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "listener.json"
             path.write_text(json.dumps(listener()))
-            self.assertEqual(REMOTE.listener_contract(path, "example-ci", "example-ci"), (8, 2))
+            self.assertEqual(REMOTE.listener_contract(path, "example-ci", "example-ci"), (8, 2, 0))
             path.write_text(json.dumps(listener("different-owner")))
             with self.assertRaisesRegex(REMOTE.SampleError, "listener_identity_mismatch"):
                 REMOTE.listener_contract(path, "example-ci", "example-ci")
@@ -141,6 +141,73 @@ class RemoteSamplerTests(unittest.TestCase):
             self.assertEqual(projected["slots"]["occupied_count"], 2)
             self.assertEqual(projected["slots"]["remaining_on_demand"], 6)
             self.assertEqual({item["index"] for item in occupied}, {1})
+
+    def test_a_wait_slot_is_its_own_pool_and_a_host_job_is_kept(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "listener.json"
+            body = listener()
+            body["kinds"] = {"wait": {"slots": 8, "set_name": "example-wait"}}
+            path.write_text(json.dumps(body))
+            self.assertEqual(REMOTE.listener_contract(path, "example-ci", "example-ci"), (8, 2, 8))
+            body["kinds"]["wait"]["slots"] = 0
+            path.write_text(json.dumps(body))
+            with self.assertRaisesRegex(REMOTE.SampleError, "listener_budget_invalid"):
+                REMOTE.listener_contract(path, "example-ci", "example-ci")
+            states = {}
+            for unit in REMOTE.slot_units("example-ci", 8, wait_slots=8):
+                states[unit] = {"ActiveState": "inactive", "SubState": "dead"}
+            states["example-ci-wait@3.service"] = {"ActiveState": "active", "SubState": "running"}
+            states["example-ci-ci@1.service"] = {"ActiveState": "active", "SubState": "running"}
+            wait = Path(directory) / "example-ci" / "wait" / "3"
+            wait.mkdir(parents=True)
+            wait.joinpath("job").write_text("example-ci wait 9 70 runner-wait-3\n")
+            wait.joinpath("assignment").write_text(json.dumps({
+                "repository": "example-ci/widgets", "name": "Wait for preview",
+                "run_id": 15, "job_id": "16"}) + "\n")
+            ci = Path(directory) / "example-ci" / "ci" / "1"
+            ci.mkdir(parents=True)
+            ci.joinpath("job").write_text("example-ci ci 4 11 runner-ci-1\n")
+            occupied = REMOTE.scan_slots("example-ci", "example-ci", 8, states, directory, wait_slots=8)
+            host = remote_host(occupied)
+            host["slots"]["wait_limit"] = 8
+            projected = COLLECTOR.project_host(host, config())
+            self.assertEqual([(row["kind"], row["index"]) for row in occupied], [("ci", 1), ("wait", 3)])
+            self.assertEqual(projected["slots"]["wait_limit"], 8)
+            self.assertEqual(projected["slots"]["occupied_count"], 1)
+            self.assertEqual(projected["slots"]["remaining_on_demand"], 7)
+            wait_row = projected["slots"]["occupied"][1]
+            self.assertEqual(wait_row["job_name"], "Wait for preview")
+            self.assertEqual(wait_row["job_repository"], "example-ci/widgets")
+            self.assertEqual(wait_row["job_url"], "https://github.com/example-ci/widgets/actions/runs/15/job/16")
+
+    def test_a_foreign_or_oversized_assignment_is_refused(self):
+        def occupied(directory, assignment):
+            job = Path(directory) / "example-ci" / "ci" / "1"
+            job.mkdir(parents=True)
+            job.joinpath("job").write_text("example-ci/repo ci 4 9 runner-ci-1\n")
+            job.joinpath("assignment").write_text(assignment)
+            states = {"example-ci-ci@1.service": {"ActiveState": "active", "SubState": "running"}}
+            return REMOTE.scan_slots("example-ci", "example-ci", 1, states, directory, ("ci",))
+
+        with tempfile.TemporaryDirectory() as directory:
+            rows = occupied(directory, json.dumps({"repository": "other/repo", "name": "Build"}))
+            self.assertEqual(rows[0]["state"], "allocated")
+            self.assertNotIn("job_name", rows[0])
+        with tempfile.TemporaryDirectory() as directory:
+            rows = occupied(directory, json.dumps({"repository": "example-ci/repo", "name": "B" * (REMOTE.MAX_JOB_NAME + 1)}))
+            self.assertNotIn("job_name", rows[0])
+        with tempfile.TemporaryDirectory() as directory:
+            rows = occupied(directory, "x" * (REMOTE.MAX_JOB + 1))
+            self.assertNotIn("job_name", rows[0])
+        base = {"kind": "ci", "index": 1, "state": "allocated",
+                "unit": {"active_state": "active", "sub_state": "running"},
+                "target_repository": "example-ci/repo", "set_id": 4, "runner_id": 9,
+                "runner_name": "runner-ci-1", "allocated_at": "2026-09-30T12:00:00Z"}
+        for extra in ({"job_name": "Build", "job_repository": "other/repo"},
+                      {"job_name": "B" * (COLLECTOR.MAX_JOB_NAME + 1), "job_repository": "example-ci/repo"}):
+            projected = COLLECTOR.project_host(remote_host([dict(base, **extra)]), config())
+            self.assertNotIn("job_name", projected["slots"]["occupied"][0])
+            self.assertNotIn("other/repo", json.dumps(projected))
 
     def test_active_unit_without_job_is_unknown_not_free(self):
         states = {"example-ci-ci@1.service": {"ActiveState": "active", "SubState": "running"}}
@@ -321,7 +388,7 @@ class RemoteSamplerTests(unittest.TestCase):
                    "listener_config_path": "/etc/example-ci/listener.json",
                    "workspace_path": "/srv/example-ci/work", "collect_quota": True,
                    "codex_home": "/var/lib/example-ci/codex"}
-        with mock.patch.object(REMOTE, "listener_contract", return_value=(1, 1)), \
+        with mock.patch.object(REMOTE, "listener_contract", return_value=(1, 1, 0)), \
              mock.patch.object(REMOTE, "read_limited", side_effect=read), \
              mock.patch.object(REMOTE, "unit_states", return_value={}), \
              mock.patch.object(REMOTE, "scan_slots", return_value=[record]), \

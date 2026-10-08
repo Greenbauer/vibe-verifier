@@ -31,10 +31,11 @@ It uses GitHub's [`actions/scaleset`](https://github.com/actions/scaleset) clien
   (`<name_prefix>-<kind>-<n>-<unix time>`, `work_folder`), writes the slot's `jit` and `job`
   files, then runs `systemctl start <name>-<kind>@<n>.service`. If the mint, the files or the
   start fail, the runner is removed and the files deleted, so neither outlives the attempt.
-- **Jobs.** JobStarted marks the slot busy; JobCompleted marks it done. The slot unit exits by
-  itself after its one job; the listener never stops a slot that took a job, and forgets it once
-  the unit is inactive and its job file is gone. A slot whose unit ends without taking a job (a
-  crash, or its `RuntimeMaxSec`) has its runner removed from GitHub.
+- **Jobs.** JobStarted marks the slot busy and writes `assignment` (the job's repository and
+  display name, plus the run id and job id when both can link the job). JobCompleted marks it
+  done. The slot unit exits by itself after its one job; the listener never stops a slot that took
+  a job, and forgets it once the unit is inactive and its job file is gone. A slot whose unit ends
+  without taking a job (a crash, or its `RuntimeMaxSec`) has its runner removed from GitHub.
 - **Idle stop.** A slot whose runner never took a job, older than `idle_stop_sec`, is stopped
   when its set has no assigned job and more idle slots than its `min_runners`, oldest first. The
   listener writes the `idle-stop` marker, removes the runner from GitHub, and only then runs
@@ -57,8 +58,10 @@ It uses GitHub's [`actions/scaleset`](https://github.com/actions/scaleset) clien
   provisioner writes it so), so a job taken by a slot about to be recycled still gets the whole
   budget.
 - **Crash safety.** At start it rebuilds its state from the run dir: a job file whose unit is
-  running is adopted; one whose unit is not running is a leftover, whose runner is removed and
-  whose files are deleted. It never deletes a scale set when it stops. On SIGTERM or SIGINT it
+  running is adopted, and its `assignment` file stays so the dashboard still knows the job; one
+  whose unit is not running is a leftover, whose runner is removed and whose files are deleted. An
+  `assignment` left behind after the job file is already gone is removed at that start. It never
+  deletes a scale set when it stops. On SIGTERM or SIGINT it
   closes every session, waits up to 20 s for starts and stops already under way, and exits 0,
   leaving running slots alone.
 - **Deleting the lane's sets.** `lane-listener -delete-sets <config>` starts no session and no
@@ -132,7 +135,8 @@ files root-owned, each written to a temporary name and renamed into place):
 | File | Mode | Content |
 |---|---|---|
 | `jit` | 0400 | The encoded JIT runner config. The slot's prepare mounts it into the container read-only. |
-| `job` | 0600 | One line: `<scope-target> <kind> <set-id> <runner-id> <runner-name>`; the scope target is the organisation or `owner/repo`. Written after `jit`. |
+| `job` | 0600 | One line: `<scope-target> <kind> <set-id> <runner-id> <runner-name>`; the scope target is the organisation or `owner/repo`. Written after `jit`. Its five fields are the contract `lane-slot.sh` and the dashboard sampler parse; nothing else is added to the line. |
+| `assignment` | 0600 | Written when the job starts, not when the slot starts. One JSON object: `repository` (`owner/repo`), `name` (the job display name), and `run_id` plus `job_id` when both can form a GitHub job link. Absent on a listener that predates it. |
 | `idle-stop` | 0600 | Empty; written before an idle stop or a warm recycle removes the runner. |
 
 An instance is **free** when it has no `job` file, its unit is inactive (`systemctl is-active`
@@ -141,9 +145,13 @@ stop can never land on the next slot's unit). The slot unit's side of the contra
 provisioner wires:
 
 - `Restart=no`: one job per start; the listener starts the next.
-- prepare reads `jit` and `job` and never deletes them (no longer mints its own runner).
+- prepare reads `jit` and `job` and never deletes them (no longer mints its own runner). It does
+  not read `assignment`.
 - cleanup counts an `idle-stop` marker like an idle timeout (no failure, no back-off), removes
-  `jit` and `idle-stop`, and removes `job` **last**, since its absence frees the instance.
+  `jit` and `idle-stop`, and removes `job` **last**, since its absence frees the instance. It does
+  not remove `assignment` (its `rmdir` of the slot directory then fails and is ignored). The
+  listener removes `assignment` with the slot's other files, and again once the unit is inactive
+  and the job file is already gone, so a finished slot leaves the directory empty and removed.
 
 A unit running, or a job file present, on an instance the listener did not start counts against
 the budget and is logged once. A job file left behind by a unit that is no longer running is

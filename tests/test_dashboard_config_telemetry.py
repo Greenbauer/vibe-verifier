@@ -164,6 +164,33 @@ class TelemetryContract(unittest.TestCase):
         value["capacity"]["lanes"][0]["job"]["repository"] = "example/foreign"
         self.assertFalse(self.load(value)["available"])
 
+    def test_a_collector_job_keeps_the_configured_owner_and_drops_a_foreign_one(self):
+        from dashboard.collector import refresh
+        from test_dashboard_collector import config as collector_config, quota, remote_host
+        row = {"kind": "ci", "index": 1, "state": "allocated",
+               "unit": {"active_state": "active", "sub_state": "running"},
+               "target_repository": "example-ci/repo", "set_id": 4, "runner_id": 9,
+               "runner_name": "runner-ci-1", "allocated_at": iso(NOW),
+               "job_name": "Build", "job_repository": "example-ci/repo"}
+        foreign = dict(row, job_repository="other/repo", job_name="Foreign")
+        path = self.root / "collector.json"
+
+        def collect(occupied):
+            host = remote_host(occupied)
+            refresh(collector_config(), path, fetch=lambda *_: {
+                "host": host, "quota": {"status": "ok", "rate_limits": quota()}}, now=iso(NOW))
+            config_path = self.root / "collector-config.json"
+            config_path.write_text(json.dumps(config_value("example-ci", path)), encoding="utf-8")
+            return read_telemetry(load_config(config_path), NOW)
+
+        shown = collect([row])
+        self.assertEqual(shown["capacity"]["lanes"][0]["job"], {
+            "repository": "example-ci/repo", "name": "Build", "url": None})
+        hidden = collect([foreign])
+        self.assertEqual(hidden["capacity"]["lanes"][0]["job"]["name"], "Runner allocated; job match pending")
+        self.assertNotIn("other/repo", json.dumps(hidden))
+        self.assertNotIn("Foreign", json.dumps(hidden))
+
     def test_sixteen_lanes_and_on_demand_are_distinct_from_registration(self):
         lanes = [{"id": "lane-%02d" % index,
                   "state": "provisionable" if index == 0 else "ready",

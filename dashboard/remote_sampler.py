@@ -17,6 +17,7 @@ from http.client import HTTPException
 
 MAX_FILE = 64 * 1024
 MAX_JOB = 4096
+MAX_JOB_NAME = 240
 MAX_PROCESS_OUTPUT = 256 * 1024
 OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 LANE_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
@@ -72,7 +73,19 @@ def listener_contract(path, owner, lane):
         raise SampleError("listener_budget_invalid")
     if not isinstance(qae, int) or isinstance(qae, bool) or not 0 <= qae <= slots:
         raise SampleError("listener_budget_invalid")
-    return slots, qae
+    return slots, qae, wait_slots_of(config)
+
+
+def wait_slots_of(config):
+    """The wait kind's own pool. Absent on an older listener, which then samples ci and qae only."""
+    kinds = config.get("kinds")
+    if not isinstance(kinds, dict) or "wait" not in kinds:
+        return 0
+    kind = kinds["wait"]
+    slots = kind.get("slots") if isinstance(kind, dict) else None
+    if not isinstance(slots, int) or isinstance(slots, bool) or not 1 <= slots <= 64:
+        raise SampleError("listener_budget_invalid")
+    return slots
 
 
 def parse_cpu_line(text):
@@ -183,13 +196,21 @@ def systemd_properties(unit, names, runner=run_bounded):
         return None
 
 
-def slot_units(lane, slots, kinds=("ci", "qae")):
+def slot_spans(slots, kinds=("ci", "qae"), wait_slots=0):
+    spans = [(kind, slots) for kind in kinds]
+    if wait_slots and "wait" not in kinds:
+        spans.append(("wait", wait_slots))
+    return spans
+
+
+def slot_units(lane, slots, kinds=("ci", "qae"), wait_slots=0):
     return ["%s-%s@%d.service" % (lane, kind, index)
-            for kind in kinds for index in range(1, slots + 1)]
+            for kind, count in slot_spans(slots, kinds, wait_slots)
+            for index in range(1, count + 1)]
 
 
-def unit_states(lane, slots, runner=run_bounded, kinds=("ci", "qae")):
-    units = slot_units(lane, slots, kinds)
+def unit_states(lane, slots, runner=run_bounded, kinds=("ci", "qae"), wait_slots=0):
+    units = slot_units(lane, slots, kinds, wait_slots)
     command = ["systemctl", "show", "--no-pager", "--property", "Id",
                "--property", "ActiveState", "--property", "SubState", *units]
     try:
@@ -248,21 +269,72 @@ def read_job(path, owner, expected_kind):
     }
 
 
-def scan_slots(owner, lane, slots, states, run_root="/run", kinds=("ci", "qae")):
+def _job_link(owner, repo, payload):
+    run_id, job_id = payload.get("run_id"), payload.get("job_id")
+    if isinstance(run_id, bool) or not isinstance(run_id, int) or not 1 <= run_id < 10 ** 20:
+        return None
+    if not isinstance(job_id, str) or not re.fullmatch(r"[1-9][0-9]{0,19}", job_id):
+        return None
+    return "https://github.com/%s/%s/actions/runs/%d/job/%s" % (owner, repo, run_id, job_id)
+
+
+def read_assignment(path, owner):
+    """The host's record of the job on this slot. Unusable text is ignored, never an error."""
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        data = os.read(fd, MAX_JOB + 1)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    if not data or len(data) > MAX_JOB:
+        return None
+    try:
+        payload = json.loads(data.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    repository, name = payload.get("repository"), payload.get("name")
+    match = TARGET_RE.fullmatch(repository) if isinstance(repository, str) else None
+    if not match or not match.group(2) or match.group(1).casefold() != owner.casefold():
+        return None
+    if (not isinstance(name, str) or not name or len(name) > MAX_JOB_NAME
+            or any(ord(char) < 32 or ord(char) == 127 for char in name)):
+        return None
+    record = {"job_repository": owner + "/" + match.group(2), "job_name": name}
+    url = _job_link(owner, match.group(2), payload)
+    if url:
+        record["job_url"] = url
+    return record
+
+
+def scan_slots(owner, lane, slots, states, run_root="/run", kinds=("ci", "qae"), wait_slots=0):
     occupied = []
-    for kind in kinds:
-        for index in range(1, slots + 1):
+    for kind, count in slot_spans(slots, kinds, wait_slots):
+        for index in range(1, count + 1):
             unit = "%s-%s@%d.service" % (lane, kind, index)
             props = states.get(unit)
             active = safe_state(props.get("ActiveState")) if props else "unknown"
             sub = safe_state(props.get("SubState")) if props else "unknown"
-            job = read_job(os.path.join(run_root, lane, kind, str(index), "job"), owner, kind)
+            slot = os.path.join(run_root, lane, kind, str(index))
+            job = read_job(os.path.join(slot, "job"), owner, kind)
             if job is None and active in ("inactive", "failed"):
                 continue
             record = {"kind": kind, "index": index,
                       "unit": {"active_state": active, "sub_state": sub}}
             if job and "error" not in job:
                 record.update(job)
+                assignment = read_assignment(os.path.join(slot, "assignment"), owner)
+                if assignment:
+                    record.update(assignment)
                 record["state"] = "allocated"
             else:
                 record["state"] = "unknown"
@@ -387,7 +459,7 @@ def collect(payload, run_root="/run", runner=run_bounded, sleeper=time.sleep,
         raise SampleError("invalid_arguments")
     if not isinstance(lane, str) or not LANE_RE.fullmatch(lane):
         raise SampleError("invalid_arguments")
-    slots, qae = listener_contract(payload.get("listener_config_path"), owner, lane)
+    slots, qae, wait = listener_contract(payload.get("listener_config_path"), owner, lane)
     try:
         before = read_limited("/proc/stat").decode()
         sleeper(0.2)
@@ -396,8 +468,8 @@ def collect(payload, run_root="/run", runner=run_bounded, sleeper=time.sleep,
         disk = statvfs(payload.get("workspace_path"))
     except (OSError, UnicodeError, TypeError):
         raise SampleError("host_metrics_unavailable") from None
-    states = unit_states(lane, slots, runner)
-    occupied = scan_slots(owner, lane, slots, states, run_root)
+    states = unit_states(lane, slots, runner, wait_slots=wait)
+    occupied = scan_slots(owner, lane, slots, states, run_root, wait_slots=wait)
     listener = systemd_properties(lane + "-listener.service",
                                   ("ActiveState", "SubState", "ExecMainStartTimestamp"), runner)
     slice_props = systemd_properties(lane + ".slice", ("MemoryCurrent", "MemoryMax", "MemoryHigh",
@@ -418,7 +490,7 @@ def collect(payload, run_root="/run", runner=run_bounded, sleeper=time.sleep,
                         "memory_high_bytes": parse_systemd_number((slice_props or {}).get("MemoryHigh")),
                         "cpu_usage_nsec": parse_systemd_number((slice_props or {}).get("CPUUsageNSec")),
                         "cpu_quota_cores": parse_quota_cores((slice_props or {}).get("CPUQuotaPerSecUSec"))},
-        "slots": {"limit": slots, "qae_concurrency": qae, "occupied": occupied},
+        "slots": {"limit": slots, "qae_concurrency": qae, "wait_limit": wait, "occupied": occupied},
     }
     quota = {"status": "not_requested"}
     if payload.get("collect_quota"):

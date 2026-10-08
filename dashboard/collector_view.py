@@ -50,9 +50,15 @@ def collector_view(value, config, now):
             if row["state"] == "allocated":
                 lane["runner_id"] = row["runner_id"]
                 lane["allocated_at"] = row["allocated_at"]
-                # An organization-scope allocation names no repository; join_runner_jobs then finds
-                # the job by runner ID alone.
-                if row["target_repository"]:
+                if row.get("job_name") and row.get("job_repository"):
+                    # The host recorded this job at start. It is busy whether or not an open pull
+                    # request carries it. join_runner_jobs still replaces it when GitHub has a match.
+                    lane["state"] = "busy"
+                    lane["job"] = {"repository": row["job_repository"], "name": row["job_name"],
+                                   "url": row.get("job_url")}
+                elif row["target_repository"]:
+                    # An organization-scope allocation names no repository; join_runner_jobs then finds
+                    # the job by runner ID alone.
                     lane["job"] = {"repository": row["target_repository"],
                                    "name": "Runner allocated; job match pending", "url": None}
             lanes.append(lane)
@@ -68,7 +74,8 @@ def collector_view(value, config, now):
                              "workspace_disk_free_bytes": host["workspace"]["free_bytes"],
                              "workspace_disk_total_bytes": host["workspace"]["total_bytes"]},
                     "limits": {**host["lane_limits"], "slots": host["slots"]["limit"],
-                               "qae_concurrency": host["slots"]["qae_concurrency"]},
+                               "qae_concurrency": host["slots"]["qae_concurrency"],
+                               "wait_slots": host["slots"].get("wait_limit", 0)},
                     "listener_state": host["listener"]["state"], "lanes": lanes}
         qae_allocated = any(row["kind"] == "qae" for row in host["slots"]["occupied"])
         state = "down" if host["listener"]["state"] == "down" else "idle" if listener_up and not qae_allocated else "unknown"

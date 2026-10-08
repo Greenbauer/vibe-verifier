@@ -93,6 +93,7 @@ insensitive. A mismatch refuses the entire sample. Only these listener fields ar
 - `name`, `github_url`
 - `budget.slots`, the combined CI and QAE slot budget
 - `budget.qae_concurrency`
+- `kinds.wait.slots`, when the lane has a wait kind: that kind's own pool, not part of `budget.slots`
 
 App credentials, installation identifiers, key paths, labels, exclusions, and the raw listener
 configuration are never returned.
@@ -102,23 +103,30 @@ guest counters; `MemTotal` and `MemAvailable`; free and total space for `workspa
 configured listener unit state; and the configured lane slice's memory and CPU values. The host
 label is marked `shared_host` because its CPU, memory, and disk totals may include unrelated work.
 
-Slot reads are limited to `/run/<lane>/{ci,qae}/<number>/job` and the exact matching systemd units.
-The sampler never reads `jit`, adjacent directories, logs, prompts, or other lanes. A valid job
-line has exactly five tokens:
+Slot reads are limited to `/run/<lane>/{ci,qae,wait}/<number>/job`, the `assignment` file beside it,
+and the exact matching systemd units. `wait` is read only when `kinds.wait.slots` is set, on
+instances `1..slots` of that pool. The sampler never reads `jit`, adjacent directories, logs,
+prompts, or other lanes. A valid job line has exactly five tokens:
 
 ```text
 target kind set-id runner-id runner-name
 ```
 
 The target owner must match the configured owner. A valid job file produces an `allocated` record
-with its repository, set, runner, and file timestamp. This means a slot is allocated, not that its
-GitHub job is running. The dashboard can join `runner_id` to a supported GitHub jobs source.
+with its repository, set, runner, and file timestamp. This means a slot holds a runner. When
+`assignment` is present and usable, the record also carries `job_repository`, `job_name`, and
+`job_url` (the last only when the file has a positive `run_id` and a numeric `job_id`). The
+repository owner must be the configured owner, compared without case, and the name must be at most
+240 characters with no control characters. A missing, foreign, oversized or unreadable assignment
+is ignored: the slot stays allocated and the dashboard falls back to joining `runner_id` to a
+GitHub job. An older listener that does not write `assignment` is that fallback.
 
 A slot is free only when its job is absent and its unit is `inactive` or `failed`. An active unit
 without a job, an unreadable job, or an unreadable unit state is `unknown` and consumes capacity.
 CI index 1 and QAE index 1 are separate instances, but both consume the one combined slot budget.
-The output includes occupied or unknown records and remaining on-demand capacity. It does not
-invent registered runners.
+A wait slot consumes `kinds.wait.slots` instead, and does not reduce the shared pool's remaining
+on-demand count. The output includes occupied or unknown records and remaining on-demand capacity
+for the shared pool. It does not invent registered runners.
 
 ## Codex quota read
 
@@ -176,15 +184,18 @@ workspace.total_bytes, workspace.free_bytes
 listener.state, listener.active_state, listener.sub_state, listener.started_at
 lane_limits.memory_current_bytes, memory_max_bytes, memory_high_bytes
 lane_limits.cpu_usage_nsec, cpu_quota_cores
-slots.limit, slots.qae_concurrency, slots.occupied_count
+slots.limit, slots.qae_concurrency, slots.wait_limit, slots.occupied_count
 slots.remaining_on_demand, slots.occupied[]
 ```
 
-Each occupied entry has `kind`, `index`, `state`, and exact unit `active_state` and `sub_state`.
-An `allocated` entry also has `target_repository`, `set_id`, `runner_id`, `runner_name`, and
-`allocated_at`. `target_repository` is `OWNER/REPO`, or `null` when an organization-scope scale set
-assigned the job and its job file names only the owner; the dashboard then takes the repository from
-GitHub's in-progress job with the same runner ID. An `unknown` entry has only an allowlisted
+`wait_limit` is 0 when the lane has no wait kind. `occupied_count` and `remaining_on_demand` count
+the shared CI/QAE pool only. Each occupied entry has `kind` (`ci`, `qae` or `wait`), `index`,
+`state`, and exact unit `active_state` and `sub_state`. An `allocated` entry also has
+`target_repository`, `set_id`, `runner_id`, `runner_name`, and `allocated_at`, and when the host
+recorded the job, `job_repository`, `job_name`, and optionally `job_url`. `target_repository` is
+`OWNER/REPO`, or `null` when an organization-scope scale set assigned the runner and its job file
+names only the owner. The dashboard then uses `job_repository` from `assignment`, or, when that
+record is absent, GitHub's in-progress job with the same runner ID. An `unknown` entry has only an allowlisted
 `reason` (`job_unreadable`, `active_unit_without_job` or `unit_state_unavailable`), with no job
 identity.
 
