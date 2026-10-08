@@ -88,7 +88,7 @@ LOGIN=example-app[bot]
 Install a GitHub App on the dashboard owner's account, for at least the configured repositories, with
 these repository permissions set to read: Actions, Administration, Checks, Contents, Metadata, Pull
 requests and Commit statuses. Administration is what lists the status checks classic branch protection
-requires. Keep its private key only in `app.pem`.
+requires and says whether it restricts who may push. Keep its private key only in `app.pem`.
 
 Every ten minutes the token timer runs `bin/vibe-dashboard-host token`. `openssl` signs the App's JWT
 from the key file, so the key never enters the Python process, and the installation token it exchanges

@@ -9,10 +9,11 @@ from __future__ import annotations
 import re
 
 from .gh_api import ApiError
+from .required_checks import PUSH_RESTRICTED
 from .util import parse_time
 
-# One page of open pull requests: review threads (resolved, and whether anyone
-# replied) and the newest commits (message, push time, parent count).
+# One page of open pull requests: the review decision, review threads (resolved, and whether
+# anyone replied) and the newest commits (message, push time, parent count).
 # GitHub prices a query by the page sizes it asks for, not by what comes back: every pull
 # request asked for costs about 1.2 points here, so $count is the number that are open.
 PAGE = 50
@@ -24,6 +25,7 @@ query($owner: String!, $name: String!, $count: Int!, $cursor: String) {
       nodes {
         number
         baseRefName
+        reviewDecision
         reviewThreads(first: 100) {
           pageInfo { hasNextPage }
           nodes { isResolved comments(first: 1) { totalCount } }
@@ -60,6 +62,8 @@ _CURSOR = re.compile(r"[A-Za-z0-9_\-=+/]{1,512}\Z")
 
 MISSING = {"review_threads": None, "unresolved_comments": None, "comments_complete": False,
            "threads_settled": False, "push": None}
+# Review decisions that stop a merge. GitHub reports none where the base branch asks for no review.
+REVIEW_OPEN = {"REVIEW_REQUIRED", "CHANGES_REQUESTED"}
 
 
 def _branch_name(value: str) -> str:
@@ -190,6 +194,7 @@ def signals_from_node(node: dict) -> dict:
         summary = thread_summary(nodes, page.get("hasNextPage") is False)
     base = node.get("baseRefName") if isinstance(node.get("baseRefName"), str) else None
     summary["push"] = classify_push(_commit_rows(node), base)
+    summary["review_decision"] = node.get("reviewDecision")
     return summary
 
 
@@ -218,6 +223,22 @@ def merge_ready(evidence_available: bool, draft: bool, merge_state: object,
     return bool(categories) and "success" in categories and set(categories) <= {"success", "skipped"}
 
 
+def merge_state_for_a_pusher(current: dict | None, signals: dict | None, push_restricted: bool) -> object:
+    """GitHub's merge state as someone allowed to push to the base branch gets it.
+
+    GitHub answers for whoever asks. A base branch that restricts who may push answers `blocked`
+    to this read-only token for every pull request, the clean ones too. There `blocked` counts as
+    clean when GitHub reports no conflict and no review is outstanding; merge_ready still asks for
+    every check (a required one that has not reported is pending) and every review thread.
+    A branch that must be up to date answers `behind` before `blocked`, so a stale head stays white.
+    Requirements this token cannot tell from its own block are not counted there: signed commits
+    and a locked branch."""
+    state = current.get("mergeable_state") if isinstance(current, dict) else None
+    if state != "blocked" or not push_restricted or current.get("mergeable") is not True:
+        return state
+    return state if (signals or {}).get("review_decision") in REVIEW_OPEN else "clean"
+
+
 def pull_face(signals: dict | None, *, evidence_available: bool, draft: bool, merge_state: object,
               categories: list, comments: int | None) -> dict:
     """The fields the page reads. Missing signals never become a green title or a zero count."""
@@ -231,8 +252,9 @@ def pull_face(signals: dict | None, *, evidence_available: bool, draft: bool, me
 
 
 def face_fields(current: dict | None, signals: dict | None, *, evidence: bool, draft: bool,
-               checks: list[dict], statuses: list[dict], expected: list[dict]) -> dict:
-    merge_state = current.get("mergeable_state") if isinstance(current, dict) else None
+               checks: list[dict], statuses: list[dict], expected: list[dict], rules: list[dict] = ()) -> dict:
+    restricted = any(rule.get("type") == PUSH_RESTRICTED for rule in rules)
+    merge_state = merge_state_for_a_pusher(current, signals, restricted)
     categories = [row.get("category") for row in (*checks, *statuses, *expected)]
     return pull_face(signals, evidence_available=evidence, draft=draft, merge_state=merge_state,
                      categories=categories, comments=comment_count(current))
