@@ -23,6 +23,14 @@ def line_count(text):
     return text.count("\n") + (1 if text and not text.endswith("\n") else 0)
 
 
+def length_at(repo, commit, path):
+    """The file's line count at that commit, or None when it was not there (new in this pull request)."""
+    try:
+        return line_count(git(repo, "show", "%s:%s" % (commit, path)))
+    except CannotRun:
+        return None
+
+
 def check(args):
     source = args.source or DEFAULT_SOURCE
     excluded = ALWAYS_EXCLUDED + (args.exclude or [])
@@ -41,10 +49,7 @@ def check(args):
         if args.all:
             findings.append(Finding("%d lines, over the %d allowed" % (now, args.max), path))
             continue
-        try:
-            before = line_count(git(args.repo, "show", "%s:%s" % (start, moved.get(path, path))))
-        except CannotRun:
-            before = None  # new in this pull request
+        before = length_at(args.repo, start, moved.get(path, path))
         if before is not None and now <= before:
             continue
         findings.append(Finding("%d lines, over the %d allowed (%s)" % (now, args.max, "new file" if before is None else "%d at the base" % before), path))
