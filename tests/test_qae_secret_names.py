@@ -17,7 +17,8 @@ import threading
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, gate, make_repo
+from helpers import ROOT, clean_env, gate, make_repo
+from test_qae_codex import ACTION, run_script
 from test_qae_console_pages import Explorer
 
 HOOK = ROOT / "actions" / "qae-browser" / "secret-names.js"
@@ -161,11 +162,50 @@ class Live(unittest.TestCase):
                     json.dumps(FIELD), json.dumps(NAME), entry)
                 answer = explorer.call("browser_run_code_unsafe", code=code)
                 texts = [part["text"] for part in answer["result"]["content"] if part["type"] == "text"]
-                # playwright-mcp shows a secret's value as its name in every tool result, so this is
-                # the field holding the value: the bare name would come back as it was written.
+                # playwright-mcp shows a secret's value as its name wherever a tool result holds it
+                # as written, so this is the field holding the value: the bare name would come back
+                # as it was written.
                 self.assertIn("<secret>%s</secret>" % NAME, "".join(texts))
                 self.assertNotIn(PASSWORD, json.dumps(answer))
         explorer.call("browser_close")
+
+    def test_a_value_json_escapes_reaches_the_explorer_escaped_and_never_the_evidence(self):
+        # playwright-mcp replaces a value only where a result holds it exactly as written, and the
+        # two tools that run a script return its result as JSON. So a value with a quote or a
+        # backslash, read back from its field, reaches the explorer escaped and unredacted: the limit
+        # the README states, read from the pinned build so that a pin bump that changes it shows
+        # here. The session log then holds that result escaped a second time, and the evidence is
+        # where a value is kept out: the action's own step after the explorer replaces it there.
+        value = "It's`a\"#\\mix-0123456789"
+        Path(self.config).write_text(json.dumps({"secrets": {NAME: value}}))
+        explorer = self.explorer()
+        explorer.call("browser_navigate", url=self.site.url + "/login")
+        explorer.call("browser_fill_form", fields=[{"name": "Password", "type": "textbox", "target": FIELD, "value": NAME}])
+        read_back = {
+            "browser_run_code_unsafe": {"code": "async (page) => await page.inputValue(%s)" % json.dumps(FIELD)},
+            "browser_evaluate": {"function": "() => document.querySelector(%s).value" % json.dumps(FIELD)},
+        }
+        for tool, arguments in read_back.items():
+            with self.subTest(tool):
+                answer = explorer.call(tool, **arguments)
+                text = "".join(part["text"] for part in answer["result"]["content"] if part["type"] == "text")
+                self.assertIn(json.dumps(value), text)
+                self.assertNotIn("<secret>", text)
+        explorer.call("browser_close")
+        explorer.close()
+        log = next(Path(self.root).glob("session-*/session.md"))
+        self.assertIn(json.dumps(json.dumps(value))[1:-1], log.read_text())
+        # What actions/qae-codex keeps for its redaction step, and that step as the shell runs it.
+        Path(self.work, "qae-codex-redact.json").write_text(json.dumps({NAME: value}))
+        script = run_script(ACTION.read_text(), "- name: Redact the secrets from the artifacts", "- name: Keep numeric usage")
+        redacted = subprocess.run(["bash", "-c", script], cwd=self.work, capture_output=True, text=True,
+                                  env=clean_env({"ARTIFACTS": "qae-artifacts", "RUNNER_TEMP": self.work}))
+        self.assertEqual(redacted.returncode, 0, redacted.stdout + redacted.stderr)
+        self.assertEqual(log.read_text().count('"result": "\\"<secret>%s</secret>\\""' % NAME), 2)
+        # The value's tail holds nothing a writer escapes, so it is in every spelling of the value.
+        for path in Path(self.root).rglob("*"):
+            if path.is_file():
+                self.assertNotIn(b"mix-0123456789", path.read_bytes(), path.name)
 
     def test_a_failed_entry_names_the_secret_in_its_error_never_the_value(self):
         # Playwright quotes the text it was typing in a failed call's error, and playwright-mcp

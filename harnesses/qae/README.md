@@ -653,10 +653,29 @@ hands the explorer only a name for each credential:
 
 The explorer step passes `secrets-file: ${{ steps.site.outputs.secrets-file }}` to `actions/qae-codex`.
 A value can be any non-empty string: the action hands the values to playwright-mcp as the `secrets` of
-a JSON `--config` file, so quotes, `#` and backslashes need no escaping. playwright-mcp then types the value when the explorer enters the name, and shows `<secret>QAE_PASSWORD</secret>`
-in every tool result. Its session log still records what was typed, so after the explorer the action
-replaces every value (and its JSON-escaped and URL-encoded forms) in each non-image file under `qae-artifacts/` (the session log, the step logs,
-the verdict) and removes its copies; the posted verdict and the uploaded evidence hold no value. Never
+a JSON `--config` file, so quotes, `#` and backslashes need no escaping. playwright-mcp then types
+the value when the explorer enters the name, and shows `<secret>QAE_PASSWORD</secret>` wherever a
+tool result holds the value exactly as written.
+
+**What the explorer is shown is not where a value is kept out.** playwright-mcp looks for the value
+as written and for nothing else (the pinned 0.0.81, 2026-10-08). `browser_evaluate` and
+`browser_run_code_unsafe` return their script's result as JSON, so a script that reads the password
+field back returns a value that holds a `"` or a `\` with those escaped, and the explorer can be
+shown it. A value with neither comes back as its name. The action leaves that alone. Refusing those two
+characters would turn away two in five 24-character passwords drawn from all of printable ASCII and
+still not make the claim true: a page can show a value any way it likes (in a URL, say). And the
+explorer runs unsandboxed, so it could read the value from its runner anyway
+([threat model](../../docs/threat-model.md)), which is why a login is a throwaway seat on a
+throwaway backend.
+
+**The evidence is.** The session log keeps every tool result inside a JSON block, where that
+read-back value is escaped a second time, and the explorer could write a value anywhere under
+`qae-artifacts/`. So after the explorer the action replaces every value in each non-image file there
+(the session log, the step logs, the verdict), in three spellings: as written, inside JSON strings
+nested up to four deep (the session log is two), and percent-encoded with every character but
+letters, digits and `-._~` encoded (a space as `%20` or `+`). Then it removes its copies. The posted
+verdict and the uploaded evidence hold no value in those spellings. Any other is not found: a URL a
+browser wrote leaves some punctuation as it is, for one. Never
 write a value into `site.md` or the prompt: the explorer does not need it, and the action can only
 redact what the file declares. `codex exec --ephemeral` keeps the run's session rollout, which holds
 everything the model read, off the runner.

@@ -22,11 +22,13 @@ inputs:
       mapping a NAME (capital letters, digits and underscores) to its value, for example a preview login's
       password. Give the explorer the NAME, never the value: the explorer types a value by entering its NAME
       (playwright-mcp's `secrets` setting, and actions/qae-browser/secret-names.js for every text-entry call
-      its two tools do not cover), every tool result shows <secret>NAME</secret> instead, and after the
-      explorer every non-image file under the artifacts directory has each value replaced, because
-      playwright-mcp's session log still records what was typed. So neither the posted verdict nor the
-      uploaded evidence holds one. A malformed file fails the step before the model runs. Empty (the
-      default) adds nothing.
+      its two tools do not cover), and a tool result that holds a value exactly as written shows
+      <secret>NAME</secret> instead. A result can still carry a value in another spelling (JSON-escaped,
+      when a script reads a field back), and playwright-mcp's session log keeps every result. So after
+      the explorer every non-image file under the artifacts directory has each value replaced, as
+      written, inside JSON strings nested up to four deep, and percent-encoded: neither the posted
+      verdict nor the uploaded evidence holds one in those spellings. A malformed file fails the step
+      before the model runs. Empty (the default) adds nothing.
     default: ""
   usage-account-alias:
     description: Optional caller-owned logical alias for the Codex subscription. Empty stays unmapped.
@@ -201,12 +203,16 @@ runs:
           -c 'approval_policy="never"' "${browser[@]}" \
           -o "$ARTIFACTS/final.md" "$(cat "$PROMPT_FILE")" < /dev/null
     - name: Redact the secrets from the artifacts
-      # playwright-mcp's secrets keep each value out of the tool results, but its session log
-      # still records what was typed, and the model could write a value anywhere under the
-      # artifacts directory. Every non-image file there gets each value replaced with
-      # <secret>NAME</secret> before the workflow posts the verdict or uploads the evidence, and the
-      # value files are removed. A value is also found in the forms a JSON or URL writer leaves it
-      # in (escaped quotes and backslashes, \uXXXX, percent-encoding), and the longest form is
+      # playwright-mcp's secrets replace a value only where a tool result holds it exactly as
+      # written; its session log keeps every result, and the model could write a value anywhere
+      # under the artifacts directory. So this step is where a value is kept out of what leaves the
+      # runner: every non-image file there gets each value replaced with <secret>NAME</secret>
+      # before the workflow posts the verdict or uploads the evidence, and the value files are
+      # removed. A value is also found percent-encoded, and inside JSON strings nested up to four
+      # deep. Nesting is what the session log does to it: a tool result is written there inside a
+      # JSON block, and the result of browser_run_code_unsafe is JSON already, so a value a snippet
+      # read back from its field is escaped twice (the pinned 0.0.81, 2026-10-08), and replacing
+      # the once-escaped form let it through. Four is that and two copies more. The longest form is
       # replaced first, so no fragment of one value survives another's replacement. Screenshots
       # hold pixels, not text.
       if: always()
@@ -223,8 +229,13 @@ runs:
         forms = {}
         for name, value in values.items():
             tag = b"<secret>%s</secret>" % name.encode()
-            for form in (value, json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1],
-                         urllib.parse.quote(value, safe=""), urllib.parse.quote_plus(value)):
+            spellings = {value, urllib.parse.quote(value, safe=""), urllib.parse.quote_plus(value)}
+            # Inside JSON strings nested up to four deep, each writer ASCII-only or not.
+            nested = {value}
+            for _ in range(4):
+                nested = {json.dumps(form, ensure_ascii=ascii_only)[1:-1] for form in nested for ascii_only in (True, False)}
+                spellings |= nested
+            for form in spellings:
                 forms[form.encode("utf-8")] = tag
         ordered = sorted(forms.items(), key=lambda item: -len(item[0]))
         root = pathlib.Path(sys.argv[2])
