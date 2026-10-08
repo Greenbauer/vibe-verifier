@@ -118,6 +118,8 @@ Repository owners remain responsible for:
 - protected-preview configuration,
 - GitHub organization/repository permissions.
 
+The pull sync action is the one catalog component that needs a token able to write a pull request's branch. It cannot be the workflow's `GITHUB_TOKEN` (an update made with it starts no workflow), so it is a GitHub App's or a bot's, and it should be scoped to the repositories it syncs, with write access to contents and pull requests. No model sees it: the engine is deterministic code that sends two kinds of write, GitHub's "update branch" and one label. Its identity becomes the actor of the workflows each update starts, so a workflow that refuses bot actors has to name it.
+
 Report vulnerabilities through the process in [`SECURITY.md`](../SECURITY.md).
 
 ## Out of scope
