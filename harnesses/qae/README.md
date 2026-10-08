@@ -660,8 +660,8 @@ tool result holds the value exactly as written.
 **What the explorer is shown is not where a value is kept out.** playwright-mcp looks for the value
 as written and for nothing else (the pinned 0.0.81, 2026-10-08). `browser_evaluate` and
 `browser_run_code_unsafe` return their script's result as JSON, so a script that reads the password
-field back returns a value that holds a `"` or a `\` with those escaped, and the explorer is shown
-it. A value with neither comes back as its name. The action leaves that alone. Refusing those two
+field back returns a value that holds a `"` or a `\` with those escaped, and the explorer can be
+shown it. A value with neither comes back as its name. The action leaves that alone. Refusing those two
 characters would turn away two in five 24-character passwords drawn from all of printable ASCII and
 still not make the claim true: a page can show a value any way it likes (in a URL, say). And the
 explorer runs unsandboxed, so it could read the value from its runner anyway
@@ -672,8 +672,10 @@ throwaway backend.
 read-back value is escaped a second time, and the explorer could write a value anywhere under
 `qae-artifacts/`. So after the explorer the action replaces every value in each non-image file there
 (the session log, the step logs, the verdict), in three spellings: as written, inside JSON strings
-nested to any depth, and URL-encoded. Then it removes its copies. The posted verdict and the uploaded
-evidence hold no value in those spellings; a value a page showed some other way is not found. Never
+nested up to four deep (the session log is two), and percent-encoded with every character but
+letters, digits and `-._~` encoded (a space as `%20` or `+`). Then it removes its copies. The posted
+verdict and the uploaded evidence hold no value in those spellings. Any other is not found: a URL a
+browser wrote leaves some punctuation as it is, for one. Never
 write a value into `site.md` or the prompt: the explorer does not need it, and the action can only
 redact what the file declares. `codex exec --ephemeral` keeps the run's session rollout, which holds
 everything the model read, off the runner.

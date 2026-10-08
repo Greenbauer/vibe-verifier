@@ -345,23 +345,24 @@ class StorageState(unittest.TestCase):
         self.assertIn("long: <secret>QAE_LONG</secret>\n", text)
         self.assertNotIn("long-tail", text)
 
-    def test_a_value_inside_json_strings_nested_to_any_depth_is_redacted(self):
+    def test_a_value_inside_json_strings_nested_four_deep_is_redacted(self):
         # playwright-mcp's session log writes each tool result inside a JSON block, and the result of
         # browser_run_code_unsafe is itself JSON, so a value its snippet returned is escaped twice
         # there (the pinned 0.0.81, 2026-10-08; tests/test_qae_secret_names.py reads it from the
         # real log). A file that quotes the log escapes it once more. Each writer on the way may or
-        # may not spell a non-ASCII character as \uXXXX, and the text around a value stays as it was.
+        # may not spell a non-ASCII character as \uXXXX. The text around a value stays as it was:
+        # this one starts with a quote and ends with a backslash, beside the log's own escapes.
         import itertools
-        value = 'pa"ss\\wo\trd\u00e9\U0001f511!'
+        value = '"pa"ss\\wo\trd\u00e9\U0001f511\\'
         result = self.run_step(secrets={"QAE_PASSWORD": value, "QAE_PLAIN": "plain-Value-0123"})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         forms = set()
-        for writers in itertools.product((True, False), repeat=3):
+        for writers in itertools.product((True, False), repeat=4):
             form = value
             for ascii_only in writers:
                 form = json.dumps(form, ensure_ascii=ascii_only)[1:-1]
                 forms.add(form)
-        self.assertEqual(len(forms), 9)
+        self.assertEqual(len(forms), 14)
         artifacts = Path(self.work, "qae-artifacts")
         (artifacts / "session-1").mkdir(parents=True, exist_ok=True)
         log = artifacts / "session-1" / "session.md"
@@ -369,7 +370,7 @@ class StorageState(unittest.TestCase):
         redacted = self.redact()
         self.assertEqual(redacted.returncode, 0, redacted.stdout + redacted.stderr)
         self.assertEqual(log.read_text(encoding="utf-8"),
-                         '  "result": "\\"<secret>QAE_PASSWORD</secret>\\"", <secret>QAE_PLAIN</secret>\n' * 9)
+                         '  "result": "\\"<secret>QAE_PASSWORD</secret>\\"", <secret>QAE_PLAIN</secret>\n' * 14)
 
     def test_a_malformed_secrets_file_stops_the_run_before_the_model(self):
         cases = {
