@@ -151,16 +151,53 @@ class QaeArtifacts(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("answered FAILED", result.stdout)
 
-    def test_a_request_the_browser_cancelled_is_not_the_sites_failure(self):
-        # The shape of a consumer's real run: the explorer left a page before its background fetch
-        # returned, so the browser cancelled the request. The site never answered it.
-        write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + ["[GET] http://localhost:3000/api/map-routes => [FAILED] net::ERR_ABORTED"])})
+    def test_a_cancelled_request_is_excused_only_by_its_own_answer(self):
+        # The shape of a consumer's real run: the explorer left a page before its slow background
+        # fetch returned, so the page cancelled it. The same request answered 200 under two earlier
+        # criteria, each with its own network record in the session log.
+        slow, aborted = "http://localhost:3000/api/dashboard?range=30d", " => [FAILED] net::ERR_ABORTED"
+        earlier = session_with(CLEAN_REQUESTS + ["[GET] %s => [200] OK" % slow])
+        write(self.root, {"session-1/session.md": earlier + earlier + session_with(CLEAN_REQUESTS + ["[GET] " + slow + aborted])})
         result = self.run_gate("--site", "http://localhost:3000")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        # Every other failure still counts, as does one with no reason recorded.
-        for reason in (" net::ERR_CONNECTION_REFUSED", " net::ERR_FAILED", " Unknown error", ""):
-            write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + ["[GET] http://localhost:3000/api/map-routes => [FAILED]" + reason])})
-            self.assertEqual(self.run_gate("--site", "http://localhost:3000").returncode, 1, reason)
+        # Never answered in the run, the record cannot tell the page moving on from the page giving
+        # up on an endpoint that hangs (a client timeout writes the same line), so it is a finding.
+        write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + ["[GET] " + slow + aborted])})
+        alone = self.run_gate("--site", "http://localhost:3000")
+        self.assertEqual(alone.returncode, 1)
+        self.assertIn("request cancelled and never answered in this run, outside the allowlist: [GET] " + slow, alone.stdout)
+        self.assertEqual(self.run_gate("--site", "http://localhost:3000", "--allow-request", "/api/dashboard").returncode, 0)
+        # Only the same request excuses it: not another method, another query, or an error answer.
+        for other in ("[POST] %s => [200] OK" % slow, "[GET] http://localhost:3000/api/dashboard?range=7d => [200] OK",
+                      "[GET] http://localhost:3000/api/dashboard => [200] OK", "[GET] %s => [500] Internal Server Error" % slow):
+            write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + [other, "[GET] " + slow + aborted])})
+            self.assertIn("request cancelled and never answered", self.run_gate("--site", "http://localhost:3000").stdout, other)
+
+    def test_a_cancelled_write_is_not_excused_by_a_read(self):
+        # A save the page cancelled may never have reached the server. A page that loaded is no answer to it.
+        write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + [
+            "[GET] http://localhost:3000/api/quote => [200] OK", "[PUT] http://localhost:3000/api/quote => [FAILED] net::ERR_ABORTED"])})
+        result = self.run_gate("--site", "http://localhost:3000")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("request cancelled and never answered in this run, outside the allowlist: [PUT] http://localhost:3000/api/quote", result.stdout)
+
+    def test_an_answer_excuses_no_other_failure(self):
+        # Every failure but the page's own cancellation is the site's or the network's, whatever
+        # else the record holds: the same request answering 200 elsewhere does not excuse it.
+        url = "http://localhost:3000/api/map-routes"
+        for reason in (" net::ERR_CONNECTION_REFUSED", " net::ERR_CONNECTION_RESET", " net::ERR_EMPTY_RESPONSE", " net::ERR_TIMED_OUT",
+                       " net::ERR_FAILED", " net::ERR_ABORTED_BY_POLICY", " Unknown error", ""):
+            write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + ["[GET] %s => [200] OK" % url, "[GET] %s => [FAILED]%s" % (url, reason)])})
+            result = self.run_gate("--site", "http://localhost:3000")
+            self.assertEqual(result.returncode, 1, reason)
+            self.assertIn("request answered FAILED outside the allowlist: [GET] " + url, result.stdout, reason)
+
+    def test_a_cancelled_request_is_answered_by_any_record_of_the_run(self):
+        # The answer may sit in another record: a network log file beside the session log.
+        url = "http://localhost:3000/api/map-routes"
+        write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + ["[GET] %s => [FAILED] net::ERR_ABORTED" % url]),
+                          "network-1.log": "1. [GET] %s => [304] Not Modified\n" % url})
+        self.assertEqual(self.run_gate("--site", "http://localhost:3000").returncode, 0)
 
     def test_site_filter_ignores_third_party_requests(self):
         write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + ["[GET] https://fonts.example.com/x.woff2 => [404] Not Found"])})
