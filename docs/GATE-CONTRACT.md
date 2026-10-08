@@ -763,8 +763,9 @@ the rules.
 The harness's second gate, `qae-artifacts`, is the adjudicator: it reads the run's artifact
 directory (`--artifacts`) and refuses on structural facts, never on the model's prose: a step
 (of a criterion, or of a re-walked feature under `qae/features/`) without its screenshot, a console error outside `--allow-console`, a missing session or network
-record, a request to the site under test that answered 400 or worse or failed (one the browser
-cancelled itself, `net::ERR_ABORTED`, is not judged) outside
+record, a request to the site under test that answered 400 or worse or failed (one the page
+cancelled itself, `net::ERR_ABORTED`, is not judged when the record also holds that request, same
+method and URL, answered below 400 somewhere in the run, and is a finding when it does not) outside
 `--allow-request`. With a site declared, Chromium's `Failed to load resource` console line for
 another host is skipped like that host's request; every other console error is still judged. The site is `--site <URL>`, or `--site-file <FILE>`: the URL the explore job
 declared, written by the verify job, where a missing or malformed file is exit 2. A network call that
