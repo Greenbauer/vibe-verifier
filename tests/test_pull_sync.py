@@ -20,7 +20,10 @@ FAKE_GH = '''#!/usr/bin/env python3
 import json, os, sys
 root, argv = os.environ["FAKE"], sys.argv[1:]
 state = json.load(open(os.path.join(root, "state.json")))
+given = dict(a.split("=", 1) for a in argv if a.startswith(("owner=", "name=")))
 if argv[:2] == ["api", "graphql"]:
+    # A repository named under "repos" answers with its own state; any other, with the top level.
+    state = state.get("repos", {}).get("%s/%s" % (given["owner"], given["name"]), state)
     if state.get("broken"):
         sys.stderr.write("HTTP 502: Bad Gateway\\n")
         sys.exit(1)
@@ -69,11 +72,11 @@ class PullSync(unittest.TestCase):
         stub.write_text(FAKE_GH)
         stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
 
-    def run_engine(self, pulls, *args, **state):
+    def run_engine(self, pulls, *args, sync=("octo/demo",), **state):
         Path(self.fake, "state.json").write_text(json.dumps(dict(state, pulls=pulls)))
         env = clean_env({"FAKE": self.fake, "PATH": "%s%s%s" % (Path(self.fake, "bin"), os.pathsep, os.environ["PATH"])})
-        return subprocess.run([sys.executable, str(ENGINE), "--repo", "octo/demo", *args],
-                              capture_output=True, text=True, env=env)
+        named = [arg for repo in sync for arg in ("--repo", repo)]
+        return subprocess.run([sys.executable, str(ENGINE), *named, *args], capture_output=True, text=True, env=env)
 
     def writes(self):
         path = Path(self.fake, "writes")
@@ -199,7 +202,7 @@ class PullSync(unittest.TestCase):
     def test_a_refused_update_fails_the_run_and_the_rest_still_happen(self):
         result = self.run_engine([pull(1), pull(2)], "--act", refuse=["repos/octo/demo/pulls/1/update-branch"])
         self.assertEqual(result.returncode, 1)
-        self.assertIn("#1 update failed: HTTP 422", result.stderr)
+        self.assertIn("octo/demo #1 update failed: HTTP 422", result.stderr)
         self.assertEqual([write[1] for write in self.writes()],
                          ["repos/octo/demo/pulls/1/update-branch", "repos/octo/demo/pulls/2/update-branch"])
 
@@ -218,11 +221,36 @@ class PullSync(unittest.TestCase):
                 self.assertEqual(result.stdout, "")
                 self.assertEqual(self.writes(), [])
 
+    def test_each_repository_is_planned_whatever_happened_to_the_others(self):
+        result = self.run_engine([pull(1)], "--act", sync=("octo/gone", "octo/demo", "octo/held"), repos={
+            "octo/gone": {"broken": True},
+            "octo/held": {"pulls": [pull(2), pull(3, checks="PENDING"), pull(4, checks="PENDING")]}})
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("cannot read octo/gone", result.stderr)
+        self.assertEqual(result.stdout.splitlines(), [
+            "octo/demo: 1 open, 0 with checks running, 2 free slot(s) (acting)",
+            "#1 sync: ready, 3 behind main",
+            "octo/held: 3 open, 2 with checks running, 0 free slot(s) (acting)",
+            "#2 wait: ready, 3 behind main; no free slot",
+            "#3 skip: checks running",
+            "#4 skip: checks running",
+        ])
+        self.assertEqual([write[1] for write in self.writes()], ["repos/octo/demo/pulls/1/update-branch"])
+
+    def test_a_failed_write_in_one_repository_is_the_exit_code_of_the_run(self):
+        result = self.run_engine([pull(1)], "--act", sync=("octo/demo", "octo/other"),
+                                 refuse=["repos/octo/demo/pulls/1/update-branch"])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("octo/demo #1 update failed", result.stderr)
+        self.assertEqual([write[1] for write in self.writes()],
+                         ["repos/octo/demo/pulls/1/update-branch", "repos/octo/other/pulls/1/update-branch"])
+
     def test_the_action_runs_the_engine_dry_unless_told_to_act(self):
         text = ACTION.read_text()
         self.assertIn('python3 "$GITHUB_ACTION_PATH/pull_sync.py"', text)
         self.assertIn('default: "false"', text.split("  act:")[1].split("  max-in-flight:")[0])
         self.assertIn('[ "$ACT" = true ] && args+=(--act)', text)
+        self.assertIn('for repo in $REPOS; do args+=(--repo "$repo"); done', text)
 
 
 if __name__ == "__main__":

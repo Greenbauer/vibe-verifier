@@ -15,8 +15,8 @@ runners can take:
   - ready: not a draft, and every check on its head passed. Updated first, oldest first.
   - stale: any other pull request, once its head commit is older than --stale-hours. An update is
     itself a head commit, so a pull request that is not ready is updated at most that often.
-  - slots: at most --max-in-flight pull requests may have checks running at once, counting the ones
-    people pushed. A candidate with no free slot waits for a later run.
+  - slots: at most --max-in-flight pull requests of a repository may have checks running at once,
+    counting the ones people pushed. A candidate with no free slot waits for a later run.
 
 Each update is GitHub's own "update branch" (a merge of the default branch into the head), sent
 with the head this run judged, so a push that lands in between makes GitHub refuse it.
@@ -26,7 +26,8 @@ A dry run unless --act is given: it prints the plan and writes nothing. Reads an
 with that one starts no workflow on the new head.
 
 Exit 0: the plan was printed and every write it called for succeeded. Exit 1: a write failed.
-Exit 2: the repository could not be read, so there is no plan.
+Exit 2: a repository could not be read, so it has no plan. With several --repo, each is planned
+whatever happened to the others, and the worst of their outcomes is the exit code.
 """
 import argparse
 import json
@@ -206,21 +207,12 @@ def describe(line):
     return "#%d %s: %s%s" % (line.number, line.action, line.reason, change)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--repo", required=True, help="owner/name")
-    parser.add_argument("--act", action="store_true", help="write the plan; without it, a dry run")
-    parser.add_argument("--max-in-flight", type=int, default=2,
-                        help="pull requests that may have checks running at once (default 2)")
-    parser.add_argument("--quiet-minutes", type=int, default=30,
-                        help="leave alone a pull request that changed this recently (default 30)")
-    parser.add_argument("--stale-hours", type=int, default=24,
-                        help="update a pull request that is not ready once its head is this old (default 24)")
-    args = parser.parse_args()
+def sync(repo, args):
+    """Plan one repository, print the plan, and write it when acting. Returns the exit code."""
     try:
-        base, pulls, remaining = read(args.repo)
+        base, pulls, remaining = read(repo)
     except CannotRead as error:
-        print("pull-sync: cannot read %s: %s" % (args.repo, error), file=sys.stderr)
+        print("pull-sync: cannot read %s: %s" % (repo, error), file=sys.stderr)
         return 2
     lines, in_flight, free = plan(pulls, base, datetime.now(timezone.utc), args.max_in_flight,
                                   timedelta(minutes=args.quiet_minutes), timedelta(hours=args.stale_hours))
@@ -228,15 +220,31 @@ def main():
     mode = "acting" if acting else "dry run, nothing written"
     if args.act and not acting:
         mode = "nothing written: %d API points left, under the floor of %d" % (remaining, BUDGET_FLOOR)
-    print("%s: %d open, %d with checks running, %d free slot(s) (%s)" % (args.repo, len(pulls), in_flight, free, mode))
+    print("%s: %d open, %d with checks running, %d free slot(s) (%s)" % (repo, len(pulls), in_flight, free, mode))
     failures = []
     for line in lines:
         print(describe(line))
         if acting:
-            failures += write(args.repo, line)
+            failures += write(repo, line)
     for failure in failures:
-        print("pull-sync: " + failure, file=sys.stderr)
+        print("pull-sync: %s %s" % (repo, failure), file=sys.stderr)
     return 1 if failures else 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--repo", required=True, action="append",
+                        help="owner/name; repeat it to sync several repositories, each on its own slots")
+    parser.add_argument("--act", action="store_true", help="write the plan; without it, a dry run")
+    parser.add_argument("--max-in-flight", type=int, default=2,
+                        help="pull requests of one repository that may have checks running at once (default 2)")
+    parser.add_argument("--quiet-minutes", type=int, default=30,
+                        help="leave alone a pull request that changed this recently (default 30)")
+    parser.add_argument("--stale-hours", type=int, default=24,
+                        help="update a pull request that is not ready once its head is this old (default 24)")
+    args = parser.parse_args()
+    # Every repository is planned even when one cannot be read; the worst outcome is the exit code.
+    return max(sync(repo, args) for repo in args.repo)
 
 
 if __name__ == "__main__":

@@ -52,8 +52,9 @@ jobs:
 - **The schedule matters as much as the push.** One run after a merge updates only what has a free
   slot and is quiet; later runs pick up the rest.
 - **Start with a dry run.** Leave `act` out and read the plan in the job's summary before turning it on.
-- **Another repository.** `repository: owner/name` syncs a repository other than the one the workflow
-  runs in, for an organization that runs this from one place.
+- **Several repositories from one place.** `repositories:` takes a list of `owner/name`, separated by
+  spaces or new lines, for an organization that runs this in one workflow with one token. Each
+  repository has its own slots, and one that cannot be read does not stop the others.
 
 ## The token
 
