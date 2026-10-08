@@ -3,7 +3,6 @@ ticket a pull request implements to qae-inputs/ticket.md, and `vibe-verifier cri
 acceptance-verdict and qae-artifacts hold them as TC1, TC2, ... in addition to the pull request's own,
 so a pull request cannot drop a ticket requirement from its list. Driven through the command lines, the
 shipped action and the template's own steps."""
-import json
 import os
 import re
 import shlex
@@ -92,7 +91,8 @@ class Criteria(unittest.TestCase):
         output.write_text("")
         result = subprocess.run(["bash", "-e", "-c", action_script("criteria")], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"GITHUB_ACTION_PATH": str(ROOT / "actions" / "criteria"), "GITHUB_OUTPUT": str(output),
-                                               "VV_PATH": "pr-body.md", "VV_CHANGED": "", "VV_TICKET": "ticket.md"}))
+                                               "VV_PATH": "pr-body.md", "VV_CHANGED": "", "VV_TICKET": "ticket.md",
+                                               "VV_MAX_SHARDS": "1", "VV_MANIFEST": "", "VV_ENTRIES": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         text = output.read_text()
         self.assertTrue(text.startswith("count=2\ndeclared-none=\nticket<<VV_TICKET_"), text)
@@ -220,26 +220,29 @@ class Template(unittest.TestCase):
     def test_the_ticket_reaches_the_explorer_and_the_gate(self):
         work = workdir(self)
         bin_dir = workdir(self)
-        Path(bin_dir, "gh").write_text('#!/bin/sh\ncase "$1 $2" in\n  pr*) cat "%s" ;;\n  *pulls*) printf "app/shop.tsx\\n" ;;\n'
-                                       '  api*) cat "%s" ;;\nesac\n' % (Path(work, "body.md"), Path(work, "comments.json")))
+        Path(bin_dir, "gh").write_text('#!/bin/sh\ncase "$1 $2" in\n  pr*) cat "%s" ;;\n  *pulls*) printf "app/shop.tsx\\n" ;;\nesac\n'
+                                       % Path(work, "body.md"))
         os.chmod(os.path.join(bin_dir, "gh"), 0o755)
         Path(work, "body.md").write_text(NONE)
-        Path(work, "comments.json").write_text(json.dumps([{"user": {"login": "github-actions[bot]"}, "body": VERDICT}]))
         env = clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x", "PR_NUMBER": "7", "REPO": "o/r",
-                         "SITE_URL": "http://localhost:3000", "SITE_ORIGINS": "", "REFERENCES": "", "TICKET": TICKET + "\n"})
+                         "SITE_URL": "http://localhost:3000", "SITE_ORIGINS": "", "REFERENCES": "", "TICKET": TICKET + "\n",
+                         "SHARDS": '[""]', "EXPLORE_ATTEMPT": "1"})
         explore = workdir(self)
         ran = subprocess.run(["bash", "-e", "-c", step_script("- name: Write the explorer's input", "- name: Select the features")],
                              cwd=explore, capture_output=True, text=True, env=env)
         self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
         self.assertEqual(Path(explore, "qae-inputs", "ticket.md").read_text().strip(), TICKET.strip())
+        # What the explore job uploaded: the explorer's logs and the verdict the workflow copied beside them.
         verify = workdir(self)
-        ran = subprocess.run(["bash", "-e", "-c", step_script("- name: Write the declared inputs", "- name: Run the QA gates")],
-                             cwd=verify, capture_output=True, text=True, env=env)
-        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
-        write(verify, {"qae-artifacts/qae/TC1.md": "- step 1: opened /shop -> prices in euros\n", "qae-artifacts/qae/TC1-step-1.png": "png",
-                       "qae-artifacts/qae/TC2.md": "- step 1: as shopper: checked out -> the cart's total\n",
-                       "qae-artifacts/qae/TC2-step-1.png": "png",
-                       "qae-artifacts/session-1/session.md": session_with(CLEAN_REQUESTS)})
+        evidence = "qae-evidence/qae-artifacts-1/"
+        write(verify, {evidence + "qae/TC1.md": "- step 1: opened /shop -> prices in euros\n", evidence + "qae/TC1-step-1.png": "png",
+                       evidence + "qae/TC2.md": "- step 1: as shopper: checked out -> the cart's total\n",
+                       evidence + "qae/TC2-step-1.png": "png", evidence + "verdicts/1.md": VERDICT,
+                       evidence + "session-1/session.md": session_with(CLEAN_REQUESTS)})
+        for step in ("- name: Write the declared inputs", "- name: Merge the evidence and read the verdict"):
+            ran = subprocess.run(["bash", "-e", "-c", step_script(step, "- name: Run the QA gates")],
+                                 cwd=verify, capture_output=True, text=True, env=env)
+            self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
         repo = make_repo(self, {"README.md": "x\n"})
         for line in MANIFEST.read_text().splitlines():
             if line.startswith(("acceptance-verdict ", "qae-artifacts ")):

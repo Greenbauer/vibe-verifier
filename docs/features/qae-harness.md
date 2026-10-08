@@ -54,6 +54,14 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - `tests/test_qae_explore.py::test_dependabot_is_the_one_bot_whose_pull_requests_reach_the_explorer`
 - `tests/test_runner.py::test_the_qae_browser_toolchain_installs_from_its_lockfile`
 - `tests/test_qae_explore.py::test_a_re_run_never_reads_an_earlier_attempts_evidence`
+- `tests/test_qae_shards.py::test_each_explorer_is_judged_on_the_newest_attempt_it_ran_in`
+- `tests/test_qae_shards.py::test_the_verify_job_reads_no_pull_request_comment`
+- `tests/test_qae_shards.py::test_the_pull_request_one_explorer_could_not_finish_is_shared_out_evenly`
+- `tests/test_qae_shards.py::test_each_explorer_is_named_its_share_and_sized_to_it`
+- `tests/test_qae_shards.py::test_the_first_explorer_starts_with_the_feature_re_walk_and_takes_fewer_criteria`
+- `tests/test_qae_shards.py::test_two_explorers_evidence_merges_without_a_collision_and_passes_the_gates`
+- `tests/test_qae_shards.py::test_a_500_in_one_explorers_saved_network_record_still_fails_the_merged_evidence`
+- `tests/test_qae_shards.py::test_an_explorer_that_wrote_no_verdict_leaves_its_criteria_without_one`
 - `tests/test_qae_browser.py::test_where_sudo_needs_no_password_only_the_missing_packages_are_installed`
 - `tests/test_qae_browser.py::test_a_fetch_that_runs_out_of_time_is_tried_once_more_from_the_next_mirror`
 
@@ -61,10 +69,12 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 
 - The explore templates must stay byte-identical outside the explorer block, and the inline prompts must equal prompt.md.
 - A console line names the resource an error is about, never the page that logged it. The page comes from `console-pages.jsonl`, which `actions/qae-browser/console-pages.js` writes through playwright-mcp's `--init-page`. A consumer copy of the Claude lane without that argument writes no record, and every console error is judged as before. The hook depends on the pinned build, and the catalog's `qae-browser` CI job runs it in the real browser.
-- The verdict is taken only from the workflow's own identity, never from another commenter.
+- The verdict is the file each explorer left in the run's own evidence (`verdicts/<n>.md`, copied there by a workflow step after the explorer). No pull request comment is read; the comment the explorer posts is for people. A consumer copy made before that still reads the newest comment from the workflow's identity.
+- Opt-in (`max-shards` on the criteria job's `actions/criteria` step): a pull request with more walks than one explorer is sized for (six) is split across explorers that run in parallel, each given its share of the criteria by code. A criterion is never split, and the first explorer keeps the job name `qae-explore` because its matrix value is blank (the others are `qae-explore (2)`, ...). Only the first re-walks features, and its share of the criteria starts at the re-walk's walks, so every explore job must run the features step before `actions/qae-inputs` to count them alike. Explorers on a shared preview share its data, so a criterion must not depend on another's leftover state, and a site step's throwaway login needs the explorer's number in its name.
+- One of several explorers renames what it left so every explorer's evidence fits in one directory (`session-<n>-*/`, `console-<n>-*.log`, `shard-<n>/`), and the verify job refuses two explorers' different files at one path. Nothing is overwritten.
 - A pull request body lists criteria only under its `Acceptance criteria` heading; the plain-list reading is for a ticket's criteria file. A Dependabot body has no such heading, so its criteria are the ones the consumer's workflow supplies.
 - A design reference's digest reaches the gate as an explore job output, never as a file the explorer could rewrite; a reference the workflow did not supply is refused, never invented.
 - The Claude lane's `--max-turns` is the qae-inputs step's `max-turns` output, sized to the run's walks; a consumer copy that still passes a fixed number keeps that number.
 - A feature re-walk covers at most `--max-states` states of each feature. A `regression-check` FAIL means a walked step broke; a state not reached goes on a `regression-skip` line, which no gate judges. A consumer copy with the older prompt still tells the explorer to walk every state.
-- The evidence artifact is `qae-artifacts-<run_attempt>`, and the verify job downloads the attempt the explore job reports as its `attempt` output. A consumer copy that still names it `qae-artifacts` in both jobs hands a re-run's verify job whichever attempt's artifact GitHub returns.
+- The evidence artifact is `qae-artifacts-<run_attempt>` (`-<n>` appended for an explorer past the first), and the verify job downloads every attempt's and takes each explorer's newest, so one failed explorer can be run again alone. It fails when the explore job's `attempt` output is newer than any evidence. A consumer copy that still names it `qae-artifacts` in both jobs hands a re-run's verify job whichever attempt's artifact GitHub returns.
 - `actions/qae-browser` reads the names of the missing system packages from the pinned Playwright's `install-deps --dry-run` report. A Playwright bump that changes that report fails the step (never reads as nothing missing), and the catalog's `qae-browser` CI job is where that shows first.

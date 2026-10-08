@@ -83,11 +83,19 @@ annotation a criterion carries (`AC2 references: home-desktop`, `AC3 roles: admi
 the criteria of the ticket the pull request implements (written by the consumer's workflow) count too,
 as TC1, TC2, ...: a ticket that lists criteria, or a non-empty one in which none can be found (printed
 as `ticket: ...`, and refused by the gate), makes a check needed whatever the pull request declares, so
-it cannot drop its ticket's requirements; an empty file links no ticket. Exit 2 when a file cannot be
+it cannot drop its ticket's requirements; an empty file links no ticket. With `--max-shards N` it then
+prints `shards: [1,2,...]`, the explorers the criteria are split across, for a harness to run in parallel:
+one walk is a criterion as one role it names at one width, an explorer is sized for six, and there are
+never more than N explorers nor than criteria (a criterion is never split). A `walks: <n>` line says how
+many it counted. Which criteria each explorer walks is `qae-inputs --shard`'s to say: it also knows the
+feature re-walk, which this command does not. The widths are the `--widths` of the qae-artifacts
+line of `--manifest FILE`, judged from the base like a run (no manifest counts one width). More walks
+than the explorers are sized for prints one `::warning::` with the numbers. Exit 2 when a file cannot be
 read.
 
 `qae-inputs [--manifest FILE] [--widths-file FILE] [--references DIR] [--evidence DIR] [--listing FILE]
-[--digests FILE] [--turns FILE [--criteria FILE] [--ticket FILE] [--features DIR]]` prepares what the QAE
+[--digests FILE] [--turns FILE [--criteria FILE] [--ticket FILE] [--features DIR] [--shard K --shards N]
+[--share FILE]]` prepares what the QAE
 explorer and its gates read from the site step's supplies and the QAE manifest, before the explorer runs.
 Each design reference `<key>.png` the site step wrote to DIR (default qae-inputs/references) is copied
 to `<evidence>/references/<key>.png` (default qae-artifacts), listed with its size in FILE (default
@@ -100,10 +108,18 @@ checks each criterion at the widths the gate will require; no such option writes
 body (`--criteria`, default qae-inputs/pr-body.md) and of the ticket (`--ticket`, default
 qae-inputs/ticket.md; absent is none) once per role it names and per width, plus each feature to re-walk
 (`--features`, default qae-inputs/features), which is one walk per three states the manifest's
-acceptance-verdict line lets the explorer walk of it (`--max-states`, default 3). It prints `references: <n>`, one
+acceptance-verdict line lets the explorer walk of it (`--max-states`, default 3). With `--shard K --shards N`
+the explorer is one of N that share the criteria (`criteria --max-shards` decided N). In document order each
+criterion goes whole to the explorer with the fewest walks so far, the lowest-numbered on a tie, and the first
+explorer starts with the walks of the feature re-walk, which only it does, so it takes fewer criteria and
+reaches the re-walk in its time. Every explorer counts the features the same way, to make the same
+assignment, and for one past the first `--features DIR` and its listing are then removed: it is not handed
+them. The cap is sized to the explorer's own share, and `--share FILE` gets the one sentence that names that
+share for its prompt (an empty line for one explorer). It prints `references: <n>`, one
 `<key>: <width>x<height>` line each, `widths: <list>` (or `widths: none`) and, with `--turns`,
-`max turns: <n> (<walks> walks)`. Exit 2 when a supplied file is not a PNG or its name is not a reference
-key, or the manifest or the criteria file cannot be read.
+`max turns: <n> (<walks> walks)` and, for one explorer of several, `share: <ids> (explorer K of N)`. Exit 2
+when a supplied file is not a PNG or its name is not a reference key, the manifest or the criteria file
+cannot be read, or the explorer has nothing to walk (the criteria changed after they were counted).
 
 `features --manifest FILE --changed-files FILE [--out DIR [--listing FILE]]` reads the manifest's
 acceptance-verdict line (judged from the base, like a run) and, when it has `--features`, prints which
@@ -917,6 +933,8 @@ def read_text(path):
 
 
 def criteria_command(args):
+    if args.max_shards is not None and args.max_shards < 1:
+        return fail("--max-shards is a whole number of explorers, 1 or more: %d" % args.max_shards)
     try:
         text = read_text(args.file)
         changed = [line for line in read_text(args.changed_files).splitlines() if line] if args.changed_files else None
@@ -937,6 +955,8 @@ def criteria_command(args):
         for label, values in (("references", notes.references), ("roles", notes.roles), ("malformed", notes.malformed)):
             if values:
                 print("%s %s: %s" % (item, label, ", ".join(values)))
+    if args.max_shards is not None:
+        print("\n".join(shard_plan(wanted, manifest_widths(args), args.max_shards)))
     return 0
 
 
@@ -964,20 +984,85 @@ def manifest_widths(args):
 # measured there (4.5 seconds) 240 turns end inside the explore job's 30 minutes.
 TURNS_BASE, TURNS_PER_WALK, TURNS_FLOOR, TURNS_CEILING = 40, 30, 80, 240
 STATES_PER_WALK = 3
+# The walks one explorer is sized for: what the turn cap reaches before its ceiling, six. A consumer's pull
+# request listed 13 broad criteria at two widths, at least 26 walks, for one explorer: it made one
+# shallow pass, never signed in as two of the three roles it had logins for, stopped after 9 of its 30 minutes
+# and FAILed 9 criteria as not completed. So the criteria of a pull request with more walks than this can be
+# split across explorers that run in parallel (`criteria --max-shards`), each sized for this many.
+SHARD_WALKS = (TURNS_CEILING - TURNS_BASE) // TURNS_PER_WALK
+SHARE = ("Your share of the criteria is %s: you are explorer %d of %d. Walk only those, and write a verdict line for "
+         "each of them and for no other criterion; the other criteria are walked by other explorers in parallel, "
+         "which may use the same site, so expect data you did not create.")
+# The first explorer when the feature re-walk is its whole load.
+NO_SHARE = ("None of the criteria is yours: you are explorer %d of %d, and other explorers walk them in parallel, "
+            "which may use the same site, so expect data you did not create. Walk no criterion and write no "
+            "acceptance-check line. Re-walk the features as described below, and write only their lines in the verdict.")
 
 
-def explorer_turns(criteria_text, ticket_text, widths, features, states):
-    """(walks, turn cap) for the criteria of a PR body and its ticket, at each of `widths`, plus `features`
+def criterion_walks(wording, widths):
+    """How many walks one criterion is: one as each role it names, at each of `widths`."""
+    return max(1, len(annotations(wording).roles)) * max(1, len(widths))
+
+
+def rewalk_walks(features, states):
+    """How many walks the re-walk of `features` features is: one for each three states the explorer walks of one."""
+    return features * -(-states // STATES_PER_WALK)
+
+
+def explorer_turns(items, widths, features, states):
+    """(walks, turn cap) for the criteria `items` ((id, wording) pairs) at each of `widths`, plus `features`
     re-walks of at most `states` states each."""
-    items = ([] if declares_none(criteria_text) else read_criteria(criteria_text)) + ticket_items(ticket_text)[0]
-    walks = (sum(max(1, len(annotations(wording).roles)) for _, wording in items) * max(1, len(widths))
-             + features * -(-states // STATES_PER_WALK))
+    walks = sum(criterion_walks(wording, widths) for _, wording in items) + rewalk_walks(features, states)
     return walks, min(TURNS_CEILING, max(TURNS_FLOOR, TURNS_BASE + TURNS_PER_WALK * walks))
+
+
+def shard_shares(items, widths, shards, rewalk=0):
+    """Each of `shards` explorers' share of the criteria `items`, in shard order. In document order, a criterion
+    goes whole to the explorer with the fewest walks so far, the lowest-numbered on a tie. The first starts
+    with `rewalk` walks, those of the feature re-walk only it does: a selected feature with no walked step is
+    a finding, so the explorer that carries the re-walk takes fewer criteria and reaches it in its time. Every
+    explore job makes this assignment for itself, from the same inputs, so they agree."""
+    shares, loads = [[] for _ in range(shards)], [rewalk] + [0] * (shards - 1)
+    for item in items:
+        least = loads.index(min(loads))
+        shares[least].append(item)
+        loads[least] += criterion_walks(item[1], widths)
+    return shares
+
+
+def shard_plan(items, widths, max_shards):
+    """What `criteria --max-shards` prints after the criteria. `shards: [1,2,3]` numbers the explorers, for the
+    explore job's matrix: enough for SHARD_WALKS walks each, never more than `max_shards` nor than the criteria
+    (one is never split), and at least one. Then the walks it counted, and a warning when they exceed what those
+    explorers are sized for, so an oversized pull request shows up front. The count is of the criteria alone:
+    which features are re-walked is selected in the explore job, from a checkout this job does not have."""
+    walks = sum(criterion_walks(wording, widths) for _, wording in items)
+    shards = max(1, min(max_shards, len(items), -(-walks // SHARD_WALKS)))
+    lines = ["shards: [%s]" % ",".join(str(number) for number in range(1, shards + 1)), "walks: %d" % walks]
+    if walks > shards * SHARD_WALKS:
+        lines.append("::warning title=vibe-verifier criteria::%d walks (each criterion once per role and width) for %d "
+                     "explorer%s sized for %d: expect criteria left unfinished. List fewer criteria on one pull request, "
+                     "or raise max-shards (harnesses/qae/README.md)."
+                     % (walks, shards, "" if shards == 1 else "s", shards * SHARD_WALKS))
+    return lines
+
+
+def explorer_share(items, widths, shard, shards, rewalk):
+    """(the criteria explorer `shard` of `shards` walks, the sentence its prompt names them in). One explorer
+    walks them all and is told nothing. One of several is told its share by code, never left to work it out.
+    `rewalk` is the walks of the feature re-walk, the first explorer's alone."""
+    if shards == 1:
+        return items, ""
+    share = shard_shares(items, widths, shards, rewalk)[shard - 1]
+    return share, SHARE % (", ".join(item for item, _ in share), shard, shards) if share else NO_SHARE % (shard, shards)
 
 
 def qae_inputs_command(args):
     """Copy each supplied design reference into the evidence, list it for the explorer, declare its digest,
-    write the widths the manifest's qae-artifacts line requires and, asked, the explorer's turn cap."""
+    write the widths the manifest's qae-artifacts line requires and, asked, the explorer's turn cap and the
+    sentence that names its share of the criteria."""
+    if not 1 <= args.shard <= args.shards:
+        return fail("--shard %d is not one of --shards %d" % (args.shard, args.shards))
     widths = manifest_widths(args)
     turns = None
     if args.turns:
@@ -986,12 +1071,28 @@ def qae_inputs_command(args):
             ticket_text = read_text(args.ticket) if os.path.isfile(args.ticket) else ""
         except OSError as error:
             return fail("could not read %s" % error)
+        items = ([] if declares_none(criteria_text) else read_criteria(criteria_text)) + ticket_items(ticket_text)[0]
         names = os.listdir(args.features) if os.path.isdir(args.features) else []
         features = len([name for name in names if name.endswith(".md")])
         options = selection_options(args) if args.manifest and features else None
-        turns = explorer_turns(criteria_text, ticket_text, widths, features, options.max_states if options else STATES_PER_WALK)
+        states = options.max_states if options else STATES_PER_WALK
+        items, share = explorer_share(items, widths, args.shard, args.shards, rewalk_walks(features, states))
+        if args.shard > 1:
+            # Every explorer counted the features, to share the criteria out alike. Only the first re-walks them.
+            features = 0
+            shutil.rmtree(args.features, ignore_errors=True)
+            if os.path.isfile(args.features.rstrip("/") + ".md"):
+                os.remove(args.features.rstrip("/") + ".md")
+        if not items and not features and args.shards > 1:
+            # The criteria job counted more criteria than this job reads: the body was edited between them.
+            return fail("explorer %d of %d has no criterion to walk: the pull request's criteria changed after the "
+                        "criteria job counted them, so run the workflow again" % (args.shard, args.shards))
+        turns = explorer_turns(items, widths, features, states)
         with open(args.turns, "w", encoding="utf-8") as handle:
             handle.write("%d\n" % turns[1])
+        if args.share:
+            with open(args.share, "w", encoding="utf-8") as handle:
+                handle.write(share + "\n")
     if widths:
         os.makedirs(os.path.dirname(args.widths_file) or ".", exist_ok=True)
         with open(args.widths_file, "w", encoding="utf-8") as handle:
@@ -1023,7 +1124,9 @@ def qae_inputs_command(args):
             handle.write(json.dumps(digests, sort_keys=True) + "\n")
     print("\n".join(["references: %d" % len(found)] + ["%s: %dx%d" % (key, *size) for key, (_, size) in sorted(found.items())]
                     + ["widths: %s" % (", ".join(map(str, widths)) or "none")]
-                    + (["max turns: %d (%d walks)" % (turns[1], turns[0])] if turns else [])))
+                    + (["max turns: %d (%d walks)" % (turns[1], turns[0])] if turns else [])
+                    + (["share: %s (explorer %d of %d)" % (", ".join(item for item, _ in items) or "no criterion",
+                                                           args.shard, args.shards)] if turns and args.shards > 1 else [])))
     return 0
 
 
@@ -1073,8 +1176,7 @@ def features_command(args):
 
 
 # The QAE's review comment: one per pull request, found again by this first line and by the identity a
-# workflow's GITHUB_TOKEN posts as, so a comment anyone else writes is never edited. The verify job's
-# verdict lookup skips a comment that starts with it, so the review never stands in for a verdict.
+# workflow's GITHUB_TOKEN posts as, so a comment anyone else writes is never edited.
 REVIEW_MARKER = "<!-- vibe-verifier:qa-review -->"
 REVIEW_AUTHOR = "github-actions[bot]"
 REVIEW_HEADINGS = {
@@ -1208,6 +1310,12 @@ def main():
     reader.add_argument("--changed-files", metavar="FILE", help="the pull request's changed paths, one per line")
     reader.add_argument("--ticket", metavar="FILE", help="the criteria of the ticket the pull request implements, "
                         "counted as TC1, TC2, ... in addition to its own (empty: no ticket)")
+    reader.add_argument("--max-shards", metavar="N", type=int, default=None, help="also print `shards: [1,...]`, how "
+                        "many explorers the criteria are split across: enough for six walks each, at most N")
+    reader.add_argument("--manifest", metavar="FILE", help="with --max-shards, the QAE manifest: the --widths of its "
+                        "qae-artifacts line, judged from the base, count toward the walks")
+    reader.add_argument("--repo", default=".")
+    reader.add_argument("--base-ref", default=None)
     inputs = commands.add_parser("qae-inputs", help="copy the site step's design references into the QAE evidence, "
                                  "list them for the explorer and write their digests")
     inputs.add_argument("--references", default="qae-inputs/references", metavar="DIR",
@@ -1227,7 +1335,14 @@ def main():
     inputs.add_argument("--ticket", default="qae-inputs/ticket.md", metavar="FILE",
                         help="with --turns, the ticket's criteria, when the file exists (default: qae-inputs/ticket.md)")
     inputs.add_argument("--features", default="qae-inputs/features", metavar="DIR",
-                        help="with --turns, the features to re-walk, one <id>.md each (default: qae-inputs/features)")
+                        help="with --turns, the features to re-walk, one <id>.md each (default: qae-inputs/features); "
+                        "counted by every explorer, and removed, with its listing DIR.md, for one past the first")
+    inputs.add_argument("--shard", metavar="K", type=int, default=1,
+                        help="with --turns, which explorer of --shards this is: the cap is sized to its share (default: 1)")
+    inputs.add_argument("--shards", metavar="N", type=int, default=1,
+                        help="with --turns, how many explorers the criteria are split across (default: 1)")
+    inputs.add_argument("--share", metavar="FILE", help="with --turns, write the sentence that names this explorer's "
+                        "share of the criteria here, for its prompt (an empty line for one explorer)")
     inputs.add_argument("--repo", default=".")
     inputs.add_argument("--base-ref", default=None)
     rewalk = commands.add_parser("features", help="the features a pull request's changed paths touch, by the selection "
@@ -1250,7 +1365,8 @@ def main():
     review.add_argument("--head", required=True, metavar="SHA", help="the head commit the run judged")
     review.add_argument("--run-url", required=True, metavar="URL")
     review.add_argument("--criteria", required=True, metavar="FILE", help="the PR body the run read")
-    review.add_argument("--verdict", metavar="FILE", help="the explorer's verdict comment, when there is one")
+    review.add_argument("--verdict", metavar="FILE", help="the explorers' verdict, as the verify job read it from "
+                        "the run's evidence, when there is one")
     review.add_argument("--ticket", metavar="FILE", help="the ticket's criteria the run read, when the workflow supplies them")
     review.add_argument("--explore-result", required=True, help="the explore job's result (success, skipped, failure, cancelled)")
     review.add_argument("--gates-outcome", default="", help="the gates step's outcome (success, failure, skipped)")

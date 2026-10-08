@@ -26,7 +26,9 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
    [its ticket's criteria](#the-tickets-criteria) with `actions/criteria`, on any runner: it
    holds no model login, checks out nothing and builds nothing. Its `count` output decides whether
    the explore job starts at all, so on the Codex lane a pull request with nothing to walk never
-   queues for, or holds, the one runner with the login.
+   queues for, or holds, the one runner with the login. Its `shards` output is the explore job's
+   matrix: one explorer, unless the consumer lets a large pull request be
+   [split across several](#splitting-a-large-pull-request-across-explorers).
 2. **explore** runs only when the criteria job found a criterion. It checks out the PR with its
    base, picks the [features to re-walk](#re-walking-the-features-a-pull-request-touches) when that is
    on, builds and starts the PR's site on the runner (or resolves its preview), copies the design
@@ -37,10 +39,12 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
    `## Acceptance criteria` heading, append one line per action to `qae-artifacts/qae/ACn.md`
    (`- step k: <what you did> -> <what you saw>`), save a screenshot per step, then write
    `qae-artifacts/verdict.md` with one `acceptance-check: ACn -- PASS|FAIL -- ... (qae/ACn.md::<step line>)`
-   per criterion and post it as a PR comment. A step after the model fails the job if anything
-   outside `qae-artifacts/` and `qae-inputs/` changed on the runner; the config paths
+   per criterion and post it as a PR comment, for people to read. A step after the model fails the
+   job if anything outside `qae-artifacts/` and `qae-inputs/` changed on the runner; the config paths
    `claude-code-action` itself resets to the base branch before the model runs (`CLAUDE.md`,
    `.claude/`, `.mcp.json` and a few more) are excused only while they still match the base.
+   The next step, the workflow's own, copies the verdict the explorer wrote to
+   `qae-artifacts/verdicts/1.md`: that file, in this run's evidence, is the verdict the gate judges.
    Everything under `qae-artifacts/` is uploaded, always, as the artifact
    `qae-artifacts-<run_attempt>`: a failed or cancelled attempt uploads too, and under one name for
    every attempt a re-run's verify job was handed an earlier attempt's evidence. A separate 7-day artifact named
@@ -49,12 +53,13 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
    skipped (no criterion) uploads none.
 3. **verify** first fails unless the criteria job succeeded (a job whose need failed is skipped,
    exactly like an explore job with nothing to walk, so this step tells the two apart). Then it
-   writes the declared inputs (the PR body; its changed paths; the newest
-   `acceptance-check:` comment posted by the explore job's own identity, skipping the QA review
-   comment; the site URL the explore job declared, in `qae-inputs/site-url`), reads the criteria with
-   the same action, downloads the artifacts when there was a criterion to explore (those of the
-   attempt the explore job ran in, which that job reports as its `attempt` output: this attempt's on
-   a full re-run, an earlier one's when only the verify job is re-run), and runs the
+   writes the declared inputs (the PR body; its changed paths; the site URL the explore job
+   declared, in `qae-inputs/site-url`), reads the criteria with the same action, and, when there
+   was a criterion to explore, downloads the run's evidence and merges it into `qae-artifacts/`: each
+   explorer's, from the newest attempt it left any in (this attempt's on a full re-run, an earlier
+   one's when only the verify job, or only another explorer, is run again). The verdict,
+   `qae-inputs/verdict.md`, is the `verdicts/<n>.md` files of that evidence in explorer order: no
+   pull request comment is read. Then it runs the
    [`acceptance-verdict`](../../gates/acceptance_verdict.py) gate through the composite action with
    the manifest [`manifest`](manifest) (`.vibe-verifier-qae` in the consumer), unless the pull request
    needs no check ([below](#which-pull-requests-need-a-check)). Last, whatever happened before it,
@@ -282,10 +287,107 @@ its `max-turns` output, which the explorer step passes as `--max-turns`:
   the cut-off run stopped at. The slowest turn there took 4.5 seconds, so 240 turns still end inside the
   explore job's 30 minutes.
 - A run that reaches the cap still fails the job: the cap bounds a runaway, it does not pass one.
+- One explorer of [several](#splitting-a-large-pull-request-across-explorers) is sized to its own
+  share of the criteria, plus the feature re-walk when it is the first.
 
 The Codex lane has no such cap: the pinned Codex CLI's `exec` takes no turn limit, and the job's
 `timeout-minutes` bounds it. A consumer's copy made before the cap was sized still passes
 `--max-turns 80`, and keeps that cap until it copies the template's explorer line.
+
+## Splitting a large pull request across explorers
+
+Opt-in. One explorer is sized for six walks: the [turn cap](#the-turn-cap) is 40 plus 30 a walk and
+stops growing at 240. A consumer's pull request listed 13 broad criteria at two widths, at least 26
+walks. Its one explorer made one shallow pass (about four steps a criterion, against about six on
+small pull requests), never signed in as two of the three roles it had logins for, stopped after 9
+of its 30 minutes and FAILed 9 criteria as not completed. A consumer with more than one QAE runner
+can give each runner a share of the criteria instead.
+
+**When it happens.** The criteria job counts the walks: each criterion of the pull request and of
+[its ticket](#the-tickets-criteria), once per role it names in `[as: ...]` and per width on the
+manifest's qae-artifacts line. Feature re-walks are not counted: which features are re-walked is
+selected from a checkout, and this job has none. It plans one explorer for every six
+walks, rounded up, never more than `max-shards`, and never more than there are criteria, because a
+criterion is never split. The job's log shows the count (`shards: [1,2,3]`), the walks, and one
+warning when the walks are more than the planned explorers are sized for, so an oversized pull
+request is visible before any explorer starts. With the default `max-shards: 1` there is always one
+explorer, and those log lines are all this job adds.
+
+**How to turn it on.** In the criteria job, raise `max-shards` on the `actions/criteria` step to the
+number of QAE runners that can run at once. The template's explore job is already a matrix over the
+criteria job's `shards` output, so a workflow copied from it needs nothing else. The criteria job
+needs the widths to count walks, and it checks out nothing, so the template fetches
+`.vibe-verifier-qae` with `gh api` into `qae-inputs/manifest` (the base's copy, or the pull
+request's own where the base has none) and passes it as `manifest:`. A wrapper passes its gate list
+as `entries:` instead, as it does to `actions/gates`. Without either, one width is counted.
+
+**What each explorer does.** Every explore job runs the same steps.
+
+- [`actions/qae-inputs`](../../actions/qae-inputs/action.yml) is given the explorer's number
+  (`matrix.shard || 1`) and how many there are (`strategy.job-total`). It shares the criteria out,
+  the same way in every explore job: in document order each criterion goes whole to the explorer
+  with the fewest walks so far, the lowest-numbered on a tie. It declares the sentence the prompt
+  gives that explorer: "Your share of the criteria is AC1, AC4, TC2: you are explorer 2 of 3. Walk
+  only those, and write a verdict line for each of them and for no other criterion; ...". The model
+  never works its share out, and the explore job's log names the share. On the Claude lane the turn
+  cap is sized to it.
+- Only the first explorer re-walks the [features](#re-walking-the-features-a-pull-request-touches),
+  and its load starts at the re-walk's walks, counted as the turn cap counts them. A selected
+  feature with no walked step fails the gate, so the explorer that carries the re-walk takes fewer
+  criteria and reaches it in its time. When the re-walk outweighs the criteria it would get, it gets
+  none and is told to re-walk only. Every explore job runs the selection step, so that all of them
+  count the same features and make the same assignment, and `actions/qae-inputs` then removes
+  `qae-inputs/features/` for every explorer but the first.
+- An explorer with nothing to walk fails before any model runs: the criteria changed after the
+  criteria job counted them.
+- After the explorer, a workflow step copies its verdict to `verdicts/<n>.md` and puts the
+  explorer's number in the name of everything else it left, so that the evidence of all of them fits
+  in one directory: `session-*/`, `console-*.log` and `network-*.log`, which the gates read by those
+  names, become `session-<n>-*/` and so on, and every other file moves under `shard-<n>/`, except
+  a criterion's own (`qae/ACn*`, `qae/TCn*`), the feature logs, `references/` and the
+  [page record](#an-error-a-page-outside-the-site-logged) `console-pages.jsonl`, which keep their
+  places. The session log names the files it saved by their paths, so the step renames those paths
+  in it too, and a network record the explorer saved is still found by `qae-artifacts`.
+- Each explorer uploads its evidence under its own name: `qae-artifacts-<run_attempt>` for the
+  first, `qae-artifacts-<run_attempt>-<n>` for the others. The usage artifact is named the same way.
+- The verify job merges them. It takes each planned explorer's evidence from the newest attempt
+  that explorer left any in, so running one failed explorer again is enough (measured on a re-run of
+  one matrix job, 2026-10-08: the verify job sees every attempt's artifacts). Two explorers that
+  left the same path with different content fail the step: nothing is overwritten. The one
+  exception is the page record, one line per console error, which the gate reads under one name:
+  every explorer's lines are appended to it. An explorer that
+  left no verdict has no `verdicts/<n>.md`, its criteria have no verdict line, and
+  `acceptance-verdict` refuses them. A copy of each verdict is still posted as a comment, one per
+  explorer, for people to read.
+
+**Names.** The first explorer's job is `qae-explore`, as it always was, and the others are
+`qae-explore (2)`, `qae-explore (3)`, ... The matrix's first value is blank for that: GitHub names a
+matrix job `<name> (<value>)` and leaves a blank value out, and shows a name that is an expression
+unevaluated when the job is skipped (both measured, 2026-10-08). So a branch rule or a dashboard
+that names `qae-explore` finds it on every pull request, split or not.
+
+**What a consumer must do.**
+
+- **Have the runners.** N explorers at once need N QAE runners, and on the Codex lane N logins
+  ([below](#the-explorer-on-codex-the-openai-subscription-with-the-login-on-the-runner)). With fewer,
+  the explorers queue: nothing fails, and the split saves less time.
+- **Keep criteria independent.** A site step that resolves a shared preview hands every explorer the
+  same site and its data, and the explorers run at the same time. A criterion must not depend on
+  what another criterion left behind (a record it created, a setting it changed).
+- **Make what the site step creates unique per explorer.** The step runs in every explore job. A
+  login it creates gets the explorer's number in its name (`matrix.shard || 1` is available to the
+  step), or two explorers sign each other out or collide on one account. A site it starts on a
+  runner that shares its machine's ports with other runners needs a port per explorer.
+- **Require `qae-verify`.** The extra explorers' checks exist only on a large pull request, so no
+  branch rule can name them. On a split run the verify job fails unless every explorer's job
+  succeeded, after its gates have run.
+- **Tell the dashboard.** A [dashboard](../../docs/dashboard.md) that lists the explorer's job names
+  lists the extra ones too (`qae-explore (2)`, ...), or it does not see those jobs. Each explorer's
+  usage artifact is read by its own name ([`docs/USAGE-CONTRACT.md`](../../docs/USAGE-CONTRACT.md)).
+
+A consumer's copy made before the split keeps working after a pin bump: `actions/criteria` and
+`actions/qae-inputs` default to one explorer. It still reads the verdict from a comment until it
+takes the template's verify steps.
 
 ## Which pull requests need a check
 
@@ -426,9 +528,9 @@ qa-review`) keeps one comment on the pull request, edited in place on every run,
 Earlier rows win. The state comes from the jobs' and the gates' outcomes, never from the explorer's
 prose: under it the comment lists each criterion with the word the explorer wrote for it (PASS, FAIL,
 or no verdict), names the head commit it judged, and links the run. It edits only a comment posted by
-`github-actions[bot]` that starts with the marker, and the verdict lookup skips that comment, so a
-review never stands in for a verdict. The explorer's own verdict comment is still posted on every run
-the explorer makes, because it is the gate's input. On a pull request from a fork the workflow token is
+`github-actions[bot]` that starts with the marker. The explorer's own verdict comment is still posted
+on every run the explorer makes, for people to read: the gate's input is the verdict file in the run's
+evidence, never a comment. On a pull request from a fork the workflow token is
 read-only, so the review step cannot post there and fails the verify job.
 
 ## A reachable preview instead of a site on the runner
@@ -562,10 +664,13 @@ everything the model read, off the runner.
 ## Rules the harness obeys, each from a real run
 
 - **Anchors resolve or the PASS is refused.** A step line the model did not write cannot be cited.
-- **Only the explore job's identity may supply a verdict.** The verify job filters comments by
-  the login `gh pr comment` posts as with the workflow token (`github-actions[bot]`). Without that
-  filter any commenter could paste a PASS anchored to a real step line. Found by review on the
-  pilot PR.
+- **The verdict is the file in the run's own evidence.** After the explorer, the workflow copies
+  `qae-artifacts/verdict.md` to `verdicts/<n>.md`, the explore job uploads it with the evidence, and
+  the verify job reads it from the download. No pull request comment is read. It used to be the
+  newest `acceptance-check:` comment posted by the workflow's identity (`github-actions[bot]`),
+  filtered so that no other commenter could paste a PASS. That filter could not tell one run from
+  another: after a pull request was closed and reopened, one run's verify job read another run's
+  comment. A file in the run's own artifact has neither problem.
 - **The write scope is enforced, not requested.** "Write only under qae-artifacts/" in the prompt is
   a suggestion; the scope step is the rule. Found by review on the pilot PR. The action's own
   reset of `CLAUDE.md` and friends to the base branch is not a write, and a PR that changes one of
@@ -615,9 +720,12 @@ everything the model read, off the runner.
   one name for every attempt, a consumer's third attempt passed its explore job and its verify job
   was handed the cancelled second attempt's artifact: no step log, no session log, both gates red on
   a correct run, and no re-run could ever pass (2026-10-07). The artifact is named
-  `qae-artifacts-<run_attempt>`, and the verify job downloads the attempt the explore job reports as
-  its `attempt` output, never its own: re-running the verify job alone leaves the explore job, and
-  its evidence, in the earlier attempt.
+  `qae-artifacts-<run_attempt>` (and `-<n>` for an explorer past the first of a
+  [split run](#splitting-a-large-pull-request-across-explorers)). The verify job downloads every
+  attempt's and takes each explorer's newest, never one named for its own attempt: re-running the
+  verify job alone, or one explorer alone, leaves the other evidence in the earlier attempt. It
+  fails when the explore job reports an attempt newer than any evidence it finds, or none: that
+  attempt left nothing to judge.
 - **The browser step asks apt only for what is missing, within a bound.** `playwright install
   --with-deps` refreshes every package list and re-installs Playwright's whole package list on each
   run, for the nine font packages a GitHub-hosted `ubuntu-24.04` runner lacks (every library chromium
@@ -654,9 +762,9 @@ same. What differs, and why:
 - **The model holds no GitHub token either.** The explorer step is given no secret and the checkout
   has none, so the model cannot post, push, or read a credential. The workflow posts
   `qae-artifacts/verdict.md` itself after the model finishes, which is why step 4 of the prompt
-  reads "do not post anything" in this lane, and why the verify job's author filter still holds.
-  The post is tried up to five times, because one GitHub 5xx would otherwise throw a finished
-  exploration away.
+  reads "do not post anything" in this lane. The comment is for people; the verify job reads the
+  file. The post is tried up to five times, because one GitHub 5xx would otherwise fail a finished
+  exploration's job.
 - **Three settings a non-interactive Codex run needs**, each found on the first spike (2026-09-23,
   zack.land on a laptop): `--sandbox danger-full-access`, because under `workspace-write` Codex
   cancels the browser's navigate and run-code calls client-side while screenshots and snapshots still
@@ -673,7 +781,8 @@ same. What differs, and why:
   runner pool. Keep it off any box that must stay credential-free. Pointed at a
   [reachable preview](#a-reachable-preview-instead-of-a-site-on-the-runner), the runner installs and
   builds nothing of the app: it drives the browser against the preview's URL.
-- **More than one QAE job at a time is more than one login.** N parallel explorers need N runners
+- **More than one QAE job at a time is more than one login.** N parallel explorers, of N pull
+  requests or of one [split](#splitting-a-large-pull-request-across-explorers) pull request, need N runners
   (or N container slots), each with its own Codex home seeded by its own
   `codex login --device-auth`. Never point two at one store: a refresh rotates the token, and two
   jobs on one `auth.json` retire each other's session ("refresh token has already been used"). Three
