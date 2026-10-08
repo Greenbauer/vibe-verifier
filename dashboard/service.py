@@ -216,7 +216,7 @@ class DashboardService:
             result = self._merge(fresh, previous, requested_wall)
             if inventory_refreshed:
                 new_inventory = fresh.get("coverage", {}).get("inventory") or None
-            if not revoked:
+            if not revoked and self._forgets == forgets:
                 self._keep(result)
         except ApiError as error:
             if error.code in PRIVATE_FAILURES:
@@ -234,8 +234,10 @@ class DashboardService:
         completed_mono = self.monotonic()
         with self._condition:
             if self._forgets != forgets:
-                # Kept state was forgotten while this pass ran: none of it is published.
+                # Kept state was forgotten while this pass ran: none of it is published, and
+                # whatever the pass wrote before it could know goes too.
                 result = self._without_kept(result) or self._empty_github("unavailable")
+                self.store.clear()
             self._github = result
             self._github_at = completed_mono
             if new_inventory:

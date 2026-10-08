@@ -255,6 +255,16 @@ class OldReading(unittest.TestCase):
         self.assertTrue(marked["bots"]["roles"]["reviewer"]["stale"])
         self.assertEqual(marked["bots"]["roles"]["reviewer"]["state"], "idle")
 
+    def test_a_reading_nested_too_deep_to_copy_is_refused(self):
+        deep = self.reading()
+        value = []
+        deep["repositories"][0]["pulls"][0]["deep"] = value
+        for _ in range(2000):
+            value.append([])
+            value = value[0]
+        self.assertIsNone(old_reading(deep))
+        self.assertNotIn("restored", deep)
+
     def test_anything_that_is_not_a_reading_is_refused(self):
         broken = [None, [], "text", {}, {**self.reading(), "coverage": None}, {**self.reading(), "repositories": {}},
                   {**self.reading(), "repositories": [{"repository": REPO}]},

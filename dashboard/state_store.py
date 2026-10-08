@@ -9,6 +9,7 @@ dashboard starts empty, as it does with no directory at all. Contract: docs/dash
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -192,6 +193,12 @@ def old_reading(value: object) -> dict | None:
     Every repository and bot in it is stale until this process reads it. A stale repository's pull
     requests are never merge-ready (head_state.withhold_stale_pulls), so no title in it is green."""
     if not _reading_shaped(value):
+        return None
+    try:
+        # Every request, pass and beat copies the reading. One nested too deep to copy would fail
+        # each of them where no one is looking, so it is not a reading.
+        copy.deepcopy(value)
+    except RecursionError:
         return None
     value.update(restored=True, stale=True, partial=True)
     for row in value["repositories"]:

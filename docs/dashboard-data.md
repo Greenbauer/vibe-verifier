@@ -81,7 +81,8 @@ subscription inventory and the rate-limit pauses are not kept.
 - **It expires.** A file written more than 24 hours ago is not used. Neither is one written for
   another owner, repository selection, bot definition or format version, one dated more than five
   minutes in the future, or one that does not decode. Each is deleted when it is read, and the
-  dashboard starts empty.
+  dashboard starts empty. A reading nested too deep to copy, which no reading the dashboard
+  writes is, is not served either.
 - **Lost access deletes it.** A pass that meets an authentication, permission or missing-resource
   failure, on any source, deletes every file and writes none. So does the head beat, which is the
   only thing reading GitHub while the page is closed: a token refused to it empties the reading in
@@ -104,8 +105,8 @@ is served as it was and goes stale by its own age, ten minutes after its scan.
 State on disk is written by whichever version ran before the restart. The first failure this
 version cannot explain after a start that was handed any (a snapshot, a pass or a usage scan that
 raises) is blamed on it, once. The kept reading, every row still carried from it, the token
-history and the files are dropped; a pass or a head beat that was in flight publishes nothing
-kept; and the collector's caches are emptied by the next pass. A reading this process made itself
+history and the files are dropped; a pass or a head beat that was in flight publishes and writes
+nothing kept; and the collector's caches are emptied by the next pass. A reading this process made itself
 stays. The dashboard then carries on as it does on a first start.
 `tests/test_dashboard_state_store.py` covers the files and every refusal,
 `tests/test_dashboard_restart.py` what a restart, a failed read, lost access and the head beat

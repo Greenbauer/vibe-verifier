@@ -2,9 +2,12 @@
 
 import copy
 import io
+import json
 import tempfile
 import threading
+import time
 import unittest
+import zlib
 from contextlib import redirect_stderr
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -247,9 +250,43 @@ class ForgetsWhatItCannotUse(RestartCase):
         self.loading(service)
         collector.hold.set()
         self.assertEqual(len(service.snapshot()["github"]["repositories"][0]["pulls"]), 1)
-        self.assertEqual(collector.cleared, 0)
+        self.assertEqual((collector.cleared, self.files()), (0, []))
         service.snapshot(force=True)
-        self.assertEqual(collector.cleared, 1)
+        self.assertEqual((collector.cleared, self.files()), (1, ["reading.json.z"]))
+
+    def test_a_pass_in_flight_writes_nothing_of_a_forgotten_reading(self):
+        partial = reading(repositories=(REPO,))
+        partial["errors"] = [{"repository": OTHER, "code": "rate_limited"}]
+        service, collector = self.unreadable(partial, reading())
+        self.loading(service)
+        collector.hold.set()
+        rows = service.snapshot()["github"]["repositories"]
+        self.assertEqual([(row["repository"], len(row["pulls"]), row.get("unavailable", False)) for row in rows],
+                         [(REPO, 1, False), (OTHER, 0, True)])
+        self.assertEqual(self.files(), [])
+        again, _ = self.start(reading())
+        self.assertIsNone(again._github)
+
+    def test_a_kept_reading_too_deep_to_copy_is_not_served_and_wedges_nothing(self):
+        deep = reading()
+        nested = "x"
+        for _ in range(600):
+            nested = "[%s]" % nested
+        text = json.dumps({"version": 1, "identity": self.store().identity, "saved_at": NOW.isoformat(), "value": deep})
+        text = text.replace('"title": "Change 1"', '"title": "Change 1", "deep": ' + nested.replace("x", "0"))
+        folder = Path(self.folder.name) / "octocat"
+        (folder / "reading.json.z").write_bytes(zlib.compress(text.encode()))
+        (folder / "reading.json.z").chmod(0o600)
+        service, _ = self.start(reading())
+        self.assertIsNone(service._github)
+        # Never a blocking read here: were the slot wedged, it would wait for ever instead of failing.
+        for _ in range(300):
+            github = service.snapshot(nonblocking=True)["github"]
+            if github["sampled_at"]:
+                break
+            time.sleep(0.01)
+        self.assertEqual(len(github["repositories"][0]["pulls"]), 1)
+        self.assertFalse(service._refreshing or service._beating)
 
     def test_a_pass_in_flight_does_not_bring_a_forgotten_reading_back(self):
         service, collector = self.unreadable(ApiError("rate_limited"), reading())
