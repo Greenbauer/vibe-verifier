@@ -9,9 +9,10 @@ from dashboard.config import BotDefinition, Config
 from dashboard.gh_api import ApiError, GitHubAPI
 from dashboard.github import GitHubCollector
 from dashboard.pull_signals import (
-    classify_push, comment_count, load_signals, merge_ready, pull_face, read_pull_page,
-    signals_from_node, thread_summary,
+    classify_push, comment_count, load_signals, merge_ready, merge_state_for_a_pusher, pull_face,
+    read_pull_page, signals_from_node, thread_summary,
 )
+from dashboard.required_checks import PUSH_RESTRICTED
 
 ROOT_UI = __import__("pathlib").Path(__file__).resolve().parent.parent
 NOW = datetime(2026, 9, 30, 15, 0, tzinfo=timezone.utc)
@@ -104,6 +105,21 @@ class MergeReady(unittest.TestCase):
                        {"categories": ["success", "failed"]}, {"categories": ["pending"]},
                        {"categories": ["skipped"]}, {"categories": []}):
             self.assertFalse(merge_ready(**{**ready, **change}), change)
+
+    def test_a_push_restricted_base_reads_blocked_as_clean_only_without_a_conflict_or_an_open_review(self):
+        # GitHub answers `blocked` to a token that may not push to the base, whatever the pull's state.
+        blocked = {"mergeable_state": "blocked", "mergeable": True}
+        settled = {"review_decision": None}
+        self.assertEqual(merge_state_for_a_pusher(blocked, settled, True), "clean")
+        self.assertEqual(merge_state_for_a_pusher(blocked, {"review_decision": "APPROVED"}, True), "clean")
+        self.assertEqual(merge_state_for_a_pusher(blocked, settled, False), "blocked")
+        for decision in ("REVIEW_REQUIRED", "CHANGES_REQUESTED"):
+            self.assertEqual(merge_state_for_a_pusher(blocked, {"review_decision": decision}, True), "blocked")
+        for mergeable in (False, None):
+            self.assertEqual(merge_state_for_a_pusher({**blocked, "mergeable": mergeable}, settled, True), "blocked")
+        for state in ("behind", "dirty", "unstable", "unknown", "clean"):
+            self.assertEqual(merge_state_for_a_pusher({**blocked, "mergeable_state": state}, settled, True), state)
+        self.assertIsNone(merge_state_for_a_pusher(None, settled, True))
 
     def test_a_missing_read_is_not_a_green_title_or_a_zero_comment_count(self):
         face = pull_face(None, evidence_available=True, draft=False, merge_state="clean",
@@ -287,10 +303,10 @@ def quiet_api(pull, graphql):
          paths["pull"]: pull}, graphql)
 
 
-def payload(threads, commits, more=False):
+def payload(threads, commits, more=False, review=None):
     return {"data": {"repository": {"pullRequests": {
         "pageInfo": {"hasNextPage": more, "endCursor": "abc" if more else None},
-        "nodes": [{"number": 3, "baseRefName": "main",
+        "nodes": [{"number": 3, "baseRefName": "main", "reviewDecision": review,
                    "reviewThreads": {"pageInfo": {"hasNextPage": False}, "nodes": threads},
                    "commits": {"nodes": commits}}]}}}}
 
@@ -310,6 +326,36 @@ class CollectedPull(unittest.TestCase):
         self.assertEqual(result["push"], {"pushed_at": "2026-09-30T14:10:00Z", "kind": "sync with main"})
         self.assertEqual(result["unresolved_comments"], 0)
         self.assertEqual(result["comment_count"], 2)
+
+    def restricted(self, pull, graphql, protection):
+        """One pull request whose base branch has this classic protection."""
+        api = quiet_api(pull, graphql)
+        api.item_values[f"repos/{REPO}/pulls?state=open&per_page=100"][0]["base"] = {"ref": "main"}
+        api.item_values[f"repos/{REPO}/rules/branches/main?per_page=100"] = []
+        api.one_values[f"repos/{REPO}/branches/main/protection"] = protection
+        return GitHubCollector(config(), api, clock=lambda: NOW)._repository(
+            REPO, {"subscription": "subscribed"})["pulls"][0]
+
+    def test_a_green_pull_on_a_push_restricted_base_is_merge_ready_though_github_answers_blocked(self):
+        pull = {"head": {"sha": SHA}, "draft": False, "mergeable": True, "mergeable_state": "blocked",
+                "comments": 0, "review_comments": 0}
+        commits = [commit("fix: close", "2026-09-30T14:00:00Z")]
+        only_octocat = {"restrictions": {"users": [{"login": "octocat"}], "teams": [], "apps": []},
+                        "required_status_checks": {"checks": [{"context": "ci"}]}}
+        self.assertTrue(self.restricted(pull, payload([], commits), only_octocat)["merge_ready"])
+        # The same answer on a base anyone with write access may push to is a real block.
+        open_base = {"required_status_checks": {"checks": [{"context": "ci"}]}}
+        self.assertFalse(self.restricted(pull, payload([], commits), open_base)["merge_ready"])
+        # On the restricted base, the dashboard's own evidence still has to hold.
+        waiting = self.restricted(pull, payload([], commits, review="REVIEW_REQUIRED"), only_octocat)
+        self.assertFalse(waiting["merge_ready"])
+        unreported = {**only_octocat, "required_status_checks": {"checks": [{"context": "ci"}, {"context": "lint"}]}}
+        missing = self.restricted(pull, payload([], commits), unreported)
+        self.assertEqual([row["name"] for row in missing["expected"]], ["lint"])
+        self.assertFalse(missing["merge_ready"])
+        self.assertFalse(self.restricted(pull, payload([thread(False, 2)], commits), only_octocat)["merge_ready"])
+        self.assertFalse(self.restricted({**pull, "mergeable_state": "behind"}, payload([], commits),
+                                         only_octocat)["merge_ready"])
 
     def test_an_unresolved_thread_and_a_failed_read_do_not_invent_readiness(self):
         pull = {"head": {"sha": SHA}, "draft": False, "mergeable_state": "clean", "comments": 1, "review_comments": 1}

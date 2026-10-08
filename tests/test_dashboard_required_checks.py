@@ -4,7 +4,7 @@ import unittest
 
 from dashboard.gh_api import ApiError
 from dashboard.github import GitHubCollector
-from dashboard.required_checks import required_contexts
+from dashboard.required_checks import PUSH_RESTRICTED, required_contexts
 from test_dashboard_github import (
     HISTORY, NOW, REPO, SHA, config, endpoints, joined_api, pinned_api, pull_row, required_workflow_rule,
 )
@@ -77,13 +77,13 @@ class RequiredChecks(unittest.TestCase):
                          [("deploy/preview", "Required status check"), ("lint", "Required status check")])
 
     def test_classic_branch_protection_lists_required_checks_the_rules_api_omits(self):
-        protection = f"repos/{REPO}/branches/main/protection/required_status_checks"
+        protection = f"repos/{REPO}/branches/main/protection"
         rules_endpoint = f"repos/{REPO}/rules/branches/main?per_page=100"
         api = joined_api()
         api.item_values[rules_endpoint] = []
-        api.one_values[protection] = {"checks": [{"context": "legacy/status", "app_id": None},
-                                                 {"context": "lint", "app_id": 1}],
-                                      "contexts": ["legacy/status", "lint"]}
+        api.one_values[protection] = {"required_status_checks": {
+            "checks": [{"context": "legacy/status", "app_id": None}, {"context": "lint", "app_id": 1}],
+            "contexts": ["legacy/status", "lint"]}}
         api.item_values[endpoints()["checks"]][0]["conclusion"] = "success"
         rules = GitHubCollector(config(), api, clock=lambda: NOW)._branch_rules(REPO, "main")
         result = self.pull(api, rules)
@@ -91,11 +91,11 @@ class RequiredChecks(unittest.TestCase):
         self.assertEqual(result["attention_reason"], "1 required check not run on this head")
 
     def test_classic_protection_falls_back_to_contexts_and_ignores_a_missing_branch_rule(self):
-        protection = f"repos/{REPO}/branches/main/protection/required_status_checks"
+        protection = f"repos/{REPO}/branches/main/protection"
         rules_endpoint = f"repos/{REPO}/rules/branches/main?per_page=100"
         api = joined_api()
         api.item_values[rules_endpoint] = []
-        api.one_values[protection] = {"checks": [], "contexts": ["lint"]}
+        api.one_values[protection] = {"required_status_checks": {"checks": [], "contexts": ["lint"]}}
         collector = GitHubCollector(config(), api, clock=lambda: NOW)
         self.assertEqual([row["name"] for row in self.pull(api, collector._branch_rules(REPO, "main"))["expected"]], ["lint"])
         api.one_values[protection] = ApiError("not_found")
@@ -103,8 +103,23 @@ class RequiredChecks(unittest.TestCase):
         with self.assertRaises(ApiError):
             required_contexts({"checks": ["lint"]})
 
+    def test_classic_protection_says_when_the_branch_restricts_who_may_push(self):
+        protection = f"repos/{REPO}/branches/main/protection"
+        api = joined_api()
+        api.item_values[f"repos/{REPO}/rules/branches/main?per_page=100"] = []
+        collector = GitHubCollector(config(), api, clock=lambda: NOW)
+        # A protected branch with neither required checks nor push restrictions adds nothing.
+        api.one_values[protection] = {"enforce_admins": {"enabled": True}}
+        self.assertEqual(collector._branch_rules(REPO, "main"), [])
+        api.one_values[protection] = {"restrictions": {"users": [{"login": "octocat"}], "teams": [], "apps": []},
+                                      "required_status_checks": {"checks": [{"context": "lint"}]}}
+        rules = collector._branch_rules(REPO, "main")
+        self.assertEqual([rule["type"] for rule in rules], ["required_status_checks", PUSH_RESTRICTED])
+        # The restriction row is not a required check: it adds no expected row of its own.
+        self.assertEqual([row["name"] for row in self.pull(api, rules)["expected"]], ["lint"])
+
     def test_a_refused_classic_protection_read_keeps_ruleset_evidence(self):
-        protection = f"repos/{REPO}/branches/main/protection/required_status_checks"
+        protection = f"repos/{REPO}/branches/main/protection"
         pulls = f"repos/{REPO}/pulls?state=open&per_page=100"
         rules = f"repos/{REPO}/rules/branches/main?per_page=100"
         api = joined_api()
@@ -122,11 +137,12 @@ class RequiredChecks(unittest.TestCase):
         api = joined_api()
         api.item_values[pulls] = [{**pull_row(), "base": {"ref": "main"}}, {**pull_row(), "base": {"ref": "main"}}]
         api.item_values[rules] = []
-        api.one_values[f"repos/{REPO}/branches/main/protection/required_status_checks"] = {"checks": [], "contexts": []}
+        api.one_values[f"repos/{REPO}/branches/main/protection"] = {
+            "required_status_checks": {"checks": [], "contexts": []}}
         api.one_values[f"repos/{REPO}/pulls/3"] = {"head": {"sha": SHA}}
         result = GitHubCollector(config(), api, clock=lambda: NOW)._repository(REPO, {"subscription": "subscribed"})
         self.assertEqual(len(result["pulls"]), 2)
-        protection = f"repos/{REPO}/branches/main/protection/required_status_checks"
+        protection = f"repos/{REPO}/branches/main/protection"
         self.assertEqual([call for call in api.calls if call[1] == rules], [("items", rules, None)])
         self.assertEqual([call for call in api.calls if call[1] == protection], [("one", protection)])
 
@@ -137,7 +153,7 @@ class RequiredChecks(unittest.TestCase):
         api = joined_api()
         api.item_values[pulls] = [{**pull_row(), "base": {"ref": "main"}}]
         api.item_values[rules] = ApiError("forbidden")
-        api.one_values[f"repos/{REPO}/branches/main/protection/required_status_checks"] = ApiError("not_found")
+        api.one_values[f"repos/{REPO}/branches/main/protection"] = ApiError("not_found")
         result = GitHubCollector(config(), api, clock=lambda: NOW)._repository(REPO, {"subscription": "subscribed"})
         self.assertTrue(result["pulls"][0]["evidence_available"])
         self.assertEqual(result["pulls"][0]["expected"], [])

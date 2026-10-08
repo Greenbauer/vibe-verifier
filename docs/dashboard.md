@@ -307,8 +307,9 @@ It re-reads the PR head after collection; a race drops the collected evidence in
 it to the new revision. Commit statuses and third-party checks remain separate evidence rows.
 
 GitHub lists a check the base branch requires as "Expected" without creating a check run for it.
-The dashboard reads the rulesets for each pull request's base branch, and the classic branch
-protection required status checks, which that rules read does not return. It adds an expected row
+The dashboard reads the rulesets for each pull request's base branch, and the branch's classic
+protection, which that rules read does not return: its required status checks, and whether it
+restricts who may push. It adds an expected row
 for every required status check that has not reported and every required workflow that has not run
 on the head. A required workflow runs at the SHA its ruleset pinned when the run was triggered, so
 after the pin moves GitHub waits for a new run. The dashboard reads the ruleset's version history
@@ -320,7 +321,8 @@ refused, any run of the required workflow on the head counts, so the pull reques
 evidence; right after a pin moves it can show as passed while GitHub waits for a rerun, and GitHub's
 merge box still enforces the rule. A required workflow that never ran on the head is still expected.
 Classic protection needs Administration read. A token without it, or a branch with no classic
-protection, leaves those checks out and still shows the pull request's other evidence.
+protection, leaves those checks and the push restriction out and still shows the pull request's
+other evidence.
 
 Direct manifest or workflow evidence reports `subscribed`. An installation subscribed only through
 an organization wrapper or ruleset reports `unknown` in this pilot, not `false`; wrapper/ruleset
@@ -359,6 +361,14 @@ The title is green when the pull request is fully merge-ready: GitHub's merge st
 is green (skipped checks may sit beside at least one success, and a check that is not required
 still counts), and every review thread is resolved and has a reply. A thread list that did not
 load completely, or a merge state GitHub has not calculated, keeps the title white.
+GitHub reports the merge state for whoever asks. A base branch that restricts who may push answers
+"blocked" to the dashboard's read-only token for every pull request, including one its allowed
+pushers see as clean. On such a branch "blocked" counts as clean when GitHub reports no conflict and
+no review is outstanding (no review required, or approved); the checks and review threads above
+must still hold, and a required check that has not reported keeps the title white. GitHub answers
+"behind" before "blocked" on a branch that must be up to date, so a stale head stays white. Two
+requirements cannot be told apart from the token's own block there and are not counted: signed
+commits and a locked branch. GitHub's merge box still enforces them.
 When the pull request has unresolved review threads, the check line shows a message icon and
 that number. The number is a lower bound, with a plus, when more threads exist than the read
 returned. The icon is hidden when every thread is resolved, and when the comment read did not

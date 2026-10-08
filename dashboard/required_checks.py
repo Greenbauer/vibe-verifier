@@ -1,7 +1,8 @@
 """Required checks the base branch still expects on a pull request head.
 
 Rulesets and classic branch protection are separate GitHub reads. A check either source requires,
-and that has not reported on the head, is one expected row.
+and that has not reported on the head, is one expected row. Classic protection also says whether
+the branch restricts who may push, which decides how GitHub's merge state is read.
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ from .gh_api import ApiError
 from .util import parse_time
 
 WORKFLOW_GAP = "Required workflow, not run at its current pin"
+# Not a GitHub rule type: the row classic_protection adds for a branch that restricts who may push.
+PUSH_RESTRICTED = "push_restricted"
 
 
 def required_contexts(protection: dict) -> list[str]:
@@ -157,23 +160,27 @@ def expected_rows(collector, repository: str, rules: list[dict], evidence: list[
     return rows
 
 
-def classic_required(api, repository: str, base: str) -> list[dict]:
-    """Required status checks from classic branch protection, which the rules API does not return.
+def classic_protection(api, repository: str, base: str) -> list[dict]:
+    """What classic branch protection adds that the rules API does not return.
 
-    Reading them needs Administration read. A token without it, or a branch with no classic
-    protection, leaves these checks out; the pull request's other evidence still stands."""
+    Its required status checks, and one PUSH_RESTRICTED row when it restricts who may push.
+    Reading it needs Administration read. A token without it, or a branch with no classic
+    protection, leaves both out; the pull request's other evidence still stands."""
     try:
-        protection = api.one("repos/%s/branches/%s/protection/required_status_checks"
-                             % (repository, quote(base, safe="")))
+        protection = api.one("repos/%s/branches/%s/protection" % (repository, quote(base, safe="")))
     except ApiError as error:
         if error.code in {"forbidden", "not_found"}:
             return []
         raise
-    contexts = required_contexts(protection)
-    if not contexts:
-        return []
-    return [{"type": "required_status_checks", "parameters": {
-        "required_status_checks": [{"context": context} for context in contexts]}}]
+    rules = []
+    status = protection.get("required_status_checks")
+    contexts = required_contexts(status) if isinstance(status, dict) else []
+    if contexts:
+        rules.append({"type": "required_status_checks", "parameters": {
+            "required_status_checks": [{"context": context} for context in contexts]}})
+    if isinstance(protection.get("restrictions"), dict):
+        rules.append({"type": PUSH_RESTRICTED})
+    return rules
 
 
 def branch_rules(api, repository: str, base: str) -> list[dict]:
@@ -190,4 +197,4 @@ def branch_rules(api, repository: str, base: str) -> list[dict]:
         if error.code != "forbidden":
             raise
         rules = []
-    return rules + classic_required(api, repository, base)
+    return rules + classic_protection(api, repository, base)
