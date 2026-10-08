@@ -1,7 +1,10 @@
 """Owner-wide discovery, and a per-pass budget that cannot starve the same repositories forever."""
 
 import copy
+import json
+import subprocess
 import unittest
+from pathlib import Path
 from datetime import datetime, timezone
 
 from dashboard.config import BotDefinition, Config
@@ -395,6 +398,36 @@ class _Values:
 
     def clear_private_cache(self):
         pass
+
+
+class Banner(unittest.TestCase):
+    def test_a_repository_with_no_open_pull_request_is_absent_and_all_mode_banner_says_so(self):
+        source = r'''
+const h=require('./dashboard/static/helpers.js');
+const pulls=[{repository:'octocat/busy',number:1,created_at:'2026-10-01T00:00:00Z',updated_at:'2026-10-02T00:00:00Z'}];
+const quiet='octocat/quiet';
+console.log(JSON.stringify({
+ groups:h.groupPulls(pulls).map(g=>g.repository),
+ filter:h.repositoriesWithPulls(pulls),
+ quietGrouped:h.groupPulls(pulls).some(g=>g.repository===quiet),
+ reading:h.coverageBanner({label:'All repositories of octocat',selected:null,readable:0},{refreshing:true,errors:[]}),
+ unavailable:h.coverageBanner({label:'All repositories of octocat',selected:null,readable:0},{refreshing:false,errors:[{code:'unavailable'}]}),
+ counted:h.coverageBanner({label:'All repositories of octocat',selected:2,readable:2},{errors:[],stale:false}),
+ selected:h.coverageBanner({label:'Selected repositories',selected:1,readable:1},{errors:[],stale:false})
+}));
+'''
+        root = Path(__file__).resolve().parent.parent
+        result = subprocess.run(["node", "-e", source], cwd=root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        parsed = json.loads(result.stdout)
+        self.assertEqual(parsed["groups"], ["octocat/busy"])
+        self.assertEqual(parsed["filter"], ["octocat/busy"])
+        self.assertNotIn("octocat/quiet", parsed["filter"])
+        self.assertFalse(parsed["quietGrouped"])
+        self.assertEqual(parsed["reading"], "Reading repositories.")
+        self.assertEqual(parsed["unavailable"], "Repository list is unavailable.")
+        self.assertEqual(parsed["counted"], "All repositories of octocat: 2. 2 read successfully in this sample.")
+        self.assertEqual(parsed["selected"], "Selected repositories: 1. 1 read successfully in this sample.")
 
 
 if __name__ == "__main__":
