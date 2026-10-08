@@ -57,12 +57,28 @@ public listener, browser credential, built-in authentication, or CORS access. Wi
 `proxy_origin`, forwarded headers are rejected. The server accepts `GET` only, rejects untrusted or
 duplicate routing headers, and serves a fixed path allowlist with no remote scripts, fonts, or icons.
 
+By default nothing is kept when the process stops, so a restart shows no pull requests until the
+first GitHub sample has loaded. To keep the last reading, give it a directory of your own:
+
+```bash
+bin/vibe-dashboard --config /absolute/path/dashboard.json --port 8765 --state-dir ~/.vibe-verifier-dashboard/state
+```
+
+`VIBE_DASHBOARD_STATE_DIR` sets the same thing. The dashboard then starts with the previous reading
+on the page, marked old with its age, and with the GitHub answers it had already read, so the first
+pass costs about what any other does. The files hold what the page shows about private
+repositories, readable only by your account; [what is kept, for how long, and what deletes
+it](dashboard-data.md#kept-across-a-restart).
+
 ## Keep it running on the newest main
 
 `bin/vibe-dashboard-follow` runs one or more dashboards and keeps them on merged code. Every
 minute it fetches `main` from origin and fast-forwards its own checkout. A merged change to the
 server's Python (`dashboard/` outside `dashboard/static/`, or `bin/vibe-dashboard`) restarts the
-dashboards; the first GitHub sample after a restart takes a few minutes to load. A change under
+dashboards. With a [state directory](#start-it) a restarted dashboard shows the previous reading,
+marked old, until its first GitHub sample replaces it; without one it shows nothing until that
+sample has loaded, which takes a few minutes. The follower passes its own environment to the
+dashboards it starts, so `VIBE_DASHBOARD_STATE_DIR` on the follower covers all of them. A change under
 `dashboard/static/` needs no restart, because the server reads those files on every request, so a
 browser reload shows it within a minute. A change to the follower re-runs it. A dashboard that exits
 is started again. If origin is unreachable or the checkout has local edits, it logs that and keeps
@@ -94,7 +110,10 @@ your shell (launchd's default `PATH` has neither Homebrew directory), then run
     <string>--serve</string><string>/absolute/path/octocat.json</string><string>8765</string>
   </array>
   <key>EnvironmentVariables</key>
-  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin</string></dict>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>VIBE_DASHBOARD_STATE_DIR</key><string>/Users/YOU/.vibe-verifier-dashboard/state</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>/Users/YOU/.vibe-verifier-dashboard/follow.log</string>
@@ -373,7 +392,14 @@ reported REST limit/remaining/reset values, and the lowest remaining count seen 
 (`lowest_remaining`; GitHub meters some endpoint families against a separate counter that the reported
 values omit). A spent counter pauses only its endpoint family until its reset. GraphQL is metered in points, so GitHub refuses a query that costs more than what is left while the counter still reads above zero; that pauses only the GraphQL reads, and the checks keep loading. Rate limits and source errors return partial or briefly
 stale data without advancing its successful sample timestamp. Authentication or access revocation
-clears derived repository data immediately. A rate limit, timeout, or sample older than three minutes keeps the last pull requests and bot rows and marks them stale. The page does the same when its own refresh fails: it keeps the last snapshot and says the refresh failed.
+clears derived repository data immediately, in memory and in the state directory. Any other failure (a rate limit, a timeout, a spent budget, a failure this version does not name) or a sample older than three minutes keeps the last pull requests and bot rows and marks them stale. A restart with a state directory does the same: the page is served the reading from before it, and the banner over the list says so until GitHub has been read again. The page does the same when its own refresh fails: it keeps the last snapshot and says the refresh failed. A page opened while the service is down tries again every five seconds while it is visible, one request at a time.
+
+Old data says that it is old where it is read. The header line gives a stale reading's age before
+anything else (`GitHub sampled Oct 8, 2026, 3:02 PM · 4m 10s ago · stale`). A bot whose state was read
+some time ago keeps that state's name with its age, in gray (`Idle · 4m 10s ago`), on the strip:
+working and idle are claims about now, and an old reading cannot make them. Its completed runs
+keep their own times. A stale pull request row is dimmed and never green, and says how old its
+checks are once they are more than three minutes old (the title rules below).
 
 The dashboard shows source-proven failures, cancellations, waiting jobs, and current elapsed times.
 The pull request list groups pull requests by repository. A repository with no open pull request
@@ -448,9 +474,12 @@ shows as soon as anything reports on the head. Elapsed time alone never asserts 
   repository selection, telemetry path, or proxy origin, and delete it after stopping the process
   to remove the installation.
 - Tab icon: the owner's public avatar, read once and held only in memory until the process stops.
-- GitHub cache: created from server-side reads, replaced by scoped source identity, held only in
-  memory, kept and marked stale on a transient source failure, cleared when access is revoked, and
-  deleted when the process stops.
+- GitHub cache: created from server-side reads, replaced by scoped source identity, kept and
+  marked stale on any source failure but lost access, and cleared when access is revoked. Without
+  a state directory it is held only in memory and deleted when the process stops. With one, the
+  last reading and the caches are also written there after each pass, readable only by the
+  account running the server, bounded in size, ignored and deleted once 24 hours old, and deleted
+  at once when access is revoked. Delete the directory after stopping the process to remove them.
 - Telemetry: created and atomically replaced by an optional collector, read only by this process,
   bounded to a current snapshot plus seven days of samples, and unavailable when deleted.
 - GitHub records: never created, updated, or deleted by this dashboard. There are no retry, cancel,
@@ -464,6 +493,13 @@ current-head suite/run/attempt joins, race handling, expected required checks an
 status/step categories, pagination, rate limits,
 and subscription uncertainty. `test_dashboard_bot_history.py` covers bounded history and workflow
 discovery; `test_dashboard_service.py` covers source timestamps and refresh caching.
+`test_dashboard_state_store.py` covers the files kept across a restart: their mode, the atomic
+replace, the size and age limits, and every file that is refused and deleted.
+`test_dashboard_restart.py` covers what a restart serves and marks old, which failures keep the
+last reading and which delete it, a token refused to the head beat, and kept state this version
+cannot use; `test_dashboard_restart_usage.py` covers the same for token history.
+`test_dashboard_old_labels.py` covers the age on the header line and the bot strip, the banner
+after a restart, and the page's single retry while it has nothing to show.
 `test_dashboard_live_service.py` covers independently aging quota/history and revocation during
 an in-flight refresh. The collector and usage-artifact test files cover the native source contracts.
 `tests/test_dashboard_host.py` covers the Linux host's token minting, telemetry publishing, and unit
@@ -505,8 +541,9 @@ five pages (500 artifacts) per repository. A listing that stops short of seven d
 for the pace line when the oldest artifact it read is at or before the plan window. An unreadable
 artifact, a partial sample, or a budget stop stays partial. A capture that reports no counts is a
 gap only when it falls inside that window. Each scan has a
-budget of 80 GitHub calls. A scan that spends it keeps the records earlier scans read, reports
-partial coverage, and reads the rest on the next scan; only lost access clears them. Token history
+budget of 80 GitHub calls. A scan that spends it, or that a rate limit or a timeout stops, keeps
+the records earlier scans read, reports partial coverage, and reads the rest on the next scan; a
+scan that cannot start keeps the last token history on the page. Only lost access clears them. Token history
 counts as stale after two missed scans (ten minutes), not during an ordinary refresh. Captured token
 records expire after seven days and disappear when source artifacts are removed. Missing captures
 remain unavailable. Old runs cannot be backfilled. The deterministic QAE verification gate has no

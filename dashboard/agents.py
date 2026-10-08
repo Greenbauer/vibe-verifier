@@ -154,6 +154,12 @@ def _workflow_row(agent, github):
     return row
 
 
+def _age(source):
+    """When a state was read and whether that reading is old. The page shows an old state with its
+    age, never as the present."""
+    return {"stale": bool(source.get("stale")), "sampled_at": source.get("sampled_at")}
+
+
 def _runs_within(history, now, hours):
     window = timedelta(hours=hours)
     return [run for run in history if timedelta(0) <= now - parse_time(run["completed_at"]) <= window][:5]
@@ -161,7 +167,7 @@ def _runs_within(history, now, hours):
 
 def _runtime_row(agent, source, observed, now):
     row = _blank(agent)
-    row.update(state=source["state"], source="Agent runtime",
+    row.update(state=source["state"], source="Agent runtime", **_age(observed),
                coverage={"history": "stale" if observed.get("stale") else "complete"})
     history = sorted(source["runs"], key=lambda run: run["completed_at"], reverse=True)
     for key, hours in (("recent_2h", 2), ("recent_7d", 168)):
@@ -194,6 +200,10 @@ def agent_view(config, github, telemetry, now):
     concurrency = _qae_concurrency(telemetry)
     for agent in config.agents:
         added, taken = _rows_for(agent, github, usage, runtime, observed, concurrency, now)
+        if agent.workflow_role:
+            source = github.get("bots", {}).get("roles", {}).get(agent.workflow_role, {})
+            for row in added:
+                row.update(_age(source))
         rows.extend(added)
         samples.extend(taken)
     plotted = {**usage, "samples": samples}

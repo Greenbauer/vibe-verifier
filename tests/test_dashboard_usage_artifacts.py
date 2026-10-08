@@ -124,7 +124,7 @@ class ArtifactCollection(unittest.TestCase):
         self.run['path'] = '.github/workflows/explore.yml'
         self.listing = {'total_count': 1, 'artifacts': [self.artifact]}
         self.elapsed, self.downloads, self.revoked, self.exhausted = 0, 0, False, False
-        self.runner_name, self.other_jobs = None, []
+        self.runner_name, self.other_jobs, self.failure = None, [], None
         self.more, self.pages_read = {}, []
         config = Config('example', (REPO,), {'explorer': BotDefinition('explore.yml', ('explore',))}, None)
         self.reader = UsageArtifacts(config, api=self, downloader=self.download, clock=lambda: self.elapsed)
@@ -137,6 +137,8 @@ class ArtifactCollection(unittest.TestCase):
             raise ApiError('not_found')
         if self.exhausted:
             raise ApiError('request_budget_exhausted')
+        if self.failure:
+            raise ApiError(self.failure)
         if '/actions/artifacts?per_page=100&page=' in endpoint:
             number = int(endpoint.rsplit('=', 1)[1])
             self.pages_read.append(number)
@@ -182,6 +184,10 @@ class ArtifactCollection(unittest.TestCase):
         self.assertEqual(result['samples'], [])
         self.assertEqual(result['accounts'], [])
         self.assertEqual(self.reader.cache, {})
+        self.assertTrue(self.reader.lost_access)
+        self.elapsed, self.revoked = 602, False
+        self.reader.collect(NOW)
+        self.assertFalse(self.reader.lost_access)
 
     def filler(self, created, count=100):
         return [{'id': 1000 + index, 'name': 'build-output', 'expired': False, 'size_in_bytes': 10,
@@ -275,6 +281,20 @@ class ArtifactCollection(unittest.TestCase):
         self.assertEqual(result['samples'][0]['input_tokens'], 100)
         self.assertEqual(len(self.reader.cache), 1)
         self.elapsed, self.exhausted = 602, False
+        self.assertFalse(self.reader.collect(NOW)['partial'])
+        self.assertEqual(self.downloads, 1)
+
+    def test_a_listing_that_fails_without_losing_access_keeps_the_history_already_read(self):
+        self.assertEqual(len(self.reader.collect(NOW)['samples']), 1)
+        for step, code in enumerate(('rate_limited', 'unavailable', 'invalid_response'), 1):
+            with self.subTest(code=code):
+                self.elapsed, self.failure = 301 * step, code
+                result = self.reader.collect(NOW)
+                self.assertTrue(result['partial'])
+                self.assertEqual(result['samples'][0]['input_tokens'], 100)
+                self.assertEqual(len(self.reader.cache), 1)
+                self.assertFalse(self.reader.lost_access)
+        self.elapsed, self.failure = 301 * 4, None
         self.assertFalse(self.reader.collect(NOW)['partial'])
         self.assertEqual(self.downloads, 1)
 

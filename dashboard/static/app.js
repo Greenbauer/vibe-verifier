@@ -1,13 +1,13 @@
 (function () {
   "use strict";
-  const { BOT_META, element: el, link, safeUrl, duration, since, ageClass, formatTime, bytes, badge,
+  const { BOT_META, element: el, link, safeUrl, duration, since, ageClass, formatTime, bytes, badge, agedState, sourceStamp,
     diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark,
     quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
   const state = { ...VV.restoreViewState(null), ...VV.parseRoute(location.hash) };
   let snapshot = null;
-  let loading = false;
+  let loading = false, retry = 0;
   let refreshFailed = false;
 
   function restoreView(owner) {
@@ -55,9 +55,7 @@
 
   function renderChrome() {
     document.querySelector("#owner").textContent = snapshot.owner;
-    const sampled = snapshot.github.sampled_at;
-    const flags = [snapshot.github.stale ? "stale" : "", snapshot.github.refreshing ? "refreshing" : ""].filter(Boolean);
-    document.querySelector("#source-stamp").textContent = sampled ? `GitHub sampled ${formatTime(sampled)}${flags.length ? ` · ${flags.join(" · ")}` : ""}` : snapshot.github.refreshing ? "Fetching GitHub data…" : "GitHub unavailable";
+    document.querySelector("#source-stamp").textContent = sourceStamp(snapshot.github, Date.now());
     document.querySelectorAll(".sidebar button").forEach(button => {
       if (button.dataset.view === state.view) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
@@ -81,17 +79,17 @@
     for (const value of agents) {
       const role = value.id;
       const meta = { name: value.name, ...BOT_META[value.role] };
-      const recent = value.recent_2h || [];
+      const recent = value.recent_2h || [], shown = agedState(value, Date.now());
       const button = el("button", {
         class: `bot-pill${recent[0]?.category === "failed" ? " has-failure" : ""}`,
         title: value.source || "Agent data unavailable",
-        "aria-label": `${meta.name}: ${value.state || "unknown"}. Open usage and recent outcomes`,
+        "aria-label": `${meta.name}: ${shown.label}. Open usage and recent outcomes`,
         onclick: () => { state.failureBot = role; go("usage"); }
       });
       button.style.setProperty("--bot", meta.color);
       const dots = el("span", { class: "run-dots", "aria-label": recent.length ? "Newest first completed outcomes" : "No completed outcomes in two hours" });
       recent.forEach((run, index) => dots.append(el("i", { class: `dot dot-${run.category}${index === 0 ? " newest" : ""}`, title: `${index === 0 ? "Latest: " : ""}${run.category}: ${formatTime(run.completed_at)}` })));
-      button.append(el("span", { class: "bot-name" }, meta.name), badge(value.state || "unknown"), dots,
+      button.append(el("span", { class: "bot-name" }, meta.name), badge(shown.status, shown.label), dots,
         el("span", { class: recent[0]?.category === "failed" ? "failure-note" : "quiet-note" }, recentRunLabel(value, recent)));
       strip.append(button);
     }
@@ -482,6 +480,7 @@
       else {
         content.replaceChildren(empty("Dashboard unavailable", "The local read-only source could not be loaded."));
         document.querySelector("#bot-strip").replaceChildren(el("span", { class: "muted" }, "Bot status unavailable"));
+        window.clearTimeout(retry); retry = window.setTimeout(refreshIfVisible, 5000); // One retry at a time, sooner than the 30-second poll.
       }
     } finally { loading = false; }
   }

@@ -13,6 +13,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
 SHA = re.compile(r"[0-9a-f]{40}")
+# Lost access. Only these delete what was read before; every other failure keeps it, marked stale.
+PRIVATE_FAILURES = {"authentication_failed", "forbidden", "not_found"}
 
 
 class ApiError(RuntimeError):
@@ -106,6 +108,21 @@ class GitHubAPI:
     def clear_cache(self) -> None:
         with self._lock:
             self._cache.clear()
+
+    def export_cache(self) -> list[list]:
+        """Every kept answer as [endpoint, etag, value], for the state store."""
+        with self._lock:
+            return [[endpoint, etag, value] for endpoint, (etag, value, _) in self._cache.items()]
+
+    def import_cache(self, rows: object) -> int:
+        """Take back what export_cache gave, and say how many answers. GitHub must still confirm each
+        one with 304 before it is used, which it does only for a token that may read it."""
+        kept = [row for row in rows if isinstance(row, list) and len(row) == 3
+                and all(isinstance(text, str) and text.isprintable() for text in row[:2])] if isinstance(rows, list) else []
+        with self._lock:
+            for endpoint, etag, value in kept:
+                self._cache[endpoint] = (etag, value, self._generation)
+        return len(kept)
 
     @staticmethod
     def _classify_error(stderr: str) -> str:
