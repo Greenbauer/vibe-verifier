@@ -20,6 +20,45 @@ def runner_name(value: object) -> str | None:
     return None
 
 
+def bot_job_ran(job: dict) -> bool:
+    """A job counts as a bot run when it had a runner and was not skipped."""
+    return bool(job.get("runner_name")) and job.get("conclusion") != "skipped"
+
+
+def workflow_basename(path: object) -> str | None:
+    """The workflow file at the end of a run path, including a required workflow from another repo."""
+    if not isinstance(path, str) or not path:
+        return None
+    return path.rsplit("/", 1)[-1]
+
+
+def pulls_bot_jobs(payloads: object, bots: dict) -> list[tuple]:
+    """Bot jobs already read on open pull requests. This adds no API calls."""
+    if not isinstance(payloads, dict):
+        return []
+    by_file: dict[str, list[str]] = {}
+    for role, definition in bots.items():
+        by_file.setdefault(definition.workflow, []).append(role)
+    found = []
+    for repository, payload in payloads.items():
+        if not isinstance(payload, dict):
+            continue
+        for pull in payload.get("pulls") or []:
+            found.extend(_pull_jobs(repository, pull, by_file, bots))
+    return found
+
+
+def _pull_jobs(repository: str, pull: dict, by_file: dict, bots: dict) -> list[tuple]:
+    found = []
+    for run in pull.get("runs") or []:
+        roles = by_file.get(workflow_basename(run.get("path"))) or []
+        for job in run.get("jobs") or []:
+            if bot_job_ran(job):
+                found.extend((repository, role, run, job)
+                             for role in roles if job.get("name") in bots[role].jobs)
+    return found
+
+
 def qae_instance(runner_name: object) -> int | None:
     """The QAE lane instance in a runner name, or None when the name is not one."""
     if not isinstance(runner_name, str):

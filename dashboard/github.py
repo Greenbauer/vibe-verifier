@@ -12,7 +12,7 @@ from urllib.parse import quote, urlencode
 from .config import BOT_KEYS, BotDefinition, Config
 from .gh_api import ApiError, GitHubAPI
 from .pull_signals import face_fields
-from .bot_runs import recent_bot_runs, runner_name
+from .bot_runs import bot_job_ran, pulls_bot_jobs, recent_bot_runs, runner_name
 from .util import category, elapsed_seconds, github_url, iso_time, parse_time, status_category
 
 MAX_WORKERS = 4
@@ -313,7 +313,7 @@ class GitHubCollector(OwnerSet):
 
     def _bot_row(self, repository: str, role: str, run: dict, job: dict) -> dict:
         return {"bot": role, "repository": repository, "run_id": run.get("id"),
-                "attempt": run.get("run_attempt") or 1, "job_id": job["id"], "name": job["name"],
+                "attempt": run.get("run_attempt") or run.get("attempt") or 1, "job_id": job["id"], "name": job["name"],
                 "status": job["status"], "conclusion": job["conclusion"], "category": job["category"],
                 "started_at": job["started_at"], "completed_at": job["completed_at"],
                 "elapsed_seconds": job["elapsed_seconds"], "html_url": job["html_url"],
@@ -330,7 +330,7 @@ class GitHubCollector(OwnerSet):
                 if ((run.get("repository") or {}).get("full_name") or repository).lower() != repository.lower():
                     continue
                 for job in self._run_jobs(repository, run):
-                    if job["status"] != "in_progress":
+                    if job["status"] != "in_progress" or not bot_job_ran(job):
                         continue
                     for role in roles:
                         if job["name"] in role_jobs[role]:
@@ -363,7 +363,7 @@ class GitHubCollector(OwnerSet):
                     floor = _time_key(run, "updated_at", "created_at")
                     break
                 for job in self._run_jobs(repository, run):
-                    if job["status"] != "completed" or not job.get("completed_at"):
+                    if job["status"] != "completed" or not job.get("completed_at") or not bot_job_ran(job):
                         continue
                     for role in roles:
                         if job["name"] in role_jobs[role]:
@@ -431,6 +431,7 @@ class GitHubCollector(OwnerSet):
                         value["floors"].append(outcome["history_floor"])
                     value["active_at"].append(outcome["active_at"])
                     value["history_at"].append(outcome["history_at"])
+        self._take_pull_jobs(readable_repositories, all_rows)
         result = {}
         for role, value in all_rows.items():
             active = sorted(value["active"], key=lambda row: _time_key(row, "started_at"), reverse=True)
@@ -450,4 +451,20 @@ class GitHubCollector(OwnerSet):
                             "coverage": {"active": "complete" if active_complete else "unavailable",
                                          "history": "complete" if history_complete else "partial"}}
         return {"partial": bool(errors), "roles": result, "errors": errors}
+
+    def _take_pull_jobs(self, payloads: object, all_rows: dict) -> None:
+        """Required-workflow jobs already fetched on open pulls. Adds no API calls."""
+        seen = {(row["repository"], row["job_id"])
+                for value in all_rows.values() for row in value["active"] + value["completed"]}
+        for repository, role, run, job in pulls_bot_jobs(payloads, self.config.bots):
+            identity = (repository, job.get("id"))
+            if identity in seen or role not in all_rows:
+                continue
+            seen.add(identity)
+            row = self._bot_row(repository, role, run, job)
+            bucket = all_rows[role]
+            if job.get("status") == "in_progress":
+                bucket["active"].append(row)
+            elif job.get("status") == "completed" and job.get("completed_at"):
+                bucket["completed"].append(row)
 

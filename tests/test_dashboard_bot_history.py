@@ -39,14 +39,15 @@ def run(run_id: int, status: str, minutes: int = 1) -> dict:
             "repository": {"full_name": REPO}}
 
 
-def job(run_id: int, name: str, status: str, conclusion=None, minutes: int = 1) -> dict:
-    return {"id": run_id * 10, "run_id": run_id, "head_sha": str(run_id) * 40, "name": name,
-            "status": status, "conclusion": conclusion,
+def job(run_id, name, status, conclusion=None, minutes=1, runner="runner"):
+    row = {"id": run_id * 10, "run_id": run_id, "head_sha": str(run_id) * 40, "name": name,
+            "status": status, "conclusion": conclusion, "runner_name": runner,
             "created_at": (NOW - timedelta(minutes=minutes + 2)).isoformat(),
             "started_at": (NOW - timedelta(minutes=minutes + 1)).isoformat(),
             "completed_at": (NOW - timedelta(minutes=minutes)).isoformat() if status == "completed" else None,
             "html_url": f"https://github.com/{REPO}/actions/runs/{run_id}/job/{run_id * 10}",
             "steps": []}
+    return row
 
 
 def jobs_endpoint(run_id: int) -> str:
@@ -311,6 +312,60 @@ class RunnerNames(unittest.TestCase):
         self.assertEqual([row["runner_name"] for row in rows],
                          ["box-ci-qae-1-1700000000", "GitHub Actions 4"])
         self.assertEqual([row["run_id"] for row in rows], [1, 2])
+
+    def test_a_skipped_job_is_not_a_run(self):
+        completed = run(2, "completed")
+        api = BotAPI(completed=[completed], jobs={jobs_endpoint(2): [
+            {**job(2, "explore", "completed", "skipped", runner=None), "id": 21},
+            {**job(2, "explore", "completed", "success"), "id": 22},
+        ]})
+        rows = GitHubCollector(config(), api, clock=lambda: NOW)._bots(NOW)["roles"]["explorer"]["recent_7d"]
+        self.assertEqual([row["job_id"] for row in rows], [22])
+
+
+class RequiredWorkflow(unittest.TestCase):
+    def test_a_consumer_run_is_found_from_pulls_already_read_and_adds_no_calls(self):
+        consumer = "octocat/app"
+        calls = []
+
+        class API:
+            max_calls = 200
+
+            def items(self, requested, key=None):
+                calls.append(requested)
+                if requested == f"repos/{consumer}/actions/workflows?per_page=100":
+                    return []
+                raise AssertionError(requested)
+
+            def page_items(self, requested, key=None):
+                raise AssertionError(requested)
+
+        when = (NOW - timedelta(minutes=30)).isoformat()
+
+        def cleaned(number, status, conclusion, runner, category):
+            return {"id": number, "name": "explore", "status": status, "conclusion": conclusion,
+                    "category": category, "started_at": when,
+                    "completed_at": None if status == "in_progress" else when,
+                    "elapsed_seconds": 1, "html_url": "https://github.com/octocat/app", "runner_name": runner}
+
+        payloads = {consumer: {"pulls": [{"runs": [{
+            "id": 9, "attempt": 2, "path": "octocat/central/.github/workflows/shared.yml",
+            "jobs": [cleaned(1, "in_progress", None, "box-ci-qae-1-1700000000", "running"),
+                     cleaned(2, "completed", "success", "box-ci-qae-2-1700000000", "success"),
+                     cleaned(3, "completed", "skipped", None, "skipped")]}]}]}}
+        cfg = Config("octocat", (consumer,), {
+            "reviewer": BotDefinition(WORKFLOW, ("review",)),
+            "explorer": BotDefinition(WORKFLOW, ("explore",)),
+            "verifier": BotDefinition(WORKFLOW, ("verify",)),
+        }, None)
+        result = GitHubCollector(cfg, API(), clock=lambda: NOW)._bots(NOW, payloads, (consumer,))
+        role = result["roles"]["explorer"]
+        self.assertEqual(role["state"], "working")
+        self.assertEqual([row["runner_name"] for row in role["active"]], ["box-ci-qae-1-1700000000"])
+        self.assertEqual(role["active"][0]["attempt"], 2)
+        self.assertEqual([row["job_id"] for row in role["recent_7d"]], [2])
+        self.assertEqual([row["runner_name"] for row in role["recent_2h"]], ["box-ci-qae-2-1700000000"])
+        self.assertEqual(calls, [f"repos/{consumer}/actions/workflows?per_page=100"])
 
 
 if __name__ == "__main__":
