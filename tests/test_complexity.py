@@ -33,6 +33,14 @@ def worse(source):
     return source.replace("  for (const x of c) {\n", "  for (const x of c) {\n    if (x < 0) { if (a > b) { total -= 2; } }\n", 1)
 
 
+def fn(name, extra=0):
+    """TANGLED under another name, made worse `extra` times: costs 27, 32, 37, 42."""
+    source = TANGLED.replace("function tangled", "function " + name)
+    for _ in range(extra):
+        source = worse(source)
+    return source
+
+
 def branch_with(test, base_files, head_files):
     repo = make_repo(test, base_files)
     commit(repo, head_files, "change")
@@ -62,32 +70,74 @@ class CognitiveComplexity(unittest.TestCase):
         self.assertIn("1 at the base, 2 now", result.stdout)
 
     def test_an_over_limit_function_that_gets_worse_fails_though_the_count_is_the_same(self):
-        repo = branch_with(self, {"src/a.ts": TANGLED}, {"src/a.ts": worse(TANGLED)})
+        repo = branch_with(self, {"src/a.ts": fn("f1", 0)}, {"src/a.ts": fn("f1", 1)})
         result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1", "--format", "json")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         findings = json.loads(result.stdout)["findings"]
         self.assertEqual([(f["path"], f["line"]) for f in findings], [("src/a.ts", 1)])
-        self.assertIn("[27] at the base", findings[0]["message"])
-        self.assertRegex(findings[0]["message"], r"\[(2[89]|[3-9]\d)\] now")
+        self.assertIn("got worse: highest first, [27] at the base, [32] now", findings[0]["message"])
 
     def test_an_over_limit_function_that_improves_but_stays_over_passes(self):
-        repo = branch_with(self, {"src/a.ts": worse(TANGLED)}, {"src/a.ts": TANGLED})
+        # A guard against over-blocking: it passes on the count rule alone, and must keep passing.
+        repo = branch_with(self, {"src/a.ts": fn("f1", 1)}, {"src/a.ts": fn("f1", 0)})
         result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_one_function_improving_does_not_pay_for_another_getting_worse(self):
-        second = TANGLED.replace("function tangled", "function tangled2")
-        # Base: tangled is the worse one. Head: tangled improves, tangled2 gets worse than tangled ever was.
-        base = worse(TANGLED) + second
-        head = TANGLED + worse(worse(second))
-        repo = branch_with(self, {"src/a.ts": base}, {"src/a.ts": head})
+    def test_a_lower_ranked_function_that_gets_worse_fails(self):
+        # [37, 27] becomes [37, 32]: the highest cost is unchanged, the second rank rose.
+        repo = branch_with(self, {"src/a.ts": fn("f1", 2) + fn("f2", 0)}, {"src/a.ts": fn("f1", 2) + fn("f2", 1)})
         result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1", "--format", "json")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         findings = json.loads(result.stdout)["findings"]
-        # Only the function that is worse than the base's function at the same rank is reported.
-        self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]["line"], len(TANGLED.splitlines()) + 1)
-        self.assertIn("got worse", findings[0]["message"])
+        # Every over-limit function in the file is listed: the tools do not say which one changed.
+        self.assertEqual([f["line"] for f in findings], [1, len(fn("f1", 2).splitlines()) + 1])
+        self.assertIn("[37, 27] at the base, [37, 32] now", findings[0]["message"])
+
+    def test_a_higher_top_cost_fails_even_when_the_files_total_falls(self):
+        # [32, 32, 32] becomes [37]: two functions fixed, one worse than any was. An improvement elsewhere does not buy that.
+        base = fn("f1", 1) + fn("f2", 1) + fn("f3", 1)
+        head = fn("f1", 2) + SIMPLE
+        repo = branch_with(self, {"src/a.ts": base}, {"src/a.ts": head})
+        result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("[32, 32, 32] at the base, [37] now", result.stdout)
+
+    def test_costs_are_compared_sorted_so_file_order_never_matters(self):
+        # The cheaper function comes first in the file; touching the file, then swapping the two, both pass.
+        base = fn("f1", 0) + fn("f2", 2)
+        repo = branch_with(self, {"src/a.ts": base}, {"src/a.ts": base + SIMPLE})
+        self.assertEqual(gate("cognitive-complexity", repo, "--base-ref", "HEAD~1").returncode, 0)
+        commit(repo, {"src/a.ts": fn("f2", 2) + fn("f1", 0) + SIMPLE}, "swap")
+        result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_rank_not_name_is_compared_so_a_big_improvement_can_cover_a_smaller_worsening(self):
+        # [37, 27] becomes [32, 27]: f1 fell from 37 to 27 while f2 rose from 27 to 32. The file's costs are no
+        # worse at any rank, and the gate cannot tell the functions apart, so this passes. Documented as a limit.
+        repo = branch_with(self, {"src/a.ts": fn("f1", 2) + fn("f2", 0)}, {"src/a.ts": fn("f1", 0) + fn("f2", 1)})
+        result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_the_base_is_the_merge_base_not_the_base_branchs_tip(self):
+        # The branch only adds a simple function. Meanwhile main improves f1. Measured against main's tip the
+        # branch would look as if it had made f1 worse; measured against where it started, it changed nothing.
+        repo = make_repo(self, {"src/a.ts": fn("f1", 2) + fn("f2", 0)})
+        git(repo, "checkout", "-q", "-b", "feat/x")
+        commit(repo, {"src/a.ts": fn("f1", 2) + fn("f2", 0) + SIMPLE}, "touch")
+        git(repo, "checkout", "-q", "main")
+        commit(repo, {"src/a.ts": fn("f1", 0) + fn("f2", 0)}, "improve f1 on main")
+        git(repo, "checkout", "-q", "feat/x")
+        result = gate("cognitive-complexity", repo, "--base-ref", "main")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_cost_the_report_does_not_carry_is_cannot_run_never_zero(self):
+        sys.path.insert(0, str(ROOT / "gates"))
+        self.addCleanup(sys.path.remove, str(ROOT / "gates"))
+        import cognitive_complexity
+        from _contract import CannotRun
+        self.assertEqual(cognitive_complexity.cost("Refactor this function to reduce its Cognitive Complexity from 27 to the 15 allowed."), 27)
+        with self.assertRaises(CannotRun):
+            cognitive_complexity.cost("Function is too complex.")
 
     def test_untouched_files_and_tests_are_not_measured_unless_all(self):
         repo = branch_with(self, {"src/a.ts": TANGLED, "src/a.test.ts": TANGLED}, {"README.md": "y\n"})
