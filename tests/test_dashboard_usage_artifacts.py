@@ -184,6 +184,10 @@ class ArtifactCollection(unittest.TestCase):
         self.assertEqual(result['samples'], [])
         self.assertEqual(result['accounts'], [])
         self.assertEqual(self.reader.cache, {})
+        self.assertTrue(self.reader.lost_access)
+        self.elapsed, self.revoked = 602, False
+        self.reader.collect(NOW)
+        self.assertFalse(self.reader.lost_access)
 
     def filler(self, created, count=100):
         return [{'id': 1000 + index, 'name': 'build-output', 'expired': False, 'size_in_bytes': 10,
@@ -289,6 +293,7 @@ class ArtifactCollection(unittest.TestCase):
                 self.assertTrue(result['partial'])
                 self.assertEqual(result['samples'][0]['input_tokens'], 100)
                 self.assertEqual(len(self.reader.cache), 1)
+                self.assertFalse(self.reader.lost_access)
         self.elapsed, self.failure = 301 * 4, None
         self.assertFalse(self.reader.collect(NOW)['partial'])
         self.assertEqual(self.downloads, 1)

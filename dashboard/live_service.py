@@ -90,8 +90,9 @@ class LiveService(DashboardService):
             self._finish_usage(reader, generation, value, lost)
 
     def _finish_usage(self, reader, generation, value, lost):
-        """Publish and keep a result. Lost access removes the history; any other failure keeps the
-        last one, which its age then marks stale."""
+        """Publish and keep a result. Lost access removes the history, from disk too, whether the
+        scan failed on it or returned what little it could still read; any other failure keeps the
+        last result, which its age then marks stale."""
         with self._usage_lock:
             self._usage_running = False
             if generation != self._usage_generation:
@@ -99,13 +100,20 @@ class LiveService(DashboardService):
             self._usage_next = self.monotonic() + USAGE_REFRESH_SECONDS
             if lost:
                 self._usage_result, self.usage_reader = None, UsageArtifacts(self.config)
-                if self.store is not None:
-                    self.store.clear(*USAGE_DOCUMENTS)
             elif value is not None:
                 self._usage_result = value
-                if self.store is not None:
-                    for name, document in usage_state(reader, value).items():
-                        self.store.save(name, document)
+            if self.store is None:
+                return
+            if lost or reader.lost_access:
+                self.store.clear(*USAGE_DOCUMENTS)
+            elif value is not None:
+                for name, document in usage_state(reader, value).items():
+                    self.store.save(name, document)
+
+    def _usage_due(self, revoked):
+        """Whether a token-history read should start now. The caller holds the usage lock."""
+        capture_ci_usage = not self.config.agents or any(agent.workflow_role for agent in self.config.agents)
+        return capture_ci_usage and not revoked and not self._usage_running and self.monotonic() >= self._usage_next
 
     @forgets_kept_state
     def snapshot(self, **kwargs):
@@ -119,8 +127,7 @@ class LiveService(DashboardService):
                 # collecting. Its old generation cannot publish after revocation.
                 self._reset_usage()
             self._usage_revoked = revoked
-            capture_ci_usage = listed and (not self.config.agents or any(agent.workflow_role for agent in self.config.agents))
-            if capture_ci_usage and not revoked and not self._usage_running and self.monotonic() >= self._usage_next:
+            if listed and self._usage_due(revoked):
                 self._usage_running = True
                 threading.Thread(target=self._refresh_usage,
                                  args=(self.usage_reader, self._usage_generation), daemon=True).start()

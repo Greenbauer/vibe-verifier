@@ -159,6 +159,8 @@ class UsageArtifacts:
         self.downloader, self.clock = downloader, clock
         self.cache, self.result, self.updated = {}, None, float("-inf")
         self._names = None
+        # True when the last scan met lost access: what it returned must not be kept on disk.
+        self.lost_access = False
 
     def _budget_left(self):
         limit = getattr(self.api, "max_calls", None)
@@ -213,6 +215,7 @@ class UsageArtifacts:
         if self.result is not None and self.clock() - self.updated < 300:
             return self.result
         self.api.begin()
+        self.lost_access = False
         cutoff = now - timedelta(days=7)
         records, hard, seen, listed = [], False, set(), set()
         listing_complete, bounds, unproven = True, [], False
@@ -268,7 +271,7 @@ class UsageArtifacts:
             hard = True
             if error.code in PRIVATE_FAILURES:
                 # Failed access invalidates prior private usage, including cached history.
-                self.cache, records, listed = {}, [], set()
+                self.cache, records, listed, self.lost_access = {}, [], set(), True
         # A repository this pass did not reach (a spent call budget, a rate limit, a timeout) keeps what
         # earlier passes read, inside the window; the next pass reads it again. A listed repository
         # keeps only what it still lists.

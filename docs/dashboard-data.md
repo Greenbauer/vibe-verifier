@@ -60,7 +60,7 @@ Without one it keeps nothing, as before. `dashboard/state_store.py` owns the fil
 | `reading` | the last GitHub reading the page was served: repositories, pull requests, checks, bot history | after every pass that did not meet lost access |
 | `jobs` | completed job lists, by repository, run and attempt, each until its run is seven days old | with `reading` |
 | `responses` | every GitHub answer that carries an ETag and was used in the last two passes | with `reading` |
-| `usage` | the last token history and every usage record read | after every usage scan that returned |
+| `usage` | the last token history and every usage record read | after every usage scan that returned and did not meet lost access |
 | `usage-responses` | the usage reader's ETag answers (artifact listings) | with `usage` |
 
 Each document is one file, `<directory>/<owner>/<document>.json.z`: zlib-compressed JSON with the

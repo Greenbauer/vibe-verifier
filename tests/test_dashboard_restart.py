@@ -323,6 +323,21 @@ class UsageAcrossARestart(RestartCase):
         self.assertIsNot(service.usage_reader, reader)
         self.assertEqual(self.files(), ["reading.json.z"])
 
+    def test_a_scan_that_meets_lost_access_on_a_listing_keeps_nothing_on_disk(self):
+        service, _ = self.live(reading())
+        self.read_usage(service, copy.deepcopy(USAGE))
+        self.assertEqual(self.files(), ["usage-responses.json.z", "usage.json.z"])
+        emptied = {**copy.deepcopy(USAGE), "accounts": [], "samples": [], "partial": True}
+
+        def scan():
+            service.usage_reader.lost_access = True
+            return emptied
+
+        service._usage_running = True
+        with patch.object(service.usage_reader, "collect", side_effect=scan):
+            service._refresh_usage()
+        self.assertEqual((self.files(), service._usage_result["samples"], service._usage_result["partial"]), ([], [], True))
+
     def test_lost_access_seen_by_a_pass_deletes_the_token_history_and_stops_a_read_in_flight(self):
         service, collector = self.live(reading(), ApiError("forbidden"))
         self.read_github(service, collector)
