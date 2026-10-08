@@ -4,9 +4,10 @@ The detail budget does not gate this read. GitHub priced the search below at 1 p
 page of 100 on 2026-10-08 (`rateLimit.cost`), against the 5,000 point hour. The detail query,
 a page of 50 with review threads and commits, cost 61 points on the same day.
 
-A beat asks again on that interval while nobody is refreshing. One call an interval is
-20 calls and 20 points an hour when the page costs 1. A second page, for more than 100 open
-pull requests, doubles that. Either way it is under one percent of the hourly point budget.
+A beat asks again while nobody is refreshing, once the last head sample is 150 seconds old.
+One call on that period is 24 calls and 24 points an hour when the page costs 1. A second page,
+for more than 100 open pull requests, doubles that. Either way it is under one percent of the
+hourly point budget. The beat reads early enough that the sample on screen stays under 180 seconds.
 """
 
 from __future__ import annotations
@@ -15,11 +16,13 @@ import copy
 from datetime import datetime
 
 from .gh_api import ApiError
-from .util import iso_time, parse_time
+from .util import elapsed_seconds, github_url, iso_time, parse_time
 
-# How often the head beat runs, and how long a check reading may stay green.
+# How long a check reading may stay green. The beat wakes often and reads before that elapses.
 BEAT_SECONDS = 180
 FRESH_SECONDS = BEAT_SECONDS
+HEAD_TICK_SECONDS = 15
+HEAD_PERIOD_SECONDS = BEAT_SECONDS - (2 * HEAD_TICK_SECONDS)
 PAGE = 100
 PAGES = 2
 _KINDS = {"changed": 0, "new": 1, "kept": 2}
@@ -33,6 +36,11 @@ query($search: String!, $count: Int!, $cursor: String) {
     nodes {
       ... on PullRequest {
         number
+        title
+        isDraft
+        url
+        createdAt
+        author { login }
         headRefOid
         mergeStateStatus
         mergeable
@@ -59,8 +67,16 @@ def search_text(owner: str, kind: str) -> str:
 
 
 def calls_per_hour(calls: int) -> int:
-    """How many of these calls a quiet hour makes, at one beat per interval."""
-    return calls * (3600 // BEAT_SECONDS)
+    """How many of these calls a quiet hour makes, at one beat per head period."""
+    return calls * (3600 // HEAD_PERIOD_SECONDS)
+
+
+def heads_due(github: dict | None, now: datetime, since_refresh: float) -> bool:
+    """Due from the head sample. A snapshot with no sample yet waits out a full beat after refresh."""
+    sampled = parse_time(github.get("heads_sampled_at")) if isinstance(github, dict) else None
+    if sampled is None:
+        return since_refresh >= BEAT_SECONDS
+    return (now - sampled).total_seconds() >= HEAD_PERIOD_SECONDS
 
 
 def head_key(repository: object, number: object) -> tuple | None:
@@ -108,8 +124,13 @@ def _one_head(node: dict) -> tuple | None:
     state = rollup.get("state") if isinstance(rollup, dict) else None
     if state is not None and not isinstance(state, str):
         return None
+    author = node.get("author")
+    login = author.get("login") if isinstance(author, dict) else None
     return key, {"sha": sha, "rollup": state, "merge_state": node.get("mergeStateStatus"),
-                 "mergeable": node.get("mergeable"), "review": node.get("reviewDecision")}
+                 "mergeable": node.get("mergeable"), "review": node.get("reviewDecision"),
+                 "repository": name, "title": node.get("title"), "author": login,
+                 "draft": node.get("isDraft") is True, "url": node.get("url"),
+                 "created_at": node.get("createdAt")}
 
 
 def read_head_page(payload: object) -> tuple[dict, str | None, int] | None:
@@ -147,8 +168,8 @@ def _graphql(api, query: str, variables: dict) -> dict:
     return graphql(query, variables, budgeted=False)
 
 
-def load_heads(api, owner: str, kind: str, count: int) -> dict:
-    """Every open pull request's head. Raises ApiError when a page is unusable."""
+def load_heads(api, owner: str, kind: str, count: int) -> tuple[dict, bool]:
+    """Every open pull request's head, and whether the search finished. Raises ApiError when a page is unusable."""
     found: dict = {}
     cursor = None
     page_size = min(PAGE, max(count, 1))
@@ -163,9 +184,9 @@ def load_heads(api, owner: str, kind: str, count: int) -> dict:
         api.add_points(page[2])
         cursor = page[1]
         if not cursor:
-            return found
+            return found, True
         page_size = PAGE
-    return found
+    return found, False
 
 
 def known_kind(collector) -> str:
@@ -197,21 +218,22 @@ def read_cached_heads(collector, github: dict) -> dict:
     before_calls = getattr(collector.api, "head_calls", 0)
     before_points = getattr(collector.api, "graphql_points", 0)
     count = sum(len(row.get("pulls") or []) for row in github.get("repositories") or [])
-    sample_heads(collector, count)
+    sample_heads(collector, max(count, 1))
     if not collector._heads_ok:
         raise ApiError("unavailable")
-    return {"heads": collector._heads,
+    return {"heads": collector._heads, "complete": bool(getattr(collector, "_heads_complete", False)),
             "calls": getattr(collector.api, "head_calls", 0) - before_calls,
             "points": getattr(collector.api, "graphql_points", 0) - before_points}
 
 
 def sample_heads(collector, count: int) -> None:
     """Read heads when count is positive. No GraphQL client leaves the flag false."""
-    collector._heads, collector._heads_ok = {}, False
+    collector._heads, collector._heads_ok, collector._heads_complete = {}, False, False
     if count < 1:
-        collector._heads_ok = True
+        collector._heads_ok, collector._heads_complete = True, True
         return
-    collector._heads = load_heads(collector.api, collector.config.owner, known_kind(collector), count)
+    collector._heads, collector._heads_complete = load_heads(
+        collector.api, collector.config.owner, known_kind(collector), count)
     collector._heads_ok = True
     mark_urgent(collector, collector._heads)
 
@@ -339,11 +361,77 @@ def reconcile_pull(pull: dict, head: dict | None, now: datetime) -> dict:
     return pull
 
 
-def apply_head_reading(github: dict, heads: dict, now: datetime, calls: int, points: int) -> dict:
-    for row in github.get("repositories") or []:
+def unseen_pull(repository: str, number: int, head: dict, now: datetime, subscription, owner: str) -> dict:
+    """A pull request the cheap pass found and this process has not detailed."""
+    from .github import CHECKS_NOT_LOADED
+
+    created = head.get("created_at") if isinstance(head.get("created_at"), str) else None
+    pull = {"repository": repository, "number": number,
+            "title": str(head.get("title") or "Untitled pull request")[:300],
+            "author": str(head.get("author") or "unknown")[:100], "created_at": created,
+            "age_seconds": elapsed_seconds(created, None, now), "head_sha": head.get("sha"),
+            "draft": head.get("draft") is True, "html_url": github_url(head.get("url"), owner),
+            "subscription": subscription if isinstance(subscription, str) else "unknown",
+            "merge_ready": False, "evidence_available": False, "attention": True,
+            "attention_reason": CHECKS_NOT_LOADED, "head_changed": False, "checks": [],
+            "statuses": [], "expected": [], "runs": [], "source_error": "request_budget_exhausted"}
+    overall = rollup_category(head)
+    if overall:
+        pull["rollup_category"] = overall
+    return pull
+
+
+def _open_pulls(pulls, heads: dict, repository, now: datetime) -> tuple[list, set]:
+    kept, seen = [], set()
+    for pull in pulls:
+        if not isinstance(pull, dict):
+            continue
+        key = head_key(repository, pull.get("number"))
+        if key is None or key not in heads:
+            continue
+        kept.append(reconcile_pull(pull, heads.get(key), now))
+        seen.add(key)
+    return kept, seen
+
+
+def _repository_row(github: dict, rows: list, repository: str) -> dict:
+    folded = repository.casefold()
+    for row in rows:
+        name = row.get("repository")
+        if isinstance(name, str) and name.casefold() == folded:
+            return row
+    row = {"repository": repository, "subscription": "unknown", "pulls": [], "errors": [], "stale": True}
+    github.setdefault("repositories", []).append(row)
+    rows.append(row)
+    return row
+
+
+def _add_unseen(github: dict, rows: list, heads: dict, seen: set, now: datetime) -> None:
+    owner = github.get("owner") if isinstance(github.get("owner"), str) else ""
+    for key, head in heads.items():
+        if key in seen or not isinstance(head, dict) or not isinstance(head.get("repository"), str):
+            continue
+        row = _repository_row(github, rows, head["repository"])
+        row.setdefault("pulls", []).append(
+            unseen_pull(head["repository"], key[1], head, now, row.get("subscription"), owner))
+
+
+def apply_head_reading(github: dict, heads: dict, now: datetime, calls: int, points: int,
+                       complete: bool = False) -> dict:
+    seen: set = set()
+    rows = [row for row in github.get("repositories") or [] if isinstance(row, dict)]
+    for row in rows:
         repo = row.get("repository")
-        row["pulls"] = [reconcile_pull(pull, heads.get(head_key(repo, pull.get("number"))), now)
-                        for pull in row.get("pulls") or [] if isinstance(pull, dict)]
+        pulls = row.get("pulls") or []
+        if complete:
+            kept, found = _open_pulls(pulls, heads, repo, now)
+            row["pulls"] = kept
+            seen.update(found)
+        else:
+            row["pulls"] = [reconcile_pull(pull, heads.get(head_key(repo, pull.get("number"))), now)
+                            for pull in pulls if isinstance(pull, dict)]
+    if complete:
+        _add_unseen(github, rows, heads, seen, now)
     reading = {"sampled_at": iso_time(now), "calls": calls, "points": points,
                "beat_seconds": BEAT_SECONDS, "calls_per_hour": calls_per_hour(calls),
                "points_per_hour": calls_per_hour(points)}

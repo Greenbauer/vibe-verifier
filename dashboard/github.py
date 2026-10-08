@@ -66,6 +66,7 @@ class GitHubCollector(OwnerSet):
         self._urgent: set[tuple] = set()
         self._heads: dict = {}
         self._heads_ok = False
+        self._heads_complete = False
         self._read_now: set[tuple] = set()
 
     def clear_private_cache(self) -> None:
@@ -80,6 +81,7 @@ class GitHubCollector(OwnerSet):
         self._urgent.clear()
         self._heads = {}
         self._heads_ok = False
+        self._heads_complete = False
         self._read_now = set()
         self._listing = None
         self._kind = None

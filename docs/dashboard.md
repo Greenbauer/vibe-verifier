@@ -493,8 +493,10 @@ The server refreshes GitHub and usage sources in the background; the page retain
 during refresh. The page asks for new data every 30 seconds while it is visible; a hidden
 tab skips those requests, so it spends no GitHub calls, and loads once when shown again. The
 first paint after a quiet spell is the cached rows, already not green where the check reading
-is older than three minutes. It does not wait for GitHub. A beat every three minutes keeps
-heads current while the tab is hidden, without re-reading check detail. If that
+is older than three minutes. It does not wait for GitHub. A beat wakes every 15 seconds and
+reads heads when the last head sample is 150 seconds old, so that sample stays under three
+minutes while the tab is hidden. It does not re-read check detail. A pull request that opened
+since the last full pass appears from that reading, with checks not loaded yet. If a refresh
 request fails, the page keeps the last snapshot and says the refresh failed. Numeric usage artifacts are read
 every five minutes through the current GitHub credentials, verified against their run/attempt/head
 and configured workflow, and parsed without extracting files or copying model content. Each scan
