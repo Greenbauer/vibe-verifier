@@ -175,7 +175,7 @@ function el(tag,attrs={},...children){
 const text=node=>typeof node==='string'?node:(node.children||[]).map(text).join(' ');
 const snapshot={agents:{rows:[{id:'ci-swe',name:'SWE',role:'swe'},{id:'ci-qae',name:'QAE',role:'qae'},{id:'qae-2',name:'QAE2',role:'qae'}]}};
 const at=hours=>new Date(Date.now()-hours*3600000).toISOString();
-const usage={sampled_at:new Date().toISOString(),accounts:[],pace:{delta_points:-11.6},
+const usage={sampled_at:new Date().toISOString(),accounts:[],pace_points:-11.6,
   samples:[{account:'a',bot:'ci-swe',timestamp:at(2),input_tokens:40,output_tokens:0},
            {account:'a',bot:'ci-qae',timestamp:at(3),input_tokens:900,output_tokens:0}]};
 const build=new Function('el','BOT_META','VVCharts','snapshot','paceHeader',SOURCE+'\nreturn usageCharts;');
@@ -183,10 +183,10 @@ const charts=build(el,BOT_META,VVCharts,snapshot,paceHeader);
 const section=charts(usage);
 const cards=section.children[2].children;
 const head=section=>section.children[2].children[3].children[0].children[0];
-const header=delta=>text(head(charts({...usage,pace:{delta_points:delta}})));
+const header=delta=>text(head(charts({...usage,pace_points:delta})));
 console.log(JSON.stringify({drawn,names:cards.map(card=>card.children[0].children[0].children[0]),
   qae2:text(cards[2]),allClass:cards[3].attrs.class,parts:section.children.map(child=>child.tag),caption:text(section.children[1]),
-  header:text(head(section)),headerTitle:head(section).attrs.title,missingHeader:header(null),noPace:text(head(charts({...usage,pace:undefined}))),
+  header:text(head(section)),headerTitle:head(section).attrs.title,missingHeader:header(null),noPace:header(undefined),
   ahead:header(21.2),even:header(0.6),swe:text(cards[0].children[0].children[0])}));
 """.replace("SOURCE", json.dumps(source)))
         self.assertEqual(result["names"], ["SWE", "QAE", "QAE2", "All bots · 12% under pace"])
@@ -230,7 +230,7 @@ const samples=[];
 for (const bot of ['ci-qae-1','ci-qae-2','ci-qae-3']) {
   for (const hours of [31,30,3,2]) samples.push({account:'a',bot,timestamp:at(hours),input_tokens:40,output_tokens:0});
 }
-const usage={sampled_at:new Date().toISOString(),accounts:[],pace:{delta_points:-11.6},samples};
+const usage={sampled_at:new Date().toISOString(),accounts:[],pace_points:-11.6,samples};
 const build=new Function('el','BOT_META','VVCharts','snapshot','paceHeader',SOURCE+'\nreturn usageCharts;');
 const cards=build(el,BOT_META,VVCharts,snapshot,paceHeader)(usage).children[2].children;
 const usual=card=>walk(card).some(node=>node.attrs&&node.attrs.class==='burn-usual');
@@ -264,7 +264,7 @@ const usage={available:true,sampled_at:at(0),samples:[
   {account:'a',bot:'ci-qae-1',timestamp:at(1),input_tokens:100,output_tokens:0},
   {account:'a',bot:'explorer',timestamp:at(1),input_tokens:40,output_tokens:7},
   {account:'a',bot:'explorer',timestamp:at(48),input_tokens:9000,output_tokens:0}],
-  pace:{delta_points:null}};
+  pace_points:null};
 const build=new Function('el','BOT_META','VVCharts','snapshot','paceHeader',SOURCE+'\nreturn usageCharts;');
 const cards=build(el,BOT_META,VVCharts,snapshot,paceHeader)(usage).children[2].children;
 const all=cards[3];

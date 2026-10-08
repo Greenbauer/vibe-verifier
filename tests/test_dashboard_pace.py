@@ -1,7 +1,9 @@
 """The paced plan window: which one it is, when it began, and its fill against an even burn."""
 import unittest
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
+from dashboard.agents import agent_view
 from dashboard.pace import plan_pace, plan_window_start
 from dashboard.usage_artifacts import apply_plan_window
 
@@ -33,11 +35,11 @@ def tokens(hours_ago, count):
 
 
 class Pace(unittest.TestCase):
-    def test_delta_is_fill_minus_the_elapsed_share_of_the_window(self):
+    def test_pace_is_fill_minus_the_elapsed_share_of_the_window_in_points(self):
         # 72 of 168 hours elapsed is 42.9% of the window; 40% used is 2.9 points under an even burn.
-        self.assertAlmostEqual(plan_pace(usage(), NOW)["delta_points"], 40 - EVEN)
-        ahead = plan_pace(usage([window(used_percent=62.0, resets_at=iso(NOW + timedelta(hours=126)))]), NOW)
-        self.assertAlmostEqual(ahead["delta_points"], 62 - 25)
+        self.assertAlmostEqual(plan_pace(usage(), NOW), 40 - EVEN)
+        ahead = usage([window(used_percent=62.0, resets_at=iso(NOW + timedelta(hours=126)))])
+        self.assertAlmostEqual(plan_pace(ahead, NOW), 62 - 25)
 
     def test_the_pace_does_not_move_with_how_much_the_bots_used(self):
         # The plan is a percent with a reset. Bot tokens once sized it: 107m tokens gave one line and
@@ -45,14 +47,21 @@ class Pace(unittest.TestCase):
         quiet = plan_pace(usage(samples=[tokens(10, 107_000_000)]), NOW)
         busy = plan_pace(usage(samples=[tokens(10, 227_000_000)], stale=True, history_stale=True, partial=True), NOW)
         self.assertEqual(quiet, busy)
-        self.assertEqual(set(quiet), {"delta_points"})  # a percent against the window, and no figure in tokens
-        self.assertAlmostEqual(quiet["delta_points"], 40 - EVEN)
+        self.assertAlmostEqual(quiet, 40 - EVEN)
+
+    def test_the_page_is_given_points_and_nothing_in_tokens(self):
+        view = agent_view(SimpleNamespace(agents=()), {}, {"available": True, "usage": usage(
+            samples=[tokens(10, 107_000_000)])}, NOW)["usage"]
+        self.assertAlmostEqual(view["pace_points"], 40 - EVEN)
+        # `pace` was the token line's object. A page loaded before it went finds none and says so.
+        self.assertNotIn("pace", view)
+        self.assertIsNone(agent_view(SimpleNamespace(agents=()), {}, {"available": False}, NOW)["usage"]["pace_points"])
 
     def test_the_longest_window_is_paced(self):
         five_hours = window(name="5h", used_percent=90.0, resets_at=iso(NOW + timedelta(hours=1)), window_minutes=300)
-        self.assertAlmostEqual(plan_pace(usage([five_hours, window()]), NOW)["delta_points"], 40 - EVEN)
+        self.assertAlmostEqual(plan_pace(usage([five_hours, window()]), NOW), 40 - EVEN)
 
-    def test_no_window_to_pace_has_no_delta(self):
+    def test_no_window_to_pace_has_no_pace(self):
         two_plans = usage()
         two_plans["accounts"].append({"id": "subscription-1", "label": "Second plan", "quota_windows": [window()]})
         cases = {"two plans": two_plans,
@@ -63,7 +72,7 @@ class Pace(unittest.TestCase):
                  "unavailable": {"available": False}}
         for name, value in cases.items():
             with self.subTest(name):
-                self.assertEqual(plan_pace(value, NOW), {"delta_points": None})
+                self.assertIsNone(plan_pace(value, NOW))
 
 
 class WindowStart(unittest.TestCase):

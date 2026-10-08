@@ -488,7 +488,7 @@ global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
 new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel','agedState',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function coverage/)[1])(el,BOT_META,snapshot,{failureBot:null},s=>el('span',{},s),()=>{},v=>v,{querySelector:()=>strip},recent,agedState);
 global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
 const samples=rows.flatMap(row=>[31,30,3,2].map(h=>({account:'a',bot:row.id,timestamp:at(h),input_tokens:40,output_tokens:0})));
-const usage={sampled_at:at(0),accounts:[],samples,pace:{delta_points:-4}};
+const usage={sampled_at:at(0),accounts:[],samples,pace_points:-4};
 const src=app.match(/\n(  function usageCharts\([\s\S]*?)\n  function renderUsage\(/)[1];
 const cards=new Function('el','BOT_META','VVCharts','snapshot','paceHeader',src+'\nreturn usageCharts;')(el,BOT_META,VVCharts,snapshot,paceHeader)(usage).children[2].children;
 const names=n=>walk(n).filter(i=>i.attrs&&i.attrs.class==='bot-name').map(text);

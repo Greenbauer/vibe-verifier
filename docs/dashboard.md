@@ -324,7 +324,7 @@ shown in the bar's hover and draws no line either. The pace through time is the
 
 The All bots header states one plan's fill against an even burn of its window, in points: used
 percent minus the share of the window elapsed, as `12% under pace`, `21% ahead of pace` or
-`on pace` (within one point). The server works it out once (`delta_points`, `dashboard/pace.py`).
+`on pace` (within one point). The server works it out once (`usage.pace_points`, `dashboard/pace.py`).
 When the plan has several windows (say 5-hour and 7-day), the longest one is paced. The header says
 nothing when no single plan reports a window length, or when the window has already reset. No
 price is inferred.

@@ -1,10 +1,10 @@
 """The plan window the page paces, and how far its fill sits from an even burn.
 
 The even pace is in the plan's own unit: 100% over the window's length, the tick on the usage bar.
-`delta_points` is the used percent minus the share of the window already elapsed. It needs the
-window's length and reset and nothing about the bots. A provider reports a plan as a percent used,
-never as a size in tokens, so there is no pace in tokens: a size worked out from the bots' tokens
-follows how much the bots use, on a plan that other use shares.
+`plan_pace` is the used percent minus the share of the window already elapsed, in points. It needs
+the window's length and reset and nothing about the bots. A provider reports a plan as a percent
+used, never as a size in tokens, so there is no pace in tokens: a size worked out from the bots'
+tokens follows how much the bots use, on a plan that other use shares.
 """
 from __future__ import annotations
 
@@ -29,13 +29,14 @@ def plan_window_start(usage: dict) -> datetime | None:
     return reset - timedelta(minutes=window["window_minutes"]) if reset else None
 
 
-def plan_pace(usage: dict, now: datetime) -> dict:
-    """`delta_points` for the paced window: None when there is none, or it has already reset."""
+def plan_pace(usage: dict, now: datetime) -> float | None:
+    """Points the paced window's fill sits ahead of an even burn. None when there is no such window,
+    or it has already reset."""
     window = _paced_window(usage) if usage.get("available") else None
     if window is None:
-        return {"delta_points": None}
+        return None
     remaining = (parse_time(window["resets_at"]) - now).total_seconds()
     elapsed = 1 - remaining / (window["window_minutes"] * 60)
     if remaining <= 0 or not 0 < elapsed <= 1:
-        return {"delta_points": None}
-    return {"delta_points": min(window["used_percent"], 100) - elapsed * 100}
+        return None
+    return min(window["used_percent"], 100) - elapsed * 100

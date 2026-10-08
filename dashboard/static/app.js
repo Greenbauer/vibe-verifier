@@ -337,7 +337,7 @@
     const loose = samples.filter(sample => !(snapshot.agents?.rows || []).some(agent => agent.id === sample.bot));
     const looseBurn = VVCharts.hourlyBurn(loose, now, through);
     const burns = [...observed, looseBurn].filter(Boolean);
-    const all = { name: "All bots", color: "rgba(255,255,255,0.6)", all: true, looseTokens: looseBurn ? looseBurn.last24h.reduce((total, value) => total + (value || 0), 0) : 0, burn: burns.length ? VVCharts.sumBurns(burns) : null, ...paceHeader(usage.pace?.delta_points ?? null) };
+    const all = { name: "All bots", color: "rgba(255,255,255,0.6)", all: true, looseTokens: looseBurn ? looseBurn.last24h.reduce((total, value) => total + (value || 0), 0) : 0, burn: burns.length ? VVCharts.sumBurns(burns) : null, ...paceHeader(usage.pace_points ?? null) };
     const shared = VVCharts.ceiling(observed);
     return el("section", { class: "panel usage-charts" }, el("h2", {}, "Token burn pattern"),
       el("p", { class: "muted" }, "Tokens each bot used, hour by hour. Solid: last 24 hours. Dashed: a usual day."),
