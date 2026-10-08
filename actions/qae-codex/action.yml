@@ -95,7 +95,10 @@ runs:
           # starts the Google Chrome channel, which only some runners carry; where it is missing every
           # browser tool fails ("Chromium distribution 'chrome' is not found") and no session log is
           # written.
-          args="\"$MCP\",\"--browser\",\"chromium\",\"--headless\",\"--isolated\",\"--output-dir\",\"$ARTIFACTS\",\"--save-session\",\"--viewport-size\",\"1280x800\""
+          # --init-page: actions/qae-browser's page record, from the same catalog commit as this
+          # action. It writes which page logged each console error to $ARTIFACTS/console-pages.jsonl,
+          # so the qae-artifacts gate can tell a third-party page's own error from the site's.
+          args="\"$MCP\",\"--browser\",\"chromium\",\"--headless\",\"--isolated\",\"--output-dir\",\"$ARTIFACTS\",\"--save-session\",\"--viewport-size\",\"1280x800\",\"--init-page\",\"$GITHUB_ACTION_PATH/../qae-browser/console-pages.js\""
           if [ -n "$STORAGE_STATE" ]; then
             # playwright-mcp's --storage-state loads the file into the isolated browser context, and
             # the `secrets` of its --config file replace each listed value with <secret>NAME</secret>

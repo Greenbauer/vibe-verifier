@@ -86,7 +86,7 @@ cat "%(temp)s/report-$n"
         result, calls, output = self.run_action()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, ["playwright install chromium", "playwright install-deps --dry-run chromium"])
-        self.assertRegex(output, r"^mcp=.*/node_modules/@playwright/mcp/cli\.js\n$")
+        self.assertRegex(output, r"^mcp=.*/node_modules/@playwright/mcp/cli\.js\nconsole-pages=.*/actions/qae-browser/console-pages\.js\n$")
 
     def test_where_sudo_needs_no_password_only_the_missing_packages_are_installed(self):
         result, calls, output = self.run_action(reports=(FONTS,))
@@ -112,7 +112,7 @@ cat "%(temp)s/report-$n"
         result, calls, output = self.run_action(sudo_exit=1, reports=(FONTS,))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, ["playwright install chromium"])
-        self.assertRegex(output, r"^mcp=.*/node_modules/@playwright/mcp/cli\.js\n$")
+        self.assertRegex(output, r"^mcp=.*/node_modules/@playwright/mcp/cli\.js\nconsole-pages=.*/actions/qae-browser/console-pages\.js\n$")
 
     def test_a_fetch_that_runs_out_of_time_is_tried_once_more_from_the_next_mirror(self):
         # A hosted runner's first mirror served 90 kB/s for minutes (a consumer's runs, 2026-10-07).

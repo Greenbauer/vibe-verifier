@@ -4,6 +4,9 @@ outputs:
   mcp:
     description: The playwright-mcp entry point, for the explorer's --mcp-config.
     value: ${{ steps.install.outputs.mcp }}
+  console-pages:
+    description: The harness's page record, for playwright-mcp's --init-page. It writes which page logged each console error to console-pages.jsonl in the output directory, which the qae-artifacts gate reads.
+    value: ${{ steps.install.outputs.console-pages }}
 runs:
   using: composite
   steps:
@@ -16,6 +19,7 @@ runs:
         # them from the registry on each run, in the job that holds the account-level token.
         dir=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" tool qae-browser)
         echo "mcp=$dir/node_modules/@playwright/mcp/cli.js" >> "$GITHUB_OUTPUT"
+        echo "console-pages=$GITHUB_ACTION_PATH/console-pages.js" >> "$GITHUB_OUTPUT"
         # chromium comes from the Playwright build the lockfile pins, so the browser matches the mcp.
         playwright="$dir/node_modules/.bin/playwright"
         "$playwright" install chromium

@@ -12,8 +12,9 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
     --allow-console REGEX    console errors matching this are expected (repeatable)
     --allow-request REGEX    requests whose URL matches this are not judged (repeatable)
     --site URL-PREFIX        judge only this origin: a request elsewhere is skipped, and so is
-                             Chromium's "Failed to load resource" line for that other host
-                             (default: every request and every resource error)
+                             Chromium's "Failed to load resource" line for that other host, and
+                             a console error a page elsewhere logged (see 2)
+                             (default: every request and every console error)
     --site-file FILE         the same, read from a file the workflow wrote: the http(s) URL the
                              explore job declared, so a preview's URL reaches the gate without a
                              manifest edit; a missing, empty or malformed file cannot run. A file
@@ -38,6 +39,16 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    error still is. A site whose API answers on another host declares that host too, or a 401 or 500
    from it reaches neither this check nor the network one (a signed-out page was once caught only by
    this line).
+   An error a page outside the site logged is not judged either: a hosted page a link opened that
+   fails to reach its own analytics is not the site's failure. A console line names the script or
+   resource the error is about, never the page that logged it, so the page is read from the record
+   the harness keeps beside the console logs (`console-pages.jsonl`, written by
+   actions/qae-browser/console-pages.js: the page's URL and the digest of the error's line). Every
+   page that logged the line must be an http(s) page outside the declared site and its further
+   origins, and the line must not be about a URL of the site. An error with no record is judged, so
+   a run without the record is judged as before, and so is one a page of the site logged, whatever
+   it is about: the site's page failing to load a third-party script may be the site's own doing
+   (its content security policy, a wrong URL).
 3. The session log exists (`session-*/session.md`, written by `--save-session`) and shows the
    browser was driven: at least one `browser_navigate` call.
 4. The network record exists and is clean: at least one `browser_network_requests` result in the
@@ -77,6 +88,8 @@ http(s) URLs: nothing was adjudicated.
 """
 import argparse
 import glob
+import hashlib
+import json
 import os
 import re
 import urllib.parse
@@ -86,7 +99,9 @@ from _contract import CannotRun, Finding, run_gate
 
 GATE = "qae-artifacts"
 STEP_LINE = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):", re.IGNORECASE)
-CONSOLE_ERROR = re.compile(r"^\[\s*[0-9]+ms\]\s+\[ERROR\]\s+(?P<message>.*)$")
+# The offset is negative for what a tab logged before playwright-mcp opened its log: a tab a link
+# opened is already loading by then (`[      -4ms] [ERROR] ...`, from the pinned build, 2026-10-08).
+CONSOLE_ERROR = re.compile(r"^\[\s*-?[0-9]+ms\]\s+\[ERROR\]\s+(?P<message>.*)$")
 TOOL_CALL = re.compile(r"^### Tool call: (?P<name>\S+)\s*$", re.MULTILINE)
 # `3. [GET] http://host/path => [404] Not Found` or `=> [FAILED] net::ERR_...`, as the tool renders it;
 # inside a JSON result the newline is escaped, so the line is matched without anchors.
@@ -101,6 +116,8 @@ REFUSABLE = ("400", "401", "403", "404", "409", "422")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 # Chromium's line for a response it refused to load, as playwright-mcp saves it: `<text> @ <url>:<line>`.
 RESOURCE_ERROR = re.compile(r"^Failed to load resource: the server responded with a status of (?P<status>[0-9]{3})\b.* @ (?P<url>\S+):[0-9]+$")
+# Where any console line says its error is: the script or resource, as ` @ <url>:<line>` at its end.
+LOCATION = re.compile(r" @ (?P<url>\S*):[0-9]+$")
 
 
 def read(path):
@@ -231,8 +248,31 @@ def resource_error_is_excused(message, expected, sites):
     return not judged(url, sites) or (refused.group("status"), exact(url)) in expected
 
 
+def logging_pages(root):
+    """{digest of a console error's line: the URLs of the pages that logged it}, from the record the
+    harness keeps (actions/qae-browser/console-pages.js). A run without the record names no page."""
+    pages, path = {}, os.path.join(root, "console-pages.jsonl")
+    for line in read(path).splitlines() if os.path.isfile(path) else ():
+        try:
+            entry = json.loads(line)
+            pages.setdefault(entry["sha256"], []).append(str(entry["page"]))
+        except (ValueError, KeyError, TypeError):
+            continue  # a line cut short names no page, so its error is judged
+    return pages
+
+
+def logged_off_site(message, pages, sites):
+    """True when every page that logged this console error is an http(s) page outside the origins
+    this run judges, and the error is not about a URL on one of them either."""
+    logged_on = pages.get(hashlib.sha256(message.encode("utf-8")).hexdigest())
+    about = LOCATION.search(message)
+    if not logged_on or (about and judged(about.group("url"), sites)):
+        return False
+    return all(is_origin(page) and not judged(page, sites) for page in logged_on)
+
+
 def console_is_clean(root, allowed, expected, sites):
-    findings, seen = [], set()
+    findings, seen, pages = [], set(), logging_pages(root)
     for log in sorted(glob.glob(os.path.join(root, "console-*.log"))):
         for number, line in enumerate(read(log).splitlines(), 1):
             match = CONSOLE_ERROR.match(line)
@@ -241,7 +281,7 @@ def console_is_clean(root, allowed, expected, sites):
             message = match.group("message")
             if any(pattern.search(message) for pattern in allowed) or message in seen:
                 continue
-            if resource_error_is_excused(message, expected, sites):
+            if resource_error_is_excused(message, expected, sites) or logged_off_site(message, pages, sites):
                 continue
             seen.add(message)
             findings.append(Finding("console error outside the allowlist: %s" % message[:200], relative(log, root), number))

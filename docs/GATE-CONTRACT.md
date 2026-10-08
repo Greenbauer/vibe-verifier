@@ -767,7 +767,11 @@ record, a request to the site under test that answered 400 or worse or failed (o
 cancelled itself, `net::ERR_ABORTED`, is not judged when the record also holds that request, same
 method and URL, answered below 400 somewhere in the run, and is a finding when it does not) outside
 `--allow-request`. With a site declared, Chromium's `Failed to load resource` console line for
-another host is skipped like that host's request; every other console error is still judged. The site is `--site <URL>`, or `--site-file <FILE>`: the URL the explore job
+another host is skipped like that host's request, and so is an error only pages outside the site
+logged (a hosted page a link opened), unless it is about a URL of the site. The page is read from
+the harness's record, `console-pages.jsonl`, which `actions/qae-browser/console-pages.js` writes
+through playwright-mcp's `--init-page`: a console line names the resource, never the page. Every
+other console error is still judged, and so is every error of a run without that record. The site is `--site <URL>`, or `--site-file <FILE>`: the URL the explore job
 declared, written by the verify job, where a missing or malformed file is exit 2. A network call that
 saved its result to a file is read from that file, and one the evidence does not hold is a finding. The file may list
 further URLs after the site's, other origins the site is served from (its API on another host), and

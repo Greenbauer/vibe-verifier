@@ -36,7 +36,8 @@ jobs:
 
   # The QAE browser action against a real apt and the pinned Playwright, which its tests stub: it reads
   # the missing system packages from that Playwright's own report, so a pin bump that changes the
-  # report shows here before a consumer pins it. Then the chromium it installed has to start.
+  # report shows here before a consumer pins it. Then the chromium it installed has to start, and
+  # the harness's page record has to work in the playwright-mcp it installed.
   qae-browser:
     name: qae-browser
     runs-on: ubuntu-latest
@@ -63,6 +64,17 @@ jobs:
               await browser.close();
             })().catch(error => { console.error(error); process.exit(1); });
           '
+      - name: Record which page logged a console error, with the playwright-mcp it installed
+        # The page record depends on that build: its --init-page hook, the page it hands the hook and
+        # the lines it writes to console-*.log. The test drives it as the explorer does, against a
+        # site and a third-party page on local ports, and runs the qae-artifacts gate on the result.
+        # It skips without QAE_MCP, so the file is checked first: a skip here must not read as a pass.
+        env:
+          QAE_MCP: ${{ steps.browser.outputs.mcp }}
+          QAE_CONSOLE_PAGES: ${{ steps.browser.outputs.console-pages }}
+        run: |
+          test -f "$QAE_MCP" && test -f "$QAE_CONSOLE_PAGES"
+          python3 -m unittest discover -s tests -p 'test_qae_console_pages.py' -v
 
   # The runner-lane kit (lanes/README.md) is Linux-only and has tests of its own, which stub every
   # system tool on PATH: nothing is installed, mounted or started on the runner. Ubuntu 24.04, not
