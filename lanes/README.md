@@ -635,7 +635,9 @@ after the key changes) and `collector.json` (root, 0600: the collector's local m
 which holds its slot and store images, and `codex_home` the lane's first Codex store, or
 `/nonexistent` on a lane without QAE, whose account quota then reads unavailable);
 `/var/lib/vibe-dashboard/<name>/gh` (root, 0755) and `/var/lib/vibe-dashboard-state/<name>` (root,
-0700). The units are the kit's: `vibe-dashboard@<name>.service`, `vibe-dashboard-token@<name>.timer`
+0700). The web unit's `CacheDirectory=` adds `/var/cache/vibe-dashboard-<name>` (the account's, 0700),
+which systemd creates when the unit starts and where the dashboard keeps its last reading and
+GitHub caches across a restart; the kit does not create it and removes it with the dashboard. The units are the kit's: `vibe-dashboard@<name>.service`, `vibe-dashboard-token@<name>.timer`
 (every 10 minutes) and `vibe-dashboard-telemetry@<name>.timer` (every 30 seconds), and one
 `vibe-dashboard-follow.service` per machine, whose drop-in `vibe-dashboard-follow.service.d/runners.conf`
 gives it one `--unit vibe-dashboard@<name>.service <port>` pair per dashboard.
@@ -676,8 +678,8 @@ units (the cron files only redeployed releases and are not needed to serve). A f
 telemetry run later shows in `--check` and `systemctl --failed`.
 
 **Removing.** A dashboard deleted from the host file is removed by the next apply: its units
-disabled, its three directories and its account deleted, the follower and the guard rewritten
-without it. `--remove --apply` removes every dashboard, the follower, the guard and the templates;
+disabled, its three directories, its cache directory and its account deleted, the follower and the
+guard rewritten without it. `--remove --apply` removes every dashboard, the follower, the guard and the templates;
 it keeps `/opt/vibe-verifier`, the retired legacy install and the lanes.
 
 ## Legacy names
