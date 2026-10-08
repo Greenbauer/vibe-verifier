@@ -11,8 +11,8 @@ from dashboard.config import BotDefinition, Config
 from dashboard.gh_api import ApiError
 from dashboard.github import CHECKS_NOT_LOADED, GitHubCollector
 from dashboard.head_state import (
-    BEAT_SECONDS, BEFORE_CHANGE, HEADS, PREVIOUS_PUSH, calls_per_hour, read_head_page,
-    search_text, withhold_if_old,
+    BEAT_SECONDS, BEFORE_CHANGE, HEADS, HEAD_PERIOD_SECONDS, PREVIOUS_PUSH, apply_head_reading,
+    calls_per_hour, read_head_page, search_text, withhold_if_old,
 )
 from dashboard.service import DashboardService
 
@@ -155,10 +155,11 @@ class HeadReading(unittest.TestCase):
     def test_the_query_uses_user_or_org_and_costs_one_call_an_interval(self):
         self.assertEqual(search_text("octocat", "User"), "is:pr is:open user:octocat")
         self.assertEqual(search_text("octocat", "Organization"), "is:pr is:open org:octocat")
-        for field in ("headRefOid", "mergeStateStatus", "mergeable", "reviewDecision", "statusCheckRollup"):
+        for field in ("headRefOid", "mergeStateStatus", "mergeable", "reviewDecision", "statusCheckRollup",
+                      "title", "author", "createdAt"):
             self.assertIn(field, HEADS)
-        self.assertEqual(calls_per_hour(1), 3600 // BEAT_SECONDS)
-        self.assertEqual(calls_per_hour(1), 20)
+        self.assertEqual(calls_per_hour(1), 3600 // HEAD_PERIOD_SECONDS)
+        self.assertEqual(calls_per_hour(1), 24)
 
     def test_a_changed_head_is_not_green_and_is_detailed_first(self):
         self._next_pass(new_sha=True)
@@ -301,8 +302,57 @@ class PaintAndBeat(unittest.TestCase):
         self.assertEqual(pull["attention_reason"], PREVIOUS_PUSH)
         self.assertEqual(updated["head_reading"]["calls"], 1)
         self.assertEqual(updated["head_reading"]["points"], 1)
-        self.assertEqual(updated["head_reading"]["calls_per_hour"], 20)
-        self.assertEqual(updated["head_reading"]["points_per_hour"], 20)
+        self.assertEqual(updated["head_reading"]["calls_per_hour"], 24)
+        self.assertEqual(updated["head_reading"]["points_per_hour"], 24)
+
+    def test_a_slow_pass_does_not_hold_the_next_head_read_for_another_beat(self):
+        wall, mono = Clock(NOW), Clock(0)
+        sample = self.sample(NOW)
+        sample["heads_sampled_at"] = NOW.isoformat()
+        collector = BeatCollector([sample])
+        service = DashboardService(listed("octocat/example"), collector, monotonic=mono, wall_clock=wall)
+        service.snapshot(force=True)
+        mono.value = 70
+        wall.value = NOW + timedelta(seconds=100)
+        self.assertIsNone(service.run_head_beat())
+        wall.value = NOW + timedelta(seconds=160)
+        updated = service.run_head_beat()
+        pull = updated["repositories"][0]["pulls"][0]
+        self.assertEqual(collector.heads_reads, 1)
+        self.assertEqual(collector.collects, 1)
+        self.assertFalse(pull["merge_ready"])
+        self.assertEqual(pull["checks"], [{"name": "test", "category": "success"}])
+
+    def test_a_complete_head_reading_shows_a_newly_opened_pull_request_and_drops_a_closed_one(self):
+        github = self.sample(NOW)
+        github["owner"] = "octocat"
+        opened = {"sha": "c" * 40, "rollup": "PENDING", "repository": "octocat/example",
+                  "title": "Opened since the last pass", "author": "octocat", "draft": False,
+                  "url": "https://github.com/octocat/example/pull/9", "created_at": "2026-10-08T15:00:00Z"}
+        other = {"sha": "d" * 40, "rollup": "FAILURE", "repository": "octocat/other",
+                 "title": "First one there", "author": "octocat", "draft": False,
+                 "url": "https://github.com/octocat/other/pull/1", "created_at": "2026-10-08T15:30:00Z"}
+        heads = {("octocat/example", 9): opened, ("octocat/other", 1): other}
+        updated = apply_head_reading(github, heads, NOW, 1, 1, complete=True)
+        rows = {row["repository"]: row for row in updated["repositories"]}
+        example = rows["octocat/example"]["pulls"]
+        self.assertEqual([pull["number"] for pull in example], [9])
+        self.assertEqual(example[0]["title"], "Opened since the last pass")
+        self.assertEqual(example[0]["head_sha"], "c" * 40)
+        self.assertEqual(example[0]["attention_reason"], CHECKS_NOT_LOADED)
+        self.assertEqual(example[0]["rollup_category"], "pending")
+        self.assertFalse(example[0]["merge_ready"])
+        self.assertEqual(example[0]["age_seconds"], 3600)
+        self.assertEqual(rows["octocat/other"]["pulls"][0]["rollup_category"], "failed")
+        self.assertEqual(rows["octocat/other"]["pulls"][0]["attention_reason"], CHECKS_NOT_LOADED)
+
+    def test_an_incomplete_head_reading_keeps_a_pull_request_it_did_not_see(self):
+        github = self.sample(NOW)
+        heads = {("octocat/example", 9): {"sha": "c" * 40, "rollup": "PENDING", "repository": "octocat/example"}}
+        updated = apply_head_reading(github, heads, NOW, 1, 1, complete=False)
+        numbers = [pull["number"] for pull in updated["repositories"][0]["pulls"]]
+        self.assertEqual(numbers, [7])
+        self.assertTrue(updated["repositories"][0]["pulls"][0]["checks"])
 
     def test_the_first_request_after_a_long_idle_paints_nothing_old_as_green(self):
         wall, mono = Clock(NOW), Clock(0)
