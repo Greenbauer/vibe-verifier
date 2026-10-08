@@ -285,7 +285,7 @@ class GitHubCollector:
         expected = self._expected(repository, rules, checks + statuses, runs)
         attention, reason = self._attention(checks + statuses, runs, expected)
         face = face_fields(current, signals, evidence=True, draft=draft, checks=checks, statuses=statuses,
-                           expected=expected)
+                           expected=expected, rules=rules)
         return {**identity, **face, "draft": draft, "head_changed": False, "evidence_available": True,
                 "attention": attention, "attention_reason": reason,
                 "checks": checks, "statuses": statuses, "expected": expected, "runs": runs}
