@@ -22,8 +22,11 @@
 // file there is nothing to resolve and nothing is wrapped. A method this build no longer has stops
 // the tab from opening: a silent miss would bring the failed sign-in back.
 //
-// Not covered, because neither goes through a text-entry call: a field a script sets inside the
-// page (browser_evaluate), and a name pressed one key at a time (browser_press_key).
+// A failed call's error names the secret it was typing, never the value (see `wrap`).
+//
+// Not covered, because none goes through a text-entry call: a field a script sets inside the page
+// (browser_evaluate), a name pressed one key at a time (browser_press_key), and text dropped onto
+// the page (browser_drop).
 const fs = require("fs");
 
 const WRAPPED = Symbol.for("vibe-verifier.secret-names");
@@ -42,13 +45,24 @@ function secrets(argv) {
 }
 
 // Wrap `owner[method]` so that its argument number `at`, when it is exactly a secret's name, is the
-// secret's value.
+// secret's value. A call that fails quotes the text it was typing in its error (Playwright's call
+// log: `fill("...")`), and playwright-mcp hands a tool's error to the explorer as it is, where it
+// redacts a result. So the value of the secret a call typed is its <secret>NAME</secret> in that
+// error, whether this hook resolved the name or one of playwright-mcp's two tools did.
 function wrap(owner, what, method, at, named) {
   const original = owner[method];
   if (typeof original !== "function") throw new Error(`secret-names.js: this Playwright build has no ${what}.${method} to resolve secret names in`);
-  owner[method] = function (...args) {
+  const names = new Map([...named].map(([name, value]) => [value, name]));
+  owner[method] = async function (...args) {
     if (named.has(args[at])) args[at] = named.get(args[at]);
-    return original.apply(this, args);
+    try {
+      return await original.apply(this, args);
+    } catch (error) {
+      const name = names.get(args[at]);
+      if (name && error instanceof Error)
+        for (const part of ["message", "stack"]) error[part] = String(error[part]).replaceAll(args[at], `<secret>${name}</secret>`);
+      throw error;
+    }
   };
 }
 

@@ -84,6 +84,23 @@ test("a wrapped call still answers what the call answers", async () => {
   assert.strictEqual(await page.mainFrame().fill("input", "QAE_PASSWORD"), "filled");
 });
 
+test("a failed call's error names the secret it was typing, never the value", async () => {
+  const { tab, Frame, Keyboard } = browser();
+  // Playwright quotes the text in the call log of the error it throws.
+  Frame.prototype.fill = async (selector, value) => { throw new Error(`frame.fill: Error: Element is not an <input>\nCall log:\n  - fill("${value}")`); };
+  Keyboard.prototype.type = async text => { throw new Error(`keyboard.type: could not type ${text}`); };
+  const page = tab();
+  await open(page, LOGIN);
+  // Resolved by the hook, and typed as a value by one of playwright-mcp's own two tools.
+  for (const text of ["QAE_PASSWORD", "s3cret"]) {
+    const failed = await page.mainFrame().fill("h1", text).catch(error => error);
+    assert.strictEqual(failed.message, 'frame.fill: Error: Element is not an <input>\nCall log:\n  - fill("<secret>QAE_PASSWORD</secret>")');
+    assert.ok(!failed.stack.includes("s3cret"), failed.stack);
+  }
+  const other = await page.keyboard.type("not a secret").catch(error => error);
+  assert.strictEqual(other.message, "keyboard.type: could not type not a secret");
+});
+
 test("the first tab wraps the classes for every later tab", async () => {
   const { sent, tab } = browser();
   await open(tab(), LOGIN);

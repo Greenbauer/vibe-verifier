@@ -679,8 +679,15 @@ that is exactly a name becomes its value; text that only holds one is typed as w
 are the `secrets` of the same `--config` file, so a name means one thing in every tool. The hook
 wraps classes of the pinned build and stops a tab from opening when one of those methods is gone,
 and the catalog's `qae-browser` CI job signs in through it in the real browser, with the hook and
-without it. Two ways stay open, because neither is a text-entry call: a script that sets the field
-inside the page (`browser_evaluate`), and the name pressed one key at a time (`browser_press_key`).
+without it. Three ways stay open, because none is a text-entry call: a script that sets the field
+inside the page (`browser_evaluate`), the name pressed one key at a time (`browser_press_key`), and
+text dropped onto the page (`browser_drop`).
+
+A text-entry call that fails quotes the text it was typing in its error (`fill("...")` in
+Playwright's call log), and playwright-mcp returns a tool's error to the explorer as it is, where
+it redacts a result. A fill that missed its field would hand the explorer the password. So the
+hook also replaces the value of the secret a failed call was typing with `<secret>NAME</secret>`
+in that error, for a name it resolved and for a value one of playwright-mcp's two tools typed.
 
 The gate is not what changed. An allowance for a refused sign-in would have to excuse a 400 at the
 site's own sign-in endpoint, and the gate cannot tell the explorer's wrong password from a sign-in

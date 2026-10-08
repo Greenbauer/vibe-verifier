@@ -167,6 +167,25 @@ class Live(unittest.TestCase):
                 self.assertNotIn(PASSWORD, json.dumps(answer))
         explorer.call("browser_close")
 
+    def test_a_failed_entry_names_the_secret_in_its_error_never_the_value(self):
+        # Playwright quotes the text it was typing in a failed call's error, and playwright-mcp
+        # returns a tool's error unredacted: without the hook's own redaction the explorer would be
+        # handed the password by a fill that missed. The second call is the tool that types the
+        # value itself, whose error held it before this hook existed.
+        explorer = self.explorer()
+        explorer.call("browser_navigate", url=self.site.url + "/login")
+        missed = {
+            "browser_run_code_unsafe": {"code": "async (page) => { await page.locator('h1').fill('%s', { timeout: 2000 }); }" % NAME},
+            "browser_fill_form": {"fields": [{"name": "Heading", "type": "textbox", "target": "h1", "value": NAME}]},
+        }
+        for tool, arguments in missed.items():
+            with self.subTest(tool):
+                answer = explorer.send("tools/call", {"name": tool, "arguments": arguments})
+                self.assertTrue(answer["result"].get("isError"), json.dumps(answer)[:600])
+                self.assertIn('fill(\\"<secret>%s</secret>\\")' % NAME, json.dumps(answer))
+                self.assertNotIn(PASSWORD, json.dumps(answer))
+        explorer.call("browser_close")
+
     def test_text_that_only_holds_a_name_is_typed_as_written(self):
         explorer = self.explorer()
         explorer.call("browser_navigate", url=self.site.url + "/login")
