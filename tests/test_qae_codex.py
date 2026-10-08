@@ -272,12 +272,19 @@ class StorageState(unittest.TestCase):
         result = self.run_step({"cookies": [COOKIE, other], "origins": []})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         config = os.path.join(self.temp, "qae-codex-mcp.json")
-        self.assertEqual(self.browser_args()[12:], ["--storage-state", os.path.realpath(os.path.join(self.work, "state.json")),
-                                                   "--config", config])
+        self.assertEqual(self.browser_args()[12:-1], ["--storage-state", os.path.realpath(os.path.join(self.work, "state.json")),
+                                                     "--config", config, "--init-page"])
+        self.assert_secret_names_hook()
         self.assertEqual(json.loads(Path(config).read_text()),
                          {"secrets": {"VV_COOKIE_1": COOKIE["value"], "VV_COOKIE_2": "all"}})
         self.assertEqual(stat.S_IMODE(os.stat(config).st_mode), 0o600)
         self.assertNotIn(COOKIE["value"], result.stdout + result.stderr)
+
+    def assert_secret_names_hook(self):
+        # The last argument, after --config: the hook that types a secret's value for its NAME in
+        # every text-entry call, not only in the two tools playwright-mcp resolves it in. Without it
+        # a sign-in through browser_run_code_unsafe sends the name (tests/test_qae_secret_names.py).
+        self.assertEqual(Path(self.browser_args()[-1]).resolve(), Path(ROOT, "actions", "qae-browser", "secret-names.js"))
 
     def redact(self):
         script = run_script(ACTION.read_text(), "- name: Redact the secrets from the artifacts", "- name: Keep numeric usage")
@@ -297,7 +304,8 @@ class StorageState(unittest.TestCase):
                                        typed=value)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 config = os.path.join(self.temp, "qae-codex-mcp.json")
-                self.assertEqual(self.browser_args()[-2:], ["--config", config])
+                self.assertEqual(self.browser_args()[-4:-1], ["--config", config, "--init-page"])
+                self.assert_secret_names_hook()
                 self.assertEqual(json.loads(Path(config).read_text()),
                                  {"secrets": {"VV_COOKIE_1": COOKIE["value"], "QAE_TRAVELER_PASSWORD": value}})
                 self.assertNotIn(value, result.stdout + result.stderr)
@@ -357,6 +365,7 @@ class StorageState(unittest.TestCase):
         result = self.run_step()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("--config", self.browser_args())
+        self.assertEqual(self.browser_args().count("--init-page"), 1)
         redacted = self.redact()
         self.assertEqual((redacted.returncode, redacted.stdout), (0, ""))
 
