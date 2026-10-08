@@ -116,7 +116,12 @@ Every 30 seconds the telemetry timer runs `bin/vibe-dashboard-host telemetry`. I
 [collector](dashboard-collector.md) in local mode, which samples this machine in-process (no SSH, no
 `sudo`) into root-only state that keeps seven days of samples. It then publishes that snapshot to the
 dashboard's `telemetry_file` without the `samples` history: the dashboard never reads those samples
-and refuses a telemetry file over 2 MiB, and a week of 30-second samples is about 3.8 MiB. Before the
+and refuses a telemetry file over 2 MiB, and a week of 30-second samples is about 3.8 MiB. The
+snapshot's `quota_history` is published whole, because the Bot usage page draws it: one reading per
+plan window per clock hour for seven days, about 3 KiB a window once it holds a week and under
+0.2 MiB at the collector's limit of 64 windows. State written before the collector kept that history
+needs no migration: the history starts with the next quota reading (within five minutes), gains a
+point an hour, and the page says so until there is one. Before the
 new file replaces the old one, the dashboard's own reader must accept it; otherwise the old file stays
 and the unit fails. The published file is the collector snapshot only: there is no runner-registration
 inventory and no agent-runtime record. Without a CI lane on the host, leave the telemetry timer off and

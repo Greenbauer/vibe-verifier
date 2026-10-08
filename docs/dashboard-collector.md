@@ -154,24 +154,31 @@ available window keeps `duration_minutes`, `used_percent`, and `resets_at`. Null
 omitted while other populated windows remain available. If no windows are populated, usage is
 unknown. These percentages are account-wide and may include activity outside this lane. The
 response does not provide a numeric token allowance, per-bot tokens, or earlier history, so the
-collector does not synthesize them. The dashboard passes each window's `duration_minutes` on as
-`window_minutes` and names the window from that length (`5 hours`, `7 days`). Each `limit_id` is
-its own account under provider `OpenAI`, so a second metered plan is not folded into Codex. That
-length is what sizes the window from captured bot tokens for the pace line
-(see [dashboard.md](dashboard.md)). Quota unavailability remains an explicit stale status.
+collector does not synthesize them. What it does keep is its own readings from then on, one per
+window per clock hour (`quota_history`, below). The dashboard passes each window's
+`duration_minutes` on as `window_minutes` and names the window from that length (`5 hours`,
+`7 days`). Each `limit_id` is its own account under provider `OpenAI`, so a second metered plan is
+not folded into Codex. That length and the reset date the window's start, which is all the even
+pace and the subscription burn chart are measured from
+(see [dashboard.md](dashboard.md#subscription-burn)). Quota unavailability remains an explicit stale status.
 
 ## Snapshot schema, version 1
 
 The root object has exactly these fields:
 
 ```text
-version       integer, currently 1
-owner         configured GitHub owner
-observed_at   UTC time this local refresh was attempted
-hosts         one host section
-accounts      one account-wide quota section
-samples       bounded numeric host history
+version         integer, currently 1
+owner           configured GitHub owner
+observed_at     UTC time this local refresh was attempted
+hosts           one host section
+accounts        one account-wide quota section
+samples         bounded numeric host history
+quota_history   hourly used percent of each quota window
 ```
+
+`quota_history` was added without a new version. A snapshot written before it has no such field:
+the collector starts the history empty from its next quota reading, and the dashboard reads the
+file as one with no history yet.
 
 The host section is:
 
@@ -218,6 +225,26 @@ Each `samples` entry contains only its UTC observation time and numeric host val
 percent, available memory, workspace free bytes, occupied slots, and remaining on-demand slots.
 Entries older than seven days are pruned. The file also keeps at most 20,160 samples, so intervals
 shorter than 30 seconds retain less than seven days. Failed observations do not add samples.
+
+`quota_history` is what each usage bar did over time, from the quota readings above and no other
+call (`dashboard/quota_history.py`):
+
+```text
+quota_history[].limit_id, name      the window, as in rate_limits
+quota_history[].points[]            [time read in epoch seconds, used_percent], oldest first
+```
+
+- Create: a successful quota reading adds a point for each window it reports.
+- Update: a later reading in the same clock hour replaces that hour's point, so a window has one
+  point an hour, the hour's latest reading, and the newest point is the reading the bar shows.
+- Read: the dashboard draws the points read since the window began (`resets_at` minus
+  `duration_minutes`). The collector does not decide when a window reset.
+- Delete: a point is dropped when it is seven days old, and a window keeps at most 168. A window
+  missing from a reading keeps its points until they age out. A failed reading adds nothing, and an
+  hour with no reading has no point. Removing the output file removes the history.
+
+It is at most 64 windows. A window that holds a full week is about 3 KiB, so the largest history is
+under 0.2 MiB.
 
 The output is an atomic replacement with mode `0600`. Remote output and prior snapshots are
 allowlist-projected before writing, so extra fields cannot carry raw configuration or secrets into

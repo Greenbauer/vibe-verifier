@@ -477,7 +477,7 @@ console.log(JSON.stringify({limits:text(lanes.children[0]),cards:cards.map(card=
     def test_usage_page_lists_each_qae_and_draws_a_prior_day_line(self):
         result = self.node(r"""
 const app=require('fs').readFileSync('./dashboard/static/app.js','utf8');
-const {BOT_META,agedState}=require('./dashboard/static/helpers.js'),VVCharts=require('./dashboard/static/charts.js');
+const {BOT_META,agedState,paceHeader}=require('./dashboard/static/helpers.js'),VVCharts=require('./dashboard/static/charts.js');
 const make=tag=>({tag,attrs:{},children:[],style:{setProperty(k,v){this[k]=v}},setAttribute(k,v){this.attrs[k]=v},append(...c){this.children.push(...c)},replaceChildren(...c){this.children=c}});
 const el=(tag,attrs={},...c)=>Object.assign(make(tag),{attrs,children:c.flat().filter(v=>v!=null)});
 const text=n=>typeof n==='string'?n:(n.children||[]).map(text).join(' '),walk=n=>!n||typeof n==='string'?[]:[n,...(n.children||[]).flatMap(walk)];
@@ -488,9 +488,9 @@ global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
 new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel','agedState',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function coverage/)[1])(el,BOT_META,snapshot,{failureBot:null},s=>el('span',{},s),()=>{},v=>v,{querySelector:()=>strip},recent,agedState);
 global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
 const samples=rows.flatMap(row=>[31,30,3,2].map(h=>({account:'a',bot:row.id,timestamp:at(h),input_tokens:40,output_tokens:0})));
-const usage={sampled_at:at(0),accounts:[],samples,pace:{tokens_per_hour:100,plan:'ChatGPT subscription',window:'7d',used_percent:25,resets_at:at(-10),delta_points:-4,sized_from:'bot_tokens',window_tokens:400,allowance_tokens:1600}};
+const usage={sampled_at:at(0),accounts:[],samples,pace:{delta_points:-4}};
 const src=app.match(/\n(  function usageCharts\([\s\S]*?)\n  function renderUsage\(/)[1];
-const cards=new Function('el','BOT_META','VVCharts','snapshot','formatTime',src+'\nreturn usageCharts;')(el,BOT_META,VVCharts,snapshot,()=>'RESET')(usage).children[2].children;
+const cards=new Function('el','BOT_META','VVCharts','snapshot','paceHeader',src+'\nreturn usageCharts;')(el,BOT_META,VVCharts,snapshot,paceHeader)(usage).children[2].children;
 const names=n=>walk(n).filter(i=>i.attrs&&i.attrs.class==='bot-name').map(text);
 console.log(JSON.stringify({strip:names(strip),cards:cards.map(c=>text(c.children[0].children[0].children[0]).split(' · ')[0]),usual:cards.map(c=>walk(c).some(n=>n.attrs&&n.attrs.class==='burn-usual'))}));
 """)

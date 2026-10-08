@@ -1,154 +1,97 @@
-"""The All-bots pace line is the even pace of the plan window, the same comparison as the tick."""
+"""The paced plan window: which one it is, when it began, and its fill against an even burn."""
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from dashboard.pace import plan_pace
+from dashboard.pace import plan_pace, plan_window_start
 from dashboard.usage_artifacts import apply_plan_window
 
 NOW = datetime(2026, 10, 5, 21, 0, tzinfo=timezone.utc)
 RESET = NOW + timedelta(hours=96)  # 72 of the window's 168 hours have elapsed
+EVEN = 72 / 168 * 100
 
 
 def iso(value):
     return value.isoformat().replace("+00:00", "Z")
 
 
-def sample(hours_ago, tokens, account="runtime-observed"):
-    return {"account": account, "bot": "agent-a", "timestamp": iso(NOW - timedelta(hours=hours_ago)),
-            "input_tokens": tokens - 10, "output_tokens": 10}
+def window(**changes):
+    return {"name": "7d", "used_percent": 40.0, "resets_at": iso(RESET), "allowance_tokens": None,
+            "window_minutes": 10080, **changes}
 
 
-def usage(samples, windows=None, **extra):
-    windows = windows if windows is not None else [
-        {"name": "7d", "used_percent": 40.0, "resets_at": iso(RESET), "allowance_tokens": None, "window_minutes": 10080}]
+def usage(windows=None, samples=(), **extra):
     return {"available": True, "stale": False, "accounts": [
         {"id": "runtime-observed", "label": "Agent runtime tokens", "quota_windows": []},
-        {"id": "subscription-0", "label": "ChatGPT subscription", "quota_windows": windows}],
-        "samples": samples, **extra}
+        {"id": "subscription-0", "label": "ChatGPT subscription",
+         "quota_windows": [window()] if windows is None else windows}],
+        "samples": list(samples), **extra}
 
 
-class DerivedPace(unittest.TestCase):
-    def test_history_that_covers_the_plan_window_draws_the_line(self):
-        # The listing never reached seven days, but its oldest artifact is before the window began.
-        history = {"hard_partial": False, "listing_complete": False,
-                   "covered_until": (NOW - timedelta(days=6)).isoformat().replace("+00:00", "Z"),
-                   "partial": True, "completeness": "Partial capture. leftover"}
-        apply_plan_window(history, NOW - timedelta(hours=72))
-        self.assertFalse(history["partial"])
-        self.assertNotIn("Partial capture.", history["completeness"])
-        pace = plan_pace(usage([sample(10, 400)], partial=False), NOW)
-        self.assertEqual(pace["sized_from"], "bot_tokens")
-        self.assertAlmostEqual(pace["tokens_per_hour"], 1000 / 168)
+def tokens(hours_ago, count):
+    return {"account": "runtime-observed", "bot": "agent-a", "timestamp": iso(NOW - timedelta(hours=hours_ago)),
+            "input_tokens": count, "output_tokens": 0}
 
-    def test_a_gap_inside_the_plan_window_still_refuses_the_line(self):
-        history = {"hard_partial": False, "listing_complete": False,
-                   "covered_until": (NOW - timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
-                   "partial": False, "completeness": "leftover"}
-        apply_plan_window(history, NOW - timedelta(hours=72))
-        self.assertTrue(history["partial"])
-        refused = plan_pace(usage([sample(10, 400)], partial=True), NOW)
-        self.assertIsNone(refused["tokens_per_hour"])
-        self.assertIn("stale or incomplete", refused["reason"])
 
-    def test_pace_is_the_percent_pace_in_tokens(self):
-        # 400 tokens since the window began made 40% of it: the window holds 1,000 tokens.
-        pace = plan_pace(usage([sample(10, 300), sample(70, 100)]), NOW)
-        self.assertEqual(pace["sized_from"], "bot_tokens")
-        self.assertEqual(pace["window_tokens"], 400)
-        self.assertEqual(pace["allowance_tokens"], 1000)
-        self.assertEqual(pace["plan"], "ChatGPT subscription")
-        # Even pace: the 1,000-token window over its 168 hours. The header's delta uses the same burn.
-        self.assertAlmostEqual(pace["tokens_per_hour"], 1000 / 168)
-        self.assertLess(pace["delta_points"], 0)
-
-    def test_header_delta_is_fill_minus_elapsed_share_of_the_window(self):
+class Pace(unittest.TestCase):
+    def test_delta_is_fill_minus_the_elapsed_share_of_the_window(self):
         # 72 of 168 hours elapsed is 42.9% of the window; 40% used is 2.9 points under an even burn.
-        self.assertAlmostEqual(plan_pace(usage([sample(1, 400)]), NOW)["delta_points"], 40 - 72 / 168 * 100)
+        self.assertAlmostEqual(plan_pace(usage(), NOW)["delta_points"], 40 - EVEN)
+        ahead = plan_pace(usage([window(used_percent=62.0, resets_at=iso(NOW + timedelta(hours=126)))]), NOW)
+        self.assertAlmostEqual(ahead["delta_points"], 62 - 25)
 
-    def test_header_delta_needs_no_token_history(self):
-        # The plan's own percentage is enough for the header even when its size cannot be measured.
-        pace = plan_pace(usage([], stale=True), NOW)
-        self.assertIsNone(pace["tokens_per_hour"])
-        self.assertAlmostEqual(pace["delta_points"], 40 - 72 / 168 * 100)
-
-    def test_tokens_before_the_window_began_do_not_size_it(self):
-        pace = plan_pace(usage([sample(10, 400), sample(73, 5000), sample(150, 9000)]), NOW)
-        self.assertEqual(pace["window_tokens"], 400)
+    def test_the_pace_does_not_move_with_how_much_the_bots_used(self):
+        # The plan is a percent with a reset. Bot tokens once sized it: 107m tokens gave one line and
+        # 227m, four hours later on the same plan, a line nearly twice as high.
+        quiet = plan_pace(usage(samples=[tokens(10, 107_000_000)]), NOW)
+        busy = plan_pace(usage(samples=[tokens(10, 227_000_000)], stale=True, history_stale=True, partial=True), NOW)
+        self.assertEqual(quiet, busy)
+        self.assertEqual(set(quiet), {"delta_points"})  # a percent against the window, and no figure in tokens
+        self.assertAlmostEqual(quiet["delta_points"], 40 - EVEN)
 
     def test_the_longest_window_is_paced(self):
-        windows = [{"name": "5h", "used_percent": 90.0, "resets_at": iso(NOW + timedelta(hours=1)),
-                    "allowance_tokens": None, "window_minutes": 300},
-                   {"name": "7d", "used_percent": 40.0, "resets_at": iso(RESET), "allowance_tokens": None,
-                    "window_minutes": 10080}]
-        self.assertEqual(plan_pace(usage([sample(1, 400)], windows), NOW)["window"], "7d")
+        five_hours = window(name="5h", used_percent=90.0, resets_at=iso(NOW + timedelta(hours=1)), window_minutes=300)
+        self.assertAlmostEqual(plan_pace(usage([five_hours, window()]), NOW)["delta_points"], 40 - EVEN)
 
-    def test_a_full_plan_still_has_an_even_pace(self):
-        windows = [{"name": "7d", "used_percent": 100.0, "resets_at": iso(RESET), "allowance_tokens": None,
-                    "window_minutes": 10080}]
-        pace = plan_pace(usage([sample(1, 400)], windows), NOW)
-        self.assertEqual(pace["allowance_tokens"], 400)
-        self.assertAlmostEqual(pace["tokens_per_hour"], 400 / 168)
-
-    def test_the_line_matches_the_tick_when_the_plan_is_ahead(self):
-        # 25% of 168 hours elapsed, 62% used. The line is allowance / window hours, and both say ahead.
-        reset = NOW + timedelta(hours=126)
-        windows = [{"name": "7d", "used_percent": 62.0, "resets_at": iso(reset),
-                    "allowance_tokens": None, "window_minutes": 10080}]
-        pace = plan_pace(usage([sample(10, 620)], windows), NOW)
-        self.assertEqual(pace["allowance_tokens"], 1000)
-        self.assertAlmostEqual(pace["tokens_per_hour"], 1000 / 168)
-        self.assertAlmostEqual(pace["delta_points"], 62 - 25)
-        self.assertGreater(pace["delta_points"], 0)
-        self.assertGreater(620 / 42, pace["tokens_per_hour"])
+    def test_no_window_to_pace_has_no_delta(self):
+        two_plans = usage()
+        two_plans["accounts"].append({"id": "subscription-1", "label": "Second plan", "quota_windows": [window()]})
+        cases = {"two plans": two_plans,
+                 "no window length": usage([window(window_minutes=None)]),
+                 "already reset": usage([window(resets_at=iso(NOW - timedelta(minutes=1)))]),
+                 "not begun": usage([window(resets_at=iso(NOW + timedelta(hours=169)))]),
+                 "no plan": usage([]),
+                 "unavailable": {"available": False}}
+        for name, value in cases.items():
+            with self.subTest(name):
+                self.assertEqual(plan_pace(value, NOW), {"delta_points": None})
 
 
-class NoPace(unittest.TestCase):
-    def assertNoPace(self, value, reason):
-        self.assertIsNone(value["tokens_per_hour"])
-        self.assertIn(reason, value["reason"])
+class WindowStart(unittest.TestCase):
+    def test_the_paced_window_began_its_length_before_its_reset(self):
+        self.assertEqual(plan_window_start(usage()), RESET - timedelta(days=7))
+        five_hours = window(resets_at=iso(NOW + timedelta(hours=1)), window_minutes=300)
+        self.assertEqual(plan_window_start(usage([five_hours, window()])), RESET - timedelta(days=7))
 
-    def window(self, **changes):
-        return [{"name": "7d", "used_percent": 40.0, "resets_at": iso(RESET), "allowance_tokens": None,
-                 "window_minutes": 10080, **changes}]
+    def test_no_single_plan_has_no_start(self):
+        two_plans = usage()
+        two_plans["accounts"].append({"id": "subscription-1", "label": "Second plan", "quota_windows": [window()]})
+        for value in (two_plans, usage([window(window_minutes=None)]), usage([]), {}, None):
+            self.assertIsNone(plan_window_start(value))
 
-    def test_unsized_cases_say_why(self):
-        cases = [
-            (usage([sample(1, 400)], self.window(used_percent=0.0)), "0% used"),
-            (usage([sample(1, 400)], self.window(window_minutes=None)), "window length"),
-            (usage([sample(80, 400)]), "no bot tokens"),
-            (usage([sample(1, 400)], stale=True), "stale or incomplete"),
-            (usage([sample(1, 400)], history_stale=True), "stale or incomplete"),
-            (usage([sample(1, 400)], partial=True), "stale or incomplete"),
-            # A monthly window began before the seven days of samples this dashboard keeps.
-            (usage([sample(1, 400)], self.window(window_minutes=60 * 24 * 30)), "seven days"),
-            (usage([sample(1, 400)], self.window(resets_at=iso(NOW - timedelta(minutes=1)))), "has reset"),
-            ({"available": False}, "unavailable"),
-        ]
-        for value, reason in cases:
-            with self.subTest(reason=reason):
-                self.assertNoPace(plan_pace(value, NOW), reason)
+    def test_history_that_covers_the_plan_window_is_complete(self):
+        # The listing never reached seven days, but its oldest artifact is before the window began.
+        history = {"hard_partial": False, "listing_complete": False, "covered_until": iso(NOW - timedelta(days=6)),
+                   "partial": True, "completeness": "Partial capture. leftover"}
+        apply_plan_window(history, plan_window_start(usage()))
+        self.assertFalse(history["partial"])
+        self.assertNotIn("Partial capture.", history["completeness"])
 
-    def test_two_plans_cannot_split_one_token_history(self):
-        value = usage([sample(1, 400)])
-        value["accounts"].append({"id": "subscription-1", "label": "Second plan", "quota_windows": self.window()})
-        self.assertNoPace(plan_pace(value, NOW), "more than one plan")
-
-
-class ReportedAllowance(unittest.TestCase):
-    def windows(self, **changes):
-        return [{"name": "7d", "used_percent": 25.0, "resets_at": iso(RESET), "allowance_tokens": 1_000_000,
-                 "window_minutes": 10080, **changes}]
-
-    def test_reported_size_paces_tokens_billed_to_that_account(self):
-        pace = plan_pace(usage([sample(1, 400, "subscription-0")], self.windows()), NOW)
-        self.assertEqual(pace["sized_from"], "reported")
-        self.assertAlmostEqual(pace["tokens_per_hour"], 1_000_000 / 168)
-        self.assertAlmostEqual(pace["tokens_per_hour"] * (10080 / 60), pace["allowance_tokens"])
-
-    def test_reported_size_for_another_account_draws_nothing(self):
-        pace = plan_pace(usage([sample(1, 400)], self.windows(window_minutes=None)), NOW)
-        self.assertIsNone(pace["tokens_per_hour"])
-        self.assertIsNone(pace["delta_points"])  # no window length, so no elapsed share
+    def test_history_that_starts_inside_the_plan_window_stays_partial(self):
+        history = {"hard_partial": False, "listing_complete": False, "covered_until": iso(NOW - timedelta(hours=1)),
+                   "partial": False, "completeness": "leftover"}
+        apply_plan_window(history, plan_window_start(usage()))
+        self.assertTrue(history["partial"])
+        self.assertIn("Partial capture.", history["completeness"])
 
 
 if __name__ == "__main__":

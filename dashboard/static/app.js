@@ -2,7 +2,7 @@
   "use strict";
   const { BOT_META, element: el, link, safeUrl, duration, since, ageClass, formatTime, bytes, badge, agedState, sourceStamp,
     diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark,
-    quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
+    quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, paceHeader, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
   const state = { ...VV.restoreViewState(null), ...VV.parseRoute(location.hash) };
@@ -331,45 +331,22 @@
     const samples = usage.samples || [], now = Date.now();
     // Hours after the source's last observation are unobserved, not zero, when the source goes stale.
     const through = Math.min(...[usage.sampled_at, usage.history_sampled_at].map(Date.parse).filter(Number.isFinite));
-    const plan = usage.pace || { tokens_per_hour: null, reason: "usage telemetry is unavailable." };
-    const pace = plan.tokens_per_hour;
     const bots = (snapshot.agents?.rows || []).map(agent => ({ name: agent.name, color: BOT_META[agent.role].color,
       burn: VVCharts.hourlyBurn(samples.filter(sample => sample.bot === agent.id), now, through) }));
     const observed = bots.map(bot => bot.burn).filter(Boolean);
     const loose = samples.filter(sample => !(snapshot.agents?.rows || []).some(agent => agent.id === sample.bot));
     const looseBurn = VVCharts.hourlyBurn(loose, now, through);
     const burns = [...observed, looseBurn].filter(Boolean);
-    const all = { name: "All bots", color: "rgba(255,255,255,0.6)", all: true, looseTokens: looseBurn ? looseBurn.last24h.reduce((total, value) => total + (value || 0), 0) : 0, burn: burns.length ? VVCharts.sumBurns(burns) : null, ...paceHeader(plan.delta_points ?? null) };
+    const all = { name: "All bots", color: "rgba(255,255,255,0.6)", all: true, looseTokens: looseBurn ? looseBurn.last24h.reduce((total, value) => total + (value || 0), 0) : 0, burn: burns.length ? VVCharts.sumBurns(burns) : null, ...paceHeader(usage.pace?.delta_points ?? null) };
     const shared = VVCharts.ceiling(observed);
     return el("section", { class: "panel usage-charts" }, el("h2", {}, "Token burn pattern"),
-      el("p", { class: "muted" }, "Tokens each bot used, hour by hour. Solid: last 24 hours. Dashed: a usual day. Flat: the even pace, the same as the tick."),
-      el("div", { class: "burn-cards" }, bots.map(bot => burnCard(bot, shared, now, null)),
-        burnCard(all, VVCharts.ceiling(all.burn ? [all.burn] : [], pace), now, pace)),
-      paceNote(plan));
-  }
-  // "12% under pace": the plan's fill against an even burn of its window, in points.
-  function paceHeader(delta) {
-    if (delta === null) return {};
-    if (delta > 1) return { pace: `${Math.round(delta)}% ahead of pace`,
-      paceTitle: `${Math.round(delta)} points ahead of an even burn: spending the plan faster than its window resets.` };
-    if (delta < -1) return { pace: `${Math.round(-delta)}% under pace`,
-      paceTitle: `${Math.round(-delta)} points behind an even burn: headroom.` };
-    return { pace: "on pace", paceTitle: "On pace with the plan's reset window." };
-  }
-
-  // What the flat line is, in words; how its size was measured rides the hover.
-  function paceNote(plan) {
-    if (plan.tokens_per_hour === null) return el("p", { class: "muted pace-note" }, `No flat pace line: ${plan.reason}`);
-    const sized = plan.sized_from === "reported" ? "The source reports the window's size." :
-      `Window size measured from the bots: ${VVCharts.short(plan.window_tokens)} tokens since the window began made ${plan.used_percent}% of it, ` +
-      `so it holds about ${VVCharts.short(plan.allowance_tokens)}. If anything else uses this plan, the line assumes the bots keep their current share.`;
-    return el("p", { class: "muted pace-note", title: sized },
-      `Flat line on All bots: ${VVCharts.short(plan.tokens_per_hour)} tokens an hour is the even pace of ${plan.plan} ` +
-      `(${plan.window}, ${plan.used_percent}% used), the same as the tick, through ${formatTime(plan.resets_at)}.`);
+      el("p", { class: "muted" }, "Tokens each bot used, hour by hour. Solid: last 24 hours. Dashed: a usual day."),
+      el("div", { class: "burn-cards" }, bots.map(bot => burnCard(bot, shared, now)),
+        burnCard(all, VVCharts.ceiling(all.burn ? [all.burn] : []), now)));
   }
 
   // One card: name and last-24h peak, the hour-of-day chart (or "Not yet observed"), and its totals.
-  function burnCard(row, maximum, now, pace) {
+  function burnCard(row, maximum, now) {
     const burn = row.burn, days = burn?.baselineDays ?? null;
     const card = el("article", { class: `burn-card${row.all ? " all-bots" : ""}`, style: `--accent:${row.color}` });
     const peak = Math.max(...(burn?.last24h || []).filter(Number.isFinite));
@@ -382,11 +359,32 @@
     const usual = `prior ${days}-day hourly average`;
     const aside = row.looseTokens ? ` ${VVCharts.short(row.looseTokens)} tokens are not on a numbered bot.` : "";
     const method = (days === null ? "Tokens in the last 24 hours. A usual day appears once every hour has an observed prior day." : `Tokens in the last 24 hours, and a usual day averaged over the ${days} prior day${days === 1 ? "" : "s"} observed so far${days < 6 ? " (not a full week yet)" : ""}.`) + aside;
-    card.append(VVCharts.drawBurn(burn, { color: row.color, maximum, nowMs: now, pace, usualTitle: `${row.name}: ${usual}`,
-      label: `${row.name}: tokens per clock hour, ${days === null ? "no usual day yet" : `against the ${usual}`}`,
-      paceTitle: pace === null ? null : `Even pace: ${Math.round(pace).toLocaleString()} tokens per hour, the same as the tick.` }),
+    card.append(VVCharts.drawBurn(burn, { color: row.color, maximum, nowMs: now, usualTitle: `${row.name}: ${usual}`,
+      label: `${row.name}: tokens per clock hour, ${days === null ? "no usual day yet" : `against the ${usual}`}` }),
     el("div", { class: "burn-totals", title: method }, VVCharts.totals(burn) + (row.looseTokens ? ` · ${VVCharts.short(row.looseTokens)} not on a numbered bot` : "")));
     return card;
+  }
+
+  // The subscription burn: one card per plan window that keeps a history. No such window, as on a
+  // host with no collector, means no panel.
+  function planCharts(accounts, usage, now = Date.now()) {
+    const cards = accounts.flatMap(account => account.quota_windows.map(window => planCard(account, window, usage, now)));
+    return cards.some(Boolean) ? el("section", { class: "panel usage-charts" }, el("h2", {}, "Subscription burn"),
+      el("p", { class: "muted" }, "Percent of each plan window used, across the window. Solid: the bar's readings, one an hour. Dashed: the even pace, the same as the tick."),
+      el("div", { class: "burn-cards plan-cards" }, cards)) : null;
+  }
+
+  // A reading that is no longer current says how old it is, like every other old value on the page.
+  function planCard(account, window, usage, now) {
+    const burn = VVCharts.planBurn(window, now), pace = quotaPace(window, now), head = paceHeader(pace ? pace.delta : null);
+    if (!burn) return null;
+    const name = `${account.label} · ${quotaWindowLabel(window)}`, color = "rgba(255,255,255,0.6)";
+    const read = `${quotaDisplayPercent(window.used_percent)}% used${usage.stale ? ` · read ${since(usage.sampled_at, now)} ago` : ""}`;
+    return el("article", { class: "burn-card", style: `--accent:${color}` },
+      el("div", { class: "burn-head" }, el("b", { title: head.paceTitle }, head.pace ? `${name} · ${head.pace}` : name), el("span", {}, read)),
+      burn.count ? [VVCharts.drawPlan(burn, { color, label: `${name}: percent used across the window, against the even pace` }),
+        el("div", { class: "burn-totals" }, VVCharts.planTotals(burn, formatTime(burn.since)))]
+        : el("p", { class: "burn-empty muted" }, "No history yet. One reading an hour is kept from now on."));
   }
 
   function renderUsage() {
@@ -395,7 +393,7 @@
     if (usage?.available) {
       if (usage.stale) content.append(sourceBanner(`Usage telemetry is stale. Last sample: ${formatTime(usage.sampled_at)}.`, "warning"));
       const quotas = usage.accounts.filter(account => account.quota_windows.length);
-      if (quotas.length) content.append(subscriptionPanel(quotas));
+      if (quotas.length) content.append(...[subscriptionPanel(quotas), planCharts(quotas, usage)].filter(Boolean));
       content.append(usageCharts(usage), el("p", { class: "muted coverage-note" }, usage.completeness));
     } else content.append(usageCharts({ samples: [], accounts: [] }), sourceBanner("Usage source is unavailable.", "warning"));
     content.append(failurePanel());

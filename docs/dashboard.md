@@ -314,28 +314,20 @@ be mapped to aggregate CI job roles. Recent history uses structural run outcomes
 Unavailable or incomplete history is labeled separately from a complete history with no failures.
 
 Quota windows can omit `allowance_tokens` and `window_minutes` (the window's length, at most 31
-days). The charts show each bot separately and then all bots combined. The All bots card draws a
-flat pace line: the even pace, the same as the white tick on the usage bar. It is the plan's size
-in tokens divided by the window's length in hours. Being above the line for an hour means the same
-thing as being right of the tick. The server computes it once
-(`dashboard/pace.py`) and the page draws that number. `tokens_per_hour` is that even pace. The window's size in tokens comes from one of
-two places:
+days). A plan's pace is in the plan's own unit: 100% over the window's length, which is what the
+white tick on the usage bar marks. It needs the window's length and reset and nothing about the
+bots. A provider reports a plan as a percent used, never as a size in tokens, so the page draws no
+pace in tokens: a size worked out from the bots' tokens follows how much the bots use, because
+other use shares the plan and a plan does not meter raw tokens. A reported `allowance_tokens` is
+shown in the bar's hover and draws no line either. The pace through time is the
+[subscription burn chart](#subscription-burn).
 
-- **Reported.** A window with `allowance_tokens` uses it, but only when every plotted sample belongs
-  to that same account.
-- **Measured.** Otherwise a window with `window_minutes` is sized from the plotted bots' tokens since
-  it began (reset minus length) divided by its used percentage. A plan's percentage is account-wide, so when other use shares the plan this
-  treats the bots' tokens as standing for all of it. The line is then right while the bots keep
-  their share, and the page's hover says so.
-
-When the plan has several windows (say 5-hour and 7-day), the longest one is paced. No
-line is drawn, and the page says why, when two plans could each be billed for the same tokens, the
-plan shows 0% used, no bot tokens fall inside the window, the window began more than the seven days
-of kept samples ago, or token history is stale or partial.
-The All bots header also states the plan's fill against an even burn of its window, in points:
-used percent minus the share of the window elapsed, as `12% under pace`, `21% ahead of pace` or
-`on pace` (within one point). It needs only the window's length and reset, so it shows even when the
-line cannot be sized. No price is inferred.
+The All bots header states one plan's fill against an even burn of its window, in points: used
+percent minus the share of the window elapsed, as `12% under pace`, `21% ahead of pace` or
+`on pace` (within one point). The server works it out once (`delta_points`, `dashboard/pace.py`).
+When the plan has several windows (say 5-hour and 7-day), the longest one is paced. The header says
+nothing when no single plan reports a window length, or when the window has already reset. No
+price is inferred.
 
 Above the charts, each provider is one block (`OpenAI usage`, `Anthropic usage`). The block
 does not name the model or plan. Each window is a bar, shorter windows first, labeled from its
@@ -481,7 +473,8 @@ shows as soon as anything reports on the head. Elapsed time alone never asserts 
   account running the server, bounded in size, ignored and deleted once 24 hours old, and deleted
   at once when access is revoked. Delete the directory after stopping the process to remove them.
 - Telemetry: created and atomically replaced by an optional collector, read only by this process,
-  bounded to a current snapshot plus seven days of samples, and unavailable when deleted.
+  bounded to a current snapshot plus seven days of samples and of hourly quota readings, and
+  unavailable when deleted.
 - GitHub records: never created, updated, or deleted by this dashboard. There are no retry, cancel,
   merge, pause, send, save, or publish controls.
 
@@ -514,9 +507,15 @@ titles, and the unresolved-comment count. `tests/test_dashboard_fresh.py` covers
 rollup change leaving the title white and first in the detail queue, check-reading age, the
 cheap pass under an exhausted detail budget, the head beat's hourly calls, and the first
 paint after a long idle. `tests/test_dashboard_usage_charts.py` covers the usage
-charts' clock-hour mapping, observed and unobserved hours, usual-day averages, scales, and pace.
+charts' clock-hour mapping, observed and unobserved hours, usual-day averages, scales, and that no
+card draws a pace in tokens. `tests/test_dashboard_pace.py` covers which plan window is paced and
+its points against an even burn, whatever the bots used.
 `tests/test_dashboard_usage_quota.py` covers the subscription bars: window labels, pace tick, color,
-reset countdown, and one block per provider. The repository's existing unittest command runs all
+reset countdown, and one block per provider. `tests/test_dashboard_quota_history.py` covers the
+hourly history of those bars: what the collector keeps, drops and refuses, a state file from before
+the history, a reset, and its size. `tests/test_dashboard_plan_burn.py` covers the subscription
+burn chart drawn from it: gaps, gridlines, the even-pace diagonal, and what a card says with no
+history or an old reading. The repository's existing unittest command runs all
 of them. Configuration tests cover the strict optional proxy origin and its immutable default.
 
 Live acceptance uses private configuration outside this repository, reconciles displayed PRs and
@@ -538,7 +537,7 @@ every five minutes through the current GitHub credentials, verified against thei
 and configured workflow, and parsed without extracting files or copying model content. Each scan
 pages through a repository's artifacts, newest first, until a page reaches past seven days, at most
 five pages (500 artifacts) per repository. A listing that stops short of seven days is still complete
-for the pace line when the oldest artifact it read is at or before the plan window. An unreadable
+when the oldest artifact it read is at or before the start of the paced plan window. An unreadable
 artifact, a partial sample, or a budget stop stays partial. A capture that reports no counts is a
 gap only when it falls inside that window. Each scan has a
 budget of 80 GitHub calls. A scan that spends it, or that a rate limit or a timeout stops, keeps
@@ -547,8 +546,8 @@ scan that cannot start keeps the last token history on the page. Only lost acces
 counts as stale after two missed scans (ten minutes), not during an ordinary refresh. Captured token
 records expire after seven days and disappear when source artifacts are removed. Missing captures
 remain unavailable. Old runs cannot be backfilled. The deterministic QAE verification gate has no
-model-token usage and is shown only in PR progress. The only use of these counts beyond the charts
-is sizing the plan's window for the pace line, described above; no price is inferred.
+model-token usage and is shown only in PR progress. These counts are used by the token charts and
+nothing else: they do not size a plan, and no price is inferred.
 
 ## Bot usage charts
 
@@ -559,9 +558,8 @@ hours and runs on to the now marker; the stretch after the marker is yesterday's
 Hours follow the local calendar, so a daylight-saving change does not shift them. The dashed line is a usual
 day: each clock hour averaged over the prior six days that were observed, and its hover names the
 fewest days any hour averages. Bot cards share one y-scale so they compare at a glance; All bots
-adds the bots' observed hours and scales to itself. Only All bots carries the flat, wider-dash pace
-line, and only when an allowance is reported as described above; otherwise a note says why it is
-absent. Each card's header gives the most tokens it used in one clock hour of the last 24 hours, and
+adds the bots' observed hours and scales to itself. No card carries a pace line: tokens are what
+the bots used, and the plan's pace is not in tokens. Each card's header gives the most tokens it used in one clock hour of the last 24 hours, and
 its totals line gives the last 24 hours and, once every hour has an observed prior day, a usual day. There is no period selector: the dashed line already carries the multi-day view,
 and a tab saved with the old selector restores without it.
 
@@ -572,3 +570,35 @@ stale source's last observation, nothing is drawn, so one captured run or a stop
 invents zeros. A bot with no sample in the seven retained days, or no usage source at all, shows
 "Not yet observed". A partial capture keeps its completeness note under the charts, because hours
 drawn as observed can then be missing some runs' tokens.
+
+### Subscription burn
+
+Between the usage bars and the token charts, the Subscription burn panel draws each bar through
+time: one card per plan window, named for the plan and the window's length. The x-axis is the
+window, from its start to its reset, and the y-axis is percent used. The dashed diagonal is the
+even pace, 0% at the start to 100% at the reset: the place the bar's white tick has been at every
+moment of the window. The solid line is the bar's own readings, one an hour. Above the diagonal is
+ahead of pace, and a line steeper than it is burning faster than the window refills. The white
+marker is now. Faint lines mark each local midnight (clock hours for a window under two days) and
+half used. The header repeats the points against an even burn (`Codex · 7 days · 12% ahead of
+pace`) and the current reading; the line under the chart gives the even pace in points an hour
+(0.6 for a week) and how many readings there are and since when. A card takes the width there is:
+one window fills the row, and two share it from 260 pixels each.
+
+It draws percent used, not points per hour. Readings are whole percents, and a week-long plan gains
+one every hour and forty minutes at the even pace, so an hourly rate is a string of zeros and ones
+until it is averaged over about half a day, which hides when a burst happened. Percent used is
+exact at that resolution: a burst is a step where it happened.
+
+The history comes from the [collector](dashboard-collector.md#snapshot-schema-version-1), which
+keeps one reading per window per clock hour for seven days. Nothing is estimated or filled in:
+
+- A window that reset starts a new line. Only readings taken since the window began are drawn.
+- An hour with no reading is a break in the line, and a reading with no neighbour is a dot.
+- With no reading kept yet (a file from a collector that predates the history), the card says so
+  instead of drawing. In the first hours the chart is a dot or a short line, and the line under it
+  says when the readings start.
+- An old reading says how old it is next to the percent (`52% used · read 3h 2m ago`), under the
+  page's stale banner.
+- Windows that no collector reads, as in a hand-written telemetry file, carry no history, and
+  there is then no panel.

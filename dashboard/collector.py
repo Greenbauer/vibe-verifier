@@ -39,6 +39,8 @@ SAFE_ERRORS = {"collection_failed", "host_metrics_unavailable", "invalid_argumen
                "listener_budget_invalid", "listener_config_unavailable", "listener_identity_mismatch",
                "foreign_job_target", "remote_failed", "remote_output_invalid", "ssh_failed",
                "ssh_timeout", "quota_unavailable"}
+# quota_history.py is loaded by path, as collect_local loads the sampler: this file also runs as a script.
+advance_quota_history = runpy.run_path(str(Path(__file__).with_name("quota_history.py")))["advance"]
 
 class CollectorError(Exception):
     """A safe local collection error code."""
@@ -461,14 +463,12 @@ def refresh(config, output, fetch=None, now=None):
         quota_ok = bool(account_observed) and old_account.get("available") is True
         old_error = old_account.get("error")
         quota_error = old_error if old_error in SAFE_ERRORS else (None if quota_ok else "quota_unavailable")
-    account = {"label": "Configured Codex account", "scope": "account_wide",
-               "observed_at": now if quota_ok and due else account_observed,
-               "last_attempt_at": account_attempt, "available": quota_ok,
-               "stale": not quota_ok, "error": None if quota_ok else quota_error,
-               "rate_limits": limits}
-    snapshot = {"version": SCHEMA_VERSION, "owner": config.owner, "observed_at": now,
-                "hosts": [host], "accounts": [account],
-                "samples": _samples(previous, host_body, host_ok, now)}
+    account = {"label": "Configured Codex account", "scope": "account_wide", "rate_limits": limits,
+               "observed_at": now if quota_ok and due else account_observed, "last_attempt_at": account_attempt,
+               "available": quota_ok, "stale": not quota_ok, "error": None if quota_ok else quota_error}
+    snapshot = {"version": SCHEMA_VERSION, "owner": config.owner, "observed_at": now, "hosts": [host],
+                "accounts": [account], "samples": _samples(previous, host_body, host_ok, now),
+                "quota_history": advance_quota_history(previous.get("quota_history"), account, now)}
     atomic_write(output, snapshot)
     return host_ok
 def parse_args(argv=None):
