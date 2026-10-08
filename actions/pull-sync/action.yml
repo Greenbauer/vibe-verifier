@@ -1,0 +1,38 @@
+name: Vibe Verifier pull sync
+description: Update a repository's open pull requests with its default branch, a few at a time, and label the ones that conflict. A dry run unless act is true.
+inputs:
+  token:
+    description: A GitHub App or bot token that can write contents and pull requests in the repository. Not the workflow's GITHUB_TOKEN, whose updates start no workflow on the new head.
+    required: true
+  repository:
+    description: The repository to sync, owner/name.
+    default: ${{ github.repository }}
+  act:
+    description: Write the plan. Anything but true prints it and writes nothing.
+    default: "false"
+  max-in-flight:
+    description: Pull requests that may have checks running at once, counting the ones people pushed.
+    default: "2"
+  quiet-minutes:
+    description: Leave alone a pull request that changed this recently.
+    default: "30"
+  stale-hours:
+    description: Update a pull request that is not ready once its head commit is this old.
+    default: "24"
+runs:
+  using: composite
+  steps:
+    - name: Sync pull requests
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ inputs.repository }}
+        ACT: ${{ inputs.act }}
+        MAX_IN_FLIGHT: ${{ inputs.max-in-flight }}
+        QUIET_MINUTES: ${{ inputs.quiet-minutes }}
+        STALE_HOURS: ${{ inputs.stale-hours }}
+      run: |
+        set -euo pipefail
+        args=(--repo "$REPO" --max-in-flight "$MAX_IN_FLIGHT" --quiet-minutes "$QUIET_MINUTES" --stale-hours "$STALE_HOURS")
+        [ "$ACT" = true ] && args+=(--act)
+        python3 "$GITHUB_ACTION_PATH/pull_sync.py" "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
