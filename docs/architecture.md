@@ -168,6 +168,12 @@ The kit is infrastructure, not a verification layer: it changes nothing about wh
 
 See [`lanes/README.md`](../lanes/README.md).
 
+### 9. Pull request sync (optional)
+
+[`actions/pull-sync`](../actions/pull-sync/README.md) brings open pull requests up to date with the default branch after it moves. It is the one part of the catalog that writes to a pull request's branch, and it is not a verification layer: it decides nothing about a merge. It asks GitHub to merge the default branch into the head, with the head it judged, and GitHub refuses when that head has moved.
+
+An update is a new head, so every per-head verdict is established again for it: the gates and the consumer's tests run, the review harness reviews the files the update touched (or refreshes its receipt when it touched none of the pull request's), and the QAE harness explores again. The sync bounds that cost instead of hiding it: it updates a pull request only when no check on it is running and nothing changed in the last half hour, takes ready pull requests first and the others about once a day, and keeps a cap on how many pull requests of a repository may be in flight. It never resolves a conflict; the `sync-conflict` label hands that pull request to its owner.
+
 ## Evidence ownership
 
 A recurring pattern is that the workflow declares the values that determine what is being judged, while the model supplies observations about that subject.
