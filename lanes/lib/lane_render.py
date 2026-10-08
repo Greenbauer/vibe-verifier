@@ -117,6 +117,7 @@ def lane_settings(host: Host, lane: Lane) -> dict[str, object]:
         "SLOT_RUNTIME_MAX": lane.slot_runtime_max_sec,
         "SLOT_GB": lane.slot_disk_gb,
         "STORE_GB": lane.store_disk_gb,
+        "STORE_FS": lane.store_fs,
         "SLICE": lane.slice,
         "TOP_SLICE": lane.top_slice or "",
         "BRIDGE": lane.bridge,

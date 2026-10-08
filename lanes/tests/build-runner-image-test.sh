@@ -507,6 +507,44 @@ grep -qE '^[^#]*install -d[^#]* /opt/known-ci/preload( |$)' "$D"; expect $? "the
 grep -qx 'ENTRYPOINT \["/usr/local/bin/known-ci-entrypoint"\]' "$D" && grep -q 'ENTRYPOINT_JSON=.\["/usr/local/bin/known-ci-entrypoint"\]' "$ROOT/bin/build-runner-image.sh"; expect $? "the in-image entrypoint path is the one running images and the build agree on"
 { ! ls "$ROOT/image" | grep -q '^supabase-projects'; }; expect $? "no project map lives in image/: each lane's preload map is in its host config"
 
+# ---- a btrfs store: the preloaded store is a subvolume, so a job's store is a snapshot of it -------
+# The build reads the store's filesystem as the slot helper does. The stat and btrfs stand-ins are
+# the provisioning tests' own: a subvolume is a directory the btrfs stand-in has listed, and it
+# stays one when it is renamed.
+# shellcheck source=lib/stubs.sh
+. "$ROOT/tests/lib/stubs.sh"
+btrfs_setup() {
+  setup
+  export ST="$TMP/s/st"; mkdir -p "$ST"
+  write_stubs "$TMP/s/provisioning-stubs"
+  cp "$TMP/s/provisioning-stubs/stat" "$TMP/s/provisioning-stubs/btrfs" "$TMP/s/pathbin/"
+}
+is_subvolume() { [ -d "$1" ] && grep -qx -- "$(ls -di "$1" | awk '{ print $1 }')" "$ST/subvolumes" 2>/dev/null; }
+mode_of() { python3 -c 'import os, sys; print(format(os.stat(sys.argv[1]).st_mode & 0o777, "o"))' "$1" 2>/dev/null; }
+btrfs_setup
+STORE_FSTYPE=btrfs run_build; rc=$?
+BT="$(dated)"
+[ "$rc" -eq 0 ] && in_order "btrfs subvolume create $STORE/golden-$BT.new" "docker run -d --runtime=sysbox-runc -v $STORE/golden-$BT.new:/var/lib/docker --name box-ci-runner-build-$BT box-ci-runner:base-$BT hold" "docker commit"
+expect $? "on a btrfs store the build creates the new store as a subvolume before the preload container mounts it"
+is_subvolume "$STORE/golden-$BT" && [ -f "$STORE/golden-$BT/pulled-by-preload" ] && [ ! -e "$STORE/golden-$BT.new" ] && [ "$(mode_of "$STORE/golden-$BT")" = 700 ] && [ "$(image_env)" = "KNOWN_CI_IMAGE_TAG=$BT" ]
+expect $? "the preloaded store lands at <store>/golden-<tag> still a subvolume (renamed from .new in place, which the stand-in follows as btrfs does), mode 0700, and becomes current"
+grep -qE "^lane-slot snapshot verify-[0-9]+ store=$STORE tag=$BT$" "$CALLLOG" && ! compgen -G "$STORE/verify-*" >/dev/null; expect $? "verify-preload still runs on the slot helper's snapshot of it, which is removed after"
+mkdir "$STORE/golden-20250101-cccccccccccc" "$STORE/golden-$BT.new"
+for d in "$STORE/golden-20250101-cccccccccccc" "$STORE/golden-$BT.new"; do ls -di "$d" | awk '{ print $1 }' >> "$ST/subvolumes"; done
+: > "$CALLLOG"
+STORE_FSTYPE=btrfs run_build; rc=$?
+[ "$rc" -eq 0 ] && ! built && grep -qx "btrfs subvolume delete $STORE/golden-20250101-cccccccccccc" "$CALLLOG" && grep -qx "btrfs subvolume delete $STORE/golden-$BT.new" "$CALLLOG" \
+  && [ "$(ls "$STORE" | tr '\n' ' ')" = "golden-$BT " ] && is_subvolume "$STORE/golden-$BT" && ! grep -q "btrfs subvolume delete $STORE/golden-$BT\$" "$CALLLOG"
+expect $? "pruning deletes a store without an image and an unfinished store with btrfs subvolume delete, and leaves the current one"
+printf '# change\n' >> "$CTX/daemon.json.note"; : > "$CALLLOG"
+STORE_FSTYPE=btrfs PRELOAD_FAIL=1 PRELOAD_DIR_FAIL="$PRELOAD/omega" run_build; rc=$?
+[ "$rc" -ne 0 ] && grep -qE "^btrfs subvolume delete $STORE/golden-$DAY1-[0-9a-f]{12}\.new$" "$CALLLOG" && [ "$(ls "$STORE" | tr '\n' ' ')" = "golden-$BT " ] && [ "$(image_env)" = "KNOWN_CI_IMAGE_TAG=$BT" ]
+expect $? "a failed preload on a btrfs store deletes its unfinished subvolume and leaves the previous store and current as they were"
+btrfs_setup
+run_build; rc=$?
+[ "$rc" -eq 0 ] && ! grep -q '^btrfs ' "$CALLLOG" && [ -d "$STORE/golden-$(dated)" ] && ! is_subvolume "$STORE/golden-$(dated)"
+expect $? "on a store that is not btrfs the build calls btrfs for nothing: the preloaded store is a directory, as before"
+
 echo
 echo "build-runner-image-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

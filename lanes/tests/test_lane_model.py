@@ -20,6 +20,10 @@ check(org.preload == (("alpha", "supabase"), ("beta.web", "-")) and org.preload_
 check((org.memory_max, org.memory_high, org.cpu_quota, org.cpu_weight) == ("16G", "14G", "800%", 50), "the slice limits")
 check((org.container_memory, org.pids, org.tmp_size) == ("4g", 2048, "2g"), "the container limits")
 check((org.runtime_max_sec, org.slot_disk_gb, org.store_disk_gb, org.check_ports) == (3600, 10, 40, (22, 54321, 54322)), "the runtime, disks and check ports")
+# store_fs is optional: xfs when absent, which is what every lane had before the key.
+check(org.store_fs == "xfs", "a lane that declares no store_fs has an xfs store")
+check(load_host(host_file({**ORG, "store_fs": "btrfs"})).lanes[0].store_fs == "btrfs" and load_host(host_file({**ORG, "store_fs": "xfs"})).lanes[0].store_fs == "xfs", "a declared store_fs, btrfs or xfs, is used")
+check(load_host(host_file({**USER, "store_fs": "btrfs"})).lanes[0].store_fs == "btrfs", "a user lane may declare store_fs too")
 # warm_max_age_sec is optional (1200 when absent). With a warm pool the slot unit's RuntimeMaxSec is
 # it plus runtime_max_sec, so a slot about to be recycled still gives a job the whole budget.
 check((org.warm_max_age_sec, org.slot_runtime_max_sec) == (1200, 4800), "a warm-pool lane's RuntimeMaxSec is warm_max_age_sec + runtime_max_sec")

@@ -70,7 +70,7 @@ IMG="$TMP/s/imgdir/sysbox.img"
 setup
 out="$(run_host 2>&1)"; rc=$?
 [ "$rc" -eq 0 ]; expect $? "default dry-run exits 0"
-grep -q "Phase A: jq python3-yaml python3-jwt python3-cryptography" <<< "$out" && grep -A1 "Phase A:" <<< "$out" | grep -q "present"; expect $? "the host packages are present, so Phase A plans nothing"
+grep -q "Phase A: jq python3-yaml python3-jwt python3-cryptography btrfs-progs$" <<< "$out" && grep -A1 "Phase A:" <<< "$out" | grep -q "present"; expect $? "the host packages are present, so Phase A plans nothing"
 grep -q "DRY-RUN: write $S/etc-docker/daemon.json with bip=172.17.0.1/16" <<< "$out"; expect $? "dry-run plans daemon.json with the live docker0 address"
 grep -q "DRY-RUN: truncate -s 20G $IMG" <<< "$out" && grep -q "DRY-RUN: mkfs.ext4 -q -F -m 0 $IMG" <<< "$out" && grep -q "DRY-RUN: systemctl enable --now var-lib-sysbox.mount" <<< "$out"; expect $? "dry-run plans the bounded Sysbox filesystem at hosts.sysbox.image"
 grep -q "DRY-RUN: download https://github.com/nestybox/sysbox/releases/download/v0.7.1/sysbox-ce_0.7.1.linux_amd64.deb, verify sha256" <<< "$out"; expect $? "dry-run plans the pinned, checksum-verified Sysbox release"
@@ -208,6 +208,9 @@ out="$(DOCKER_CE_ABSENT=1 run_host 2>&1)"; rc=$?
 setup
 out="$(HOST_PKGS_ABSENT="jq python3-jwt python3-cryptography" run_host --apply 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -qx "apt-get install -y jq python3-jwt python3-cryptography" "$CALLLOG" && before '^apt-get install -y jq' '^dockerd --validate'; expect $? "missing host packages are installed first, before anything reads JSON"
+setup
+out="$(HOST_PKGS_ABSENT="btrfs-progs" run_host --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "apt-get install -y btrfs-progs" "$CALLLOG"; expect $? "a host without btrfs-progs gets it, alone: a lane's store may be btrfs"
 
 # ---- check ------------------------------------------------------------------------------------------
 setup
@@ -215,6 +218,8 @@ converged
 out="$(run_host --check 2>&1)"; rc=$?
 [ "$rc" -eq 0 ]; expect $? "--check passes on a converged host"
 grep -q "host_packages=present" <<< "$out" && grep -q "packages=sysbox-ce:0.7.1.linux docker-ce:5:29.5.2" <<< "$out" && grep -q "missing_holds=none" <<< "$out" && grep -q "kernel_meta=linux-image-virtual" <<< "$out"; expect $? "--check reports package versions and holds"
+out="$(HOST_PKGS_ABSENT="btrfs-progs" run_host --check 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -qx "host_packages=btrfs-progs " <<< "$out"; expect $? "--check fails on a host without btrfs-progs and names it"
 grep -q "docker_runtime_sysbox=yes docker_storage=overlayfs daemon_json_bip=172.17.0.1/16 daemon_json_pools=present" <<< "$out" && grep -q "sysbox_services=sysbox:active sysbox-mgr:active sysbox-fs:active" <<< "$out"; expect $? "--check reports the runtime, the image store, daemon.json and the Sysbox services"
 grep -q "sysbox_fs=mounted (/dev/loop9 ext4 20G)" <<< "$out" && grep -q "disk free=62G sysbox_image=$IMG (20G, sparse)" <<< "$out"; expect $? "--check reports the Sysbox mount and the disk headroom for its image"
 grep -qx "self_update_timer=runners-pull.timer active" <<< "$out" && grep -q "deploy_key=$S/etc-runners/deploy_key present" <<< "$out" && grep -qx "runners_host=box" <<< "$out" && grep -qx "last_applied=engine=$(git -C "$S/engine" rev-parse HEAD:lanes) config=$(git -C "$S/config" rev-parse HEAD) (engine: the tree of lanes/ in $S/engine; config: the HEAD of $S/config)" <<< "$out"

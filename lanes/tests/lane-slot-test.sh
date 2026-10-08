@@ -111,6 +111,22 @@ setup
 listener_files ci 1 acme 4242
 out="$(env -u KNOWN_CI_BRIDGE PATH="$S/pathbin:$PATH" KNOWN_CI_NAME=box-ci KNOWN_CI_SCOPE=org KNOWN_CI_GH_HOSTS="$S/ghhome/hosts.yml" KNOWN_CI_HARDEN="$S/harden.sh" bash "$HELPER" prepare ci 1 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && ! grep -q '^harden' "$CALLLOG"; expect $? "prepare refuses a unit environment without the lane's bridge, before any firewall call"
+# A slot step that fails stops the prepare. The helper's set -e does not: bash ignores it inside a
+# function called in an || list, which is how prepare_job calls the slot's steps. A prepare that
+# went on past a failed mkfs or mount would exit 0, and the unit would start its container on the
+# bare slot directory of the host filesystem.
+setup
+listener_files ci 1 acme 4242
+out="$(MOUNT_RC=32 run_slot prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "could not mount the slot image $S/state/slot-ci-1.img at $S/state/slot-ci-1; refusing to start a job on the bare directory" <<< "$out" \
+  && grep -q '^mount -o loop,nodev,nosuid' "$CALLLOG" && ! grep -q '^cp --reflink' "$CALLLOG" && [ ! -e "$STORE/slot-ci-1" ] && ! grep -q 'slot ready' <<< "$out"
+expect $? "a prepare whose mount fails exits non-zero naming the step, and makes no store copy: no job starts on the bare slot directory"
+setup
+listener_files ci 1 acme 4242
+out="$(MKFS_RC=1 run_slot prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "mkfs.ext4 failed on the slot image $S/state/slot-ci-1.img; refusing to start a job" <<< "$out" \
+  && grep -q '^mkfs.ext4 -q -F -m 0' "$CALLLOG" && ! grep -q '^mount' "$CALLLOG" && ! grep -q '^cp --reflink' "$CALLLOG" && [ ! -e "$STORE/slot-ci-1" ] && ! grep -q 'slot ready' <<< "$out"
+expect $? "a prepare whose mkfs.ext4 fails exits non-zero naming the step, before any mount or store copy"
 
 # The QAE kind: the Codex store is reset to the login and the tracked config, and handed to the job.
 setup
@@ -713,6 +729,95 @@ setup
 listener_files ci 1 acme 4242
 out="$(HARDEN_RC=1 run_slot prepare ci 1 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && grep -q "refusing to start a job" <<< "$out" && ! grep -q '^mount' "$CALLLOG"; expect $? "prepare fails closed without the lane firewall rules"
+
+# ---- a btrfs store: a job's store is a snapshot, not a copied tree ----------------------------------
+# The helper follows the store it finds: here the stat stand-in says btrfs, and the btrfs stand-in
+# keeps the subvolumes. The image build makes the preloaded store a subvolume.
+subvolume() { ls -di "$1" | awk '{ print $1 }' >> "$S/st/subvolumes"; }
+btrfs_store() { setup; probe_rm; subvolume "$STORE/golden-tag1"; }
+on_btrfs() { STORE_FSTYPE=btrfs run_slot "$@"; }
+btrfs_store
+listener_files ci 1 acme 4242
+out="$(on_btrfs prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "btrfs subvolume snapshot $STORE/golden-tag1 $STORE/slot-ci-1" "$CALLLOG" && cmp -s "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres" "$STORE/slot-ci-1/overlay2/layer1/diff/usr/bin/postgres" \
+  && grep -q "store snapshot of tag1 made" <<< "$out"
+expect $? "on a btrfs store prepare makes the job's store a snapshot of the preloaded subvolume, at the slot's usual path"
+{ ! grep -qE '^(cp --reflink|df |systemctl)' "$CALLLOG"; } && [ ! -e "$STORE/trash" ] && before '^mount -o loop,nodev,nosuid' '^btrfs subvolume snapshot'
+expect $? "and copies nothing: no reflink copy, no reading of the store's room, no trash, after the slot image is mounted as always"
+: > "$CALLLOG"
+out="$(SERVICE_RESULT=success on_btrfs cleanup ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "btrfs subvolume delete $STORE/slot-ci-1" "$CALLLOG" && [ ! -e "$STORE/slot-ci-1" ] && [ ! -e "$S/run/ci/1/job" ] && before "^btrfs subvolume delete" "^rm -f $S/run/ci/1/job\$"
+expect $? "cleanup deletes the snapshot with one btrfs subvolume delete and then frees the instance"
+no_delete_of slot-ci-1 && [ ! -e "$STORE/trash" ] && ! grep -q '^systemctl' "$CALLLOG" && [ -f "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres" ]
+expect $? "with no tree delete, no trash and no reaper to start, and the preloaded store untouched"
+btrfs_store
+listener_files ci 1 acme 4242
+on_btrfs prepare ci 1 >/dev/null 2>&1; printf 'left by a killed cleanup\n' > "$STORE/slot-ci-1/leftover"; : > "$CALLLOG"
+out="$(on_btrfs prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && before "^btrfs subvolume delete $STORE/slot-ci-1\$" "^btrfs subvolume snapshot $STORE/golden-tag1 $STORE/slot-ci-1\$" && [ ! -e "$STORE/slot-ci-1/leftover" ] && [ -d "$STORE/slot-ci-1/overlay2/layer1" ]
+expect $? "a leftover snapshot at the slot's path is deleted with btrfs subvolume delete before the fresh one is made"
+btrfs_store
+listener_files ci 1 acme 4242
+mkdir -p "$STORE/slot-ci-1/not-a-subvolume"
+out="$(on_btrfs prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "rm -rf -- $STORE/slot-ci-1" "$CALLLOG" && grep -q "btrfs could not delete $STORE/slot-ci-1 as a subvolume; deleting it as a tree" <<< "$out" \
+  && [ ! -e "$STORE/slot-ci-1/not-a-subvolume" ] && [ -d "$STORE/slot-ci-1/overlay2/layer1" ]
+expect $? "a leftover btrfs will not delete as a subvolume (a plain directory) is deleted as a tree, and the fresh snapshot is still made"
+btrfs_store
+listener_files ci 1 acme 4242
+mkdir -p "$STORE/slot-ci-1/stuck"
+out="$(RM_FAIL="$STORE/slot-ci-1" on_btrfs prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && ! grep -q '^btrfs subvolume snapshot' "$CALLLOG" && [ -d "$STORE/slot-ci-1/stuck" ] && grep -q "$STORE/slot-ci-1 could not be removed; refusing to snapshot into it" <<< "$out"
+expect $? "a leftover that cannot be removed fails the job closed: no snapshot is made into another job's store"
+btrfs_store
+listener_files ci 1 acme 4242
+out="$(BTRFS_SNAPSHOT_RC=1 on_btrfs prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && [ ! -e "$STORE/slot-ci-1" ] && ! grep -q "slot ready" <<< "$out" \
+  && grep -q "could not snapshot $STORE/golden-tag1 to $STORE/slot-ci-1 (is it a subvolume? bin/build-runner-image.sh makes it one on a btrfs store)" <<< "$out"
+expect $? "a snapshot that cannot be made fails the job closed, with a line that says why, and leaves nothing at the slot's path"
+setup; probe_rm
+listener_files ci 1 acme 4242
+out="$(on_btrfs prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && [ ! -e "$STORE/slot-ci-1" ] && grep -q "could not snapshot $STORE/golden-tag1" <<< "$out" && ! grep -q '^cp --reflink' "$CALLLOG"
+expect $? "a preloaded store that is not a subvolume cannot be snapshotted: the job fails closed, and no copy is made in its place"
+# The wait kind: an empty subvolume, so whatever a wait job wrote goes in one call too.
+btrfs_store
+listener_files wait 3 acme 4545
+out="$(on_btrfs prepare wait 3 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "btrfs subvolume create $STORE/slot-wait-3" "$CALLLOG" && [ -z "$(ls -A "$STORE/slot-wait-3")" ] && [ "$(mode_of "$STORE/slot-wait-3")" = 700 ] && ! grep -q '^btrfs subvolume snapshot' "$CALLLOG"
+expect $? "on a btrfs store a wait slot's store is an empty subvolume, mode 0700, at its usual path: no snapshot is taken for it"
+out="$(SERVICE_RESULT=success on_btrfs cleanup wait 3 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "btrfs subvolume delete $STORE/slot-wait-3" "$CALLLOG" && [ ! -e "$STORE/slot-wait-3" ] && [ ! -e "$STORE/trash" ] && [ ! -e "$S/run/wait/3/job" ]
+expect $? "and its cleanup deletes that subvolume and frees the instance, with no trash"
+# What the helper may delete: the path it derived, never a preloaded store, never through a link.
+btrfs_store
+listener_files ci 1 acme 4242
+ln -s "$STORE/golden-tag1" "$STORE/slot-ci-1"
+out="$(SERVICE_RESULT=success on_btrfs cleanup ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -L "$STORE/slot-ci-1" ] && [ ! -e "$STORE/slot-ci-1" ] && [ -f "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres" ] && ! grep -q '^btrfs subvolume delete' "$CALLLOG"
+expect $? "a link at the slot's path is removed itself and never handed to btrfs, which would delete the subvolume it points to: the preloaded store stays"
+btrfs_store
+mkdir "$STORE/golden-1"; subvolume "$STORE/golden-1"
+for fs in btrfs xfs; do
+  out="$(STORE_FSTYPE="$fs" run_slot discard golden-1 2>&1)"; rc=$?
+  [ "$rc" -eq 2 ] && [ -d "$STORE/golden-1" ] && ! grep -qE '^(btrfs|rm) ' "$CALLLOG" && grep -q "must be <word>-<digits> and not a golden store's, got 'golden-1'" <<< "$out"
+  expect $? "discard refuses a golden store's name on $fs: the helper never deletes a preloaded store"
+done
+# The smoke's and the image build's snapshot and discard.
+btrfs_store
+out="$(on_btrfs snapshot smoke-42 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "btrfs subvolume snapshot $STORE/golden-tag1 $STORE/smoke-42" "$CALLLOG" && [ -d "$STORE/smoke-42/overlay2/layer1" ] && ! grep -q '^cp --reflink' "$CALLLOG"
+expect $? "snapshot <name> on a btrfs store is a subvolume snapshot too, so the smoke and the image build's verify run on what a job gets"
+out="$(on_btrfs discard smoke-42 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "btrfs subvolume delete $STORE/smoke-42" "$CALLLOG" && [ ! -e "$STORE/smoke-42" ]; expect $? "and discard <name> deletes it as a subvolume"
+# xfs is as it was: the same lane, with the store's type the only difference.
+btrfs_store
+listener_files ci 1 acme 4242
+out="$(run_slot prepare ci 1 2>&1)"; rc=$?
+SERVICE_RESULT=success run_slot cleanup ci 1 >/dev/null 2>&1
+[ "$rc" -eq 0 ] && ! grep -q '^btrfs' "$CALLLOG" && grep -q '^cp --reflink=always' "$CALLLOG" && [ "$(trash_count)" = 1 ]
+expect $? "on an xfs store nothing changes: the reflink copy and the trash as before, and btrfs is never called"
+grep -qx 'STORE_FS="$(stat -f -c %T "$STORE_DIR" 2>/dev/null || true)"' "$HELPER"; expect $? "the helper reads the filesystem of the store it finds, not a setting"
 
 echo
 echo "lane-slot-test: $pass passed, $fail failed"

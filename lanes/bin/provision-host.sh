@@ -21,7 +21,9 @@
 # --apply converges, in order, each step skipped when already converged:
 #   A   jq, python3-yaml, python3-jwt and python3-cryptography (the scripts read JSON and the lane
 #       config, and the token refresh signs its App JWT with RS256, which PyJWT does through
-#       cryptography; python3-jwt only recommends it)
+#       cryptography; python3-jwt only recommends it), and btrfs-progs (mkfs.btrfs and btrfs, for a
+#       lane whose host file says store_fs: btrfs; on every host, so that a lane's host file can
+#       ask for it without a second trip through the host phases)
 #   A2  Docker CE, only where it is absent, from Docker's apt repository at the versions the runner
 #       image's Dockerfile pins (the host and the inner engine run the same release)
 #   B   /etc/docker/daemon.json carries bip and default-address-pools, set to the live docker0
@@ -76,7 +78,7 @@ SYSBOX_DROPIN="$SYSBOX_DROPIN_DIR/known-ci-storage.conf"
 SYSBOX_DEB="sysbox-ce_${SYSBOX_VERSION}.linux_amd64.deb"
 SYSBOX_URL="https://github.com/nestybox/sysbox/releases/download/v${SYSBOX_VERSION}/${SYSBOX_DEB}"
 SYSBOX_SHA256="9d6d5484f980d0a17f86c492c1262015c2afb66280bdb97215b79fde6a0261c5"
-HOST_PACKAGES=(jq python3-yaml python3-jwt python3-cryptography)
+HOST_PACKAGES=(jq python3-yaml python3-jwt python3-cryptography btrfs-progs)
 HELD_PACKAGES=(sysbox-ce docker-ce docker-ce-cli containerd.io)
 KERNEL_META_CANDIDATES=(
   linux-generic linux-image-generic linux-headers-generic

@@ -51,6 +51,9 @@ class Lane:
     wait_label: str | None = None
     wait_slots: int = 0
     wait_memory: str | None = None
+    # The filesystem of the lane's store (README.md, "Disk"): xfs, where a job's store is a reflink
+    # copy of the preloaded one, or btrfs, where it is a snapshot of it.
+    store_fs: str = "xfs"
 
     @property
     def kinds(self) -> tuple[str, ...]:

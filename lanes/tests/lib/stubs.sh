@@ -3,13 +3,21 @@
 #
 # write_stubs <dir> writes docker, dockerd, apt-get, apt-mark, dpkg-query, systemctl, journalctl,
 # useradd, getent, chown, chgrp, chmod, runuser, stat, mountpoint, mount, umount, mkfs.ext4,
-# mkfs.xfs, cp, truncate, findmnt, nproc, df, ip, nft, iptables, timeout, sleep, curl and gh into
-# <dir>. No real package, mount, unit, container, firewall, network or GitHub call happens. They
+# mkfs.xfs, mkfs.btrfs, blkid, btrfs, stub-image, cp, truncate, findmnt, nproc, df, ip, nft,
+# iptables, timeout, sleep, curl and gh into <dir>. No real package, mount, unit, container, firewall, network or GitHub call happens. They
 # record every mutation in $CALLLOG and keep their state under $ST; fixtures come from $FX. A
 # mount unit's enable mounts its Where= path; GNU stat -c %u reads a list of root-owned paths;
 # cp --reflink=always is done as a plain copy (neither ext4 nor tmpfs takes one); chmod
-# --reference is done from the reference's mode. The gh stub applies the script's own jq filter to
-# its fixture with the real jq.
+# --reference is done from the reference's mode. MOUNT_RC and MKFS_RC fail mount (which then mounts
+# nothing) and mkfs.ext4 with that status. A filesystem's type is what mkfs left as the first line
+# of its image, and a mount records it for its mount point in $ST/mount-types; stat -f, findmnt and
+# blkid answer from there, or STORE_FSTYPE (xfs when unset) for a store nothing mounted. The files
+# of an image a mkfs stand-in made follow it: they are in its mount point while it is mounted and
+# nowhere a test's lane looks while it is not (stub-image), so a store that is unmounted, has its
+# image renamed and is mounted elsewhere shows there what it held. btrfs keeps subvolumes as
+# directories whose inode it lists in $ST/subvolumes, so one stays a subvolume when it is renamed; a
+# snapshot is a plain copy, and a delete follows a link as the real one does. The gh stub applies
+# the script's own jq filter to its fixture with the real jq.
 
 write_stubs() {
   local p="$1"
@@ -32,6 +40,7 @@ case "$1 $2" in
   "network rm") rm -f "$ST/network-$3"; exit 0 ;;
   "image inspect")
     [ "${IMAGE_PRESENT:-1}" = 1 ] || exit 1
+    case " ${IMAGES_ABSENT:-} " in *" ${*: -1} "*) exit 1 ;; esac
     case "$*" in *--format*) echo "2026-09-25T00:00:00Z" ;; esac
     exit 0 ;;
   "info --format")
@@ -77,7 +86,7 @@ case "$3" in
     echo "5:29.5.2-1~ubuntu.24.04~noble" ;;
   containerd.io) echo "2.2.4-1~ubuntu.24.04~noble" ;;
   linux-image-virtual) echo "6.8.0-142.142" ;;
-  jq|python3-yaml|python3-jwt|python3-cryptography) case " ${HOST_PKGS_ABSENT:-} " in *" $3 "*) exit 1 ;; esac; echo "1.0" ;;
+  jq|python3-yaml|python3-jwt|python3-cryptography|btrfs-progs) case " ${HOST_PKGS_ABSENT:-} " in *" $3 "*) exit 1 ;; esac; echo "1.0" ;;
   *) exit 1 ;;
 esac
 SH
@@ -87,6 +96,25 @@ SH
   cat > "$p/systemctl" <<'SH'
 #!/bin/bash
 echo "systemctl $*" >> "$CALLLOG"
+# A mount unit mounts its Where= path as its Type=, and fails on an image mkfs made as another type.
+mount_unit() {
+  local where what type made
+  [ "${MOUNT_FAIL:-0}" = 1 ] && return 1
+  where="$(sed -n 's/^Where=//p' "$UNITS/$1")"; what="$(sed -n 's/^What=//p' "$UNITS/$1")"; type="$(sed -n 's/^Type=//p' "$UNITS/$1")"
+  made="$(head -n 1 "$what" 2>/dev/null)"
+  case "$made" in xfs|btrfs) [ "$made" = "$type" ] || { echo "mount: $where: wrong fs type ($what is $made, the unit says $type)" >&2; return 32; } ;; esac
+  echo "$where" >> "$ST/mounts"; echo "$where $type" >> "$ST/mount-types"
+  "$(dirname "$0")/stub-image" attach "$what" "$where"
+}
+# MOUNT_STOP_RC fails the unmount, as a mount something still uses does: it stays mounted.
+unmount_unit() {
+  local where
+  [ "${MOUNT_STOP_RC:-0}" = 0 ] || { echo "umount: target is busy" >&2; return "$MOUNT_STOP_RC"; }
+  where="$(sed -n 's/^Where=//p' "$UNITS/$1")"
+  "$(dirname "$0")/stub-image" detach "$where"
+  grep -vx -- "$where" "$ST/mounts" > "$ST/mounts.new"; mv "$ST/mounts.new" "$ST/mounts"
+  grep -v -- "^$where " "$ST/mount-types" > "$ST/mount-types.new" 2>/dev/null; mv "$ST/mount-types.new" "$ST/mount-types"
+}
 state_of() {
   if [ -f "$ST/state/$1" ]; then cat "$ST/state/$1"; return; fi
   case "$1" in sysbox|sysbox-mgr|sysbox-fs) echo "${ACTIVE_STATE:-active}" ;; *) echo inactive ;; esac
@@ -105,6 +133,7 @@ case "$1" in
   is-enabled) echo "${ENABLED_STATE:-enabled}" ;;
   start|restart)
     for u in "${@:2}"; do
+      case "$u" in *.mount) mount_unit "$u" || exit 1 ;; esac
       echo active > "$ST/state/$u"
       case "$u" in
         # The token refresh writes the lane user's hosts.yml, as bin/lane-token-refresh.py does.
@@ -118,13 +147,15 @@ case "$1" in
           fi ;;
       esac
     done ;;
-  stop) for u in "${@:2}"; do echo inactive > "$ST/state/$u"; done ;;
+  stop)
+    for u in "${@:2}"; do
+      case "$u" in *.mount) unmount_unit "$u" || exit 1 ;; esac
+      echo inactive > "$ST/state/$u"
+    done ;;
   enable)
     for u in "$@"; do
       case "$u" in
-        *.mount)
-          [ "${MOUNT_FAIL:-0}" = 1 ] && exit 1
-          sed -n 's/^Where=//p' "$UNITS/$u" >> "$ST/mounts" ;;
+        *.mount) mount_unit "$u" || exit 1 ;;
         *.service|*.timer)
           mkdir -p "$UNITS/multi-user.target.wants"; ln -sf "$UNITS/x" "$UNITS/multi-user.target.wants/$u"
           case " $* " in *" --now "*) echo active > "$ST/state/$u" ;; esac ;;
@@ -171,6 +202,13 @@ SH
   # GNU stat -c %u: 0 for a path listed in $ST/root-owned, 1000 for any other that exists.
   cat > "$p/stat" <<'SH'
 #!/bin/bash
+# stat -f -c %T <path>: the type of the filesystem mounted there.
+if [ "$1" = -f ] && [ "$2" = -c ] && [ "$3" = %T ]; then
+  [ -e "$4" ] || exit 1
+  type="$(awk -v m="$4" '$1 == m { t = $2 } END { print t }' "$ST/mount-types" 2>/dev/null)"
+  echo "${type:-${STORE_FSTYPE:-xfs}}"
+  exit 0
+fi
 [ "$1" = -c ] && [ "$2" = %u ] && [ -e "$3" ] || exit 1
 if grep -qxF -- "$3" "$ST/root-owned" 2>/dev/null; then echo 0; else echo 1000; fi
 SH
@@ -194,20 +232,96 @@ SH
   cat > "$p/mount" <<'SH'
 #!/bin/bash
 echo "mount $*" >> "$CALLLOG"
+[ "${MOUNT_RC:-0}" = 0 ] || exit "$MOUNT_RC"
 echo "${@: -1}" >> "$ST/mounts"
+image="${*: -2:1}"
+case "$(head -n 1 "$image" 2>/dev/null)" in xfs|btrfs) echo "${@: -1} $(head -n 1 "$image")" >> "$ST/mount-types" ;; esac
+"$(dirname "$0")/stub-image" attach "$image" "${@: -1}"
+exit 0
 SH
   cat > "$p/umount" <<'SH'
 #!/bin/bash
 echo "umount $*" >> "$CALLLOG"
+"$(dirname "$0")/stub-image" detach "${@: -1}"
 grep -vx -- "${@: -1}" "$ST/mounts" > "$ST/mounts.new"; mv "$ST/mounts.new" "$ST/mounts"
+grep -v -- "^${*: -1} " "$ST/mount-types" > "$ST/mount-types.new" 2>/dev/null; mv "$ST/mount-types.new" "$ST/mount-types"
+exit 0
 SH
   cat > "$p/mkfs.ext4" <<'SH'
 #!/bin/bash
 echo "mkfs.ext4 $*" >> "$CALLLOG"
+exit "${MKFS_RC:-0}"
 SH
   cat > "$p/mkfs.xfs" <<'SH'
 #!/bin/bash
 echo "mkfs.xfs $*" >> "$CALLLOG"
+echo xfs > "${@: -1}"
+"$(dirname "$0")/stub-image" format "${@: -1}"
+SH
+  cat > "$p/mkfs.btrfs" <<'SH'
+#!/bin/bash
+echo "mkfs.btrfs $*" >> "$CALLLOG"
+[ "${MKFS_BTRFS_RC:-0}" = 0 ] || exit "$MKFS_BTRFS_RC"
+echo btrfs > "${@: -1}"
+"$(dirname "$0")/stub-image" format "${@: -1}"
+SH
+  cat > "$p/blkid" <<'SH'
+#!/bin/bash
+# blkid -p -o value -s TYPE <image>: what mkfs made it, xfs for an image no stand-in made, or
+# BLKID_TYPE (empty: an image blkid finds nothing in).
+[ -f "${@: -1}" ] || exit 2
+if [ -n "${BLKID_TYPE+set}" ]; then [ -n "$BLKID_TYPE" ] || exit 2; echo "$BLKID_TYPE"; exit 0; fi
+case "$(head -n 1 "${@: -1}" 2>/dev/null)" in btrfs) echo btrfs ;; *) echo xfs ;; esac
+SH
+  cat > "$p/stub-image" <<'SH'
+#!/bin/bash
+# Where the files of a filesystem image a mkfs stand-in made are (the header of stubs.sh):
+#   stub-image attach <image> <dir>   a mount: the image's files appear in <dir>
+#   stub-image detach <dir>           an unmount: they go back to the image mounted there
+#   stub-image format <image>         a mkfs: the image holds no file
+# They are kept by the image's inode, which a rename of the image keeps.
+ino() { ls -di "$1" 2>/dev/null | awk '{ print $1 }'; }
+move_all() { find "$1" -mindepth 1 -maxdepth 1 -exec mv {} "$2/" \; ; }
+case "$1" in
+  attach)
+    case "$(head -n 1 "$2" 2>/dev/null)" in xfs|btrfs) ;; *) exit 0 ;; esac
+    files="$ST/image-files/$(ino "$2")"
+    echo "$3 $files" >> "$ST/mount-images"
+    [ ! -d "$files" ] || move_all "$files" "$3" ;;
+  detach)
+    files="$(awk -v m="$2" '$1 == m { f = $2 } END { print f }' "$ST/mount-images" 2>/dev/null)"
+    [ -n "$files" ] || exit 0
+    mkdir -p "$files" && move_all "$2" "$files"
+    grep -v -- "^$2 " "$ST/mount-images" > "$ST/mount-images.new"; mv "$ST/mount-images.new" "$ST/mount-images" ;;
+  format) rm -rf "$ST/image-files/$(ino "$2")" ;;
+esac
+exit 0
+SH
+  cat > "$p/btrfs" <<'SH'
+#!/bin/bash
+echo "btrfs $*" >> "$CALLLOG"
+ino() { ls -di "$1" 2>/dev/null | awk '{ print $1 }'; }
+is_subvolume() { [ -d "$1" ] && [ ! -L "$1" ] && grep -qx -- "$(ino "$1")" "$ST/subvolumes" 2>/dev/null; }
+[ "$1" = subvolume ] || exit 1
+case "$2" in
+  create)
+    [ "${BTRFS_CREATE_RC:-0}" = 0 ] || exit "$BTRFS_CREATE_RC"
+    [ ! -e "$3" ] || { echo "ERROR: target path already exists: $3" >&2; exit 1; }
+    /bin/mkdir "$3" && ino "$3" >> "$ST/subvolumes" ;;
+  snapshot)
+    [ "${BTRFS_SNAPSHOT_RC:-0}" = 0 ] || { echo "ERROR: cannot snapshot '$3'" >&2; exit "$BTRFS_SNAPSHOT_RC"; }
+    is_subvolume "$3" || { echo "ERROR: Not a Btrfs subvolume: $3" >&2; exit 1; }
+    [ ! -e "$4" ] || { echo "ERROR: the stand-in refuses a destination that exists: $4" >&2; exit 1; }
+    /bin/cp -a "$3" "$4" && ino "$4" >> "$ST/subvolumes" ;;
+  delete)
+    target="$3"; [ ! -L "$target" ] || target="$(readlink -f "$target")"
+    [ "${BTRFS_DELETE_FAIL:-}" != "$target" ] || { echo "ERROR: cannot delete '$target'" >&2; exit 1; }
+    is_subvolume "$target" || { echo "ERROR: Not a Btrfs subvolume: $target" >&2; exit 1; }
+    grep -vx -- "$(ino "$target")" "$ST/subvolumes" > "$ST/subvolumes.new"; mv "$ST/subvolumes.new" "$ST/subvolumes"
+    /bin/rm -rf "$target" ;;
+  show) is_subvolume "$3" ;;
+  *) exit 1 ;;
+esac
 SH
   cat > "$p/cp" <<'SH'
 #!/bin/bash
@@ -226,7 +340,9 @@ echo "truncate $*" >> "$CALLLOG"
 SH
   cat > "$p/findmnt" <<'SH'
 #!/bin/bash
-case "${@: -1}" in *slot-*) echo " 10G" ;; *store) echo "/dev/loop8 xfs 40G" ;; *) echo "/dev/loop9 ext4 20G" ;; esac
+type="$(awk -v m="${*: -1}" '$1 == m { t = $2 } END { print t }' "$ST/mount-types" 2>/dev/null)"; type="${type:-${STORE_FSTYPE:-xfs}}"
+case "$*" in *"-o FSTYPE"*) case "${@: -1}" in *store) echo "$type" ;; *) echo ext4 ;; esac; exit 0 ;; esac
+case "${@: -1}" in *slot-*) echo " 10G" ;; *store) echo "/dev/loop8 $type 40G" ;; *) echo "/dev/loop9 ext4 20G" ;; esac
 SH
   # The host's core count, for the per-slot cpusets.
   cat > "$p/nproc" <<'SH'
@@ -324,7 +440,8 @@ for ((i = 1; i < ${#args[@]}; i++)); do
     *) [ -z "$endpoint" ] && endpoint="${args[$i]}" ;;
   esac
 done
-[ "$method" = DELETE ] && exit 0
+# A DELETE succeeds unless GH_DELETE_RC says otherwise (GitHub refuses to remove a runner on a job).
+[ "$method" = DELETE ] && exit "${GH_DELETE_RC:-0}"
 case "$endpoint" in
   */runner-groups) [ "${GH_GROUPS_RC:-0}" = 0 ] || exit 1; fixture="${GROUPS_JSON:-$FX/groups.json}" ;;
   installation/repositories) [ "${GH_RUNNERS_RC:-0}" = 0 ] || exit 1; fixture="$FX/install-repos.json" ;;
