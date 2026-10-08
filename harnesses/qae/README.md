@@ -311,7 +311,7 @@ walks, rounded up, never more than `max-shards`, and never more than there are c
 criterion is never split. The job's log shows the count (`shards: [1,2,3]`), the walks, and one
 warning when the walks are more than the planned explorers are sized for, so an oversized pull
 request is visible before any explorer starts. With the default `max-shards: 1` there is always one
-explorer, and that warning is the only new thing.
+explorer, and those log lines are all this job adds.
 
 **How to turn it on.** In the criteria job, raise `max-shards` on the `actions/criteria` step to the
 number of QAE runners that can run at once. The template's explore job is already a matrix over the
