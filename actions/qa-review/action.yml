@@ -5,7 +5,7 @@ inputs:
     description: The PR body the run read, relative to the workspace.
     required: true
   verdict:
-    description: The explorer's verdict comment, relative to the workspace; empty when there is none.
+    description: The explorers' verdict, as the verify job read it from the run's evidence, relative to the workspace; empty when there is none.
     default: ""
   ticket:
     description: The ticket's criteria the run read, relative to the workspace; empty when the workflow supplies none.

@@ -4,7 +4,7 @@
 A wired gate: the caller supplies two declared inputs and the working tree is the head.
 
     --criteria FILE   the PR body: its `## Acceptance criteria` list, and none without that heading
-    --verdict FILE    the verdict text, usually the QAE's PR comment
+    --verdict FILE    the verdict text, usually the file a QAE explorer wrote
     --artifacts DIR   a second root anchors may resolve in: the run's evidence (step logs, traces)
     --token TOKEN     the marker each check line starts with (default: acceptance-check)
 

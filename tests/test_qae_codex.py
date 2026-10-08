@@ -90,11 +90,11 @@ class Prompt(unittest.TestCase):
         url = "https://site-git-feat-team.vercel.app/?a=1&b=$(id)"
         self.assertIn("SITE_URL: ${{ steps.site.outputs.url }}", CODEX.read_text())
         result = subprocess.run(["bash", "-e", "-c", prompt_script()], cwd=work, capture_output=True, text=True,
-                                env=clean_env({"SITE_URL": url}))
+                                env=clean_env({"SITE_URL": url, "SHARD_SHARE": "Your share of the criteria is AC2."}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         written = Path(work, "qae-inputs", "prompt.md").read_text()
         self.assertEqual("".join(line[2:] if line.strip() else "\n" for line in written.splitlines(True)),
-                         inlined_prompt().replace("SITE_URL", url))
+                         inlined_prompt().replace("SITE_URL", url).replace("SHARD_SHARE", "Your share of the criteria is AC2."))
         self.assertIn("The site built from this PR is running at %s.\n" % url, written)
 
 
