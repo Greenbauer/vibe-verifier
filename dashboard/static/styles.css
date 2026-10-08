@@ -138,6 +138,7 @@ a.pr-row { color: inherit; text-decoration: none; cursor: pointer; }
 .pr-row:first-child { border-top: 0; }
 .pr-row:hover { background: var(--row); }
 .pr-row.stale-row { opacity: .68; }
+.pr-row small.check-age { color: var(--yellow); }
 .pr-identity, .pr-work, .progress-copy, .pr-age { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .pr-identity b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pr-identity b.merge-ready { color: var(--green); }

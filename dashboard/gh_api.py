@@ -78,6 +78,10 @@ class GitHubAPI:
         self.clock = clock
         self.runner = runner
         self.calls = 0
+        self.head_calls = 0
+        self.head_calls_total = 0
+        self.graphql_points = 0
+        self.graphql_points_total = 0
         self.lowest_remaining: int | None = None
         self.backoff_until = 0.0
         self._family_backoff: dict[str, float] = {}
@@ -88,6 +92,8 @@ class GitHubAPI:
     def begin(self) -> None:
         with self._lock:
             self.calls = 0
+            self.head_calls = 0
+            self.graphql_points = 0
             self.lowest_remaining = None
             self._family_backoff = {family: until for family, until in self._family_backoff.items()
                                     if until > self.clock()}
@@ -192,6 +198,21 @@ class GitHubAPI:
                 raise ApiError("request_budget_exhausted")
             self.calls += 1
 
+    def _count_head(self) -> None:
+        """A head reading is not part of the detail budget. It still stops when GraphQL is paused."""
+        with self._lock:
+            if self.clock() < max(self.backoff_until, self._family_backoff.get("graphql", 0.0)):
+                raise ApiError("rate_limited")
+            self.head_calls += 1
+            self.head_calls_total += 1
+
+    def add_points(self, cost: int) -> None:
+        if isinstance(cost, bool) or not isinstance(cost, int) or cost < 0:
+            return
+        with self._lock:
+            self.graphql_points += cost
+            self.graphql_points_total += cost
+
     def _remember_remaining(self, headers: dict[str, str]) -> str:
         remaining = headers.get("x-ratelimit-remaining", "")
         if remaining.isdigit():
@@ -226,12 +247,16 @@ class GitHubAPI:
             with self._lock:
                 self._family_backoff["graphql"] = max(self._family_backoff.get("graphql", 0.0), reset)
 
-    def graphql(self, query: str, variables: dict[str, str | int]) -> dict:
-        """One GraphQL request. Counts as one budget unit and is not ETag-cached.
+    def graphql(self, query: str, variables: dict[str, str | int], *, budgeted: bool = True) -> dict:
+        """One GraphQL request. A budgeted one counts against the detail cap and is not ETag-cached.
 
         GraphQL is a POST, so a later refresh cannot reuse it with If-None-Match the way REST reads can.
+        A head reading passes budgeted=False and still runs after the detail cap is spent.
         """
-        self._reserve("graphql")
+        if budgeted:
+            self._reserve("graphql")
+        else:
+            self._count_head()
         try:
             result = self.runner(_graphql_command(query, variables), capture_output=True, text=True,
                                  timeout=self.timeout)

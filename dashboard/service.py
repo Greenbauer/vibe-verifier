@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from .config import BOT_KEYS, Config, coverage_label
 from .gh_api import ApiError
 from .github import GitHubCollector, recent_bot_runs
+from .head_state import BEAT_SECONDS, apply_head_reading, read_cached_heads, withhold_stale_pulls
 from .telemetry import read_telemetry
 from .util import parse_time
 
@@ -33,6 +34,9 @@ class DashboardService:
         self._inventory_at = 0.0
         self._condition = threading.Condition()
         self._refreshing = False
+        self._beating = False
+        self._beat_stop = threading.Event()
+        self._beat_thread = None
 
     def _empty_github(self, code: str) -> dict:
         # A list already names its repositories. `all` has not discovered any yet, so an empty
@@ -166,6 +170,45 @@ class DashboardService:
     def _background_refresh(self, now_mono: float, now: datetime) -> None:
         self._perform_refresh(now_mono, now)
 
+    def start_head_beat(self) -> None:
+        """Keep heads warm while the page is closed. One cheap read per beat, never the detail."""
+        if self._beat_thread is not None:
+            return
+        self._beat_thread = threading.Thread(target=self._beat_loop, name="dashboard-head-beat", daemon=True)
+        self._beat_thread.start()
+
+    def _beat_loop(self) -> None:
+        while not self._beat_stop.wait(BEAT_SECONDS):
+            try:
+                self.run_head_beat()
+            except Exception:
+                continue
+
+    def run_head_beat(self) -> dict | None:
+        """Refresh heads on the cached snapshot. Skips when a full pass is running or just finished."""
+        reader = getattr(self.collector, "read_open_heads", None)
+        with self._condition:
+            if self._refreshing or self._beating or self._github is None or self.monotonic() - self._github_at < BEAT_SECONDS:
+                return None
+            self._beating = True
+            generation, github = self._github_at, copy.deepcopy(self._github)
+        updated = None
+        try:
+            reading = reader(github) if callable(reader) else read_cached_heads(self.collector, github)
+            updated = apply_head_reading(github, reading["heads"], self.wall_clock().astimezone(timezone.utc),
+                                         reading["calls"], reading["points"])
+        except ApiError:
+            updated = None
+        finally:
+            with self._condition:
+                self._beating = False
+                if updated is None or self._refreshing or self._github_at != generation:
+                    updated = None
+                else:
+                    self._github = updated
+                self._condition.notify_all()
+        return updated
+
     def _expire(self, github: dict, now: datetime) -> dict:
         """Mark observations past the grace window stale and keep their last rows."""
         for row in github.get("repositories", []):
@@ -224,11 +267,11 @@ class DashboardService:
         thread = None
         with self._condition:
             waited = False
-            while self._refreshing and not nonblocking:
+            while (self._refreshing or self._beating) and not nonblocking:
                 waited = True
                 self._condition.wait()
             due = force or self._github is None or now_mono - self._github_at >= ACTIVE_TTL_SECONDS
-            if due and not self._refreshing and not waited:
+            if due and not self._refreshing and not self._beating and not waited:
                 self._refreshing = True
                 if nonblocking:
                     thread = threading.Thread(target=self._background_refresh, args=(now_mono, now),
@@ -245,7 +288,12 @@ class DashboardService:
             with self._condition:
                 github = copy.deepcopy(self._github)
                 github["refreshing"] = False
-        github = self._expire(github, self.wall_clock().astimezone(timezone.utc))
-        telemetry = read_telemetry(self.config, self.wall_clock().astimezone(timezone.utc))
+        # The cached rows paint immediately. A head read cannot make a title green, because
+        # green needs this pass's check detail, so the first paint after a quiet spell does
+        # not wait on GitHub. Anything older than one beat is already not green.
+        observed = self.wall_clock().astimezone(timezone.utc)
+        github = self._expire(github, observed)
+        withhold_stale_pulls(github, observed)
+        telemetry = read_telemetry(self.config, observed)
         self._merge_bot_states(github, telemetry)
         return {"version": 1, "owner": self.config.owner, "github": github, "telemetry": telemetry}
