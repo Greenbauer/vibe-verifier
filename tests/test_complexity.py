@@ -155,6 +155,10 @@ class CognitiveComplexity(unittest.TestCase):
                 result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1")
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn("0 at the base, 1 now", result.stdout)
+        # A comment eslint 9 rejects outright used to stop the gate (exit 2) on any file carrying it; now it is not read.
+        repo = branch_with(self, {"README.md": "x\n"}, {"src/a.ts": "/* eslint-env node */\n" + fn("f1", 0)})
+        result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         # And a function that gets worse under one is still a function that got worse.
         hidden = "// eslint-disable-next-line sonarjs/cognitive-complexity\n"
         repo = branch_with(self, {"src/a.ts": hidden + fn("f1", 0)}, {"src/a.ts": hidden + fn("f1", 1)})
