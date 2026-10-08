@@ -47,8 +47,8 @@ console.log(JSON.stringify({
             self.assertEqual(result[name], {"label": label, "tone": tone})
         self.assertEqual(result["jobStillShowsHours"], {"day": "36h 0m", "long": "2d 1h"})
         css = (ROOT / "dashboard/static/styles.css").read_text()
-        self.assertIn(".pr-age .age-yellow { color: var(--yellow); }", css)
-        self.assertIn(".pr-age .age-red { color: var(--red); }", css)
+        self.assertIn(".pr-age .age-yellow, .progress-copy .age-yellow { color: var(--yellow); }", css)
+        self.assertIn(".pr-age .age-red, .progress-copy .age-red { color: var(--red); }", css)
 
 
 if __name__ == "__main__":

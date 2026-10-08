@@ -138,29 +138,36 @@
     }, messageIcon(), mark.shown);
   }
 
-  function runningHeading(pull) {
-    const names = runningWork(pull).map(work => work.name).filter(Boolean);
-    if (!names.length) return null;
-    const label = names.join(" · ");
-    return el("b", { class: "running-steps", title: label }, label);
+  function pushLine(pull, now) {
+    const push = pull.push;
+    if (!push || typeof push.pushed_at !== "string" || typeof push.kind !== "string" || !push.kind) {
+      return el("span", { class: "push-line", title: "Last push unavailable" }, "Last push unavailable");
+    }
+    const when = since(push.pushed_at, now);
+    return el("span", { class: "push-line", title: `${when} · ${push.kind}` },
+      el("span", { class: ageClass(push.pushed_at, now) }, when),
+      el("span", { class: "push-kind" }, `· ${push.kind}`));
   }
 
-  function progress(pull) {
+  function progress(pull, now = Date.now()) {
     const totals = checkTotals(pull);
     const mark = commentMark(pull);
-    if (!totals.known) return el("div", { class: "progress-copy" },
-      el("div", { class: "progress-meter-row" }, el("b", {}, "No checks reported"), mark),
-      el("span", {}, "Progress is not shown as complete"));
-    const segments = meterSegments(totals);
-    const meter = el("div", { class: "check-meter", role: "img", "aria-label": meterLabel(totals) });
-    segments.forEach(segment => meter.append(el("span", {
+    const segments = totals.known ? meterSegments(totals) : [];
+    const meter = !totals.known ? el("b", { class: "progress-lead" }, "No checks reported")
+      : el("div", { class: "check-meter", role: "img", "aria-label": meterLabel(totals) });
+    if (totals.known) segments.forEach(segment => meter.append(el("span", {
       class: `seg-${segment.state}`, style: `flex:${segment.count} 1 0`, title: `${segment.count} ${segment.label}`,
       "aria-hidden": "true"
     })));
     const open = segments.filter(segment => segment.state !== "success")
       .map(segment => `${segment.count} ${segment.label.toLowerCase()}`);
-    return el("div", { class: "progress-copy" }, runningHeading(pull),
-      el("div", { class: "progress-meter-row" }, meter, mark), el("span", {}, open.join(" · ") || "All passed"));
+    const caption = totals.known ? (open.join(" · ") || "All passed") : "Progress is not shown as complete";
+    return el("div", { class: "progress-copy" },
+      el("div", { class: mark ? "progress-layout has-mark" : "progress-layout" },
+        meter, mark,
+        el("div", { class: "progress-caption" },
+          el("span", { class: "progress-counts" }, caption),
+          pushLine(pull, now))));
   }
 
   function renderPrRows() {
@@ -187,14 +194,34 @@
     });
   }
 
-  function pushStat(pull, now) {
-    const push = pull.push;
-    if (!push || typeof push.pushed_at !== "string" || typeof push.kind !== "string" || !push.kind) {
-      return el("span", { class: "age-stat" }, el("b", {}, "Unavailable"), el("small", {}, "Last push"));
-    }
-    return el("span", { class: "age-stat" },
-      el("b", { class: ageClass(push.pushed_at, now) }, since(push.pushed_at, now)),
-      el("small", {}, push.kind));
+  function runningNames(pull) {
+    const jobs = new Map((pull.runs || []).flatMap(run => (run.jobs || []).map(job => [job.id, job])));
+    const started = row => {
+      const step = ((jobs.get(row.id) || {}).steps || []).find(item => item.status === "in_progress");
+      const at = Date.parse((step && step.started_at) || row.started_at);
+      return Number.isFinite(at) ? at : -Infinity;
+    };
+    const checks = (pull.checks || []).filter(row => row.status === "in_progress")
+      .sort((a, b) => started(b) - started(a));
+    return runningWork({ ...pull, checks }).map(item => item.name).filter(Boolean);
+  }
+
+  function clipped(names) {
+    return { lines: names.slice(0, 2), extra: Math.max(0, names.length - 2) };
+  }
+
+  function workDetail(pull) {
+    const running = runningNames(pull);
+    if (running.length) return clipped(running);
+    const rows = [...(pull.checks || []), ...(pull.statuses || []), ...(pull.expected || [])];
+    const name = row => (row && typeof row.name === "string" ? row.name : "");
+    const failed = rows.filter(row => row.category === "failed").map(name).filter(Boolean);
+    if (failed.length) return clipped(failed);
+    const required = (pull.expected || []).map(name).filter(Boolean);
+    if (required.length) return clipped(required);
+    const queued = rows.filter(row => row.status === "queued").length;
+    if (queued) return { lines: [`${queued} ${queued === 1 ? "check" : "checks"} queued`], extra: 0 };
+    return null;
   }
 
   function prRow(pull) {
@@ -202,6 +229,13 @@
     const href = safeUrl(pull.html_url, snapshot.owner);
     const now = Date.now();
     const opened = href ? `Open ${pull.repository} pull request ${pull.number} on GitHub: ${pull.title}` : null;
+    const reason = pull.attention_reason || "";
+    const detail = workDetail(pull);
+    const workLines = !detail ? [el("small", {}, reason)] : [
+      ...detail.lines.map(line => el("small", { class: "work-line", title: line }, line)),
+      detail.extra ? el("small", { class: "work-more" }, `+${detail.extra} more`) : null,
+      reason ? el("span", { class: "sr-only" }, reason) : null
+    ];
     return el(href ? "a" : "div", {
       class: `pr-row${pull.stale ? " stale-row" : ""}`,
       href, target: href ? "_blank" : null, rel: href ? "noreferrer" : null,
@@ -210,12 +244,11 @@
     el("span", { class: "pr-identity" },
       el("b", { class: pull.merge_ready ? "merge-ready" : null, title: pull.merge_ready ? "Fully merge-ready" : null }, pull.title),
       el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
-    el("span", { class: "pr-work" }, badge(category), el("small", {}, pull.attention_reason)),
-    progress(pull),
+    el("span", { class: "pr-work", title: reason || null }, badge(category), ...workLines),
+    progress(pull, now),
     el("span", { class: "pr-age" },
       el("span", { class: "age-stat" }, el("b", { class: ageClass(pull.created_at, now) }, since(pull.created_at, now)),
-        el("small", {}, "PR age")),
-      pushStat(pull, now)),
+        el("small", {}, "PR age"))),
     el("span", { class: "chevron", "aria-hidden": "true" }, "›"));
   }
 

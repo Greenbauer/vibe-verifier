@@ -425,8 +425,8 @@ function createElementNS(ns, tag) {
   return node;
 }
 global.document={createElementNS};
-const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','runningWork', slice+'return progress;')(
-  el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark, helpers.runningWork);
+const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','since','ageClass', slice+'return progress;')(
+  el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass);
 const base={runs:[], checks:[{name:'test', category:'success', status:'completed'}], statuses:[], expected:[]};
 function marks(node) {
   const found=[];
@@ -462,7 +462,8 @@ console.log(JSON.stringify({
   clear: marks(clear).length,
   partial: marks(partial).map(text),
   unknown: marks(unknown).map(text),
-  besideMeter: open.children.some(item=>item.attrs&&item.attrs.class==='progress-meter-row' && marks(item).length===1),
+  besideMeter: open.children.some(item=>item.attrs&&String(item.attrs.class||'').split(' ').includes('has-mark') && marks(item).length===1 && (item.children||[]).some(child=>child.attrs&&child.attrs.class==='check-meter')),
+  stepAboveBar: JSON.stringify(running).includes('test: Build'),
   hidden: helpers.unresolvedMark({unresolved_comments:null, review_threads:null, comment_count:null}),
   noComments: helpers.unresolvedMark({unresolved_comments:0, review_threads:0, comment_count:0}),
   resolved: helpers.unresolvedMark({unresolved_comments:0, review_threads:4, comments_complete:true, comment_count:6}),
@@ -485,7 +486,8 @@ console.log(JSON.stringify({
         self.assertIsNone(parsed["resolved"])
         self.assertIsNone(parsed["negative"])
         self.assertEqual(parsed["idleHeadings"], [])
-        self.assertEqual(parsed["runningHeadings"], ["test: Build"])
+        self.assertEqual(parsed["runningHeadings"], [])
+        self.assertFalse(parsed["stepAboveBar"])
         css = (ROOT_UI / "dashboard/static/styles.css").read_text()
         self.assertIn(".pr-identity b.merge-ready { color: var(--green); }", css)
         self.assertIn(".progress-copy .comment-mark {", css)
