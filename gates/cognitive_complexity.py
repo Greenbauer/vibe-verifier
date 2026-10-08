@@ -96,6 +96,19 @@ def measure_js(root, files, limit):
     return found
 
 
+def regressions(path, hits, base_hits):
+    """The findings for one changed file: every over-limit function when it has more of them than at the base,
+    otherwise each one whose cost is higher than the base's at the same rank (costs highest first)."""
+    was = sorted((cost(text) for _, text in base_hits), reverse=True)
+    if len(hits) > len(was):
+        return [Finding("%s (over-limit functions in this file: %d at the base, %d now)" % (text, len(was), len(hits)), path, line)
+                for line, text in hits]
+    ranked = sorted(hits, key=lambda hit: cost(hit[1]), reverse=True)  # stable: equal costs keep file order
+    now = [cost(text) for _, text in ranked]
+    return [Finding("%s (it got worse: over-limit costs in this file, highest first, were %s at the base and are %s now)" % (text, was, now), path, line)
+            for (line, text), current, allowed in zip(ranked, now, was) if current > allowed]
+
+
 def check(args):
     source = args.source or DEFAULT_SOURCE
     excluded = ALWAYS_EXCLUDED + (args.exclude or [])
@@ -123,20 +136,7 @@ def check(args):
                 handle.write(git(args.repo, "show", "%s:%s" % (base, origin)))
             at_base.append(path)
         before = measure(snapshot, at_base, args.max)
-    findings = []
-    for path, hits in sorted(head.items()):
-        was = sorted((cost(text) for _, text in before.get(path, [])), reverse=True)
-        if len(hits) > len(was):
-            for line, text in hits:
-                findings.append(Finding("%s (over-limit functions in this file: %d at the base, %d now)" % (text, len(was), len(hits)), path, line))
-            continue
-        ranked = sorted(hits, key=lambda hit: cost(hit[1]), reverse=True)  # stable: equal costs keep file order
-        now = [cost(text) for _, text in ranked]
-        for (line, text), current, allowed in zip(ranked, now, was):
-            if current > allowed:
-                findings.append(Finding("%s (it got worse: over-limit costs in this file, highest first, were %s at the base and are %s now)"
-                                        % (text, was, now), path, line))
-    return findings
+    return [finding for path, hits in sorted(head.items()) for finding in regressions(path, hits, before.get(path, []))]
 
 
 def add_arguments(parser):
