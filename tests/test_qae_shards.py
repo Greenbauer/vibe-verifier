@@ -24,6 +24,9 @@ MERGE = ("- name: Merge the evidence and read the verdict", "- name: Run the QA 
 SHARE = ("Your share of the criteria is %s: you are explorer %d of %d. Walk only those, and write a verdict line for each "
          "of them and for no other criterion; the other criteria are walked by other explorers in parallel, which may "
          "use the same site, so expect data you did not create.")
+NO_SHARE = ("None of the criteria is yours: you are explorer %d of %d, and other explorers walk them in parallel, which may "
+            "use the same site, so expect data you did not create. Walk no criterion and write no acceptance-check line. "
+            "Re-walk the features as described below, and write only their lines in the verdict.")
 SESSION, CONSOLE = "session-1760000000000", "console-2026-10-08T12-00-00-000Z.log"
 
 
@@ -85,7 +88,7 @@ def tree(root):
 
 
 class Plan(unittest.TestCase):
-    """`criteria --max-shards`: how many explorers, and which criteria each walks."""
+    """`criteria --max-shards`: how many explorers, from the walks of the criteria alone."""
 
     def plan(self, text, most, ticket="", manifest="", code=0):
         work = workdir(self)
@@ -95,47 +98,42 @@ class Plan(unittest.TestCase):
         args += ["--manifest", os.path.join(work, "manifest")] if manifest else []
         result = runner(*args)
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
-        return [line for line in result.stdout.splitlines() if line.startswith(("shard", "::warning"))]
+        return [line for line in result.stdout.splitlines() if line.startswith(("shard", "walks", "::warning"))]
 
     def test_a_small_pull_request_is_one_explorer_whatever_is_allowed(self):
         # Three criteria at two widths are six walks, what one explorer is sized for.
-        self.assertEqual(self.plan(body("a", "b", "c"), 4, manifest=QAE), ["shards: [1]"])
+        self.assertEqual(self.plan(body("a", "b", "c"), 4, manifest=QAE), ["shards: [1]", "walks: 6"])
 
     def test_the_pull_request_one_explorer_could_not_finish_is_shared_out_evenly(self):
-        # A consumer's pull request: 13 criteria at two widths, 26 walks. Four runners take them in turn, and
-        # the plan says up front that 26 walks are more than four explorers are sized for.
+        # A consumer's pull request: 13 criteria at two widths, 26 walks. Four runners share them, and the
+        # plan says up front that 26 walks are more than four explorers are sized for. Who walks which
+        # criterion is the explore job's to say (Share, below): it knows the feature re-walk.
         lines = self.plan(THIRTEEN, 4, manifest=QAE)
-        self.assertEqual(lines[:5], ["shards: [1,2,3,4]", "shard 1: AC1, AC5, AC9, AC13 (8 walks)", "shard 2: AC2, AC6, AC10 (6 walks)",
-                                     "shard 3: AC3, AC7, AC11 (6 walks)", "shard 4: AC4, AC8, AC12 (6 walks)"])
-        self.assertEqual(lines[5:], ["::warning title=vibe-verifier criteria::26 walks (each criterion once per role and width) for 4 "
-                                     "explorers sized for 24: expect criteria left unfinished. List fewer criteria on one pull request, "
-                                     "or raise max-shards (harnesses/qae/README.md)."])
+        self.assertEqual(lines, ["shards: [1,2,3,4]", "walks: 26",
+                                 "::warning title=vibe-verifier criteria::26 walks (each criterion once per role and width) for 4 "
+                                 "explorers sized for 24: expect criteria left unfinished. List fewer criteria on one pull request, "
+                                 "or raise max-shards (harnesses/qae/README.md)."])
         self.assertEqual(self.plan(THIRTEEN, 4, manifest=QAE), lines)
-        self.assertEqual(self.plan(THIRTEEN, 8, manifest=QAE)[0], "shards: [1,2,3,4,5]")
+        self.assertEqual(self.plan(THIRTEEN, 8, manifest=QAE), ["shards: [1,2,3,4,5]", "walks: 26"])
 
-    def test_a_criterion_goes_whole_to_the_explorer_with_the_fewest_walks_and_a_tie_to_the_first(self):
-        # Three roles are three walks of one criterion, which is never split between explorers.
-        self.assertEqual(self.plan(body("a [as: admin, rep, viewer]", "b", "c", "d", "e"), 3),
-                         ["shards: [1,2]", "shard 1: AC1, AC5 (4 walks)", "shard 2: AC2, AC3, AC4 (3 walks)"])
-
-    def test_the_tickets_criteria_are_shared_out_after_the_pull_requests(self):
+    def test_each_role_and_each_ticket_criterion_is_counted(self):
+        # Three roles are three walks of one criterion; a ticket's criteria count with the pull request's.
+        self.assertEqual(self.plan(body("a [as: admin, rep, viewer]", "b", "c", "d", "e"), 3), ["shards: [1,2]", "walks: 7"])
         ticket = "- t1\n- t2 [as: admin, rep]\n- t3\n"
-        self.assertEqual(self.plan(body("a", "b", "c", "d"), 2, ticket=ticket),
-                         ["shards: [1,2]", "shard 1: AC1, AC3, TC1, TC3 (4 walks)", "shard 2: AC2, AC4, TC2 (4 walks)"])
-        self.assertEqual(self.plan(body("None: a refactor"), 2, ticket=ticket + "- t4\n- t5\n- t6\n"),
-                         ["shards: [1,2]", "shard 1: TC1, TC3, TC4, TC6 (4 walks)", "shard 2: TC2, TC5 (3 walks)"])
+        self.assertEqual(self.plan(body("a", "b", "c", "d"), 2, ticket=ticket), ["shards: [1,2]", "walks: 8"])
+        self.assertEqual(self.plan(body("None: a refactor"), 2, ticket=ticket + "- t4\n- t5\n- t6\n"), ["shards: [1,2]", "walks: 7"])
 
     def test_one_explorer_is_the_default_and_an_oversized_pull_request_says_so(self):
         self.assertEqual(self.plan(THIRTEEN, 1), [
-            "shards: [1]", "::warning title=vibe-verifier criteria::13 walks (each criterion once per role and width) for 1 explorer "
-            "sized for 6: expect criteria left unfinished. List fewer criteria on one pull request, or raise max-shards "
-            "(harnesses/qae/README.md)."])
+            "shards: [1]", "walks: 13", "::warning title=vibe-verifier criteria::13 walks (each criterion once per role and width) "
+            "for 1 explorer sized for 6: expect criteria left unfinished. List fewer criteria on one pull request, or raise "
+            "max-shards (harnesses/qae/README.md)."])
 
     def test_there_are_never_more_explorers_than_criteria(self):
         # One criterion as four roles at two widths is eight walks, and still one explorer's.
         lines = self.plan(body("a [as: admin, rep, viewer, guest]"), 3, manifest=QAE)
-        self.assertEqual(lines[0], "shards: [1]")
-        self.assertIn("8 walks (each criterion once per role and width) for 1 explorer sized for 6", lines[1])
+        self.assertEqual(lines[:2], ["shards: [1]", "walks: 8"])
+        self.assertIn("8 walks (each criterion once per role and width) for 1 explorer sized for 6", lines[2])
 
     def test_the_widths_are_the_manifests_as_the_base_has_it(self):
         repo = make_repo(self, {".vibe-verifier-qae": QAE, "pr-body.md": body("a", "b", "c", "d")})
@@ -143,8 +141,8 @@ class Plan(unittest.TestCase):
         commit(repo, {".vibe-verifier-qae": QAE.replace(" --widths 1280,375", "")})
         args = ["criteria", os.path.join(repo, "pr-body.md"), "--max-shards", "3", "--repo", repo]
         counted = runner(*args, "--manifest", os.path.join(repo, ".vibe-verifier-qae"))
-        self.assertIn("shards: [1,2]\nshard 1: AC1, AC3 (4 walks)\n", counted.stdout)
-        self.assertIn("shards: [1]\n", runner(*args).stdout)
+        self.assertIn("shards: [1,2]\nwalks: 8\n", counted.stdout)
+        self.assertIn("shards: [1]\nwalks: 4\n", runner(*args).stdout)
 
     def test_a_count_below_one_or_a_manifest_that_is_not_there_cannot_run(self):
         self.assertEqual(self.plan(body("a"), 0, code=2), [])
@@ -192,11 +190,11 @@ class CriteriaAction(unittest.TestCase):
 
 
 class Share(unittest.TestCase):
-    """actions/qae-inputs tells each explorer its share, by the assignment the criteria job counted with,
-    and sizes its turn cap to it."""
+    """actions/qae-inputs shares the criteria out, the same way in every explore job, tells each explorer
+    its share and sizes its turn cap to it."""
 
-    def run_action(self, files, shard, shards):
-        repo = make_repo(self, {".vibe-verifier-qae": QAE})
+    def run_action(self, files, shard, shards, manifest=QAE):
+        repo = make_repo(self, {".vibe-verifier-qae": manifest})
         write(repo, files)
         output = os.path.join(repo, ".git", "github-output")
         Path(output).write_text("")
@@ -204,32 +202,67 @@ class Share(unittest.TestCase):
             "GITHUB_ACTION_PATH": str(ROOT / "actions" / "qae-inputs"), "GITHUB_OUTPUT": output,
             "RUNNER_TEMP": os.path.join(repo, ".git"), "VV_MANIFEST": ".vibe-verifier-qae", "VV_ENTRIES": "",
             "VV_REFERENCES": "qae-inputs/references", "VV_EVIDENCE": "qae-artifacts", "VV_SHARD": str(shard), "VV_SHARDS": str(shards)})
-        return result, outputs(output)
+        return result, outputs(output), repo
+
+    def shares(self, files, shards, manifest=QAE):
+        """[(the criteria the explore job's log names, its turn cap)] for each explorer, each in a workspace of its own."""
+        found = []
+        for shard in range(1, shards + 1):
+            result, declared, _ = self.run_action(files, shard, shards, manifest)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            share = re.search(r"^share: (.*) \(explorer %d of %d\)$" % (shard, shards), result.stdout, re.MULTILINE).group(1)
+            self.assertEqual(declared["share"], SHARE % (share, shard, shards) if share != "no criterion" else NO_SHARE % (shard, shards))
+            found.append((share, int(declared["max-turns"])))
+        return found
 
     def test_each_explorer_is_named_its_share_and_sized_to_it(self):
-        shares = {1: ("AC1, AC5, AC9, AC13", 240), 2: ("AC2, AC6, AC10", 220), 3: ("AC3, AC7, AC11", 220), 4: ("AC4, AC8, AC12", 220)}
-        for shard, (share, turns) in shares.items():
-            result, declared = self.run_action({"qae-inputs/pr-body.md": THIRTEEN}, shard, 4)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(declared["share"], SHARE % (share, shard, 4))
-            self.assertEqual(declared["max-turns"], str(turns))
-            self.assertIn("share: %s (explorer %d of 4)" % (share, shard), result.stdout)
+        # Thirteen criteria at two widths, taken in turn: no criterion twice, none left out.
+        self.assertEqual(self.shares({"qae-inputs/pr-body.md": THIRTEEN}, 4), [
+            ("AC1, AC5, AC9, AC13", 240), ("AC2, AC6, AC10", 220), ("AC3, AC7, AC11", 220), ("AC4, AC8, AC12", 220)])
+
+    def test_a_criterion_goes_whole_to_the_explorer_with_the_fewest_walks_and_a_tie_to_the_first(self):
+        # Three roles at two widths are six walks of one criterion, which is never split between explorers.
+        files = {"qae-inputs/pr-body.md": body("a [as: admin, rep, viewer]", "b", "c", "d", "e")}
+        self.assertEqual([share for share, _ in self.shares(files, 2)], ["AC1, AC5", "AC2, AC3, AC4"])
+
+    def test_the_tickets_criteria_are_shared_out_after_the_pull_requests(self):
+        files = {"qae-inputs/pr-body.md": body("a", "b", "c", "d"), "qae-inputs/ticket.md": "- t1\n- t2 [as: admin, rep]\n- t3\n"}
+        self.assertEqual([share for share, _ in self.shares(files, 2)], ["AC1, AC3, TC1, TC3", "AC2, AC4, TC2"])
 
     def test_one_explorer_walks_every_criterion_and_is_told_nothing(self):
-        result, declared = self.run_action({"qae-inputs/pr-body.md": body("a", "b")}, 1, 1)
+        result, declared, _ = self.run_action({"qae-inputs/pr-body.md": body("a", "b")}, 1, 1)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual((declared["share"], declared["max-turns"]), ("", "160"))
         self.assertNotIn("share:", result.stdout)
 
-    def test_the_feature_re_walk_is_counted_for_the_explorer_that_has_it(self):
-        # Six walks of criteria are 220 turns; the re-walk of one feature is a seventh walk, at the ceiling.
+    def test_the_first_explorer_starts_with_the_feature_re_walk_and_takes_fewer_criteria(self):
+        # A selected feature with no walked step fails the gate, so the explorer that carries the re-walk
+        # must reach it: its load starts at the re-walk's walks, counted as the turn cap counts them (one
+        # a feature at three states each). Without the re-walk it had four criteria; with it, two.
         files = {"qae-inputs/pr-body.md": THIRTEEN}
-        self.assertEqual(self.run_action(files, 2, 4)[1]["max-turns"], "220")
-        self.assertEqual(self.run_action(dict(files, **{"qae-inputs/features/sign-in.md": "# Sign-in\n"}), 2, 4)[1]["max-turns"], "240")
+        files.update({"qae-inputs/features/%s.md" % name: "# %s\n" % name for name in ("cart", "search", "sign-in")})
+        files["qae-inputs/features.md"] = "# Features to re-walk\n"
+        self.assertEqual(self.shares(files, 4), [("AC7, AC11", 240), ("AC1, AC4, AC8, AC12", 240), ("AC2, AC5, AC9, AC13", 240),
+                                                 ("AC3, AC6, AC10", 220)])
+        # Six states of each feature are two walks a feature: six walks before the first criterion.
+        more = QAE.replace("--verdict b", "--verdict b --max-states 6")
+        self.assertEqual([share for share, _ in self.shares(files, 4, more)], ["AC10", "AC1, AC4, AC7, AC11", "AC2, AC5, AC8, AC12",
+                                                                                "AC3, AC6, AC9, AC13"])
+        # Every explorer counts the features, to make the same assignment. Only the first is handed them.
+        for shard, handed in ((1, True), (2, False)):
+            _, _, repo = self.run_action(files, shard, 4)
+            self.assertEqual(os.path.isdir(os.path.join(repo, "qae-inputs", "features")), handed)
+            self.assertEqual(os.path.isfile(os.path.join(repo, "qae-inputs", "features.md")), handed)
 
-    def test_an_explorer_left_with_no_criterion_fails_before_a_model_runs(self):
+    def test_an_explorer_whose_whole_load_is_the_re_walk_is_told_to_walk_no_criterion(self):
+        # Two criteria, of two walks and of six, and three features: both criteria go to the second explorer.
+        files = {"qae-inputs/pr-body.md": body("a", "b [as: admin, rep, viewer]"), "qae-inputs/features.md": "# Features to re-walk\n"}
+        files.update({"qae-inputs/features/%s.md" % name: "# %s\n" % name for name in ("cart", "search", "sign-in")})
+        self.assertEqual(self.shares(files, 2), [("no criterion", 130), ("AC1, AC2", 240)])
+
+    def test_an_explorer_left_with_nothing_to_walk_fails_before_a_model_runs(self):
         # The criteria job counted two criteria and the body now lists one: it was edited between the jobs.
-        result, declared = self.run_action({"qae-inputs/pr-body.md": body("a")}, 2, 2)
+        result, declared, _ = self.run_action({"qae-inputs/pr-body.md": body("a")}, 2, 2)
         self.assertEqual(result.returncode, 2)
         self.assertIn("explorer 2 of 2 has no criterion to walk", result.stderr)
         self.assertEqual(declared, {})
@@ -252,13 +285,16 @@ class Templates(unittest.TestCase):
             # A fixed name: an expression there shows unevaluated on a skipped job (measured, 2026-10-08).
             self.assertIn("\n  explore:\n    name: qae-explore\n", explore)
 
-    def test_each_explorer_is_given_its_number_and_only_the_first_re_walks_the_features(self):
+    def test_each_explorer_is_given_its_number_and_counts_the_features_before_its_share(self):
+        # Every explore job runs the selection, so all of them start the first explorer at the same
+        # re-walk and make the same assignment. The references step then leaves the features to the first.
         for template in TEMPLATES:
             _, explore, _ = self.parts(template)
             step = explore[explore.index("- name: Prepare the explorer's references and widths"):explore.index("- name: Install the browser")]
             self.assertIn("        with:\n          shard: ${{ matrix.shard || 1 }}\n          shards: ${{ strategy.job-total }}\n", step)
             rewalk = explore[explore.index("- name: Select the features to re-walk"):explore.index("- uses: actions/setup-node@")]
-            self.assertIn("        if: ${{ (matrix.shard || 1) == 1 }}\n", rewalk)
+            self.assertNotIn("        if:", rewalk)
+            self.assertLess(explore.index("- name: Select the features to re-walk"), explore.index("- name: Prepare the explorer's references"))
 
     def test_the_share_reaches_the_prompt_of_both_lanes(self):
         self.assertIn("   post nothing, and stop.\n   SHARD_SHARE\n2. For each criterion", PROMPT.read_text())

@@ -147,8 +147,9 @@ jobs:
         # qae-inputs/features.md tells the explorer how many states of each to walk (--max-states, default 3)
         # and which changed paths selected it. The verify job's gate makes the same selection itself and
         # requires one regression-check line and one walked step per feature, so this step only informs.
-        # Of several explorers only the first re-walks: the others get no qae-inputs/features.
-        if: ${{ (matrix.shard || 1) == 1 }}
+        # Of several explorers only the first re-walks. Every one runs this step all the same: each
+        # counts the selection, so that they share the criteria out alike, and the references step
+        # below then takes qae-inputs/features away from every explorer but the first.
         uses: Greenbauer/vibe-verifier/actions/features@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
         with:
           changed-files: qae-inputs/changed-files
@@ -190,8 +191,10 @@ jobs:
         # Its `max-turns` output is the explorer's turn cap, sized to the criteria, roles, widths and
         # features it walks (harnesses/qae/README.md); the Claude lane passes it as --max-turns.
         # Its `share` output is the sentence that names this explorer's share of the criteria, for the
-        # prompt: empty for one explorer, and for one of several the assignment the criteria job counted
-        # with, made again here by code, so the model never works its share out.
+        # prompt: empty for one explorer. For one of several the criteria are shared out here, by code,
+        # the same way in every explore job, so the model never works its share out. The first
+        # explorer's load starts at the feature re-walk's walks, so it takes fewer criteria and reaches
+        # the re-walk in its time: a selected feature with no walked step fails the gate.
         id: references
         uses: Greenbauer/vibe-verifier/actions/qae-inputs@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
         with:

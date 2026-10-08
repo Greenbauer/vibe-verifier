@@ -20,12 +20,16 @@ inputs:
   shard:
     description: >-
       Which explorer this is, of the `shards` that share the pull request's criteria (`matrix.shard || 1` in
-      the explore job). The turn cap is sized to its share, which the `share` output names.
+      the explore job). The turn cap is sized to its share, which the `share` output names. Only the first
+      re-walks the features: for one past the first, qae-inputs/features and qae-inputs/features.md are
+      removed here, after they are counted.
     default: "1"
   shards:
     description: >-
       How many explorers the criteria job split the criteria across (`strategy.job-total` in the explore
-      job). Each is given its share by the assignment the criteria job counted with.
+      job). Every explore job shares the criteria out the same way: in document order each goes whole to
+      the explorer with the fewest walks so far, and the first starts with the walks of the feature re-walk
+      in qae-inputs/features, so the features step runs before this one in every explore job.
     default: "1"
 outputs:
   references:

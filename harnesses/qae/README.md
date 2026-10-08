@@ -305,13 +305,13 @@ can give each runner a share of the criteria instead.
 
 **When it happens.** The criteria job counts the walks: each criterion of the pull request and of
 [its ticket](#the-tickets-criteria), once per role it names in `[as: ...]` and per width on the
-manifest's qae-artifacts line. Feature re-walks are not counted. It plans one explorer for every six
+manifest's qae-artifacts line. Feature re-walks are not counted: which features are re-walked is
+selected from a checkout, and this job has none. It plans one explorer for every six
 walks, rounded up, never more than `max-shards`, and never more than there are criteria, because a
-criterion is never split. In document order each criterion goes to the explorer with the fewest
-walks so far, the lowest-numbered on a tie. The job's log shows the plan
-(`shard 2: AC2, AC6, AC10 (6 walks)`) and one warning when the walks are more than the planned
-explorers are sized for, so an oversized pull request is visible before any explorer starts. With
-the default `max-shards: 1` there is always one explorer, and that warning is the only new thing.
+criterion is never split. The job's log shows the count (`shards: [1,2,3]`), the walks, and one
+warning when the walks are more than the planned explorers are sized for, so an oversized pull
+request is visible before any explorer starts. With the default `max-shards: 1` there is always one
+explorer, and that warning is the only new thing.
 
 **How to turn it on.** In the criteria job, raise `max-shards` on the `actions/criteria` step to the
 number of QAE runners that can run at once. The template's explore job is already a matrix over the
@@ -324,14 +324,22 @@ as `entries:` instead, as it does to `actions/gates`. Without either, one width 
 **What each explorer does.** Every explore job runs the same steps.
 
 - [`actions/qae-inputs`](../../actions/qae-inputs/action.yml) is given the explorer's number
-  (`matrix.shard || 1`) and how many there are (`strategy.job-total`). It makes the criteria job's
-  assignment again, with the same code, and declares the sentence the prompt gives that explorer:
-  "Your share of the criteria is AC1, AC4, TC2: you are explorer 2 of 3. Walk only those, and write
-  a verdict line for each of them and for no other criterion; ...". The model never works its share
-  out. On the Claude lane the turn cap is sized to that share. An explorer whose share is empty
-  fails before any model runs: the criteria changed after the criteria job counted them.
-- Only the first explorer re-walks the [features](#re-walking-the-features-a-pull-request-touches):
-  the others get no `qae-inputs/features/`.
+  (`matrix.shard || 1`) and how many there are (`strategy.job-total`). It shares the criteria out,
+  the same way in every explore job: in document order each criterion goes whole to the explorer
+  with the fewest walks so far, the lowest-numbered on a tie. It declares the sentence the prompt
+  gives that explorer: "Your share of the criteria is AC1, AC4, TC2: you are explorer 2 of 3. Walk
+  only those, and write a verdict line for each of them and for no other criterion; ...". The model
+  never works its share out, and the explore job's log names the share. On the Claude lane the turn
+  cap is sized to it.
+- Only the first explorer re-walks the [features](#re-walking-the-features-a-pull-request-touches),
+  and its load starts at the re-walk's walks, counted as the turn cap counts them. A selected
+  feature with no walked step fails the gate, so the explorer that carries the re-walk takes fewer
+  criteria and reaches it in its time. When the re-walk outweighs the criteria it would get, it gets
+  none and is told to re-walk only. Every explore job runs the selection step, so that all of them
+  count the same features and make the same assignment, and `actions/qae-inputs` then removes
+  `qae-inputs/features/` for every explorer but the first.
+- An explorer with nothing to walk fails before any model runs: the criteria changed after the
+  criteria job counted them.
 - After the explorer, a workflow step copies its verdict to `verdicts/<n>.md` and puts the
   explorer's number in the name of everything else it left, so that the evidence of all of them fits
   in one directory: `session-*/`, `console-*.log` and `network-*.log`, which the gates read by those
