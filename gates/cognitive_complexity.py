@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail when a file this pull request changed has more over-limit functions than it had at the base.
+"""Fail when a file this pull request changed has more over-limit functions than at the base, or a worse one.
 
 The metric is SonarSource's cognitive complexity. JS and TS files are measured by
 eslint-plugin-sonarjs through the pinned toolchain in tools/cognitive-complexity (eslint, the sonarjs
@@ -7,10 +7,15 @@ plugin, the TypeScript parser and typescript, every version and tarball integrit
 lockfile); Python files by complexipy through tools/cognitive-complexity-python (one wheel per
 interpreter, every digest in the committed requirements file). Neither honors the repository's own
 suppressions (eslint bulk suppressions, complexipy's ignore comments): the ratchet counts. A ratchet, not
-a backlog: every source file changed since the base ref is measured at HEAD and at the base, and
-a file is a finding only when it has more functions over the limit than it had, or is new and
-has any. Functions nobody touched never block, and a refactor that removes one is never undone
-by the count. --all measures every tracked source file against the limit instead, for an audit.
+a backlog: every source file changed since the base ref is measured at HEAD and at the merge base
+(what the pull request started from, so a later improvement on the base branch is not held
+against it), and a file is a finding when it has more functions over the limit than it had (or is
+new and has any), or when its over-limit costs got worse: sorted highest first, each must be no
+higher than the base's at the same rank. That judges the file's costs, not named functions (eslint
+does not name them): a function that grows fails the file unless a costlier one in it dropped far
+enough to take the lower rank, and a file whose highest cost rises always fails. An over-limit
+function may be touched, renamed, moved within its file or improved. Functions nobody touched
+never block. --all measures every tracked source file against the limit instead, for an audit.
 
     --max N          the limit (default 15)
     --source GLOB    what counts as source (repeatable; default: JS, TS and Python files)
@@ -18,6 +23,7 @@ by the count. --all measures every tracked source file against the limit instead
 """
 import json
 import os
+import re
 import subprocess
 import tempfile
 
@@ -33,6 +39,16 @@ ALWAYS_EXCLUDED = ["**/*.d.ts", "**/node_modules/**", "**/*.test.*", "**/*.spec.
 # for its own config: against this one rule its other entries look unused (eslint exits 2), and its count
 # for this rule would hide what the ratchet counts. Read from the catalog, not the cache, whose key is the lockfile.
 NO_SUPPRESSIONS = os.path.join(NODE_TOOLS, "cognitive-complexity", "no-suppressions.json")
+# Both tools word a finding the same way; the cost is read out of it.
+COST = re.compile(r"Cognitive Complexity from (\d+) to")
+
+
+def cost(text):
+    """A reported function's cost. A report this cannot read is cannot-run, never a function scored at zero."""
+    found = COST.search(text)
+    if not found:
+        raise CannotRun("could not read a function's cost from the report: %s" % text.split("\n")[0][:120])
+    return int(found.group(1))
 
 
 def measure(root, files, limit):
@@ -82,6 +98,21 @@ def measure_js(root, files, limit):
     return found
 
 
+def regressions(path, hits, base_hits):
+    """The findings for one changed file: its over-limit functions, when it has more of them than at the base
+    or when its costs, highest first, are higher than the base's at some rank. Every over-limit function is
+    listed either way, because the tools do not say which one changed; the message carries what did."""
+    was = sorted((cost(text) for _, text in base_hits), reverse=True)
+    now = sorted((cost(text) for _, text in hits), reverse=True)
+    if len(now) > len(was):
+        why = "over-limit functions in this file: %d at the base, %d now" % (len(was), len(now))
+    elif any(current > allowed for current, allowed in zip(now, was)):
+        why = "this file's over-limit costs got worse: highest first, %s at the base, %s now" % (was, now)
+    else:
+        return []
+    return [Finding("%s (%s)" % (text, why), path, line) for line, text in hits]
+
+
 def check(args):
     source = args.source or DEFAULT_SOURCE
     excluded = ALWAYS_EXCLUDED + (args.exclude or [])
@@ -96,27 +127,23 @@ def check(args):
         return []
     head = measure(args.repo, files, args.max)
     moved = renamed(args.repo, base)
+    # The files above are the changes since the merge base, so that is the commit to measure them at. The base
+    # ref's tip may have moved on: read there, a function someone else improved since would count against this change.
+    start = git(args.repo, "merge-base", base, "HEAD").strip()
     with tempfile.TemporaryDirectory(prefix="vv-base-") as snapshot:
         at_base = []
         for path in files:
             origin = moved.get(path, path)  # a renamed file is compared with itself at its old path
-            probe = subprocess.run(["git", "-C", args.repo, "cat-file", "-e", "%s:%s" % (base, origin)], capture_output=True)
+            probe = subprocess.run(["git", "-C", args.repo, "cat-file", "-e", "%s:%s" % (start, origin)], capture_output=True)
             if probe.returncode != 0:
                 continue  # new in this pull request: any over-limit function is a finding
             target = os.path.join(snapshot, path)
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, "w", encoding="utf-8") as handle:
-                handle.write(git(args.repo, "show", "%s:%s" % (base, origin)))
+                handle.write(git(args.repo, "show", "%s:%s" % (start, origin)))
             at_base.append(path)
         before = measure(snapshot, at_base, args.max)
-    findings = []
-    for path, hits in sorted(head.items()):
-        had = len(before.get(path, []))
-        if len(hits) <= had:
-            continue
-        for line, text in hits:
-            findings.append(Finding("%s (over-limit functions in this file: %d at the base, %d now)" % (text, had, len(hits)), path, line))
-    return findings
+    return [finding for path, hits in sorted(head.items()) for finding in regressions(path, hits, before.get(path, []))]
 
 
 def add_arguments(parser):

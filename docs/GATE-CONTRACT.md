@@ -434,9 +434,14 @@ the venv.
 
 `cognitive-complexity` and `max-file-lines` judge the source files a pull request changed, against
 the same files at the base: a file is a finding only when it has more functions over the
-complexity limit than it had (or is new and has any), or is over the line cap and grew. What
-nobody touched never blocks, and a refactor that removes one over-limit function is never undone
-by the count. A file the pull request moved is compared with itself at its old path (git's
+complexity limit than it had (or is new and has any), when its over-limit costs got worse, or
+when it is over the line cap and grew. "Worse" compares the file's over-limit costs, sorted
+highest first, with the merge base's at the same rank: each must be no higher. That judges the
+file's costs, not named functions, because eslint does not name them: a function that grows
+fails the file unless a costlier one in it dropped far enough to take the lower rank, and a file
+whose highest cost rises always fails. An over-limit function may be touched, renamed, moved
+within its file or improved; moved to another file, it counts as new there. What nobody touched
+never blocks, and a refactor that removes one over-limit function is never undone by the count. A file the pull request moved is compared with itself at its old path (git's
 rename detection), so moving a long or tangled file without changing it never blocks either. That is the lesson of a predecessor's observe stage, which reported main's own nine
 findings on every pull request and could not be promoted. `--all` measures everything, for an
 audit or to decide a first subscription. `cognitive-complexity` runs eslint on its own config and
