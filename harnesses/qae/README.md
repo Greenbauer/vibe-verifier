@@ -382,8 +382,8 @@ that names `qae-explore` finds it on every pull request, split or not.
   branch rule can name them. On a split run the verify job fails unless every explorer's job
   succeeded, after its gates have run.
 - **Tell the dashboard.** A [dashboard](../../docs/dashboard.md) that lists the explorer's job names
-  lists the extra ones too (`qae-explore (2)`, ...), or it does not see those jobs. It does not read
-  a later explorer's usage artifact yet ([`docs/USAGE-CONTRACT.md`](../../docs/USAGE-CONTRACT.md)).
+  lists the extra ones too (`qae-explore (2)`, ...), or it does not see those jobs. Each explorer's
+  usage artifact is read by its own name ([`docs/USAGE-CONTRACT.md`](../../docs/USAGE-CONTRACT.md)).
 
 A consumer's copy made before the split keeps working after a pin bump: `actions/criteria` and
 `actions/qae-inputs` default to one explorer. It still reads the verdict from a comment until it
