@@ -208,6 +208,31 @@ console.log(JSON.stringify(groups.map(g=>[g.repository,g.pulls.map(x=>x.number)]
 ''')
         self.assertEqual(result, [["o/busy", [3, 4, 2]], ["o/quiet", [1]], ["o/blank", [5]]])
         self.assertEqual(self.node("console.log(JSON.stringify(require('./dashboard/static/helpers.js').groupPulls([])))"), [])
+
+    def test_a_repository_with_no_open_pull_request_is_absent_and_all_mode_banner_says_so(self):
+        result = self.node(r'''
+const h=require('./dashboard/static/helpers.js');
+const pulls=[{repository:'octocat/busy',number:1,created_at:'2026-10-01T00:00:00Z',updated_at:'2026-10-02T00:00:00Z'}];
+const quiet='octocat/quiet';
+console.log(JSON.stringify({
+ groups:h.groupPulls(pulls).map(g=>g.repository),
+ filter:h.repositoriesWithPulls(pulls),
+ quietGrouped:h.groupPulls(pulls).some(g=>g.repository===quiet),
+ reading:h.coverageBanner({label:'All repositories of octocat',selected:null,readable:0},{refreshing:true,errors:[]}),
+ unavailable:h.coverageBanner({label:'All repositories of octocat',selected:null,readable:0},{refreshing:false,errors:[{code:'unavailable'}]}),
+ counted:h.coverageBanner({label:'All repositories of octocat',selected:2,readable:2},{errors:[],stale:false}),
+ selected:h.coverageBanner({label:'Selected repositories',selected:1,readable:1},{errors:[],stale:false})
+}));
+''')
+        self.assertEqual(result["groups"], ["octocat/busy"])
+        self.assertEqual(result["filter"], ["octocat/busy"])
+        self.assertNotIn("octocat/quiet", result["filter"])
+        self.assertFalse(result["quietGrouped"])
+        self.assertEqual(result["reading"], "Reading repositories.")
+        self.assertEqual(result["unavailable"], "Repository list is unavailable.")
+        self.assertEqual(result["counted"], "All repositories of octocat: 2. 2 read successfully in this sample.")
+        self.assertEqual(result["selected"], "Selected repositories: 1. 1 read successfully in this sample.")
+
     def test_pr_badge_is_passed_when_the_only_other_checks_were_skipped(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');

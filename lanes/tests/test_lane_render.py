@@ -44,6 +44,8 @@ check(json.loads(listener_config(three, codex_store="/k/codex"))["kinds"]["qae"]
 dhost = load_host(host_file(ORG, USER, top={"dashboards": [DASH, {**without(DASH, "bridge_account"), "name": "own", "lane": "own-ci", "port": 8766, "config": {"version": 1, "owner": "someone"}}]}))
 box, own = dhost.dashboards
 check(json.loads(dashboard_config(box)) == {**DASH["config"], "telemetry_file": "/var/lib/vibe-dashboard/box/telemetry.json"}, "dashboard.json is the declared config plus this machine's telemetry file")
+every = load_host(host_file(ORG, top={"dashboards": [{**DASH, "config": {**DASH["config"], "repositories": "all"}}]})).dashboards[0]
+check(json.loads(dashboard_config(every))["repositories"] == "all", "repositories: all is written through as the string")
 check(json.loads(collector_config(dhost, box)) == {"version": 1, "owner": "Example", "host": {
     "label": "box-1 box-ci", "listener_config_path": "/etc/box-ci/listener.json", "lane_name": "box-ci",
     "workspace_path": "/var/lib/box-ci", "codex_home": "/var/lib/box-ci/codex"}},

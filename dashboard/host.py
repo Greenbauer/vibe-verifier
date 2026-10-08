@@ -4,8 +4,10 @@ Linux-only (Ubuntu 24.04, systemd): bin/vibe-dashboard-host runs these as root f
 checkout, on the timers in dashboard/systemd/. The web service never runs this module, and never
 reads the App key or the collector's raw state. Runbook: docs/dashboard-host.md.
 
-- token: mint a GitHub App installation token narrowed to the dashboard's repositories and to read
-  permissions, and write it as the dashboard user's gh hosts.yml.
+- token: mint a GitHub App installation token narrowed to read permissions. A configured list
+  is also narrowed to those repositories. `repositories: all` covers every repository the
+  installation can reach, still only for the configured owner. Write it as the dashboard user's
+  gh hosts.yml.
 - telemetry: sample this machine with the collector's local mode into root-only state, then publish
   the dashboard's telemetry file without the raw sample history.
 """
@@ -128,19 +130,47 @@ def mint(jwt: str, installation: int, scope: dict, opener=urllib.request.urlopen
         raise HostError("the GitHub token exchange is unavailable") from None
 
 
-def granted_token(data: object, repositories: tuple[str, ...]) -> str:
-    """The token, only when GitHub granted exactly the requested read permissions on exactly the
-    configured repositories. Anything wider, narrower or missing fails closed."""
+def _token_text(data: object) -> str:
     if not isinstance(data, dict) or not isinstance(data.get("token"), str) or not TOKEN.fullmatch(data["token"]):
         raise HostError("GitHub returned no usable token")
     if data.get("permissions") != READ_PERMISSIONS:
         raise HostError("GitHub granted permissions other than the requested reads")
+    return data["token"]
+
+
+def granted_token(data: object, repositories: tuple[str, ...]) -> str:
+    """The token, only when GitHub granted exactly the requested read permissions on exactly the
+    configured repositories. Anything wider, narrower or missing fails closed."""
+    token = _token_text(data)
     granted = data.get("repositories")
     if (not isinstance(granted, list) or not all(isinstance(row, dict) for row in granted)
             or sorted(str(row.get("full_name")).casefold() for row in granted)
             != sorted(name.casefold() for name in repositories)):
         raise HostError("GitHub scoped the token to repositories other than the configured ones")
-    return data["token"]
+    return token
+
+
+def granted_installation(data: object, owner: str) -> str:
+    """The token for `repositories: all`. Permissions are still exactly the requested reads.
+
+    Omitting the repository list asks GitHub for every repository the installation can reach.
+    That is wider than a named list: the token can read the whole installation, not a hand list.
+    A named repository outside the configured owner fails closed. An installation-wide grant
+    (`repository_selection` all, no repository list) names nothing outside the owner."""
+    token = _token_text(data)
+    selection = data.get("repository_selection")
+    granted = data.get("repositories")
+    if selection == "all" and granted is None:
+        return token
+    owner_fold = owner.casefold()
+    if (selection not in ("all", "selected") or not isinstance(granted, list)
+            or not all(isinstance(row, dict) for row in granted)):
+        raise HostError("GitHub scoped the token outside the dashboard owner")
+    for row in granted:
+        full = row.get("full_name")
+        if not isinstance(full, str) or full.count("/") != 1 or full.split("/", 1)[0].casefold() != owner_fold:
+            raise HostError("GitHub scoped the token outside the dashboard owner")
+    return token
 
 
 def hosts_yml(token: str, login: str) -> str:
@@ -149,15 +179,22 @@ def hosts_yml(token: str, login: str) -> str:
 
 def refresh_token(config_path: str, user: str, app: str, installation: int, key: Path, login: str,
                   output: Path, opener=urllib.request.urlopen) -> None:
-    """Mint the dashboard's read token from its own repository list and write its gh hosts.yml."""
+    """Mint the dashboard's read token and write its gh hosts.yml.
+
+    A configured list is requested by name. `repositories: all` omits the list, so the token
+    covers whatever the installation can reach, and is refused if that reaches outside the owner."""
     if not APP.fullmatch(app) or not LOGIN.fullmatch(login) or installation < 1:
         raise HostError("the App, installation or login is not a GitHub identifier")
     owner = _account(user)
     config = load_config(config_path, uid=owner[0])
     _root_secret(key)
-    scope = {"repositories": [name.split("/", 1)[1] for name in config.repositories],
-             "permissions": READ_PERMISSIONS}
-    token = granted_token(mint(app_jwt(app, key), installation, scope, opener), config.repositories)
+    if config.all_repositories:
+        scope = {"permissions": READ_PERMISSIONS}
+        token = granted_installation(mint(app_jwt(app, key), installation, scope, opener), config.owner)
+    else:
+        scope = {"repositories": [name.split("/", 1)[1] for name in config.repositories],
+                 "permissions": READ_PERMISSIONS}
+        token = granted_token(mint(app_jwt(app, key), installation, scope, opener), config.repositories)
     publish(output, hosts_yml(token, login).encode(), owner)
     # gh 2.93 treats hosts.yml with no config.yml as a migration and exits before any API call
     # unless it can create that file. This directory is writable only by root, and the web service

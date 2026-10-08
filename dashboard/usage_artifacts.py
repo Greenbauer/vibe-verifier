@@ -132,6 +132,7 @@ class UsageArtifacts:
         self.api = api or GitHubAPI(max_calls=80)
         self.downloader, self.clock = downloader, clock
         self.cache, self.result, self.updated = {}, None, float("-inf")
+        self._names = None
 
     def _budget_left(self):
         limit = getattr(self.api, "max_calls", None)
@@ -177,8 +178,12 @@ class UsageArtifacts:
                 return artifacts, True, oldest
         return artifacts, False, oldest
 
-    def collect(self, now=None, window_start=None):
+    def collect(self, now=None, window_start=None, repositories=None):
         now = now or datetime.now(timezone.utc)
+        names = tuple(self.config.repositories if repositories is None else repositories)
+        if self._names != names:
+            self.result = None
+            self._names = names
         if self.result is not None and self.clock() - self.updated < 300:
             return self.result
         self.api.begin()
@@ -186,7 +191,7 @@ class UsageArtifacts:
         records, hard, seen, listed = [], False, set(), set()
         listing_complete, bounds, unproven = True, [], False
         try:
-            for repository in self.config.repositories:
+            for repository in names:
                 artifacts, complete, oldest = self._recent(repository, cutoff)
                 if complete:
                     bounds.append(cutoff)

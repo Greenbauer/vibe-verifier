@@ -60,9 +60,10 @@ check([(d.name, d.lane.name, d.port, d.bridge_account) for d in example.dashboar
       "the example serves greenbauer on 8765 behind a bridge account and acme on 8766 without one")
 check([(d.name, d.lane.name, d.port, d.bridge_account) for d in vps.dashboards] == [("orbit", "orbit-ci", 8766, None)], "vps-1 serves orbit on 8766, with no bridge account")
 check(all(d.config["agents"] == CI_ROLES for d in dashes.values()), "every dashboard's agents are the QAE roster")
-check({name: (d.config["owner"], len(d.config["repositories"]), d.config["proxy_origin"]) for name, d in dashes.items()} == {
-    "greenbauer": ("Greenbauer", 1, "https://worker-1.example.ts.net:8443"), "acme": ("acme", 2, "https://worker-1.example.ts.net:8444"),
-    "orbit": ("orbit-labs", 3, "https://vps-1.example.ts.net:8444")}, "each dashboard keeps its owner, repositories and HTTPS route")
+check(dashes["greenbauer"].config["repositories"] == "all", "greenbauer discovers every repository of its owner")
+check({name: (d.config["owner"], len(d.config["repositories"]), d.config["proxy_origin"]) for name, d in dashes.items() if name != "greenbauer"} == {
+    "acme": ("acme", 2, "https://worker-1.example.ts.net:8444"),
+    "orbit": ("orbit-labs", 3, "https://vps-1.example.ts.net:8444")}, "a listed dashboard keeps its owner, repositories and HTTPS route")
 check(json.loads(collector_config(vps, dashes["orbit"]))["host"] == {"label": "vps-1 orbit-ci", "listener_config_path": "/etc/orbit-ci/listener.json",
       "lane_name": "orbit-ci", "workspace_path": "/var/lib/orbit-ci", "codex_home": "/nonexistent"}, "orbit's telemetry samples orbit-ci, which has no Codex login")
 for path in sorted((ROOT / "examples/hosts").glob("*")) + sorted((ROOT / "tests/fixtures/hosts").glob("*")):

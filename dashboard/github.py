@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
-from .config import BOT_KEYS, BotDefinition, Config
+from .config import BOT_KEYS, REPOSITORY, BotDefinition, Config, coverage_label
 from .gh_api import ApiError, GitHubAPI
 from .pull_signals import face_fields, load_signals
 from .bot_runs import recent_bot_runs, runner_name
@@ -21,6 +21,10 @@ WORKFLOW_CACHE_AGE = timedelta(minutes=5)
 # History reads jobs only for this many of a workflow's newest completed runs. A configured job name
 # that never runs would otherwise read every run of the last seven days, hundreds in a busy repository.
 HISTORY_RUN_LIMIT = 50
+# Shown on a pull request that was listed but whose checks did not fit in this pass's budget.
+CHECKS_NOT_LOADED = "Checks are not loaded yet"
+_EARLIEST = datetime.min.replace(tzinfo=timezone.utc)
+_SEARCH_REPOSITORY = "https://api.github.com/repos/"
 
 
 def _endpoint(path: str, **query: object) -> str:
@@ -50,6 +54,12 @@ class GitHubCollector:
         self._job_lock = threading.Lock()
         self._workflows: dict[str, tuple[datetime, set[str]]] = {}
         self._pins: dict[tuple, tuple[str, datetime]] = {}
+        # Detail finished, and detail started. Never-finished repositories are read before ones
+        # that finished, and one that was started but did not finish waits behind ones not started.
+        self._detailed_at: dict[str, datetime] = {}
+        self._attempted_at: dict[str, datetime] = {}
+        self._listing: str | None = None
+        self._kind: str | None = None
 
     def clear_private_cache(self) -> None:
         with self._job_lock:
@@ -57,6 +67,10 @@ class GitHubCollector:
             self._completed_jobs.clear()
             self._workflows.clear()
             self._pins.clear()
+        self._detailed_at.clear()
+        self._attempted_at.clear()
+        self._listing = None
+        self._kind = None
         self.api.clear_cache()
 
     def _prune_job_cache(self, now: datetime) -> None:
@@ -295,11 +309,31 @@ class GitHubCollector:
         from .required_checks import branch_rules
         return branch_rules(self.api, repository, base)
 
-    def _repository(self, repository: str, inventory: dict) -> dict:
-        rows = self.api.items(_endpoint("repos/%s/pulls" % repository, state="open", per_page=100))
+    def _unloaded_pull(self, repository: str, row: dict, inventory: dict, code: str,
+                       signals: dict | None = None) -> dict:
+        """A listed pull request whose checks were not read. A spent budget says so; a real access
+        failure stays unavailable. Signals already read for this pull request are kept."""
+        identity = self._pull_identity(repository, row, inventory)
+        face = face_fields(None, signals, evidence=False, draft=identity["draft"], checks=[], statuses=[], expected=[])
+        budget = code == "request_budget_exhausted"
+        pull = {**identity, **face, "head_changed": False, "evidence_available": False, "attention": True,
+                "attention_reason": CHECKS_NOT_LOADED if budget else "Current-head evidence is unavailable",
+                "checks": [], "statuses": [], "expected": [], "runs": [], "source_error": code}
+        if not budget:
+            pull["unavailable"] = True
+        return pull
+
+    def _detail_repository(self, repository: str, rows: list[dict], inventory: dict) -> tuple[dict, bool]:
+        """Read current-head detail. True when the budget stopped this repository before it finished."""
         pulls, errors, rules = [], [], {}
         signals = load_signals(self.api, repository, len(rows))
+        stopped = False
         for row in rows:
+            if stopped:
+                pulls.append(self._unloaded_pull(repository, row, inventory, "request_budget_exhausted",
+                                                 signals.get(row.get("number"))))
+                errors.append({"pull": row.get("number"), "code": "request_budget_exhausted"})
+                continue
             try:
                 base = (row.get("base") or {}).get("ref")
                 if isinstance(base, str) and base not in rules:
@@ -307,16 +341,145 @@ class GitHubCollector:
                 pulls.append(self._pull(repository, row, inventory, rules.get(base, []),
                                         signals.get(row.get("number"))))
             except ApiError as error:
-                identity = self._pull_identity(repository, row, inventory)
-                face = face_fields(None, signals.get(row.get("number")), evidence=False,
-                                   draft=identity["draft"], checks=[], statuses=[], expected=[])
-                pulls.append({**identity, **face, "head_changed": False, "evidence_available": False,
-                              "unavailable": True, "attention": True,
-                              "attention_reason": "Current-head evidence is unavailable",
-                              "checks": [], "statuses": [], "expected": [], "runs": [],
-                              "source_error": error.code})
+                pulls.append(self._unloaded_pull(repository, row, inventory, error.code,
+                                                 signals.get(row.get("number"))))
                 errors.append({"pull": row.get("number"), "code": error.code})
-        return {"repository": repository, **inventory, "pulls": pulls, "errors": errors}
+                stopped = error.code == "request_budget_exhausted"
+        return {"repository": repository, **inventory, "pulls": pulls, "errors": errors}, stopped
+
+    def _repository(self, repository: str, inventory: dict) -> dict:
+        rows = self.api.items(_endpoint("repos/%s/pulls" % repository, state="open", per_page=100))
+        return self._detail_repository(repository, rows, inventory)[0]
+
+    def _by_need(self, names: list[str]) -> list[str]:
+        """Never successfully detailed first (never started before started-but-unfinished), then
+        the least recently detailed. A repository added since the last pass has neither stamp."""
+        def key(name: str) -> tuple:
+            success = self._detailed_at.get(name)
+            if success is None:
+                return (0, self._attempted_at.get(name) or _EARLIEST, names.index(name))
+            return (1, success, names.index(name))
+        return sorted(names, key=key)
+
+    def _known_inventory(self, repository: str, inventory: dict[str, dict] | None) -> dict:
+        known = (inventory or {}).get(repository)
+        return known if known else self.inventory(repository)
+
+    def _installation_rows(self) -> list[dict] | None:
+        try:
+            rows = self.api.items("installation/repositories", "repositories")
+        except ApiError as error:
+            if self._listing == "installation" or error.code not in ("forbidden", "not_found"):
+                raise
+            return None
+        self._listing = "installation"
+        return rows
+
+    def _repository_rows(self) -> list[dict]:
+        """Every repository this credential can see for the owner, one page at a time.
+
+        An installation token reads `GET /installation/repositories` (user or organization).
+        A person's `gh` login is refused there, and then reads `GET /orgs/{owner}/repos` or
+        `GET /users/{owner}/repos?type=owner`. The choice is remembered for this process."""
+        if self._listing != "account":
+            rows = self._installation_rows()
+            if rows is not None:
+                return rows
+        if self._kind is None:
+            described = self.api.one("users/%s" % self.config.owner)
+            kind, login = described.get("type"), described.get("login")
+            if kind not in ("User", "Organization") or not isinstance(login, str) or login.casefold() != self.config.owner.casefold():
+                raise ApiError("invalid_response")
+            self._kind = kind
+        endpoint = ("orgs/%s/repos" % self.config.owner if self._kind == "Organization"
+                    else _endpoint("users/%s/repos" % self.config.owner, type="owner"))
+        rows = self.api.items(endpoint)
+        self._listing = "account"
+        return rows
+
+    def _names_from(self, rows: object) -> list[str]:
+        if not isinstance(rows, list):
+            raise ApiError("invalid_response")
+        names, seen = [], set()
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ApiError("invalid_response")
+            full = row.get("full_name")
+            if not isinstance(full, str) or full.count("/") != 1:
+                raise ApiError("invalid_response")
+            repo_owner, name = full.split("/", 1)
+            if repo_owner.casefold() != self.config.owner.casefold() or not REPOSITORY.fullmatch(name):
+                raise ApiError("invalid_response")
+            nested = row.get("owner")
+            if isinstance(nested, dict) and isinstance(nested.get("login"), str) and nested["login"].casefold() != self.config.owner.casefold():
+                raise ApiError("invalid_response")
+            archived = row.get("archived")
+            if archived is True:
+                continue
+            if archived is not False:
+                raise ApiError("invalid_response")
+            canonical = self.config.owner + "/" + name
+            if canonical.casefold() in seen:
+                continue
+            seen.add(canonical.casefold())
+            names.append(canonical)
+        return names
+
+    @staticmethod
+    def _kind_from(rows: list[dict]) -> str | None:
+        kinds = set()
+        for row in rows:
+            owner = row.get("owner")
+            if isinstance(owner, dict) and owner.get("type") in ("User", "Organization"):
+                kinds.add(owner["type"])
+        if len(kinds) == 1:
+            return kinds.pop()
+        return None
+
+    def _open_names(self, kind: str, names: list[str]) -> set[str]:
+        """Which of names have an open pull request, from one owner-wide search.
+
+        `GET /search/issues` with `org:` or `user:`. Repositories absent from it are not listed
+        one by one. An incomplete search is a failure, not an empty owner."""
+        query = "is:pr is:open %s:%s" % ("org" if kind == "Organization" else "user", self.config.owner)
+        known = {name.casefold(): name for name in names}
+        found: set[str] = set()
+        for page in range(1, 11):
+            payload = self.api.one(_endpoint("search/issues", q=query, per_page=100, page=page))
+            if not isinstance(payload, dict) or payload.get("incomplete_results") is True:
+                raise ApiError("unavailable")
+            items = payload.get("items")
+            if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+                raise ApiError("invalid_response")
+            for item in items:
+                url = item.get("repository_url")
+                if not isinstance(url, str) or not url.startswith(_SEARCH_REPOSITORY):
+                    raise ApiError("invalid_response")
+                match = known.get(url[len(_SEARCH_REPOSITORY):].casefold())
+                if match:
+                    found.add(match)
+            if len(items) < 100:
+                return found
+        raise ApiError("unavailable")
+
+    def _discover(self) -> tuple[tuple[str, ...], set[str]]:
+        """Non-archived repositories of the owner, and which of them have an open pull request.
+
+        A repository owned by anyone else refuses the whole discovery. Archived repositories
+        are left out. The set is not cached: the next refresh sees a repository that appeared
+        or disappeared."""
+        rows = self._repository_rows()
+        names = self._names_from(rows)
+        if not names:
+            return (), set()
+        kind = self._kind_from(rows) or self._kind
+        if kind is None:
+            described = self.api.one("users/%s" % self.config.owner)
+            kind, login = described.get("type"), described.get("login")
+            if kind not in ("User", "Organization") or not isinstance(login, str) or login.casefold() != self.config.owner.casefold():
+                raise ApiError("invalid_response")
+            self._kind = kind
+        return tuple(names), self._open_names(kind, names)
 
     def _bot_row(self, repository: str, role: str, run: dict, job: dict) -> dict:
         return {"bot": role, "repository": repository, "run_id": run.get("id"),
@@ -393,28 +556,29 @@ class GitHubCollector:
         self._workflows[repository] = (self.clock(), names)
         return names
 
-    def _bots(self, now: datetime, readable_repositories=None) -> dict:
+    def _bots(self, now: datetime, readable_repositories=None, names=None) -> dict:
         groups: dict[tuple[str, str], list[str]] = {}
         all_rows = {role: {"active": [], "completed": [], "active_complete": True,
                            "history_complete": True, "active_at": [], "history_at": [],
                            "floors": []} for role in BOT_KEYS}
         errors = []
-        readable = set(self.config.repositories if readable_repositories is None else readable_repositories)
+        repositories = self.config.repositories if names is None else names
+        readable = set(repositories if readable_repositories is None else readable_repositories)
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             futures = {repository: pool.submit(self._workflow_names, repository)
-                       for repository in self.config.repositories if repository in readable}
-            for repository in self.config.repositories:
+                       for repository in repositories if repository in readable}
+            for repository in repositories:
                 try:
                     if repository not in futures:
                         raise ApiError("unavailable")
-                    names = futures[repository].result()
+                    workflow_names = futures[repository].result()
                 except ApiError as error:
                     errors.append({"repository": repository, "phase": "workflows", "code": error.code})
                     for value in all_rows.values():
                         value["active_complete"] = value["history_complete"] = False
                     continue
                 for role, definition in self.config.bots.items():
-                    if definition.workflow in names:
+                    if definition.workflow in workflow_names:
                         groups.setdefault((repository, definition.workflow), []).append(role)
                     else:
                         # A successful owner-repo listing proves this workflow absent;
@@ -457,40 +621,126 @@ class GitHubCollector:
                                          "history": "complete" if history_complete else "partial"}}
         return {"partial": bool(errors), "roles": result, "errors": errors}
 
-    def _collect_repository(self, repository: str, inventory: dict[str, dict] | None) -> tuple:
-        known_inventory = (inventory or {}).get(repository)
-        try:
-            repo_inventory = known_inventory or self.inventory(repository)
-            row = self._repository(repository, repo_inventory)
-            row["sampled_at"] = iso_time(self.clock())
-            return repository, repo_inventory, row, None
-        except ApiError as error:
-            return repository, known_inventory, None, error.code
+    def _empty_repository(self, repository: str, inventory: dict, when: datetime) -> dict:
+        return {"repository": repository, "subscription": inventory.get("subscription", "unknown"),
+                "pulls": [], "errors": [], "sampled_at": iso_time(when),
+                **({"evidence": inventory["evidence"]} if "evidence" in inventory else {})}
+
+    def _not_loaded_repository(self, repository: str, rows: list[dict], inventory: dict) -> dict:
+        known = inventory or {"subscription": "unknown"}
+        return {"repository": repository, **known, "sampled_at": iso_time(self.clock()),
+                "pulls": [self._unloaded_pull(repository, row, known, "request_budget_exhausted") for row in rows],
+                "errors": [{"pull": row.get("number"), "code": "request_budget_exhausted"} for row in rows]}
+
+    def _remember(self, names: tuple[str, ...] | list[str]) -> None:
+        keep = set(names)
+        self._detailed_at = {name: when for name, when in self._detailed_at.items() if name in keep}
+        self._attempted_at = {name: when for name, when in self._attempted_at.items() if name in keep}
 
     def collect(self, inventory: dict[str, dict] | None = None) -> dict:
+        """List every repository's open pull requests before any run or job detail.
+
+        Detail is then spent on the repositories that have gone longest without it, so a busy
+        head of the list cannot starve the tail on every pass. A pull request that was listed
+        but not detailed stays visible with its checks not loaded yet. `repositories: all`
+        learns the set, and which of it has an open pull request, before that, and does not
+        read a repository the search says is empty."""
         now = self.clock().astimezone(timezone.utc)
         with self._job_lock:
             self._jobs = {}
         self._prune_job_cache(now)
         self.api.begin()
         rate = self.api.rate()
-        inventories, by_repository, errors = {}, {}, []
-        with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(self.config.repositories))) as pool:
-            futures = [pool.submit(self._collect_repository, repository, inventory)
-                       for repository in self.config.repositories]
-            for future in futures:
-                repository, repo_inventory, row, code = future.result()
-                if repo_inventory:
+        if self.config.all_repositories:
+            names, open_names = self._discover()
+        else:
+            names, open_names = self.config.repositories, set(self.config.repositories)
+        self._remember(names)
+        listings: dict[str, list[dict]] = {}
+        errors: list[dict] = []
+        budget_hit = False
+        if self.config.all_repositories:
+            for repository in names:
+                if repository not in open_names:
+                    listings[repository] = []
+        to_list = [repository for repository in names if repository not in listings]
+        for repository in self._by_need(to_list):
+            if budget_hit:
+                break
+            try:
+                listings[repository] = self.api.items(
+                    _endpoint("repos/%s/pulls" % repository, state="open", per_page=100))
+            except ApiError as error:
+                errors.append({"repository": repository, "code": error.code})
+                budget_hit = error.code == "request_budget_exhausted"
+        for repository in names:
+            if repository not in listings and not any(error.get("repository") == repository for error in errors):
+                errors.append({"repository": repository, "code": "request_budget_exhausted"})
+                budget_hit = True
+
+        inventories: dict[str, dict] = {}
+        by_repository: dict[str, dict] = {}
+        for repository, rows in listings.items():
+            if rows:
+                continue
+            # The open-pull list completed and was empty. An all-mode repository the search
+            # left out costs nothing more. A listed repository still learns its subscription
+            # when the budget has room, which is what a configured list did before.
+            idle = self.config.all_repositories and repository not in open_names
+            if idle or budget_hit:
+                repo_inventory = {"subscription": "unknown"} if idle else (inventory or {}).get(repository) or {"subscription": "unknown"}
+            else:
+                try:
+                    repo_inventory = self._known_inventory(repository, inventory)
+                except ApiError as error:
+                    if error.code != "request_budget_exhausted":
+                        errors.append({"repository": repository, "code": error.code})
+                        continue
+                    budget_hit = True
+                    repo_inventory = (inventory or {}).get(repository) or {"subscription": "unknown"}
+                else:
                     inventories[repository] = repo_inventory
-                if row:
-                    by_repository[repository] = row
-                if code:
-                    errors.append({"repository": repository, "code": code})
-        bots = self._bots(self.clock(), by_repository)
-        repository_rows = [by_repository[name] for name in self.config.repositories if name in by_repository]
+            if repository in inventories or idle or budget_hit:
+                by_repository[repository] = self._empty_repository(repository, repo_inventory, now)
+                self._detailed_at[repository] = self.clock()
+
+        detail = self._by_need([repository for repository, rows in listings.items() if rows])
+        for repository in detail:
+            rows = listings[repository]
+            known = (inventory or {}).get(repository) or {"subscription": "unknown"}
+            if budget_hit or self.api.calls >= self.api.max_calls:
+                # Not started. A previous successful detail stays the least-recent stamp, and this
+                # repository is still never-attempted, so it is first next pass.
+                by_repository[repository] = self._not_loaded_repository(repository, rows, known)
+                budget_hit = True
+                continue
+            self._attempted_at[repository] = self.clock()
+            try:
+                repo_inventory = self._known_inventory(repository, inventory)
+            except ApiError as error:
+                errors.append({"repository": repository, "code": error.code})
+                if error.code == "request_budget_exhausted":
+                    budget_hit = True
+                    by_repository[repository] = self._not_loaded_repository(repository, rows, known)
+                    self._detailed_at.pop(repository, None)
+                continue
+            inventories[repository] = repo_inventory
+            row, stopped = self._detail_repository(repository, rows, repo_inventory)
+            row["sampled_at"] = iso_time(self.clock())
+            by_repository[repository] = row
+            if stopped:
+                budget_hit = True
+                self._detailed_at.pop(repository, None)
+            else:
+                self._detailed_at[repository] = self.clock()
+        if budget_hit:
+            errors.append({"code": "request_budget_exhausted"})
+        bots = self._bots(self.clock(), by_repository, names)
+        repository_rows = [by_repository[name] for name in names if name in by_repository]
         return {"owner": self.config.owner, "sampled_at": iso_time(now), "repositories": repository_rows,
-                "coverage": {"selected": len(self.config.repositories), "readable": len(repository_rows),
-                             "label": "Selected repositories", "inventory": inventories},
+                "repository_names": list(names),
+                "coverage": {"selected": len(names), "readable": len(repository_rows),
+                             "label": coverage_label(self.config), "inventory": inventories},
                 "bots": bots, "errors": errors, "partial": bool(errors) or bots["partial"],
                 "api": {**rate, "calls": self.api.calls, "lowest_remaining": self.api.lowest_remaining,
                         "max_calls": self.api.max_calls}}

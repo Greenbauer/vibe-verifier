@@ -70,8 +70,7 @@ dashboards:
     config:
       version: 1
       owner: Greenbauer
-      repositories:
-        - Greenbauer/vibe-verifier
+      repositories: all
       bots:
         reviewer: {workflow: review.yml, jobs: [review]}
         explorer: {workflow: qae-explore.yml, jobs: [qae-explore]}
