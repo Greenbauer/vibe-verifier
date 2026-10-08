@@ -155,6 +155,10 @@ roster shows no invented agents. See
 }
 ```
 
+A bot's `jobs` are exact job names. A QAE workflow that splits a large pull request across
+explorers runs the extra ones as `<job> (2)`, `<job> (3)`, ..., so list those too
+(`"jobs": ["explore", "explore (2)", "explore (3)"]`), or their runs are not shown.
+
 `telemetry_file` is optional and must be absolute. Deleting it makes telemetry unavailable without
 affecting GitHub data. `proxy_origin` is optional; omit it for local-only mode. It must be one exact
 HTTPS origin with a hostname and optional valid port, with no trailing slash, credentials, path,

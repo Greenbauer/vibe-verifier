@@ -80,6 +80,7 @@ The full rules are in the [gate contract](docs/GATE-CONTRACT.md).
 | Local read-only verification dashboard | ✓ |
 | Numeric model-usage and runner-capacity telemetry | Optional |
 | Disposable-container self-hosted runner lanes | Optional |
+| Open pull requests kept up to date after a merge | Optional |
 
 ## Get started
 
@@ -182,7 +183,7 @@ The explorer can navigate and observe. The verifier independently checks that ev
 
 With a [feature map](docs/feature-map.md), the explorer can also re-walk the features each pull request's changes touch (at most three, chosen from the map's own source globs with shared files left out, and at most three states of each), and the verifier then requires an anchored PASS over at least one walked step for each of them too. A state it did not walk is reported, never failed.
 
-Review receipts explicitly name a head SHA. QAE instead uses the pull-request workflow checkout and artifacts from the same run; its verdict comment is selected by bot identity, without a SHA/run-ID match. The consumer must supply the intended application revision, and configure the required checks to include explorer failures. See the [revision-binding limits](docs/threat-model.md#revision-binding-limits).
+Review receipts explicitly name a head SHA. QAE instead uses the pull-request workflow checkout and artifacts from the same run, its verdict included: the gate reads the verdict file in that run's evidence, never a comment. The consumer must supply the intended application revision, and configure the required checks to include explorer failures. See the [revision-binding limits](docs/threat-model.md#revision-binding-limits).
 
 The review harness and default Claude explorer need Claude authentication. A Codex explorer lane can use a self-hosted runner holding a ChatGPT login; browser testing also needs an application it can start or reach. The regular gates need no AI account. CI and model usage may incur charges under the selected providers' plans.
 
@@ -216,6 +217,10 @@ The optional [local CI dashboard](docs/dashboard.md) gives a read-only view of s
 - optional numeric model usage and quota windows.
 
 It binds to loopback, can optionally sit behind a trusted private HTTPS proxy, accepts `GET` only, has no merge/retry/cancel/publish controls, and does not change the gate runner. Missing telemetry stays unavailable rather than becoming zero; stale and partial samples retain explicit status and timestamps.
+
+## Pull request sync
+
+After a merge, every other open pull request is behind the default branch. The optional [pull sync action](actions/pull-sync/README.md) updates them with GitHub's own "update branch", a few at a time so the runners are not flooded: ready pull requests first, the rest about once a day, never one with checks running, and never past a cap on how many may be in flight. A pull request that conflicts is labelled `sync-conflict` and left to its owner. It is a dry run until told to act.
 
 ## Self-hosted runner lanes
 

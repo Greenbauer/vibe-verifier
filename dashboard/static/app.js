@@ -340,8 +340,9 @@
       burn: VVCharts.hourlyBurn(samples.filter(sample => sample.bot === agent.id), now, through) }));
     const observed = bots.map(bot => bot.burn).filter(Boolean);
     const loose = samples.filter(sample => !(snapshot.agents?.rows || []).some(agent => agent.id === sample.bot));
-    const burns = [...observed, VVCharts.hourlyBurn(loose, now, through)].filter(Boolean);
-    const all = { name: "All bots", color: "rgba(255,255,255,0.6)", all: true, looseTokens: loose.reduce((sum, sample) => sum + (sample.input_tokens || 0) + (sample.output_tokens || 0), 0), burn: burns.length ? VVCharts.sumBurns(burns) : null, ...paceHeader(plan.delta_points ?? null) };
+    const looseBurn = VVCharts.hourlyBurn(loose, now, through);
+    const burns = [...observed, looseBurn].filter(Boolean);
+    const all = { name: "All bots", color: "rgba(255,255,255,0.6)", all: true, looseTokens: looseBurn ? looseBurn.last24h.reduce((total, value) => total + (value || 0), 0) : 0, burn: burns.length ? VVCharts.sumBurns(burns) : null, ...paceHeader(plan.delta_points ?? null) };
     const shared = VVCharts.ceiling(observed);
     return el("section", { class: "panel usage-charts" }, el("h2", {}, "Token burn pattern"),
       el("p", { class: "muted" }, "Tokens each bot used, hour by hour. Solid: last 24 hours. Dashed: a usual day. Flat: the even pace, the same as the tick."),

@@ -12,6 +12,7 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
    verdict line acceptance-check: TCn). If the pull request's only item reads "None: <reason>"
    and the ticket lists no criteria, there is nothing for a browser to check: write nothing,
    post nothing, and stop.
+   SHARD_SHARE
 2. For each criterion, use the playwright browser tools to do what a user would do to check
    it: navigate, click, read the page. A step is one action that changes what is on screen.
    For every step, first save a screenshot to qae-artifacts/qae/ACn-step-k.png, then append
