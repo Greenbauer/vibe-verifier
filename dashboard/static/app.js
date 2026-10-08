@@ -140,13 +140,11 @@
 
   function pushLine(pull, now) {
     const push = pull.push;
-    if (!push || typeof push.pushed_at !== "string" || typeof push.kind !== "string" || !push.kind) {
-      return el("span", { class: "push-line", title: "Last push unavailable" }, "Last push unavailable");
-    }
+    const known = push && typeof push.pushed_at === "string" && typeof push.kind === "string" && push.kind;
+    if (!known) return el("span", { class: "push-line", title: "Last push unavailable" }, "Last push unavailable");
     const when = since(push.pushed_at, now);
     return el("span", { class: "push-line", title: `${when} · ${push.kind}` },
-      el("span", { class: ageClass(push.pushed_at, now) }, when),
-      el("span", { class: "push-kind" }, `· ${push.kind}`));
+      el("span", { class: ageClass(push.pushed_at, now) }, when), el("span", { class: "push-kind" }, `· ${push.kind}`));
   }
 
   function progress(pull, now = Date.now()) {
@@ -196,32 +194,34 @@
 
   function runningNames(pull) {
     const jobs = new Map((pull.runs || []).flatMap(run => (run.jobs || []).map(job => [job.id, job])));
-    const started = row => {
+    const at = row => {
       const step = ((jobs.get(row.id) || {}).steps || []).find(item => item.status === "in_progress");
-      const at = Date.parse((step && step.started_at) || row.started_at);
-      return Number.isFinite(at) ? at : -Infinity;
+      const when = Date.parse((step && step.started_at) || row.started_at);
+      return Number.isFinite(when) ? when : -Infinity;
     };
-    const checks = (pull.checks || []).filter(row => row.status === "in_progress")
-      .sort((a, b) => started(b) - started(a));
+    const checks = (pull.checks || []).filter(row => row.status === "in_progress").sort((a, b) => at(b) - at(a));
     return runningWork({ ...pull, checks }).map(item => item.name).filter(Boolean);
   }
 
-  function clipped(names) {
-    return { lines: names.slice(0, 2), extra: Math.max(0, names.length - 2) };
+  function workLines(names, reason) {
+    const extra = Math.max(0, names.length - 2);
+    return [...names.slice(0, 2).map(line => el("small", { class: "work-line", title: line }, line)),
+      extra ? el("small", { class: "work-more" }, `+${extra} more`) : null,
+      reason ? el("span", { class: "sr-only" }, reason) : null];
   }
-
   function workDetail(pull) {
+    const reason = pull.attention_reason || "";
     const running = runningNames(pull);
-    if (running.length) return clipped(running);
+    if (running.length) return workLines(running, reason);
     const rows = [...(pull.checks || []), ...(pull.statuses || []), ...(pull.expected || [])];
-    const name = row => (row && typeof row.name === "string" ? row.name : "");
-    const failed = rows.filter(row => row.category === "failed").map(name).filter(Boolean);
-    if (failed.length) return clipped(failed);
-    const required = (pull.expected || []).map(name).filter(Boolean);
-    if (required.length) return clipped(required);
+    const named = list => list.map(row => row && typeof row.name === "string" ? row.name : "").filter(Boolean);
+    const failed = named(rows.filter(row => row.category === "failed"));
+    if (failed.length) return workLines(failed, reason);
+    const required = named(pull.expected || []);
+    if (required.length) return workLines(required, reason);
     const queued = rows.filter(row => row.status === "queued").length;
-    if (queued) return { lines: [`${queued} ${queued === 1 ? "check" : "checks"} queued`], extra: 0 };
-    return null;
+    if (queued) return workLines([`${queued} ${queued === 1 ? "check" : "checks"} queued`], reason);
+    return [el("small", {}, reason)];
   }
 
   function prRow(pull) {
@@ -230,12 +230,6 @@
     const now = Date.now();
     const opened = href ? `Open ${pull.repository} pull request ${pull.number} on GitHub: ${pull.title}` : null;
     const reason = pull.attention_reason || "";
-    const detail = workDetail(pull);
-    const workLines = !detail ? [el("small", {}, reason)] : [
-      ...detail.lines.map(line => el("small", { class: "work-line", title: line }, line)),
-      detail.extra ? el("small", { class: "work-more" }, `+${detail.extra} more`) : null,
-      reason ? el("span", { class: "sr-only" }, reason) : null
-    ];
     return el(href ? "a" : "div", {
       class: `pr-row${pull.stale ? " stale-row" : ""}`,
       href, target: href ? "_blank" : null, rel: href ? "noreferrer" : null,
@@ -244,7 +238,7 @@
     el("span", { class: "pr-identity" },
       el("b", { class: pull.merge_ready ? "merge-ready" : null, title: pull.merge_ready ? "Fully merge-ready" : null }, pull.title),
       el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
-    el("span", { class: "pr-work", title: reason || null }, badge(category), ...workLines),
+    el("span", { class: "pr-work", title: reason || null }, badge(category), ...workDetail(pull)),
     progress(pull, now),
     el("span", { class: "pr-age" },
       el("span", { class: "age-stat" }, el("b", { class: ageClass(pull.created_at, now) }, since(pull.created_at, now)),
