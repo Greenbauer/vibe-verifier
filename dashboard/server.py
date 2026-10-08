@@ -11,6 +11,7 @@ from .config import Config
 from .favicon import Favicon
 from .service import DashboardService
 from .live_service import LiveService
+from .state_store import open_store
 
 STATIC = Path(__file__).with_name("static")
 FILES = {
@@ -157,8 +158,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
     do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = do_HEAD = _read_only
 
 
-def make_server(config: Config, port: int, service: DashboardService | None = None) -> DashboardServer:
-    service = service or LiveService(config)
+def make_server(config: Config, port: int, service: DashboardService | None = None,
+                state_dir: str | None = None) -> DashboardServer:
+    """state_dir is where the last reading and the GitHub caches are kept across a restart."""
+    service = service or LiveService(config, store=open_store(state_dir, config))
     start = getattr(service, "start_head_beat", None)
     if start:
         start()

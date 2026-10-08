@@ -197,8 +197,9 @@ def refresh_token(config_path: str, user: str, app: str, installation: int, key:
         token = granted_token(mint(app_jwt(app, key), installation, scope, opener), config.repositories)
     publish(output, hosts_yml(token, login).encode(), owner)
     # gh 2.93 treats hosts.yml with no config.yml as a migration and exits before any API call
-    # unless it can create that file. This directory is writable only by root, and the web service
-    # has no writable path, so root leaves a settings-free marker the account can read but not change.
+    # unless it can create that file. This directory is writable only by root (the web service's one
+    # writable path is its cache directory), so root leaves a settings-free marker the account can
+    # read but not change.
     publish(output.parent / "config.yml", b'version: "1"\n', (ROOT_UID, os.getgid()), mode=0o644)
 
 

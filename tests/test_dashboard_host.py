@@ -337,6 +337,12 @@ class Units(unittest.TestCase):
         self.assertEqual([line for line in WEB_SANDBOX if line not in lines], [])
         self.assertEqual(values["User"], "vibe-dashboard-%i")
         self.assertNotIn("ReadWritePaths", values)
+        # Its one writable path is the cache directory systemd makes for the account alone. The code
+        # learns it from the environment, so an older checkout that knows no such option still starts.
+        self.assertEqual((values["CacheDirectory"], values["CacheDirectoryMode"]), ("vibe-dashboard-%i", "0700"))
+        self.assertNotIn("StateDirectory", values)
+        self.assertIn(" VIBE_DASHBOARD_STATE_DIR=/var/cache/vibe-dashboard-%i PATH=", values["ExecStart"])
+        self.assertNotIn("--state-dir", values["ExecStart"])
         command = values["ExecStart"]
         self.assertTrue(command.startswith("/usr/bin/env -i "))
         for setting in ("GH_PROMPT_DISABLED=1", "PYTHONNOUSERSITE=1", "GH_CONFIG_DIR=/var/lib/vibe-dashboard/%i/gh"):

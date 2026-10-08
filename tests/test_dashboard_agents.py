@@ -56,6 +56,7 @@ class AgentIdentities(unittest.TestCase):
         row = agent_view(config, {}, {"available": True, "agents": runtime}, NOW)["rows"][0]
         self.assertEqual(row["state"], "paused")
         self.assertEqual(row["coverage"]["history"], "stale")
+        self.assertEqual((row["stale"], row["sampled_at"]), (True, runtime["sampled_at"]))
         raw = self.runtime()
         raw["rows"][0]["id"] = "foreign-agent"
         with self.assertRaises(TelemetryError):
@@ -68,8 +69,10 @@ class AgentIdentities(unittest.TestCase):
         row = agent_view(config, github, {}, NOW)["rows"][0]
         self.assertEqual(row["state"], "idle")
         self.assertEqual(row["source"], "CI workflow activity")
-        github["bots"]["roles"]["reviewer"]["active"] = [{"id": 1}]
-        self.assertEqual(agent_view(config, github, {}, NOW)["rows"][0]["state"], "working")
+        self.assertEqual((row["stale"], row["sampled_at"]), (False, None))
+        github["bots"]["roles"]["reviewer"].update(active=[{"id": 1}], stale=True, sampled_at=NOW.isoformat())
+        aged = agent_view(config, github, {}, NOW)["rows"][0]
+        self.assertEqual((aged["state"], aged["stale"], aged["sampled_at"]), ("working", True, NOW.isoformat()))
         self.assertEqual(agent_view(Config("octocat", (), {}, None), github, {}, NOW)["rows"], [])
 
     def test_registered_busy_runner_keeps_unknown_job_until_owner_evidence_matches(self):

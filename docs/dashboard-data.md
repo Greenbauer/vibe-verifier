@@ -26,7 +26,7 @@ The default refresh budget is 200 GitHub requests that cost rate limit, counting
 
 GraphQL is metered separately, in points, and the token's points are shared with everything else that uses the same App. Once a GraphQL response shows less than half of them left, the dashboard stops its GraphQL reads until the counter resets. The REST reads go on, and the latest push, merge-ready title and comment count are blank until then.
 
-Every response that carries an ETag is kept in memory and requested again with `If-None-Match`. GitHub answers an unchanged resource with `304 Not Modified`, which does not count against its hourly rate limit, so the dashboard reuses the kept response and returns that request's budget unit. The budget therefore counts only requests that cost rate limit. Only responses used during the previous refresh are kept into the next one, and the whole cache is dropped when authentication or access is revoked. GitHub does not meter every endpoint against one hourly counter. On 2026-10-05 the check-suite, single-run, run-attempt jobs, workflow list, and workflow runs endpoints were refused with `X-Ratelimit-Remaining: 0` and their own reset time, while pull requests, commit check runs, commit status, and the run list of the same account still had about 3,370 requests left, and `GET /rate_limit` reported neither counter as used. So when GitHub refuses a request because an hourly counter is spent, only that endpoint family (its path with owner, repository, IDs, and SHAs ignored) waits until the reset GitHub reported on the refusal; the other families keep reading. A rate-limit refusal without a spent counter, such as a secondary limit, pauses every request for 60 seconds. `github.api.lowest_remaining` is the lowest `X-Ratelimit-Remaining` seen on any response during the refresh, including refusals, and is the honest headroom; `github.api.remaining` is what `/rate_limit` reports.
+Every response that carries an ETag is kept in memory and requested again with `If-None-Match`. GitHub answers an unchanged resource with `304 Not Modified`, which does not count against its hourly rate limit, so the dashboard reuses the kept response and returns that request's budget unit. The budget therefore counts only requests that cost rate limit. Only responses used during the previous refresh are kept into the next one, and the whole cache is dropped when authentication or access is revoked. With a state directory the kept responses are also written there after each pass, so the first pass after a restart is as cheap as any other ([kept across a restart](#kept-across-a-restart)). GitHub does not meter every endpoint against one hourly counter. On 2026-10-05 the check-suite, single-run, run-attempt jobs, workflow list, and workflow runs endpoints were refused with `X-Ratelimit-Remaining: 0` and their own reset time, while pull requests, commit check runs, commit status, and the run list of the same account still had about 3,370 requests left, and `GET /rate_limit` reported neither counter as used. So when GitHub refuses a request because an hourly counter is spent, only that endpoint family (its path with owner, repository, IDs, and SHAs ignored) waits until the reset GitHub reported on the refusal; the other families keep reading. A rate-limit refusal without a spent counter, such as a secondary limit, pauses every request for 60 seconds. `github.api.lowest_remaining` is the lowest `X-Ratelimit-Remaining` seen on any response during the refresh, including refusals, and is the honest headroom; `github.api.remaining` is what `/rate_limit` reports.
 
 Bot collection first lists the workflows on each readable repository and caches successful listings for five minutes. A configured filename absent from that successful listing needs no run calls; an API failure remains unknown. Roles sharing a present workflow share its scan. Active runs are fetched before history. Seven days of lightweight run metadata are collected across pages and sorted by update time before fetching jobs, so a recently rerun workflow on a later page is not skipped. Job reads stop once every role has five completed results and the next run was updated more than two hours ago and no later than each role’s fifth result. This bounds expensive job reads without assuming pages are ordered by completion time. Jobs are read for at most the 50 newest completed runs of a workflow, so a configured job name that never runs cannot read every run of the last seven days. When that limit ends a scan, a role's history stays `complete` only if its five newest results across all repositories are newer than the runs the scan skipped; otherwise its history coverage is `partial`, and a role with no result in the scanned runs has no history timestamp. The history query covers runs created in the last seven days; a rerun of an older run is outside this query. A budget or API failure marks history coverage `partial`.
 
@@ -42,13 +42,65 @@ Only a job whose GitHub status is `in_progress` makes a bot `working`. A queued 
 - Successful GitHub snapshots are reused for 60 seconds.
 - Subscription inventory is reused for five minutes. Reusing it does not reset its age.
 - Fully completed job lists are cached by repository, run ID, and run attempt until the run is seven days old. Active or partly completed jobs are never placed in that cache.
-- Transient failures keep the last repository rows and bot history and mark them stale. Age does the same after 180 seconds: the rows stay, `stale` becomes true, and the two-hour and seven-day history windows still drop runs by their own timestamps. A pull request is merge-ready only when its checks were read on this pass and are still within that 180 seconds. An older check reading keeps the row, including its checks, clears the green title, sets the pull's `stale`, and sets `checks_age_seconds`. A head or rollup that has since changed keeps those same checks and says newer ones are loading. A failed page refresh keeps the last snapshot on screen, with those same titles cleared. Opening the page paints that cache at once. It does not wait for the head reading, because that reading cannot turn a title green.
+- Any failure other than lost access keeps the last repository rows and bot history and marks them stale: a rate limit, a timeout, a spent budget, an unreadable answer, and a failure code this version does not name. Age does the same after 180 seconds: the rows stay, `stale` becomes true, and the two-hour and seven-day history windows still drop runs by their own timestamps. A pull request is merge-ready only when its checks were read on this pass and are still within that 180 seconds. An older check reading keeps the row, including its checks, clears the green title, sets the pull's `stale`, and sets `checks_age_seconds`. A head or rollup that has since changed keeps those same checks and says newer ones are loading. A failed page refresh keeps the last snapshot on screen, with those same titles cleared. Opening the page paints that cache at once. It does not wait for the head reading, because that reading cannot turn a title green.
 - While nobody is refreshing, a background beat reads heads only. It wakes every 15 seconds and reads when the last head sample is 150 seconds old, so the sample on screen stays under 180 seconds. It does not reset the 60 second full-refresh timer. For an owner with 22 open pull requests that is one GraphQL call and 1 point a beat: 24 calls and 24 points an hour, under 0.5% of the 5,000 point hour. Adding the pull request's title and author to that query still cost 1 point on 2026-10-08. It does not spend the REST detail budget. The beat does not run during a full pass, and it does not run again until that pass's head sample is 150 seconds old, so a viewer adds the same one call and one point once per full pass (at most 60 an hour, 1.2% of the point hour, and less when a pass takes longer than a minute). A finished head reading replaces the open list: a pull request that has since opened is shown from that reading, checks not loaded yet, with the cheap overall state, and a pull request that has closed leaves the list. A reading that stopped early keeps every row it already had. The 200-call detail cap is unchanged.
-- Authentication, permission, and missing-resource failures do not reuse private cached rows. Completed-job and inventory caches are cleared when those failures are observed. Usage readers are replaced on the same errors, including nested repository or bot-source errors; an in-flight reader from before revocation cannot publish its result.
-- Numeric usage history retains its own `history_sampled_at` and `history_stale` fields alongside independently sampled quota. It becomes stale after five minutes on every snapshot read, including while a refresh is running. Fresh quota does not refresh the history timestamp, and a stale-history notice remains visible in source coverage.
+- Authentication, permission, and missing-resource failures do not reuse private cached rows. Completed-job and inventory caches are cleared when those failures are observed, and every file in the state directory is deleted. Usage readers are replaced on the same errors, including nested repository or bot-source errors; an in-flight reader from before revocation cannot publish or keep its result. A usage read that fails any other way keeps the last token history and the records already read.
+- Numeric usage history retains its own `history_sampled_at` and `history_stale` fields alongside independently sampled quota. It becomes stale after ten minutes (two missed scans) on every snapshot read, including while a refresh is running. Fresh quota does not refresh the history timestamp, and a stale-history notice remains visible in source coverage.
 
 The response sets repository, bot, and top-level partial or unavailable fields instead of turning missing evidence into healthy status.
 
+## Kept across a restart
+
+Started with a state directory (`--state-dir`, or `VIBE_DASHBOARD_STATE_DIR`, which the Linux unit
+sets), the dashboard writes what a restart would otherwise lose, and reads it back when it starts.
+Without one it keeps nothing, as before. `dashboard/state_store.py` owns the files.
+
+| Document | Holds | Written |
+|---|---|---|
+| `reading` | the last GitHub reading the page was served: repositories, pull requests, checks, bot history | after every pass that did not meet lost access |
+| `jobs` | completed job lists, by repository, run and attempt, each until its run is seven days old | with `reading` |
+| `responses` | every GitHub answer that carries an ETag and was used in the last two passes | with `reading` |
+| `usage` | the last token history and every usage record read | after every usage scan that returned |
+| `usage-responses` | the usage reader's ETag answers (artifact listings) | with `usage` |
+
+Each document is one file, `<directory>/<owner>/<document>.json.z`: zlib-compressed JSON with the
+format version, a hash of the owner, repository selection and bot definitions, and the time it was
+written. Dashboards of different owners may share a directory. Telemetry, the tab icon, the
+subscription inventory and the rate-limit pauses are not kept.
+
+- **Only this account reads it.** The owner's directory is created 0700 and every file 0600. A file
+  is written to a draft beside it and renamed over the old one, so a reader never sees half of one.
+  A file is used only when it is a regular file this account owns that nobody else can read or
+  write. A symbolic link is never followed, for reading or writing.
+- **Bounded.** A document is at most 16 MiB on disk and 64 MiB decompressed, which is the most a
+  start loads into memory at once. A cache is compressed as it is encoded, one answer at a time,
+  so writing it never holds the whole text in memory. A document over either limit, or one the
+  disk refuses, is not written, and one line on standard error says so; the previous file stays
+  until a later write replaces it or it expires. There is one file and at most one draft per
+  document.
+- **It expires.** A file written more than 24 hours ago is not used. Neither is one written for
+  another owner, repository selection, bot definition or format version, one dated more than five
+  minutes in the future, or one that does not decode. Each is deleted when it is read, and the
+  dashboard starts empty.
+- **Lost access deletes it.** A pass that meets an authentication, permission or missing-resource
+  failure, on any source, deletes every file and writes none. The same failure on a usage scan
+  deletes the two usage documents.
+- **A kept answer is not trusted on its own.** A response is served from the kept copy only when
+  GitHub answers that request with 304, which it does only for a token that may still read it.
+
+On a start with a kept `reading`, the page is served that reading at once, with `github.restored`
+true, while the first pass runs. Every repository row and every bot in it is `stale`, the reading
+keeps its own `sampled_at`, and no pull request in it is merge-ready: a title turns green only on
+checks this process read. A pass that fails without losing access keeps showing it. Token history
+is different: it is a record of finished runs, not a current state, so a kept one is served as it
+was and goes stale by its own age, ten minutes after its scan.
+
+State on disk is written by whichever version ran before the restart. The first failure this
+version cannot explain while it holds any (a snapshot or a pass that raises) is blamed on it,
+once: everything kept is dropped from memory and disk, and the dashboard carries on as it does
+on a first start. `tests/test_dashboard_state_store.py` covers the files and every refusal;
+`tests/test_dashboard_restart.py` covers what a restart, a failed read and lost access serve.
+
 ## Blocking and nonblocking snapshots
 
-`snapshot()` remains blocking and is used by tests and direct measurements. `snapshot(nonblocking=True)` returns the current cached snapshot, or an initial loading response, while one daemon refresh runs. Concurrent callers share that refresh. Collection does not hold the cache read lock, and a failed background refresh releases the refresh slot so a later request can retry.
+`snapshot()` remains blocking and is used by tests and direct measurements. `snapshot(nonblocking=True)` returns the current cached snapshot, the reading kept from before a restart, or an initial loading response, while one daemon refresh runs. Concurrent callers share that refresh. Collection does not hold the cache read lock, and a failed background refresh releases the refresh slot so a later request can retry.

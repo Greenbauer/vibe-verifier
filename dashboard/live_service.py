@@ -5,8 +5,9 @@ from datetime import timedelta
 
 from .collector_view import join_runner_jobs
 from .gh_api import ApiError
-from .service import DashboardService, PRIVATE_FAILURES
+from .service import DashboardService, PRIVATE_FAILURES, forgets_kept_state
 from .pace import plan_window_start
+from .state_store import USAGE_DOCUMENTS, restore_usage, usage_state
 from .usage_artifacts import UsageArtifacts, apply_plan_window
 from .util import parse_time
 from .agents import agent_view
@@ -27,6 +28,29 @@ class LiveService(DashboardService):
         self._usage_running = False
         self._usage_generation = 0
         self._usage_revoked = False
+        if self.store is not None:
+            self._usage_result = restore_usage(self.usage_reader, self.store)
+            self._kept = self._kept or bool(self._usage_result or self.usage_reader.cache)
+
+    def _reset_usage(self):
+        """Forget every token count read so far. The caller holds the usage lock. A reader from
+        before this cannot publish or keep its result, and the next snapshot starts a new one."""
+        self._usage_generation += 1
+        self._usage_result = None
+        self.usage_reader = UsageArtifacts(self.config)
+        self._usage_next = 0
+
+    def _revoke(self):
+        with self._usage_lock:
+            self._reset_usage()
+        super()._revoke()
+
+    def _forget_kept(self):
+        kept = super()._forget_kept()
+        if kept:
+            with self._usage_lock:
+                self._reset_usage()
+        return kept
 
     def _discovered_repositories(self):
         """Repositories usage should read. None means the owner-wide set is not known yet."""
@@ -45,7 +69,7 @@ class LiveService(DashboardService):
             reader = reader or self.usage_reader
             generation = self._usage_generation if generation is None else generation
         names = self._discovered_repositories()
-        value, failed = None, False
+        value, lost = None, False
         try:
             if names is not None:
                 # A configured list is the reader's own config, so collect() keeps the signature
@@ -54,32 +78,48 @@ class LiveService(DashboardService):
                     value = reader.collect()
                 else:
                     value = reader.collect(repositories=names)
-        except (ApiError, OSError, ValueError):
-            failed = True
+        except ApiError as error:
+            lost = error.code in PRIVATE_FAILURES
+        except (OSError, ValueError):
+            pass
+        except Exception:
+            # A record kept from before a restart that this code cannot read. Without one, a defect.
+            if not self._forget_kept():
+                raise
         finally:
-            with self._usage_lock:
-                if generation == self._usage_generation and names is not None:
-                    self._usage_result = value
-                    self._usage_next = self.monotonic() + USAGE_REFRESH_SECONDS
-                    if failed:
-                        self.usage_reader = UsageArtifacts(self.config)
-                elif generation == self._usage_generation:
-                    self._usage_next = self.monotonic() + USAGE_REFRESH_SECONDS
-                self._usage_running = False
+            self._finish_usage(reader, generation, value, lost)
 
+    def _finish_usage(self, reader, generation, value, lost):
+        """Publish and keep a result. Lost access removes the history; any other failure keeps the
+        last one, which its age then marks stale."""
+        with self._usage_lock:
+            self._usage_running = False
+            if generation != self._usage_generation:
+                return
+            self._usage_next = self.monotonic() + USAGE_REFRESH_SECONDS
+            if lost:
+                self._usage_result, self.usage_reader = None, UsageArtifacts(self.config)
+                if self.store is not None:
+                    self.store.clear(*USAGE_DOCUMENTS)
+            elif value is not None:
+                self._usage_result = value
+                if self.store is not None:
+                    for name, document in usage_state(reader, value).items():
+                        self.store.save(name, document)
+
+    @forgets_kept_state
     def snapshot(self, **kwargs):
         value = super().snapshot(nonblocking=True, **kwargs)
         revoked = bool(self._source_error_codes(value['github']) & PRIVATE_FAILURES)
+        # With `repositories: all` there is nothing to read until the first pass has listed them.
+        listed = self._discovered_repositories() is not None
         with self._usage_lock:
             if revoked and not self._usage_revoked:
-                self._usage_generation += 1
-                self._usage_result = None
                 # Replace the cache owner instead of mutating the reader while it is
                 # collecting. Its old generation cannot publish after revocation.
-                self.usage_reader = UsageArtifacts(self.config)
-                self._usage_next = 0
+                self._reset_usage()
             self._usage_revoked = revoked
-            capture_ci_usage = not self.config.agents or any(agent.workflow_role for agent in self.config.agents)
+            capture_ci_usage = listed and (not self.config.agents or any(agent.workflow_role for agent in self.config.agents))
             if capture_ci_usage and not revoked and not self._usage_running and self.monotonic() >= self._usage_next:
                 self._usage_running = True
                 threading.Thread(target=self._refresh_usage,

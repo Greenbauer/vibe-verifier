@@ -14,12 +14,13 @@ follower below then keeps the dashboards' checkout current.
 
 | Unit | Runs as | When | Writes |
 |---|---|---|---|
-| `vibe-dashboard@NAME.service` | `vibe-dashboard-NAME` | always, on `127.0.0.1:PORT` | nothing: no writable path in its sandbox |
+| `vibe-dashboard@NAME.service` | `vibe-dashboard-NAME` | always, on `127.0.0.1:PORT` | `/var/cache/vibe-dashboard-NAME`, its one writable path: the last reading and its GitHub caches |
 | `vibe-dashboard-token@NAME.timer` | root | every 10 minutes | `/var/lib/vibe-dashboard/NAME/gh/hosts.yml` |
 | `vibe-dashboard-telemetry@NAME.timer` | root | every 30 seconds | `/var/lib/vibe-dashboard-state/NAME/collector.json` (root only) and `/var/lib/vibe-dashboard/NAME/telemetry.json` |
 | `vibe-dashboard-follow.service` | root | every 60 seconds | the checkout at `/opt/vibe-verifier` |
 
-The web service runs with an empty capability set, no new privileges, a read-only file system, private
+The web service runs with an empty capability set, no new privileges, a file system that is read-only
+but for its [cache directory](#state-kept-across-a-restart), private
 `/tmp` and devices, IPv4, IPv6 and Unix sockets only, 512 MiB of memory, one CPU and 256 tasks, from an
 `env -i` environment. The task limit leaves room for a refresh: it runs four `gh` calls at once, each
 with about fifteen threads, beside the web server's own. At 64 the service ran out, and a page request
@@ -160,14 +161,48 @@ free only for a request that carries an `Authorization` header, so the follower 
 Instead it asks at most once a minute and only while a new commit is undecided, and when GitHub reports
 the hourly limit spent it asks nothing until the reset GitHub gave.
 
-Not applied automatically: a changed unit template (copy it again and `systemctl daemon-reload`), a
+Not applied automatically: a changed unit template (copy it again, `systemctl daemon-reload`, and
+restart the unit; until then the new code runs under the old unit), a
 changed configuration or `host.env` (restart the unit), and a merged follower that cannot start, which
 systemd keeps restarting on the new copy (reset `/opt/vibe-verifier` to the previous commit and restart
 it). The health check covers the web units only; a broken helper shows as a failed unit in
 `systemctl --failed`.
 
+## State kept across a restart
+
+Every merge that changes the server's Python restarts the dashboards, and a restarted dashboard used
+to show nothing until its first GitHub sample had loaded, then spend several passes re-reading
+what it had already read. The web unit now has one writable path, a cache directory:
+
+```ini
+CacheDirectory=vibe-dashboard-%i
+CacheDirectoryMode=0700
+```
+
+systemd creates `/var/cache/vibe-dashboard-NAME` when the unit starts, owned by the dashboard's
+account and closed to everyone else, and leaves it in place when the unit stops. The unit names it
+to the code as `VIBE_DASHBOARD_STATE_DIR` in the `env -i` list, not as an argument: after a rollback
+to code from before the directory existed, an unknown variable is ignored, where an unknown option
+would stop the dashboard from starting. The dashboard writes its last reading and its GitHub caches
+there after each pass, and a restart then serves the previous reading at once, marked old, with a
+first pass about as cheap as any other. What the files hold, their limits (16 MiB each on disk,
+24 hours), and what deletes them: [kept across a restart](dashboard-data.md#kept-across-a-restart).
+A lost or refused GitHub token deletes them; so does `systemctl clean --what=cache
+vibe-dashboard@NAME.service` on a stopped unit, after which the next start is an ordinary cold one.
+
+A cache, not state: nothing in it is the only copy of anything, so it lives under `/var/cache`,
+not beside the token in `/var/lib`, and a backup that skips `/var/cache` loses nothing.
+
+A host whose installed unit predates these lines runs the same code and keeps nothing, as before,
+until the template is copied again as [Updates](#6-updates) describes. Check with
+`systemctl show vibe-dashboard@NAME.service -p CacheDirectory` and `ls -l /var/cache/vibe-dashboard-NAME/*`.
+
 ## Data lifecycle and removal
 
+- `/var/cache/vibe-dashboard-NAME`: rewritten after every GitHub pass (about once a minute while
+  someone is looking) and every usage scan; a file older than 24 hours is deleted unread at the next
+  start; all of it is deleted when GitHub refuses the token. Nothing deletes it while the unit is
+  stopped, so remove it with the dashboard.
 - `hosts.yml`: replaced every ten minutes, read only by `gh` inside the web service, expires an hour
   after minting whatever happens to the host.
 - `telemetry.json`: replaced every 30 seconds; the root-only state behind it keeps at most seven days
@@ -176,11 +211,13 @@ it). The health check covers the web units only; a broken helper shows as a fail
   with the checkout.
 - Removal: `systemctl disable --now` the instance's units (and the follower once no dashboard is left),
   delete the unit files from `/etc/systemd/system` and `systemctl daemon-reload`, then remove
-  `/etc/vibe-dashboard/NAME`, `/var/lib/vibe-dashboard/NAME` and `/var/lib/vibe-dashboard-state/NAME`,
+  `/etc/vibe-dashboard/NAME`, `/var/lib/vibe-dashboard/NAME`, `/var/lib/vibe-dashboard-state/NAME` and
+  `/var/cache/vibe-dashboard-NAME`,
   `userdel vibe-dashboard-NAME`, and `/opt/vibe-verifier` when nothing else uses it. Uninstall the
   GitHub App, or remove the repositories from its installation, when no dashboard needs it.
 
 `tests/test_dashboard_host.py` covers the token request and its scope checks, the published files'
-owner and mode, the telemetry projection, and the unit templates' sandbox lines.
+owner and mode, the telemetry projection, and the unit templates' sandbox lines, the web unit's cache
+directory among them.
 `tests/test_dashboard_follow.py` covers the check-run gate, the rate-limit pause, the health check,
 and the rollback. Neither runs on a systemd host; the units are verified by their text.

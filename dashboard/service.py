@@ -1,30 +1,44 @@
-"""Memory-only polling cache with honest source age and coalesced refreshes."""
+"""Polling cache with honest source age and coalesced refreshes. It lives in memory, and a state
+store, when one is given, carries the last reading and the collector's caches across a restart."""
 
 from __future__ import annotations
 
 import copy
+import functools
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 
 from .config import BOT_KEYS, Config, coverage_label
-from .gh_api import ApiError
+from .gh_api import PRIVATE_FAILURES, ApiError
 from .github import GitHubCollector, recent_bot_runs
 from .head_state import (
     HEAD_TICK_SECONDS, apply_head_reading, heads_due, read_cached_heads, withhold_stale_pulls)
+from .state_store import StateStore, collector_state, old_reading, restore_collector
 from .telemetry import read_telemetry
 from .util import parse_time
 
 ACTIVE_TTL_SECONDS = 60
 INVENTORY_TTL_SECONDS = 300
 STALE_GRACE_SECONDS = 180
-TRANSIENT = {"rate_limited", "unavailable", "request_budget_exhausted", "invalid_response"}
-PRIVATE_FAILURES = {"authentication_failed", "forbidden", "not_found"}
+
+
+def forgets_kept_state(snapshot):
+    """Run a snapshot again without what a restart handed over when it fails while holding some."""
+    @functools.wraps(snapshot)
+    def guarded(self, *args, **options):
+        try:
+            return snapshot(self, *args, **options)
+        except Exception:
+            if not self._forget_kept():
+                raise
+            return snapshot(self, *args, **options)
+    return guarded
 
 
 class DashboardService:
     def __init__(self, config: Config, collector: GitHubCollector | None = None,
-                 *, monotonic=time.monotonic, wall_clock=None):
+                 *, monotonic=time.monotonic, wall_clock=None, store: StateStore | None = None):
         self.config = config
         self.collector = collector or GitHubCollector(config)
         self.monotonic = monotonic
@@ -38,6 +52,40 @@ class DashboardService:
         self._beating = False
         self._beat_stop = threading.Event()
         self._beat_thread = None
+        self.store = store
+        # True while something a restart handed over, written by whichever version ran before, is in use.
+        self._kept = False
+        if store is not None:
+            self._restore()
+
+    def _restore(self) -> None:
+        """Serve the reading from before the restart, marked old, and start with the caches it left."""
+        github = old_reading(self.store.load("reading"))
+        self._kept = restore_collector(self.collector, self.store) or github is not None
+        if github is not None:
+            # Due at once: this process has not read GitHub yet.
+            self._github, self._github_at = github, float("-inf")
+
+    def _keep(self, result: dict) -> None:
+        if self.store is None:
+            return
+        self.store.save("reading", result)
+        for name, document in collector_state(self.collector).items():
+            self.store.save(name, document)
+
+    def _forget_kept(self) -> bool:
+        """Drop what a restart handed over, in memory and on disk. True when there was any.
+
+        The first failure this code cannot explain is blamed on it, once: the dashboard then
+        behaves as it does on a first start, instead of failing on every request or pass."""
+        with self._condition:
+            kept, self._kept = self._kept, False
+            if kept and (self._github or {}).get("restored"):
+                self._github = None
+        if kept:
+            self._clear_collector_cache()
+            self.store.clear()
+        return kept
 
     def _empty_github(self, code: str) -> dict:
         # A list already names its repositories. `all` has not discovered any yet, so an empty
@@ -61,8 +109,8 @@ class DashboardService:
         return sampled is not None and now - sampled <= timedelta(seconds=STALE_GRACE_SECONDS)
 
     def _stale_allowed(self, row: dict, code: str, _now: datetime) -> bool:
-        # A transient miss keeps the last observation. Age marks it stale; it does not delete it.
-        return code in TRANSIENT and bool(row.get("sampled_at"))
+        # Only lost access removes the last observation. Any other miss keeps it; age marks it stale.
+        return code not in PRIVATE_FAILURES and bool(row.get("sampled_at"))
 
     def _merge(self, fresh: dict, previous: dict | None, now: datetime) -> dict:
         current = {row["repository"]: row for row in fresh["repositories"]}
@@ -127,6 +175,14 @@ class DashboardService:
         if clear:
             clear()
 
+    def _revoke(self) -> None:
+        """Access was refused: nothing read with it stays, in memory or on disk."""
+        self._clear_collector_cache()
+        with self._condition:
+            self._inventory, self._inventory_at = {}, 0.0
+        if self.store is not None:
+            self.store.clear()
+
     def _perform_refresh(self, requested_mono: float, requested_wall: datetime) -> None:
         with self._condition:
             previous = copy.deepcopy(self._github)
@@ -137,26 +193,23 @@ class DashboardService:
         inventory_refreshed = inventory is None
         try:
             fresh = self.collector.collect(inventory)
-            codes = self._source_error_codes(fresh)
-            if codes & PRIVATE_FAILURES:
-                self._clear_collector_cache()
-                with self._condition:
-                    self._inventory, self._inventory_at = {}, 0.0
+            revoked = bool(self._source_error_codes(fresh) & PRIVATE_FAILURES)
+            if revoked:
+                self._revoke()
             result = self._merge(fresh, previous, requested_wall)
             if inventory_refreshed:
                 new_inventory = fresh.get("coverage", {}).get("inventory") or None
+            if not revoked:
+                self._keep(result)
         except ApiError as error:
-            if error.code in PRIVATE_FAILURES or previous is None:
-                result = self._empty_github(error.code)
-                if error.code in PRIVATE_FAILURES:
-                    self._clear_collector_cache()
-                    with self._condition:
-                        self._inventory, self._inventory_at = {}, 0.0
-            elif error.code in TRANSIENT:
-                result = self._mark_transient(previous, error.code, requested_wall)
-            else:
-                result = self._empty_github(error.code)
+            if error.code in PRIVATE_FAILURES:
+                self._revoke()
+            # Any other failure, one this code does not name included, keeps the last reading.
+            kept = previous is not None and error.code not in PRIVATE_FAILURES
+            result = self._mark_transient(previous, error.code, requested_wall) if kept else self._empty_github(error.code)
         except Exception:
+            if self._forget_kept():
+                previous = None
             result = self._mark_transient(previous, "unavailable", requested_wall) if previous else self._empty_github("unavailable")
         completed_mono = self.monotonic()
         with self._condition:
@@ -264,6 +317,7 @@ class DashboardService:
             github["stale"] = True
             github["partial"] = True
 
+    @forgets_kept_state
     def snapshot(self, *, force: bool = False, nonblocking: bool = False) -> dict:
         now_mono, now = self.monotonic(), self.wall_clock().astimezone(timezone.utc)
         run_refresh = False

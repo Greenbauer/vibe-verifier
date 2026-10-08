@@ -477,7 +477,7 @@ console.log(JSON.stringify({limits:text(lanes.children[0]),cards:cards.map(card=
     def test_usage_page_lists_each_qae_and_draws_a_prior_day_line(self):
         result = self.node(r"""
 const app=require('fs').readFileSync('./dashboard/static/app.js','utf8');
-const {BOT_META}=require('./dashboard/static/helpers.js'),VVCharts=require('./dashboard/static/charts.js');
+const {BOT_META,agedState}=require('./dashboard/static/helpers.js'),VVCharts=require('./dashboard/static/charts.js');
 const make=tag=>({tag,attrs:{},children:[],style:{setProperty(k,v){this[k]=v}},setAttribute(k,v){this.attrs[k]=v},append(...c){this.children.push(...c)},replaceChildren(...c){this.children=c}});
 const el=(tag,attrs={},...c)=>Object.assign(make(tag),{attrs,children:c.flat().filter(v=>v!=null)});
 const text=n=>typeof n==='string'?n:(n.children||[]).map(text).join(' '),walk=n=>!n||typeof n==='string'?[]:[n,...(n.children||[]).flatMap(walk)];
@@ -485,7 +485,7 @@ const rows=[1,2,3].map(n=>({id:'ci-qae-'+n,name:'QAE '+n,role:'qae',state:'idle'
 const snapshot={agents:{rows}},strip=el('div'),at=h=>new Date(Date.now()-h*3600000).toISOString();
 const recent=(value,runs)=>runs[0]?.category==='failed'?'Latest run failed':runs.length?'Last 2h':value.coverage?.history==='complete'?'No runs in 2h':'History incomplete';
 global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
-new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function coverage/)[1])(el,BOT_META,snapshot,{failureBot:null},s=>el('span',{},s),()=>{},v=>v,{querySelector:()=>strip},recent);
+new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel','agedState',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function coverage/)[1])(el,BOT_META,snapshot,{failureBot:null},s=>el('span',{},s),()=>{},v=>v,{querySelector:()=>strip},recent,agedState);
 global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
 const samples=rows.flatMap(row=>[31,30,3,2].map(h=>({account:'a',bot:row.id,timestamp:at(h),input_tokens:40,output_tokens:0})));
 const usage={sampled_at:at(0),accounts:[],samples,pace:{tokens_per_hour:100,plan:'ChatGPT subscription',window:'7d',used_percent:25,resets_at:at(-10),delta_points:-4,sized_from:'bot_tokens',window_tokens:400,allowance_tokens:1600}};

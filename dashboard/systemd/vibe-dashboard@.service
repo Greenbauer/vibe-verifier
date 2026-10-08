@@ -11,7 +11,13 @@ User=vibe-dashboard-%i
 Group=vibe-dashboard-%i
 EnvironmentFile=/etc/vibe-dashboard/%i/host.env
 WorkingDirectory=/
-ExecStart=/usr/bin/env -i HOME=/var/lib/vibe-dashboard/%i GH_CONFIG_DIR=/var/lib/vibe-dashboard/%i/gh GH_PROMPT_DISABLED=1 PYTHONNOUSERSITE=1 PATH=/usr/bin:/bin /usr/bin/python3 /opt/vibe-verifier/bin/vibe-dashboard --config /etc/vibe-dashboard/%i/dashboard.json --port ${PORT}
+ExecStart=/usr/bin/env -i HOME=/var/lib/vibe-dashboard/%i GH_CONFIG_DIR=/var/lib/vibe-dashboard/%i/gh GH_PROMPT_DISABLED=1 PYTHONNOUSERSITE=1 VIBE_DASHBOARD_STATE_DIR=/var/cache/vibe-dashboard-%i PATH=/usr/bin:/bin /usr/bin/python3 /opt/vibe-verifier/bin/vibe-dashboard --config /etc/vibe-dashboard/%i/dashboard.json --port ${PORT}
+# The one path the service may write: its last reading and GitHub caches, so a restart shows the
+# previous reading instead of nothing. systemd creates /var/cache/vibe-dashboard-NAME for the account
+# alone. It is named in the environment, not as an argument, so a checkout rolled back to code from
+# before the directory existed still starts.
+CacheDirectory=vibe-dashboard-%i
+CacheDirectoryMode=0700
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes
