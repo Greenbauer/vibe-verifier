@@ -9,12 +9,13 @@ in a sibling __tests__ directory, or anywhere in the repo as long as it imports 
 source by relative path (`from '../email/templates'`). Imports through a path alias
 (`@/lib/x`) are not resolved and do not count.
 
-Python: a test is a test_*.py or *_test.py file. One counts if it is named for the
-source (test_foo.py or foo_test.py) beside it or under a tests/ or test/ directory, if
-it imports the source (`import pkg.foo`, `from pkg import foo`, `from .foo import x`;
-a dotted name counts when it is the end of the source's path, so `pkg.foo` and `foo`
-both cover src/pkg/foo.py), or if it runs the source as a script: a string that is its
-file name, ends in /<file name>, or is its command name (foo_bar.py as `foo-bar`).
+Python: a test is a test_*.py, *_test.py, test-*.py, *-test.py or *.test.py file. One
+counts if it is named for the source (test_foo.py, foo_test.py, test-foo.py, foo-test.py
+or foo.test.py) beside it or under a tests/ or test/ directory, if it imports the source
+(`import pkg.foo`, `from pkg import foo`, `from .foo import x`; a dotted name counts when
+it is the end of the source's path, so `pkg.foo` and `foo` both cover src/pkg/foo.py), or
+if it runs the source as a script: a string that is its file name, ends in /<file name>,
+or is its command name (foo_bar.py as `foo-bar`).
 
     --source GLOB    what counts as source (repeatable; default: JS, TS and Python files)
     --exclude GLOB   extra paths to ignore (repeatable)
@@ -30,7 +31,10 @@ GATE = "new-source-has-test"
 
 EXTENSIONS = ("ts", "tsx", "js", "jsx", "mjs", "cjs")
 DEFAULT_SOURCE = ["**/*." + ext for ext in EXTENSIONS] + ["**/*.py"]
-PY_TESTS = ["**/test_*.py", "**/*_test.py"]
+# What a Python test file is called, around the stem of what it tests: pytest's two names, and the
+# hyphen and dot forms of test files that are run by path.
+PY_TEST_NAMES = ("test_%s.py", "%s_test.py", "test-%s.py", "%s-test.py", "%s.test.py")
+PY_TESTS = ["**/" + name % "*" for name in PY_TEST_NAMES]
 TEST_FILES = ["**/*.test.*", "**/*.spec.*", "**/__tests__/**"] + PY_TESTS
 ALWAYS_EXCLUDED = TEST_FILES + [
     "**/*.d.ts", "**/*.types.ts", "**/index.*", "**/*.stories.*", "**/*.config.*",
@@ -73,9 +77,9 @@ def imported_by_tests(repo, tracked):
 
 
 def named_python_test(path, tracked):
-    """A tracked test_<stem>.py or <stem>_test.py beside the source or under a tests/ or test/ directory."""
+    """A tracked test named for the source (PY_TEST_NAMES) beside it or under a tests/ or test/ directory."""
     stem = posixpath.splitext(posixpath.basename(path))[0]
-    names = {"test_%s.py" % stem, "%s_test.py" % stem}
+    names = {name % stem for name in PY_TEST_NAMES}
     for test in tracked:
         directory, name = posixpath.split(test)
         if name in names and (directory == posixpath.dirname(path) or {"tests", "test"} & set(directory.split("/"))):
@@ -139,8 +143,8 @@ def check(args):
             if references is None:
                 references = python_references(args.repo, tracked)
             if not python_test_refers_to(path, references):
-                findings.append(Finding("new source file has no test (no test_*.py or *_test.py is named for it, imports it, "
-                                        "or runs it by name)", path))
+                findings.append(Finding("new source file has no test (no test_*.py, *_test.py, test-*.py, *-test.py or "
+                                        "*.test.py is named for it, imports it, or runs it by name)", path))
             continue
         if any(candidate in tracked for candidate in test_candidates(path)):
             continue

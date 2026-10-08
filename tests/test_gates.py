@@ -225,6 +225,45 @@ class NewPythonSourceHasTest(unittest.TestCase):
                                    "tests/test_nothing.py": "def test_x(): pass\n"})
         self.assertEqual(gate("new-source-has-test", repo).returncode, 0)
 
+    def test_hyphen_and_dot_named_tests_are_not_source(self):
+        repo = self.on_branch({}, {"tests/rates-test.py": "x = 1\n", "tests/test-rates.py": "x = 1\n",
+                                   "tests/rates.test.py": "x = 1\n", "tests/rates.cli.test.py": "x = 1\n"})
+        self.assertEqual(gate("new-source-has-test", repo).returncode, 0)
+
+    def test_a_name_that_only_holds_the_word_test_is_still_source(self):
+        result = gate("new-source-has-test", self.on_branch({}, {"pkg/latest.py": "x = 1\n", "pkg/rates_test_helpers.py": "y = 2\n",
+                                                                 "pkg/rates-tests.py": "z = 3\n"}))
+        self.assertEqual(result.returncode, 1)
+        for source in ("pkg/latest.py", "pkg/rates_test_helpers.py", "pkg/rates-tests.py"):
+            self.assertIn(source, result.stdout)
+
+    def test_a_hyphen_or_dot_test_named_for_it_counts(self):
+        for test in ("pkg/sync-rates-test.py", "pkg/test-sync-rates.py", "pkg/sync-rates.test.py", "tests/sync-rates-test.py",
+                     "tests/unit/sync-rates.test.py"):
+            repo = self.on_branch({}, {"pkg/sync-rates.py": "x = 1\n", test: "x = 1\n"})
+            self.assertEqual(gate("new-source-has-test", repo).returncode, 0, test)
+
+    def test_a_hyphen_or_dot_test_named_for_it_somewhere_else_does_not_count(self):
+        for test in ("other/sync-rates-test.py", "other/test-sync-rates.py", "other/sync-rates.test.py"):
+            repo = self.on_branch({}, {"pkg/sync-rates.py": "x = 1\n", test: "x = 1\n"})
+            self.assertEqual(gate("new-source-has-test", repo).returncode, 1, test)
+
+    def test_a_hyphen_or_dot_test_that_imports_it_or_runs_it_counts(self):
+        for test in ("tests/payments-test.py", "tests/test-payments.py", "tests/payments.test.py"):
+            repo = self.on_branch({}, {"pkg/billing.py": "x = 1\n", test: "from pkg.billing import charge\n"})
+            self.assertEqual(gate("new-source-has-test", repo).returncode, 0, test)
+            repo = self.on_branch({}, {"scripts/sync-rates.py": "x = 1\n", test: 'SCRIPT = ROOT / "scripts/sync-rates.py"\n'})
+            self.assertEqual(gate("new-source-has-test", repo).returncode, 0, test)
+
+    def test_a_file_that_is_not_named_as_a_test_covers_nothing(self):
+        # a helper beside the tests imports the source and names the script; it is itself source, and untested
+        repo = self.on_branch({}, {"pkg/billing.py": "x = 1\n", "scripts/sync-rates.py": "y = 2\n",
+                                   "tests/payments_helpers.py": 'from pkg.billing import charge\nSCRIPT = "scripts/sync-rates.py"\n'})
+        result = gate("new-source-has-test", repo)
+        self.assertEqual(result.returncode, 1)
+        for source in ("pkg/billing.py", "scripts/sync-rates.py", "tests/payments_helpers.py"):
+            self.assertIn(source, result.stdout)
+
 
 class BranchNameLength(unittest.TestCase):
     def test_over_and_under_budget(self):
