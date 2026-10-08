@@ -72,6 +72,15 @@ class Config:
     telemetry_file: Path | None
     proxy_origin: str | None = None
     agents: tuple[AgentDefinition, ...] = ()
+    # True when repositories is the string "all": the set is discovered on each refresh.
+    all_repositories: bool = False
+
+
+def coverage_label(config: Config) -> str:
+    """What the pull-request banner counts. A list is a selection; "all" is the whole owner."""
+    if config.all_repositories:
+        return "All repositories of %s" % config.owner
+    return "Selected repositories"
 
 
 def _owned_regular_file(path: Path, uid: int | None, *, may_be_missing: bool = False) -> None:
@@ -165,19 +174,27 @@ def load_config(filename: str | os.PathLike[str], uid: int | None = None) -> Con
     owner = value.get("owner")
     if not isinstance(owner, str) or not OWNER.fullmatch(owner):
         raise ConfigError("owner is not a valid GitHub owner")
-    repositories = value.get("repositories")
-    if not isinstance(repositories, list) or not repositories:
-        raise ConfigError("repositories must be a non-empty list")
-    canonical = []
-    for repository in repositories:
-        if not isinstance(repository, str) or repository.count("/") != 1:
-            raise ConfigError("each repository must be OWNER/NAME")
-        repo_owner, name = repository.split("/", 1)
-        if repo_owner.lower() != owner.lower() or not REPOSITORY.fullmatch(name):
-            raise ConfigError("repository %r is outside configured owner %s" % (repository, owner))
-        canonical.append(owner + "/" + name)
-    if len(set(name.lower() for name in canonical)) != len(canonical):
-        raise ConfigError("repositories contains a duplicate")
+    # Either a non-empty list of this owner's repositories, or the exact string "all"
+    # (every non-archived repository of the owner, discovered on each refresh). The two
+    # shapes are different JSON types, so a list cannot mean "all" and the string cannot
+    # name a repository.
+    repositories = value.get("repositories", None)
+    if repositories == "all":
+        canonical, all_repositories = [], True
+    elif isinstance(repositories, list) and repositories:
+        all_repositories = False
+        canonical = []
+        for repository in repositories:
+            if not isinstance(repository, str) or repository.count("/") != 1:
+                raise ConfigError("each repository must be OWNER/NAME")
+            repo_owner, name = repository.split("/", 1)
+            if repo_owner.lower() != owner.lower() or not REPOSITORY.fullmatch(name):
+                raise ConfigError("repository %r is outside configured owner %s" % (repository, owner))
+            canonical.append(owner + "/" + name)
+        if len(set(name.lower() for name in canonical)) != len(canonical):
+            raise ConfigError("repositories contains a duplicate")
+    else:
+        raise ConfigError('repositories must be a non-empty list of OWNER/NAME or the string "all"')
     telemetry = value.get("telemetry_file")
     telemetry_path = None
     if telemetry is not None:
@@ -186,4 +203,5 @@ def load_config(filename: str | os.PathLike[str], uid: int | None = None) -> Con
         telemetry_path = Path(telemetry)
         _owned_regular_file(telemetry_path, uid, may_be_missing=True)
     return Config(owner, tuple(canonical), _parse_bots(value.get("bots")), telemetry_path,
-                  _parse_proxy_origin(value.get("proxy_origin")), _parse_agents(value.get("agents", [])))
+                  _parse_proxy_origin(value.get("proxy_origin")), _parse_agents(value.get("agents", [])),
+                  all_repositories)

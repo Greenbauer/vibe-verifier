@@ -89,19 +89,24 @@ Install a GitHub App on the dashboard owner's account, for at least the configur
 these repository permissions set to read: Actions, Administration, Checks, Contents, Metadata, Pull
 requests and Commit statuses. Administration is what lists the status checks classic branch protection
 requires and says whether it restricts who may push. Keep its private key only in `app.pem`.
+`repositories: all` needs the App installed on every repository of that owner the dashboard should
+see. The token can then read the whole installation, which is wider than a named list, and it is
+refused when a granted repository belongs to another owner.
 
 Every ten minutes the token timer runs `bin/vibe-dashboard-host token`. `openssl` signs the App's JWT
 from the key file, so the key never enters the Python process, and the installation token it exchanges
-the JWT for is requested for exactly the configuration's `repositories` and exactly those seven read
-permissions. The helper refuses a token whose granted permissions or repositories differ from the
-request in any way, and refuses a key file another user can read. It writes the token as
+the JWT for is requested with exactly those seven read permissions. A configured list also names
+those repositories, and the helper refuses a token whose permissions or repository list differ from
+that request. `repositories: all` omits the repository list. The helper still refuses any other
+permissions, and refuses a grant that names a repository outside the owner. It refuses a key file
+another user can read. It writes the token as
 `gh`'s `hosts.yml` (`oauth_token`, `user` from `LOGIN`, `git_protocol: https`), mode 0600, owned by
 the dashboard account, replacing the old file in one rename. It also writes `config.yml` next to
 it (`version: "1"`, mode 0644, owned by root, no token and no settings). gh 2.93 exits before any
 API call when that file is missing, because it tries to create it and this directory is not writable
 by the dashboard account. A token lives one hour, so ten-minute
-refreshes ride out several missed runs. Because the repository list comes from the dashboard's own
-configuration, which its account owns, only root and that account can widen the token, and the web
+refreshes ride out several missed runs. The configuration belongs to the dashboard account, so only
+root and that account can change which repositories the token asks for, and the web
 service's sandbox cannot write the file.
 
 ## 4. Telemetry

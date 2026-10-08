@@ -127,6 +127,24 @@ class Host(unittest.TestCase):
         self.assertEqual((stat.S_IMODE(config_info.st_mode), config_info.st_uid), (0o644, host.ROOT_UID))
         self.assertEqual(sorted(path.name for path in self.hosts.parent.iterdir()), ["config.yml", "hosts.yml"])
 
+    def test_all_repositories_omits_the_list_and_refuses_another_owner(self):
+        value = json.loads(self.config.read_text())
+        value["repositories"] = "all"
+        self.config.write_text(json.dumps(value))
+        self.refresh_token({"token": "ghs_" + "b" * 36, "permissions": dict(host.READ_PERMISSIONS),
+                            "repository_selection": "all"})
+        self.assertEqual(json.loads(self.requests[0][0].data), {"permissions": dict(host.READ_PERMISSIONS)})
+        self.requests.clear()
+        named = {"token": "ghs_" + "c" * 36, "permissions": dict(host.READ_PERMISSIONS),
+                 "repository_selection": "all",
+                 "repositories": [{"full_name": "octocat/example"}, {"full_name": "octocat/archived"}]}
+        self.refresh_token(named)
+        self.assertNotIn("repositories", json.loads(self.requests[0][0].data))
+        with self.assertRaisesRegex(host.HostError, "outside the dashboard owner"):
+            self.refresh_token({**named, "repositories": [{"full_name": "other/example"}]})
+        with self.assertRaisesRegex(host.HostError, "outside the dashboard owner"):
+            self.refresh_token({key: value for key, value in named.items() if key != "repository_selection"})
+
     def test_a_grant_wider_narrower_or_malformed_fails_closed_and_keeps_the_old_token(self):
         self.hosts.write_text("old\n")
         wider = dict(host.READ_PERMISSIONS, contents="write")

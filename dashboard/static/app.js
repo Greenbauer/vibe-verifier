@@ -1,7 +1,7 @@
 (function () {
   "use strict";
   const { BOT_META, element: el, link, safeUrl, duration, since, ageClass, formatTime, bytes, badge,
-    diskUsage, flattenPulls, filterPulls, groupPulls, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark,
+    diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark,
     quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
@@ -99,14 +99,13 @@
 
   function coverage() {
     const value = snapshot.github.coverage;
-    const errors = snapshot.github.errors || [];
-    const stale = Boolean(snapshot.github.stale);
-    const text = `${value.label}: ${value.selected}. ${value.readable} read successfully in this sample.`;
-    return sourceBanner(text + (errors.length || stale ? " Some GitHub data is unavailable or stale." : ""), errors.length || stale ? "warning" : "");
+    const unavailable = value.selected == null && !snapshot.github.refreshing;
+    const warning = unavailable || Boolean((snapshot.github.errors || []).length || snapshot.github.stale);
+    return sourceBanner(coverageBanner(value, snapshot.github), warning ? "warning" : "");
   }
 
   function prFilters(pulls) {
-    const repositories = [...new Set(pulls.map(pull => pull.repository))].sort();
+    const repositories = repositoriesWithPulls(pulls);
     const search = el("input", { type: "search", id: "pr-search", placeholder: "Search PRs", value: state.query,
       "aria-label": "Search pull requests", oninput: event => { state.query = event.target.value; renderPrRows(); } });
     const select = el("select", { id: "repo-filter", "aria-label": "Repository filter", onchange: event => {
