@@ -271,9 +271,10 @@ const snapshot={agents:{rows:[
   {id:'ci-qae-2',name:'QAE 2',role:'qae'},
   {id:'ci-qae-3',name:'QAE 3',role:'qae'}]}};
 const at=hours=>new Date(Date.now()-hours*3600000).toISOString();
-const usage={available:true,samples:[
+const usage={available:true,sampled_at:at(0),samples:[
   {account:'a',bot:'ci-qae-1',timestamp:at(1),input_tokens:100,output_tokens:0},
-  {account:'a',bot:'explorer',timestamp:at(1),input_tokens:40,output_tokens:7}],
+  {account:'a',bot:'explorer',timestamp:at(1),input_tokens:40,output_tokens:7},
+  {account:'a',bot:'explorer',timestamp:at(48),input_tokens:9000,output_tokens:0}],
   pace:{tokens_per_hour:null,reason:'unused',delta_points:null}};
 const build=new Function('el','BOT_META','VVCharts','snapshot',SOURCE+'\nreturn usageCharts;');
 const cards=build(el,BOT_META,VVCharts,snapshot)(usage).children[2].children;
@@ -285,6 +286,7 @@ console.log(JSON.stringify({names:cards.map(card=>text(card.children[0].children
         self.assertEqual(result["names"], ["QAE 1", "QAE 2", "QAE 3", "All bots"])
         self.assertIn("147", result["all"])
         self.assertIn("47 not on a numbered bot", result["all"])
+        self.assertNotIn("9k", result["all"])
         self.assertIn("47 tokens are not on a numbered bot", result["title"])
 
 
