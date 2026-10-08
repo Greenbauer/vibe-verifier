@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from dashboard.config import Config, BotDefinition
 from dashboard.gh_api import ApiError
-from dashboard.usage_artifacts import UsageArtifacts, decode_archive, normalize
+from dashboard.usage_artifacts import UsageArtifacts, apply_plan_window, decode_archive, normalize
 
 NOW = datetime(2026, 9, 30, 12, tzinfo=timezone.utc)
 REPO = 'example/site'
@@ -212,6 +212,22 @@ class ArtifactCollection(unittest.TestCase):
         result = self.reader.collect(NOW, window_start=NOW - timedelta(days=3))
         self.assertFalse(result['hard_partial'])
         self.assertTrue(result['partial'])
+
+    def test_an_unavailable_capture_before_the_plan_window_does_not_refuse_the_line(self):
+        self.record['status'], self.record['usage'] = 'unavailable', None
+        result = self.reader.collect(NOW)
+        self.assertTrue(result['partial'])
+        apply_plan_window(result, NOW - timedelta(minutes=30))
+        self.assertFalse(result['hard_partial'])
+        self.assertFalse(result['partial'])
+        self.assertEqual(result['samples'], [])
+
+    def test_an_unavailable_capture_inside_the_plan_window_stays_partial(self):
+        self.record['status'], self.record['usage'] = 'unavailable', None
+        result = self.reader.collect(NOW, window_start=NOW - timedelta(hours=2))
+        self.assertFalse(result['hard_partial'])
+        self.assertTrue(result['partial'])
+        self.assertEqual(result['samples'], [])
 
     def test_an_unreadable_artifact_stays_partial_when_the_window_is_covered(self):
         self.run['path'] = '.github/workflows/unrelated.yml'

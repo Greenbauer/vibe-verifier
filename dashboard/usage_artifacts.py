@@ -90,24 +90,43 @@ def normalize(value, artifact, run, repository, now):
                        "input_tokens": total_input, "output_tokens": numbers["output_tokens"], "partial": status == "partial"}}
 
 
+def _gap_inside(result, window_start):
+    """A capture with no counts blocks the pace only when it falls inside the plan window."""
+    for stamp in result.get("gaps") or []:
+        when = parse_time(stamp)
+        if window_start is None or when is None or when >= window_start:
+            return True
+    return False
+
+
 def apply_plan_window(result, window_start):
     """`partial` means token history since the plan window began is incomplete.
 
     A listing that never reaches the seven-day cutoff is still complete for the pace when the
     oldest artifact it did read is at or before the window start. An unreadable artifact, a
-    partial sample, or a budget stop stays partial either way. Results from before this field
-    existed are left alone.
+    partial sample, or a budget stop stays partial either way. A capture that reports no counts
+    does too, when that capture is inside the window. Results from before this field existed
+    are left alone.
     """
     if not isinstance(result, dict) or "hard_partial" not in result:
         return result
     if window_start is None:
-        partial = bool(result["hard_partial"]) or not result.get("listing_complete", False)
+        partial = bool(result["hard_partial"]) or not result.get("listing_complete", False) or _gap_inside(result, None)
     else:
         covered = parse_time(result.get("covered_until"))
-        partial = bool(result["hard_partial"]) or covered is None or covered > window_start
+        partial = (bool(result["hard_partial"]) or _gap_inside(result, window_start) or
+                   covered is None or covered > window_start)
     result["partial"] = partial
     result["completeness"] = (CAPTURE if partial else "") + OBSERVED
     return result
+
+
+def _still_cached(value, cutoff):
+    if value is None:
+        return True
+    stamp = value["sample"]["timestamp"] if "sample" in value else value.get("gap_at")
+    when = parse_time(stamp) if isinstance(stamp, str) else None
+    return when is not None and when >= cutoff
 
 
 def download(repository, artifact_id):
@@ -227,7 +246,9 @@ class UsageArtifacts:
                         if str(run.get("path", "")).split("/")[-1] != definition.workflow:
                             raise ValueError("unexpected source workflow")
                         record = normalize(decode_archive(self.downloader(repository, artifact_id)), artifact, run, repository, now)
-                        if record and ROLE[matched.group(1)] == "explorer":
+                        if record is None:
+                            record = {"gap_at": artifact.get("created_at")}
+                        elif ROLE[matched.group(1)] == "explorer":
                             # Filled after the token reads, so a runner lookup cannot spend the
                             # budget the history itself needs.
                             record["_lookup"] = (repository, run_id, attempt, definition.jobs)
@@ -244,8 +265,7 @@ class UsageArtifacts:
         # A repository the call budget did not reach keeps what earlier passes read, inside the window;
         # the next pass reads it again. A listed repository keeps only what it still lists.
         self.cache = {key: value for key, value in self.cache.items()
-                      if key in seen or (key[0] not in listed and
-                                         (value is None or parse_time(value["sample"]["timestamp"]) >= cutoff))}
+                      if key in seen or (key[0] not in listed and _still_cached(value, cutoff))}
         records.extend(value for key, value in self.cache.items() if key not in seen)
         for record in records:
             lookup = record.get("_lookup") if isinstance(record, dict) else None
@@ -256,18 +276,21 @@ class UsageArtifacts:
                 break
             record["sample"]["instance"] = number
             record["_instance_known"] = True
-        accounts, samples = {}, []
+        accounts, samples, gaps = {}, [], []
         for record in records:
-            if record is None:
+            if not record:
                 hard = True
-            if record:
-                accounts[record["account"]["id"]] = record["account"]
-                samples.append(record["sample"])
-                hard |= record["sample"]["partial"]
+                continue
+            if "sample" not in record:
+                gaps.append(record.get("gap_at"))
+                continue
+            accounts[record["account"]["id"]] = record["account"]
+            samples.append(record["sample"])
+            hard |= record["sample"]["partial"]
         covered = None if unproven or not bounds else max(bounds)
         self.result = apply_plan_window(
             {"available": True, "sampled_at": iso_time(now), "stale": False,
-             "accounts": list(accounts.values()), "samples": samples,
+             "accounts": list(accounts.values()), "samples": samples, "gaps": gaps,
              "hard_partial": hard, "listing_complete": listing_complete and not hard,
              "covered_until": iso_time(covered) if covered else None},
             window_start)

@@ -473,7 +473,10 @@ request fails, the page keeps the last snapshot and says the refresh failed. Num
 every five minutes through the current GitHub credentials, verified against their run/attempt/head
 and configured workflow, and parsed without extracting files or copying model content. Each scan
 pages through a repository's artifacts, newest first, until a page reaches past seven days, at most
-five pages (500 artifacts) per repository; a longer week reports partial coverage. Each scan has a
+five pages (500 artifacts) per repository. A listing that stops short of seven days is still complete
+for the pace line when the oldest artifact it read is at or before the plan window. An unreadable
+artifact, a partial sample, or a budget stop stays partial. A capture that reports no counts is a
+gap only when it falls inside that window. Each scan has a
 budget of 80 GitHub calls. A scan that spends it keeps the records earlier scans read, reports
 partial coverage, and reads the rest on the next scan; only lost access clears them. Token history
 counts as stale after two missed scans (ten minutes), not during an ordinary refresh. Captured token
