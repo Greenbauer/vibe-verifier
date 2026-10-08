@@ -712,8 +712,10 @@ and refuses on structural facts:
 4. a `browser_network_requests` result exists (the prompt asks for one after each criterion; a call
    that saved its result to a file is read from that file, which must be in the evidence), and
    no request to the site under test (`--site-file`, the URL the explore job declared and any further
-   origin after it, or a fixed `--site`) answered 400 or worse or failed, outside `--allow-request` patterns (a request the browser cancelled
-   itself, `net::ERR_ABORTED`, was never answered and is not judged);
+   origin after it, or a fixed `--site`) answered 400 or worse or failed, outside `--allow-request` patterns. A request the page cancelled
+   itself, `net::ERR_ABORTED`, is not judged when the record also holds that request (same method and
+   URL) answered below 400 somewhere in the run, and is a finding when it does not
+   ([below](#a-request-the-page-cancelled));
 5. with `--widths`, each criterion's step screenshots include one of each declared width
    ([above](#viewports-themes-and-what-a-criterion-does-not-say)).
 
@@ -743,6 +745,26 @@ and every other console error still fail, and a declaration of another status, o
 site, is itself a finding. Because the declaration is a criterion, the explorer must still show the
 refusal happens, and a reviewer reads the allowance as part of the spec. An HTML comment does not
 declare anything.
+
+### A request the page cancelled
+
+`[FAILED] net::ERR_ABORTED` is the page cancelling its own request: a view that drops its fetch when
+the user moves on, a search box replacing the last query, and also a page giving up on an endpoint
+that never answers (a client timeout). Checked in the pinned browser, all of them write the same
+line, and the record holds no timing, no initiator and no navigation (a request still pending when a
+document unloads is recorded with no failure at all, and a client-side route change makes no
+request). So the gate cannot tell moving on from giving up, and asks the record a question it can
+answer: was this request answered at all? When the same method and URL (query included, fragment
+dropped) answered below 400 anywhere in the run's network records, the endpoint is shown to work and
+the cancelled line is not judged. When it never was, the line is a finding: `request cancelled and
+never answered in this run`. A cancelled `PUT` is not excused by a `GET` of the same URL, and no
+answer excuses any other failure (`net::ERR_CONNECTION_*`, `net::ERR_TIMED_OUT`, `net::ERR_FAILED`,
+a failure with no reason, a 5xx).
+
+A request the site always cancels and never completes by design (a query replaced on every
+keystroke, whose URL changes each time) is declared with `--allow-request`, like anything else
+environmental. A finding for a slow request the explorer simply left behind clears on a re-run in
+which that request is answered once.
 
 A manifest copied before the site URL was declared reads `--site http://localhost:3000`, and keeps
 working: `--site` judges a fixed URL, `--site-file` the declared one, and a line takes one or the other.

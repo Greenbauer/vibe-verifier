@@ -45,11 +45,15 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    such result, or in a `network-*.log` file, answered 400 or worse or failed, outside the
    allowlist. A call may save its result to a file (its `filename` argument); the session log then
    holds a link and no requests, so that file is read as the result. One the evidence does not hold
-   is a finding: a record nobody can read is not a record. A request the browser cancelled itself
-   (`[FAILED] net::ERR_ABORTED`: the explorer navigated away before it returned, or the page aborted
-   its own fetch) was never answered by the site, so it is not judged; every other failed request
-   is. This encodes the recorded false-PASS lesson: a PASS obtained while the real
-   endpoint failed is refused here whatever the verdict says.
+   is a finding: a record nobody can read is not a record. A request the page cancelled itself
+   (`[FAILED] net::ERR_ABORTED`) was never answered by the site. The record cannot say why it was
+   cancelled: a page that drops a fetch when the user moves on, and one that gives up on an endpoint
+   that never answers, write the same line. So it is not judged only when the record also holds that
+   request (same method, same URL, fragment dropped) answered below 400 somewhere in the run: the
+   endpoint is shown to work, and the cancellation was the page moving on. Cancelled and never
+   answered is a finding, and every other failed request always is. This encodes the recorded
+   false-PASS lesson: a PASS obtained while the real endpoint failed is refused here whatever the
+   verdict says.
 5. A refusal is the correct outcome of some criteria (an auth gate answering 401 signed out, a
    server answering 422 to the invalid input the explorer is told to try), so a criterion declares
    it: `- Signed out, the quotes API refuses (expected-refusal: 401 /api/quotes)`.
@@ -87,7 +91,8 @@ TOOL_CALL = re.compile(r"^### Tool call: (?P<name>\S+)\s*$", re.MULTILINE)
 # `3. [GET] http://host/path => [404] Not Found` or `=> [FAILED] net::ERR_...`, as the tool renders it;
 # inside a JSON result the newline is escaped, so the line is matched without anchors.
 REQUEST = re.compile(r"[0-9]+\. \[(?P<method>[A-Z]+)\] (?P<url>\S+) => \[(?P<status>[0-9]{3}|FAILED)\](?: (?P<reason>net::[A-Z0-9_]+))?")
-# The browser's own cancellation of a request: the page navigated away, or aborted its fetch.
+# The page's own cancellation of a request: it aborted its fetch, for whatever reason. A request
+# still pending when a document unloads is recorded with no failure at all, so this is never that.
 CANCELLED = "net::ERR_ABORTED"
 # What a browser_network_requests call was told to save its result to, in the call's Args block.
 SAVED_TO = re.compile(r'"filename":\s*"(?P<name>[^"\\]+)"')
@@ -244,12 +249,18 @@ def console_is_clean(root, allowed, expected, sites):
 
 
 def site_failed(request):
-    """True when the request the REQUEST match holds is the site's failure: it answered 400 or worse,
-    or failed outright. One the browser cancelled itself was never answered, and is not."""
+    """True when the request the REQUEST match holds answered 400 or worse, or failed outright."""
     status = request.group("status")
-    if status == "FAILED":
-        return request.group("reason") != CANCELLED
-    return int(status) >= 400
+    return status == "FAILED" or int(status) >= 400
+
+
+def cancelled(request):
+    """True when the page cancelled the request the REQUEST match holds before any answer."""
+    return request.group("status") == "FAILED" and request.group("reason") == CANCELLED
+
+
+def same_request(request):
+    return request.group("method"), exact(request.group("url"))
 
 
 def saved_network_records(root, sessions):
@@ -288,25 +299,38 @@ def session_and_network(root, allowed, sites, expected):
         findings.append(Finding("no network record: the explorer must call browser_network_requests after each criterion"))
     saved, unreadable = saved_network_records(root, sessions)
     findings += unreadable
-    sources = sessions + saved + sorted(glob.glob(os.path.join(root, "network-*.log")))
-    seen = set()
-    for source in sources:
-        for match in REQUEST.finditer(read(source)):
-            url, status = match.group("url"), match.group("status")
-            if not judged(url, sites):
-                continue
-            if any(pattern.search(url) for pattern in allowed):
-                continue
-            if not site_failed(match):
-                continue
-            if (status, exact(url)) in expected:
-                continue
-            key = (match.group("method"), url, status)
-            if key in seen:
-                continue
-            seen.add(key)
-            findings.append(Finding("request answered %s outside the allowlist: [%s] %s" % (status, match.group("method"), url[:200]), relative(source, root)))
+    return findings + request_findings(root, sessions + saved + sorted(glob.glob(os.path.join(root, "network-*.log"))),
+                                       allowed, sites, expected)
+
+
+def request_findings(root, sources, allowed, sites, expected):
+    """A finding per request to a judged origin that answered 400 or worse or failed, across every
+    network record of the run. What excuses a cancelled one, beyond the allowlist, is that same
+    request answered below 400 anywhere in those records."""
+    records = [(source, match) for source in sources for match in REQUEST.finditer(read(source))]
+    answered = {same_request(match) for _, match in records if not site_failed(match)}
+    findings, seen = [], set()
+    for source, match in records:
+        url, status = match.group("url"), match.group("status")
+        if not site_failed(match) or not judged(url, sites) or any(pattern.search(url) for pattern in allowed):
+            continue
+        if (status, exact(url)) in expected or (cancelled(match) and same_request(match) in answered):
+            continue
+        key = (match.group("method"), url, status)
+        if key in seen:
+            continue
+        seen.add(key)
+        findings.append(Finding(request_failure(match), relative(source, root)))
     return findings
+
+
+def request_failure(request):
+    """The finding for a failed request: one the page cancelled says what would have excused it."""
+    line = "[%s] %s" % (request.group("method"), request.group("url")[:200])
+    if cancelled(request):
+        return ("request cancelled and never answered in this run, outside the allowlist: %s (%s is the page's own "
+                "cancellation, excused only when the record also shows this request answered below 400)" % (line, CANCELLED))
+    return "request answered %s outside the allowlist: %s" % (request.group("status"), line)
 
 
 def is_origin(word):
