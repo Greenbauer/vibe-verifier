@@ -240,6 +240,67 @@ out="$(SERVICE_RESULT=success run_slot cleanup ci 1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ ! -e "$STORE/slot-ci-1" ] && [ -z "$(ls -A "$S/elsewhere")" ] && grep -qx "rm -rf -- $STORE/slot-ci-1" "$CALLLOG" && ! grep -q '^systemctl' "$CALLLOG" \
   && grep -q "could not move $STORE/slot-ci-1 into $STORE/trash; deleting it in place" <<< "$out" && [ ! -e "$S/run/ci/1/job" ]
 expect $? "a trash that is a link takes nothing: the copy is deleted in place, as before the trash existed, nothing goes through the link, and the instance is still freed"
+# The trash is bounded. It absorbs a burst; past the bound a slot deletes its own copy in its stop
+# path, as every slot did before there was a trash, and takes no new job until that is done, so a
+# lane cannot retire copies faster than the disk deletes them. run_slot sets no slot count, so the
+# bound here is the fixed eight.
+retired() { local i; for i in $(seq 1 "$1"); do mkdir -p "$STORE/trash/17000000$(printf '%02d' "$i").slot-$2-$i.7/overlay2"; done; }
+setup; probe_rm
+retired 7 ci
+listener_files ci 1 acme 4242
+run_slot prepare ci 1 >/dev/null 2>&1; : > "$CALLLOG"
+out="$(SERVICE_RESULT=success run_slot cleanup ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 8 ] && no_delete_of slot-ci-1 && [ ! -e "$S/run/ci/1/job" ] && ! grep -q "in place" <<< "$out"
+expect $? "with the trash under its bound (seven copies of eight) a cleanup renames its copy into it and frees the instance at once"
+listener_files ci 1 acme 4243
+run_slot prepare ci 1 >/dev/null 2>&1; : > "$CALLLOG"
+out="$(SERVICE_RESULT=success run_slot cleanup ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 8 ] && [ ! -e "$STORE/slot-ci-1" ] && before "^rm -rf -- $STORE/slot-ci-1\$" "^rm -f $S/run/ci/1/job\$" \
+  && grep -q "$STORE/trash holds its 8 retired copies (or cannot be read); deleting $STORE/slot-ci-1 in place, before this instance is free" <<< "$out"
+expect $? "at the bound a cleanup deletes its copy in place and adds nothing to the trash: it says why, and frees the instance only once the copy is gone"
+grep -qx "systemctl start --no-block box-ci-store-reaper.service" "$CALLLOG"; expect $? "and it still starts the reaper: a full trash needs one at work on it"
+listener_files ci 1 acme 4244
+mkdir -p "$STORE/slot-ci-1/overlay2/left-by-a-killed-cleanup"; : > "$CALLLOG"
+out="$(run_slot prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 8 ] && before "^rm -rf -- $STORE/slot-ci-1\$" '^cp --reflink=always' && [ ! -e "$STORE/slot-ci-1/overlay2/left-by-a-killed-cleanup" ] && [ -d "$STORE/slot-ci-1/overlay2/layer1" ]
+expect $? "at the bound a prepare deletes a leftover in place too, then makes its fresh copy"
+setup; probe_rm
+retired 8 wait; retired 7 ci
+listener_files ci 1 acme 4242
+run_slot prepare ci 1 >/dev/null 2>&1; : > "$CALLLOG"
+out="$(SERVICE_RESULT=success run_slot cleanup ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 16 ] && no_delete_of slot-ci-1; expect $? "a wait slot's entries do not count toward the bound: eight of them beside seven copies leave room for an eighth copy"
+listener_files wait 2 acme 4545
+run_slot prepare wait 2 >/dev/null 2>&1; : > "$CALLLOG"
+out="$(SERVICE_RESULT=success run_slot cleanup wait 2 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 17 ] && [ ! -e "$STORE/slot-wait-2" ] && ! grep -q "in place" <<< "$out" && ! grep -q '^df ' "$CALLLOG"
+expect $? "and a wait slot is unaffected by a full trash: its empty store is renamed as before, and the store is not read for it"
+setup; probe_rm
+listener_files ci 1 acme 4242
+run_slot prepare ci 1 >/dev/null 2>&1
+mkdir -p "$STORE/trash"; /bin/chmod 000 "$STORE/trash"; : > "$CALLLOG"
+out="$(SERVICE_RESULT=success run_slot cleanup ci 1 2>&1)"; rc=$?
+/bin/chmod 700 "$STORE/trash"
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 0 ] && grep -qx "rm -rf -- $STORE/slot-ci-1" "$CALLLOG" && [ ! -e "$STORE/slot-ci-1" ] && [ ! -e "$S/run/ci/1/job" ] && grep -q "(or cannot be read); deleting $STORE/slot-ci-1 in place" <<< "$out"
+expect $? "a trash that cannot be read counts as full: the copy is deleted in place"
+setup; probe_rm
+listener_files ci 1 acme 4242
+run_slot prepare ci 1 >/dev/null 2>&1; : > "$CALLLOG"
+out="$(STORE_DF_SHORT="1000 50 1000 500" SERVICE_RESULT=success run_slot cleanup ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 0 ] && grep -qx "rm -rf -- $STORE/slot-ci-1" "$CALLLOG" && [ ! -e "$S/run/ci/1/job" ] \
+  && grep -q "the store has under 10% of its space or inodes free; deleting $STORE/slot-ci-1 in place, before this instance is free" <<< "$out"
+expect $? "a store short of room takes nothing more into its trash, however empty the trash is: the copy is deleted in place"
+setup; probe_rm
+retired 3 ci
+listener_files ci 1 acme 4242
+run_slot prepare ci 1 >/dev/null 2>&1
+out="$(KNOWN_CI_CPUSET_1=0-3 KNOWN_CI_CPUSET_2=4-7 KNOWN_CI_CPUSET_3=8-11 SERVICE_RESULT=success run_slot cleanup ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 3 ] && grep -q "holds its 3 retired copies" <<< "$out"
+expect $? "the bound is the slot count of the unit that runs the helper: three instances, three copies, the most one burst retires"
+listener_files ci 1 acme 4243
+run_slot prepare ci 1 >/dev/null 2>&1
+out="$(KNOWN_CI_TRASH_MAX=5 KNOWN_CI_CPUSET_1=0-3 SERVICE_RESULT=success run_slot cleanup ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 4 ] && ! grep -q "in place" <<< "$out"; expect $? "KNOWN_CI_TRASH_MAX sets another bound"
 setup
 listener_files ci 2 acme/widgets 4444
 out="$(HELPER_SCOPE=user SERVICE_RESULT=success run_slot cleanup ci 2 2>&1)"; rc=$?

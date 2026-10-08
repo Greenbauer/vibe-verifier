@@ -41,7 +41,8 @@
 #   removes the container; deregisters the job file's runner at its scope's endpoint
 #   (orgs/<org>/actions/runners/<id> or repos/<owner>/<repo>/actions/runners/<id>) unless the
 #   listener's idle-stop marker says the listener already removed it; unmounts; retires the job's
-#   store into the trash (a rename) and starts the lane's reaper without waiting for it; deletes
+#   store into the trash (a rename) and starts the lane's reaper without waiting for it, or, with
+#   the trash at its bound or the store short of room, deletes that store here and now; deletes
 #   the slot image; prunes a qae store back to auth.json and gives it back to the lane user
 #   (KNOWN_CI_CODEX_OWNER), holding its lock, so an operator can log it in again; records the
 #   outcome; removes jit and idle-stop, and the job file LAST, because its absence is what frees the
@@ -77,8 +78,13 @@
 # instance until it finished. So a slot never deletes its copy. prepare (a leftover) and cleanup
 # rename it to <store>/trash/<epoch second>.slot-<kind>-<n>.<pid>: one rename inside one filesystem,
 # so atomic and immediate, under a name no other entry has and that carries the entry's age. The
-# reaper deletes it later, at its own pace. A copy the trash cannot take (the directory cannot be
-# made, it is a link, or the rename fails) is deleted in place, as it was before.
+# reaper deletes it later, at its own pace. The trash is bounded: it takes a ci or qae copy only
+# while it holds fewer than TRASH_MAX of them and the store has room (STORE_MIN_FREE_PCT). Past
+# that the slot deletes its copy in place, in its own stop path, as every slot did before there was
+# a trash: slower, but a slot that is deleting takes no new job, so the lane cannot retire copies
+# faster than the disk deletes them. The trash absorbs a burst; sustained load falls back to that.
+# A copy the trash cannot take for another reason (the directory cannot be made, it is a link, or
+# the rename fails) is deleted in place too.
 # Fail closed on disk: a backlog must not fill the store unseen. Before a ci or qae copy, when the
 # store filesystem has less than STORE_MIN_FREE_PCT of its space or of its inodes free (a reading
 # that cannot be made counts as short) and the trash holds entries, prepare deletes the oldest
@@ -222,6 +228,17 @@ STORE_AMPLE_FREE_PCT="${KNOWN_CI_STORE_AMPLE_FREE_PCT:-50}"
 # between batches, so no delete is cut short. One that is (the unit stopped, a reboot) is safe too:
 # what is left of the entry stays in the trash under its name, and a later pass deletes the rest.
 REAP_MAX_SEC="${KNOWN_CI_REAP_MAX_SEC:-300}"
+# The most retired ci and qae copies the trash may hold. Without a bound nothing ties the lane's
+# pace to the disk's: measured on a live lane, 2026-10-07, three deletes at a time took 77 to 133 s
+# each, 1.5 to 2.3 a minute, while the lane retired 2.1 to 2.8 copies a minute. The trash went from
+# 39 to 70 entries in an hour and the store reached 90% of its inodes (an XFS store of 40G caps
+# them at 20.9 million, and a copy holds about 225,000), where every prepare was deleting for
+# itself and four slots of five waited in it. A slot that deletes its own copy in its stop path is
+# slow but cannot outrun the disk: it takes no new job until the delete is done. So the trash
+# absorbs a burst and no more. The default is the unit's slot count, which is the most copies one
+# burst can retire (a slot unit sets one KNOWN_CI_CPUSET_<n> for each instance), or 8.
+TRASH_MAX="${KNOWN_CI_TRASH_MAX:-$(compgen -v KNOWN_CI_CPUSET_ | grep -c . || true)}"
+[[ "$TRASH_MAX" =~ ^[1-9][0-9]*$ ]] || TRASH_MAX=8
 
 INSTANCE="$KIND-$SLOT"
 SLOT_RUN="$RUN_DIR/$KIND/$SLOT"
@@ -299,22 +316,40 @@ start_reaper() {
     || log "could not start $REAPER_UNIT (bin/provision-lane.sh writes it); its timer, or the next cleanup's start, empties $TRASH_DIR"
 }
 
+# True while the trash holds fewer than TRASH_MAX retired ci and qae copies: one listing of the
+# directory. A wait slot's entry is an empty store that takes no time to delete, and is not counted.
+# A trash that cannot be read counts as full.
+trash_has_space() {
+  local entries
+  entries="$(find "$TRASH_DIR" -mindepth 1 -maxdepth 1 ! -name '*.slot-wait-*' -print 2>/dev/null)" || return 1
+  [ "$(grep -c . <<< "$entries" || true)" -lt "$TRASH_MAX" ]
+}
+
 # retire_store <path>: gets a store copy out of the way ("The store trash" above). A slot's
-# (prepare, cleanup) is renamed into the trash for the reaper; one the trash cannot take, and the
-# smoke's and the image build's (snapshot, discard), is deleted here before this returns. That
-# removal is serial: a parallel rm -rf of one copy gained nothing on the loop device (9 s either
-# way, 2026-09-26).
+# (prepare, cleanup) is renamed into the trash for the reaper while the trash has space for it and
+# the store has room; otherwise, like one the trash cannot take and like the smoke's and the image
+# build's (snapshot, discard), it is deleted here before this returns. That removal is serial: a
+# parallel rm -rf of one copy gained nothing on the loop device (9 s either way, 2026-09-26).
 retire_store() {
   local path="$1"
   [ -e "$path" ] || [ -L "$path" ] || return 0
   case "$ACTION" in
     prepare|cleanup)
+      if ! trash_ready; then
+        log "could not move $path into $TRASH_DIR; deleting it in place"
+      elif [ "$KIND" != wait ] && ! trash_has_space; then
+        # Whatever is in a full trash needs a reaper at work on it.
+        start_reaper
+        log "$TRASH_DIR holds its $TRASH_MAX retired copies (or cannot be read); deleting $path in place, before this instance is free"
+      elif [ "$KIND" != wait ] && ! store_has_room; then
+        log "the store has under $STORE_MIN_FREE_PCT% of its space or inodes free; deleting $path in place, before this instance is free"
       # mv -T renames onto exactly that name, never into a directory that already has it.
-      if trash_ready && mv -T -- "$path" "$TRASH_DIR/$(date +%s).${path##*/}.$$" 2>/dev/null; then
+      elif mv -T -- "$path" "$TRASH_DIR/$(date +%s).${path##*/}.$$" 2>/dev/null; then
         start_reaper
         return 0
-      fi
-      log "could not move $path into $TRASH_DIR; deleting it in place" ;;
+      else
+        log "could not move $path into $TRASH_DIR; deleting it in place"
+      fi ;;
   esac
   rm -rf -- "$path"
 }

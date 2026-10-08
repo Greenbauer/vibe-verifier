@@ -123,9 +123,21 @@ slot did it in its own stop path. Measured on a live lane, 2026-10-07 (8 `ci`, 8
 slots, about 120 jobs an hour): a copy holds about 225,000 inodes, and copying or deleting one
 alone takes 8 and 9 s, but with many running at once a copy took 48 to 63 s and a delete 21 to 121
 s, each delete holding its instance until it finished, so more slots finished no more jobs. So a
-slot never deletes its copy. `cleanup`, and `prepare` when it finds a leftover, rename it to
-`/var/lib/<name>/store/trash/<epoch second>.slot-<kind>-<n>.<pid>`: one rename inside the store
-filesystem, atomic and immediate, under a name no other entry has and that carries the entry's age.
+slot does not delete its copy while the trash can take it. `cleanup`, and `prepare` when it finds a
+leftover, rename it to `/var/lib/<name>/store/trash/<epoch second>.slot-<kind>-<n>.<pid>`: one
+rename inside the store filesystem, atomic and immediate, under a name no other entry has and that
+carries the entry's age. The trash is bounded, because a delete put off is a debt and nothing else
+ties the lane's pace to the disk's. Measured on a live lane, 2026-10-07, with no bound: three
+deletes at a time took 77 to 133 s each, 1.5 to 2.3 a minute, while the lane retired 2.1 to 2.8
+copies a minute; the trash went from 39 to 70 entries in an hour and the store reached 90% of its
+inodes (XFS caps a 40 GB store at 20.9 million, and a copy holds about 225,000), where every
+`prepare` was deleting for itself and four slots of five waited in it. So the trash takes a `ci` or
+`qae` copy only while it holds fewer than `TRASH_MAX` of them (the unit's slot count, the most one
+burst retires, or 8; `KNOWN_CI_TRASH_MAX` overrides) and the store is above its 10% floor ("Disk"
+below). Past that a slot deletes its copy in its own stop path, as every slot did before there was
+a trash: slower, but a slot that is deleting takes no new job, so the lane cannot retire copies
+faster than the disk deletes them. The trash absorbs a burst, and sustained load falls back to that.
+A wait slot's empty store costs nothing to delete: it is not counted and always goes to the trash.
 `<name>-store-reaper.service` (`lane-slot.sh reap`, a root oneshot) deletes the entries oldest
 first, holding the trash's lock (an `flock` on the directory itself), until the trash is empty; a
 second reaper finds the lock held and exits. How many it deletes at once follows the store: one
@@ -201,7 +213,8 @@ store filesystem is a sparse XFS image with reflinks (`/var/lib/<name>/store.img
 there once per tag (`golden-<tag>`), and `prepare` gives each `ci` and `qae` job a
 `cp -a --reflink=always` copy, which costs inodes, not a second copy of the data (a wait job gets an
 empty directory). A finished job's copy waits in `trash/` there until the reaper deletes it ("The
-store trash" above), and that backlog must not fill the store unseen. Before a `ci` or `qae` copy,
+store trash" above): a bounded backlog, a slot count of copies at most. Should the store run short
+all the same, one more rule keeps it from filling unseen. Before a `ci` or `qae` copy,
 when the store filesystem has less than 10% of its space or of its inodes free and the trash holds
 entries, `prepare` deletes the oldest ones itself until there is room, waiting at most 120 s for a
 reaper that holds the lock; still short with entries left, it refuses the job with a log line that

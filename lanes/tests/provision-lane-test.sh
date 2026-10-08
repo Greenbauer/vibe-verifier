@@ -469,6 +469,11 @@ out="$(as_unit "$S/units/box-ci-ci@.service" 2 prepare ci 2 2>&1)"; rc_prepare=$
 expect $? "a slot of the rewritten template is prepared from its own environment: a fresh copy of the preloaded store"
 out="$(as_unit "$S/units/box-ci-ci@.service" 2 cleanup ci 2 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ ! -e "$STORE/slot-ci-2" ] && [ ! -e "$S/run/ci/2/job" ] && [ "$(trash_count)" = 2 ]; expect $? "and cleaned up the same way: its copy joins the first in the trash"
+listener_files ci 1 7003
+as_unit "$S/units/box-ci-ci@.service" 1 prepare ci 1 >/dev/null 2>&1
+out="$(as_unit "$S/units/box-ci-ci@.service" 1 cleanup ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 2 ] && [ ! -e "$STORE/slot-ci-1" ] && [ ! -e "$S/run/ci/1/job" ] && grep -q "holds its 2 retired copies (or cannot be read); deleting $STORE/slot-ci-1 in place" <<< "$out"
+expect $? "the trash is bounded by the template's own slot count: with the lane's two copies waiting there, a third cleanup deletes its copy in place and adds nothing"
 out="$(as_unit "$S/units/box-ci-store-reaper.service" 0 reap 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(trash_count)" = 0 ] && [ -d "$STORE/trash" ] && [ "$(cat "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres")" = bin ] && [ "$(grep -c ': deleted ' <<< "$out")" = 2 ]
 expect $? "the reaper, run from its own unit's environment, deletes both retired copies and leaves the preloaded store"
