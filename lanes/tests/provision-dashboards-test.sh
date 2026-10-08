@@ -192,7 +192,7 @@ legacy() {
 run_dash() {
   env PATH="$S/pathbin:$PATH" RUNNERS_ALLOW_NON_ROOT=1 RUNNERS_CONFIG="$S/config" ${HOST_YML_UNDER_TEST:+RUNNERS_HOST_YML="$HOST_YML_UNDER_TEST"} \
     RUNNERS_UNIT_DIR="$S/units" RUNNERS_VV_CHECKOUT="$S/opt/vibe-verifier" RUNNERS_DASHBOARD_ETC="$S/etc" \
-    RUNNERS_DASHBOARD_DATA="$S/data" RUNNERS_DASHBOARD_STATE="$S/state" RUNNERS_DASHBOARD_GUARD="$S/guard.nft" \
+    RUNNERS_DASHBOARD_DATA="$S/data" RUNNERS_DASHBOARD_STATE="$S/state" RUNNERS_DASHBOARD_CACHE="$S/cache" RUNNERS_DASHBOARD_GUARD="$S/guard.nft" \
     RUNNERS_CRON_DIR="$S/cron.d" RUNNERS_LEGACY_LOCK_DIR="$S/locks" RUNNERS_APPLY_LOCK="$S/apply.lock" \
     bash "$S/repo/bin/provision-dashboards.sh" "${HOST_UNDER_TEST:-example}" "$@"
 }
@@ -324,11 +324,16 @@ path = sys.argv[1]
 text = open(path).read()
 open(path, "w").write(text[:text.index("  - name: acme\n")])
 PY
+# What systemd made for each running dashboard (the web unit's CacheDirectory=), with a kept reading in it.
+mkdir -p "$S/cache/vibe-dashboard-acme/acme" "$S/cache/vibe-dashboard-greenbauer/greenbauer"
+: > "$S/cache/vibe-dashboard-acme/acme/reading.json.z"; : > "$S/cache/vibe-dashboard-greenbauer/greenbauer/reading.json.z"
 : > "$CALLLOG"
 out="$(run_dash --apply 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -qx "systemctl disable --now vibe-dashboard@acme.service vibe-dashboard-token@acme.timer vibe-dashboard-telemetry@acme.timer" "$CALLLOG" \
   && [ ! -e "$S/etc/acme" ] && [ ! -e "$S/data/acme" ] && [ ! -e "$S/state/acme" ] && grep -qx "userdel vibe-dashboard-acme" "$CALLLOG"
 expect $? "an undeclared dashboard's units are disabled and its files and account removed"
+[ ! -e "$S/cache/vibe-dashboard-acme" ] && [ -f "$S/cache/vibe-dashboard-greenbauer/greenbauer/reading.json.z" ]
+expect $? "its cache directory, with the reading it kept, goes with it, and the remaining dashboard's stays"
 grep -qxF "ExecStart=$FOLLOW_CMD --unit vibe-dashboard@greenbauer.service 8765" "$S/units/vibe-dashboard-follow.service.d/runners.conf" && grep -qx "systemctl restart vibe-dashboard-follow.service" "$CALLLOG" \
   && ! grep -q "dport 8766" "$S/st/nft" && [ -d "$S/etc/greenbauer" ]
 expect $? "the follower is restarted on the remaining dashboard, the guard drops the port, and the other dashboard stays"
@@ -372,9 +377,11 @@ setup; legacy
 run_dash --apply >/dev/null 2>&1; : > "$CALLLOG"
 out="$(run_dash --remove 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q "DRY-RUN: userdel vibe-dashboard-greenbauer" <<< "$out" && { ! grep -qE "$MUTATIONS" "$CALLLOG"; } && [ -d "$S/etc/greenbauer" ]; expect $? "--remove alone plans the teardown and mutates nothing"
+mkdir -p "$S/cache/vibe-dashboard-greenbauer/greenbauer" "$S/cache/vibe-dashboard-acme" "$S/cache/apt"
 out="$(run_dash --remove --apply 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ ! -e "$S/etc/greenbauer" ] && [ ! -e "$S/etc/acme" ] && ! grep -q vibe-dashboard "$S/st/users" && [ -z "$(ls "$S/units" | grep -E 'vibe-dashboard|runners-dashboard')" ] && [ ! -e "$S/guard.nft" ] && [ ! -e "$S/st/nft" ]
 expect $? "--remove --apply removes every dashboard, its account, the follower, the guard and the templates"
+[ "$(ls "$S/cache")" = apt ]; expect $? "--remove --apply removes every dashboard's cache directory and nothing else under the cache base"
 [ -d "$S/opt/vibe-verifier" ] && [ -f "$S/units/ci-dashboard.service" ] && grep -q "Left in place: $S/opt/vibe-verifier, the retired legacy install" <<< "$out"; expect $? "--remove keeps the checkout and the retired legacy unit files, and says so"
 
 # ---- refusals ---------------------------------------------------------------------------------------
