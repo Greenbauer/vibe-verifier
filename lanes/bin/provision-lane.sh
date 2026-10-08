@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # provision-lane.sh: provision one disposable-container lane of a machine.
 #
-#   provision-lane.sh <host> <lane> [--check | --apply | --remove [--apply]]
+#   provision-lane.sh <host> <lane> [--check | --apply | --remove [--apply] | --convert-store [--apply]]
 #
 # The lane runs every job it serves in its own Sysbox system container, started on demand: the
 # lane's scale-set listener (listener/) keeps a GitHub runner scale set per kind of job, mints a
@@ -15,8 +15,9 @@
 #
 # Operator-invoked and dry-run by default: --apply mutates, --check is a read-only report that exits
 # non-zero until the lane is converged and its smoke proofs pass, --remove plans the teardown (and
-# runs it with --apply). runners-pull.service runs --apply for every lane after every change to the
-# kit or to the machine's values.
+# runs it with --apply), --convert-store plans the move of the lane's store from XFS to btrfs (and
+# makes it with --apply). runners-pull.service runs --apply for every lane after every change to
+# the kit or to the machine's values.
 # The host phases (bin/provision-host.sh) must have converged first; this script refuses otherwise.
 #
 # Linux-only by design: Ubuntu 24.04, bash 5, GNU coreutils, util-linux, apt, systemd, rootful
@@ -36,7 +37,10 @@
 #   C   <state>/store.img, XFS with reflinks, mounted at <state>/store: the preloaded inner Docker
 #       store (golden-<tag>, written by bin/build-runner-image.sh) and the per-job reflink snapshot
 #       of it that each slot mounts on its container's /var/lib/docker, so Sysbox has no store to
-#       copy at container start (README.md, "Disk")
+#       copy at container start (README.md, "Disk"). With store_fs: btrfs in the host file a new
+#       store is btrfs instead, and a job's store a snapshot of the golden-<tag> subvolume. A store
+#       that exists is mounted as what it is and never converted here: one that differs from the
+#       host file ends at a gate, and --check fails until --convert-store has run
 #   D   <state>/store/trash, where a slot retires its store copy with a rename instead of deleting
 #       it in its stop path, and <name>-store-reaper.timer: a root oneshot (bin/lane-slot.sh reap)
 #       deletes the retired copies (one at a time, or a few at a time while the store is under
@@ -72,6 +76,15 @@
 # organization permission "Self-hosted runners: Read and write" and the runner group with the
 # lane's repositories.
 #
+# --convert-store moves the lane's store from XFS to btrfs, for a lane whose host file says
+# store_fs: btrfs. It takes the lane off its jobs while it runs: it stops the listener, stops the
+# slots that are not on a job, waits (bounded) for the ones that are, swaps a new btrfs image in at
+# the store's path, copies every preloaded store an image still names out of the XFS image, mounted
+# read-only beside it, and starts the listener again once a snapshot of the current one can be made
+# and deleted. The XFS image is moved aside and never deleted. Whatever fails before that last
+# check, the XFS store is put back and the listener restarted (README.md, "Converting a lane's
+# store").
+#
 # --remove disables the health timer first and the listener next, so nothing restarts what it stops.
 # A Codex keepalive already running finishes. Once every slot has stopped it stops the store reaper
 # and empties the store's trash. It leaves the host's Docker and Sysbox, the store filesystem with
@@ -104,20 +117,27 @@ LISTENER_SRC="$REPO_ROOT/listener"
 WARM_WAIT_SEC=180
 # How recent the listener's newest journal line must be for --check: it logs a heartbeat a minute.
 JOURNAL_MAX_AGE_SEC=180
+# How long --convert-store waits for the slots that are on a job once the listener is stopped. The
+# lane takes no job all that time, so past it the conversion gives up, with nothing changed, rather
+# than hold the lane down for the length of its longest job.
+CONVERT_WAIT_SEC=900
 APPLY=0
 CHECK=0
 REMOVE=0
+CONVERT=0
 HOST=""
 LANE=""
 
 usage() {
   cat <<EOF
-usage: $0 <host> <lane> [--check | --apply | --remove [--apply]]
+usage: $0 <host> <lane> [--check | --apply | --remove [--apply] | --convert-store [--apply]]
 
 <host> names hosts/<host>.yml in the values checkout and <lane> one of its lanes. Default is dry-run
 planning. --apply converges the lane. --check is read-only (its smoke proofs start one throwaway
 container and remove it) and exits non-zero until the lane is converged. --remove plans the
-teardown; --remove --apply performs it.
+teardown; --remove --apply performs it. --convert-store plans the move of the lane's store from XFS
+to btrfs, for a lane whose host file says store_fs: btrfs; --convert-store --apply makes it, and
+the lane takes no job meanwhile.
 EOF
 }
 
@@ -126,6 +146,7 @@ while [ $# -gt 0 ]; do
     --apply) APPLY=1 ;;
     --check) CHECK=1 ;;
     --remove) REMOVE=1 ;;
+    --convert-store) CONVERT=1 ;;
     -h|--help) usage; exit 0 ;;
     -*) die "unknown arg: $1" ;;
     *)
@@ -137,7 +158,8 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$HOST" ] && [ -n "$LANE" ] || { usage >&2; exit 2; }
 [[ "$HOST" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "invalid host '$HOST' (allowed: a-z 0-9 -)"
-[ "$CHECK" = "1" ] && { [ "$APPLY" = "1" ] || [ "$REMOVE" = "1" ]; } && die "--check is read-only; do not combine it with --apply or --remove"
+[ "$CHECK" = "1" ] && { [ "$APPLY" = "1" ] || [ "$REMOVE" = "1" ] || [ "$CONVERT" = "1" ]; } && die "--check is read-only; do not combine it with --apply, --remove or --convert-store"
+[ "$REMOVE" = "1" ] && [ "$CONVERT" = "1" ] && die "--remove and --convert-store are two different runs"
 
 if [ "${RUNNERS_ALLOW_NON_ROOT:-0}" != "1" ]; then
   [ "$(id -u)" = "0" ] || die "must run as root (packages, mounts, systemd units, Docker)"
@@ -173,7 +195,7 @@ TOKEN_SERVICE="$NAME-token-refresh.service"
 TOKEN_TIMER="$NAME-token-refresh.timer"
 IMAGE_BUILD_SERVICE="$NAME-image-build.service"
 IMAGE_BUILD_TIMER="$NAME-image-build.timer"
-BUILD_LOCK="/run/$NAME-runner-build.lock"
+BUILD_LOCK="${RUNNERS_LANE_BUILD_LOCK:-/run/$NAME-runner-build.lock}"
 HEALTH_SERVICE="$NAME-listener-health.service"
 HEALTH_TIMER="$NAME-listener-health.timer"
 KEEPALIVE_SERVICE="$NAME-codex-keepalive.service"
@@ -190,6 +212,9 @@ REAPER_TIMER="$NAME-store-reaper.timer"
 # some fifteen of the slowest deletes: the reaper is failing, wedged, or slower than the lane
 # retires copies.
 TRASH_STALE_SEC=1800
+# --convert-store keeps the XFS image under this name, and reads it at this mount point.
+OLD_STORE_IMG="$STORE_IMG.xfs-$(date -u +%Y%m%dT%H%M%SZ)"
+OLD_STORE_DIR="$STATE_DIR/store-xfs"
 # The keepalive refreshes a store once it is 10 days old, daily (bin/lane-slot.sh,
 # KEEPALIVE_AFTER_SEC), so a store older than this has missed two of its runs.
 CODEX_STALE_DAYS=12
@@ -259,12 +284,29 @@ CPUWeight=$CPU_WEIGHT
 EOF
 }
 
-render_store_mount() {
+# The store's mount options after `loop`. XFS: discard, so a deleted snapshot gives its blocks back
+# to the sparse image. btrfs: noatime, because under the default (relatime) the first read of a
+# file in a fresh snapshot updates its access time and so copies its metadata, which btrfs(5) names
+# as relatime's worst case (many files, older than a day, read just after a snapshot), and that is
+# how every job starts; and discard=async, for the same blocks back to the sparse image: btrfs(5)
+# calls it the preferred mode, gathering freed extents into larger chunks before the TRIM, where
+# the synchronous mode (a plain discard) can degrade performance.
+store_mount_options() { if [ "$1" = btrfs ]; then printf 'noatime,discard=async'; else printf 'discard'; fi; }
+
+render_store_mount() {  # $1: the store's filesystem, xfs or btrfs
+  local what
+  if [ "$1" = btrfs ]; then
+    what="# The lane's inner Docker store: golden-<tag> (the image build's preload, a subvolume) and one
+# snapshot of it per running job, mounted on that job's /var/lib/docker. btrfs for the snapshots;
+# the options are explained at store_mount_options in bin/provision-lane.sh."
+  else
+    what="# The lane's inner Docker store: golden-<tag> (the image build's preload) and one reflink snapshot
+# of it per running job, mounted on that job's /var/lib/docker. XFS for the reflinks; discard so a
+# deleted snapshot gives its blocks back to the sparse image."
+  fi
   cat <<EOF
 # Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
-# The lane's inner Docker store: golden-<tag> (the image build's preload) and one reflink snapshot
-# of it per running job, mounted on that job's /var/lib/docker. XFS for the reflinks; discard so a
-# deleted snapshot gives its blocks back to the sparse image.
+$what
 [Unit]
 Description=Preloaded inner Docker store and per-job snapshots ($NAME lane)
 RequiresMountsFor=$STATE_DIR
@@ -272,8 +314,8 @@ RequiresMountsFor=$STATE_DIR
 [Mount]
 What=$STORE_IMG
 Where=$STORE_DIR
-Type=xfs
-Options=loop,discard
+Type=$1
+Options=loop,$(store_mount_options "$1")
 
 [Install]
 WantedBy=multi-user.target
@@ -673,6 +715,21 @@ image_tag() {  # empty until the lane's first image build writes image.env
   sed -n 's/^KNOWN_CI_IMAGE_TAG=//p' "$IMAGE_ENV" | tail -n 1
 }
 
+# The store's filesystem as it is on the machine, whatever the host file says: what is mounted at
+# its path, else what its image holds; empty when the lane has no store yet, "unknown" for an image
+# that holds nothing blkid knows.
+found_store_fs() {
+  local fs
+  if mountpoint -q "$STORE_DIR" 2>/dev/null; then
+    fs="$(findmnt -n -o FSTYPE "$STORE_DIR" 2>/dev/null || true)"
+  elif [ -e "$STORE_IMG" ]; then
+    fs="$(blkid -p -o value -s TYPE "$STORE_IMG" 2>/dev/null || true)"
+  else
+    return 0
+  fi
+  printf '%s\n' "${fs:-unknown}"
+}
+
 enabled_always_on_slots() {  # the retiring template's instance numbers with an enablement link
   local link
   for link in "$UNIT_DIR"/multi-user.target.wants/"$NAME"@*.service; do
@@ -709,6 +766,7 @@ require_host() {
   sysbox_version_pinned "$(installed_version sysbox-ce)" || missing+="sysbox-ce $SYSBOX_VERSION, "
   mountpoint -q "$SYSBOX_DIR" 2>/dev/null || missing+="the Sysbox filesystem on $SYSBOX_DIR, "
   docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"sysbox-runc"' || missing+="Docker's sysbox-runc runtime, "
+  [ "$STORE_FS" != btrfs ] || [ -n "$(installed_version btrfs-progs)" ] || missing+="btrfs-progs, "
   [ -z "$missing" ] || die "the host phases have not converged (missing: ${missing%, }); run bin/provision-host.sh $HOST --apply first"
   RUNTIME_OK=1
 }
@@ -765,9 +823,29 @@ ensure_image_build_timer() {
   run_mutation systemctl enable --now "$IMAGE_BUILD_TIMER"
 }
 
+make_store_fs() {  # $1: xfs or btrfs, $2: the image
+  if [ "$1" = btrfs ]; then
+    # mkfs.btrfs's own defaults: no option of it has been measured on a lane, so none is set.
+    run_mutation mkfs.btrfs -q "$2"
+  else
+    run_mutation mkfs.xfs -q -m reflink=1 "$2"
+  fi
+}
+
+# A store that exists is mounted as what it is, never as what the host file says: the slot helper
+# and the image build follow the filesystem they find, so a lane whose host file changed keeps
+# running, and the move to the other filesystem is the operator's (the gate below, --convert-store).
+STORE_FOUND=""
 ensure_store_storage() {
-  log "Phase C: $STORE_DIR on its own ${STORE_GB}G XFS filesystem (reflinks)"
-  local changed=""
+  local changed="" fs
+  STORE_FOUND="$(found_store_fs)"
+  fs="${STORE_FOUND:-$STORE_FS}"
+  case "$fs" in
+    xfs) log "Phase C: $STORE_DIR on its own ${STORE_GB}G XFS filesystem (reflinks)" ;;
+    btrfs) log "Phase C: $STORE_DIR on its own ${STORE_GB}G btrfs filesystem (snapshots)" ;;
+    *) die "the lane's store ($STORE_DIR, from $STORE_IMG) is on a filesystem that is neither XFS nor btrfs ($fs); this kit made no such store. Move it aside, then re-run." ;;
+  esac
+  [ "$fs" = "$STORE_FS" ] || log "  the store is $fs and the host file says $STORE_FS: it stays as it is (see the gate below)"
   if ! mountpoint -q "$STORE_DIR" 2>/dev/null && [ -n "$(ls -A "$STORE_DIR" 2>/dev/null)" ]; then
     die "$STORE_DIR holds files but is not a mount; mounting over it would hide them. Move the directory aside, then re-run."
   fi
@@ -775,16 +853,16 @@ ensure_store_storage() {
     log "  $STORE_IMG present"
   else
     run_mutation truncate -s "${STORE_GB}G" "$STORE_IMG"
-    run_mutation mkfs.xfs -q -m reflink=1 "$STORE_IMG"
+    make_store_fs "$fs" "$STORE_IMG"
   fi
   run_mutation install -d -m 0700 "$STORE_DIR"
-  changed+="$(converge_file "$UNIT_DIR/$STORE_MOUNT_UNIT" "$(render_store_mount)")"
+  changed+="$(converge_file "$UNIT_DIR/$STORE_MOUNT_UNIT" "$(render_store_mount "$fs")")"
   [ -n "$changed" ] && run_mutation systemctl daemon-reload
   if mountpoint -q "$STORE_DIR" 2>/dev/null; then
     log "  $STORE_DIR mounted"
     # A changed unit does not touch the live mount, and restarting a .mount unit would unmount
     # under the running slots; a remount applies the options in place.
-    [ -z "$changed" ] || run_mutation mount -o remount,discard "$STORE_DIR"
+    [ -z "$changed" ] || run_mutation mount -o "remount,$(store_mount_options "$fs")" "$STORE_DIR"
   else
     run_mutation systemctl enable --now "$STORE_MOUNT_UNIT"
   fi
@@ -1104,6 +1182,13 @@ print_gates() {
     [ -s "$(codex_store_dir "$store")/auth.json" ] && continue
     gate "Log qae instance $n's Codex store $store in once, with a login of its own (a device code opens in your browser; that instance takes no QAE job until then): $(codex_login_cmd "$store")"
   done
+  if [ -n "$STORE_FOUND" ] && [ "$STORE_FOUND" != "$STORE_FS" ]; then
+    if [ "$STORE_FS" = btrfs ]; then
+      gate "The host file says store_fs: btrfs and the lane's store $STORE_DIR is $STORE_FOUND. --apply converts no store, so the lane keeps running on it as it is. Convert it when the lane may take no job for a while (README.md, \"Converting a lane's store\"): $CHECKOUT/bin/provision-lane.sh $HOST $NAME --convert-store --apply"
+    else
+      gate "The lane's store $STORE_DIR is $STORE_FOUND and the host file says store_fs: $STORE_FS (xfs when the key is absent). The kit converts a store to btrfs only: set store_fs: $STORE_FOUND for $NAME in hosts/$HOST.yml."
+    fi
+  fi
   case "$IMAGE_STATE" in
     present) ;;
     *) gate "Build the runner image first: flock -o $BUILD_LOCK $IMAGE_BUILD $HOST $NAME writes $IMAGE_ENV (KNOWN_CI_IMAGE_TAG=<tag>), the $IMAGE:<tag> image and its preloaded store $STORE_DIR/golden-<tag>. Then re-run --apply." ;;
@@ -1116,12 +1201,18 @@ remove_slot_files() {  # $1: the instance (<kind>-<n>, or <n> for an always-on s
   if mountpoint -q "$STATE_DIR/slot-$1" 2>/dev/null; then
     run_mutation umount "$STATE_DIR/slot-$1"
   fi
+  # On a btrfs store a slot's store is a subvolume: one call deletes it. What that leaves (a plain
+  # directory, a link) goes with the rest below.
+  if [ "$STORE_FOUND" = btrfs ] && [ -d "$STORE_DIR/slot-$1" ] && [ ! -L "$STORE_DIR/slot-$1" ]; then
+    run_mutation btrfs subvolume delete "$STORE_DIR/slot-$1" || true
+  fi
   run_mutation rm -rf "$STATE_DIR/slot-$1" "$STATE_DIR/slot-$1.img" "$STORE_DIR/slot-$1"
 }
 
 remove_lane() {
   log "Remove: $NAME lane (listener, scale sets, slot units, slot images, registrations, timers, network)"
   local kind n slot rows target id name status busy
+  STORE_FOUND="$(found_store_fs)"
   # The health check first, so it restarts nothing this stops; then the listener, so it starts
   # nothing more and recreates no scale set. A lane whose listener never ran has no health units, and
   # systemctl refuses to disable a unit file that does not exist.
@@ -1193,6 +1284,233 @@ remove_lane() {
   log "Left in place: the host's Docker and Sysbox, $STORE_MOUNT_UNIT ($STORE_IMG) with its preloaded stores, the runner image, the App key ($KEY_FILE), the lane user $LANE_USER$(has_qae && printf ' and its Codex stores%s' "$kept_stores"), and the lane firewall rules (inert without $BRIDGE)."
 }
 
+# ---- convert the store ------------------------------------------------------------------------------
+# What an exit of --convert-store --apply has to undo: nothing (empty), the stop of the lane's units
+# (stopped), or the swap of the store as well (swapped). convert_exit reads it.
+CONVERT_STAGE=""
+LISTENER_WAS=""
+HEALTH_WAS=""
+REAPER_WAS=""
+
+# The preloaded stores the new store must hold: the current tag's, and every other whose image is
+# still there, which is what the image build's prune keeps (bin/build-runner-image.sh). One that no
+# image names, or an unfinished one, stays behind in the XFS image.
+carried_stores() {
+  local dir tag current
+  current="$(image_tag)"
+  for dir in "$STORE_DIR"/golden-*; do
+    [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+    tag="${dir##*/golden-}"
+    case "$tag" in *.new) continue ;; esac
+    if [ "$tag" = "$current" ] || docker image inspect "$IMAGE:$tag" >/dev/null 2>&1; then printf '%s\n' "$tag"; fi
+  done
+}
+
+running_slots() {
+  local kind n
+  for kind in $KINDS; do
+    for n in $(seq 1 "$(kind_slots "$kind")"); do
+      if unit_running "$(systemctl is-active "$NAME-$kind@$n.service" 2>/dev/null || true)"; then printf '%s-%s@%s.service ' "$NAME" "$kind" "$n"; fi
+    done
+  done
+}
+
+# Stops one slot unless its runner is on a job, the way the listener's own idle stop does
+# (listener/README.md, "Idle stop"): the idle-stop marker first, so the slot's cleanup counts no
+# failure; then the runner's removal, which GitHub refuses for a runner on a job; and only then
+# the stop. Fails, leaving the slot as it was, when the removal was refused or the slot has no job
+# file (the listener did not start it).
+stop_idle_slot() {  # $1: the kind, $2: the instance
+  local dir="$RUN_DIR/$1/$2" target id
+  [ -r "$dir/job" ] || return 1
+  read -r target _ _ id _ < "$dir/job" || true
+  [ -n "$id" ] || return 1
+  install -m 0600 /dev/null "$dir/idle-stop" || return 1
+  if run_mutation gh_lane api -X DELETE "$(runners_endpoint "$target")/$id" --silent; then
+    run_mutation systemctl stop "$NAME-$1@$2.service"
+  else
+    rm -f "$dir/idle-stop"
+    return 1
+  fi
+}
+
+# Takes the lane off its jobs: nothing may start a slot, and no slot may be running, while the store
+# is swapped. The store is not touched here, so an exit only has to start these units again.
+quiesce_lane() {
+  local kind n unit i running
+  HEALTH_WAS="$(systemctl is-active "$HEALTH_TIMER" 2>/dev/null || true)"
+  LISTENER_WAS="$(systemctl is-active "$LISTENER_UNIT" 2>/dev/null || true)"
+  REAPER_WAS="$(systemctl is-active "$REAPER_TIMER" 2>/dev/null || true)"
+  [ "$APPLY" != "1" ] || CONVERT_STAGE=stopped
+  # The health check first, so that it restarts no listener this stops (as --remove does).
+  if [ -f "$UNIT_DIR/$HEALTH_TIMER" ]; then run_mutation systemctl stop "$HEALTH_TIMER" "$HEALTH_SERVICE"; fi
+  if [ -f "$UNIT_DIR/$LISTENER_UNIT" ]; then run_mutation systemctl stop "$LISTENER_UNIT"; fi
+  # With the listener stopped no job reaches an idle slot any more, and an idle slot would not end
+  # by itself: those are stopped now, once each. A slot on a job ends with its job.
+  for kind in $KINDS; do
+    for n in $(seq 1 "$(kind_slots "$kind")"); do
+      unit="$NAME-$kind@$n.service"
+      case "$(systemctl is-active "$unit" 2>/dev/null || true)" in active|activating) ;; *) continue ;; esac
+      if [ "$APPLY" != "1" ]; then
+        log "DRY-RUN: stop $unit if its runner is on no job (its registration is removed first), else wait for its job"
+      elif ! stop_idle_slot "$kind" "$n"; then
+        log "  $unit keeps running: GitHub did not remove its runner, as for one that is on a job. The conversion waits for it."
+      fi
+    done
+  done
+  if [ "$APPLY" != "1" ]; then
+    log "DRY-RUN: wait up to ${CONVERT_WAIT_SEC}s for the slots that are on a job"
+  else
+    for ((i = 0; ; i++)); do
+      running="$(running_slots)"
+      [ -n "$running" ] || break
+      [ "$i" -lt $((CONVERT_WAIT_SEC / 5)) ] || die "still running after ${CONVERT_WAIT_SEC}s: ${running% }. The store was not touched; run this again when the lane is quieter."
+      [ $((i % 12)) != 0 ] || log "  waiting for ${running% }"
+      sleep 5
+    done
+  fi
+  # The reaper last: each slot that stopped retired its copy and started it. What it leaves in the
+  # trash stays behind in the XFS image.
+  if [ -f "$UNIT_DIR/$REAPER_TIMER" ]; then run_mutation systemctl stop "$REAPER_TIMER" "$REAPER_SERVICE"; fi
+}
+
+# Starts again what quiesce_lane found running, and only that.
+resume_lane() {
+  ! unit_running "$REAPER_WAS" || run_mutation systemctl start "$REAPER_TIMER" || warn "could not start $REAPER_TIMER"
+  ! unit_running "$LISTENER_WAS" || run_mutation systemctl start "$LISTENER_UNIT" || warn "could not start $LISTENER_UNIT: start it by hand"
+  ! unit_running "$HEALTH_WAS" || run_mutation systemctl start "$HEALTH_TIMER" || warn "could not start $HEALTH_TIMER"
+}
+
+# The swap, and the copy of each preloaded store ($@: their tags) out of the XFS image. From its
+# first line an exit puts the XFS store back (restore_xfs_store).
+swap_store() {
+  local tag src dst
+  [ "$APPLY" != "1" ] || CONVERT_STAGE=swapped
+  run_mutation systemctl stop "$STORE_MOUNT_UNIT" \
+    || die "could not unmount $STORE_DIR: something still uses it (a shell inside it, a container, a --check under way). The store was not touched."
+  run_mutation mv "$STORE_IMG" "$OLD_STORE_IMG"
+  run_mutation truncate -s "${STORE_GB}G" "$STORE_IMG"
+  make_store_fs btrfs "$STORE_IMG"
+  [ -z "$(converge_file "$UNIT_DIR/$STORE_MOUNT_UNIT" "$(render_store_mount btrfs)")" ] || run_mutation systemctl daemon-reload
+  run_mutation systemctl start "$STORE_MOUNT_UNIT"
+  run_mutation install -d -m 0700 "$OLD_STORE_DIR"
+  run_mutation mount -o loop,ro "$OLD_STORE_IMG" "$OLD_STORE_DIR"
+  for tag in "$@"; do
+    src="$OLD_STORE_DIR/golden-$tag"
+    dst="$(store_dir "$tag")"
+    # A subvolume, so that a job's store can be a snapshot of it; under the unfinished store's name
+    # until it is whole, as the image build writes one. cp -a of <src>/. copies the directory
+    # itself onto the subvolume: its files, and its own owner, mode and times.
+    run_mutation btrfs subvolume create "$dst.new"
+    run_mutation cp -a "$src/." "$dst.new/"
+    run_mutation mv "$dst.new" "$dst"
+  done
+  run_mutation umount "$OLD_STORE_DIR"
+  run_mutation rmdir "$OLD_STORE_DIR"
+}
+
+# The check the conversion ends on: the store is btrfs, and the current tag's preloaded store ($1,
+# empty when the XFS store held none) takes a snapshot and gives it up, made and removed by the slot
+# helper as a job's is.
+verify_new_store() {
+  [ "$(found_store_fs)" = btrfs ] || { warn "$STORE_DIR is not btrfs after the swap"; return 1; }
+  [ -n "$1" ] || return 0
+  smoke_snapshot snapshot "$1" && smoke_snapshot discard "$1"
+}
+
+# Puts the XFS store back at its path, from any point of swap_store. The image at the store's path
+# is this run's own new one only once the XFS image has been moved aside; only then is it deleted.
+restore_xfs_store() {
+  log "Convert: putting the XFS store back"
+  if mountpoint -q "$OLD_STORE_DIR" 2>/dev/null; then
+    umount "$OLD_STORE_DIR" || { warn "could not unmount $OLD_STORE_DIR"; return 1; }
+  fi
+  [ ! -d "$OLD_STORE_DIR" ] || rmdir "$OLD_STORE_DIR" || true
+  if [ -e "$OLD_STORE_IMG" ]; then
+    if mountpoint -q "$STORE_DIR" 2>/dev/null; then
+      systemctl stop "$STORE_MOUNT_UNIT" || { warn "could not unmount the new store at $STORE_DIR"; return 1; }
+    fi
+    rm -f "$STORE_IMG"
+    mv "$OLD_STORE_IMG" "$STORE_IMG" || { warn "could not move $OLD_STORE_IMG back to $STORE_IMG"; return 1; }
+  fi
+  converge_file "$UNIT_DIR/$STORE_MOUNT_UNIT" "$(render_store_mount xfs)" >/dev/null
+  systemctl daemon-reload || true
+  mountpoint -q "$STORE_DIR" 2>/dev/null || systemctl start "$STORE_MOUNT_UNIT" || { warn "could not mount the XFS store at $STORE_DIR"; return 1; }
+  log "Convert: $STORE_DIR is the XFS store again"
+}
+
+convert_exit() {
+  local rc=$?
+  if [ "$CONVERT_STAGE" = swapped ]; then
+    if restore_xfs_store; then
+      CONVERT_STAGE=stopped
+    else
+      warn "the XFS store is not back at $STORE_DIR, so the lane stays stopped: its image is $OLD_STORE_IMG, or still $STORE_IMG (README.md, \"Converting a lane's store\", has the steps by hand)"
+    fi
+  fi
+  [ "$CONVERT_STAGE" != stopped ] || resume_lane
+  repair_gh_config
+  exit "$rc"
+}
+
+# One build at a time holds the lane's build lock, and a build writes into the store: the
+# conversion holds it too (fd 7, until the script exits), so the weekly build waits for it.
+take_build_lock() {
+  [ "$APPLY" = "1" ] || return 0
+  exec 7>"$BUILD_LOCK"
+  flock -n 7 || die "an image build holds $BUILD_LOCK; convert once it has finished (systemctl status $IMAGE_BUILD_SERVICE)"
+}
+
+convert_store() {
+  local tags tag size need=1 free current=""
+  [ "$STORE_FS" = btrfs ] || die "the host file does not say store_fs: btrfs for $NAME (it says $STORE_FS, or nothing). Set it there first: --convert-store moves a store from XFS to btrfs and nothing else."
+  STORE_FOUND="$(found_store_fs)"
+  case "$STORE_FOUND" in
+    btrfs) log "Convert: $STORE_DIR is btrfs already; nothing to do"; return 0 ;;
+    "") log "Convert: $NAME has no store yet; --apply makes a new one btrfs"; return 0 ;;
+    xfs) ;;
+    *) die "the lane's store ($STORE_DIR, from $STORE_IMG) is on a filesystem that is neither XFS nor btrfs ($STORE_FOUND); nothing to convert" ;;
+  esac
+  mountpoint -q "$STORE_DIR" 2>/dev/null || die "$STORE_DIR is not mounted, so its preloaded stores cannot be read; run --apply first"
+  log "Convert: $STORE_DIR from XFS to btrfs (a new ${STORE_GB}G image at $STORE_IMG; the XFS image is kept as $OLD_STORE_IMG)"
+  tags="$(carried_stores)"
+  for tag in $tags; do
+    size="$(du -sx -BG "$(store_dir "$tag")" 2>/dev/null | cut -f1 | tr -dc '0-9')"
+    log "  carries over $(store_dir "$tag") (${size:-?}G)"
+    need=$((need + ${size:-0}))
+    [ "$tag" != "$(image_tag)" ] || current="$tag"
+  done
+  [ -n "$tags" ] || log "  no preloaded store to carry over: the lane needs an image build afterwards (the gate --apply prints)"
+  # What the copies write, and 1G over: btrfs keeps two copies of its metadata on a single device.
+  free="$(df -BG --output=avail "$STATE_DIR" 2>/dev/null | tail -n 1 | tr -dc '0-9')"
+  [ -n "$free" ] && [ "$free" -ge "$need" ] \
+    || die "the conversion writes about ${need}G beside the XFS image, which stays, and the filesystem under $STATE_DIR has ${free:-?}G free. Nothing was changed."
+  log "  needs about ${need}G of the ${free}G free under $STATE_DIR"
+  take_build_lock
+  trap convert_exit EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  quiesce_lane
+  # shellcheck disable=SC2086 # the tags are a word list
+  swap_store $tags
+  if [ "$APPLY" = "1" ]; then
+    verify_new_store "$current" || die "the new store did not verify${current:+ (a snapshot of $(store_dir "$current") could not be made and deleted)}"
+    log "  verified: $STORE_DIR is btrfs${current:+, and a snapshot of $(store_dir "$current") was made and deleted}"
+    # Past this line the btrfs store is the lane's: an exit starts the lane's units and undoes nothing.
+    CONVERT_STAGE=stopped
+  else
+    log "DRY-RUN: check that $STORE_DIR is btrfs${current:+ and that a snapshot of $(store_dir "$current") can be made and deleted}; if anything above failed, put the XFS store back"
+  fi
+  ensure_dir "$TRASH_DIR" 0700
+  resume_lane
+  CONVERT_STAGE=""
+  [ "$APPLY" = "1" ] || return 0
+  log "Convert: done. $STORE_DIR is btrfs and the lane takes jobs again."
+  log "  The XFS store is kept at $OLD_STORE_IMG. Once the lane has run jobs on the new store, remove it: rm $OLD_STORE_IMG"
+  log "  Now: $CHECKOUT/bin/provision-lane.sh $HOST $NAME --check"
+}
+
 # ---- check ------------------------------------------------------------------------------------------
 fail=0
 bad() { fail=1; }
@@ -1217,14 +1535,24 @@ check_network() {
 
 check_storage() {
   local src free worst dir
+  STORE_FOUND="$(found_store_fs)"
   if mountpoint -q "$STORE_DIR" 2>/dev/null; then
     src="$(findmnt -n -o SOURCE,FSTYPE,SIZE "$STORE_DIR" 2>/dev/null | tr -s ' ')"
     printf 'store_fs=mounted (%s) mount_unit=%s\n' "${src:-?}" "$(systemctl is-enabled "$STORE_MOUNT_UNIT" 2>/dev/null || echo unknown)"
-    case "$src" in *" xfs "*) ;; *) printf 'store_fs_type=not-xfs (reflink snapshots need XFS)\n'; bad ;; esac
+    # The store's own type, against the host file's: a lane is converged on the one it asks for.
+    case "$STORE_FOUND" in
+      "$STORE_FS") ;;
+      xfs) printf 'store_fs_type=xfs host_file=%s (not converged: %s %s %s --convert-store converts the store)\n' "$STORE_FS" "$CHECKOUT/bin/provision-lane.sh" "$HOST" "$NAME"; bad ;;
+      btrfs) printf 'store_fs_type=btrfs host_file=%s (not converged: the kit converts a store to btrfs only, so the host file must say store_fs: btrfs)\n' "$STORE_FS"; bad ;;
+      *) printf 'store_fs_type=%s (a lane store is XFS, for its reflink snapshots, or btrfs)\n' "$STORE_FOUND"; bad ;;
+    esac
   else
     printf 'store_fs=not-mounted\n'
     bad
   fi
+  # The room under the lane's sparse images, whatever filesystem is inside them: df on the
+  # directory that holds them. Nothing here reads the room inside a btrfs store (its df is an
+  # estimate, and what a deleted snapshot held comes back only once the kernel has cleaned up).
   # Before --apply the state directory does not exist yet; its parent is the same filesystem.
   dir="$STATE_DIR"
   [ -d "$dir" ] || dir="$(dirname "$dir")"
@@ -1482,7 +1810,7 @@ check_smoke() {
     return
   fi
   started="$(date +%s)"
-  printf 'smoke store_snapshot_s=%s (reflink snapshot of %s)\n' "$(( started - snapshot_started ))" "$(store_dir "$tag")"
+  printf 'smoke store_snapshot_s=%s (%s snapshot of %s)\n' "$(( started - snapshot_started ))" "$([ "$STORE_FOUND" = btrfs ] && printf btrfs || printf reflink)" "$(store_dir "$tag")"
   # shellcheck disable=SC2046 # container_flags is a word list by design
   out="$(timeout 1800 docker run --rm -i $(container_flags)--cpuset-cpus "$(slot_cpuset 1)" -e "KNOWN_CI_CPUS=$CPUS_PER_JOB" --tmpfs /home/runner:size=1g \
     -v "$STORE_DIR/smoke-$$:/var/lib/docker" \
@@ -1524,7 +1852,7 @@ check_report() {
   [ "$fail" = 0 ]
 }
 
-log "host=$HOST lane=$NAME scope=$SCOPE owner=$OWNER kinds=[$KINDS] slots=$SLOTS${WAIT_LABEL:+ wait_slots=$WAIT_SLOTS}${GROUP:+ group=$GROUP repos=[$REPOS]}${EXCLUDE:+ exclude=[$EXCLUDE]} apply=$APPLY check=$CHECK remove=$REMOVE"
+log "host=$HOST lane=$NAME scope=$SCOPE owner=$OWNER kinds=[$KINDS] slots=$SLOTS${WAIT_LABEL:+ wait_slots=$WAIT_SLOTS}${GROUP:+ group=$GROUP repos=[$REPOS]}${EXCLUDE:+ exclude=[$EXCLUDE]} apply=$APPLY check=$CHECK remove=$REMOVE convert_store=$CONVERT"
 take_apply_lock
 repair_gh_config
 trap repair_gh_config EXIT
@@ -1536,6 +1864,11 @@ fi
 require_host
 if [ "$CHECK" = "1" ]; then
   check_report || exit 1
+  exit 0
+fi
+if [ "$CONVERT" = "1" ]; then
+  convert_store
+  log "done"
   exit 0
 fi
 ensure_lane_user

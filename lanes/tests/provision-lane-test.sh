@@ -1079,6 +1079,271 @@ out="$(HOST_YML_UNDER_TEST="$ROOT/tests/fixtures/hosts/vps-1.yml" run_lane orbit
 [ "$rc" -eq 0 ] && grep -q "DRY-RUN: systemctl stop orbit-ci-wait@8.service" <<< "$out" && ! grep -q "orbit-ci-wait@9.service" <<< "$out" && grep -qF "$wu" <<< "$out"
 expect $? "its --remove stops all 8 wait instances and removes the wait template"
 
+# ---- store_fs: btrfs, a lane whose store is a btrfs filesystem ------------------------------------
+# Sets store_fs for box-ci in the host file under test.
+host_store_fs() {
+  awk -v fs="$1" '{ print } /^    store_disk_gb: 40$/ { print "    store_fs: " fs }' "$S/host.yml" > "$S/host.yml.new" && mv "$S/host.yml.new" "$S/host.yml"
+}
+# A stand-in, run as the scripts run it.
+stub() { env PATH="$S/pathbin:$PATH" "$@"; }
+is_subvolume() { [ -d "$1" ] && [ ! -L "$1" ] && grep -qx -- "$(ls -di "$1" | awk '{ print $1 }')" "$S/st/subvolumes" 2>/dev/null; }
+# An org lane provisioned from nothing, so that its store is an image the stand-ins mounted (an
+# unmount takes its files with it): then tag1's preloaded store, as the image build leaves one on
+# that filesystem, and a second apply, which starts the listener. $1: the host file's store_fs.
+mounted_org() {
+  setup
+  rm -rf "$STORE/golden-tag1"; printf '%s\n' "$S/sysbox" > "$S/st/mounts"
+  [ -z "${1:-}" ] || host_store_fs "$1"
+  run_org --apply >/dev/null 2>&1
+  if [ "${1:-}" = btrfs ]; then stub btrfs subvolume create "$STORE/golden-tag1" >/dev/null; else mkdir "$STORE/golden-tag1"; fi
+  mkdir -p "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin"; printf 'bin\n' > "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres"
+  run_org --apply >/dev/null 2>&1
+  mkdir -p "$GHDIR"; printf 'github.com:\n    oauth_token: %s\n' "$APP_SESSION_MARKER" > "$GHDIR/hosts.yml"
+  login_json > "$S/state/codex/auth.json"
+  : > "$CALLLOG"
+}
+IMG="$TMP/s/state/store.img"
+
+# The XFS mount unit, byte for byte as the kit wrote it before a store could be btrfs: a lane that
+# has it is not rewritten, reloaded or remounted by this kit's first apply.
+converged_org
+[ "$(cat "$S/units/$STORE_UNIT")" = "# Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
+# The lane's inner Docker store: golden-<tag> (the image build's preload) and one reflink snapshot
+# of it per running job, mounted on that job's /var/lib/docker. XFS for the reflinks; discard so a
+# deleted snapshot gives its blocks back to the sparse image.
+[Unit]
+Description=Preloaded inner Docker store and per-job snapshots (box-ci lane)
+RequiresMountsFor=$S/state
+
+[Mount]
+What=$IMG
+Where=$STORE
+Type=xfs
+Options=loop,discard
+
+[Install]
+WantedBy=multi-user.target" ]
+expect $? "an XFS lane's store mount unit is, byte for byte, the one the kit wrote before store_fs existed"
+out="$(HOST_PKGS_ABSENT=btrfs-progs run_org --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ! grep -q '^btrfs \|^mkfs.btrfs' "$CALLLOG" && ! grep -q "store_fs" <<< "$out"; expect $? "an XFS lane's apply needs no btrfs-progs, calls btrfs for nothing and prints no store gate"
+
+setup
+rm -rf "$STORE/golden-tag1"; printf '%s\n' "$S/sysbox" > "$S/st/mounts"; host_store_fs btrfs
+out="$(run_org 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "Phase C: $STORE on its own 40G btrfs filesystem (snapshots)" <<< "$out" && grep -q "DRY-RUN: truncate -s 40G $IMG" <<< "$out" && grep -q "DRY-RUN: mkfs.btrfs -q $IMG" <<< "$out" \
+  && ! grep -q "mkfs.xfs" <<< "$out" && ! grep -qE "$MUTATIONS" "$CALLLOG"
+expect $? "with store_fs: btrfs the dry run plans a new store as a btrfs image, and no XFS one"
+out="$(HOST_PKGS_ABSENT=btrfs-progs run_org --apply 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "the host phases have not converged (missing: btrfs-progs); run bin/provision-host.sh box --apply first" <<< "$out" && ! grep -qE "$MUTATIONS" "$CALLLOG"
+expect $? "a btrfs lane refuses a host without btrfs-progs, naming provision-host.sh, before it makes anything"
+out="$(run_org --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "truncate -s 40G $IMG" "$CALLLOG" && grep -qx "mkfs.btrfs -q $IMG" "$CALLLOG" && ! grep -q '^mkfs.xfs' "$CALLLOG" && before '^mkfs.btrfs' "^systemctl enable --now ${STORE_UNIT//\\/\\\\}"
+expect $? "--apply makes the new store's image btrfs and mounts it through its unit"
+grep -qx "Type=btrfs" "$S/units/$STORE_UNIT" && grep -qx "Options=loop,noatime,discard=async" "$S/units/$STORE_UNIT" && grep -qx "What=$IMG" "$S/units/$STORE_UNIT" && grep -qx "Where=$STORE" "$S/units/$STORE_UNIT" \
+  && grep -qx "$STORE btrfs" "$S/st/mount-types"
+expect $? "its mount unit says btrfs, with noatime and an asynchronous discard"
+[ -d "$STORE/trash" ] && [ -f "$S/units/box-ci-store-reaper.timer" ] && ! grep -q "store_fs" <<< "$out"; expect $? "a btrfs lane keeps the store's trash and the reaper's units (they find nothing to do), and its apply prints no store gate"
+: > "$CALLLOG"
+out="$(run_org --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ! grep -qE '^(truncate|mkfs|mount |umount|systemctl enable --now .*\.mount)' "$CALLLOG"; expect $? "a second apply makes, formats and mounts nothing"
+awk '{ sub(/^Options=loop,noatime,discard=async$/, "Options=loop"); print }' "$S/units/$STORE_UNIT" > "$S/unit.new" && mv "$S/unit.new" "$S/units/$STORE_UNIT"; : > "$CALLLOG"
+out="$(run_org --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "Options=loop,noatime,discard=async" "$S/units/$STORE_UNIT" && grep -qx "mount -o remount,noatime,discard=async $STORE" "$CALLLOG" && ! grep -qF "systemctl enable --now $STORE_UNIT" "$CALLLOG"
+expect $? "a btrfs store's changed mount unit is rewritten and remounted in place with its own options"
+
+# A converged btrfs lane: a slot run from its rendered template, --check, and --remove.
+mounted_org btrfs
+listener_files ci 2 7301
+out="$(as_unit "$S/units/box-ci-ci@.service" 2 prepare ci 2 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "btrfs subvolume snapshot $STORE/golden-tag1 $STORE/slot-ci-2" "$CALLLOG" && ! grep -q '^cp --reflink' "$CALLLOG" && is_subvolume "$STORE/slot-ci-2" \
+  && [ "$(cat "$STORE/slot-ci-2/overlay2/layer1/diff/usr/bin/postgres")" = bin ]
+expect $? "a ci slot started from the btrfs lane's template gets a btrfs snapshot of the preloaded store at the path the template mounts, and no reflink copy"
+out="$(as_unit "$S/units/box-ci-ci@.service" 2 cleanup ci 2 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "btrfs subvolume delete $STORE/slot-ci-2" "$CALLLOG" && [ ! -e "$STORE/slot-ci-2" ] && [ ! -e "$S/run/ci/2/job" ] && [ "$(trash_count)" = 0 ]
+expect $? "and its cleanup deletes the snapshot in one call and frees the instance, with nothing left in the trash"
+: > "$CALLLOG"
+out="$(run_org --check 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "store_fs=mounted (/dev/loop8 btrfs 40G) mount_unit=enabled" <<< "$out" && ! grep -q "store_fs_type=" <<< "$out"; expect $? "--check passes on a converged btrfs lane and reports the store as btrfs"
+grep -qx "store_trash=$STORE/trash entries=0 oldest_age_s=none" <<< "$out" && grep -qx "store_reaper_timer=box-ci-store-reaper.timer active" <<< "$out" && grep -q "disk free=62G lane_worst_case=60G (store 40G + 2 slots x 10G, all sparse)" <<< "$out"
+expect $? "its --check keeps the trash, reaper and disk worst-case lines"
+grep -q "smoke=PASS" <<< "$out" && grep -qE "^smoke store_snapshot_s=[0-9]+ \(btrfs snapshot of $STORE/golden-tag1\)$" <<< "$out" && grep -qE "^btrfs subvolume snapshot $STORE/golden-tag1 $STORE/smoke-[0-9]+$" "$CALLLOG" \
+  && grep -qE "^btrfs subvolume delete $STORE/smoke-[0-9]+$" "$CALLLOG" && ! compgen -G "$STORE/smoke-*" >/dev/null
+expect $? "its smoke runs on a btrfs snapshot of the preloaded store, deleted afterwards"
+stub btrfs subvolume create "$STORE/slot-ci-1" >/dev/null; mkdir -p "$STORE/slot-qae-2/overlay2"; : > "$CALLLOG"
+out="$(run_org --remove --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "btrfs subvolume delete $STORE/slot-ci-1" "$CALLLOG" && [ ! -e "$STORE/slot-ci-1" ] && [ ! -e "$STORE/slot-qae-2" ] && [ ! -e "$STORE/trash" ] && is_subvolume "$STORE/golden-tag1" \
+  && [ -f "$S/units/$STORE_UNIT" ] && grep -qx "$STORE" "$S/st/mounts"
+expect $? "--remove on a btrfs lane deletes a slot's subvolume with btrfs, a plain leftover as a tree, and leaves the store filesystem and the preloaded subvolume"
+converged_org
+mkdir -p "$STORE/slot-ci-1"
+out="$(run_org --remove --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$STORE/slot-ci-1" ] && ! grep -q '^btrfs ' "$CALLLOG"; expect $? "--remove on an XFS lane calls btrfs for nothing"
+
+# ---- the host file and the store disagree: a gate, never a conversion by --apply ------------------
+converged_org
+host_store_fs btrfs
+cp "$S/units/$STORE_UNIT" "$S/unit-before"
+out="$(run_org --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qF "[OPERATOR ACTION]" <<< "$(grep -F "store_fs: btrfs" <<< "$out")" \
+  && grep -qF "The host file says store_fs: btrfs and the lane's store $STORE is xfs." <<< "$out" && grep -qF "$ROOT/bin/provision-lane.sh box box-ci --convert-store --apply" <<< "$out"
+expect $? "with store_fs: btrfs on a lane whose store is XFS, --apply ends at an OPERATOR ACTION gate that names the one conversion command"
+cmp -s "$S/units/$STORE_UNIT" "$S/unit-before" && [ -d "$STORE/golden-tag1" ] && grep -q "Phase C: $STORE on its own 40G XFS filesystem (reflinks)" <<< "$out" && grep -q "the store is xfs and the host file says btrfs: it stays as it is" <<< "$out" \
+  && ! grep -qE "^(truncate|mkfs|mount |umount|btrfs |systemctl daemon-reload|systemctl (stop|restart) |systemctl enable --now .*\.mount)" "$CALLLOG"
+expect $? "that apply converts nothing: no image is made or formatted, the XFS unit and mount stay, and nothing is stopped, restarted or reloaded"
+out="$(run_org --check 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -qxF "store_fs_type=xfs host_file=btrfs (not converged: $ROOT/bin/provision-lane.sh box box-ci --convert-store converts the store)" <<< "$out" && grep -q "smoke=" <<< "$out"
+expect $? "--check fails on it, naming the conversion, and still runs to the end"
+mounted_org btrfs
+awk '!/^    store_fs: btrfs$/' "$S/host.yml" > "$S/host.yml.new" && mv "$S/host.yml.new" "$S/host.yml"
+cp "$S/units/$STORE_UNIT" "$S/unit-before"
+out="$(run_org --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qF "The lane's store $STORE is btrfs and the host file says store_fs: xfs (xfs when the key is absent)." <<< "$out" && grep -qF "set store_fs: btrfs for box-ci in hosts/box.yml" <<< "$out" \
+  && cmp -s "$S/units/$STORE_UNIT" "$S/unit-before" && ! grep -qE "^(truncate|mkfs|mount |umount|systemctl daemon-reload)" "$CALLLOG"
+expect $? "a btrfs store under a host file that says XFS is never rewritten as an XFS mount: the gate says to set store_fs: btrfs"
+out="$(run_org --check 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q "^store_fs_type=btrfs host_file=xfs (not converged: " <<< "$out"; expect $? "and --check fails on it"
+converged_org
+out="$(STORE_FSTYPE=ext4 run_org --apply 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "the lane's store ($STORE, from $IMG) is on a filesystem that is neither XFS nor btrfs (ext4)" <<< "$out" && ! grep -qE "^(truncate|mkfs|mount |umount)" "$CALLLOG"; expect $? "a store on any other filesystem is refused by --apply"
+out="$(STORE_FSTYPE=ext4 run_org --check 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -qx "store_fs_type=ext4 (a lane store is XFS, for its reflink snapshots, or btrfs)" <<< "$out"; expect $? "and reported by --check"
+
+# ---- --convert-store: an XFS store becomes btrfs, with its preloaded stores -----------------------
+run_convert() { RUNNERS_LANE_BUILD_LOCK="$S/build.lock" run_org --convert-store "$@"; }
+old_images() { find "$S/state" -maxdepth 1 -name 'store.img.xfs-*' | wc -l | tr -d ' '; }
+# The XFS store as it was before a conversion: its image at its path, its unit, its mount, its files.
+xfs_store_back() {
+  [ "$(head -n 1 "$IMG")" = xfs ] && [ "$(old_images)" = 0 ] && grep -qx "Type=xfs" "$S/units/$STORE_UNIT" && grep -qx "$STORE" "$S/st/mounts" && grep -qx "$STORE xfs" "$S/st/mount-types" \
+    && [ "$(cat "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres")" = bin ] && [ ! -e "$S/state/store-xfs" ] && ! is_subvolume "$STORE/golden-tag1"
+}
+# The lane's units started again, each after its own stop.
+lane_resumed() {
+  before '^systemctl stop box-ci-listener.service' '^systemctl start box-ci-listener.service' && grep -qx "systemctl start box-ci-listener-health.timer" "$CALLLOG" && grep -qx "systemctl start box-ci-store-reaper.timer" "$CALLLOG" \
+    && [ "$(cat "$S/st/state/box-ci-listener.service")" = active ] && [ "$(cat "$S/st/state/box-ci-listener-health.timer")" = active ]
+}
+mounted_org
+out="$(run_convert --apply 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "the host file does not say store_fs: btrfs for box-ci" <<< "$out" && ! grep -qE "$MUTATIONS" "$CALLLOG"; expect $? "--convert-store refuses a lane whose host file does not say store_fs: btrfs, and changes nothing"
+out="$(run_org --convert-store --check 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "do not combine it with --apply, --remove or --convert-store" <<< "$out"; expect $? "--check is not combined with --convert-store"
+out="$(run_org --convert-store --remove 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "two different runs" <<< "$out"; expect $? "nor is --remove"
+
+# The plan. The store holds the current tag's preloaded store, another whose image is kept, one no
+# image names, an unfinished one, a job's copy and a retired copy.
+conversion_fixture() {
+  mounted_org
+  mkdir -p "$STORE/golden-tag9/overlay2" "$STORE/golden-tag0/overlay2" "$STORE/golden-tag7.new" "$STORE/slot-qae-2/overlay2" "$STORE/trash/1700000100.slot-ci-1.7"
+  printf 'nine\n' > "$STORE/golden-tag9/overlay2/file"; /bin/chmod 0710 "$STORE/golden-tag1"
+  host_store_fs btrfs
+  export IMAGES_ABSENT="box-ci-runner:tag0"
+}
+conversion_fixture
+out="$(run_convert 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "Convert: $STORE from XFS to btrfs (a new 40G image at $IMG; the XFS image is kept as $IMG.xfs-[0-9]\{8\}T[0-9]\{6\}Z)" <<< "$out" \
+  && grep -q "carries over $STORE/golden-tag1 (1G)" <<< "$out" && grep -q "carries over $STORE/golden-tag9 (1G)" <<< "$out" && ! grep -q "carries over $STORE/golden-tag0\|carries over $STORE/golden-tag7" <<< "$out" \
+  && grep -q "needs about 3G of the 62G free under $S/state" <<< "$out"
+expect $? "the dry run names the stores it carries over (the current tag's and every one whose image is kept, never an unfinished one or one no image names) and the room it needs"
+out_before "DRY-RUN: systemctl stop box-ci-listener-health.timer box-ci-listener-health.service" "DRY-RUN: systemctl stop box-ci-listener.service" \
+  && out_before "DRY-RUN: systemctl stop box-ci-listener.service" "DRY-RUN: stop box-ci-ci@1.service if its runner is on no job (its registration is removed first), else wait for its job" \
+  && out_before "DRY-RUN: stop box-ci-ci@1.service if its runner" "DRY-RUN: wait up to 900s for the slots that are on a job" \
+  && out_before "DRY-RUN: wait up to 900s" "DRY-RUN: systemctl stop box-ci-store-reaper.timer box-ci-store-reaper.service" \
+  && out_before "DRY-RUN: systemctl stop box-ci-store-reaper.timer" "DRY-RUN: systemctl stop $STORE_UNIT"
+expect $? "it plans the stops in order: the health check, the listener, the idle slots, the wait for busy ones, the reaper, and only then the store's unmount"
+out_before "DRY-RUN: systemctl stop $STORE_UNIT" "DRY-RUN: mv $IMG $IMG.xfs-" && out_before "DRY-RUN: mv $IMG $IMG.xfs-" "DRY-RUN: truncate -s 40G $IMG" && out_before "DRY-RUN: truncate -s 40G $IMG" "DRY-RUN: mkfs.btrfs -q $IMG" \
+  && out_before "DRY-RUN: mkfs.btrfs -q $IMG" "DRY-RUN: write $S/units/$STORE_UNIT" && out_before "DRY-RUN: write $S/units/$STORE_UNIT" "DRY-RUN: systemctl start $STORE_UNIT" \
+  && out_before "DRY-RUN: systemctl start $STORE_UNIT" "DRY-RUN: mount -o loop,ro $IMG.xfs-" && grep -qE "DRY-RUN: mount -o loop,ro $IMG\.xfs-[0-9TZ]+ $S/state/store-xfs$" <<< "$out"
+expect $? "then the swap: the XFS image moved aside, a new btrfs image at its path, the unit rewritten, the new store mounted, and the XFS image mounted read-only beside it"
+out_before "DRY-RUN: btrfs subvolume create $STORE/golden-tag1.new" "DRY-RUN: cp -a $S/state/store-xfs/golden-tag1/. $STORE/golden-tag1.new/" \
+  && out_before "DRY-RUN: cp -a $S/state/store-xfs/golden-tag1/. $STORE/golden-tag1.new/" "DRY-RUN: mv $STORE/golden-tag1.new $STORE/golden-tag1" \
+  && grep -q "DRY-RUN: btrfs subvolume create $STORE/golden-tag9.new" <<< "$out" && out_before "DRY-RUN: mv $STORE/golden-tag9.new $STORE/golden-tag9" "DRY-RUN: umount $S/state/store-xfs" \
+  && out_before "DRY-RUN: umount $S/state/store-xfs" "DRY-RUN: check that $STORE is btrfs and that a snapshot of $STORE/golden-tag1 can be made and deleted" \
+  && out_before "DRY-RUN: check that $STORE is btrfs" "DRY-RUN: systemctl start box-ci-listener.service" && out_before "DRY-RUN: systemctl start box-ci-listener.service" "DRY-RUN: systemctl start box-ci-listener-health.timer"
+expect $? "then each carried store copied into a new subvolume under its unfinished name and renamed, the check, and the listener's start before its health check's"
+{ ! grep -qE "$MUTATIONS|^btrfs |^mv " "$CALLLOG"; } && xfs_store_back && [ ! -e "$S/build.lock" ] && [ ! -e "$S/run/ci/1/idle-stop" ] && [ "$(cat "$S/st/state/box-ci-listener.service")" = active ]
+expect $? "the dry run changes nothing: no unit is stopped, no runner removed, no image moved, no lock taken"
+
+# The conversion.
+conversion_fixture
+out="$(run_convert --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "Convert: done. $STORE is btrfs and the lane takes jobs again." <<< "$out"; expect $? "--convert-store --apply exits 0 on a converted store"
+[ "$(line_of '^systemctl stop ')" = "$(line_of '^systemctl stop box-ci-listener-health.timer box-ci-listener-health.service$')" ] && before '^systemctl stop box-ci-listener-health.timer' '^systemctl stop box-ci-listener.service$' \
+  && before '^systemctl stop box-ci-listener.service$' '^gh api -X DELETE orgs/acme/actions/runners/508 --silent ' && before '^gh api -X DELETE orgs/acme/actions/runners/508' '^systemctl stop box-ci-ci@1.service$' \
+  && [ -f "$S/run/ci/1/idle-stop" ] && [ "$(mode_of "$S/run/ci/1/idle-stop")" = 600 ] && [ "$(grep -c '^gh api -X DELETE' "$CALLLOG" | tr -d ' ')" = 1 ]
+expect $? "it stops the health check first, then the listener, then an idle slot the way the listener's idle stop does: the marker, the runner's removal, the stop"
+before '^systemctl stop box-ci-ci@1.service$' '^systemctl stop box-ci-store-reaper.timer box-ci-store-reaper.service$' && before '^systemctl stop box-ci-store-reaper.timer' "^systemctl stop ${STORE_UNIT//\\/\\\\}\$" \
+  && before "^systemctl stop ${STORE_UNIT//\\/\\\\}\$" '^mkfs.btrfs' && ! grep -q '^sleep' "$CALLLOG"
+expect $? "the store is unmounted only once no slot runs and the reaper is stopped, and with no slot on a job it waits for nothing"
+[ "$(head -n 1 "$IMG")" = btrfs ] && [ "$(old_images)" = 1 ] && [ "$(head -n 1 "$S"/state/store.img.xfs-*)" = xfs ] && grep -qx "mkfs.btrfs -q $IMG" "$CALLLOG" && grep -qx "truncate -s 40G $IMG" "$CALLLOG" && ! grep -q '^mkfs.xfs' "$CALLLOG"
+expect $? "the XFS image is kept under a dated name beside a new 40G btrfs image at the store's path"
+grep -qx "Type=btrfs" "$S/units/$STORE_UNIT" && grep -qx "Options=loop,noatime,discard=async" "$S/units/$STORE_UNIT" && grep -qx "$STORE btrfs" "$S/st/mount-types" && ! grep -qx "$STORE xfs" "$S/st/mount-types" \
+  && grep -qx "$STORE" "$S/st/mounts" && before '^mkfs.btrfs' '^systemctl daemon-reload' && before '^systemctl daemon-reload' "^systemctl start ${STORE_UNIT//\\/\\\\}\$"
+expect $? "the mount unit is rewritten for btrfs and reloaded, and the new store is mounted at the same path"
+is_subvolume "$STORE/golden-tag1" && [ "$(cat "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres")" = bin ] && [ "$(mode_of "$STORE/golden-tag1")" = 710 ] && is_subvolume "$STORE/golden-tag9" && [ "$(cat "$STORE/golden-tag9/overlay2/file")" = nine ] \
+  && grep -qE "^mount -o loop,ro $IMG\.xfs-[0-9TZ]+ $S/state/store-xfs$" "$CALLLOG" && before "^btrfs subvolume create $STORE/golden-tag1.new" "^btrfs subvolume create $STORE/golden-tag9.new"
+expect $? "every carried store is a subvolume of the new store with the files and the mode it had, copied from the XFS image mounted read-only"
+[ "$(ls "$STORE" | tr '\n' ' ')" = "golden-tag1 golden-tag9 trash " ] && [ -z "$(ls -A "$STORE/trash")" ] && [ "$(mode_of "$STORE/trash")" = 700 ] && [ ! -e "$S/state/store-xfs" ] && ! grep -qx "$S/state/store-xfs" "$S/st/mounts" \
+  && grep -qx "umount $S/state/store-xfs" "$CALLLOG"
+expect $? "nothing else comes over (no store without an image, no unfinished store, no job's copy, no retired copy), the trash is new and empty, and the XFS image is unmounted again"
+grep -qE "^btrfs subvolume snapshot $STORE/golden-tag1 $STORE/smoke-[0-9]+$" "$CALLLOG" && grep -qE "^btrfs subvolume delete $STORE/smoke-[0-9]+$" "$CALLLOG" && before "^umount $S/state/store-xfs" "^btrfs subvolume snapshot $STORE/golden-tag1" \
+  && before "^btrfs subvolume delete $STORE/smoke-" '^systemctl start box-ci-listener.service$'
+expect $? "the listener starts only after a snapshot of the current tag's store was made and deleted by the slot helper"
+grep -q "verified: $STORE is btrfs, and a snapshot of $STORE/golden-tag1 was made and deleted" <<< "$out"; expect $? "and it says what it verified"
+lane_resumed && before '^systemctl start box-ci-listener.service$' '^systemctl start box-ci-listener-health.timer$'; expect $? "the reaper's timer, the listener and its health check are started again, the health check last"
+grep -qE "The XFS store is kept at $IMG\.xfs-[0-9TZ]+\. Once the lane has run jobs on the new store, remove it: rm $IMG\.xfs-[0-9TZ]+$" <<< "$out" && grep -qF "Now: $ROOT/bin/provision-lane.sh box box-ci --check" <<< "$out"
+expect $? "it prints where the XFS image is, the command that removes it later, and the check to run next"
+: > "$CALLLOG"
+out="$(run_convert --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "Convert: $STORE is btrfs already; nothing to do" <<< "$out" && ! grep -qE "$MUTATIONS|^btrfs |^mv " "$CALLLOG" && [ "$(old_images)" = 1 ]; expect $? "run again on the converted lane it does nothing"
+out="$(run_org --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ! grep -q "store_fs" <<< "$out" && ! grep -qE "^(truncate|mkfs|mount |umount|systemctl daemon-reload|systemctl enable --now .*\.mount)" "$CALLLOG" && grep -qx "Type=btrfs" "$S/units/$STORE_UNIT"
+expect $? "and the lane's next --apply is converged: no gate, nothing rewritten, reloaded or remounted"
+mkdir -p "$GHDIR"; printf 'github.com:\n    oauth_token: %s\n' "$APP_SESSION_MARKER" > "$GHDIR/hosts.yml"
+out="$(run_org --check 2>&1)"; rc=$?
+grep -q "store_fs=mounted (/dev/loop8 btrfs 40G)" <<< "$out" && ! grep -q "store_fs_type=" <<< "$out" && grep -q "store=$STORE/golden-tag1 present" <<< "$out" && grep -q "smoke=PASS" <<< "$out"; expect $? "its --check reads the store as btrfs, converged, and its smoke passes on a snapshot"
+
+# Slots still on a job at the bound: nothing is changed.
+conversion_fixture
+out="$(GH_DELETE_RC=1 run_convert --apply 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "box-ci-ci@1.service keeps running: GitHub did not remove its runner, as for one that is on a job. The conversion waits for it." <<< "$out" && grep -q "still running after 900s: box-ci-ci@1.service. The store was not touched" <<< "$out" \
+  && [ "$(grep -c '^sleep 5$' "$CALLLOG" | tr -d ' ')" = 180 ]
+expect $? "a slot GitHub will not release (its runner is on a job) is waited for, 900 s at most, and then the conversion gives up"
+xfs_store_back && ! grep -qE "^(truncate|mkfs|mount |umount|mv |btrfs |systemctl stop .*\.mount|systemctl stop box-ci-ci@|systemctl daemon-reload)" "$CALLLOG" && [ ! -e "$S/run/ci/1/idle-stop" ] && [ "$(cat "$S/st/state/box-ci-ci@1.service")" = active ] \
+  && [ -d "$STORE/golden-tag0" ] && [ -d "$STORE/slot-qae-2" ]
+expect $? "with nothing changed: the store is not unmounted, no image is made or moved, the busy slot is not stopped and its marker is taken back"
+lane_resumed; expect $? "and the listener, its health check and the reaper's timer are started again"
+
+# A failure after the unmount: the XFS store is put back.
+conversion_fixture
+out="$(MKFS_BTRFS_RC=1 run_convert --apply 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "Convert: putting the XFS store back" <<< "$out" && grep -q "Convert: $STORE is the XFS store again" <<< "$out" && ! grep -q "Convert: done" <<< "$out" && xfs_store_back && [ -d "$STORE/golden-tag0" ] && [ -d "$STORE/trash/1700000100.slot-ci-1.7" ]
+expect $? "when the new image cannot be formatted, the XFS image goes back to its path and is mounted again with everything it held"
+lane_resumed && before "^systemctl start ${STORE_UNIT//\\/\\\\}\$" '^systemctl start box-ci-listener.service$'; expect $? "and the listener is started again, after the store is back"
+conversion_fixture
+out="$(BTRFS_SNAPSHOT_RC=1 run_convert --apply 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "the new store did not verify (a snapshot of $STORE/golden-tag1 could not be made and deleted)" <<< "$out" && grep -q "Convert: $STORE is the XFS store again" <<< "$out" && xfs_store_back \
+  && grep -qx "btrfs subvolume create $STORE/golden-tag9.new" "$CALLLOG" && [ "$(cat "$STORE/golden-tag9/overlay2/file")" = nine ] && lane_resumed
+expect $? "when the copied store takes no snapshot, the finished btrfs store is dropped, the XFS store put back and the listener restarted: the check is the last word"
+conversion_fixture
+out="$(MOUNT_RO_RC=32 run_convert --apply 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && xfs_store_back && lane_resumed && ! grep -q '^btrfs subvolume create' "$CALLLOG"; expect $? "when the XFS image cannot be mounted beside the new store, the XFS store is put back"
+conversion_fixture
+out="$(MOUNT_STOP_RC=1 run_convert --apply 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "could not unmount $STORE: something still uses it" <<< "$out" && xfs_store_back && lane_resumed && ! grep -qE "^(truncate|mkfs|mv |btrfs )" "$CALLLOG"
+expect $? "a store something still uses is not converted: the unmount fails, nothing is moved, and the listener is started again"
+
+# Refusals before anything is stopped.
+conversion_fixture
+out="$(DF_FREE=2 run_convert --apply 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "the conversion writes about 3G beside the XFS image, which stays, and the filesystem under $S/state has 2G free. Nothing was changed." <<< "$out" && ! grep -qE "$MUTATIONS|^btrfs |^mv " "$CALLLOG" && xfs_store_back
+expect $? "without room for the copies beside the XFS image it refuses before it stops anything"
+exec 9>"$S/build.lock"; flock -n 9
+out="$(run_convert --apply 2>&1)"; rc=$?
+exec 9>&-
+[ "$rc" -ne 0 ] && grep -q "an image build holds $S/build.lock; convert once it has finished" <<< "$out" && ! grep -qE "$MUTATIONS|^btrfs |^mv " "$CALLLOG" && xfs_store_back
+expect $? "while an image build holds the lane's build lock it refuses before it stops anything"
+unset IMAGES_ABSENT
+
 echo
 echo "provision-lane-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
