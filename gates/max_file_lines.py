@@ -2,8 +2,9 @@
 """Fail when a file this pull request changed is over the line limit and got longer.
 
 A ratchet on file length: a changed file is a finding when it exceeds --max lines and is new or
-grew since the base ref. A long file that shrank, or that nobody touched, never blocks. --all
-reports every tracked source file over the limit instead, for an audit.
+grew since the merge base (what the pull request started from, so a file the base branch shrank
+since is not held against it). A long file that shrank, or that nobody touched, never blocks.
+--all reports every tracked source file over the limit instead, for an audit.
 
     --max N          lines a file may have (default 500)
     --source GLOB    what counts as source (repeatable; default: JS, TS and Python files)
@@ -29,6 +30,8 @@ def check(args):
     base = None if args.all else resolve_base(args.repo, args.base_ref)
     candidates = tracked if args.all else set(changed_files(args.repo, base))
     moved = {} if args.all else renamed(args.repo, base)
+    # The changed files are the changes since the merge base, so that is where each one's old length is read.
+    start = None if args.all else git(args.repo, "merge-base", base, "HEAD").strip()
     findings = []
     for path in sorted(p for p in candidates if p in tracked and matches(p, source) and not matches(p, excluded)):
         with open(os.path.join(args.repo, path), encoding="utf-8", errors="replace") as handle:
@@ -39,7 +42,7 @@ def check(args):
             findings.append(Finding("%d lines, over the %d allowed" % (now, args.max), path))
             continue
         try:
-            before = line_count(git(args.repo, "show", "%s:%s" % (base, moved.get(path, path))))
+            before = line_count(git(args.repo, "show", "%s:%s" % (start, moved.get(path, path))))
         except CannotRun:
             before = None  # new in this pull request
         if before is not None and now <= before:

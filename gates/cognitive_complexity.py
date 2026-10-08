@@ -6,7 +6,8 @@ eslint-plugin-sonarjs through the pinned toolchain in tools/cognitive-complexity
 plugin, the TypeScript parser and typescript, every version and tarball integrity from the committed
 lockfile); Python files by complexipy through tools/cognitive-complexity-python (one wheel per
 interpreter, every digest in the committed requirements file). Neither honors the repository's own
-suppressions (eslint bulk suppressions, complexipy's ignore comments): the ratchet counts. A ratchet, not
+suppressions (eslint bulk suppressions and inline eslint comments, complexipy's ignore comments): the
+ratchet counts. A ratchet, not
 a backlog: every source file changed since the base ref is measured at HEAD and at the merge base
 (what the pull request started from, so a later improvement on the base branch is not held
 against it), and a file is a finding when it has more functions over the limit than it had (or is
@@ -78,6 +79,9 @@ def measure_js(root, files, limit):
     tool = ensure_node_tool("cognitive-complexity")
     result = subprocess.run([os.path.join(tool, "node_modules", ".bin", "eslint"), "--no-config-lookup", "--config",
                              os.path.join(tool, "eslint.config.mjs"), "--format", "json",
+                             # An `eslint-disable` or `/* eslint rule: off */` comment in a file is the repository's
+                             # suppression too: honored, one comment would take a function out of the ratchet.
+                             "--no-inline-config",
                              "--suppressions-location", NO_SUPPRESSIONS, *files],
                             cwd=root, capture_output=True, text=True, env=dict(os.environ, VV_COMPLEXITY_MAX=str(limit)))
     if result.returncode not in (0, 1):
