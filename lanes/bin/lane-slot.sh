@@ -28,7 +28,9 @@
 #      serially. A store filesystem short of room gets some back from the trash first, or the job
 #      is refused. For wait it is an empty directory, and no copy is made: a job that only polls
 #      for another job's result runs no inner image, and the inner dockerd starts on an empty data
-#      root (the image build's preload starts it on the empty store it then fills);
+#      root (the image build's preload starts it on the empty store it then fills). On a btrfs store
+#      the snapshot is a subvolume snapshot and the empty store an empty subvolume ("The store on
+#      btrfs" below);
 #   7. for the qae kind, reset the instance's own Codex login store (KNOWN_CI_CODEX_STORE_<n>; it
 #      refuses an instance without one, and a store that is missing or a link), holding the store's
 #      lock (below): delete every entry but auth.json, write the tracked config.toml
@@ -93,6 +95,17 @@
 # short store with an empty trash is not the backlog's doing: the copy is tried as before, and
 # fails closed on a full filesystem.
 #
+# The store on btrfs: a store filesystem that is btrfs (the helper reads its type, STORE_FS; the
+# lane's store_fs in the host file only decides what a new store is made as) needs no copy at all.
+# The image build makes each golden-<tag> a subvolume; prepare takes `btrfs subvolume snapshot` of
+# it (milliseconds, against 22 to 50 s for the reflink copy of about 225,000 inodes on a live lane),
+# a wait slot gets an empty subvolume, and cleanup, a leftover in prepare, and discard use
+# `btrfs subvolume delete`, which returns at once and leaves the freeing to the kernel. So there is
+# no trash, no room to make and nothing for the reaper, whose unit stays installed and finds an
+# empty trash. A snapshot that cannot be made fails the job closed. The helper deletes only the
+# path it derived (slot-<kind>-<n>, or the validated <word>-<digits> of snapshot and discard, which
+# is never a golden-* name), and removes a link at that path without following it.
+#
 # Back-off: a failing prepare must not turn the lane into a tight loop of failed starts. cleanup
 # counts consecutive runs of an instance that did not end normally ($SERVICE_RESULT, which systemd
 # sets for ExecStopPost, is "success"; or an idle slot's RuntimeMaxSec "timeout" whose runner never
@@ -134,7 +147,8 @@ case "$ACTION" in
     : "${KNOWN_CI_NAME:?}" "${KNOWN_CI_SCOPE:?}" "${KNOWN_CI_GH_HOSTS:?}" "${KNOWN_CI_BRIDGE:?}" ;;
   snapshot|discard)
     SLOT="${2:-}"
-    [[ "$SLOT" =~ ^[a-z]+-[0-9]+$ ]] || { echo "lane-slot: snapshot name must be <word>-<digits>, got '$SLOT'" >&2; exit 2; } ;;
+    # <word>-<digits>, and never a preloaded store's name: discard deletes what it is given.
+    [[ "$SLOT" =~ ^[a-z]+-[0-9]+$ ]] && [[ "$SLOT" != golden-* ]] || { echo "lane-slot: snapshot name must be <word>-<digits> and not a golden store's, got '$SLOT'" >&2; exit 2; } ;;
   reap)
     # No argument: the one directory it deletes from is the store's own trash, never a path given.
     [ "$#" -eq 1 ] || usage ;;
@@ -165,6 +179,11 @@ STATE_DIR="${KNOWN_CI_STATE_DIR:-/var/lib/${KNOWN_CI_NAME:-}}"
 # The lane user's home (bin/provision-lane.sh, Phase A0), where the keepalive's Codex runs.
 LANE_HOME="$STATE_DIR/home"
 STORE_DIR="${KNOWN_CI_STORE_DIR:-$STATE_DIR/store}"
+# The store's filesystem as the kernel names it. The helper follows the store it finds, never a
+# setting: on btrfs a job's store is a snapshot of the preloaded one and is deleted in one call, on
+# anything else (xfs) it is a reflink copy that goes through the trash ("The store on btrfs" above).
+# So a lane behaves as it always did until its store itself is converted.
+STORE_FS="$(stat -f -c %T "$STORE_DIR" 2>/dev/null || true)"
 RUN_DIR="${KNOWN_CI_RUN_DIR:-/run/${KNOWN_CI_NAME:-}}"
 API="${KNOWN_CI_API:-https://api.github.com}"
 HARDEN="${KNOWN_CI_HARDEN:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lane-firewall.sh}"
@@ -333,6 +352,17 @@ trash_has_space() {
 retire_store() {
   local path="$1"
   [ -e "$path" ] || [ -L "$path" ] || return 0
+  if [ "$STORE_FS" = btrfs ]; then
+    # A link is removed itself: btrfs would follow it and delete the subvolume it names.
+    if [ -L "$path" ]; then rm -f -- "$path"; return; fi
+    # One call whatever the job wrote, and the instance is free at once: the kernel cleans up
+    # behind it. What btrfs will not delete (a plain directory, or a subvolume holding one a job
+    # made) is deleted as a tree.
+    btrfs subvolume delete "$path" >/dev/null 2>&1 && return 0
+    log "btrfs could not delete $path as a subvolume; deleting it as a tree"
+    rm -rf -- "$path"
+    return
+  fi
   case "$ACTION" in
     prepare|cleanup)
       if ! trash_ready; then
@@ -358,6 +388,14 @@ snapshot() {
   : "${KNOWN_CI_IMAGE_TAG:?}"
   [ -d "$GOLDEN" ] || { log "no preloaded store for image tag $KNOWN_CI_IMAGE_TAG at $GOLDEN; the image build (bin/build-runner-image.sh) writes it"; return 1; }
   retire_store "$SNAPSHOT"
+  if [ "$STORE_FS" = btrfs ]; then
+    # btrfs would make the snapshot inside a directory that is already there, under the golden
+    # store's name, and the job would start on what was left: nothing may be at the path.
+    if [ -e "$SNAPSHOT" ] || [ -L "$SNAPSHOT" ]; then log "$SNAPSHOT could not be removed; refusing to snapshot into it"; return 1; fi
+    btrfs subvolume snapshot "$GOLDEN" "$SNAPSHOT" >/dev/null \
+      || { log "could not snapshot $GOLDEN to $SNAPSHOT (is it a subvolume? bin/build-runner-image.sh makes it one on a btrfs store)"; retire_store "$SNAPSHOT"; return 1; }
+    return 0
+  fi
   snapshot_store "$GOLDEN" "$SNAPSHOT" || { log "could not snapshot $GOLDEN to $SNAPSHOT (is $STORE_DIR the lane's XFS store?)"; retire_store "$SNAPSHOT"; return 1; }
 }
 
@@ -515,10 +553,17 @@ prepare_slot() {
   mount -o loop,nodev,nosuid "$IMAGE_FILE" "$MOUNT_POINT"
   # A leftover of an earlier run of this instance: its cleanup was killed, or never ran.
   retire_store "$SNAPSHOT"
-  if [ "$KIND" = wait ]; then
+  if [ "$KIND" = wait ] && [ "$STORE_FS" = btrfs ]; then
+    # An empty subvolume, so that whatever a wait job did write goes in one call too. Like mkdir
+    # below, the create fails on a leftover that could not be retired.
+    { btrfs subvolume create "$SNAPSHOT" >/dev/null && chmod 0700 "$SNAPSHOT"; } || { log "could not make the empty store $SNAPSHOT"; return 1; }
+  elif [ "$KIND" = wait ]; then
     # mkdir, not install -d: it fails on a leftover that could not be retired, so a wait job never
     # starts on another job's store.
     mkdir -m 0700 "$SNAPSHOT" || { log "could not make the empty store $SNAPSHOT"; return 1; }
+  elif [ "$STORE_FS" = btrfs ]; then
+    # A snapshot takes no room and leaves no trash: nothing to make room for.
+    snapshot
   else
     make_room || return 1
     snapshot

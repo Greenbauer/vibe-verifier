@@ -233,6 +233,27 @@ On the host's own Docker a lane leaves only its runner image: the image build ke
 dated tags and, after every run, drops the Docker build-cache records unused for a week
 (`image/README.md`), so a lane needs no other job on the machine to prune behind it.
 
+**A btrfs store.** With `store_fs: btrfs` the store filesystem is btrfs, and a job's store is a
+snapshot, not a copied tree. Every job on an XFS store copies and later deletes a tree of about
+225,000 inodes, and the disk is one budget whatever the slot count, which caps a lane near 2.3 job
+starts a minute. On btrfs the image build makes each `golden-<tag>` a subvolume, `prepare` takes
+`btrfs subvolume snapshot` of it, and `cleanup` (and `prepare`, for a leftover) deletes it with
+`btrfs subvolume delete`, which returns at once and leaves the freeing to the kernel. A wait slot
+gets an empty subvolume. So there is no copy to pace: no trash, no room rule, and nothing for the
+reaper, whose unit stays installed, so that both kinds of store have one provisioner, and finds an
+empty trash. A snapshot that cannot be made fails the job closed. Measured by hand on a lane's
+machine, 2026-10-08, in a throwaway 14 GB btrfs image, not with this code (Sysbox 0.7.1, kernel
+6.8): a snapshot took 9 to 26 ms, against 22 to 50 s for the reflink copy; a job container on a
+snapshot had its inner dockerd ready in 2 s, on `overlay2` over btrfs, with all nine preloaded
+images there; the kit's own smoke started six preloaded Supabase stacks in 40 to 72 s each with no
+image pulled (51 to 117 s that evening on a reflink copy); a delete returned in 3 to 138 ms and the
+kernel had freed five snapshots 24 s later, against 30 to 130 s for each tree delete under load.
+The slot helper follows the store it finds (`stat -f` on the store), never the key: an XFS store
+behaves exactly as described above whatever the host file says, until the store itself is converted
+("Converting a lane's store" below). It deletes only the path it derived for the slot (or the
+smoke's and the build's `<word>-<digits>` name, never a `golden-*` one), and removes a link there
+without following it.
+
 **The runner image contract.** `/var/lib/<name>/image.env` holds `KNOWN_CI_IMAGE_TAG=<tag>` for
 `<image>:<tag>`, and its preloaded store is `/var/lib/<name>/store/golden-<tag>`; the units read
 the file at every start, so a rebuilt image reaches the next job without touching a unit. The
