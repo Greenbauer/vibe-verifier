@@ -8,8 +8,9 @@
 # record every mutation in $CALLLOG and keep their state under $ST; fixtures come from $FX. A
 # mount unit's enable mounts its Where= path; GNU stat -c %u reads a list of root-owned paths;
 # cp --reflink=always is done as a plain copy (neither ext4 nor tmpfs takes one); chmod
-# --reference is done from the reference's mode. The gh stub applies the script's own jq filter to
-# its fixture with the real jq.
+# --reference is done from the reference's mode. MOUNT_RC and MKFS_RC fail mount (which then mounts
+# nothing) and mkfs.ext4 with that status. The gh stub applies the script's own jq filter to its
+# fixture with the real jq.
 
 write_stubs() {
   local p="$1"
@@ -194,6 +195,7 @@ SH
   cat > "$p/mount" <<'SH'
 #!/bin/bash
 echo "mount $*" >> "$CALLLOG"
+[ "${MOUNT_RC:-0}" = 0 ] || exit "$MOUNT_RC"
 echo "${@: -1}" >> "$ST/mounts"
 SH
   cat > "$p/umount" <<'SH'
@@ -204,6 +206,7 @@ SH
   cat > "$p/mkfs.ext4" <<'SH'
 #!/bin/bash
 echo "mkfs.ext4 $*" >> "$CALLLOG"
+exit "${MKFS_RC:-0}"
 SH
   cat > "$p/mkfs.xfs" <<'SH'
 #!/bin/bash
