@@ -661,6 +661,32 @@ write a value into `site.md` or the prompt: the explorer does not need it, and t
 redact what the file declares. `codex exec --ephemeral` keeps the run's session rollout, which holds
 everything the model read, off the runner.
 
+**The name is the value however the explorer enters it.** playwright-mcp resolves a name in two of
+its tools only, `browser_fill_form` and `browser_type`. Any other way to enter text sends the name
+itself, and the one a model picks is `browser_run_code_unsafe`, whose snippet is handed the page:
+`page.locator('input[type=password]').fill('QAE_PASSWORD')` signs in with the twelve letters of the
+name. In the session logs of 89 explorations (2026-10-05 to 2026-10-08), 80 password entries went
+through the two tools and one through run-code. That one was answered 400 by the site's sign-in
+endpoint; the explorer then entered the name through `browser_fill_form` and signed in, all five
+criteria passed, and `qae-artifacts` failed the run on the 400 (its console line and its request).
+Another run failed on the same console line that day, after the same wrong first sign-in; a re-run
+replaced its evidence before its session log was read. So the action loads a second `--init-page`
+hook whenever it writes secrets,
+[`secret-names.js`](../../actions/qae-browser/secret-names.js), which resolves a name in the
+Playwright client every tool and snippet goes through: `fill`, `type` and `pressSequentially` on a
+page, a frame, a locator or an element handle, and `keyboard.type` and `keyboard.insertText`. Text
+that is exactly a name becomes its value; text that only holds one is typed as written. The names
+are the `secrets` of the same `--config` file, so a name means one thing in every tool. The hook
+wraps classes of the pinned build and stops a tab from opening when one of those methods is gone,
+and the catalog's `qae-browser` CI job signs in through it in the real browser, with the hook and
+without it. Two ways stay open, because neither is a text-entry call: a script that sets the field
+inside the page (`browser_evaluate`), and the name pressed one key at a time (`browser_press_key`).
+
+The gate is not what changed. An allowance for a refused sign-in would have to excuse a 400 at the
+site's own sign-in endpoint, and the gate cannot tell the explorer's wrong password from a sign-in
+the pull request broke: both are the same request, the same status and the same console line. A
+criterion that expects a refusal there still declares it (`expected-refusal: 400 <path>`).
+
 ## Rules the harness obeys, each from a real run
 
 - **Anchors resolve or the PASS is refused.** A step line the model did not write cannot be cited.

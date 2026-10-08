@@ -21,7 +21,8 @@ inputs:
       A JSON object of credentials the workflow wrote before this step, outside the workspace ($RUNNER_TEMP),
       mapping a NAME (capital letters, digits and underscores) to its value, for example a preview login's
       password. Give the explorer the NAME, never the value: the explorer types a value by entering its NAME
-      (playwright-mcp's `secrets` setting), every tool result shows <secret>NAME</secret> instead, and after the
+      (playwright-mcp's `secrets` setting, and actions/qae-browser/secret-names.js for every text-entry call
+      its two tools do not cover), every tool result shows <secret>NAME</secret> instead, and after the
       explorer every non-image file under the artifacts directory has each value replaced, because
       playwright-mcp's session log still records what was typed. So neither the posted verdict nor the
       uploaded evidence holds one. A malformed file fails the step before the model runs. Empty (the
@@ -184,7 +185,12 @@ runs:
               echo "$out"
               exit 2
             fi
-            args+=",\"--config\",\"$config\""
+            # A second --init-page, from the same catalog commit: playwright-mcp types a secret's value
+            # for its NAME in two of its tools only, and a model that signs in through
+            # browser_run_code_unsafe sends the name itself, which the site refuses and the
+            # qae-artifacts gate then fails the run on. The hook resolves the name in every
+            # Playwright text-entry call, reading the names from this same --config file.
+            args+=",\"--config\",\"$config\",\"--init-page\",\"$GITHUB_ACTION_PATH/../qae-browser/secret-names.js\""
           fi
           browser=(-c 'mcp_servers.playwright.command="node"' -c "mcp_servers.playwright.args=[$args]")
         fi
