@@ -102,13 +102,16 @@ class LiveService(DashboardService):
                 self._usage_result, self.usage_reader = None, UsageArtifacts(self.config)
             elif value is not None:
                 self._usage_result = value
-            if self.store is None:
-                return
-            if lost or reader.lost_access:
+        if self.store is None:
+            return
+        # Written outside the lock every request takes: a slow disk must not stall the page.
+        if value is not None and not lost and not reader.lost_access:
+            for name, document in usage_state(reader, value).items():
+                self.store.save(name, document)
+        with self._usage_lock:
+            # Lost access, here or noticed by a pass while this was writing, leaves no usage file.
+            if lost or reader.lost_access or generation != self._usage_generation:
                 self.store.clear(*USAGE_DOCUMENTS)
-            elif value is not None:
-                for name, document in usage_state(reader, value).items():
-                    self.store.save(name, document)
 
     def _usage_due(self, revoked):
         """Whether a token-history read should start now. The caller holds the usage lock."""

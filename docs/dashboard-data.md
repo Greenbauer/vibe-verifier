@@ -83,23 +83,33 @@ subscription inventory and the rate-limit pauses are not kept.
   minutes in the future, or one that does not decode. Each is deleted when it is read, and the
   dashboard starts empty.
 - **Lost access deletes it.** A pass that meets an authentication, permission or missing-resource
-  failure, on any source, deletes every file and writes none. The same failure on a usage scan
-  deletes the two usage documents.
+  failure, on any source, deletes every file and writes none. So does the head beat, which is the
+  only thing reading GitHub while the page is closed: a token refused to it empties the reading in
+  memory as well. The same failure on a usage scan deletes the two usage documents, whether the
+  scan failed on it or returned what it could still read. A usage write that is under way when a
+  pass loses access is deleted when it lands.
 - **A kept answer is not trusted on its own.** A response is served from the kept copy only when
-  GitHub answers that request with 304, which it does only for a token that may still read it.
+  GitHub answers that request with 304, which it does only for a token that may still read it. A
+  kept job list is used without a request, as it is in memory, and only for a run that GitHub has
+  just listed to this token.
 
 On a start with a kept `reading`, the page is served that reading at once, with `github.restored`
 true, while the first pass runs. Every repository row and every bot in it is `stale`, the reading
 keeps its own `sampled_at`, and no pull request in it is merge-ready: a title turns green only on
-checks this process read. A pass that fails without losing access keeps showing it. Token history
-is different: it is a record of finished runs, not a current state, so a kept one is served as it
-was and goes stale by its own age, ten minutes after its scan.
+checks this process read. A pass that fails without losing access keeps showing it. A row carried
+from it into a later reading, because that repository could not be read, keeps `restored` true.
+Token history is different: it is a record of finished runs, not a current state, so a kept one
+is served as it was and goes stale by its own age, ten minutes after its scan.
 
 State on disk is written by whichever version ran before the restart. The first failure this
-version cannot explain while it holds any (a snapshot or a pass that raises) is blamed on it,
-once: everything kept is dropped from memory and disk, and the dashboard carries on as it does
-on a first start. `tests/test_dashboard_state_store.py` covers the files and every refusal;
-`tests/test_dashboard_restart.py` covers what a restart, a failed read and lost access serve.
+version cannot explain after a start that was handed any (a snapshot, a pass or a usage scan that
+raises) is blamed on it, once. The kept reading, every row still carried from it, the token
+history and the files are dropped; a pass or a head beat that was in flight publishes nothing
+kept; and the collector's caches are emptied by the next pass. A reading this process made itself
+stays. The dashboard then carries on as it does on a first start.
+`tests/test_dashboard_state_store.py` covers the files and every refusal,
+`tests/test_dashboard_restart.py` what a restart, a failed read, lost access and the head beat
+serve, and `tests/test_dashboard_restart_usage.py` the same for token history.
 
 ## Blocking and nonblocking snapshots
 

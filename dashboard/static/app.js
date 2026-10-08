@@ -7,7 +7,7 @@
   const announcement = document.querySelector("#announcement");
   const state = { ...VV.restoreViewState(null), ...VV.parseRoute(location.hash) };
   let snapshot = null;
-  let loading = false;
+  let loading = false, retry = 0;
   let refreshFailed = false;
 
   function restoreView(owner) {
@@ -480,7 +480,7 @@
       else {
         content.replaceChildren(empty("Dashboard unavailable", "The local read-only source could not be loaded."));
         document.querySelector("#bot-strip").replaceChildren(el("span", { class: "muted" }, "Bot status unavailable"));
-        window.setTimeout(load, 5000); // A page opened while the service restarts need not wait for the 30-second poll.
+        window.clearTimeout(retry); retry = window.setTimeout(refreshIfVisible, 5000); // One retry at a time, sooner than the 30-second poll.
       }
     } finally { loading = false; }
   }

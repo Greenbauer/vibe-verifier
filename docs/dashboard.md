@@ -392,7 +392,7 @@ reported REST limit/remaining/reset values, and the lowest remaining count seen 
 (`lowest_remaining`; GitHub meters some endpoint families against a separate counter that the reported
 values omit). A spent counter pauses only its endpoint family until its reset. GraphQL is metered in points, so GitHub refuses a query that costs more than what is left while the counter still reads above zero; that pauses only the GraphQL reads, and the checks keep loading. Rate limits and source errors return partial or briefly
 stale data without advancing its successful sample timestamp. Authentication or access revocation
-clears derived repository data immediately, in memory and in the state directory. Any other failure (a rate limit, a timeout, a spent budget, a failure this version does not name) or a sample older than three minutes keeps the last pull requests and bot rows and marks them stale. A restart with a state directory does the same: the page is served the reading from before it, and the banner over the list says so until GitHub has been read again. The page does the same when its own refresh fails: it keeps the last snapshot and says the refresh failed. A page opened while the service is down tries again every five seconds.
+clears derived repository data immediately, in memory and in the state directory. Any other failure (a rate limit, a timeout, a spent budget, a failure this version does not name) or a sample older than three minutes keeps the last pull requests and bot rows and marks them stale. A restart with a state directory does the same: the page is served the reading from before it, and the banner over the list says so until GitHub has been read again. The page does the same when its own refresh fails: it keeps the last snapshot and says the refresh failed. A page opened while the service is down tries again every five seconds while it is visible, one request at a time.
 
 Old data says that it is old where it is read. The header line gives a stale reading's age before
 anything else (`GitHub sampled Oct 8, 2026, 3:02 PM · 4m 10s ago · stale`). A bot whose state was read
@@ -496,8 +496,10 @@ discovery; `test_dashboard_service.py` covers source timestamps and refresh cach
 `test_dashboard_state_store.py` covers the files kept across a restart: their mode, the atomic
 replace, the size and age limits, and every file that is refused and deleted.
 `test_dashboard_restart.py` covers what a restart serves and marks old, which failures keep the
-last reading and which delete it, token history across a restart, and the age on the header line
-and the bot strip.
+last reading and which delete it, a token refused to the head beat, and kept state this version
+cannot use; `test_dashboard_restart_usage.py` covers the same for token history.
+`test_dashboard_old_labels.py` covers the age on the header line and the bot strip, the banner
+after a restart, and the page's single retry while it has nothing to show.
 `test_dashboard_live_service.py` covers independently aging quota/history and revocation during
 an in-flight refresh. The collector and usage-artifact test files cover the native source contracts.
 `tests/test_dashboard_host.py` covers the Linux host's token minting, telemetry publishing, and unit

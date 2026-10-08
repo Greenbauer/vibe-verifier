@@ -53,8 +53,9 @@ class DashboardService:
         self._beat_stop = threading.Event()
         self._beat_thread = None
         self.store = store
-        # True while something a restart handed over, written by whichever version ran before, is in use.
-        self._kept = False
+        # True from a start that was handed something, written by whichever version ran before, until
+        # it is forgotten. _forgets counts those: a pass or a beat in flight compares it before publishing.
+        self._kept, self._forgets, self._clear_before_pass = False, 0, False
         if store is not None:
             self._restore()
 
@@ -77,15 +78,28 @@ class DashboardService:
         """Drop what a restart handed over, in memory and on disk. True when there was any.
 
         The first failure this code cannot explain is blamed on it, once: the dashboard then
-        behaves as it does on a first start, instead of failing on every request or pass."""
+        behaves as it does on a first start, instead of failing on every request or pass. A reading
+        this process made itself stays. A pass or a beat in flight publishes nothing kept, and the
+        collector's caches are emptied by the next pass, in the thread that uses them."""
         with self._condition:
             kept, self._kept = self._kept, False
-            if kept and (self._github or {}).get("restored"):
-                self._github = None
+            if kept:
+                self._forgets += 1
+                self._clear_before_pass = True
+                self._github = self._without_kept(self._github)
         if kept:
-            self._clear_collector_cache()
             self.store.clear()
         return kept
+
+    def _without_kept(self, github: dict | None) -> dict | None:
+        """The reading with nothing a restart handed over: none at all when it is the kept reading,
+        and an unavailable row for each repository still carried from it."""
+        if github is None or github.get("restored"):
+            return None
+        github["repositories"] = [
+            self._unavailable_repository(row["repository"], "unavailable", github) if row.get("restored") else row
+            for row in github["repositories"]]
+        return github
 
     def _empty_github(self, code: str) -> dict:
         # A list already names its repositories. `all` has not discovered any yet, so an empty
@@ -185,10 +199,13 @@ class DashboardService:
 
     def _perform_refresh(self, requested_mono: float, requested_wall: datetime) -> None:
         with self._condition:
-            previous = copy.deepcopy(self._github)
+            previous, forgets = copy.deepcopy(self._github), self._forgets
+            clear, self._clear_before_pass = self._clear_before_pass, False
             inventory_fresh = (bool(self._inventory)
                                and requested_mono - self._inventory_at < INVENTORY_TTL_SECONDS)
             inventory = copy.deepcopy(self._inventory) if inventory_fresh else None
+        if clear:
+            self._clear_collector_cache()
         new_inventory = None
         inventory_refreshed = inventory is None
         try:
@@ -208,11 +225,17 @@ class DashboardService:
             kept = previous is not None and error.code not in PRIVATE_FAILURES
             result = self._mark_transient(previous, error.code, requested_wall) if kept else self._empty_github(error.code)
         except Exception:
-            if self._forget_kept():
-                previous = None
+            self._forget_kept()
             result = self._mark_transient(previous, "unavailable", requested_wall) if previous else self._empty_github("unavailable")
+        self._publish(result, forgets, new_inventory)
+
+    def _publish(self, result: dict, forgets: int, new_inventory: dict | None) -> None:
+        """End a pass: what it read becomes the reading, and the refresh slot is free again."""
         completed_mono = self.monotonic()
         with self._condition:
+            if self._forgets != forgets:
+                # Kept state was forgotten while this pass ran: none of it is published.
+                result = self._without_kept(result) or self._empty_github("unavailable")
             self._github = result
             self._github_at = completed_mono
             if new_inventory:
@@ -247,18 +270,23 @@ class DashboardService:
             if self._refreshing or self._beating or self._github is None or not due:
                 return None
             self._beating = True
-            generation, github = self._github_at, copy.deepcopy(self._github)
+            generation, forgets, github = self._github_at, self._forgets, copy.deepcopy(self._github)
         updated = None
         try:
             reading = reader(github) if callable(reader) else read_cached_heads(self.collector, github)
             updated = apply_head_reading(github, reading["heads"], self.wall_clock().astimezone(timezone.utc),
                                          reading["calls"], reading["points"], bool(reading.get("complete")))
-        except ApiError:
+        except ApiError as error:
             updated = None
+            if error.code in PRIVATE_FAILURES:
+                # A refused token is lost access whoever notices it, and with the page closed only
+                # the beat reads GitHub: nothing read with that token stays, in memory or on disk.
+                self._revoke()
+                updated = self._empty_github(error.code)
         finally:
             with self._condition:
                 self._beating = False
-                if updated is None or self._refreshing or self._github_at != generation:
+                if updated is None or self._refreshing or self._github_at != generation or self._forgets != forgets:
                     updated = None
                 else:
                     self._github = updated

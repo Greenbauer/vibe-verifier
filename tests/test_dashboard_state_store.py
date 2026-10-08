@@ -124,6 +124,16 @@ class RefusesAndDeletes(StoreCase):
                 os.chmod(self.file, 0o600)
                 self.refused()
 
+    def test_a_file_that_breaks_the_reader_itself_starts_empty_too(self):
+        # Neither is an OSError or a ValueError: nesting deeper than the decoder recurses, and a
+        # date that overflows when it is moved to UTC. A start must not die on either, every time.
+        nested = b'{"value": ' + b"[" * 200000 + b"]" * 200000 + b"}"
+        for content in (nested, json.dumps(self.document(saved_at="0001-01-01T00:00:00+14:00")).encode()):
+            with self.subTest(content=content[:24]):
+                self.file.write_bytes(zlib.compress(content))
+                os.chmod(self.file, 0o600)
+                self.refused()
+
     def test_an_old_format_or_another_configuration_starts_empty(self):
         other_repositories = StateStore(self.root, config(repositories=(REPO, "octocat/second")), clock=self.clock)
         other_bots = StateStore(self.root, config(workflow="other.yml"), clock=self.clock)
@@ -240,6 +250,7 @@ class OldReading(unittest.TestCase):
         marked = old_reading(self.reading())
         self.assertTrue(marked["restored"] and marked["stale"] and marked["partial"])
         self.assertEqual([row.get("stale") for row in marked["repositories"]], [True, None])
+        self.assertEqual([row["restored"] for row in marked["repositories"]], [True, True])
         self.assertEqual(marked["repositories"][0]["pulls"], self.reading()["repositories"][0]["pulls"])
         self.assertTrue(marked["bots"]["roles"]["reviewer"]["stale"])
         self.assertEqual(marked["bots"]["roles"]["reviewer"]["state"], "idle")

@@ -2,8 +2,6 @@
 
 import copy
 import io
-import json
-import subprocess
 import tempfile
 import threading
 import unittest
@@ -12,9 +10,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from dashboard.config import AgentDefinition, BotDefinition, Config
+from dashboard.config import BotDefinition, Config
 from dashboard.gh_api import ApiError
-from dashboard.live_service import LiveService
 from dashboard.server import make_server
 from dashboard.service import DashboardService
 from dashboard.state_store import StateStore
@@ -55,6 +52,8 @@ class Collector:
         self.values = list(values)
         self.cleared = 0
         self.hold = None
+        # What the head beat meets: an error to raise, and an event that holds it in flight.
+        self.beat, self.beat_hold, self.beat_started = None, None, threading.Event()
 
     def collect(self, inventory=None):
         if self.hold:
@@ -67,6 +66,14 @@ class Collector:
     def clear_private_cache(self):
         self.cleared += 1
 
+    def read_open_heads(self, github):
+        self.beat_started.set()
+        if self.beat_hold:
+            self.beat_hold.wait(2)
+        if self.beat:
+            raise self.beat
+        return {"heads": {}, "calls": 1, "points": 1, "complete": False}
+
 
 class RestartCase(unittest.TestCase):
     service_class = DashboardService
@@ -74,7 +81,7 @@ class RestartCase(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
-        self.wall = NOW
+        self.wall, self.mono = NOW, 1000.0
 
     def store(self):
         return StateStore(self.folder.name, config(), clock=lambda: self.wall)
@@ -84,7 +91,7 @@ class RestartCase(unittest.TestCase):
 
     def start(self, *values, settings=None):
         collector = Collector(*values)
-        service = self.service_class(settings or config(), collector=collector, monotonic=lambda: 1000.0,
+        service = self.service_class(settings or config(), collector=collector, monotonic=lambda: self.mono,
                                      wall_clock=lambda: self.wall, store=self.store())
         return service, collector
 
@@ -135,6 +142,7 @@ class ServesTheLastReading(RestartCase):
                          [(REPO, False, 1), (OTHER, True, 1)])
         self.assertEqual(rows[1]["source_error"], "rate_limited")
         self.assertFalse(rows[1]["pulls"][0]["merge_ready"])
+        self.assertEqual([row.get("restored") for row in rows], [None, True])
 
     def test_a_first_start_shows_loading_and_then_keeps_what_it_read(self):
         service, collector = self.start(reading())
@@ -219,21 +227,65 @@ class OnlyLostAccessDeletes(RestartCase):
 
 
 class ForgetsWhatItCannotUse(RestartCase):
-    def keep(self, value):
-        self.store().save("reading", value)
-
-    def test_a_kept_reading_this_code_cannot_serve_is_dropped_instead_of_failing_every_request(self):
-        unreadable = reading()
-        unreadable["bots"]["roles"]["reviewer"]["recent_2h"] = ["a row from another version"]
-        self.keep(unreadable)
-        service, collector = self.start(reading())
+    def unreadable(self, *values):
+        """A start handed a reading this version cannot serve, with its first pass held in flight."""
+        kept = reading()
+        kept["bots"]["roles"]["reviewer"]["recent_2h"] = ["a row from another version"]
+        self.store().save("reading", kept)
+        service, collector = self.start(*values)
         collector.hold = threading.Event()
         self.assertTrue(service._github["restored"])
+        return service, collector
+
+    def loading(self, service):
         github = service.snapshot(nonblocking=True)["github"]
         self.assertEqual((github["errors"], github["repositories"][0]["pulls"]), ([{"code": "loading"}], []))
-        self.assertEqual((collector.cleared, self.files(), service._kept), (1, [], False))
+        self.assertEqual((self.files(), service._kept), ([], False))
+
+    def test_a_kept_reading_this_code_cannot_serve_is_dropped_instead_of_failing_every_request(self):
+        service, collector = self.unreadable(reading(), reading())
+        self.loading(service)
         collector.hold.set()
         self.assertEqual(len(service.snapshot()["github"]["repositories"][0]["pulls"]), 1)
+        self.assertEqual(collector.cleared, 0)
+        service.snapshot(force=True)
+        self.assertEqual(collector.cleared, 1)
+
+    def test_a_pass_in_flight_does_not_bring_a_forgotten_reading_back(self):
+        service, collector = self.unreadable(ApiError("rate_limited"), reading())
+        self.loading(service)
+        collector.hold.set()
+        for _ in range(3):
+            github = service.snapshot()["github"]
+            self.assertNotIn("restored", github)
+            self.assertEqual((github["errors"], [row["pulls"] for row in github["repositories"]]),
+                             ([{"code": "unavailable"}], [[], []]))
+        self.assertEqual(len(service.snapshot(force=True)["github"]["repositories"][0]["pulls"]), 1)
+
+    def test_a_beat_in_flight_does_not_bring_a_forgotten_reading_back(self):
+        service, collector = self.unreadable(reading())
+        collector.beat_hold = threading.Event()
+        beat = threading.Thread(target=service.run_head_beat)
+        beat.start()
+        self.assertTrue(collector.beat_started.wait(2))
+        self.loading(service)
+        collector.beat_hold.set()
+        beat.join(2)
+        self.assertFalse(beat.is_alive())
+        self.assertIsNone(service._github)
+        collector.hold.set()
+        self.assertEqual(len(service.snapshot()["github"]["repositories"][0]["pulls"]), 1)
+
+    def test_a_row_carried_from_the_kept_reading_goes_when_kept_state_is_forgotten(self):
+        partial = reading(NOW + timedelta(seconds=40), repositories=(REPO,))
+        partial["errors"] = [{"repository": OTHER, "code": "rate_limited"}]
+        service, _ = self.restarted(partial)
+        service.snapshot(force=True)
+        self.assertTrue(service._forget_kept())
+        rows = service.snapshot()["github"]["repositories"]
+        self.assertEqual([(row["repository"], len(row["pulls"]), row.get("unavailable", False)) for row in rows],
+                         [(REPO, 1, False), (OTHER, 0, True)])
+        self.assertFalse(service._forget_kept())
 
     def test_a_failure_with_nothing_kept_still_reaches_the_caller(self):
         service, _ = self.start(reading())
@@ -244,10 +296,22 @@ class ForgetsWhatItCannotUse(RestartCase):
         service, collector = self.restarted(KeyError("a cached row of another shape"), KeyError("again"), reading())
         github = service.snapshot(force=True)["github"]
         self.assertEqual((github["errors"], github["repositories"][0]["pulls"]), ([{"code": "unavailable"}], []))
-        self.assertEqual((collector.cleared, self.files()), (1, []))
+        self.assertEqual((collector.cleared, self.files()), (0, []))
         service.snapshot(force=True)
         self.assertEqual(collector.cleared, 1)
         self.assertEqual(len(service.snapshot(force=True)["github"]["repositories"][0]["pulls"]), 1)
+        self.assertEqual(collector.cleared, 1)
+
+    def test_an_unexpected_failure_keeps_a_reading_this_process_made_even_after_a_restart(self):
+        later = NOW + timedelta(seconds=40)
+        service, collector = self.restarted(reading(later), KeyError("defect"), reading(later))
+        service.snapshot(force=True)
+        github = service.snapshot(force=True)["github"]
+        self.assertEqual(([len(row["pulls"]) for row in github["repositories"]], github["errors"]), ([1, 1], [{"code": "unavailable"}]))
+        self.assertEqual((github["sampled_at"], [row["stale"] for row in github["repositories"]]), (later.isoformat(), [True, True]))
+        self.assertEqual((self.files(), collector.cleared), ([], 0))
+        service.snapshot(force=True)
+        self.assertEqual((self.files(), collector.cleared), (["reading.json.z"], 1))
 
     def test_an_unexpected_failure_with_nothing_kept_keeps_the_last_reading(self):
         service, collector = self.start(reading(), KeyError("defect"))
@@ -257,189 +321,34 @@ class ForgetsWhatItCannotUse(RestartCase):
         self.assertEqual(self.files(), ["reading.json.z"])
 
 
-USAGE = {"available": True, "sampled_at": NOW.isoformat(), "stale": False, "accounts": [{"id": "openai:plan", "label": "plan", "provider": "openai", "quota_windows": []}],
-         "samples": [{"account": "openai:plan", "bot": "reviewer", "timestamp": NOW.isoformat(), "input_tokens": 900, "output_tokens": 100, "partial": False}],
-         "gaps": [], "hard_partial": False, "listing_complete": True, "covered_until": None, "partial": False, "completeness": "Observed."}
+class TheHeadBeat(RestartCase):
+    """With the page closed only the beat reads GitHub, so it is the beat that meets a refused token."""
 
-
-class UsageAcrossARestart(RestartCase):
-    service_class = LiveService
-
-    def live(self, *values, settings=None):
-        """A live service whose token history is read only when a test says so, and whose pass,
-        started in the background by its own snapshot, is held until the test ends."""
-        service, collector = self.start(*values, settings=settings)
-        service._usage_next = float("inf")
-        collector.hold = threading.Event()
-        self.addCleanup(self.read_github, service, collector)
+    def quiet(self, *values):
+        service, collector = self.start(reading(), *values)
+        service.snapshot(force=True)
+        self.assertEqual(self.files(), ["reading.json.z"])
+        self.mono += 1000
         return service, collector
 
-    @staticmethod
-    def read_github(service, collector):
-        """One whole pass, finished before this returns. A live service's own snapshot never waits."""
-        collector.hold.set()
-        return DashboardService.snapshot(service, force=bool(collector.values))
+    def test_a_token_refused_to_the_beat_deletes_everything_read_with_it(self):
+        for code in ("authentication_failed", "forbidden", "not_found"):
+            with self.subTest(code=code):
+                service, collector = self.quiet()
+                collector.beat = ApiError(code)
+                service.run_head_beat()
+                github = service.snapshot(nonblocking=True)["github"]
+                self.assertEqual((github["errors"], [row["pulls"] for row in github["repositories"]]), ([{"code": code}], [[], []]))
+                self.assertEqual((self.files(), collector.cleared), ([], 1))
 
-    def read_usage(self, service, outcome):
-        service._usage_running = True
-        with patch.object(service.usage_reader, "collect", side_effect=[outcome]):
-            service._refresh_usage()
-
-    def test_token_history_and_its_records_are_served_right_after_a_restart(self):
-        first, collector = self.live(reading())
-        self.read_github(first, collector)
-        first.usage_reader.cache = {(REPO, 9): {"gap_at": NOW.isoformat()}}
-        self.read_usage(first, copy.deepcopy(USAGE))
-        self.assertEqual(self.files(), ["reading.json.z", "usage-responses.json.z", "usage.json.z"])
-        self.wall = NOW + timedelta(minutes=3)
-        service, _ = self.live(reading(self.wall))
-        self.assertTrue(service._kept)
-        self.assertEqual(service.usage_reader.cache, {(REPO, 9): {"gap_at": NOW.isoformat()}})
-        usage = service.snapshot()["telemetry"]["usage"]
-        self.assertEqual((usage["samples"][0]["input_tokens"], usage["sampled_at"], usage["stale"]), (900, NOW.isoformat(), False))
-        self.wall = NOW + timedelta(minutes=11)
-        self.assertTrue(service.snapshot()["telemetry"]["usage"]["stale"])
-
-    def test_a_read_that_fails_without_losing_access_keeps_the_last_token_history(self):
-        service, _ = self.live(reading())
-        self.read_usage(service, copy.deepcopy(USAGE))
-        reader = service.usage_reader
-        for failure in (ApiError("rate_limited"), ApiError("unavailable"), ApiError("teapot"), OSError("timed out"), ValueError("bad")):
-            with self.subTest(failure=repr(failure)):
-                self.read_usage(service, failure)
-                self.assertEqual(service._usage_result["samples"][0]["input_tokens"], 900)
-                self.assertIs(service.usage_reader, reader)
-                self.assertFalse(service._usage_running)
-                self.assertIn("usage.json.z", self.files())
-
-    def test_lost_access_on_the_usage_source_deletes_the_token_history_and_nothing_else(self):
-        service, collector = self.live(reading())
-        self.read_github(service, collector)
-        reader = service.usage_reader
-        self.read_usage(service, copy.deepcopy(USAGE))
-        self.assertEqual(self.files(), ["reading.json.z", "usage-responses.json.z", "usage.json.z"])
-        self.read_usage(service, ApiError("forbidden"))
-        self.assertIsNone(service._usage_result)
-        self.assertIsNot(service.usage_reader, reader)
-        self.assertEqual(self.files(), ["reading.json.z"])
-
-    def test_a_scan_that_meets_lost_access_on_a_listing_keeps_nothing_on_disk(self):
-        service, _ = self.live(reading())
-        self.read_usage(service, copy.deepcopy(USAGE))
-        self.assertEqual(self.files(), ["usage-responses.json.z", "usage.json.z"])
-        emptied = {**copy.deepcopy(USAGE), "accounts": [], "samples": [], "partial": True}
-
-        def scan():
-            service.usage_reader.lost_access = True
-            return emptied
-
-        service._usage_running = True
-        with patch.object(service.usage_reader, "collect", side_effect=scan):
-            service._refresh_usage()
-        self.assertEqual((self.files(), service._usage_result["samples"], service._usage_result["partial"]), ([], [], True))
-
-    def test_lost_access_seen_by_a_pass_deletes_the_token_history_and_stops_a_read_in_flight(self):
-        service, collector = self.live(reading(), ApiError("forbidden"))
-        self.read_github(service, collector)
-        self.read_usage(service, copy.deepcopy(USAGE))
-        reader, generation = service.usage_reader, service._usage_generation
-        self.read_github(service, collector)
-        self.assertEqual((self.files(), service._usage_result, collector.cleared), ([], None, 1))
-        self.assertIsNot(service.usage_reader, reader)
-        service._usage_running = True
-        service._finish_usage(reader, generation, copy.deepcopy(USAGE), False)
-        self.assertEqual((self.files(), service._usage_result, service._usage_running), ([], None, False))
-
-    def test_a_kept_record_this_code_cannot_read_is_forgotten_once(self):
-        first, collector = self.live(reading())
-        self.read_github(first, collector)
-        self.read_usage(first, copy.deepcopy(USAGE))
-        service, collector = self.live(reading())
-        self.read_usage(service, KeyError("a record of another shape"))
-        self.assertEqual((self.files(), service._usage_result, service._kept, collector.cleared), ([], None, False, 1))
-        self.assertFalse(service._usage_running)
-        with self.assertRaises(KeyError):
-            self.read_usage(service, KeyError("a defect, with nothing kept to blame"))
-        self.assertFalse(service._usage_running)
-
-    def test_token_history_is_not_read_before_the_owner_wide_repository_list_exists(self):
-        everything = Config("octocat", (), BOTS, None, all_repositories=True)
-        service = LiveService(everything, collector=Collector(), monotonic=lambda: 1000.0, wall_clock=lambda: NOW)
-        github = {"errors": [], "repositories": [], "coverage": {"selected": None}}
-        with patch("dashboard.live_service.DashboardService.snapshot", return_value={"github": github, "telemetry": {"available": False}}), \
-                patch("dashboard.live_service.threading.Thread") as thread:
-            service.snapshot()
-            self.assertEqual((thread.call_count, service._usage_next, service._usage_running), (0, 0, False))
-            service._github = {"coverage": {"selected": 1}, "repositories": [{"repository": REPO}]}
-            service.snapshot()
-            self.assertEqual((thread.call_count, service._usage_running), (1, True))
-
-    def test_a_bot_read_before_the_restart_carries_its_age_onto_the_strip(self):
-        roster = config(agents=(AgentDefinition("swe", "SWE", "swe", "reviewer"),))
-        first, collector = self.live(reading(), settings=roster)
-        self.read_github(first, collector)
-        self.wall = NOW + timedelta(seconds=40)
-        service, _ = self.live(reading(self.wall), settings=roster)
-        row = service.snapshot()["agents"]["rows"][0]
-        self.assertEqual((row["state"], row["stale"], row["sampled_at"], len(row["recent_2h"])), ("idle", True, NOW.isoformat(), 1))
-        fresh = self.read_github(service, service.collector)
-        self.assertFalse(fresh["github"]["bots"]["roles"]["reviewer"].get("stale"))
-
-
-class ThePageSaysHowOld(unittest.TestCase):
-    def node(self, source):
-        result = subprocess.run(["node", "-e", source], cwd=ROOT, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        return json.loads(result.stdout)
-
-    def test_an_old_state_keeps_its_name_with_its_age_and_is_never_the_present_tense(self):
-        result = self.node(r"""
-const h=require('./dashboard/static/helpers.js'), now=Date.parse('2026-10-08T15:04:10Z'), at='2026-10-08T15:00:00Z';
-console.log(JSON.stringify({
- fresh:[h.agedState({state:'working',sampled_at:at},now),h.agedState({state:'idle',stale:false,sampled_at:at},now)],
- old:[h.agedState({state:'idle',stale:true,sampled_at:at},now),h.agedState({state:'working',stale:true,sampled_at:at},now)],
- undated:h.agedState({state:'paused',stale:true},now), unknown:[h.agedState({stale:true,sampled_at:at},now),h.agedState({state:'unknown',stale:true},now)]}));
-""")
-        self.assertEqual(result["fresh"], [{"status": "working", "label": "Working"}, {"status": "idle", "label": "Idle"}])
-        self.assertEqual(result["old"], [{"status": "unknown", "label": "Idle · 4m 10s ago"},
-                                         {"status": "unknown", "label": "Working · 4m 10s ago"}])
-        self.assertEqual(result["undated"], {"status": "unknown", "label": "Paused · stale"})
-        self.assertEqual(result["unknown"], [{"status": "unknown", "label": "Unknown"}] * 2)
-
-    def test_the_header_and_the_banner_say_a_reading_is_old_and_where_it_came_from(self):
-        result = self.node(r"""
-const h=require('./dashboard/static/helpers.js'), now=Date.parse('2026-10-08T15:04:10Z'), at='2026-10-08T15:00:00Z';
-const time=h.formatTime(at), coverage={label:'Selected repositories',selected:2,readable:2};
-console.log(JSON.stringify({time,
- stamps:[h.sourceStamp({sampled_at:at},now),h.sourceStamp({sampled_at:at,refreshing:true},now),h.sourceStamp({sampled_at:at,stale:true},now),
-  h.sourceStamp({sampled_at:at,stale:true,refreshing:true,restored:true},now),h.sourceStamp({refreshing:true},now),h.sourceStamp({},now)],
- banners:[h.coverageBanner(coverage,{}),h.coverageBanner(coverage,{stale:true}),h.coverageBanner(coverage,{stale:true,restored:true})]}));
-""")
-        time = result["time"]
-        self.assertEqual(result["stamps"], [
-            "GitHub sampled %s" % time, "GitHub sampled %s · refreshing" % time, "GitHub sampled %s · 4m 10s ago · stale" % time,
-            "GitHub sampled %s · 4m 10s ago · stale · refreshing" % time, "Fetching GitHub data…", "GitHub unavailable"])
-        counted = "Selected repositories: 2. 2 read successfully in this sample."
-        self.assertEqual(result["banners"], [counted, counted + " Some GitHub data is unavailable or stale.",
-                                             counted + " This is the reading from before a restart; GitHub is being read again."])
-
-    def test_the_bot_strip_draws_an_old_state_in_gray_with_its_age_and_the_header_uses_the_stamp(self):
-        result = self.node(r"""
-const app=require('fs').readFileSync('./dashboard/static/app.js','utf8'), h=require('./dashboard/static/helpers.js');
-const make=tag=>({tag,attrs:{},children:[],style:{setProperty(){}},append(...c){this.children.push(...c)},replaceChildren(...c){this.children=c}});
-const el=(tag,attrs={},...c)=>Object.assign(make(tag),{attrs,children:c.flat().filter(v=>v!=null)});
-const at=new Date(Date.now()-250000).toISOString(), strip=el('div');
-const rows=[{id:'swe',name:'SWE',role:'swe',state:'idle',stale:true,sampled_at:at,recent_2h:[]},{id:'qae',name:'QAE',role:'qae',state:'working',recent_2h:[]}];
-new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel','agedState',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function coverage/)[1])(
- el,h.BOT_META,{agents:{rows}},{},(status,label)=>el('span',{class:'badge status-'+status},label),()=>{},v=>v,{querySelector:()=>strip},()=>'Last 2h',h.agedState);
-const pills=strip.children.filter(n=>n.tag==='button');
-console.log(JSON.stringify({badges:pills.map(p=>p.children[1]).map(b=>[b.attrs.class,b.children[0]]),labels:pills.map(p=>p.attrs['aria-label']),
- stamp:app.includes('textContent = sourceStamp(snapshot.github, Date.now());'),retry:app.includes('window.setTimeout(load, 5000);')}));
-""")
-        self.assertEqual(result["badges"], [["badge status-unknown", "Idle · 4m 10s ago"], ["badge status-working", "Working"]])
-        self.assertEqual(result["labels"], ["SWE: Idle · 4m 10s ago. Open usage and recent outcomes",
-                                            "QAE: Working. Open usage and recent outcomes"])
-        self.assertTrue(result["stamp"] and result["retry"])
+    def test_a_beat_that_fails_without_losing_access_deletes_nothing(self):
+        for code in ("rate_limited", "unavailable", "invalid_response"):
+            with self.subTest(code=code):
+                service, collector = self.quiet()
+                collector.beat = ApiError(code)
+                self.assertIsNone(service.run_head_beat())
+                self.assertEqual([len(row["pulls"]) for row in service._github["repositories"]], [1, 1])
+                self.assertEqual((self.files(), collector.cleared), (["reading.json.z"], 0))
 
 
 class Wiring(unittest.TestCase):

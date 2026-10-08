@@ -88,7 +88,8 @@ class StateStore:
                 value = self._read(path)
             except FileNotFoundError:
                 return None
-            except (OSError, ValueError, zlib.error):
+            except Exception:
+                # Whatever makes a file unreadable, a start must not fail on it, now or next time.
                 value = None
             if value is None:
                 self._remove(path)
@@ -194,6 +195,8 @@ def old_reading(value: object) -> dict | None:
         return None
     value.update(restored=True, stale=True, partial=True)
     for row in value["repositories"]:
+        # A row carried into a later reading keeps this mark, so forgetting kept state finds it.
+        row["restored"] = True
         if not row.get("unavailable"):
             row["stale"] = True
     for role in value["bots"]["roles"].values():
