@@ -445,6 +445,7 @@ mkdir -p "$STORE/slot-ci-1/overlay2"; printf 'live\n' > "$STORE/slot-ci-1/overla
 out="$(run_org --apply 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(mode_of "$STORE/trash")" = 700 ] && [ -f "$S/units/box-ci-store-reaper.service" ] && [ -f "$S/units/box-ci-store-reaper.timer" ] && grep -qx "systemctl enable --now box-ci-store-reaper.timer" "$CALLLOG"
 expect $? "the first apply on a lane that is already running makes the trash and the reaper's unit and timer, and enables the timer"
+{ ! grep -qE '^systemctl (start|restart).*box-ci-store-reaper\.service' "$CALLLOG"; }; expect $? "and it starts no reaper: one that is not running has nothing of an older unit to shed"
 out_before "RUN: install -d -m 0700 $STORE/trash" "wrote $S/units/box-ci-store-reaper.service" && out_before "RUN: systemctl enable --now box-ci-store-reaper.timer" "wrote $S/units/box-ci-ci@.service" \
   && grep -qx "# Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine." "$S/units/box-ci-ci@.service"
 expect $? "first-apply order: the trash exists and the reaper's timer runs before the slot templates are rewritten"
@@ -468,9 +469,24 @@ out="$(as_unit "$S/units/box-ci-ci@.service" 2 prepare ci 2 2>&1)"; rc_prepare=$
 expect $? "a slot of the rewritten template is prepared from its own environment: a fresh copy of the preloaded store"
 out="$(as_unit "$S/units/box-ci-ci@.service" 2 cleanup ci 2 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ ! -e "$STORE/slot-ci-2" ] && [ ! -e "$S/run/ci/2/job" ] && [ "$(trash_count)" = 2 ]; expect $? "and cleaned up the same way: its copy joins the first in the trash"
+listener_files ci 1 7003
+as_unit "$S/units/box-ci-ci@.service" 1 prepare ci 1 >/dev/null 2>&1
+out="$(as_unit "$S/units/box-ci-ci@.service" 1 cleanup ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 2 ] && [ ! -e "$STORE/slot-ci-1" ] && [ ! -e "$S/run/ci/1/job" ] && grep -q "holds its 2 retired copies (or cannot be read); deleting $STORE/slot-ci-1 in place" <<< "$out"
+expect $? "the trash is bounded by the template's own slot count: with the lane's two copies waiting there, a third cleanup deletes its copy in place and adds nothing"
 out="$(as_unit "$S/units/box-ci-store-reaper.service" 0 reap 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(trash_count)" = 0 ] && [ -d "$STORE/trash" ] && [ "$(cat "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres")" = bin ] && [ "$(grep -c ': deleted ' <<< "$out")" = 2 ]
 expect $? "the reaper, run from its own unit's environment, deletes both retired copies and leaves the preloaded store"
+# A reaper that is deleting when an apply changes its unit would run as the old unit until it ended,
+# and on a busy lane it does not end.
+echo activating > "$S/st/state/box-ci-store-reaper.service"; : > "$CALLLOG"
+out="$(run_org --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ! grep -qE '^systemctl (start|stop|restart).*box-ci-store-reaper\.service' "$CALLLOG"; expect $? "an apply that changes nothing of the reaper's unit leaves a running reaper alone"
+sed -i 's/^Nice=19$/Nice=10/' "$S/units/box-ci-store-reaper.service"; : > "$CALLLOG"
+out="$(run_org --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "Nice=19" "$S/units/box-ci-store-reaper.service" && grep -qx "systemctl restart --no-block box-ci-store-reaper.service" "$CALLLOG" \
+  && before '^systemctl daemon-reload' '^systemctl restart --no-block box-ci-store-reaper.service'
+expect $? "an apply that changes the reaper's unit restarts a reaper that is running, after the reload and without waiting for the new run"
 
 # ---- without its App key: both scopes wait at the same gate ------------------------------------------
 for lane in box-ci own-ci; do
