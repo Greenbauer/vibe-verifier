@@ -17,8 +17,10 @@ Add either gate to `.vibe-verifier`.
 
 - `tests/test_gates.py::test_duplicate_top_level_key_with_line`
 - `tests/test_gates.py::test_build_tool_in_dependencies`
+- `tests/test_gates.py::test_test_dom_and_scoped_test_and_build_packages`
 - `tests/test_gates.py::test_override_needs_a_reason`
 
 ## Gotchas
 
 - Invalid JSON is a finding, not a crash.
+- A listed package that does run in production (`jsdom` parsing HTML on a server, `playwright` driving a browser in a scraper) is allowed with a reason: `"vibeVerifier": {"allowInDependencies": {"<package>": "<why>"}}` in that `package.json`.
