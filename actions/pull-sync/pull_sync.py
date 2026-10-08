@@ -17,7 +17,8 @@ runners can take:
     itself a head commit, so a pull request that is not ready is updated at most that often.
   - slots: at most --max-in-flight pull requests of a repository may hold a slot at once, counting
     the ones people pushed. A pull request holds one while any check on its head is unfinished, and
-    while its head commit is newer than --quiet-minutes (its checks may not have registered yet).
+    while its head has no checks at all and is newer than --quiet-minutes (they may not have
+    registered yet). A head whose checks have all finished holds none, however new it is.
     A candidate with no free slot waits for a later run.
 
 Each update is GitHub's own "update branch" (a merge of the default branch into the head), sent
@@ -148,8 +149,9 @@ def running(pull):
 
 
 def holds_slot(pull, now, quiet):
-    """Checks are running on its head, or the head is so new that they may not have registered."""
-    return running(pull) or now - when(head_commit(pull)["committedDate"]) < quiet
+    """Checks are running on its head, or it has none yet and is so new that they may not have registered."""
+    commit = head_commit(pull)
+    return running(pull) or (not commit["statusCheckRollup"] and now - when(commit["committedDate"]) < quiet)
 
 
 def labels(pull):

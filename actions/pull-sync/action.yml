@@ -11,7 +11,7 @@ inputs:
     description: Write the plan. Anything but true prints it and writes nothing.
     default: "false"
   max-in-flight:
-    description: Pull requests of one repository that may hold a slot (checks running, or a head too new for them to have registered) at once, counting the ones people pushed.
+    description: Pull requests of one repository that may hold a slot (checks running, or a new head with no checks yet) at once, counting the ones people pushed.
     default: "2"
   quiet-minutes:
     description: Leave alone a pull request that changed this recently.

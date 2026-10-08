@@ -16,9 +16,9 @@ in [`pull_sync.py`](pull_sync.py), which is the whole engine; this page is how t
 | Anything else (red, draft, no checks) | Updated once its head commit is 24 hours old. An update is a head commit, so that is at most once a day unless the author pushes an older commit back |
 
 At most two pull requests may hold a slot at once (`max-in-flight`), counting the ones people pushed.
-A pull request holds a slot while any check on its head is unfinished, and while its head commit is
-newer than 30 minutes, because the checks of a head that new may not have registered yet. A pull
-request with no free slot waits for a later run. An update is refused by GitHub when the head moved
+A pull request holds a slot while any check on its head is unfinished, and while its head has no
+checks at all and is newer than 30 minutes, because they may not have registered yet. A pull request
+with no free slot waits for a later run. An update is refused by GitHub when the head moved
 since the run read it, so it never lands on top of a push it did not see.
 
 GitHub works out whether a pull request merges cleanly only when asked, so right after a merge it
@@ -66,6 +66,8 @@ jobs:
 
 - It must be able to write contents and pull requests in the repository: an update is a merge commit
   on the pull request's branch, and the conflict label is a write to the pull request.
+- Not yet measured: whether an update that brings in a change under `.github/workflows/` also needs
+  an App's workflows permission. If it does, that update is refused and the run exits 1, naming it.
 - It must not be the workflow's `GITHUB_TOKEN`. GitHub starts no workflow for an event that token
   causes, so the updated head would have no checks at all.
 - The token's identity becomes the actor of every workflow the update starts. A workflow that refuses

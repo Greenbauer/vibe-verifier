@@ -163,7 +163,9 @@ class PullSync(unittest.TestCase):
 
     def test_a_head_too_new_for_its_checks_to_have_registered_holds_a_slot(self):
         # What the previous run's update looks like to a run that follows it within seconds.
-        result = self.run_engine([pull(1, behind=0, checks=None, committed=ago(minutes=1)), pull(2), pull(3)], "--act")
+        # A head just as new whose checks have all finished (#4) holds none.
+        result = self.run_engine([pull(1, behind=0, checks=None, committed=ago(minutes=1)), pull(2), pull(3),
+                                  pull(4, behind=0, committed=ago(minutes=1))], "--act")
         self.assertIn("1 holding a slot, 1 free slot(s)", result.stdout.splitlines()[0])
         self.assertEqual(self.rows(result)["#3 wait"], "ready, 3 behind main; no free slot")
         self.assertEqual([write[1] for write in self.writes()], ["repos/octo/demo/pulls/2/update-branch"])
