@@ -707,7 +707,8 @@ and refuses on structural facts:
    `reference <key>` is reported as that comparison);
 2. no `[ERROR]` in any `console-*.log` outside `--allow-console` patterns, except Chromium's
    `Failed to load resource` line for a host other than the declared site and its further declared
-   origins, which is judged (and skipped) like that host's request in 4;
+   origins, which is judged (and skipped) like that host's request in 4, and an error only pages
+   outside the site logged ([below](#an-error-a-page-outside-the-site-logged));
 3. the session log exists (`--save-session`) and shows a `browser_navigate`;
 4. a `browser_network_requests` result exists (the prompt asks for one after each criterion; a call
    that saved its result to a file is read from that file, which must be in the evidence), and
@@ -745,6 +746,53 @@ and every other console error still fail, and a declaration of another status, o
 site, is itself a finding. Because the declaration is a criterion, the explorer must still show the
 refusal happens, and a reviewer reads the allowance as part of the spec. An HTML comment does not
 declare anything.
+
+### An error a page outside the site logged
+
+A criterion can send the explorer to a page the site does not serve: a hosted checkout or sign-in
+page that a link opens in a new tab. That page's console is not the site's. A real run was refused
+for one: the hosted page could not reach its own analytics endpoint (`Failed to load resource:
+net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin @ <that endpoint>:0`) while the site logged nothing, and
+with one manifest line shared by several repositories the only way out was to reword the criterion.
+
+The console log cannot say which page logged a line. A line ends with the script or resource the
+error is about (` @ <url>:<line>`), which reads the same on the site's page and on the hosted one.
+Checked in the pinned browser: playwright-mcp keeps one `console-*.log` per tab, a tab a link opened
+is not the current tab unless the explorer selects it, and the session log then lists that tab's URL
+but never ties a console log to it.
+
+So the harness records the page. [`console-pages.js`](../../actions/qae-browser/console-pages.js)
+is loaded into playwright-mcp with `--init-page`, and for each console error it appends one line to
+`console-pages.jsonl` in the artifact directory: the URL of the page the tab showed (query and
+fragment dropped) and the SHA-256 of the error's line as the console log holds it. No text is
+copied, so the record is not a second place a credential can land.
+
+With a site declared, the gate does not judge a console error when all three hold:
+
+- the record names at least one page for that line;
+- every page it names is an `http(s)` page outside the declared site and its further origins;
+- the line is not about a URL of the site or of those origins.
+
+Everything else is judged as before:
+
+- an error the record does not name, so a run without the record changes nothing, and neither does
+  a gate with no site declared;
+- an error a page of the site logged. The site's page failing to load a third-party script can be
+  the site's own doing (its content security policy, a wrong URL), and the line cannot say which;
+- a line both a hosted page and a page of the site logged;
+- an error on a page that is not an `http(s)` page (`about:blank`, a `blob:`, the browser's error
+  page).
+
+The rule in 2 for a `Failed to load resource: ... status of NNN` line on another host is unchanged:
+that line is skipped whichever page logged it.
+
+The Claude lane passes the hook in its `--mcp-config`
+(`"--init-page","${{ steps.browser.outputs.console-pages }}"`, the `console-pages` output of
+`actions/qae-browser`), and the Codex lane's action passes it itself. A copy of the Claude lane
+without that argument writes no record and is judged as before.
+
+A tab a link opened starts logging before playwright-mcp opens its log, so its first lines carry a
+negative offset (`[      -4ms] [ERROR] ...`). The gate reads those lines too.
 
 ### A request the page cancelled
 

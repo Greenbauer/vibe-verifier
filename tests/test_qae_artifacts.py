@@ -1,5 +1,6 @@
 """The qae-artifacts adjudicator, driven through its command line against a synthetic artifact
 directory shaped like what playwright-mcp and the explorer write (see harnesses/qae/)."""
+import hashlib
 import json
 import os
 import shutil
@@ -39,6 +40,15 @@ def session_saving_to(filename):
 
 def session_with(requests):
     return SESSION % json.dumps({"result": "\n".join("%d. %s" % (n + 1, line) for n, line in enumerate(requests))})
+
+
+# A hosted page failing to reach its own analytics, as Chromium logs it: the line names the resource.
+BLOCKED = "Failed to load resource: net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin @ https://api.pay.example/pageviews?id=1:0"
+
+
+def page_record(*logged):
+    """console-pages.jsonl as the harness writes it: one line per (page, console error) pair."""
+    return "".join(json.dumps({"page": page, "sha256": hashlib.sha256(message.encode()).hexdigest()}) + "\n" for page, message in logged)
 
 
 CLEAN_REQUESTS = ["[GET] http://localhost:3000/ => [200] OK", "[GET] http://localhost:3000/bid-study => [200] OK"]
@@ -121,6 +131,44 @@ class QaeArtifacts(unittest.TestCase):
         on_site = self.run_gate("--site", "http://localhost:3000")
         self.assertEqual(on_site.returncode, 1)
         self.assertIn("status of 400 (Bad Request) @ http://localhost:3000/api/journeys:0", on_site.stdout)
+
+    def test_an_error_a_third_party_page_logged_is_not_judged(self):
+        # A criterion follows a link to a hosted checkout, which fails to reach its own analytics. The
+        # console line names that resource; the harness's record names the page that logged it.
+        write(self.root, {"console-2.log": "[   -4ms] [ERROR] %s\n" % BLOCKED,
+                          "console-pages.jsonl": page_record(("https://pay.example/checkout", BLOCKED)) + '{"page": "https://pay.exa'})
+        result = self.run_gate("--site", "http://localhost:3000")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # No site declared, nothing is outside it. No record, no page is known: judged as before. The
+        # line is read at all only because a negative offset is accepted: a tab a link opened logs
+        # before playwright-mcp opens its log, and such a line was once skipped unjudged.
+        self.assertEqual(self.run_gate().returncode, 1)
+        os.remove(os.path.join(self.root, "console-pages.jsonl"))
+        unrecorded = self.run_gate("--site", "http://localhost:3000")
+        self.assertEqual(unrecorded.returncode, 1)
+        self.assertIn("console-2.log:1: console error outside the allowlist: " + BLOCKED, unrecorded.stdout)
+
+    def test_an_error_a_page_of_the_site_logged_still_fails(self):
+        site_script = "Uncaught TypeError: cart is undefined @ http://localhost:3000/app.js:7"
+        for why, message, pages in (
+                ("the site's page failed to load the third-party resource", BLOCKED, ["http://localhost:3000/checkout"]),
+                ("a page of the site logged it too", BLOCKED, ["https://pay.example/checkout", "http://localhost:3000/checkout"]),
+                ("a page of a further declared origin logged it", BLOCKED, ["https://api.example.com/docs"]),
+                ("the error is about a URL of the site, whichever page the tab showed", site_script, ["https://pay.example/checkout"]),
+                ("a page that is not an http(s) page is nobody else's", BLOCKED, ["about:blank"]),
+                ("the record names pages for another error only", BLOCKED, [])):
+            with self.subTest(why):
+                write(self.root, {"console-2.log": "[   15ms] [ERROR] %s\n" % message, "qae-inputs/site-url": "http://localhost:3000\nhttps://api.example.com\n",
+                                  "console-pages.jsonl": page_record(("https://pay.example/checkout", "another error"), *((page, message) for page in pages))})
+                result = self.run_gate("--site-file", os.path.join(self.root, "qae-inputs", "site-url"))
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("console error outside the allowlist: " + message, result.stdout)
+
+    def test_an_allowlisted_error_passes_whichever_page_logged_it(self):
+        write(self.root, {"console-2.log": "[   15ms] [ERROR] %s\n" % BLOCKED, "console-pages.jsonl": page_record(("http://localhost:3000/checkout", BLOCKED))})
+        self.assertEqual(self.run_gate("--site", "http://localhost:3000").returncode, 1)
+        result = self.run_gate("--site", "http://localhost:3000", "--allow-console", r"api\.pay\.example/pageviews")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_console_error_fails_unless_allowlisted(self):
         write(self.root, {"console-1.log": "[   606ms] [ERROR] Failed to load resource: 404 @ http://localhost:3000/_vercel/insights/script.js:0\n"})

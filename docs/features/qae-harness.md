@@ -34,6 +34,8 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 
 - `tests/test_acceptance.py::test_one_anchored_pass_per_criterion_passes`
 - `tests/test_qae_artifacts.py::test_a_step_without_a_screenshot_fails`
+- `tests/test_qae_artifacts.py::test_an_error_a_third_party_page_logged_is_not_judged`
+- `tests/test_qae_console_pages.py::test_a_hosted_pages_own_error_passes_and_only_because_of_the_record`
 - `tests/test_criteria.py::test_a_pull_request_that_changes_only_unrendered_paths_needs_no_check`
 - `tests/test_features.py::test_a_selected_feature_without_its_line_is_refused`
 - `tests/test_features.py::test_states_left_unwalked_are_printed_and_never_a_finding`
@@ -58,6 +60,7 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 ## Gotchas
 
 - The explore templates must stay byte-identical outside the explorer block, and the inline prompts must equal prompt.md.
+- A console line names the resource an error is about, never the page that logged it. The page comes from `console-pages.jsonl`, which `actions/qae-browser/console-pages.js` writes through playwright-mcp's `--init-page`. A consumer copy of the Claude lane without that argument writes no record, and every console error is judged as before. The hook depends on the pinned build, and the catalog's `qae-browser` CI job runs it in the real browser.
 - The verdict is taken only from the workflow's own identity, never from another commenter.
 - A pull request body lists criteria only under its `Acceptance criteria` heading; the plain-list reading is for a ticket's criteria file. A Dependabot body has no such heading, so its criteria are the ones the consumer's workflow supplies.
 - A design reference's digest reaches the gate as an explore job output, never as a file the explorer could rewrite; a reference the workflow did not supply is refused, never invented.
