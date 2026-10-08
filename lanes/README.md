@@ -126,13 +126,22 @@ s, each delete holding its instance until it finished, so more slots finished no
 slot never deletes its copy. `cleanup`, and `prepare` when it finds a leftover, rename it to
 `/var/lib/<name>/store/trash/<epoch second>.slot-<kind>-<n>.<pid>`: one rename inside the store
 filesystem, atomic and immediate, under a name no other entry has and that carries the entry's age.
-`<name>-store-reaper.service` (`lane-slot.sh reap`, a root oneshot) deletes the entries three at a
-time, oldest first, holding the trash's lock (an `flock` on the directory itself), until the trash
-is empty; a second reaper finds the lock held and exits, so a lane never runs more than those three
-deletes at once. Three, not one: one at a time took 25 to 36 s a delete beside that lane's copies
-and left the disk half idle, about 2 a minute against the 2.3 copies a minute the lane retires by
-day, so the trash did not drain. And not eight, which is what every slot deleting in its own stop
-path came to (`KNOWN_CI_REAP_JOBS` in `lane-slot.sh`). It runs at `Nice=19` and outside the lane's
+`<name>-store-reaper.service` (`lane-slot.sh reap`, a root oneshot) deletes the entries oldest
+first, holding the trash's lock (an `flock` on the directory itself), until the trash is empty; a
+second reaper finds the lock held and exits. How many it deletes at once follows the store: one
+while the store has at least half of its space and of its inodes free, up to three while it has
+less, read again before every batch (`STORE_AMPLE_FREE_PCT` and `REAP_JOBS` in `lane-slot.sh`).
+Deletes and copies share one disk, which did the same 12,000 to 14,000 small writes a second
+whatever the split, so the count trades a job's start against the store's room. One at a time, ci
+`prepare` took a median of 22 s (longest 36), but at 2.3 copies retired a minute the trash grew
+from 16 to 39 entries and the store's inodes from 35% to 67% used in 45 minutes. Three at a time,
+inodes fell from 64% to 51% used in 12 minutes, but a delete took 71 s on average and ci `prepare`
+a median of 46 s (longest 79). Eight at once is what every slot deleting in its own stop path came
+to. A reaper on a busy lane never finds the trash empty, so after 5 minutes of work it replaces
+itself, between batches, with the helper then on disk: a helper the machine pulled reaches a
+reaper that was already running. An apply that changes the reaper's unit restarts a running reaper
+for the same reason; the delete that cuts short is safe, since what is left of the entry stays in
+the trash and is deleted by the next run. It runs at `Nice=19` and outside the lane's
 slice, so the lane's `CPUQuota` and `MemoryHigh` never stall the one thing that gives the store its
 space back. Every `cleanup` starts it with `systemctl start --no-block`, which does not wait for the
 unit, and `<name>-store-reaper.timer` starts it a minute after boot and every 5 minutes, so no entry

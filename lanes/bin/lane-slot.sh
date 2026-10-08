@@ -47,9 +47,11 @@
 #   outcome; removes jit and idle-stop, and the job file LAST, because its absence is what frees the
 #   instance for the listener.
 # reap
-#   deletes what the slots retired into <store>/trash: up to REAP_JOBS entries at a time (three),
-#   oldest first, holding the trash's lock, until the trash is empty. A second reaper finds the lock
-#   held and exits 0, so a lane never runs more than those few deletes at once. It deletes
+#   deletes what the slots retired into <store>/trash, oldest first, holding the trash's lock, until
+#   the trash is empty: one entry at a time while the store has ample room, up to REAP_JOBS (three)
+#   at a time while it is under pressure. A second reaper finds the lock held and exits 0, so a lane
+#   never runs more than those few deletes at once. After REAP_MAX_SEC of work it starts itself
+#   afresh, so a helper the machine pulled since reaches a reaper that never runs dry. It deletes
 #   entries of that one directory and nothing else: it refuses a trash that is a link, rm
 #   follows no link inside an entry, and it stays on the store's filesystem. Exits 1 when an entry
 #   could not be deleted. <lane>-store-reaper.service runs it, started by every cleanup and by
@@ -75,7 +77,7 @@
 # instance until it finished. So a slot never deletes its copy. prepare (a leftover) and cleanup
 # rename it to <store>/trash/<epoch second>.slot-<kind>-<n>.<pid>: one rename inside one filesystem,
 # so atomic and immediate, under a name no other entry has and that carries the entry's age. The
-# reaper deletes it later, a few at a time. A copy the trash cannot take (the directory cannot be
+# reaper deletes it later, at its own pace. A copy the trash cannot take (the directory cannot be
 # made, it is a link, or the rename fails) is deleted in place, as it was before.
 # Fail closed on disk: a backlog must not fill the store unseen. Before a ci or qae copy, when the
 # store filesystem has less than STORE_MIN_FREE_PCT of its space or of its inodes free (a reading
@@ -198,13 +200,28 @@ STORE_MIN_FREE_PCT="${KNOWN_CI_STORE_MIN_FREE_PCT:-10}"
 # lock; only on top of the longest back-off (10 minutes) can the start time out, which is one more
 # failed run of an instance that was already failing.
 REAP_LOCK_WAIT="${KNOWN_CI_REAP_LOCK_WAIT:-120}"
-# How many entries the reaper deletes at once. Not one: one at a time took 25 to 36 s a delete
-# beside a live lane's copies and left the disk half idle (6,400 small writes a second, 13,700 when
-# saturated), which is about 2 a minute against the 2.3 full copies a minute that lane retires by
-# day, so the trash did not drain (2026-10-07). Not eight: that many ran at once when every slot
-# deleted in its own stop path, the disk saturated, and each took 21 to 121 s. Three at a time keep
-# pace with that lane as long as a batch of three finishes within 78 s.
+# How many entries the reaper deletes at once: one while the store has ample room, REAP_JOBS while
+# it is under pressure, read again before every batch. Deletes and copies share one disk, which
+# does the same 12,000 to 14,000 small writes a second whatever the split, so the count trades a
+# job's start against the store's room. Measured on a live lane, 12 minutes each, 2026-10-07. One
+# at a time: ci prepare took a median of 22 s (p90 29, longest 36), but at about 2.3 copies retired
+# a minute the trash grew from 16 to 39 entries and the store's inodes from 35% to 67% used in 45
+# minutes. Three at a time: inodes fell from 64% to 51% used and space from 81% to 66% in 12
+# minutes, but a delete took 71 s on average (longest 108) and ci prepare a median of 46 s (p90 68,
+# longest 79). So jobs start fast while there is room, and the trash is drained only when it has to
+# be. Never eight: that many ran at once when every slot deleted in its own stop path, and each
+# took 21 to 121 s.
 REAP_JOBS="${KNOWN_CI_REAP_JOBS:-3}"
+# With at least this share of its space and of its inodes free the store has ample room; with less
+# it is under pressure. Half: far above the tenth at which a prepare must delete for itself, so the
+# reaper has the whole stretch between them to win the room back.
+STORE_AMPLE_FREE_PCT="${KNOWN_CI_STORE_AMPLE_FREE_PCT:-50}"
+# How long one reaper process works before it starts itself afresh from the helper on disk. A
+# reaper ends only when the trash is empty, and on a busy lane it never is: a helper a machine
+# pulled at 23:45 never reached the reaper it had started at 22:56 (2026-10-07). It starts afresh
+# between batches, so no delete is cut short. One that is (the unit stopped, a reboot) is safe too:
+# what is left of the entry stays in the trash under its name, and a later pass deletes the rest.
+REAP_MAX_SEC="${KNOWN_CI_REAP_MAX_SEC:-300}"
 
 INSTANCE="$KIND-$SLOT"
 SLOT_RUN="$RUN_DIR/$KIND/$SLOT"
@@ -325,16 +342,20 @@ reap_entry() {
 }
 
 # reap_trash <lock wait> [<enough> ...]: deletes the trash's entries oldest first (their names
-# start with the second they were retired), REAP_JOBS at a time: it starts that many deletes, waits
-# for all of them, and starts the next. It holds the trash's lock throughout: an flock on the
-# directory itself, so the lock needs no file of its own and is gone with its holder. It waits at
-# most <lock wait> seconds for the lock (0: not at all) and returns 75 when it stays held. Given an
-# <enough> command, it starts no further delete once that succeeds, and waits for those under way.
-# An entry can arrive while it works, so it lists the trash again until a pass deletes nothing.
-# Returns 1 when an entry could not be deleted, when REAP_JOBS is not a positive number, or when the
-# trash is not a directory of the store's own.
+# start with the second they were retired), a batch at a time: it starts a batch's deletes, waits
+# for all of them, and starts the next. The reaper's batch is one entry while the store has ample
+# room and REAP_JOBS while it is under pressure, read again before every batch (REAP_JOBS above);
+# a prepare deleting for itself is short of room already and always takes REAP_JOBS. It holds the
+# trash's lock throughout: an flock on the directory itself, so the lock needs no file of its own
+# and is gone with its holder. It waits at most <lock wait> seconds for the lock (0: not at all)
+# and returns 75 when it stays held. Given an <enough> command, it starts no further delete once
+# that succeeds, and waits for those under way. An entry can arrive while it works, so it lists the
+# trash again until a pass deletes nothing. A reaper that has deleted something and worked for
+# REAP_MAX_SEC replaces itself, between batches, with the helper now on disk. Returns 1 when an
+# entry could not be deleted, when REAP_JOBS is not a positive number, or when the trash is not a
+# directory of the store's own.
 reap_trash() {
-  local wait="$1" fd entry entries pid pids progressed failed=0 enough
+  local wait="$1" fd entry entries pid pids progressed failed=0 enough jobs="$REAP_JOBS" batch why reaped=0
   shift
   # A count that is no number would never fill a batch, and every entry would be deleted at once.
   [[ "$REAP_JOBS" =~ ^[1-9][0-9]*$ ]] || { log "KNOWN_CI_REAP_JOBS must be a positive number, got '$REAP_JOBS'"; return 1; }
@@ -348,6 +369,8 @@ reap_trash() {
     exec {fd}<&-
     return 75
   fi
+  # The reaper begins at one at a time, so that its first batch says so when it takes more.
+  [ "$ACTION" != reap ] || jobs=1
   while :; do
     progressed=0
     failed=0
@@ -357,9 +380,9 @@ reap_trash() {
     mapfile -d '' -t entries < <(find "$TRASH_DIR" -mindepth 1 -maxdepth 1 -print0 | LC_ALL=C sort -z)
     # A last, empty round collects the deletes still under way after the last entry.
     for entry in "${entries[@]}" ""; do
-      if [ -z "$entry" ] || [ "${#pids[@]}" -ge "$REAP_JOBS" ]; then
+      if [ -z "$entry" ] || [ "${#pids[@]}" -ge "$jobs" ]; then
         for pid in "${pids[@]}"; do
-          if wait "$pid"; then progressed=1; else failed=$((failed + 1)); fi
+          if wait "$pid"; then progressed=1; reaped=1; else failed=$((failed + 1)); fi
         done
         pids=()
       fi
@@ -367,6 +390,21 @@ reap_trash() {
       if [ "$#" -gt 0 ] && "$@"; then enough=1; continue; fi
       # Gone since the listing (--remove, or a hand): nothing to delete.
       [ -e "$entry" ] || [ -L "$entry" ] || continue
+      if [ "$ACTION" = reap ] && [ "${#pids[@]}" -eq 0 ]; then
+        # The reaper begins a batch. The lock goes first: the new process takes it for itself.
+        if [ "$reaped" = 1 ] && [ "$SECONDS" -ge "$REAP_MAX_SEC" ]; then
+          log "has worked for ${SECONDS}s; starting afresh from the helper on disk"
+          exec {fd}<&-
+          exec "${BASH_SOURCE[0]}" reap
+        fi
+        if store_free "$STORE_AMPLE_FREE_PCT"; then
+          batch=1; why="the store has ample room"
+        else
+          batch="$REAP_JOBS"; why="the store has under $STORE_AMPLE_FREE_PCT% of its space or inodes free"
+        fi
+        [ "$batch" = "$jobs" ] || log "deleting $batch at a time: $why"
+        jobs="$batch"
+      fi
       reap_entry "$entry" &
       pids+=("$!")
     done
@@ -388,14 +426,17 @@ reap() {
 
 trash_backlog() { [ -n "$(find "$TRASH_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; }
 
-# True when the store filesystem has at least STORE_MIN_FREE_PCT of its space and of its inodes
-# free. A reading that cannot be made counts as no room, so the trash is emptied before the copy.
-store_has_room() {
+# store_free <percent>: true when the store filesystem has at least that share of its space and of
+# its inodes free. A reading that cannot be made counts as not that free, so the trash is emptied
+# before a copy and the reaper takes its larger batch.
+store_free() {
   local size avail itotal iavail
   read -r size avail itotal iavail < <(df -B1 --output=size,avail,itotal,iavail "$STORE_DIR" 2>/dev/null | tail -n 1) || return 1
   [[ "$size $avail $itotal $iavail" =~ ^[0-9]+\ [0-9]+\ [0-9]+\ [0-9]+$ ]] || return 1
-  [ $((avail * 100)) -ge $((size * STORE_MIN_FREE_PCT)) ] && [ $((iavail * 100)) -ge $((itotal * STORE_MIN_FREE_PCT)) ]
+  [ $((avail * 100)) -ge $((size * $1)) ] && [ $((iavail * 100)) -ge $((itotal * $1)) ]
 }
+
+store_has_room() { store_free "$STORE_MIN_FREE_PCT"; }
 
 # Before a ci or qae copy ("The store trash" above, "Fail closed on disk").
 make_room() {

@@ -39,9 +39,10 @@
 #       copy at container start (README.md, "Disk")
 #   D   <state>/store/trash, where a slot retires its store copy with a rename instead of deleting
 #       it in its stop path, and <name>-store-reaper.timer: a root oneshot (bin/lane-slot.sh reap)
-#       deletes the retired copies a few at a time, started by every slot's cleanup and by the timer
-#       every 5 minutes. Before the templates (H), so the trash and the reaper are there before a
-#       slot of a rewritten template can finish
+#       deletes the retired copies (one at a time, or a few at a time while the store is under
+#       pressure), started by every slot's cleanup and by the timer every 5 minutes. A reaper that
+#       is running when its unit changes is restarted. Before the templates (H), so the trash and
+#       the reaper are there before a slot of a rewritten template can finish
 #   F   the Docker network <name> on the bridge <name>0, inter-container traffic off
 #   G   the lane firewall rules (bin/lane-firewall.sh)
 #   H   <name>.slice (and its root-level ancestor, which systemd derives from the dash) and one slot
@@ -408,10 +409,13 @@ render_reaper_service() {
   cat <<EOF
 # Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
 # The $NAME lane's store reaper (bin/lane-slot.sh reap): deletes the store copies its slots retired
-# into $TRASH_DIR, a few at a time under one lock (REAP_JOBS in that script). Every slot's
-# cleanup starts it without waiting (systemctl start --no-block), and $REAPER_TIMER does,
-# so no copy is left there by a start that was missed or by a reboot. No start timeout (a oneshot
-# has none): emptying a backlog is its job, and a killed run would only begin again where it stopped.
+# into $TRASH_DIR under one lock: one at a time, or a few at a time while the store is under
+# pressure (REAP_JOBS in that script). Every slot's cleanup starts it without waiting (systemctl
+# start --no-block), and $REAPER_TIMER does, so no copy is left there by a start that was
+# missed or by a reboot. No start timeout (a oneshot has none): emptying a backlog is its job, and a
+# killed run would only begin again where it stopped. A run that never ends replaces itself now
+# and then, between deletes, with the helper on disk (REAP_MAX_SEC there), so a pulled helper
+# reaches it.
 [Unit]
 Description=$NAME lane: delete the store copies its slots retired
 RequiresMountsFor=$STORE_DIR
@@ -798,6 +802,12 @@ ensure_store_reaper() {
   changed+="$(converge_file "$UNIT_DIR/$REAPER_TIMER" "$(render_reaper_timer)")"
   [ -z "$changed" ] || run_mutation systemctl daemon-reload
   run_mutation systemctl enable --now "$REAPER_TIMER"
+  # A reaper that is deleting when its unit changes would run as the old unit until it ended, and
+  # on a busy lane it does not end: restart it, without waiting for the new run. The delete this
+  # cuts short is safe: what is left of the entry stays in the trash and the new run deletes it.
+  if [ -n "$changed" ] && unit_running "$(systemctl is-active "$REAPER_SERVICE" 2>/dev/null || true)"; then
+    run_mutation systemctl restart --no-block "$REAPER_SERVICE"
+  fi
 }
 
 ensure_network() {

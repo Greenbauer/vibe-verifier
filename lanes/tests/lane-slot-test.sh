@@ -321,12 +321,12 @@ backlog() { local t; for t in "$@"; do mkdir -p "$STORE/trash/$t.slot-ci-2.7/ove
 setup; probe_rm
 listener_files ci 1 acme 4242
 backlog 1700000300 1700000500 1700000100 1700000400 1700000200
-out="$(STORE_DF_SHORT="1000 50 1000 500" STORE_DF_SHORT_WHILE="$STORE/trash" STORE_DF_SHORT_ABOVE=2 run_slot prepare ci 1 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && [ "$(ls -A "$STORE/trash" | tr '\n' ' ')" = "1700000400.slot-ci-2.7 1700000500.slot-ci-2.7 " ] && [ -d "$STORE/slot-ci-1/overlay2/layer1" ] \
+out="$(KNOWN_CI_STORE_AMPLE_FREE_PCT=1 RM_HOLD=0.2 STORE_DF_SHORT="1000 50 1000 500" STORE_DF_SHORT_WHILE="$STORE/trash" STORE_DF_SHORT_ABOVE=2 run_slot prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(most_at_once)" = 3 ] && [ "$(ls -A "$STORE/trash" | tr '\n' ' ')" = "1700000400.slot-ci-2.7 1700000500.slot-ci-2.7 " ] && [ -d "$STORE/slot-ci-1/overlay2/layer1" ] \
   && [ "$(grep -c '^rm -rf --one-file-system' "$CALLLOG")" = 3 ] && before "^rm -rf --one-file-system -- $STORE/trash/1700000100\." '^cp --reflink=always' \
   && before "^rm -rf --one-file-system -- $STORE/trash/1700000200\." '^cp --reflink=always' && before "^rm -rf --one-file-system -- $STORE/trash/1700000300\." '^cp --reflink=always' \
   && grep -q "the store filesystem at $STORE has under 10% of its space or inodes free and $STORE/trash holds retired copies; deleting from it here, before this job's copy" <<< "$out"
-expect $? "a store short of space with a backlog in the trash: prepare deletes the oldest retired copies itself, three at a time, starts no more once there is room, then makes its copy"
+expect $? "a store short of space with a backlog in the trash: prepare deletes the oldest retired copies itself, three at a time whatever pace the reaper would take, starts no more once there is room, then makes its copy"
 setup; probe_rm
 listener_files ci 1 acme 4242
 backlog 1700000100
@@ -362,8 +362,9 @@ grep -qx 'STORE_MIN_FREE_PCT="${KNOWN_CI_STORE_MIN_FREE_PCT:-10}"' "$HELPER" && 
 expect $? "the store is short of room below a tenth of its space or inodes free, and a prepare waits 120 s for a reaper that holds the lock"
 
 # ---- reap: the lane's store reaper ---------------------------------------------------------------
-# As <lane>-store-reaper.service runs it; it needs the store and nothing else.
-run_reap() { env PATH="$S/pathbin:$PATH" KNOWN_CI_STORE_DIR="$STORE" PROBE_TRASH="$STORE/trash" bash "$HELPER" reap "$@"; }
+# As <lane>-store-reaper.service runs it; it needs the store and nothing else. Bounded, so that a
+# reaper that never ended would fail its test rather than hang the run.
+run_reap() { timeout 60 env PATH="$S/pathbin:$PATH" KNOWN_CI_STORE_DIR="$STORE" PROBE_TRASH="$STORE/trash" bash "$HELPER" reap "$@"; }
 setup; probe_rm
 for t in 1700000300 1700000100 1700000200; do mkdir -p "$STORE/trash/$t.slot-ci-1.7/overlay2/layer1"; printf 'x\n' > "$STORE/trash/$t.slot-ci-1.7/overlay2/layer1/file"; done
 mkdir -p "$STORE/slot-ci-2/overlay2"; printf 'live\n' > "$STORE/slot-ci-2/overlay2/file"
@@ -375,29 +376,77 @@ expect $? "the reaper runs one rm for each entry, naming that entry alone by its
 [ "$(cat "$STORE/slot-ci-2/overlay2/file")" = live ] && [ "$(cat "$STORE/golden-tag1/overlay2/layer1/diff/usr/bin/postgres")" = bin ] && [ -f "$STORE/golden-tag1/image/overlay2/repositories.json" ]
 expect $? "it never deletes a preloaded golden-* store or a live slot-* copy: only what is inside the trash"
 grep -qE "^lane-slot\[reap\]: deleted 1700000100\.slot-ci-1\.7 in [0-9]+s$" <<< "$out" && [ "$(grep -c ': deleted ' <<< "$out")" = 3 ]; expect $? "it logs each entry it deleted and how long that took"
-# A few at a time: three deletes run together, never more, and the oldest entries go first. Each
-# held delete records when it began and ended, and a batch starts only after the one before it ended.
+# How many at once follows the store: one while it has ample room (the df stand-in's half free),
+# three while it is under pressure (PRESSED: 40% of the space free, above the tenth at which a
+# prepare deletes for itself). Each held delete records when it began and ended, and a batch starts
+# only after the one before it ended.
+PRESSED="1000 400 1000 500"
 entries_of() { local t; for t in "$@"; do printf 'rm -rf --one-file-system -- %s/trash/%s.slot-ci-1.7|' "$STORE" "$t"; done; }
 setup; probe_rm
 for t in 1700000600 1700000100 1700000500 1700000200 1700000400 1700000300 1700000700; do mkdir -p "$STORE/trash/$t.slot-ci-1.7/overlay2"; done
-out="$(RM_HOLD=0.3 run_reap 2>&1)"; rc=$?
+out="$(STORE_DF_SHORT="$PRESSED" RM_HOLD=0.3 run_reap 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(trash_count)" = 0 ] && [ "$(grep -c ' 1$' "$S/st/rm-times")" = 7 ] && [ "$(most_at_once)" = 3 ]
-expect $? "the reaper deletes three entries at a time: with seven waiting, three deletes run together and never more than three"
+expect $? "under pressure the reaper deletes three entries at a time: with seven waiting, three deletes run together and never more than three"
 [ "$(grep '^rm ' "$CALLLOG" | sed -n '1,3p' | sort | tr '\n' '|')" = "$(entries_of 1700000100 1700000200 1700000300)" ] && [ "$(grep '^rm ' "$CALLLOG" | sed -n '4,6p' | sort | tr '\n' '|')" = "$(entries_of 1700000400 1700000500 1700000600)" ] \
   && [ "$(grep '^rm ' "$CALLLOG" | sed -n '7,$p' | tr '\n' '|')" = "$(entries_of 1700000700)" ]
 expect $? "oldest first: the three oldest entries are deleted together, then the next three, then the one that is left"
 [ "$(grep -c '^trash lock held at rm ' "$CALLLOG")" = 7 ]; expect $? "and every one of those deletes runs under the one lock the reaper holds"
+grep -q "deleting 3 at a time: the store has under 50% of its space or inodes free" <<< "$out"; expect $? "it says so when it takes the larger batch, and why"
 setup; probe_rm
 for t in 1700000300 1700000100 1700000200; do mkdir -p "$STORE/trash/$t.slot-ci-1.7/overlay2"; done
-out="$(KNOWN_CI_REAP_JOBS=1 RM_HOLD=0.1 run_reap 2>&1)"; rc=$?
+out="$(RM_HOLD=0.1 run_reap 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(most_at_once)" = 1 ] && [ "$(grep '^rm ' "$CALLLOG" | tr '\n' '|')" = "$(entries_of 1700000100 1700000200 1700000300)" ] && ! grep -q "at a time" <<< "$out"
+expect $? "while the store has ample room the reaper deletes one entry at a time, strictly oldest first, so a job's copy has the disk"
+setup; probe_rm
+for t in 1700000300 1700000100 1700000200; do mkdir -p "$STORE/trash/$t.slot-ci-1.7/overlay2"; done
+out="$(STORE_DF_SHORT="1000 500 1000 400" RM_HOLD=0.3 run_reap 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(most_at_once)" = 3 ]; expect $? "a store short of inodes alone is under pressure too"
+# The pressure goes as the trash drains: here the store is pressed while more than four entries wait.
+setup; probe_rm
+for t in 1 2 3 4 5 6 7 8; do mkdir -p "$STORE/trash/170000${t}000.slot-ci-1.7/overlay2"; done
+out="$(STORE_DF_SHORT="$PRESSED" STORE_DF_SHORT_WHILE="$STORE/trash" STORE_DF_SHORT_ABOVE=4 RM_HOLD=0.3 run_reap 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 0 ] && [ "$(most_at_once)" = 3 ] && [ "$(sort -n "$S/st/rm-times" | tail -n 4 | cut -d' ' -f2 | tr '\n' ' ')" = "1 -1 1 -1 " ] \
+  && [ "$(grep -c 'deleting 3 at a time' <<< "$out")" = 1 ] && [ "$(grep -c 'deleting 1 at a time: the store has ample room' <<< "$out")" = 1 ] \
+  && [ "$(grep -n 'deleting 3 at a time' <<< "$out" | cut -d: -f1)" -lt "$(grep -n 'deleting 1 at a time' <<< "$out" | cut -d: -f1)" ]
+expect $? "the store is read again before every batch: once the pressure is gone the reaper falls back to one at a time, and says so"
+setup; probe_rm
+for t in 1700000300 1700000100 1700000200; do mkdir -p "$STORE/trash/$t.slot-ci-1.7/overlay2"; done
+out="$(KNOWN_CI_REAP_JOBS=1 STORE_DF_SHORT="$PRESSED" RM_HOLD=0.1 run_reap 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(most_at_once)" = 1 ] && [ "$(grep '^rm ' "$CALLLOG" | tr '\n' '|')" = "$(entries_of 1700000100 1700000200 1700000300)" ]
-expect $? "KNOWN_CI_REAP_JOBS sets how many: at 1 the reaper deletes one entry at a time, strictly oldest first"
+expect $? "KNOWN_CI_REAP_JOBS sets the most it takes under pressure: at 1 the reaper deletes one entry at a time even then"
 setup; probe_rm
 for t in 1700000300 1700000100 1700000200; do mkdir -p "$STORE/trash/$t.slot-ci-1.7/overlay2"; done
 out="$(KNOWN_CI_REAP_JOBS=many run_reap 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && ! grep -q '^rm ' "$CALLLOG" && [ "$(trash_count)" = 3 ] && grep -q "KNOWN_CI_REAP_JOBS must be a positive number, got 'many'" <<< "$out"
 expect $? "a count that is not a positive number is refused, and nothing is deleted: it could not bound how many deletes run at once"
-grep -qx 'REAP_JOBS="${KNOWN_CI_REAP_JOBS:-3}"' "$HELPER"; expect $? "three at a time is the default"
+grep -qx 'REAP_JOBS="${KNOWN_CI_REAP_JOBS:-3}"' "$HELPER" && grep -qx 'STORE_AMPLE_FREE_PCT="${KNOWN_CI_STORE_AMPLE_FREE_PCT:-50}"' "$HELPER"
+expect $? "three at a time is the most by default, and the store is under pressure with less than half of its space or inodes free"
+# A new helper must reach a reaper that is already running: on a busy lane the trash is never empty,
+# so the reaper never ends by itself. After REAP_MAX_SEC of work it replaces itself, between batches,
+# with the helper then on disk (here after every batch).
+setup; probe_rm
+for t in 1700000300 1700000100 1700000200; do mkdir -p "$STORE/trash/$t.slot-ci-1.7/overlay2"; done
+out="$(KNOWN_CI_REAP_MAX_SEC=0 run_reap 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(trash_count)" = 0 ] && [ "$(grep -c 'starting afresh from the helper on disk' <<< "$out")" = 2 ] \
+  && [ "$(grep '^rm ' "$CALLLOG" | tr '\n' '|')" = "$(entries_of 1700000100 1700000200 1700000300)" ] && flock -n "$STORE/trash" true
+expect $? "a reaper past its working time starts afresh between batches: every entry is still deleted, oldest first, and the lock is free at the end"
+setup; probe_rm
+cp "$HELPER" "$S/helper-on-disk.sh"
+printf '#!/bin/bash\necho "the newer helper ran: $*" >> "$CALLLOG"\n' > "$S/newer-helper.sh"; chmod +x "$S/newer-helper.sh"
+for t in 1700000300 1700000100 1700000200; do mkdir -p "$STORE/trash/$t.slot-ci-1.7/overlay2"; done
+timeout 60 env PATH="$S/pathbin:$PATH" KNOWN_CI_STORE_DIR="$STORE" KNOWN_CI_REAP_MAX_SEC=0 RM_HOLD=0.5 bash "$S/helper-on-disk.sh" reap > "$S/reap.out" 2>&1 & reaper=$!
+for _ in $(seq 1 100); do grep -q '^rm ' "$CALLLOG" && break; /bin/sleep 0.05; done
+mv "$S/newer-helper.sh" "$S/helper-on-disk.sh"
+wait "$reaper"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "the newer helper ran: reap" "$CALLLOG" && [ ! -e "$STORE/trash/1700000100.slot-ci-1.7" ] && [ "$(trash_count)" -ge 1 ] \
+  && [ "$(( $(trash_count) + $(grep -c '^rm ' "$CALLLOG") ))" = 3 ] && [ "$(grep -c ' 1$' "$S/st/rm-times")" = "$(grep -c ' -1$' "$S/st/rm-times")" ]
+expect $? "a helper replaced while the reaper deletes takes over between batches: no delete is cut short, and the new helper runs in the reaper's place with entries still waiting"
+setup; probe_rm
+mkdir -p "$STORE/trash/1700000100.slot-ci-1.7" "$STORE/trash/1700000200.slot-ci-1.7"
+out="$(RM_FAIL="$STORE/trash/1700000100.slot-ci-1.7" KNOWN_CI_REAP_MAX_SEC=0 run_reap 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && [ "$(trash_count)" = 1 ] && [ "$(grep -c 'starting afresh' <<< "$out")" = 1 ] && [ "$(grep -c "could not delete $STORE/trash/1700000100.slot-ci-1.7" <<< "$out")" = 2 ]
+expect $? "a reaper starts afresh only once it has deleted something: one whose entries will not delete ends and exits 1, so its failure shows"
+grep -qx 'REAP_MAX_SEC="${KNOWN_CI_REAP_MAX_SEC:-300}"' "$HELPER"; expect $? "five minutes of work is the default"
 setup; probe_rm
 mkdir -p "$STORE/trash/1700000100.slot-ci-1.7" "$STORE/trash/1700000200.slot-ci-1.7" "$STORE/trash/1700000300.slot-ci-1.7" "$STORE/trash/1700000400.slot-ci-1.7"
 out="$(RM_VANISH="$STORE/trash/1700000400.slot-ci-1.7" run_reap 2>&1)"; rc=$?
