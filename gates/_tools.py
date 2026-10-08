@@ -127,7 +127,7 @@ FETCH_BACKOFF = 2  # seconds before the second attempt, doubled before each one 
 def _transient(error):
     """Whether a failed fetch may succeed on another try: the release host answered 429 or 5xx, or the
     connection failed (refused, reset, timed out, cut short). Any other status, such as 404 or 403, is
-    the host's answer, and so is a URL it cannot open."""
+    the host's answer, and a ValueError is a URL urllib cannot parse: neither changes on a second try."""
     if isinstance(error, urllib.error.HTTPError):
         return error.code == 429 or error.code >= 500
     return not isinstance(error, ValueError)

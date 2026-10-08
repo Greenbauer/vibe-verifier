@@ -83,7 +83,7 @@ class Download(unittest.TestCase):
         message, fetches, waits = self.download(urllib.error.URLError(ConnectionResetError("reset by peer")),
                                                 status(502, "Bad Gateway"), status(503, "Service Unavailable"),
                                                 ASSET)  # a fourth answer that must never be asked for
-        self.assertEqual((fetches, waits), (_tools.FETCH_ATTEMPTS, [_tools.FETCH_BACKOFF, _tools.FETCH_BACKOFF * 2]))
+        self.assertEqual((fetches, waits), (3, [2, 4]))  # the numbers docs/GATE-CONTRACT.md gives
         self.assertEqual(message, "could not fetch stand-in 1.2.3 (%s) after 3 attempts: HTTP Error 503: Service "
                                   "Unavailable; install it on PATH or set VIBE_VERIFIER_TOOLS to a cache that has it" % URL)
         self.assertFalse(os.path.exists(self.target))
@@ -95,10 +95,17 @@ class Download(unittest.TestCase):
                                   "install it on PATH or set VIBE_VERIFIER_TOOLS to a cache that has it" % URL)
         self.assertFalse(os.path.exists(self.target))
 
-    def test_a_403_is_not_tried_again(self):
-        message, fetches, waits = self.download(status(403, "Forbidden"), ASSET)
+    def test_no_other_4xx_is_tried_again(self):
+        for code in (400, 403, 408, 499):
+            with self.subTest(code=code):
+                message, fetches, waits = self.download(status(code, "Refused"), ASSET)
+                self.assertEqual((fetches, waits), (1, []))
+                self.assertIn("after 1 attempt: HTTP Error %d: Refused" % code, message)
+
+    def test_a_url_that_cannot_be_parsed_is_not_tried_again(self):
+        message, fetches, waits = self.download(ValueError("unknown url type: 'stand-in.zip'"), ASSET)
         self.assertEqual((fetches, waits), (1, []))
-        self.assertIn("after 1 attempt: HTTP Error 403: Forbidden", message)
+        self.assertIn("after 1 attempt: unknown url type: 'stand-in.zip'", message)
 
     def test_a_digest_mismatch_is_not_tried_again(self):
         message, fetches, waits = self.download(OTHER, ASSET)

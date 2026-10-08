@@ -22,4 +22,4 @@ Add `gitleaks` to `.vibe-verifier`.
 
 ## Gotchas
 
-- The pinned binary is downloaded and checked against its sha256 on first use. A 429, a 5xx or a dropped connection is tried three times in all; no network is still exit 2, a few seconds later.
+- The pinned binary is downloaded and checked against its sha256 on first use. A 429, a 5xx or a dropped connection is tried three times in all; no network is still exit 2, about 6 seconds later, or up to 3 minutes when every attempt runs to its 60 second timeout.
