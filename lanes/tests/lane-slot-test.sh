@@ -111,6 +111,22 @@ setup
 listener_files ci 1 acme 4242
 out="$(env -u KNOWN_CI_BRIDGE PATH="$S/pathbin:$PATH" KNOWN_CI_NAME=box-ci KNOWN_CI_SCOPE=org KNOWN_CI_GH_HOSTS="$S/ghhome/hosts.yml" KNOWN_CI_HARDEN="$S/harden.sh" bash "$HELPER" prepare ci 1 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && ! grep -q '^harden' "$CALLLOG"; expect $? "prepare refuses a unit environment without the lane's bridge, before any firewall call"
+# A slot step that fails stops the prepare. The helper's set -e does not: bash ignores it inside a
+# function called in an || list, which is how prepare_job calls the slot's steps. A prepare that
+# went on past a failed mkfs or mount would exit 0, and the unit would start its container on the
+# bare slot directory of the host filesystem.
+setup
+listener_files ci 1 acme 4242
+out="$(MOUNT_RC=32 run_slot prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "could not mount the slot image $S/state/slot-ci-1.img at $S/state/slot-ci-1; refusing to start a job on the bare directory" <<< "$out" \
+  && grep -q '^mount -o loop,nodev,nosuid' "$CALLLOG" && ! grep -q '^cp --reflink' "$CALLLOG" && [ ! -e "$STORE/slot-ci-1" ] && ! grep -q 'slot ready' <<< "$out"
+expect $? "a prepare whose mount fails exits non-zero naming the step, and makes no store copy: no job starts on the bare slot directory"
+setup
+listener_files ci 1 acme 4242
+out="$(MKFS_RC=1 run_slot prepare ci 1 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "mkfs.ext4 failed on the slot image $S/state/slot-ci-1.img; refusing to start a job" <<< "$out" \
+  && grep -q '^mkfs.ext4 -q -F -m 0' "$CALLLOG" && ! grep -q '^mount' "$CALLLOG" && ! grep -q '^cp --reflink' "$CALLLOG" && [ ! -e "$STORE/slot-ci-1" ] && ! grep -q 'slot ready' <<< "$out"
+expect $? "a prepare whose mkfs.ext4 fails exits non-zero naming the step, before any mount or store copy"
 
 # The QAE kind: the Codex store is reset to the login and the tracked config, and handed to the job.
 setup

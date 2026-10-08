@@ -8,16 +8,16 @@
 # record every mutation in $CALLLOG and keep their state under $ST; fixtures come from $FX. A
 # mount unit's enable mounts its Where= path; GNU stat -c %u reads a list of root-owned paths;
 # cp --reflink=always is done as a plain copy (neither ext4 nor tmpfs takes one); chmod
-# --reference is done from the reference's mode. A filesystem's type is what mkfs left as the first
-# line of its image, and a mount records it for its mount point in $ST/mount-types; stat -f, findmnt
-# and blkid answer from there, or STORE_FSTYPE (xfs when unset) for a store nothing mounted. The
-# files of an image a mkfs stand-in made follow it: they are in its mount point while it is mounted
-# and nowhere a test's lane looks while it is not (stub-image), so a store that is unmounted, has
-# its image renamed and is mounted elsewhere shows there what it held. MOUNT_RC fails mount with
-# that status (it then mounts nothing). btrfs
-# keeps subvolumes as directories whose inode it lists in $ST/subvolumes, so one stays a subvolume
-# when it is renamed; a snapshot is a plain copy, and a delete follows a link as the real one does. The gh stub applies the script's own jq filter to
-# its fixture with the real jq.
+# --reference is done from the reference's mode. MOUNT_RC and MKFS_RC fail mount (which then mounts
+# nothing) and mkfs.ext4 with that status. A filesystem's type is what mkfs left as the first line
+# of its image, and a mount records it for its mount point in $ST/mount-types; stat -f, findmnt and
+# blkid answer from there, or STORE_FSTYPE (xfs when unset) for a store nothing mounted. The files
+# of an image a mkfs stand-in made follow it: they are in its mount point while it is mounted and
+# nowhere a test's lane looks while it is not (stub-image), so a store that is unmounted, has its
+# image renamed and is mounted elsewhere shows there what it held. btrfs keeps subvolumes as
+# directories whose inode it lists in $ST/subvolumes, so one stays a subvolume when it is renamed; a
+# snapshot is a plain copy, and a delete follows a link as the real one does. The gh stub applies
+# the script's own jq filter to its fixture with the real jq.
 
 write_stubs() {
   local p="$1"
@@ -250,6 +250,7 @@ SH
   cat > "$p/mkfs.ext4" <<'SH'
 #!/bin/bash
 echo "mkfs.ext4 $*" >> "$CALLLOG"
+exit "${MKFS_RC:-0}"
 SH
   cat > "$p/mkfs.xfs" <<'SH'
 #!/bin/bash

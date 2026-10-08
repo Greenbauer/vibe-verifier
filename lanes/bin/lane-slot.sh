@@ -540,17 +540,20 @@ backoff() {
   sleep "$delay"
 }
 
-# Steps 2-6 of prepare.
+# Steps 2-6 of prepare. prepare_job calls this in an || list, and bash ignores set -e for everything
+# a function runs there, so each step that must stop the prepare says so itself: a slot whose mkfs
+# or mount failed would otherwise leave the unit to start its container on the bare mount point, a
+# directory of the host filesystem that is neither bounded nor fresh.
 prepare_slot() {
   backoff
   "$HARDEN" >/dev/null || { log "lane firewall rules could not be asserted; refusing to start a job"; return 1; }
   remove_container
   unmount_slot
-  install -d -m 0700 "$MOUNT_POINT"
-  rm -f "$IMAGE_FILE"
-  truncate -s "${KNOWN_CI_SLOT_GB:?}G" "$IMAGE_FILE"
-  mkfs.ext4 -q -F -m 0 "$IMAGE_FILE"
-  mount -o loop,nodev,nosuid "$IMAGE_FILE" "$MOUNT_POINT"
+  install -d -m 0700 "$MOUNT_POINT" || { log "could not make the slot's mount point $MOUNT_POINT; refusing to start a job"; return 1; }
+  rm -f "$IMAGE_FILE" || { log "could not delete the old slot image $IMAGE_FILE; refusing to start a job"; return 1; }
+  truncate -s "${KNOWN_CI_SLOT_GB:?}G" "$IMAGE_FILE" || { log "could not create the slot image $IMAGE_FILE; refusing to start a job"; return 1; }
+  mkfs.ext4 -q -F -m 0 "$IMAGE_FILE" || { log "mkfs.ext4 failed on the slot image $IMAGE_FILE; refusing to start a job"; return 1; }
+  mount -o loop,nodev,nosuid "$IMAGE_FILE" "$MOUNT_POINT" || { log "could not mount the slot image $IMAGE_FILE at $MOUNT_POINT; refusing to start a job on the bare directory"; return 1; }
   # A leftover of an earlier run of this instance: its cleanup was killed, or never ran.
   retire_store "$SNAPSHOT"
   if [ "$KIND" = wait ] && [ "$STORE_FS" = btrfs ]; then
