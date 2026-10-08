@@ -24,8 +24,8 @@ history, no outcomes), and a feature file the base has selects by its base Surfa
 request cannot narrow its own re-walk by editing the map.
 
 `missing_map` judges a head with no feature file, for the drift gate and the re-walk alike, from the
-commits alone: the branch removed the map, or it predates a map the base has since gained, or nothing
-tells which and the caller cannot run.
+commits alone: the branch predates a map the base has since gained, which is no fault of the branch,
+or the caller cannot run (the branch removed the map, or nothing tells which).
 """
 import os
 import posixpath
@@ -134,31 +134,32 @@ def paths_at(repo, directory, commit):
     return feature_paths(directory, [p for p in listed.stdout.split("\0") if p])
 
 
-class Missing(NamedTuple):
-    """Why the head's map has no feature file, as the base tells it."""
-    removed: bool   # the merge base has the map, so this branch removed it; else the branch predates the map
+class Predates(NamedTuple):
+    """A head with no feature file on a branch that predates the map, as `missing_map` found it."""
     directory: str  # the map's directory
-    base: str       # the base ref
-    point: str      # the merge base of the base and HEAD, abbreviated
-    count: int      # the feature files at the merge base (removed) or at the base (predates)
+    base: str       # the base ref, which has the map
+    point: str      # the merge base of the base and HEAD (the first of several), abbreviated: it has no map
+    count: int      # the feature files at the base
 
     def why(self):
         """The fact, in the words the drift gate and the re-walk both print."""
-        if self.removed:
-            return ("the feature map was removed: %s/ has no feature file at the head, and the merge base %s has %d"
-                    % (self.directory, self.point, self.count))
         return ("this branch has no feature map because it predates it (%s/ has no feature file here or at the merge "
                 "base %s, and %s has %d)" % (self.directory, self.point, self.base, self.count))
 
 
 def missing_map(repo, directory, base_ref=None):
-    """What the base says of a head whose map has no feature file, or exit 2 when it says nothing.
+    """Predates, for a head with no feature file on a branch that predates the map; exit 2 for every
+    other head with none.
 
-    The merge base of the base and HEAD has feature files: this branch removed the map. It has none and
-    the base has some: the map landed on the base after the branch left it, so the branch predates the
-    map and gets it by taking the base. Anything else is the exit 2 a missing map always was, because
-    nothing then tells a branch that predates a map from a subscription that has none: no base resolves,
-    the two share no merge base (a shallow clone), or the base has no map either.
+    The branch predates the map when no merge base of the base and HEAD has a feature file and the base
+    has some: the map landed on the base after the branch left it, and the branch gets it by taking
+    the base. Everything else is exit 2, which --soak never masks:
+
+    - a merge base has feature files (any one of several, after a criss-cross merge): the branch
+      removed the map. Nothing was judged at this head, and nothing could be on the base once it merged;
+    - nothing tells a branch that predates a map from a subscription that has none: no base resolves,
+      the base the environment names is not in this checkout (falling through to main would be a
+      guess), the base and HEAD share no merge base (a shallow clone), or the base has no map either.
     """
     where = map_directory(directory)
     absent = "no feature files in %s/ (one <id>.md per feature, besides the %s index)" % (where, INDEX)
@@ -166,18 +167,26 @@ def missing_map(repo, directory, base_ref=None):
         base = resolve_base(repo, base_ref)
     except CannotRun as reason:
         raise CannotRun("%s, and no base to tell whether the branch predates the map: %s" % (absent, reason))
-    found = subprocess.run(["git", "-C", repo, "merge-base", base, "HEAD"], capture_output=True, text=True)
-    point = found.stdout.strip()
-    if found.returncode != 0 or not point:
+    named = os.environ.get("VIBE_VERIFIER_BASE_REF") or os.environ.get("GITHUB_BASE_REF")
+    if named and not base_ref and base not in ("origin/" + named, named):
+        raise CannotRun("%s, and the base this run names, %s, is not in this checkout to tell whether the branch "
+                        "predates the map (fetch it: fetch-depth: 0)" % (absent, named))
+    found = subprocess.run(["git", "-C", repo, "merge-base", "--all", base, "HEAD"], capture_output=True, text=True)
+    points = found.stdout.split()
+    if found.returncode != 0 or not points:
         raise CannotRun("%s, and %s and HEAD have no merge base to tell whether the branch predates the map "
                         "(fetch history: fetch-depth: 0)" % (absent, base))
-    at_point = paths_at(repo, directory, point)
-    if at_point:
-        return Missing(True, where, base, point[:12], len(at_point))
+    for point in points:
+        count = len(paths_at(repo, directory, point))
+        if count:
+            raise CannotRun("the feature map was removed: %s/ has no feature file at the head, and the merge base %s "
+                            "has %d. Restore it. To stop keeping a map, first merge a change that removes what reads "
+                            "it (the feature-map line, the --features option), then delete the map"
+                            % (where, point[:12], count))
     at_base = paths_at(repo, directory, base)
     if not at_base:
         raise CannotRun(absent)
-    return Missing(False, where, base, point[:12], len(at_base))
+    return Predates(where, base, points[0][:12], len(at_base))
 
 
 def base_map(repo, directory, base):
@@ -196,7 +205,7 @@ class Selection(NamedTuple):
     selected: list  # [(feature id, [changed paths it owns])], best first, at most the cap
     dropped: list   # the same, for features over the cap
     shared: list    # [(changed path, [ids of the features whose globs match it])], not counted
-    predates: Missing = None  # set when the branch predates the map: it has no feature to select
+    predates: Predates = None  # set when the branch predates the map: it has no feature to select
 
 
 def select(head, base, changed, cap, shared_over):
@@ -241,21 +250,12 @@ def add_selection_arguments(parser):
                         help="the explorer walks at most this many of each feature's Verify states (default: 3)")
 
 
-def without_map(repo, directory, base_ref):
-    """What `selection` returns for a head with no feature file, as `missing_map` judges it: nothing
-    selected, with the reason, on a branch that predates the map. A branch that removed the map is
-    exit 2, since there is then no feature to select and none of its files for an explorer to read."""
-    missing = missing_map(repo, directory, base_ref)
-    if missing.removed:
-        raise CannotRun("%s, so no feature can be selected for the re-walk. Restore it" % missing.why())
-    return Selection([], [], [], missing), {}
-
-
 def selection(repo, args, base_ref=None):
     """(Selection, {id: Feature at the head}) for the selection options in `args`, or exit 2 when the
     map, the changed paths or the base cannot be read. With no base to resolve (no history, no
     default branch), the head's map stands alone, as the runner's manifest does; an explicit
-    `base_ref` must resolve. A head with no feature file selects as `without_map` says."""
+    `base_ref` must resolve. A head with no feature file is `missing_map`'s to judge: on a branch
+    that predates the map nothing is selected, with the reason, and any other is exit 2."""
     if not args.changed_files or not os.path.isfile(args.changed_files):
         raise CannotRun("--features needs --changed-files, a readable file of changed paths: %s" % (args.changed_files or "(none given)"))
     if min(args.max_features, args.shared_over, args.max_states) < 1:
@@ -267,7 +267,7 @@ def selection(repo, args, base_ref=None):
         raise CannotRun("git ls-files failed: %s" % tracked.stderr.strip())
     head = head_map(repo, args.features, [p for p in tracked.stdout.split("\0") if p])
     if not head:
-        return without_map(repo, args.features, base_ref)
+        return Selection([], [], [], missing_map(repo, args.features, base_ref)), {}
     try:
         base_commit = resolve_base(repo, base_ref)
     except CannotRun:

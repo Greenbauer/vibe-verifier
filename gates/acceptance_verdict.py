@@ -40,8 +40,9 @@ the file. A feature with a line and no walked step was not re-walked, which is a
 A head whose map has no feature file is judged as the feature-map gate judges it (gates/_features.py).
 A branch that predates the map (its merge base with the base has no feature file, and the base has
 some) has no feature to re-walk: the gate says so, asks for no regression-check line, and its pass
-is labelled `re-walk not run: the branch predates the feature map`. A branch that removed the map
-(the merge base has feature files) is exit 2, like a map that cannot be read.
+is labelled `re-walk not run: the branch predates the feature map`. Any other head with no feature
+file is exit 2, as before: a branch that removed the map (a merge base has feature files), and one
+nothing explains.
 
 A criterion's annotations (harnesses/qae/README.md) are held to the run's evidence, its step log
 `qae/ACn.md` under --artifacts:

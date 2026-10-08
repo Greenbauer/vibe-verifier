@@ -2,11 +2,12 @@
 written in the format docs/feature-map.md describes."""
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 
-from helpers import ROOT, commit, gate, git, make_repo, runner, write
+from helpers import ROOT, clean_env, commit, gate, git, make_repo, runner, write
 
 sys.path.insert(0, str(ROOT / "gates"))
 import _features  # noqa: E402
@@ -217,6 +218,24 @@ class FeatureMap(unittest.TestCase):
 MAP = {path: text for path, text in FILES.items() if path.startswith("docs/features/")}
 CODE = {path: text for path, text in FILES.items() if path not in MAP}
 FRIENDS = ROUTES.replace('  "/projects",\n', '  "/projects",\n  "/friends",\n')
+ABSENT = "feature-map could not run: no feature files in docs/features/ (one <id>.md per feature, besides the README.md index)"
+REMOVED = (r"^feature-map could not run: the feature map was removed: docs/features/ has no feature file at the head, "
+           r"and the merge base [0-9a-f]{12} has 2\. Restore it\. To stop keeping a map, first merge a change that removes "
+           r"what reads it \(the feature-map line, the --features option\), then delete the map\n$")
+
+
+def commit_on(repo, day, files, message):
+    """commit() dated that day of January 2030, so which of two merge bases git names first does not vary."""
+    write(repo, files)
+    git(repo, "add", "-A")
+    stamp = "2030-01-%02dT00:00:00Z" % day
+    subprocess.run(["git", "-C", repo, "commit", "-q", "-m", message], check=True, capture_output=True,
+                   env=clean_env({"GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}))
+
+
+def drop_the_map(repo):
+    git(repo, "rm", "-q", "docs/features/login.md", "docs/features/projects.md")  # the index alone is no map
+    git(repo, "commit", "-q", "-m", "drop the map")
 
 
 class NoMapAtTheHead(unittest.TestCase):
@@ -270,20 +289,64 @@ class NoMapAtTheHead(unittest.TestCase):
             # Not a bare PASS: the summary says the map was not checked.
             self.assertRegex(result.stdout, r"feature-map\s+PASS( \(soak\))? \(not checked: the branch predates the feature map\)\n")
 
-    def test_a_pull_request_that_removes_the_map_is_a_finding(self):
+    def test_a_pull_request_that_removes_the_map_cannot_run_and_soak_does_not_hide_it(self):
+        # As before this rule, and for its reason: a gate with no map judged nothing, here or on the base once
+        # this merged. What is new is that the message says who removed it.
         repo = make_repo(self, FILES)
         git(repo, "checkout", "-q", "-b", "feat")
-        git(repo, "rm", "-q", "docs/features/login.md", "docs/features/projects.md")  # the index alone is no map
-        git(repo, "commit", "-q", "-m", "drop the map")
-        result = gate("feature-map", repo, "--base-ref", "main", *ROUTE_SURFACE)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertRegex(result.stdout, r"^feature-map: the feature map was removed: docs/features/ has no feature file at "
-                                        r"the head, and the merge base [0-9a-f]{12} has 2\. Restore it, or unsubscribe "
-                                        r"first: remove the feature-map line and merge, then delete the map\n"
-                                        r"feature-map: 1 finding\(s\), blocking\n$")
-        write(repo, {".vibe-verifier": "feature-map\n"})
+        drop_the_map(repo)
+        for extra in ((), ("--soak",)):
+            result = gate("feature-map", repo, "--base-ref", "main", *ROUTE_SURFACE, *extra)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertRegex(result.stderr, REMOVED)
+        write(repo, {".vibe-verifier": "feature-map --soak\n"})
         summary = runner("run", "--repo", repo, "--manifest", os.path.join(repo, ".vibe-verifier"), "--base-ref", "main")
-        self.assertRegex(summary.stdout, r"feature-map\s+FAIL\n")  # a verdict on the change, not a gate that could not run
+        self.assertEqual(summary.returncode, 2, summary.stdout + summary.stderr)
+        self.assertRegex(summary.stdout, r"feature-map\s+COULD NOT RUN\n")
+
+    def test_a_map_only_one_of_two_merge_bases_has_was_removed(self):
+        # After a criss-cross merge the base and the head have two merge bases and plain `git merge-base`
+        # names one. Here the newer of the two has no map, and the other is the commit that brought the map
+        # this branch took and then deleted. Read as one merge base, that passed as a branch predating the map.
+        repo = make_repo(self, CODE)
+        git(repo, "checkout", "-q", "-b", "lower")
+        commit_on(repo, 3, {"app/lower.ts": "export const lower = 1\n"}, "lower")
+        git(repo, "checkout", "-q", "main")
+        commit_on(repo, 2, MAP, "add the feature map")
+        git(repo, "checkout", "-q", "-b", "feat", "lower")
+        git(repo, "merge", "-q", "--no-ff", "--no-edit", "main")
+        git(repo, "checkout", "-q", "main")
+        git(repo, "merge", "-q", "--no-ff", "--no-edit", "lower")
+        git(repo, "checkout", "-q", "feat")
+        drop_the_map(repo)
+        bases = subprocess.run(["git", "-C", repo, "merge-base", "--all", "main", "HEAD"], capture_output=True, text=True)
+        self.assertEqual(len(bases.stdout.split()), 2, bases.stdout + bases.stderr)
+        result = gate("feature-map", repo, "--base-ref", "main")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertRegex(result.stderr, REMOVED)
+
+    def test_a_named_base_the_checkout_lacks_is_never_replaced_by_main(self):
+        # release and main each got a map of their own, and the pull request targets release and deletes its
+        # map. In a checkout without origin/release the base falls through to origin/main, whose map this
+        # branch does predate. That would be a guess, so the gate cannot run.
+        origin = make_repo(self, CODE)
+        git(origin, "checkout", "-q", "-b", "release")
+        commit(origin, MAP, "release gets a map")
+        git(origin, "checkout", "-q", "-b", "feat")
+        drop_the_map(origin)
+        git(origin, "checkout", "-q", "main")
+        commit(origin, MAP, "main gets a map")
+        clone = tempfile.mkdtemp(prefix="vv-clone-")
+        self.addCleanup(shutil.rmtree, clone, True)
+        git(origin, "clone", "-q", "--branch", "feat", ".", clone)
+        fetched = gate("feature-map", clone, env={"GITHUB_BASE_REF": "release"})
+        self.assertEqual(fetched.returncode, 2, fetched.stdout + fetched.stderr)
+        self.assertRegex(fetched.stderr, REMOVED)
+        git(clone, "update-ref", "-d", "refs/remotes/origin/release")
+        lacking = gate("feature-map", clone, env={"GITHUB_BASE_REF": "release"})
+        self.assertEqual(lacking.returncode, 2, lacking.stdout + lacking.stderr)
+        self.assertEqual(lacking.stderr, ABSENT + ", and the base this run names, release, is not in this checkout to tell "
+                                         "whether the branch predates the map (fetch it: fetch-depth: 0)\n")
 
     def test_a_pull_request_that_introduces_the_map_is_judged_on_its_own_map(self):
         repo = make_repo(self, CODE)
@@ -296,18 +359,17 @@ class NoMapAtTheHead(unittest.TestCase):
         self.assertEqual(gate("feature-map", repo, "--base-ref", "main", *ROUTE_SURFACE).returncode, 1)
 
     def test_with_nothing_to_tell_them_apart_a_missing_map_cannot_run(self):
-        absent = "feature-map could not run: no feature files in docs/features/ (one <id>.md per feature, besides the README.md index)"
         # No base at all: one commit on a branch that is neither main nor master.
         alone = make_repo(self, CODE, initial_branch="work")
         for extra in ((), ("--soak",)):
             result = gate("feature-map", alone, *extra)
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-            self.assertIn(absent + ", and no base to tell whether the branch predates the map: no base ref to compare against",
+            self.assertIn(ABSENT + ", and no base to tell whether the branch predates the map: no base ref to compare against",
                           result.stderr)
         # A named base that does not resolve.
         named = gate("feature-map", self.predating(), "--base-ref", "gone")
         self.assertEqual(named.returncode, 2)
-        self.assertIn(absent + ", and no base to tell whether the branch predates the map: --base-ref 'gone' does not resolve",
+        self.assertIn(ABSENT + ", and no base to tell whether the branch predates the map: --base-ref 'gone' does not resolve",
                       named.stderr)
         # A shallow clone: the base and the head are both there, and their merge base is not.
         shallow = tempfile.mkdtemp(prefix="vv-shallow-")
@@ -317,7 +379,7 @@ class NoMapAtTheHead(unittest.TestCase):
         git(shallow, "fetch", "-q", "--depth", "1", "origin", "main:refs/remotes/origin/main")
         cut = gate("feature-map", shallow, env={"GITHUB_BASE_REF": "main"})
         self.assertEqual(cut.returncode, 2, cut.stdout + cut.stderr)
-        self.assertIn(absent + ", and origin/main and HEAD have no merge base to tell whether the branch predates the map "
+        self.assertIn(ABSENT + ", and origin/main and HEAD have no merge base to tell whether the branch predates the map "
                       "(fetch history: fetch-depth: 0)", cut.stderr)
         # A base with no map either: there is no map for the branch to predate, so the subscription has none.
         mapless = make_repo(self, CODE)
@@ -325,7 +387,7 @@ class NoMapAtTheHead(unittest.TestCase):
         commit(mapless, {"app/routes.ts": FRIENDS})
         nowhere = gate("feature-map", mapless, "--base-ref", "main")
         self.assertEqual(nowhere.returncode, 2, nowhere.stdout + nowhere.stderr)
-        self.assertEqual(nowhere.stderr, absent + "\n")
+        self.assertEqual(nowhere.stderr, ABSENT + "\n")
 
 
 class Parse(unittest.TestCase):

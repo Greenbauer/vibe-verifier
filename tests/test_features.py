@@ -347,7 +347,8 @@ class NoMapAtTheHead(unittest.TestCase):
         commit(repo, {"app/auth/login.ts": "2\n"})
         listed, judged, note = self.run_both(repo)
         why = (r"the feature map was removed: docs/features/ has no feature file at the head, and the merge base "
-               r"[0-9a-f]{12} has 4, so no feature can be selected for the re-walk\. Restore it\n$")
+               r"[0-9a-f]{12} has 4\. Restore it\. To stop keeping a map, first merge a change that removes what reads it "
+               r"\(the feature-map line, the --features option\), then delete the map\n$")
         self.assertEqual((listed.returncode, judged.returncode, note), (2, 2, ""), listed.stderr + judged.stderr)
         self.assertRegex(listed.stderr, "vibe-verifier: features: " + why)
         self.assertRegex(judged.stderr, "^acceptance-verdict could not run: " + why)

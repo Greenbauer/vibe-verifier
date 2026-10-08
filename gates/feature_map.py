@@ -33,14 +33,15 @@ otherwise pass every map.
 A head whose map has no feature file is judged by what the base says of it (--base-ref, resolved
 as every gate resolves it), and by nothing else:
 
-- the merge base of the base and the head has feature files: the branch removed the map, which is
-  a finding;
-- the merge base has none and the base has some: the branch predates the map, which landed on the
-  base after the branch left it. That is no fault of the branch, so the gate passes, checks
-  nothing, and says so: an advisory finding, and a pass labelled `not checked: the branch predates
-  the feature map`. The map is checked once the branch takes the base;
-- anything else is exit 2, as a missing map always was: no base resolves, the two share no merge
-  base (a shallow clone), or the base has no map either, so the subscription has none.
+- no merge base of the base and the head has a feature file, and the base has some: the branch
+  predates the map, which landed on the base after the branch left it. That is no fault of the
+  branch, so the gate passes, checks nothing, and says so: an advisory finding, and a pass labelled
+  `not checked: the branch predates the feature map`. The map is checked once the branch takes the
+  base;
+- a merge base has feature files: the branch removed the map. Exit 2, and the message says so;
+- anything else is exit 2 too, as a missing map always was: no base resolves, the base the
+  environment names is not in the checkout, the two share no merge base (a shallow clone), or the
+  base has no map either, so the subscription has none.
 """
 import os
 import re
@@ -145,17 +146,13 @@ def anchor_findings(feature, repo, tracked_set):
     return findings
 
 
-def missing_findings(args):
-    """A head with no feature file, judged by what the base says of it (`missing_map` is exit 2 when it
-    says nothing). Removing the map is a finding, not an exit 2: the gate read the history it needs
-    and has a verdict on the change. Predating it is a pass that says nothing was checked."""
-    missing = missing_map(args.repo, args.dir, args.base_ref)
-    if missing.removed:
-        return [Finding("%s. Restore it, or unsubscribe first: remove the feature-map line and merge, then delete "
-                        "the map" % missing.why())]
+def predates_finding(args):
+    """The pass for a head with no feature file on a branch that predates the map (`missing_map` is exit 2
+    for every other head with none): it says nothing was checked, in the run's summary too."""
+    predates = missing_map(args.repo, args.dir, args.base_ref)
     qualify("not checked: the branch predates the feature map")
-    return [Finding("not checked: %s. The map is checked once the branch takes %s" % (missing.why(), missing.base),
-                    advisory=True)]
+    return Finding("not checked: %s. The map is checked once the branch takes %s" % (predates.why(), predates.base),
+                   advisory=True)
 
 
 def check(args):
@@ -163,7 +160,7 @@ def check(args):
     tracked = tracked_files(args.repo)
     features = head_map(args.repo, args.dir, tracked)
     if not features:
-        return missing_findings(args)
+        return [predates_finding(args)]
     declared = {}
     for kind, glob, pattern in declared_extractors:
         for value, where in extract(args.repo, tracked, kind, glob, pattern).items():

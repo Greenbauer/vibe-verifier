@@ -126,14 +126,14 @@ has to bring up to date.
 ### A head with no map
 
 When the head has no feature file, the gate asks the base (`--base-ref`, resolved as
-[every gate resolves it](GATE-CONTRACT.md#base-ref-resolution)) which of three things happened. It
-decides from the commits alone:
+[every gate resolves it](GATE-CONTRACT.md#base-ref-resolution)) what happened. It decides from the
+commits alone:
 
-| The merge base of the base and the head | The base | What it means | Result |
+| The merge bases of the base and the head | The base | What it means | Result |
 |---|---|---|---|
-| has feature files | either | the pull request removed the map | a finding (exit 1) |
-| has none | has feature files | the branch predates the map: the map landed on the base after the branch left it | pass, labelled `not checked` |
-| has none | has none | the subscription has no map | exit 2 |
+| none has a feature file | has feature files | the branch predates the map: the map landed on the base after the branch left it | pass, labelled `not checked` |
+| one has feature files | either | the pull request removed the map | exit 2 |
+| none has a feature file | has none | the subscription has no map | exit 2 |
 
 - **The branch predates the map.** A pull request opened before the map merged did nothing wrong,
   and until it takes the base it has no map to keep true. The gate passes, checks nothing (not the
@@ -142,13 +142,18 @@ decides from the commits alone:
   `PASS (not checked: the branch predates the feature map)`, never a bare `PASS`. Once the branch
   merges or rebases onto the base it has the map, and the whole map is judged against its code like
   any other.
-- **The pull request removed the map.** This is a finding and not an exit 2, because the gate read
-  the history it needs and has a verdict on the change. To stop keeping a map, unsubscribe first
-  (remove the `feature-map` line and merge), then delete the map.
+- **The pull request removed the map.** Exit 2, as a missing map always was, and the message now
+  says the map was removed. It is not a finding, because `--soak` reports findings and passes: a
+  soaked gate would let the removal merge, and from then on no run on the base could judge
+  anything. To stop keeping a map, first merge a change that removes what reads it (the
+  `feature-map` line, the `--features` option), then delete the map. After a criss-cross merge the
+  base and the head have several merge bases; the map counts as removed when any of them has it.
 - **Nothing tells the two apart.** No base resolves, the base and the head share no merge base (a
-  shallow clone: check out with `fetch-depth: 0`), or the base has no map either. Exit 2, as a
-  missing map always was. A pull request that brings the first map is not this case: its head has
-  a map, and it is judged on that map whatever the base has.
+  shallow clone: check out with `fetch-depth: 0`), or the base has no map either. Exit 2, as
+  before. So is a run whose environment names a base (`$VIBE_VERIFIER_BASE_REF`, `$GITHUB_BASE_REF`)
+  that the checkout does not have: other gates fall through to `main` there, and this pass must
+  not rest on a guess. A pull request that brings the first map is none of these: its head has a
+  map, and it is judged on that map whatever the base has.
 
 Before this rule every missing map was exit 2. A consumer added the gate to its gate list right
 after its map merged (2026-10-08), and each pull request already open went red until it took the
@@ -180,10 +185,8 @@ request deletes is retired and selects nothing.
 that predates the map, `bin/vibe-verifier features` prints `features: 0` and the reason, the
 explorer re-walks nothing, and `acceptance-verdict` asks for no `regression-check` line and labels
 its pass `re-walk not run: the branch predates the feature map`. Features are re-walked once the
-branch takes the base. A pull request that removed the map cannot be re-walked: both exit 2 and say
-the map was removed, because no feature is left to select and no feature file for the explorer to
-read (the `feature-map` gate is where the removal itself is a finding). With nothing to tell the
-two apart, both exit 2 as they always did.
+branch takes the base. Every other head with no feature file is exit 2 in both, as it always was: a
+pull request that removed the map (the message says so), and a missing map nothing explains.
 
 **Turning it on.** Add the selection to the `acceptance-verdict` line of `.vibe-verifier-qae`:
 

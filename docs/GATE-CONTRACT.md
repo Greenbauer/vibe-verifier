@@ -323,8 +323,8 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
   cannot be judged: exit 2. A head with no feature file follows
   [the `feature-map` gate's rule](feature-map.md#a-head-with-no-map): a branch that predates the map
   has no feature to re-walk, so the gate asks for no line, says why, and qualifies its pass
-  `re-walk not run: the branch predates the feature map`; a pull request that removed the map is
-  exit 2, as is a missing map nothing explains.
+  `re-walk not run: the branch predates the feature map`; every other missing map is exit 2, as
+  before.
 - A criterion's own text may carry [annotations](../harnesses/qae/README.md#design-references-and-roles),
   held to its step log `qae/ACn.md` under `--artifacts`. `[ref: <key>]` names a design reference: the
   criterion is refused unless `--references FILE` (the JSON object of key to image sha256 the workflow
@@ -763,13 +763,14 @@ feature-map --dir docs/features --surface page 'content/**/*.md'
   `completeness not checked`, with an advisory finding saying why.
 - Exit 2 when a `--surface` is malformed, matches no tracked file or finds no surface.
 - A head with no feature file is judged by what the base says of it, from the commits alone
-  ([the three cases](feature-map.md#a-head-with-no-map)). The merge base of the base and the head has
-  feature files: the pull request removed the map, a finding. The merge base has none and the base has
-  some: the branch predates the map, which landed on the base after the branch left it, so the gate
-  passes without checking anything and says so (an advisory finding naming the base to take, and the
-  pass qualified `not checked: the branch predates the feature map`); the map is checked once the
-  branch takes the base. Anything else is exit 2, as a missing map always was: no base resolves, the
-  base and the head share no merge base (a shallow clone), or the base has no map either. A pull
+  ([the cases](feature-map.md#a-head-with-no-map)). No merge base of the base and the head has a
+  feature file and the base has some: the branch predates the map, which landed on the base after
+  the branch left it, so the gate passes without checking anything and says so (an advisory finding
+  naming the base to take, and the pass qualified `not checked: the branch predates the feature map`);
+  the map is checked once the branch takes the base. Every other missing map is exit 2, as it always
+  was, so `--soak` never hides it: a merge base has feature files (the pull request removed the map,
+  and the message says so), no base resolves, the base the environment names is not in the checkout,
+  the base and the head share no merge base (a shallow clone), or the base has no map either. A pull
   request that brings the first map has one at its head and is judged on it.
 
 ## Harnesses
