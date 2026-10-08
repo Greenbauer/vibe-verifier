@@ -223,8 +223,6 @@ def _state(value, choices=None):
     if choices and value not in choices:
         raise ValueError
     return value
-
-
 def _host_job(item, config):
     """A job the host recorded. A foreign, oversized or unreadable record is left off the slot."""
     name, repository, url = item.get("job_name"), item.get("job_repository"), item.get("job_url")
@@ -242,8 +240,6 @@ def _host_job(item, config):
         detail["job_url"] = "https://github.com/%s/%s/actions/runs/%s/job/%s" % (
             config.owner, match.group(2), parsed.group(3), parsed.group(4))
     return detail
-
-
 def project_host(raw, config):
     if not isinstance(raw, dict):
         raise ValueError
@@ -323,8 +319,6 @@ def project_host(raw, config):
     if body["workspace"]["free_bytes"] > body["workspace"]["total_bytes"]:
         raise ValueError
     return body
-
-
 def project_rate_limits(raw):
     if not isinstance(raw, list) or not 1 <= len(raw) <= 32:
         raise ValueError
@@ -344,14 +338,10 @@ def project_rate_limits(raw):
                             "resets_at": _integer(window.get("resets_at"), 1)})
         result.append({"limit_id": item["limit_id"], "windows": windows})
     return result
-
-
 def _empty_host(config):
     return {"label": config.host_label, "aggregate_scope": "shared_host", "cpu": None,
             "memory": None, "workspace": None, "listener": None, "lane_limits": None,
             "slots": None}
-
-
 def _previous_host(previous, config):
     try:
         host = previous["hosts"][0]
@@ -361,8 +351,6 @@ def _previous_host(previous, config):
         return body, observed, attempted
     except (KeyError, IndexError, TypeError, ValueError):
         return _empty_host(config), None, None
-
-
 def _previous_account(previous):
     try:
         account = previous["accounts"][0]
@@ -372,8 +360,6 @@ def _previous_account(previous):
         return limits, observed, attempted
     except (KeyError, IndexError, TypeError, ValueError):
         return [], None, None
-
-
 def load_previous(path, owner):
     try:
         previous = json.loads(_read_file(path, MAX_SNAPSHOT).decode("utf-8"))
@@ -384,19 +370,13 @@ def load_previous(path, owner):
     if previous.get("owner") != owner:
         raise ValueError("output already belongs to a different owner")
     return previous
-
-
 def _error_code(error):
     code = str(error)
     return code if code in SAFE_ERRORS else "collection_failed"
-
-
 def _quota_due(last_attempt, now):
     attempted = _parse_time(last_attempt)
     current = _parse_time(now)
     return attempted is None or current is None or (current - attempted).total_seconds() >= QUOTA_INTERVAL_SECONDS
-
-
 def _samples(previous, host, success, now):
     kept = []
     current = _parse_time(now)
@@ -424,8 +404,6 @@ def _samples(previous, host, success, now):
             "slots_remaining_on_demand": host["slots"]["remaining_on_demand"]}})
     unique = {sample["observed_at"]: sample for sample in kept}
     return [unique[key] for key in sorted(unique)][-MAX_SAMPLES:]
-
-
 def atomic_write(path, snapshot):
     destination = Path(path)
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -449,8 +427,6 @@ def atomic_write(path, snapshot):
         except OSError:
             pass
         raise
-
-
 def refresh(config, output, fetch=None, now=None):
     now = now or utc_now()
     previous = load_previous(output, config.owner)
@@ -495,8 +471,6 @@ def refresh(config, output, fetch=None, now=None):
                 "samples": _samples(previous, host_body, host_ok, now)}
     atomic_write(output, snapshot)
     return host_ok
-
-
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, help="private collector configuration JSON")
@@ -506,8 +480,6 @@ def parse_args(argv=None):
     if args.interval is not None and (not math.isfinite(args.interval) or args.interval <= 0):
         parser.error("--interval must be positive")
     return args
-
-
 def main(argv=None):
     args = parse_args(argv)
     try:
@@ -524,7 +496,5 @@ def main(argv=None):
             time.sleep(max(0, args.interval - (time.monotonic() - started)))
     except KeyboardInterrupt:
         return 0
-
-
 if __name__ == "__main__":
     sys.exit(main())

@@ -207,8 +207,6 @@ def slot_units(lane, slots, kinds=("ci", "qae"), wait_slots=0):
     return ["%s-%s@%d.service" % (lane, kind, index)
             for kind, count in slot_spans(slots, kinds, wait_slots)
             for index in range(1, count + 1)]
-
-
 def unit_states(lane, slots, runner=run_bounded, kinds=("ci", "qae"), wait_slots=0):
     units = slot_units(lane, slots, kinds, wait_slots)
     command = ["systemctl", "show", "--no-pager", "--property", "Id",
@@ -223,12 +221,8 @@ def unit_states(lane, slots, runner=run_bounded, kinds=("ci", "qae"), wait_slots
         if props.get("Id") in units:
             found[props["Id"]] = props
     return {unit: found.get(unit) for unit in units}
-
-
 def safe_state(value):
     return value if isinstance(value, str) and STATE_RE.fullmatch(value) else "unknown"
-
-
 def read_job(path, owner, expected_kind):
     try:
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -267,8 +261,6 @@ def read_job(path, owner, expected_kind):
         "runner_name": fields[4],
         "allocated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(info.st_mtime)),
     }
-
-
 def _job_link(owner, repo, payload):
     run_id, job_id = payload.get("run_id"), payload.get("job_id")
     if isinstance(run_id, bool) or not isinstance(run_id, int) or not 1 <= run_id < 10 ** 20:
@@ -276,8 +268,6 @@ def _job_link(owner, repo, payload):
     if not isinstance(job_id, str) or not re.fullmatch(r"[1-9][0-9]{0,19}", job_id):
         return None
     return "https://github.com/%s/%s/actions/runs/%d/job/%s" % (owner, repo, run_id, job_id)
-
-
 def read_assignment(path, owner):
     """The host's record of the job on this slot. Unusable text is ignored, never an error."""
     try:
@@ -314,8 +304,6 @@ def read_assignment(path, owner):
     if url:
         record["job_url"] = url
     return record
-
-
 def scan_slots(owner, lane, slots, states, run_root="/run", kinds=("ci", "qae"), wait_slots=0):
     occupied = []
     for kind, count in slot_spans(slots, kinds, wait_slots):
@@ -342,8 +330,6 @@ def scan_slots(owner, lane, slots, states, run_root="/run", kinds=("ci", "qae"),
                     "error", "unit_state_unavailable" if active == "unknown" else "active_unit_without_job")
             occupied.append(record)
     return occupied
-
-
 def parse_systemd_number(value):
     if not isinstance(value, str) or value in ("", "infinity", "[not set]"):
         return None
@@ -352,8 +338,6 @@ def parse_systemd_number(value):
     except ValueError:
         return None
     return number if number >= 0 else None
-
-
 def parse_quota_cores(value):
     if not isinstance(value, str) or value == "infinity":
         return None
@@ -363,15 +347,11 @@ def parse_quota_cores(value):
     multipliers = {None: 0.000001, "us": 0.000001, "ms": 0.001, "s": 1.0, "min": 60.0}
     result = float(match.group(1)) * multipliers[match.group(2)]
     return round(result, 6) if math.isfinite(result) else None
-
-
 # Matched to Codex rust-v0.159.2 backend-client/src/client/rate_limit_resets.rs.
 # This internal route is version-coupled; it must fail unavailable if its contract changes.
 QUOTA_URL = "https://chatgpt.com/backend-api/wham/usage"
 QUOTA_TIMEOUT_SECONDS = 10
 MAX_QUOTA_BODY = 256 * 1024
-
-
 def normalize_rate_limits(payload):
     if not isinstance(payload, dict):
         raise QuotaError("quota_malformed")
@@ -413,13 +393,9 @@ def normalize_rate_limits(payload):
     if not limits:
         raise QuotaError("quota_malformed")
     return limits
-
-
 class NoQuotaRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
-
-
 def quota_read(codex_home, opener=None):
     """Read existing managed auth once in memory; never refresh or write its store."""
     try:
@@ -450,8 +426,6 @@ def quota_read(codex_home, opener=None):
         raise QuotaError("quota_unavailable") from None
     except (OSError, ValueError, TypeError, HTTPException):
         raise QuotaError("quota_unavailable") from None
-
-
 def collect(payload, run_root="/run", runner=run_bounded, sleeper=time.sleep,
             statvfs=os.statvfs, quota_reader=quota_read):
     owner, lane = payload.get("owner"), payload.get("lane_name")
@@ -500,8 +474,6 @@ def collect(payload, run_root="/run", runner=run_bounded, sleeper=time.sleep,
         except (KeyError, TypeError, QuotaError):
             quota = {"status": "quota_unavailable"}
     return {"ok": True, "host": host, "quota": quota}
-
-
 def respond(payload):
     """collect() as the collector reads it, over SSH or in-process (its local mode): the sample, or
     an error code and never raw text."""
@@ -513,8 +485,6 @@ def respond(payload):
         return {"ok": False, "error": str(error)}
     except Exception:
         return {"ok": False, "error": "collection_failed"}
-
-
 def main():
     try:
         if len(sys.argv) != 2 or len(sys.argv[1]) > MAX_FILE * 2:
@@ -526,7 +496,5 @@ def main():
     except Exception:
         result = {"ok": False, "error": "collection_failed"}
     sys.stdout.write(json.dumps(result, separators=(",", ":")) + "\n")
-
-
 if __name__ == "__main__":
     main()
