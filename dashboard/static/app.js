@@ -228,8 +228,7 @@
     const href = safeUrl(pull.html_url, snapshot.owner);
     const now = Date.now();
     const opened = href ? `Open ${pull.repository} pull request ${pull.number} on GitHub: ${pull.title}` : null;
-    const reason = pull.attention_reason || "";
-    const ready = pull.merge_ready && !pull.stale, aged = Number.isFinite(pull.checks_age_seconds);
+    const reason = pull.attention_reason || "", ready = pull.merge_ready && !pull.stale, aged = Number.isFinite(pull.checks_age_seconds);
     return el(href ? "a" : "div", {
       class: `pr-row${pull.stale ? " stale-row" : ""}`,
       href, target: href ? "_blank" : null, rel: href ? "noreferrer" : null,
