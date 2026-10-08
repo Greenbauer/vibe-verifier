@@ -5,12 +5,13 @@ The image every lane's slot runs: one GitHub Actions job per container, under Sy
 host's. One definition serves every lane; each lane builds it under its own name (its `image`, for
 example `greenbauer-ci-runner`). `bin/build-runner-image.sh` builds it on the lane's machine and
 preloads an inner Docker store with the Supabase images the lane's repositories start, so a job
-pulls nothing. The store is not in the image: it is a directory on the lane's XFS store filesystem
-(`/var/lib/<lane name>/store/golden-<tag>`), and every job runs on its own reflink snapshot of it,
-mounted on the container's `/var/lib/docker` (the kit's `README.md`, one directory up, "Disk"). A
-job of the wait kind, which only polls for another job's result, gets an empty directory there
-instead: the job mode of the entrypoint reads nothing from the store, and the inner dockerd starts
-on an empty data root.
+pulls nothing. The store is not in the image: it is a directory on the lane's store filesystem
+(`/var/lib/<lane name>/store/golden-<tag>`), and every job runs on its own snapshot of it, mounted
+on the container's `/var/lib/docker`: a reflink copy on an XFS store, a btrfs snapshot on a btrfs
+one, where `golden-<tag>` is a subvolume (the kit's `README.md`, one directory up, "Disk"). A job
+of the wait kind, which only polls for another job's result, gets an empty directory there instead:
+the job mode of the entrypoint reads nothing from the store, and the inner dockerd starts on an
+empty data root.
 
 | File | Role |
 |---|---|
@@ -147,8 +148,9 @@ committed image:
    file is missing, and template content does not change which images start pulls;
 2. builds this directory as `<image>:base-<tag>`;
 3. copies them to `/opt/known-ci/preload/<name>/supabase/` in a container of it run under
-   sysbox-runc in `hold` mode with the empty `/var/lib/<lane name>/store/golden-<tag>.new` mounted
-   on `/var/lib/docker`, and execs `known-ci-entrypoint preload`, which runs each repository's own
+   sysbox-runc in `hold` mode with the empty `/var/lib/<lane name>/store/golden-<tag>.new` (on a
+   btrfs store a subvolume, made with `btrfs subvolume create`) mounted on `/var/lib/docker`, and
+   execs `known-ci-entrypoint preload`, which runs each repository's own
    `supabase start -x studio,imgproxy,mailpit,edge-runtime,logflare,vector --ignore-health-check`
    (the preload wants the images, not a healthy stack) against its own `config.toml` (so the tags
    match its CLI and Postgres major version), then `supabase stop --no-backup`, pulls
@@ -157,15 +159,16 @@ committed image:
 4. commits the container as `<image>:<date>-<hash>` with `CMD` reset (the mounted store is not
    part of the commit: the new layer is the manifest and the project configs, under 1 MB);
 5. checks `CMD`, `ENTRYPOINT` and the label `ai-fleet.disk-watch=keep`, renames the store to `golden-<tag>`, and runs `verify-preload`
-   in a fresh sysbox-runc container on a reflink snapshot of that store, made and removed by
+   in a fresh sysbox-runc container on a snapshot of that store, made and removed by
    `bin/lane-slot.sh` the way a job gets its store; it fails unless the store holds exactly the
-   recorded images;
+   recorded images. The rename is a plain `mv` on either filesystem: a btrfs subvolume can be
+   renamed (btrfs-subvolume(8): "Subvolumes can be renamed or moved") and stays one;
 6. moves `<image>:current` to it, writes `KNOWN_CI_IMAGE_TAG=<tag>` to
    `/var/lib/<lane name>/image.env` (the lane's units read it at every start, so the next job runs
    the new image on a snapshot of the new store), and keeps the newest three dated tags (plus
    whichever one `current` names) with their stores; a dated tag without its store (no slot can
    run it) is pruned whatever its age, and so is a store whose tag has no image, or an unfinished
-   one. Last it runs `docker builder prune --force --filter until=168h`: the base build's layers
+   one (on a btrfs store with `btrfs subvolume delete`, which returns at once). Last it runs `docker builder prune --force --filter until=168h`: the base build's layers
    stay in Docker's build cache after their tags are removed, and the build clears what it left
    rather than rely on another job on the machine. That is the machine's whole build cache, unused
    for a week; a failure there is a warning. An image tag without its store is not converged on:
@@ -202,9 +205,11 @@ that, is Sysbox-EE only): 56 to 66 s and 5.6 GB per container for a five-project
 no volume there, so nothing is copied; the lane mounts a per-job reflink snapshot (`cp -a
 --reflink=always`, about 8 s for 270k files; the container's first line follows `docker run` by
 about 1 s), and the preload's writes go through the same kind of mount, which also keeps the inner
-images' own uids (a commit of a Sysbox container had stored every file as root). The build log
-prints the manifest and the store's on-disk size at every build; that number, once per kept tag
-plus what jobs write, is what `store_disk_gb` bounds.
+images' own uids (a commit of a Sysbox container had stored every file as root). On a btrfs store
+the per-job snapshot is `btrfs subvolume snapshot` of the `golden-<tag>` subvolume, which copies no
+file at all (the kit's `README.md`, "Disk", has the measurement). The build log prints the manifest
+and the store's on-disk size at every build; that number, once per kept tag plus what jobs write,
+is what `store_disk_gb` bounds.
 
 **Staying pull-free.** A job pulls nothing only while it asks for the preloaded tags:
 
