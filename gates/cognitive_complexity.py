@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail when a file this pull request changed has more over-limit functions than it had at the base.
+"""Fail when a file this pull request changed has more over-limit functions than at the base, or a worse one.
 
 The metric is SonarSource's cognitive complexity. JS and TS files are measured by
 eslint-plugin-sonarjs through the pinned toolchain in tools/cognitive-complexity (eslint, the sonarjs
@@ -8,9 +8,12 @@ lockfile); Python files by complexipy through tools/cognitive-complexity-python 
 interpreter, every digest in the committed requirements file). Neither honors the repository's own
 suppressions (eslint bulk suppressions, complexipy's ignore comments): the ratchet counts. A ratchet, not
 a backlog: every source file changed since the base ref is measured at HEAD and at the base, and
-a file is a finding only when it has more functions over the limit than it had, or is new and
-has any. Functions nobody touched never block, and a refactor that removes one is never undone
-by the count. --all measures every tracked source file against the limit instead, for an audit.
+a file is a finding when it has more functions over the limit than it had (or is new and has
+any), or when one of them got worse: the file's over-limit costs, highest first, must each be no
+higher than the base's at the same rank. So an over-limit function may be touched, moved, renamed
+or improved, but it may not grow, and one function improving does not pay for another getting
+worse. Functions nobody touched never block. --all measures every tracked source file against the
+limit instead, for an audit.
 
     --max N          the limit (default 15)
     --source GLOB    what counts as source (repeatable; default: JS, TS and Python files)
@@ -18,6 +21,7 @@ by the count. --all measures every tracked source file against the limit instead
 """
 import json
 import os
+import re
 import subprocess
 import tempfile
 
@@ -33,6 +37,16 @@ ALWAYS_EXCLUDED = ["**/*.d.ts", "**/node_modules/**", "**/*.test.*", "**/*.spec.
 # for its own config: against this one rule its other entries look unused (eslint exits 2), and its count
 # for this rule would hide what the ratchet counts. Read from the catalog, not the cache, whose key is the lockfile.
 NO_SUPPRESSIONS = os.path.join(NODE_TOOLS, "cognitive-complexity", "no-suppressions.json")
+# Both tools word a finding the same way; the cost is read out of it.
+COST = re.compile(r"Cognitive Complexity from (\d+) to")
+
+
+def cost(text):
+    """A reported function's cost. A report this cannot read is cannot-run, never a function scored at zero."""
+    found = COST.search(text)
+    if not found:
+        raise CannotRun("could not read a function's cost from the report: %s" % text.split("\n")[0][:120])
+    return int(found.group(1))
 
 
 def measure(root, files, limit):
@@ -111,11 +125,17 @@ def check(args):
         before = measure(snapshot, at_base, args.max)
     findings = []
     for path, hits in sorted(head.items()):
-        had = len(before.get(path, []))
-        if len(hits) <= had:
+        was = sorted((cost(text) for _, text in before.get(path, [])), reverse=True)
+        if len(hits) > len(was):
+            for line, text in hits:
+                findings.append(Finding("%s (over-limit functions in this file: %d at the base, %d now)" % (text, len(was), len(hits)), path, line))
             continue
-        for line, text in hits:
-            findings.append(Finding("%s (over-limit functions in this file: %d at the base, %d now)" % (text, had, len(hits)), path, line))
+        ranked = sorted(hits, key=lambda hit: cost(hit[1]), reverse=True)  # stable: equal costs keep file order
+        now = [cost(text) for _, text in ranked]
+        for (line, text), current, allowed in zip(ranked, now, was):
+            if current > allowed:
+                findings.append(Finding("%s (it got worse: over-limit costs in this file, highest first, were %s at the base and are %s now)"
+                                        % (text, was, now), path, line))
     return findings
 
 

@@ -28,6 +28,11 @@ TANGLED = """export function tangled(a: number, b: number, c: number[]): number 
 SIMPLE = "export const simple = (n: number) => n + 1;\n"
 
 
+def worse(source):
+    """The same function with one more nested branch in its loop, so its cost rises and its line stays."""
+    return source.replace("  for (const x of c) {\n", "  for (const x of c) {\n    if (x < 0) { if (a > b) { total -= 2; } }\n", 1)
+
+
 def branch_with(test, base_files, head_files):
     repo = make_repo(test, base_files)
     commit(repo, head_files, "change")
@@ -55,6 +60,34 @@ class CognitiveComplexity(unittest.TestCase):
         result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1")
         self.assertEqual(result.returncode, 1)
         self.assertIn("1 at the base, 2 now", result.stdout)
+
+    def test_an_over_limit_function_that_gets_worse_fails_though_the_count_is_the_same(self):
+        repo = branch_with(self, {"src/a.ts": TANGLED}, {"src/a.ts": worse(TANGLED)})
+        result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1", "--format", "json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        findings = json.loads(result.stdout)["findings"]
+        self.assertEqual([(f["path"], f["line"]) for f in findings], [("src/a.ts", 1)])
+        self.assertIn("[27] at the base", findings[0]["message"])
+        self.assertRegex(findings[0]["message"], r"\[(2[89]|[3-9]\d)\] now")
+
+    def test_an_over_limit_function_that_improves_but_stays_over_passes(self):
+        repo = branch_with(self, {"src/a.ts": worse(TANGLED)}, {"src/a.ts": TANGLED})
+        result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_one_function_improving_does_not_pay_for_another_getting_worse(self):
+        second = TANGLED.replace("function tangled", "function tangled2")
+        # Base: tangled is the worse one. Head: tangled improves, tangled2 gets worse than tangled ever was.
+        base = worse(TANGLED) + second
+        head = TANGLED + worse(worse(second))
+        repo = branch_with(self, {"src/a.ts": base}, {"src/a.ts": head})
+        result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1", "--format", "json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        findings = json.loads(result.stdout)["findings"]
+        # Only the function that is worse than the base's function at the same rank is reported.
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["line"], len(TANGLED.splitlines()) + 1)
+        self.assertIn("got worse", findings[0]["message"])
 
     def test_untouched_files_and_tests_are_not_measured_unless_all(self):
         repo = branch_with(self, {"src/a.ts": TANGLED, "src/a.test.ts": TANGLED}, {"README.md": "y\n"})
@@ -126,6 +159,16 @@ class PythonCognitiveComplexity(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("1 at the base, 2 now", result.stdout)
         self.assertNotIn("test_a.py", gate("cognitive-complexity", repo, "--all").stdout)
+
+    def test_a_python_function_that_gets_worse_fails_though_the_count_is_the_same(self):
+        deeper = PY_TANGLED.replace("    for x in c:\n", "    for x in c:\n        if x < 0:\n            if a > b:\n                total -= 2\n", 1)
+        self.assertNotEqual(deeper, PY_TANGLED)
+        repo = branch_with(self, {"pkg/a.py": PY_TANGLED}, {"pkg/a.py": deeper})
+        result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("got worse", result.stdout)
+        self.assertEqual(gate("cognitive-complexity", branch_with(self, {"pkg/a.py": deeper}, {"pkg/a.py": PY_TANGLED}),
+                              "--base-ref", "HEAD~1").returncode, 0)
 
     def test_a_method_is_named_by_its_class(self):
         method = "class Rates:\n" + "".join("    " + line + "\n" if line else "\n" for line in PY_TANGLED.replace("(a, b, c)", "(self, a, b, c)").splitlines())
