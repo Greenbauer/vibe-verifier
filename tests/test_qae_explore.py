@@ -1,7 +1,6 @@
 """The explore template: its write-scope, site and verify-input steps run as the shell they are, the
 one site URL it carries from the site step to the prompt and the gate, and the order of its steps.
 All read harnesses/qae/explore.yml itself, so the test judges what a consumer copies."""
-import json
 import os
 import re
 import shlex
@@ -152,7 +151,8 @@ class SiteUrl(unittest.TestCase):
     def test_the_prompt_is_the_harness_prompt_naming_the_declared_url(self):
         expected = (PROMPT.read_text().replace("PR_NUMBER", "${{ github.event.pull_request.number }}")
                     .replace("REPOSITORY", "${{ github.repository }}")
-                    .replace("SITE_URL", "${{ steps.site.outputs.url }}"))
+                    .replace("SITE_URL", "${{ steps.site.outputs.url }}")
+                    .replace("SHARD_SHARE", "${{ steps.references.outputs.share }}"))
         self.assertEqual(prompt_block(TEMPLATE.read_text()), expected)
 
     def test_the_declared_url_reaches_the_gate_through_the_verify_job(self):
@@ -163,7 +163,6 @@ class SiteUrl(unittest.TestCase):
         bin_dir = stub_bin(self, {"gh": 'case "$1 $2" in\n'
                                         '  pr*) printf "## Acceptance criteria\\n\\n- The quote page loads\\n" ;;\n'
                                         '  *pulls*) printf "app/quote/page.tsx\\n" ;;\n'
-                                        '  api*) printf %s "[{\\"user\\":{\\"login\\":\\"github-actions[bot]\\"},\\"body\\":\\"acceptance-check: AC1 -- PASS -- loaded (qae/AC1.md::step 1: x)\\"}]" ;;\n'
                                         'esac\n'})
         script = verify_inputs_script()
         result = subprocess.run(["bash", "-e", "-c", script], cwd=self.work, capture_output=True, text=True,
@@ -348,7 +347,7 @@ class Applicability(unittest.TestCase):
         script = step_script("- name: Write the criteria inputs", "- name: Read the criteria")
         result = subprocess.run(["bash", "-e", "-c", script], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
-                                               "PR_NUMBER": "7", "REPO": "o/r"}))
+                                               "PR_NUMBER": "7", "REPO": "o/r", "BASE_SHA": "b" * 40, "HEAD_SHA": "a" * 40}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(Path(work, "qae-inputs", "changed-files").read_text(), "README.md\ndocs/about.tsx\napp/about.tsx\n")
         self.assertTrue(Path(work, "qae-inputs", "pr-body.md").is_file())
@@ -367,15 +366,18 @@ class Evidence(unittest.TestCase):
     def test_a_re_run_never_reads_an_earlier_attempts_evidence(self):
         # The upload runs always, so a failed or cancelled attempt uploads too: under one name, a
         # consumer's third attempt passed and verify was handed the cancelled second's (2026-10-07).
-        # The download follows the explore job's attempt, never the verify job's own: re-running the
-        # verify job alone leaves the evidence in the earlier attempt.
+        # Each attempt uploads under its own name, and the verify job takes the newest one an explorer
+        # left, never one named for its own attempt: re-running the verify job alone leaves the evidence
+        # in the earlier attempt (the merge itself: test_qae_shards.py).
         text = TEMPLATE.read_text()
         explore, verify = text[text.index("\n  explore:\n"):text.index("\n  verify:\n")], text[text.index("\n  verify:\n"):]
         self.assertIn("      attempt: ${{ github.run_attempt }}\n    steps:\n", explore)
-        self.assertIn("        if: always()\n", explore[explore.index("- name: Keep the evidence"):])
+        self.assertIn("        if: always()\n", explore[explore.index("- name: Keep the evidence\n"):])
+        past_the_first = "${{ matrix.shard && format('-{0}', matrix.shard) || '' }}"
         self.assertEqual(re.findall(r"^          name: (.*)$", explore, re.MULTILINE),
-                         ["vv-usage-qae-explorer-${{ github.run_attempt }}", "qae-artifacts-${{ github.run_attempt }}"])
-        self.assertEqual(re.findall(r"^          name: (.*)$", verify, re.MULTILINE), ["qae-artifacts-${{ needs.explore.outputs.attempt }}"])
+                         ["vv-usage-qae-explorer-${{ github.run_attempt }}" + past_the_first, "qae-artifacts-${{ github.run_attempt }}" + past_the_first])
+        self.assertIn("          pattern: qae-artifacts-*\n", verify)
+        self.assertIn("          EXPLORE_ATTEMPT: ${{ needs.explore.outputs.attempt }}\n", verify)
         self.assertNotIn("github.run_attempt", verify)
 
 
@@ -400,29 +402,22 @@ class Review(unittest.TestCase):
         self.assertIn("      pull-requests: write   # the QA review comment, and nothing else\n", verify)
         self.assertNotIn("issues: write", text)
 
-    def test_the_verdict_lookup_skips_the_review_comment(self):
-        # The review is posted by the same identity, after the verdict, and can quote a criterion that
-        # reads like a check line. The gate must still be fed the explorer's verdict.
+    def test_the_inputs_step_leaves_the_verdict_empty_for_the_evidence_to_fill(self):
+        # The gate is always given a verdict file: empty for a pull request with nothing to walk, and
+        # until the merge step fills it from the run's own evidence (test_qae_shards.py). No comment is read.
         work = tempfile.mkdtemp(prefix="vv-work-")
         self.addCleanup(shutil.rmtree, work, True)
-        verdict = "acceptance-check: AC1 -- PASS -- loaded (qae/AC1.md::step 1: x)"
-        comments = json.dumps([
-            {"user": {"login": "github-actions[bot]"}, "body": verdict},
-            {"user": {"login": "github-actions[bot]"},
-             "body": "<!-- vibe-verifier:qa-review -->\n## QA review: passed\n\n- AC1, explorer says PASS: acceptance-check: AC1 -- PASS"},
-        ])
-        Path(work, "comments.json").write_text(comments)
         bin_dir = stub_bin(self, {"gh": 'case "$1 $2" in\n'
                                         '  pr*) printf "## Acceptance criteria\\n\\n- x\\n" ;;\n'
                                         '  *pulls*) printf "app/page.tsx\\n" ;;\n'
-                                        '  api*) cat "%s" ;;\n'
-                                        'esac\n' % Path(work, "comments.json")})
+                                        '  *) echo "unexpected gh $*" >&2; exit 1 ;;\n'
+                                        'esac\n'})
         result = subprocess.run(["bash", "-e", "-c", verify_inputs_script()], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
                                                "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": "http://localhost:3000",
                                                "SITE_ORIGINS": "", "REFERENCES": "", "TICKET": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(Path(work, "qae-inputs", "verdict.md").read_text(), verdict + "\n")
+        self.assertEqual(Path(work, "qae-inputs", "verdict.md").read_text(), "")
         self.assertEqual(Path(work, "qae-inputs", "changed-files").read_text(), "app/page.tsx\n")
 
 
@@ -441,7 +436,7 @@ class TurnCap(unittest.TestCase):
                                 env=clean_env({"GITHUB_ACTION_PATH": str(ROOT / "actions" / "qae-inputs"), "GITHUB_OUTPUT": str(output),
                                                "RUNNER_TEMP": os.path.join(repo, ".git"), "VV_MANIFEST": ".vibe-verifier-qae",
                                                "VV_ENTRIES": "", "VV_REFERENCES": "qae-inputs/references",
-                                               "VV_EVIDENCE": "qae-artifacts"}))
+                                               "VV_EVIDENCE": "qae-artifacts", "VV_SHARD": "1", "VV_SHARDS": "1"}))
         return result, output.read_text()
 
     def cap(self, files, widths=None, verdict_line=""):

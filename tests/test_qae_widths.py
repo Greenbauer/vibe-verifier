@@ -78,7 +78,7 @@ class QaeInputs(unittest.TestCase):
                                 env=clean_env({"GITHUB_ACTION_PATH": str(ROOT / "actions" / "qae-inputs"), "GITHUB_OUTPUT": str(output),
                                                "RUNNER_TEMP": os.path.join(repo, ".git"), "VV_MANIFEST": manifest,
                                                "VV_ENTRIES": entries, "VV_REFERENCES": "qae-inputs/references",
-                                               "VV_EVIDENCE": "qae-artifacts"}))
+                                               "VV_EVIDENCE": "qae-artifacts", "VV_SHARD": "1", "VV_SHARDS": "1"}))
         return result, output.read_text()
 
     def widths(self, repo):
@@ -92,7 +92,7 @@ class QaeInputs(unittest.TestCase):
         self.assertEqual(self.widths(repo), "1280\n375\n")
         self.assertIn("widths: 1280, 375", result.stdout)
         # Two criteria at two widths are four walks: the turn cap grows with them (bin/vibe-verifier TURNS_BASE).
-        self.assertEqual(output, "references={}\nmax-turns=160\n")
+        self.assertEqual(output, "references={}\nmax-turns=160\nshare=\n")
 
     def test_no_widths_option_writes_no_file(self):
         repo = make_repo(self, {".vibe-verifier-qae": QAE.replace(" --widths 1280,375", "")})
