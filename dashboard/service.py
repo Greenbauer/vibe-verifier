@@ -10,7 +10,8 @@ from datetime import datetime, timedelta, timezone
 from .config import BOT_KEYS, Config, coverage_label
 from .gh_api import ApiError
 from .github import GitHubCollector, recent_bot_runs
-from .head_state import BEAT_SECONDS, apply_head_reading, read_cached_heads, withhold_stale_pulls
+from .head_state import (
+    HEAD_TICK_SECONDS, apply_head_reading, heads_due, read_cached_heads, withhold_stale_pulls)
 from .telemetry import read_telemetry
 from .util import parse_time
 
@@ -178,17 +179,19 @@ class DashboardService:
         self._beat_thread.start()
 
     def _beat_loop(self) -> None:
-        while not self._beat_stop.wait(BEAT_SECONDS):
+        while not self._beat_stop.wait(HEAD_TICK_SECONDS):
             try:
                 self.run_head_beat()
             except Exception:
                 continue
 
     def run_head_beat(self) -> dict | None:
-        """Refresh heads on the cached snapshot. Skips when a full pass is running or just finished."""
+        """Refresh heads on the cached snapshot. Skips while a full pass runs or the head sample is still young."""
         reader = getattr(self.collector, "read_open_heads", None)
         with self._condition:
-            if self._refreshing or self._beating or self._github is None or self.monotonic() - self._github_at < BEAT_SECONDS:
+            now = self.wall_clock().astimezone(timezone.utc)
+            due = heads_due(self._github, now, self.monotonic() - self._github_at)
+            if self._refreshing or self._beating or self._github is None or not due:
                 return None
             self._beating = True
             generation, github = self._github_at, copy.deepcopy(self._github)
@@ -196,7 +199,7 @@ class DashboardService:
         try:
             reading = reader(github) if callable(reader) else read_cached_heads(self.collector, github)
             updated = apply_head_reading(github, reading["heads"], self.wall_clock().astimezone(timezone.utc),
-                                         reading["calls"], reading["points"])
+                                         reading["calls"], reading["points"], bool(reading.get("complete")))
         except ApiError:
             updated = None
         finally:
