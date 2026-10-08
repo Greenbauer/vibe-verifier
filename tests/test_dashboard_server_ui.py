@@ -25,31 +25,22 @@ class FakeService:
                 "bots": {"roles": {}}, "coverage": {"selected": 1, "readable": 0},
                 "title": "<img src=x onerror=alert(1)>"}, "telemetry": {"available": False}}
 
-
 class FakeSocket:
     def __init__(self, request):
         self.request = io.BytesIO(request)
         self.response = bytearray()
-
     def makefile(self, mode, buffering=None):
         return self.request
-
     def sendall(self, data):
         self.response.extend(data)
-
     def close(self):
         pass
-
-
 class FakeServer:
     server_port = 8765
     service = FakeService()
     favicon = Favicon("octocat", fetch=lambda owner: None)
-
     def __init__(self, proxy_origin=None):
         self.proxy_origin = proxy_origin
-
-
 class ServerSecurity(unittest.TestCase):
     def request(self, method, path, headers=None, proxy_origin=None):
         if isinstance(headers, dict):
@@ -67,7 +58,6 @@ class ServerSecurity(unittest.TestCase):
         values = {name.lower(): value.strip() for name, value in
                   (line.split(":", 1) for line in lines[1:] if ":" in line)}
         return int(lines[0].split()[1]), values, body
-
     def test_server_binds_only_loopback_and_serves_json_without_literal_html(self):
         with mock.patch("dashboard.server.DashboardServer") as server:
             make_server(config(), 8765, FakeService())
@@ -78,7 +68,6 @@ class ServerSecurity(unittest.TestCase):
         self.assertNotIn(b"<img", body)
         self.assertEqual(json.loads(body)["owner"], "octocat")
         self.assertNotIn("access-control-allow-origin", headers)
-
     def test_favicon_is_served_same_origin_and_used_as_tab_icon_and_header_logo(self):
         status, headers, body = self.request("GET", "/favicon.svg")
         self.assertEqual(status, 200)
@@ -88,11 +77,9 @@ class ServerSecurity(unittest.TestCase):
         _, _, page = self.request("GET", "/")
         self.assertIn(b'<link rel="icon" href="/favicon.svg" type="image/svg+xml">', page)
         self.assertIn(b'<img class="brand-mark" src="/favicon.svg" alt="">', page)
-
     def test_untrusted_host_and_origin_are_rejected(self):
         self.assertEqual(self.request("GET", "/", {"Host": "example.invalid"})[0], 421)
         self.assertEqual(self.request("GET", "/", {"Origin": "https://example.invalid"})[0], 403)
-
     def test_valid_proxy_request_uses_exact_forwarded_authority_and_https(self):
         origin = "https://dashboard.example.test:8443"
         for host in ("localhost", "localhost:8765", "127.0.0.1:8765"):
@@ -106,7 +93,6 @@ class ServerSecurity(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertIn("script-src 'self'", headers["content-security-policy"])
                 self.assertNotIn("access-control-allow-origin", headers)
-
     def test_host_preserving_proxy_may_send_the_configured_authority_as_host(self):
         origin = "https://dashboard.example.test:8443"
         forwarded = {"X-Forwarded-Host": "dashboard.example.test:8443", "X-Forwarded-Proto": "https"}
@@ -127,13 +113,11 @@ class ServerSecurity(unittest.TestCase):
             "X-Forwarded-Proto": "https"}, proxy_origin=origin)[0], 403)
         self.assertEqual(self.request("GET", "/", {
             "Host": "dashboard.example.test:8443", **forwarded}, proxy_origin=None)[0], 403)
-
     def test_default_mode_rejects_forwarded_headers(self):
         self.assertEqual(self.request("GET", "/", {
             "X-Forwarded-Host": "dashboard.example.test",
             "X-Forwarded-Proto": "https",
         })[0], 403)
-
     def test_proxy_mode_rejects_missing_mismatched_and_duplicate_forwarded_headers(self):
         origin = "https://dashboard.example.test"
         denied = (
@@ -150,7 +134,6 @@ class ServerSecurity(unittest.TestCase):
             with self.subTest(headers=headers):
                 self.assertNotEqual(self.request(
                     "GET", "/", headers, proxy_origin=origin)[0], 200)
-
     def test_duplicate_host_origin_and_hostile_proxy_origin_are_rejected(self):
         origin = "https://dashboard.example.test"
         self.assertEqual(self.request("GET", "/", [
@@ -163,23 +146,19 @@ class ServerSecurity(unittest.TestCase):
             "X-Forwarded-Host": "dashboard.example.test",
             "X-Forwarded-Proto": "https",
         }, proxy_origin=origin)[0], 403)
-
     def test_direct_loopback_requests_still_work_when_proxy_is_configured(self):
         origin = "https://dashboard.example.test"
         local_headers = {"Host": "localhost:8765", "Origin": "http://localhost:8765"}
         self.assertEqual(self.request("GET", "/", local_headers, proxy_origin=origin)[0], 200)
         self.assertEqual(self.request(
             "GET", "/api/dashboard", local_headers, proxy_origin=origin)[0], 200)
-
     def test_path_traversal_is_rejected_before_static_lookup(self):
         self.assertEqual(self.request("GET", "/%2e%2e/secret")[0], 400)
         self.assertEqual(self.request("GET", "/assets/unknown.js")[0], 404)
-
     def test_every_mutating_method_is_denied(self):
         for method in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS"):
             with self.subTest(method=method):
                 self.assertEqual(self.request(method, "/api/dashboard")[0], 405)
-
     def test_every_mutating_method_is_denied_through_proxy(self):
         origin = "https://dashboard.example.test"
         headers = {"Host": "localhost", "X-Forwarded-Host": "dashboard.example.test",
@@ -188,20 +167,16 @@ class ServerSecurity(unittest.TestCase):
             with self.subTest(method=method):
                 self.assertEqual(self.request(
                     method, "/api/dashboard", headers, proxy_origin=origin)[0], 405)
-
     def test_static_response_has_no_remote_script_permission(self):
         status, headers, body = self.request("GET", "/")
         self.assertEqual(status, 200)
         self.assertIn("script-src 'self'", headers["content-security-policy"])
         self.assertNotIn(b"https://", body)
-
-
 class BrowserHelpers(unittest.TestCase):
     def node(self, source):
         result = subprocess.run(["node", "-e", source], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
-
     def test_filters_check_unknowns_and_urls_are_pure(self):
         source = r'''
 const h=require('./dashboard/static/helpers.js');
@@ -219,7 +194,6 @@ console.log(JSON.stringify({filtered:filtered.map(x=>x.number),unknown,
         self.assertEqual(result["unknown"]["total"], 0)
         self.assertTrue(result["safe"].startswith("https://github.com/octocat/"))
         self.assertIsNone(result["unsafe"])
-
     def test_pulls_group_by_repository_newest_activity_first_oldest_pull_last(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
@@ -234,7 +208,6 @@ console.log(JSON.stringify(groups.map(g=>[g.repository,g.pulls.map(x=>x.number)]
 ''')
         self.assertEqual(result, [["o/busy", [3, 4, 2]], ["o/quiet", [1]], ["o/blank", [5]]])
         self.assertEqual(self.node("console.log(JSON.stringify(require('./dashboard/static/helpers.js').groupPulls([])))"), [])
-
     def test_pr_badge_is_passed_when_the_only_other_checks_were_skipped(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
@@ -243,7 +216,6 @@ console.log(JSON.stringify([h.combinedCategory(pr('success','skipped')),h.combin
  h.combinedCategory(pr('success','skipped','failed')),h.combinedCategory(pr('skipped','pending'))]));
 ''')
         self.assertEqual(result, ["success", "skipped", "failed", "pending"])
-
     def test_check_meter_segments_keep_each_outcome_share(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
@@ -267,7 +239,6 @@ console.log(JSON.stringify({
         self.assertEqual(result["unknown"], [])
         self.assertEqual(result["label"], "6 succeeded, 1 running, 1 waiting, 1 failed, 1 skipped of 10 checks")
         self.assertEqual(result["none"], "No checks reported")
-
     def test_check_totals_take_one_share_per_check_status_and_expected_row(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
@@ -282,7 +253,6 @@ console.log(JSON.stringify(h.checkTotals(pull)));
         self.assertEqual(result, {"known": True, "completed": 6, "total": 11, "remaining": 5,
                                   "counts": {"success": 3, "running": 1, "waiting": 3, "failed": 1,
                                              "skipped": 1, "cancelled": 1, "unknown": 1}})
-
     def test_a_queued_job_with_no_steps_still_shows_the_check_line(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
@@ -295,7 +265,6 @@ console.log(JSON.stringify([totals.known,totals.completed,totals.total,totals.co
  h.meterSegments(totals).map(segment=>segment.state)]));
 ''')
         self.assertEqual(result, [True, 1, 2, 1, ["success", "waiting"]])
-
     def test_an_expected_required_check_keeps_the_pr_pending_and_takes_one_share(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
@@ -305,7 +274,6 @@ const totals=h.checkTotals(pr);
 console.log(JSON.stringify([h.combinedCategory(pr),totals.known,totals.completed,totals.total,totals.remaining,totals.counts.waiting,none.known]));
 ''')
         self.assertEqual(result, ["pending", True, 1, 2, 1, 1, False])
-
     def test_running_work_names_each_check_in_progress_with_its_current_step(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
@@ -321,7 +289,6 @@ console.log(JSON.stringify([h.runningWork(pull),h.runningWork({})]));
 ''')
         self.assertEqual(result, [[{"name": "test: Run unit tests", "elapsed": 95}, {"name": "build", "elapsed": 12},
                                    {"name": "Vercel", "elapsed": 40}], []])
-
     def test_disk_meter_reports_used_space_not_free_space(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
@@ -331,7 +298,6 @@ console.log(JSON.stringify([h.diskUsage({workspace_disk_free_bytes:25,workspace_
 ''')
         self.assertEqual(result[0], {"used": 75, "total": 100, "percent": 75})
         self.assertEqual(result[1:], [None, None])
-
     def test_failure_panel_distinguishes_unavailable_empty_and_failed_history(self):
         result = self.node(r"""
 const fs=require('fs');
@@ -361,18 +327,15 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
   failed:render({'qae-1':{recent_7d:[run]}}),
   pressed:render({'swe-1':{name:'SWE1',role:'swe',recent_7d:[]},'qae-1':{recent_7d:[]}})}));
 """)
-
         def text(node):
             if isinstance(node, str):
                 return node
             return " ".join(text(child) for child in node.get("children", []))
-
         def nodes(node):
             if isinstance(node, str):
                 return []
             return [node] + [descendant for child in node.get("children", [])
                              for descendant in nodes(child)]
-
         self.assertIn("Bot history is unavailable.", text(result["unavailable"]))
         self.assertNotIn("No failed completed run", text(result["unavailable"]))
         self.assertIn("No failed completed run in the available seven-day history.",
@@ -388,7 +351,6 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
         buttons = [node for node in nodes(result["pressed"]) if node["tag"] == "button"]
         self.assertEqual([(text(node).strip(), node["attrs"]["aria-pressed"]) for node in buttons],
                          [("SWE1", "false"), ("QAE1", "true")])
-
     def test_pull_request_row_opens_github_instead_of_a_dashboard_page(self):
         result = self.node(r'''
 const fs=require('fs');
@@ -418,12 +380,10 @@ console.log(JSON.stringify({
   detail:app.includes('function renderDetail(')||app.includes('go("prs",')
 }));
 ''')
-
         def text(node):
             if isinstance(node, str):
                 return node
             return " ".join(text(child) for child in node.get("children", []))
-
         linked = result["linked"]
         self.assertEqual(linked["tag"], "a")
         self.assertEqual(linked["attrs"]["href"], "https://github.com/octocat/example/pull/3")
@@ -448,7 +408,73 @@ console.log(JSON.stringify({
             self.assertEqual((row["tag"], row["attrs"]["href"], row["attrs"]["aria-label"]), ("div", None, None))
             self.assertIn("Fix the gate", text(row))
         self.assertFalse(result["detail"])
-
+    def test_a_held_slot_reads_as_occupied_and_a_job_name_stays_text(self):
+        result = self.node(r"""
+const fs=require('fs');
+const app=fs.readFileSync('./dashboard/static/app.js','utf8');
+const match=app.match(/  function renderCapacity\(\) \{([\s\S]*?)\n  \}\n\n  function render\(\)/);
+if (!match) throw new Error('renderCapacity not found');
+function el(tag, attrs={}, ...children) {
+  const node={tag, attrs, children:children.flat().filter(value => value !== null && value !== undefined)};
+  node.append=(...items) => node.children.push(...items.flat().filter(value => value !== null && value !== undefined));
+  node.prepend=(...items) => node.children.unshift(...items.flat().filter(value => value !== null && value !== undefined));
+  node.querySelector=(selector) => {
+    const cls=selector.slice(1);
+    const walk=(item) => {
+      if (!item || typeof item === 'string') return null;
+      if ((item.attrs.class || '').split(' ').includes(cls)) return item;
+      for (const child of item.children || []) { const found=walk(child); if (found) return found; }
+      return null;
+    };
+    return walk(node);
+  };
+  return node;
+}
+const badge=(status) => el('span', {class:`badge status-${status}`}, status);
+const link=(label, url) => url ? el('a', {href:url}, label) : null;
+const content={children:[], replaceChildren(...nodes){ this.children=nodes.flat(); }, append(...nodes){ this.children.push(...nodes.flat()); }};
+const snapshot={owner:'example', telemetry:{available:true, capacity:{
+  available:true, stale:false, sampled_at:'2026-10-08T03:18:00Z',
+  host:{cpu_percent:10, memory_used_bytes:1, memory_total_bytes:2, workspace_disk_free_bytes:1, workspace_disk_total_bytes:2},
+  limits:{slots:8, wait_slots:8, qae_concurrency:2, cpu_quota_cores:4, memory_max_bytes:100},
+  lanes:[
+    {id:'ci-1', state:'busy', registered:null, labels:['ci'], job:{repository:'example/widgets', name:'<img src=x>', url:'https://github.com/example/widgets/actions/runs/9/job/8'}},
+    {id:'wait-3', state:'busy', registered:null, labels:['wait'], job:{repository:'example/widgets', name:'Wait for preview', url:null}},
+    {id:'ci-2', state:'allocated', registered:null, labels:['ci']},
+    {id:'on-demand-1', state:'provisionable', registered:false, labels:[]}
+  ]}}};
+const heading=(title) => el('h1', {}, title);
+const metric=(label, value) => el('div', {}, label, String(value));
+const renderCapacity=new Function('content','snapshot','heading','empty','sourceBanner','el','formatTime','bytes','diskUsage','badge','link','metric',
+  match[1] + '\nreturn content;');
+renderCapacity(content, snapshot, heading, ()=>el('p'), ()=>null, el, value=>value, value=>String(value),
+  ()=>({used:1,total:2,percent:50}), badge, link, metric);
+function text(node) {
+  if (typeof node === 'string') return node;
+  return (node.children || []).map(text).join(' ');
+}
+function tags(node) {
+  if (!node || typeof node === 'string') return [];
+  return [node.tag, ...(node.children || []).flatMap(tags)];
+}
+const lanes=content.children[content.children.length - 1];
+const cards=lanes.querySelector('.lane-grid').children;
+console.log(JSON.stringify({
+  limits:text(lanes.children[0]),
+  cards:cards.map(card => ({text:text(card), tags:tags(card)}))
+}));
+""")
+        self.assertIn("8 shared CI/QAE slots · 8 wait slots", result["limits"])
+        self.assertNotIn("Registration unknown", json.dumps(result))
+        busy, wait, held, free = result["cards"]
+        self.assertIn("<img src=x>", busy["text"])
+        self.assertNotIn("img", busy["tags"])
+        self.assertIn("Wait for preview", wait["text"])
+        self.assertIn("example/widgets", wait["text"])
+        self.assertIn("Occupied; no job recorded for this slot", held["text"])
+        self.assertNotIn("No current same-owner job", held["text"])
+        self.assertIn("No runner registered", free["text"])
+        self.assertNotIn("Registration unknown", free["text"])
     def test_ui_uses_text_nodes_and_the_approved_local_palette(self):
         app = (ROOT / "dashboard/static/app.js").read_text()
         helpers = (ROOT / "dashboard/static/helpers.js").read_text()
@@ -461,7 +487,6 @@ console.log(JSON.stringify({
             self.assertIn(color, helpers)
         self.assertEqual(html.count('data-view="'), 3)
         self.assertNotIn("footer", html.lower())
-
     def test_workspace_nav_stays_put_while_the_view_scrolls(self):
         css = (ROOT / "dashboard/static/styles.css").read_text()
         app = (ROOT / "dashboard/static/app.js").read_text()
@@ -471,6 +496,5 @@ console.log(JSON.stringify({
         self.assertTrue(all(part in css for part in held))
         self.assertIn("content.scrollTo?.(0, 0)", app)
         self.assertFalse("min-height: auto" in css or "top: 102px" in css)
-
 if __name__ == "__main__":
     unittest.main()

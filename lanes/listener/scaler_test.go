@@ -128,6 +128,77 @@ func TestLaneFollowsAJobToItsEnd(t *testing.T) {
 	}
 }
 
+func TestJobAssignmentIsWrittenKeptAndRemovedWithTheSlot(t *testing.T) {
+	h, _ := startedLane(t, orgConfig(), 1)
+	s := h.lane.trackedSlots()[0]
+	h.lane.jobStarted(SetKey{"example", kindCI}, &scaleset.JobStarted{
+		RunnerName: s.RunnerName,
+		JobMessageBase: scaleset.JobMessageBase{
+			OwnerName: "example", RepositoryName: "widgets",
+			JobDisplayName: "Build", WorkflowRunID: 42, JobID: "7",
+		},
+	})
+	path := filepath.Join(slotDir(h.run, kindCI, s.Instance), assignmentFile)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\"repository\":\"example/widgets\",\"name\":\"Build\",\"run_id\":42,\"job_id\":\"7\"}\n"
+	if string(body) != want {
+		t.Fatalf("assignment = %s", body)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("assignment mode %v", info.Mode().Perm())
+	}
+	job, err := os.ReadFile(jobPath(h.run, kindCI, s.Instance))
+	if err != nil || len(strings.Fields(string(job))) != 5 {
+		t.Fatalf("job line = %q", job)
+	}
+
+	// A restart adopts the running slot and leaves the record where the sampler reads it.
+	restarted := newLane(h.lane.cfg, h.run, h.sys, h.host, h.lane.newAPI, h.log.logf)
+	restarted.now = h.lane.now
+	restarted.rebuild()
+	if got, err := os.ReadFile(path); err != nil || string(got) != want {
+		t.Fatalf("assignment after adoption = %q, %v", got, err)
+	}
+	if got := restarted.trackedSlots(); len(got) != 1 || got[0].RunnerName != s.RunnerName {
+		t.Fatalf("adopted %+v", got)
+	}
+
+	// The slot script removes jit and job, then rmdir, which cannot remove this file. Once the
+	// unit is inactive the listener removes it and the directory.
+	if err := os.Remove(filepath.Join(slotDir(h.run, kindCI, s.Instance), jitFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(jobPath(h.run, kindCI, s.Instance)); err != nil {
+		t.Fatal(err)
+	}
+	h.sys.set(unitName(h.lane.cfg.Name, kindCI, s.Instance), "inactive")
+	restarted.reconcile()
+	if !restarted.waitInflight(5 * time.Second) {
+		t.Fatal("runner removal did not finish")
+	}
+	if _, err := os.Stat(slotDir(h.run, kindCI, s.Instance)); !os.IsNotExist(err) {
+		t.Fatalf("slot dir left behind: %v", err)
+	}
+
+	// The slot script can remove the job file while the listener is down, leaving the record
+	// behind. A restart with nothing to adopt still removes it.
+	leftover := slotDir(h.run, kindCI, s.Instance)
+	if err := os.MkdirAll(leftover, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(leftover, assignmentFile), []byte(want), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restarted.rebuild()
+	if _, err := os.Stat(leftover); !os.IsNotExist(err) {
+		t.Fatalf("a leftover job record survived a restart: %v", err)
+	}
+}
+
 func TestLaneIdleStopRemovesTheRunnerBeforeStoppingTheUnit(t *testing.T) {
 	cfg := userConfig()
 	h := newHarness(t, cfg)

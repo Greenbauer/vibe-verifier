@@ -109,6 +109,7 @@ func (l *Lane) rebuild() {
 	records := readJobFiles(l.runDir, l.cfg.kindNames())
 	if len(records) == 0 {
 		l.logf("run dir %s holds no slots to adopt", l.runDir)
+		l.sweepAssignments()
 		return
 	}
 	_, units := l.allUnits()
@@ -136,6 +137,28 @@ func (l *Lane) rebuild() {
 		default:
 			l.clearStale(ref, rec)
 		}
+	}
+	l.sweepAssignments()
+}
+
+// sweepAssignments removes a job record left in a slot the listener is not tracking and whose job
+// file is already gone. The slot script's cleanup cannot remove it, so a restart would otherwise
+// keep the previous job's name until the next start. Called with l.mu held.
+func (l *Lane) sweepAssignments() {
+	for _, kind := range l.cfg.kindNames() {
+		for n := 1; n <= l.cfg.kindSlots(kind); n++ {
+			ref := slotRef{kind, n}
+			if _, tracked := l.slots[ref]; tracked || l.host.Exists(jobPath(l.runDir, kind, n)) {
+				continue
+			}
+			l.dropAssignment(ref)
+		}
+	}
+}
+
+func (l *Lane) dropAssignment(ref slotRef) {
+	if err := removeAssignment(l.runDir, ref.Kind, ref.N); err != nil {
+		l.logf("job record of %s could not be removed: %v", l.unit(ref), err)
 	}
 }
 
@@ -263,8 +286,10 @@ func (l *Lane) refresh() ([]Slot, map[string]string, bool) {
 				// It exited without a job (a crash, or its RuntimeMaxSec): GitHub still lists its runner.
 				l.logf("%s exited without taking a job (runner %s); removing its runner", unit, s.RunnerName)
 				l.removeRunnerLater(s.Set.Target, s.RunnerID)
+				l.dropAssignment(ref)
 			default:
 				l.logf("%s finished (runner %s, %s); the instance is free", unit, s.RunnerName, s.Phase)
+				l.dropAssignment(ref)
 			}
 			delete(l.slots, ref)
 			continue
@@ -285,6 +310,7 @@ func (l *Lane) refresh() ([]Slot, map[string]string, bool) {
 			occupied = append(occupied, Slot{Kind: ref.Kind, Instance: ref.N, Phase: PhaseDone})
 		default:
 			delete(l.foreign, ref)
+			l.dropAssignment(ref)
 		}
 	}
 	return occupied, states, true
@@ -499,16 +525,30 @@ func (l *Lane) slotByRunner(name string) *Slot {
 
 func (l *Lane) jobStarted(key SetKey, j *scaleset.JobStarted) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	s := l.slotByRunner(j.RunnerName)
 	if s == nil {
 		l.logf("job %q started on runner %s, which this listener does not track (%s)", j.JobDisplayName, j.RunnerName, key)
+		l.mu.Unlock()
 		return
 	}
 	if s.Phase != PhaseDone {
 		s.Phase = PhaseBusy
 	}
-	l.logf("job %q of %s/%s started on %s (runner %s)", j.JobDisplayName, j.OwnerName, j.RepositoryName, l.unit(s.ref()), j.RunnerName)
+	ref := s.ref()
+	l.logf("job %q of %s/%s started on %s (runner %s)", j.JobDisplayName, j.OwnerName, j.RepositoryName, l.unit(ref), j.RunnerName)
+	l.mu.Unlock()
+	l.recordAssignment(ref, j.OwnerName, j.RepositoryName, j.JobDisplayName, j.WorkflowRunID, j.JobID)
+}
+
+func (l *Lane) recordAssignment(ref slotRef, owner, repository, name string, runID int64, jobID string) {
+	body, ok := assignmentRecord(owner, repository, name, runID, jobID)
+	if !ok {
+		l.logf("job record of %s not written: the job name or repository is not usable", l.unit(ref))
+		return
+	}
+	if err := writeAssignment(l.runDir, ref.Kind, ref.N, body); err != nil {
+		l.logf("job record of %s could not be written: %v", l.unit(ref), err)
+	}
 }
 
 func (l *Lane) jobCompleted(key SetKey, j *scaleset.JobCompleted) {

@@ -30,6 +30,10 @@ LANE_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 DESTINATION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@:\[\]-]{0,254}$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 TARGET_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]{1,100})$")
+JOB_URL_RE = re.compile(
+    r"^https://github\.com/([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]{1,100})"
+    r"/actions/runs/([1-9][0-9]{0,19})/job/([1-9][0-9]{0,19})$")
+MAX_JOB_NAME = 240
 TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 SAFE_ERRORS = {"collection_failed", "host_metrics_unavailable", "invalid_arguments",
                "listener_budget_invalid", "listener_config_unavailable", "listener_identity_mismatch",
@@ -219,8 +223,23 @@ def _state(value, choices=None):
     if choices and value not in choices:
         raise ValueError
     return value
-
-
+def _host_job(item, config):
+    """A job the host recorded. A foreign, oversized or unreadable record is left off the slot."""
+    name, repository, url = item.get("job_name"), item.get("job_repository"), item.get("job_url")
+    if name is None and repository is None and url is None:
+        return {}
+    if (not isinstance(name, str) or not 1 <= len(name) <= MAX_JOB_NAME
+            or any(ord(char) < 32 or ord(char) == 127 for char in name)):
+        return {}
+    match = TARGET_RE.fullmatch(repository) if isinstance(repository, str) else None
+    if not match or match.group(1).casefold() != config.owner.casefold():
+        return {}
+    detail = {"job_repository": config.owner + "/" + match.group(2), "job_name": name}
+    parsed = JOB_URL_RE.fullmatch(url) if isinstance(url, str) else None
+    if parsed and parsed.group(1).casefold() == config.owner.casefold() and parsed.group(2) == match.group(2):
+        detail["job_url"] = "https://github.com/%s/%s/actions/runs/%s/job/%s" % (
+            config.owner, match.group(2), parsed.group(3), parsed.group(4))
+    return detail
 def project_host(raw, config):
     if not isinstance(raw, dict):
         raise ValueError
@@ -230,15 +249,20 @@ def project_host(raw, config):
         raise ValueError
     limit = _integer(slots.get("limit"), 1, 64)
     qae = _integer(slots.get("qae_concurrency"), 0, limit)
+    raw_wait = slots.get("wait_limit", 0)
+    wait_limit = _integer(0 if raw_wait is None else raw_wait, 0, 64)
     records, seen = [], set()
     raw_records = slots.get("occupied")
-    if not isinstance(raw_records, list) or len(raw_records) > 2 * limit:
+    if not isinstance(raw_records, list) or len(raw_records) > 2 * limit + wait_limit:
         raise ValueError
     for item in raw_records:
         if not isinstance(item, dict):
             raise ValueError
-        kind = _state(item.get("kind"), ("ci", "qae"))
-        index = _integer(item.get("index"), 1, limit)
+        kind = _state(item.get("kind"), ("ci", "qae", "wait"))
+        ceiling = wait_limit if kind == "wait" else limit
+        if ceiling < 1:
+            raise ValueError
+        index = _integer(item.get("index"), 1, ceiling)
         if (kind, index) in seen:
             raise ValueError
         seen.add((kind, index))
@@ -258,6 +282,7 @@ def project_host(raw, config):
                            "set_id": _integer(item.get("set_id"), 1),
                            "runner_id": _integer(item.get("runner_id"), 1),
                            "runner_name": item["runner_name"], "allocated_at": item["allocated_at"]})
+            record.update(_host_job(item, config))
         else:
             record["reason"] = _state(item.get("reason"), (
                 "active-unit-without-job", "active_unit_without_job", "job_unreadable",
@@ -267,6 +292,7 @@ def project_host(raw, config):
     if started_at is not None and (not isinstance(started_at, str) or len(started_at) > 100
                                    or any(ord(char) < 32 for char in started_at)):
         raise ValueError
+    shared = sum(row["kind"] != "wait" for row in records)
     body = {
         "label": config.host_label,
         "aggregate_scope": "shared_host",
@@ -284,16 +310,15 @@ def project_host(raw, config):
             "memory_high_bytes": _integer(limits.get("memory_high_bytes"), 0, nullable=True),
             "cpu_usage_nsec": _integer(limits.get("cpu_usage_nsec"), 0, nullable=True),
             "cpu_quota_cores": _number(limits.get("cpu_quota_cores"), 0, nullable=True)},
-        "slots": {"limit": limit, "qae_concurrency": qae, "occupied_count": len(records),
-                  "remaining_on_demand": max(0, limit - len(records)), "occupied": records},
+        "slots": {"limit": limit, "qae_concurrency": qae, "wait_limit": wait_limit,
+                  "occupied_count": shared, "remaining_on_demand": max(0, limit - shared),
+                  "occupied": records},
     }
     if body["memory"]["available_bytes"] > body["memory"]["total_bytes"]:
         raise ValueError
     if body["workspace"]["free_bytes"] > body["workspace"]["total_bytes"]:
         raise ValueError
     return body
-
-
 def project_rate_limits(raw):
     if not isinstance(raw, list) or not 1 <= len(raw) <= 32:
         raise ValueError
@@ -313,14 +338,10 @@ def project_rate_limits(raw):
                             "resets_at": _integer(window.get("resets_at"), 1)})
         result.append({"limit_id": item["limit_id"], "windows": windows})
     return result
-
-
 def _empty_host(config):
     return {"label": config.host_label, "aggregate_scope": "shared_host", "cpu": None,
             "memory": None, "workspace": None, "listener": None, "lane_limits": None,
             "slots": None}
-
-
 def _previous_host(previous, config):
     try:
         host = previous["hosts"][0]
@@ -330,8 +351,6 @@ def _previous_host(previous, config):
         return body, observed, attempted
     except (KeyError, IndexError, TypeError, ValueError):
         return _empty_host(config), None, None
-
-
 def _previous_account(previous):
     try:
         account = previous["accounts"][0]
@@ -341,8 +360,6 @@ def _previous_account(previous):
         return limits, observed, attempted
     except (KeyError, IndexError, TypeError, ValueError):
         return [], None, None
-
-
 def load_previous(path, owner):
     try:
         previous = json.loads(_read_file(path, MAX_SNAPSHOT).decode("utf-8"))
@@ -353,19 +370,13 @@ def load_previous(path, owner):
     if previous.get("owner") != owner:
         raise ValueError("output already belongs to a different owner")
     return previous
-
-
 def _error_code(error):
     code = str(error)
     return code if code in SAFE_ERRORS else "collection_failed"
-
-
 def _quota_due(last_attempt, now):
     attempted = _parse_time(last_attempt)
     current = _parse_time(now)
     return attempted is None or current is None or (current - attempted).total_seconds() >= QUOTA_INTERVAL_SECONDS
-
-
 def _samples(previous, host, success, now):
     kept = []
     current = _parse_time(now)
@@ -393,8 +404,6 @@ def _samples(previous, host, success, now):
             "slots_remaining_on_demand": host["slots"]["remaining_on_demand"]}})
     unique = {sample["observed_at"]: sample for sample in kept}
     return [unique[key] for key in sorted(unique)][-MAX_SAMPLES:]
-
-
 def atomic_write(path, snapshot):
     destination = Path(path)
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -418,8 +427,6 @@ def atomic_write(path, snapshot):
         except OSError:
             pass
         raise
-
-
 def refresh(config, output, fetch=None, now=None):
     now = now or utc_now()
     previous = load_previous(output, config.owner)
@@ -464,8 +471,6 @@ def refresh(config, output, fetch=None, now=None):
                 "samples": _samples(previous, host_body, host_ok, now)}
     atomic_write(output, snapshot)
     return host_ok
-
-
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, help="private collector configuration JSON")
@@ -475,8 +480,6 @@ def parse_args(argv=None):
     if args.interval is not None and (not math.isfinite(args.interval) or args.interval <= 0):
         parser.error("--interval must be positive")
     return args
-
-
 def main(argv=None):
     args = parse_args(argv)
     try:
@@ -493,7 +496,5 @@ def main(argv=None):
             time.sleep(max(0, args.interval - (time.monotonic() - started)))
     except KeyboardInterrupt:
         return 0
-
-
 if __name__ == "__main__":
     sys.exit(main())

@@ -51,6 +51,9 @@ func TestSlotFilesRoundTrip(t *testing.T) {
 	if err := writeIdleStop(run, kindCI, 2); err != nil {
 		t.Fatal(err)
 	}
+	if err := writeAssignment(run, kindCI, 2, []byte("{\"repository\":\"example/repo-a\",\"name\":\"Build\"}\n")); err != nil {
+		t.Fatal(err)
+	}
 	if err := removeSlotFiles(run, kindCI, 2); err != nil {
 		t.Fatal(err)
 	}

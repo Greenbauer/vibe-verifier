@@ -399,18 +399,21 @@
     const lanes = el("section", { class: "panel" }, el("div", { class: "panel-title" }, el("h2", {}, `${snapshot.owner} runners (${capacity.lanes.length})`),
       el("span", { class: "muted" }, "Registered and on-demand capacity")), el("div", { class: "lane-grid" }));
     const grid = lanes.querySelector(".lane-grid");
+    const registrationText = { true: "Runner registered", false: "No runner registered" };
+    const idleText = { provisionable: "Provisionable when work arrives", busy: "Busy; job details not yet matched",
+      allocated: "Occupied; no job recorded for this slot" };
     capacity.lanes.forEach(lane => {
+      const registration = registrationText[lane.registered];
       const card = el("article", { class: `lane status-${lane.state}` }, el("div", { class: "lane-heading" }, el("b", { class: "mono" }, lane.id), badge(lane.state)),
-        el("p", { class: "muted" }, lane.registered === true ? "Runner registered" : lane.registered === false ? "No runner registered" : "Registration unknown"));
+        registration ? el("p", { class: "muted" }, registration) : null);
       if (lane.job) card.append(el("div", {}, el("p", {}, lane.job.name), el("p", { class: "muted" }, lane.job.repository), link("Open job", lane.job.url, snapshot.owner)));
-      else card.append(el("p", { class: "muted" }, lane.state === "provisionable" ? "Provisionable when work arrives" :
-        lane.state === "busy" ? "Busy; job details not yet matched" : "No current same-owner job"));
+      else card.append(el("p", { class: "muted" }, idleText[lane.state] || "No current same-owner job"));
       if (lane.labels.length) card.append(el("small", { class: "muted" }, lane.labels.join(" · ")));
       grid.append(card);
     });
     const limits = capacity.limits;
     if (limits) lanes.prepend(el("p", { class: "muted lane-limits" },
-      `${limits.slots} shared CI/QAE slots · QAE maximum ${limits.qae_concurrency} · CPU cap ${limits.cpu_quota_cores ?? "unknown"} cores · Memory cap ${bytes(limits.memory_max_bytes)}`));
+      `${limits.slots} shared CI/QAE slots${limits.wait_slots ? ` · ${limits.wait_slots} wait slots` : ""} · QAE maximum ${limits.qae_concurrency} · CPU cap ${limits.cpu_quota_cores ?? "unknown"} cores · Memory cap ${bytes(limits.memory_max_bytes)}`));
     content.append(lanes);
   }
 

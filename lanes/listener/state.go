@@ -2,31 +2,54 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // The run-dir contract (README.md): the listener writes, per started slot,
 //
-//	<run>/<kind>/<n>/jit        0400  the encoded JIT runner config; the slot mounts it into the container
-//	<run>/<kind>/<n>/job        0600  "<scope-target> <kind> <set-id> <runner-id> <runner-name>\n"
-//	<run>/<kind>/<n>/idle-stop        written before an idle stop removes the runner
+//	<run>/<kind>/<n>/jit         0400  the encoded JIT runner config; the slot mounts it into the container
+//	<run>/<kind>/<n>/job         0600  "<scope-target> <kind> <set-id> <runner-id> <runner-name>\n"
+//	<run>/<kind>/<n>/assignment  0600  the job GitHub reported started, written by JobStarted
+//	<run>/<kind>/<n>/idle-stop         written before an idle stop removes the runner
 //
-// An instance is free when it has no job file and its unit is inactive. The slot's cleanup
-// removes the job file last; the listener removes files itself only for a start it undoes and for
-// a job file left behind by a unit that is no longer running.
+// An instance is free when it has no job file and its unit is inactive. The assignment file does
+// not hold the instance: the slot script never reads it, and removes only jit, idle-stop and job
+// before rmdir. The listener removes the assignment with those files, and again once the unit is
+// inactive and the job file is already gone, so the directory does not stay behind.
 const (
-	jitFile      = "jit"
-	jobFile      = "job"
-	idleStopFile = "idle-stop"
+	jitFile        = "jit"
+	jobFile        = "job"
+	assignmentFile = "assignment"
+	idleStopFile   = "idle-stop"
+	maxJobName     = 240
+	maxAssignment  = 4096
 )
+
+var (
+	assignmentOwner = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
+	assignmentRepo  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
+	assignmentJobID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
+)
+
+// jobAssignment is what JobStarted records for the dashboard. run_id and job_id are included only
+// when both can build a GitHub job link; the five-field job line is a different file.
+type jobAssignment struct {
+	Repository string `json:"repository"`
+	Name       string `json:"name"`
+	RunID      int64  `json:"run_id,omitempty"`
+	JobID      string `json:"job_id,omitempty"`
+}
 
 func slotDir(runDir, kind string, n int) string {
 	return filepath.Join(runDir, kind, strconv.Itoa(n))
@@ -157,12 +180,60 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	return err
 }
 
+// assignmentRecord is the assignment file body, or ok false when the name or repository cannot be
+// shown. A refused record is not written; the page then uses its GitHub match.
+func assignmentRecord(owner, repository, name string, runID int64, jobID string) ([]byte, bool) {
+	if !assignmentOwner.MatchString(owner) || !assignmentRepo.MatchString(repository) {
+		return nil, false
+	}
+	if name == "" || utf8.RuneCountInString(name) > maxJobName || len(name) > maxAssignment {
+		return nil, false
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return nil, false
+		}
+	}
+	rec := jobAssignment{Repository: owner + "/" + repository, Name: name}
+	if runID > 0 && assignmentJobID.MatchString(jobID) {
+		rec.RunID, rec.JobID = runID, jobID
+	}
+	data, err := json.Marshal(rec)
+	if err != nil || len(data)+1 > maxAssignment {
+		return nil, false
+	}
+	return append(data, '\n'), true
+}
+
+func writeAssignment(runDir, kind string, n int, body []byte) error {
+	return writeFileAtomic(filepath.Join(slotDir(runDir, kind, n), assignmentFile), body, 0o600)
+}
+
 // removeSlotFiles removes one instance's files, the job file last because its absence is what
 // frees the instance, then the directory if nothing else is in it.
 func removeSlotFiles(runDir, kind string, n int) error {
 	dir := slotDir(runDir, kind, n)
 	var errs []error
-	for _, name := range []string{jitFile, jitFile + ".tmp", idleStopFile, jobFile + ".tmp", jobFile} {
+	names := []string{
+		jitFile, jitFile + ".tmp", idleStopFile,
+		assignmentFile, assignmentFile + ".tmp",
+		jobFile + ".tmp", jobFile,
+	}
+	for _, name := range names {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	_ = os.Remove(dir)
+	return errors.Join(errs...)
+}
+
+// removeAssignment removes a job record the slot script does not know about, then the directory
+// when that was the last file. Absent files are not an error.
+func removeAssignment(runDir, kind string, n int) error {
+	dir := slotDir(runDir, kind, n)
+	var errs []error
+	for _, name := range []string{assignmentFile, assignmentFile + ".tmp"} {
 		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}
