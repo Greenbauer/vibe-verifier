@@ -18,10 +18,11 @@ NAMES = {
     "typescript", "ts-node", "tsx", "eslint", "prettier", "vitest", "jest", "mocha", "chai",
     "postcss", "autoprefixer", "tailwindcss", "webpack", "vite", "rollup", "esbuild", "nodemon",
     "husky", "lint-staged", "lefthook", "knip", "jscpd", "dependency-cruiser", "playwright",
+    "jsdom", "happy-dom",
 }
 PREFIXES = (
     "@types/", "eslint-", "@typescript-eslint/", "@eslint/", "prettier-plugin-", "@vitest/",
-    "@testing-library/", "@playwright/", "@stryker-mutator/", "@tailwindcss/",
+    "@testing-library/", "@playwright/", "@stryker-mutator/", "@tailwindcss/", "@jest/", "@vitejs/",
 )
 
 
