@@ -350,19 +350,23 @@ The dashboard shows source-proven failures, cancellations, waiting jobs, and cur
 The pull request list groups pull requests by repository. A repository with no open pull request
 that matches the filters gets no group. Groups are ordered by their most recently updated pull
 request, newest first; within a group the newest pull request is first and the oldest is last.
-A row's age is how long that pull request has been open. Under a day it shows hours and minutes.
+A row's age is how long that pull request has been open, and it is the only figure in the
+right-hand column. Under a day it shows hours and minutes.
 From a day through seven days it counts whole days, with no hours. Past seven days it counts
 whole weeks, past thirty days whole months, and from a year whole years. The number stays the
 default text color through three days, turns yellow after that, and turns red after two weeks.
 An age of exactly three days or exactly two weeks keeps the younger color.
-Beside that age, the same units and colors show when the latest push landed. The label under
-that time is the kind of push: feature, bug fix, refactor, performance, docs, test, chore, ci,
+The latest push uses those same units and colors, on the right of the line under the check
+meter, in the same size and weight as that line. Its right edge lines up with the meter, not
+with the comment mark beside the meter. The kind of push follows the time on that same line:
+feature, bug fix, refactor, performance, docs, test, chore, ci,
 build, style, revert, work in progress, or update when the commit message has no such prefix.
 A merge of the pull request's base branch is "sync with main" (or "sync with <base>" when the
 base is not main or master). When one push contains several commits, a sync of the base is
 ignored if the push also contains other work, and the label is the kind of the newest other
 commit. The time is the commit's pushed time when GitHub has one, otherwise the commit time.
-If that read fails, the cell says Unavailable.
+If that read fails, the line says the last push is unavailable. A long kind truncates instead
+of widening the meter.
 The title is green when the pull request is fully merge-ready: GitHub's merge state is clean
 (not a draft, not behind the base, and not blocked or conflicting), every current-head check
 is green (skipped checks may sit beside at least one success, and a check that is not required
@@ -388,14 +392,18 @@ total, taller than the host meters. Each outcome takes a share of that line equa
 with a gap between shares: green for passed, yellow for running, dim yellow for waiting, red for
 failed, and gray for skipped, cancelled, or unknown. A check is running when GitHub marks it in
 progress. A queued job, a pending commit status, and an expected required check are all waiting.
-The text above the line names the checks running now, and the step an Actions job is on, and is
-left off when nothing is running. The text under it counts every outcome except passed, or says
-all passed. The badge beside it, not the line, is the worst current-head check.
-A job that has not started has no steps yet, but it is still one waiting check, so the line
-shows as soon as anything reports on the head. A head with no checks at all says so, and never
-renders as complete.
-Running checks are named in that one place: under the badge the row gives only the reason for
-the badge. Elapsed time alone never asserts that a job is stuck.
+The Current work column holds that badge and, under it, what the pull request is doing or stuck
+on. Each check in progress is one line, the job and its current step, newest first, at most two
+lines and then "+N more". A job with no current step is named by the job alone. When nothing is
+running, failed checks are named the same way, then required checks that have not run, then a
+count of queued checks. The attention reason is the line when none of those apply, and it stays
+the column tooltip and the screen-reader text when a more specific line is shown. Each of those
+lines stays on one line and truncates, with the full text in its title.
+The text under the meter counts every outcome except passed, or says all passed. The latest
+push is the right-hand side of that same line. A head with no checks at all says so and never
+renders as complete, and the push line sits under that notice too.
+A job that has not started has no steps yet, but it is still one waiting check, so the meter
+shows as soon as anything reports on the head. Elapsed time alone never asserts that a job is stuck.
 
 ## Data lifecycle and uninstall
 
@@ -425,7 +433,8 @@ an in-flight refresh. The collector and usage-artifact test files cover the nati
 templates, and `test_dashboard_follow.py` the follower's check-run gate and rollback.
 `tests/test_dashboard_server_ui.py` covers loopback HTTP, proxy and direct routing headers,
 read-only methods, Host/Origin/traversal, XSS-safe JSON and DOM construction, filters, account usage
-math, the class on a row's age number, local assets, the tab icon route, and the approved palette.
+math, the class on a row's age number, the push line under the meter, the current-work names,
+local assets, the tab icon route, and the approved palette.
 `tests/test_dashboard_pull_age.py` covers pull-request age units and color.
 `tests/test_dashboard_pull_signals.py` covers the latest push's kind and time, merge-ready
 titles, and the unresolved-comment count. `tests/test_dashboard_usage_charts.py` covers the usage

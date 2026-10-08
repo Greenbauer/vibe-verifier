@@ -145,11 +145,19 @@ a.pr-row { color: inherit; text-decoration: none; cursor: pointer; }
 .pr-age { align-items: flex-end; gap: 6px; text-align: right; font-variant-numeric: tabular-nums; }
 .age-stat { min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .age-stat small { max-width: 9.5em; }
-.pr-age .age-yellow { color: var(--yellow); }
-.pr-age .age-red { color: var(--red); }
-.progress-meter-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.progress-meter-row .check-meter { flex: 1 1 auto; min-width: 48px; }
-.progress-copy .running-steps { font-size: 11px; font-weight: 600; overflow-wrap: anywhere; }
+.pr-age .age-yellow, .progress-copy .age-yellow { color: var(--yellow); }
+.pr-age .age-red, .progress-copy .age-red { color: var(--red); }
+.pr-work .work-line, .pr-work .work-more { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.progress-layout { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 4px; align-items: center; min-width: 0; }
+.progress-layout.has-mark { grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; }
+.progress-layout > .check-meter, .progress-layout > .progress-lead { grid-column: 1; grid-row: 1; min-width: 0; }
+.progress-layout > .check-meter { min-width: 48px; width: 100%; }
+.progress-layout > .comment-mark { grid-column: 2; grid-row: 1; }
+.progress-layout > .progress-caption { grid-column: 1; grid-row: 2; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; min-width: 0; }
+.progress-counts { min-width: 0; }
+.push-line { display: flex; justify-content: flex-end; gap: 4px; min-width: 0; margin-left: auto; text-align: right; }
+.push-line > span:first-child { flex: none; }
+.push-kind { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .progress-copy .comment-mark { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px; color: var(--yellow); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 1; }
 .comment-icon { width: 13px; height: 13px; display: block; }
 .chevron { color: var(--muted); font-size: 18px; }

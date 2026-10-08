@@ -356,15 +356,15 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
 const fs=require('fs');
 const {safeUrl}=require('./dashboard/static/helpers.js');
 const app=fs.readFileSync('./dashboard/static/app.js','utf8');
-const source=app.slice(app.indexOf('  function pushStat('),app.indexOf('  function renderPulls('));
+const source=app.slice(app.indexOf('  function runningNames('),app.indexOf('  function renderPulls('));
 function el(tag, attrs={}, ...children) {
   return {tag, attrs, children:children.flat().filter(value => value !== null && value !== undefined)};
 }
-const prRow=new Function('el','safeUrl','snapshot','combinedCategory','badge','progress','since','ageClass',
+const prRow=new Function('el','safeUrl','snapshot','combinedCategory','badge','progress','since','ageClass','runningWork',
   source+'return prRow;')(el, safeUrl, {owner:'octocat'}, ()=>'failed',
   status=>el('span',{},status), ()=>el('div',{class:'progress'}),
   value=>value==='2026-09-01T00:00:00Z'?'5w':'2d',
-  value=>value==='2026-09-01T00:00:00Z'?'age-red':'age-yellow');
+  value=>value==='2026-09-01T00:00:00Z'?'age-red':'age-yellow', require('./dashboard/static/helpers.js').runningWork);
 const pull=(html_url, stale)=>({repository:'octocat/example',number:3,title:'Fix the gate',author:'octocat',
   head_sha:'abcdef1234567890',html_url,attention_reason:'A current-head check failed',
   created_at:'2026-10-01T00:00:00Z',stale});
@@ -394,14 +394,14 @@ console.log(JSON.stringify({
         self.assertIn("Fix the gate", text(linked))
         age = next(node for node in linked["children"] if node["attrs"].get("class") == "pr-age")
         got = ([part["children"] for stat in age["children"] for part in stat["children"]], age["children"][0]["children"][0]["attrs"]["class"])
-        self.assertEqual(got, ([["2d"], ["PR age"], ["Unavailable"], ["Last push"]], "age-yellow"))
+        self.assertEqual(got, ([["2d"], ["PR age"]], "age-yellow"))
         self.assertEqual([text(node) for node in linked["children"][1]["children"][1:]], ["A current-head check failed"])
         ready = result["ready"]
         title = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-identity")["children"][0]
-        pushed = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-age")["children"][1]["children"]
+        age_only = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-age")
         self.assertEqual((("Fully merge-ready" in ready["attrs"]["aria-label"]), title["attrs"]["class"],
-                          [part["children"] for part in pushed], pushed[0]["attrs"]["class"]),
-                         (True, "merge-ready", [["5w"], ["bug fix"]], "age-red"))
+                          len(age_only["children"]), text(age_only)),
+                         (True, "merge-ready", 1, "2d PR age"))
         self.assertEqual((result["stale"]["attrs"]["class"], result["stale"]["attrs"]["href"]), ("pr-row stale-row", linked["attrs"]["href"]))
         for key in ("foreign", "missing"):
             row = result[key]
