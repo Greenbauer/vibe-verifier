@@ -20,9 +20,16 @@ MAX_ARCHIVE = 65536
 MAX_RECORD = 16384
 MAX_PAGES = 5  # 500 artifacts a week per repository
 ROLE = {"swe-reviewer": "reviewer", "qae-explorer": "explorer"}
-NAME = re.compile(r"vv-usage-(swe-reviewer|qae-explorer)-([1-9][0-9]*)\Z")
+# `vv-usage-<role>-<run attempt>`, then `-<explorer>` for a QAE explorer past the first of a split run.
+NAME = re.compile(r"vv-usage-(swe-reviewer|qae-explorer)-([1-9][0-9]*)(?:-([1-9][0-9]*))?\Z")
 ALIAS = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,63}\Z")
 COUNTS = {"input_tokens", "cached_input_tokens", "cache_creation_input_tokens", "output_tokens", "reasoning_output_tokens"}
+
+
+def explorer_jobs(jobs, explorer):
+    """The job names of the explorer an artifact is from: the bot's own for the first, and for one past
+    the first of a split run the name GitHub gives that matrix job, `<job> (<n>)`."""
+    return tuple("%s (%s)" % (job, explorer) for job in jobs) if explorer else jobs
 
 
 def count(value, nullable=False):
@@ -251,7 +258,7 @@ class UsageArtifacts:
                         elif ROLE[matched.group(1)] == "explorer":
                             # Filled after the token reads, so a runner lookup cannot spend the
                             # budget the history itself needs.
-                            record["_lookup"] = (repository, run_id, attempt, definition.jobs)
+                            record["_lookup"] = (repository, run_id, attempt, explorer_jobs(definition.jobs, matched.group(3)))
                         self.cache[key] = record
                         records.append(record)
                     except (ApiError, ValueError, TypeError, KeyError, zipfile.BadZipFile, OSError):

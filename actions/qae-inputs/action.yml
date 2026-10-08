@@ -1,5 +1,5 @@
 name: Vibe Verifier QAE inputs
-description: Before the QAE explorer runs, copy the design references the site step supplied into the evidence, list them for the explorer, and declare their digests so the verify job's gate judges the images the workflow supplied; write the viewport widths the QAE manifest's qae-artifacts line requires, for the explorer; and declare the explorer's turn cap, sized to what it walks.
+description: Before the QAE explorer runs, copy the design references the site step supplied into the evidence, list them for the explorer, and declare their digests so the verify job's gate judges the images the workflow supplied; write the viewport widths the QAE manifest's qae-artifacts line requires, for the explorer; and declare the explorer's turn cap, sized to what it walks, and its share of the criteria when they are split across several explorers.
 inputs:
   manifest:
     description: >-
@@ -17,6 +17,20 @@ inputs:
   evidence:
     description: The explorer's artifact directory; each reference is copied to its references/<key>.png.
     default: qae-artifacts
+  shard:
+    description: >-
+      Which explorer this is, of the `shards` that share the pull request's criteria (`matrix.shard || 1` in
+      the explore job). The turn cap is sized to its share, which the `share` output names. Only the first
+      re-walks the features: for one past the first, qae-inputs/features and qae-inputs/features.md are
+      removed here, after they are counted.
+    default: "1"
+  shards:
+    description: >-
+      How many explorers the criteria job split the criteria across (`strategy.job-total` in the explore
+      job). Every explore job shares the criteria out the same way: in document order each goes whole to
+      the explorer with the fewest walks so far, and the first starts with the walks of the feature re-walk
+      in qae-inputs/features, so the features step runs before this one in every explore job.
+    default: "1"
 outputs:
   references:
     description: >-
@@ -33,7 +47,14 @@ outputs:
       one feature in qae-inputs/features/ (the acceptance-verdict line's --max-states, default 3, is how many
       states of each are walked); the cap is 40 plus 30 a walk, never below 80 nor above 240 (the numbers
       behind it: TURNS_BASE in bin/vibe-verifier). The explore job writes those inputs before this step runs.
+      One explorer of several is sized to its own share.
     value: ${{ steps.prepare.outputs.max-turns }}
+  share:
+    description: >-
+      The sentence that names this explorer's share of the criteria, for its prompt: "Your share of the
+      criteria is AC1, AC4, TC2: ...". Written by code from the criteria's own numbers, so the model never
+      works its share out. Empty for one explorer, which walks them all.
+    value: ${{ steps.prepare.outputs.share }}
 runs:
   using: composite
   steps:
@@ -45,6 +66,8 @@ runs:
         VV_ENTRIES: ${{ inputs.entries }}
         VV_REFERENCES: ${{ inputs.references }}
         VV_EVIDENCE: ${{ inputs.evidence }}
+        VV_SHARD: ${{ inputs.shard }}
+        VV_SHARDS: ${{ inputs.shards }}
       run: |
         set -euo pipefail
         manifest="$VV_MANIFEST"
@@ -54,8 +77,10 @@ runs:
         fi
         digests="$RUNNER_TEMP/vv-reference-digests.json"
         turns="$RUNNER_TEMP/vv-explorer-turns"
+        share="$RUNNER_TEMP/vv-explorer-share"
         python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" qae-inputs --manifest "$manifest" --references "$VV_REFERENCES" \
           --evidence "$VV_EVIDENCE" --listing "$VV_REFERENCES.md" --digests "$digests" --widths-file qae-inputs/widths \
-          --turns "$turns"
+          --turns "$turns" --shard "$VV_SHARD" --shards "$VV_SHARDS" --share "$share"
         echo "references=$(cat "$digests")" >> "$GITHUB_OUTPUT"
         echo "max-turns=$(cat "$turns")" >> "$GITHUB_OUTPUT"
+        echo "share=$(cat "$share")" >> "$GITHUB_OUTPUT"
