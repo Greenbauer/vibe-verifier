@@ -431,5 +431,20 @@ class CacheTruthfulness(unittest.TestCase):
         self.assertIsNone(result["sampled_at"])
 
 
+class RunnerNames(unittest.TestCase):
+    def test_run_jobs_keep_a_runner_name_and_drop_a_non_string(self):
+        endpoint = f"repos/{REPO}/actions/runs/11/attempts/1/jobs?per_page=100"
+        api = FakeAPI(items={endpoint: [
+            {"id": 1, "run_id": 11, "head_sha": SHA, "name": "explore", "status": "completed",
+             "conclusion": "success", "runner_name": "box-ci-qae-2-1700000000", "runner_id": 9, "steps": []},
+            {"id": 2, "run_id": 11, "head_sha": SHA, "name": "other", "status": "completed",
+             "conclusion": "success", "runner_name": 12, "steps": []},
+        ]})
+        run = {"id": 11, "run_attempt": 1, "head_sha": SHA, "status": "completed", "updated_at": NOW.isoformat()}
+        jobs = GitHubCollector(config(), api, clock=lambda: NOW)._run_jobs(REPO, run)
+        self.assertEqual(jobs[0]["runner_name"], "box-ci-qae-2-1700000000")
+        self.assertIsNone(jobs[1]["runner_name"])
+
+
 if __name__ == "__main__":
     unittest.main()

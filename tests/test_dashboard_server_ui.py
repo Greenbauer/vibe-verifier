@@ -410,59 +410,37 @@ console.log(JSON.stringify({
         self.assertFalse(result["detail"])
     def test_a_held_slot_reads_as_occupied_and_a_job_name_stays_text(self):
         result = self.node(r"""
-const fs=require('fs');
-const app=fs.readFileSync('./dashboard/static/app.js','utf8');
+const app=require('fs').readFileSync('./dashboard/static/app.js','utf8');
 const match=app.match(/  function renderCapacity\(\) \{([\s\S]*?)\n  \}\n\n  function render\(\)/);
 if (!match) throw new Error('renderCapacity not found');
+const keep=items=>items.flat().filter(value=>value!=null);
 function el(tag, attrs={}, ...children) {
-  const node={tag, attrs, children:children.flat().filter(value => value !== null && value !== undefined)};
-  node.append=(...items) => node.children.push(...items.flat().filter(value => value !== null && value !== undefined));
-  node.prepend=(...items) => node.children.unshift(...items.flat().filter(value => value !== null && value !== undefined));
-  node.querySelector=(selector) => {
+  const node={tag, attrs, children:keep(children)};
+  node.append=(...items)=>node.children.push(...keep(items));
+  node.prepend=(...items)=>node.children.unshift(...keep(items));
+  node.querySelector=selector=>{
     const cls=selector.slice(1);
-    const walk=(item) => {
-      if (!item || typeof item === 'string') return null;
-      if ((item.attrs.class || '').split(' ').includes(cls)) return item;
-      for (const child of item.children || []) { const found=walk(child); if (found) return found; }
-      return null;
-    };
+    const walk=item=>!item||typeof item==='string'?null:(item.attrs.class||'').split(' ').includes(cls)?item:(item.children||[]).reduce((found,child)=>found||walk(child),null);
     return walk(node);
   };
   return node;
 }
-const badge=(status) => el('span', {class:`badge status-${status}`}, status);
-const link=(label, url) => url ? el('a', {href:url}, label) : null;
-const content={children:[], replaceChildren(...nodes){ this.children=nodes.flat(); }, append(...nodes){ this.children.push(...nodes.flat()); }};
-const snapshot={owner:'example', telemetry:{available:true, capacity:{
-  available:true, stale:false, sampled_at:'2026-10-08T03:18:00Z',
-  host:{cpu_percent:10, memory_used_bytes:1, memory_total_bytes:2, workspace_disk_free_bytes:1, workspace_disk_total_bytes:2},
-  limits:{slots:8, wait_slots:8, qae_concurrency:2, cpu_quota_cores:4, memory_max_bytes:100},
-  lanes:[
-    {id:'ci-1', state:'busy', registered:null, labels:['ci'], job:{repository:'example/widgets', name:'<img src=x>', url:'https://github.com/example/widgets/actions/runs/9/job/8'}},
-    {id:'wait-3', state:'busy', registered:null, labels:['wait'], job:{repository:'example/widgets', name:'Wait for preview', url:null}},
-    {id:'ci-2', state:'allocated', registered:null, labels:['ci']},
-    {id:'on-demand-1', state:'provisionable', registered:false, labels:[]}
-  ]}}};
-const heading=(title) => el('h1', {}, title);
-const metric=(label, value) => el('div', {}, label, String(value));
-const renderCapacity=new Function('content','snapshot','heading','empty','sourceBanner','el','formatTime','bytes','diskUsage','badge','link','metric',
-  match[1] + '\nreturn content;');
-renderCapacity(content, snapshot, heading, ()=>el('p'), ()=>null, el, value=>value, value=>String(value),
-  ()=>({used:1,total:2,percent:50}), badge, link, metric);
-function text(node) {
-  if (typeof node === 'string') return node;
-  return (node.children || []).map(text).join(' ');
-}
-function tags(node) {
-  if (!node || typeof node === 'string') return [];
-  return [node.tag, ...(node.children || []).flatMap(tags)];
-}
-const lanes=content.children[content.children.length - 1];
-const cards=lanes.querySelector('.lane-grid').children;
-console.log(JSON.stringify({
-  limits:text(lanes.children[0]),
-  cards:cards.map(card => ({text:text(card), tags:tags(card)}))
-}));
+const badge=status=>el('span',{class:`badge status-${status}`},status);
+const link=(label,url)=>url?el('a',{href:url},label):null;
+const content={children:[],replaceChildren(...nodes){this.children=nodes.flat()},append(...nodes){this.children.push(...nodes.flat())}};
+const job=(name,url)=>({repository:'example/widgets',name,url});
+const snapshot={owner:'example',telemetry:{available:true,capacity:{available:true,stale:false,sampled_at:'2026-10-08T03:18:00Z',
+  host:{cpu_percent:10,memory_used_bytes:1,memory_total_bytes:2,workspace_disk_free_bytes:1,workspace_disk_total_bytes:2},
+  limits:{slots:8,wait_slots:8,qae_concurrency:2,cpu_quota_cores:4,memory_max_bytes:100},
+  lanes:[{id:'ci-1',state:'busy',registered:null,labels:['ci'],job:job('<img src=x>','https://github.com/example/widgets/actions/runs/9/job/8')},
+    {id:'wait-3',state:'busy',registered:null,labels:['wait'],job:job('Wait for preview',null)},
+    {id:'ci-2',state:'allocated',registered:null,labels:['ci']},{id:'on-demand-1',state:'provisionable',registered:false,labels:[]}]}}};
+const renderCapacity=new Function('content','snapshot','heading','empty','sourceBanner','el','formatTime','bytes','diskUsage','badge','link','metric',match[1]+'\nreturn content;');
+renderCapacity(content,snapshot,title=>el('h1',{},title),()=>el('p'),()=>null,el,value=>value,value=>String(value),()=>({used:1,total:2,percent:50}),badge,link,(label,value)=>el('div',{},label,String(value)));
+const text=node=>typeof node==='string'?node:(node.children||[]).map(text).join(' ');
+const tags=node=>!node||typeof node==='string'?[]:[node.tag,...(node.children||[]).flatMap(tags)];
+const lanes=content.children[content.children.length-1],cards=lanes.querySelector('.lane-grid').children;
+console.log(JSON.stringify({limits:text(lanes.children[0]),cards:cards.map(card=>({text:text(card),tags:tags(card)}))}));
 """)
         self.assertIn("8 shared CI/QAE slots · 8 wait slots", result["limits"])
         self.assertNotIn("Registration unknown", json.dumps(result))
@@ -496,5 +474,27 @@ console.log(JSON.stringify({
         self.assertTrue(all(part in css for part in held))
         self.assertIn("content.scrollTo?.(0, 0)", app)
         self.assertFalse("min-height: auto" in css or "top: 102px" in css)
+    def test_usage_page_lists_each_qae_and_draws_a_prior_day_line(self):
+        result = self.node(r"""
+const app=require('fs').readFileSync('./dashboard/static/app.js','utf8');
+const {BOT_META}=require('./dashboard/static/helpers.js'),VVCharts=require('./dashboard/static/charts.js');
+const make=tag=>({tag,attrs:{},children:[],style:{setProperty(k,v){this[k]=v}},setAttribute(k,v){this.attrs[k]=v},append(...c){this.children.push(...c)},replaceChildren(...c){this.children=c}});
+const el=(tag,attrs={},...c)=>Object.assign(make(tag),{attrs,children:c.flat().filter(v=>v!=null)});
+const text=n=>typeof n==='string'?n:(n.children||[]).map(text).join(' '),walk=n=>!n||typeof n==='string'?[]:[n,...(n.children||[]).flatMap(walk)];
+const rows=[1,2,3].map(n=>({id:'ci-qae-'+n,name:'QAE '+n,role:'qae',state:'idle',recent_2h:[],coverage:{history:'complete'}}));
+const snapshot={agents:{rows}},strip=el('div'),at=h=>new Date(Date.now()-h*3600000).toISOString();
+const recent=(value,runs)=>runs[0]?.category==='failed'?'Latest run failed':runs.length?'Last 2h':value.coverage?.history==='complete'?'No runs in 2h':'History incomplete';
+global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
+new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function coverage/)[1])(el,BOT_META,snapshot,{failureBot:null},s=>el('span',{},s),()=>{},v=>v,{querySelector:()=>strip},recent);
+global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
+const samples=rows.flatMap(row=>[31,30,3,2].map(h=>({account:'a',bot:row.id,timestamp:at(h),input_tokens:40,output_tokens:0})));
+const usage={sampled_at:at(0),accounts:[],samples,pace:{tokens_per_hour:100,plan:'ChatGPT subscription',window:'7d',used_percent:25,resets_at:at(-10),delta_points:-4,sized_from:'bot_tokens',window_tokens:400,allowance_tokens:1600}};
+const src=app.match(/\n(  function usageCharts\([\s\S]*?)\n  function renderUsage\(/)[1];
+const cards=new Function('el','BOT_META','VVCharts','snapshot','formatTime',src+'\nreturn usageCharts;')(el,BOT_META,VVCharts,snapshot,()=>'RESET')(usage).children[2].children;
+const names=n=>walk(n).filter(i=>i.attrs&&i.attrs.class==='bot-name').map(text);
+console.log(JSON.stringify({strip:names(strip),cards:cards.map(c=>text(c.children[0].children[0].children[0]).split(' · ')[0]),usual:cards.map(c=>walk(c).some(n=>n.attrs&&n.attrs.class==='burn-usual'))}));
+""")
+        self.assertEqual([result["strip"], result["cards"], result["usual"]], [["QAE 1", "QAE 2", "QAE 3"], ["QAE 1", "QAE 2", "QAE 3", "All bots"], [True, True, True, True]])
+
 if __name__ == "__main__":
     unittest.main()

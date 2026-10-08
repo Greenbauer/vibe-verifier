@@ -215,6 +215,44 @@ console.log(JSON.stringify({drawn,names:cards.map(card=>card.children[0].childre
         self.assertEqual(result["missingHeader"], "All bots")
         self.assertEqual(result["swe"], "SWE")
 
+    def test_three_qae_cards_and_a_prior_day_usual_line(self):
+        app = (ROOT / "dashboard/static/app.js").read_text()
+        source = re.search(r"\n(  function usageCharts\([\s\S]*?)\n  function renderUsage\(", app).group(1)
+        result = node(r"""
+const make=tag=>({tag,attrs:{},children:[],style:{},setAttribute(k,v){this.attrs[k]=v;},append(...c){this.children.push(...c);}});
+global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
+const VVCharts=require('./dashboard/static/charts.js');
+const {BOT_META}=require('./dashboard/static/helpers.js');
+function el(tag,attrs={},...children){
+  const node={tag,attrs,children:children.flat().filter(value=>value!==null&&value!==undefined)};
+  node.append=(...items)=>node.children.push(...items); return node;
+}
+const text=node=>typeof node==='string'?node:(node.children||[]).map(text).join(' ');
+const walk=node=>!node||typeof node==='string'?[]:[node,...(node.children||[]).flatMap(walk)];
+const snapshot={agents:{rows:[
+  {id:'ci-qae-1',name:'QAE 1',role:'qae'},
+  {id:'ci-qae-2',name:'QAE 2',role:'qae'},
+  {id:'ci-qae-3',name:'QAE 3',role:'qae'}]}};
+const at=hours=>new Date(Date.now()-hours*3600000).toISOString();
+const samples=[];
+for (const bot of ['ci-qae-1','ci-qae-2','ci-qae-3']) {
+  for (const hours of [31,30,3,2]) samples.push({account:'a',bot,timestamp:at(hours),input_tokens:40,output_tokens:0});
+}
+const usage={sampled_at:new Date().toISOString(),accounts:[],
+  pace:{tokens_per_hour:3600,plan:'ChatGPT subscription',window:'7d',used_percent:40,resets_at:at(-10),
+    delta_points:-11.6,sized_from:'bot_tokens',window_tokens:900,allowance_tokens:2250},
+  samples};
+const build=new Function('el','BOT_META','VVCharts','snapshot','formatTime',SOURCE+'\nreturn usageCharts;');
+const cards=build(el,BOT_META,VVCharts,snapshot,()=>'RESET')(usage).children[2].children;
+const usual=card=>walk(card).some(node=>node.attrs&&node.attrs.class==='burn-usual');
+console.log(JSON.stringify({
+  names:cards.map(card=>text(card.children[0].children[0].children[0]).split(' · ')[0]),
+  usual:cards.map(usual)
+}));
+""".replace("SOURCE", json.dumps(source)))
+        self.assertEqual(result["names"], ["QAE 1", "QAE 2", "QAE 3", "All bots"])
+        self.assertEqual(result["usual"], [True, True, True, True])
+
 
 if __name__ == "__main__":
     unittest.main()

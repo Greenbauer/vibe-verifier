@@ -23,6 +23,23 @@ def _none(reason: str) -> dict:
     return {"tokens_per_hour": None, "reason": reason}
 
 
+def plan_window_start(usage: dict) -> datetime | None:
+    """Start of the one plan `plan_pace` would size, or None when that plan is not unique."""
+    if not isinstance(usage, dict):
+        return None
+    paced = [(account, window) for account in usage.get("accounts", []) for window in account.get("quota_windows", [])
+             if window.get("allowance_tokens") is not None or window.get("window_minutes")]
+    if len({account["id"] for account, _ in paced}) != 1:
+        return None
+    reported = [pair for pair in paced if pair[1].get("allowance_tokens") is not None]
+    window = (reported[0] if reported else max(paced, key=lambda pair: pair[1]["window_minutes"]))[1]
+    reset = parse_time(window.get("resets_at"))
+    minutes = window.get("window_minutes")
+    if reset is None or not minutes:
+        return None
+    return reset - timedelta(minutes=minutes)
+
+
 def plan_pace(usage: dict, now: datetime) -> dict:
     """Pace for the one plan the plotted samples bill to, or the reason there is none.
 

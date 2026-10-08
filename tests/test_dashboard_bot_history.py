@@ -298,5 +298,20 @@ class CompletedJobCache(unittest.TestCase):
         self.assertEqual(sum(call[1] == jobs_endpoint(2) for call in api.calls), 2)
 
 
+class RunnerNames(unittest.TestCase):
+    def test_explore_jobs_keep_the_runner_name_that_names_the_instance(self):
+        first, second = run(1, "completed", 10), run(2, "completed", 20)
+        api = BotAPI(completed=[first, second], jobs={
+            jobs_endpoint(1): [{**job(1, "explore", "completed", "success", 10),
+                                "runner_name": "box-ci-qae-1-1700000000"}],
+            jobs_endpoint(2): [{**job(2, "explore", "completed", "success", 20),
+                                "runner_name": "GitHub Actions 4"}],
+        })
+        rows = GitHubCollector(config(), api, clock=lambda: NOW)._bots(NOW)["roles"]["explorer"]["recent_7d"]
+        self.assertEqual([row["runner_name"] for row in rows],
+                         ["box-ci-qae-1-1700000000", "GitHub Actions 4"])
+        self.assertEqual([row["run_id"] for row in rows], [1, 2])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -43,5 +43,4 @@ dashboards:
         verifier: {workflow: qae.yml, jobs: [qae-verify]}
       proxy_origin: https://vps-1.example.ts.net:8444
       agents:
-        - {id: ci-swe, name: SWE, role: swe, workflow_role: reviewer}
         - {id: ci-qae, name: QAE, role: qae, workflow_role: explorer}

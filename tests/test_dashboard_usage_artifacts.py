@@ -4,7 +4,7 @@ import io
 import json
 import unittest
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from dashboard.config import Config, BotDefinition
 from dashboard.gh_api import ApiError
@@ -111,6 +111,7 @@ class ArtifactCollection(unittest.TestCase):
         self.run['path'] = '.github/workflows/explore.yml'
         self.listing = {'total_count': 1, 'artifacts': [self.artifact]}
         self.elapsed, self.downloads, self.revoked, self.exhausted = 0, 0, False, False
+        self.runner_name = None
         self.more, self.pages_read = {}, []
         config = Config('example', (REPO,), {'explorer': BotDefinition('explore.yml', ('explore',))}, None)
         self.reader = UsageArtifacts(config, api=self, downloader=self.download, clock=lambda: self.elapsed)
@@ -127,6 +128,9 @@ class ArtifactCollection(unittest.TestCase):
             number = int(endpoint.rsplit('=', 1)[1])
             self.pages_read.append(number)
             return self.listing if number == 1 else self.more.get(number, {'artifacts': []})
+        if endpoint.endswith('/jobs?per_page=100'):
+            job = {'name': 'explore', 'runner_name': self.runner_name} if self.runner_name else None
+            return {'jobs': [job] if job else []}
         self.assertEqual(endpoint, 'repos/example/site/actions/runs/42/attempts/1')
         return self.run
 
@@ -191,6 +195,41 @@ class ArtifactCollection(unittest.TestCase):
         self.more = {n: {'artifacts': self.filler('2026-09-30T11:30:00Z')} for n in range(2, 10)}
         self.assertTrue(self.reader.collect(NOW)['partial'])
         self.assertEqual(self.pages_read, [1, 2, 3, 4, 5])
+
+    def test_page_cap_does_not_force_partial_when_the_plan_window_is_covered(self):
+        # Five pages never reach the seven-day cutoff, but the oldest artifact is before the window.
+        self.listing = {'total_count': 900, 'artifacts': self.filler('2026-09-30T11:30:00Z')}
+        self.more = {n: {'artifacts': self.filler('2026-09-30T11:30:00Z')} for n in range(2, 5)}
+        self.more[5] = {'artifacts': self.filler('2026-09-24T12:00:00Z')}
+        result = self.reader.collect(NOW, window_start=NOW - timedelta(days=2))
+        self.assertFalse(result['hard_partial'])
+        self.assertFalse(result['partial'])
+        self.assertEqual(self.pages_read, [1, 2, 3, 4, 5])
+
+    def test_a_page_cap_that_stops_inside_the_plan_window_stays_partial(self):
+        self.listing = {'total_count': 900, 'artifacts': self.filler('2026-09-30T11:30:00Z')}
+        self.more = {n: {'artifacts': self.filler('2026-09-30T11:30:00Z')} for n in range(2, 10)}
+        result = self.reader.collect(NOW, window_start=NOW - timedelta(days=3))
+        self.assertFalse(result['hard_partial'])
+        self.assertTrue(result['partial'])
+
+    def test_an_unreadable_artifact_stays_partial_when_the_window_is_covered(self):
+        self.run['path'] = '.github/workflows/unrelated.yml'
+        result = self.reader.collect(NOW, window_start=NOW - timedelta(days=1))
+        self.assertTrue(result['hard_partial'])
+        self.assertTrue(result['partial'])
+        self.assertEqual(result['samples'], [])
+
+    def test_explore_usage_keeps_the_lane_instance_from_the_runner_name(self):
+        self.runner_name = 'box-ci-qae-2-1700000000'
+        result = self.reader.collect(NOW)
+        self.assertEqual(result['samples'][0]['instance'], 2)
+        self.reader.cache.clear()
+        self.reader.updated = 0
+        self.elapsed = 301
+        self.runner_name = 'GitHub Actions 4'
+        plain = self.reader.collect(NOW)
+        self.assertIsNone(plain['samples'][0]['instance'])
 
     def test_a_spent_call_budget_keeps_the_history_already_read(self):
         self.assertEqual(len(self.reader.collect(NOW)['samples']), 1)

@@ -3,6 +3,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from dashboard.pace import plan_pace
+from dashboard.usage_artifacts import apply_plan_window
 
 NOW = datetime(2026, 10, 5, 21, 0, tzinfo=timezone.utc)
 RESET = NOW + timedelta(hours=96)  # 72 of the window's 168 hours have elapsed
@@ -27,6 +28,28 @@ def usage(samples, windows=None, **extra):
 
 
 class DerivedPace(unittest.TestCase):
+    def test_history_that_covers_the_plan_window_draws_the_line(self):
+        # The listing never reached seven days, but its oldest artifact is before the window began.
+        history = {"hard_partial": False, "listing_complete": False,
+                   "covered_until": (NOW - timedelta(days=6)).isoformat().replace("+00:00", "Z"),
+                   "partial": True, "completeness": "Partial capture. leftover"}
+        apply_plan_window(history, NOW - timedelta(hours=72))
+        self.assertFalse(history["partial"])
+        self.assertNotIn("Partial capture.", history["completeness"])
+        pace = plan_pace(usage([sample(10, 400)], partial=False), NOW)
+        self.assertEqual(pace["sized_from"], "bot_tokens")
+        self.assertAlmostEqual(pace["tokens_per_hour"], 600 / 96)
+
+    def test_a_gap_inside_the_plan_window_still_refuses_the_line(self):
+        history = {"hard_partial": False, "listing_complete": False,
+                   "covered_until": (NOW - timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+                   "partial": False, "completeness": "leftover"}
+        apply_plan_window(history, NOW - timedelta(hours=72))
+        self.assertTrue(history["partial"])
+        refused = plan_pace(usage([sample(10, 400)], partial=True), NOW)
+        self.assertIsNone(refused["tokens_per_hour"])
+        self.assertIn("stale or incomplete", refused["reason"])
+
     def test_pace_is_the_percent_pace_in_tokens(self):
         # 400 tokens since the window began made 40% of it: the window holds 1,000 tokens.
         pace = plan_pace(usage([sample(10, 300), sample(70, 100)]), NOW)

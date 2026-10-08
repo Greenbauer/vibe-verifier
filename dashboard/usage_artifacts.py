@@ -9,8 +9,12 @@ import time
 import zipfile
 from datetime import datetime, timedelta, timezone
 
+from .bot_runs import qae_instance
 from .gh_api import ApiError, GitHubAPI
 from .util import parse_time, iso_time
+
+OBSERVED = "Observed source-run tokens only; older runs have no history. Unmapped accounts are kept separate."
+CAPTURE = "Partial capture. "
 
 MAX_ARCHIVE = 65536
 MAX_RECORD = 16384
@@ -86,6 +90,26 @@ def normalize(value, artifact, run, repository, now):
                        "input_tokens": total_input, "output_tokens": numbers["output_tokens"], "partial": status == "partial"}}
 
 
+def apply_plan_window(result, window_start):
+    """`partial` means token history since the plan window began is incomplete.
+
+    A listing that never reaches the seven-day cutoff is still complete for the pace when the
+    oldest artifact it did read is at or before the window start. An unreadable artifact, a
+    partial sample, or a budget stop stays partial either way. Results from before this field
+    existed are left alone.
+    """
+    if not isinstance(result, dict) or "hard_partial" not in result:
+        return result
+    if window_start is None:
+        partial = bool(result["hard_partial"]) or not result.get("listing_complete", False)
+    else:
+        covered = parse_time(result.get("covered_until"))
+        partial = bool(result["hard_partial"]) or covered is None or covered > window_start
+    result["partial"] = partial
+    result["completeness"] = (CAPTURE if partial else "") + OBSERVED
+    return result
+
+
 def download(repository, artifact_id):
     """Read a fixed API endpoint, never execute/extract uploaded content."""
     command = ["gh", "api", "repos/%s/actions/artifacts/%s/zip" % (repository, artifact_id)]
@@ -109,34 +133,69 @@ class UsageArtifacts:
         self.downloader, self.clock = downloader, clock
         self.cache, self.result, self.updated = {}, None, float("-inf")
 
+    def _budget_left(self):
+        limit = getattr(self.api, "max_calls", None)
+        if limit is None:
+            return True
+        return getattr(self.api, "calls", 0) < limit
+
+    def _qae_instance(self, repository, run_id, attempt, job_names):
+        """The explore job's lane instance, from its runner name. A miss is not a token gap."""
+        if not self._budget_left():
+            return None, False
+        try:
+            page = self.api.one("repos/%s/actions/runs/%s/attempts/%s/jobs?per_page=100" %
+                                (repository, run_id, attempt))
+        except ApiError:
+            return None, False
+        jobs = page.get("jobs") if isinstance(page, dict) else None
+        if not isinstance(jobs, list):
+            return None, True
+        found = [qae_instance(job.get("runner_name")) for job in jobs
+                 if isinstance(job, dict) and job.get("name") in job_names]
+        if found and all(number == found[0] for number in found):
+            return found[0], True
+        return None, True
+
     def _recent(self, repository, cutoff):
         """A repository's artifacts, page by page until one reaches past the cutoff.
 
         The listing runs newest first (by id, which follows creation), so once a page holds an artifact
-        older than the cutoff, later pages hold nothing newer. Returns the artifacts and whether the
-        listing reached that point within MAX_PAGES.
+        older than the cutoff, later pages hold nothing newer. Returns the artifacts, whether the
+        listing reached that point within MAX_PAGES, and the oldest created_at on the pages read.
         """
-        artifacts = []
+        artifacts, oldest = [], None
         for number in range(1, MAX_PAGES + 1):
             page = self.api.one("repos/%s/actions/artifacts?per_page=100&page=%s" % (repository, number))
             rows = page.get("artifacts", [])
             artifacts.extend(rows)
             created = [parse_time(row.get("created_at")) for row in rows]
+            for time in created:
+                if time is not None and (oldest is None or time < oldest):
+                    oldest = time
             if len(rows) < 100 or any(time is not None and time < cutoff for time in created):
-                return artifacts, True
-        return artifacts, False
+                return artifacts, True, oldest
+        return artifacts, False, oldest
 
-    def collect(self, now=None):
+    def collect(self, now=None, window_start=None):
         now = now or datetime.now(timezone.utc)
         if self.result is not None and self.clock() - self.updated < 300:
             return self.result
         self.api.begin()
         cutoff = now - timedelta(days=7)
-        records, partial, seen, listed = [], False, set(), set()
+        records, hard, seen, listed = [], False, set(), set()
+        listing_complete, bounds, unproven = True, [], False
         try:
             for repository in self.config.repositories:
-                artifacts, complete = self._recent(repository, cutoff)
-                partial |= not complete
+                artifacts, complete, oldest = self._recent(repository, cutoff)
+                if complete:
+                    bounds.append(cutoff)
+                else:
+                    listing_complete = False
+                    if oldest is None:
+                        unproven = True
+                    else:
+                        bounds.append(oldest)
                 for artifact in artifacts:
                     matched = NAME.fullmatch(artifact.get("name", ""))
                     created = parse_time(artifact.get("created_at"))
@@ -145,7 +204,7 @@ class UsageArtifacts:
                     artifact_id = artifact.get("id")
                     size = artifact.get("size_in_bytes")
                     if (not isinstance(artifact_id, int) or not isinstance(size, int) or not 0 < size <= MAX_ARCHIVE):
-                        partial = True
+                        hard = True
                         continue
                     key = (repository, artifact_id)
                     seen.add(key)
@@ -163,13 +222,17 @@ class UsageArtifacts:
                         if str(run.get("path", "")).split("/")[-1] != definition.workflow:
                             raise ValueError("unexpected source workflow")
                         record = normalize(decode_archive(self.downloader(repository, artifact_id)), artifact, run, repository, now)
+                        if record and ROLE[matched.group(1)] == "explorer":
+                            # Filled after the token reads, so a runner lookup cannot spend the
+                            # budget the history itself needs.
+                            record["_lookup"] = (repository, run_id, attempt, definition.jobs)
                         self.cache[key] = record
                         records.append(record)
                     except (ApiError, ValueError, TypeError, KeyError, zipfile.BadZipFile, OSError):
-                        partial = True
+                        hard = True
                 listed.add(repository)
         except ApiError as error:
-            partial = True
+            hard = True
             if error.code != "request_budget_exhausted":
                 # Failed access invalidates prior private usage, including cached history.
                 self.cache, records, listed = {}, [], set()
@@ -179,18 +242,29 @@ class UsageArtifacts:
                       if key in seen or (key[0] not in listed and
                                          (value is None or parse_time(value["sample"]["timestamp"]) >= cutoff))}
         records.extend(value for key, value in self.cache.items() if key not in seen)
+        for record in records:
+            lookup = record.get("_lookup") if isinstance(record, dict) else None
+            if not lookup or record.get("_instance_known"):
+                continue
+            number, known = self._qae_instance(*lookup)
+            if not known:
+                break
+            record["sample"]["instance"] = number
+            record["_instance_known"] = True
         accounts, samples = {}, []
         for record in records:
             if record is None:
-                partial = True
+                hard = True
             if record:
                 accounts[record["account"]["id"]] = record["account"]
                 samples.append(record["sample"])
-                partial |= record["sample"]["partial"]
-        self.result = {"available": True, "sampled_at": iso_time(now), "stale": False,
-                       "accounts": list(accounts.values()), "samples": samples,
-                       "completeness": ("Partial capture. " if partial else "") +
-                         "Observed source-run tokens only; older runs have no history. Unmapped accounts are kept separate.",
-                       "partial": partial}
+                hard |= record["sample"]["partial"]
+        covered = None if unproven or not bounds else max(bounds)
+        self.result = apply_plan_window(
+            {"available": True, "sampled_at": iso_time(now), "stale": False,
+             "accounts": list(accounts.values()), "samples": samples,
+             "hard_partial": hard, "listing_complete": listing_complete and not hard,
+             "covered_until": iso_time(covered) if covered else None},
+            window_start)
         self.updated = self.clock()
         return self.result

@@ -97,5 +97,68 @@ class AgentIdentities(unittest.TestCase):
             _agents(raw, self.config(), NOW)
 
 
+class QaeInstances(unittest.TestCase):
+    def roster(self, swe=False):
+        agents = []
+        if swe:
+            agents.append(AgentDefinition("ci-swe", "SWE", "swe", "reviewer"))
+        agents.append(AgentDefinition("ci-qae", "QAE", "qae", "explorer"))
+        return Config("example", ("example/site",), {}, None, agents=tuple(agents))
+
+    def explore(self, active=(), recent=()):
+        return {"bots": {"roles": {"explorer": {
+            "active": list(active), "recent_2h": list(recent), "recent_7d": list(recent),
+            "coverage": {"active": "complete", "history": "complete"}}}}}
+
+    def test_explorer_runs_split_by_instance_and_idle_ones_stay(self):
+        github = self.explore(
+            active=[{"runner_name": "box-ci-qae-1-1700000000"}],
+            recent=[{"runner_name": "box-ci-qae-1-1700000000", "category": "success"},
+                    {"runner_name": "box-ci-qae-2-1700000001", "category": "failed"}])
+        telemetry = {"available": True, "capacity": {"available": True, "limits": {"qae_concurrency": 3}},
+                     "usage": {"available": True, "samples": [
+                         {"bot": "explorer", "instance": 1, "input_tokens": 10, "output_tokens": 0},
+                         {"bot": "explorer", "instance": 2, "input_tokens": 20, "output_tokens": 0},
+                         {"bot": "explorer", "input_tokens": 7, "output_tokens": 0}]}}
+        view = agent_view(self.roster(), github, telemetry, NOW)
+        self.assertEqual([row["name"] for row in view["rows"]], ["QAE 1", "QAE 2", "QAE 3", "QAE"])
+        self.assertEqual([row["state"] for row in view["rows"]], ["working", "idle", "idle", "idle"])
+        self.assertEqual([row["category"] for row in view["rows"][1]["recent_7d"]], ["failed"])
+        tokens = {sample["bot"]: sample["input_tokens"] for sample in view["usage"]["samples"]}
+        self.assertEqual(tokens, {"ci-qae-1": 10, "ci-qae-2": 20, "ci-qae": 7})
+        self.assertNotIn("SWE", [row["name"] for row in view["rows"]])
+
+    def test_a_run_with_no_instance_stays_on_plain_qae(self):
+        github = self.explore(recent=[{"runner_name": "GitHub Actions 4", "category": "success"},
+                                      {"runner_name": None, "category": "failed"}])
+        view = agent_view(self.roster(), github, {"available": True, "usage": {"samples": []}}, NOW)
+        self.assertEqual([row["name"] for row in view["rows"]], ["QAE"])
+        self.assertEqual(len(view["rows"][0]["recent_7d"]), 2)
+
+    def test_idle_instances_follow_qae_concurrency_when_nothing_has_run(self):
+        view = agent_view(self.roster(), self.explore(), {
+            "available": True, "capacity": {"available": True, "limits": {"qae_concurrency": 3}},
+            "usage": {"samples": []}}, NOW)
+        self.assertEqual([(row["name"], row["state"]) for row in view["rows"]],
+                         [("QAE 1", "idle"), ("QAE 2", "idle"), ("QAE 3", "idle")])
+
+    def test_without_qae_concurrency_only_instances_that_ran_appear(self):
+        github = self.explore(recent=[{"runner_name": "box-ci-qae-2-1700000000", "category": "success"}])
+        view = agent_view(self.roster(), github, {"available": True, "usage": {"samples": []}}, NOW)
+        self.assertEqual([row["name"] for row in view["rows"]], ["QAE 2"])
+
+    def test_a_roster_that_lists_swe_still_shows_it(self):
+        github = self.explore()
+        github["bots"]["roles"]["reviewer"] = {
+            "active": [], "recent_2h": [], "recent_7d": [{"category": "success"}],
+            "coverage": {"active": "complete", "history": "complete"}}
+        telemetry = {"available": True, "capacity": {"available": True, "limits": {"qae_concurrency": 1}},
+                     "usage": {"samples": [{"bot": "reviewer", "input_tokens": 4},
+                                           {"bot": "explorer", "instance": 1, "input_tokens": 9}]}}
+        view = agent_view(self.roster(swe=True), github, telemetry, NOW)
+        self.assertEqual([row["name"] for row in view["rows"]], ["SWE", "QAE 1"])
+        self.assertEqual({sample["bot"] for sample in view["usage"]["samples"]}, {"ci-swe", "ci-qae-1"})
+
+
 if __name__ == "__main__":
     unittest.main()
