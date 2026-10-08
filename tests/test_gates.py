@@ -92,6 +92,13 @@ class BuildToolsInDevDependencies(unittest.TestCase):
     def test_type_package_prefix(self):
         self.assertEqual(self.run_with({"dependencies": {"@types/node": "22"}}).returncode, 1)
 
+    def test_test_dom_and_scoped_test_and_build_packages(self):
+        for name in ("jsdom", "happy-dom", "@jest/globals", "@vitejs/plugin-react"):
+            with self.subTest(name=name):
+                result = self.run_with({"dependencies": {"react": "19", name: "1"}})
+                self.assertEqual(result.returncode, 1)
+                self.assertIn('"%s"' % name, result.stdout)
+
     def test_dev_dependencies_are_fine(self):
         self.assertEqual(self.run_with({"dependencies": {"react": "19"}, "devDependencies": {"typescript": "5"}}).returncode, 0)
 

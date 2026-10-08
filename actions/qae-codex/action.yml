@@ -30,6 +30,12 @@ inputs:
   usage-account-alias:
     description: Optional caller-owned logical alias for the Codex subscription. Empty stays unmapped.
     default: ""
+  shard:
+    description: >-
+      Which explorer this is, past the first, when a pull request's criteria are split across several
+      (`matrix.shard` in the explore job, which is blank for the first): it goes in the usage artifact's
+      name, so each explorer uploads its own. Empty (the default) is the first explorer, or the only one.
+    default: ""
 runs:
   using: composite
   steps:
@@ -233,7 +239,7 @@ runs:
       if: always() && inputs.mcp != ''
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
-        name: vv-usage-qae-explorer-${{ github.run_attempt }}
+        name: vv-usage-qae-explorer-${{ github.run_attempt }}${{ inputs.shard && format('-{0}', inputs.shard) || '' }}
         path: ${{ runner.temp }}/vv-usage/usage.json
         if-no-files-found: error
         retention-days: 7

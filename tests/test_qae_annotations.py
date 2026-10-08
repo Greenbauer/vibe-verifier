@@ -79,7 +79,7 @@ class Criteria(unittest.TestCase):
         result = subprocess.run(["bash", "-e", "-c", action_script("criteria")], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"GITHUB_ACTION_PATH": str(ROOT / "actions" / "criteria"),
                                                "GITHUB_OUTPUT": str(output), "VV_PATH": "pr-body.md", "VV_CHANGED": "",
-                                               "VV_TICKET": ""}))
+                                               "VV_TICKET": "", "VV_MAX_SHARDS": "1", "VV_MANIFEST": "", "VV_ENTRIES": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(output.read_text().startswith("count=2\ndeclared-none=\n"), output.read_text())
         self.assertIn("AC2 roles: admin, read-only", result.stdout)
@@ -96,7 +96,8 @@ class QaeInputs(unittest.TestCase):
         result = subprocess.run(["bash", "-e", "-c", action_script("qae-inputs")], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"GITHUB_ACTION_PATH": str(ROOT / "actions" / "qae-inputs"),
                                                "GITHUB_OUTPUT": str(output), "RUNNER_TEMP": work, "VV_MANIFEST": "", "VV_ENTRIES": "",
-                                               "VV_REFERENCES": "qae-inputs/references", "VV_EVIDENCE": "qae-artifacts"}))
+                                               "VV_REFERENCES": "qae-inputs/references", "VV_EVIDENCE": "qae-artifacts",
+                                               "VV_SHARD": "1", "VV_SHARDS": "1"}))
         return result, output.read_text()
 
     def test_supplied_references_are_copied_listed_and_declared(self):
@@ -107,7 +108,7 @@ class QaeInputs(unittest.TestCase):
         result, output = self.run_action(work)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("references: 1\nhome-desktop: 1440x900\n", result.stdout)
-        self.assertEqual(output, "references=%s\nmax-turns=130\n" % json.dumps(DIGESTS))
+        self.assertEqual(output, "references=%s\nmax-turns=130\nshare=\n" % json.dumps(DIGESTS))
         self.assertEqual(Path(work, "qae-artifacts", "references", "home-desktop.png").read_bytes(), HOME)
         self.assertIn("- home-desktop: qae-inputs/references/home-desktop.png, 1440 pixels wide (1440 x 900)",
                       Path(work, "qae-inputs", "references.md").read_text())
@@ -116,7 +117,7 @@ class QaeInputs(unittest.TestCase):
         work = workdir(self)
         result, output = self.run_action(work)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(output, "references={}\nmax-turns=130\n")
+        self.assertEqual(output, "references={}\nmax-turns=130\nshare=\n")
         self.assertFalse(os.path.exists(os.path.join(work, "qae-artifacts")))
         self.assertFalse(os.path.exists(os.path.join(work, "qae-inputs", "references.md")))
 
@@ -284,27 +285,29 @@ class Template(unittest.TestCase):
         prepare = subprocess.run(["bash", "-e", "-c", action_script("qae-inputs")], cwd=work, capture_output=True, text=True,
                                  env=clean_env({"GITHUB_ACTION_PATH": str(ROOT / "actions" / "qae-inputs"), "GITHUB_OUTPUT": str(output),
                                                 "RUNNER_TEMP": work, "VV_REFERENCES": "qae-inputs/references",
-                                                "VV_EVIDENCE": "qae-artifacts", "VV_MANIFEST": "", "VV_ENTRIES": ""}))
+                                                "VV_EVIDENCE": "qae-artifacts", "VV_MANIFEST": "", "VV_ENTRIES": "",
+                                                "VV_SHARD": "1", "VV_SHARDS": "1"}))
         self.assertEqual(prepare.returncode, 0, prepare.stdout + prepare.stderr)
         declared = output.read_text().splitlines()[0].split("=", 1)[1]
-        # The verify job's runner has none of the explore job's files: only the output and the artifact.
+        # The verify job's runner has none of the explore job's files: only the output and the artifact,
+        # which holds the explorer's logs, its screenshots and the verdict the workflow copied.
+        write(work, {"qae-artifacts/qae/AC1.md": LOG_AC1, "qae-artifacts/qae/AC2.md": LOG_AC2, "qae-artifacts/verdicts/1.md": VERDICT})
+        Path(work, "qae-artifacts", "qae", "AC1-step-2.png").write_bytes(png(1440))
         verify = workdir(self)
-        shutil.copytree(os.path.join(work, "qae-artifacts"), os.path.join(verify, "qae-artifacts"))
-        write(verify, {"qae-artifacts/qae/AC1.md": LOG_AC1, "qae-artifacts/qae/AC2.md": LOG_AC2})
-        Path(verify, "qae-artifacts", "qae", "AC1-step-2.png").write_bytes(png(1440))
+        shutil.copytree(os.path.join(work, "qae-artifacts"), os.path.join(verify, "qae-evidence", "qae-artifacts-1"))
         bin_dir = workdir(self)
-        Path(bin_dir, "gh").write_text('#!/bin/sh\ncase "$1 $2" in\n  pr*) cat "%s" ;;\n  *pulls*) printf "app/page.tsx\\n" ;;\n'
-                                       '  api*) cat "%s" ;;\nesac\n' % (Path(work, "body.md"), Path(work, "comments.json")))
+        Path(bin_dir, "gh").write_text('#!/bin/sh\ncase "$1 $2" in\n  pr*) cat "%s" ;;\n  *pulls*) printf "app/page.tsx\\n" ;;\nesac\n'
+                                       % Path(work, "body.md"))
         os.chmod(os.path.join(bin_dir, "gh"), 0o755)
         Path(work, "body.md").write_text(BODY)
-        Path(work, "comments.json").write_text(json.dumps([{"user": {"login": "github-actions[bot]"}, "body": VERDICT}]))
         text = TEMPLATE.read_text()
-        script = step_script(text, "- name: Write the declared inputs", "- name: Run the QA gates")
-        result = subprocess.run(["bash", "-e", "-c", script], cwd=verify, capture_output=True, text=True,
-                                env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x", "PR_NUMBER": "7",
-                                               "REPO": "o/r", "SITE_URL": "http://localhost:3000", "SITE_ORIGINS": "", "REFERENCES": declared,
-                                               "TICKET": ""}))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        env = clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x", "PR_NUMBER": "7", "REPO": "o/r",
+                         "SITE_URL": "http://localhost:3000", "SITE_ORIGINS": "", "REFERENCES": declared, "TICKET": "",
+                         "SHARDS": '[""]', "EXPLORE_ATTEMPT": "1"})
+        for step in ("- name: Write the declared inputs", "- name: Merge the evidence and read the verdict"):
+            script = step_script(text, step, "- name: Run the QA gates")
+            result = subprocess.run(["bash", "-e", "-c", script], cwd=verify, capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(json.loads(Path(verify, "qae-inputs", "references.json").read_text()), DIGESTS)
         line = [entry for entry in MANIFEST.read_text().splitlines() if entry.startswith("acceptance-verdict ")]
         self.assertEqual(len(line), 1)

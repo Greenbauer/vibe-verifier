@@ -91,6 +91,19 @@ class ArtifactValidation(unittest.TestCase):
         mapped = self.normalize(value, artifact, run)
         self.assertEqual(mapped['account']['id'], 'openai:runner-subscription')
 
+    def test_each_explorer_of_a_split_run_is_a_sample_of_that_runs_account(self):
+        # A pull request's criteria split across explorers: each past the first uploads under its own name.
+        value, artifact, run = fixture()
+        first = self.normalize(value, artifact, run)
+        artifact['name'] = 'vv-usage-qae-explorer-1-2'
+        second = self.normalize(value, artifact, run)
+        self.assertEqual(second['account']['id'], first['account']['id'])
+        self.assertEqual(second['sample']['input_tokens'], 100)
+        for name in ('vv-usage-qae-explorer-1-0', 'vv-usage-qae-explorer-1-2-3', 'vv-usage-qae-explorer-1-'):
+            artifact['name'] = name
+            with self.assertRaises(ValueError):
+                self.normalize(value, artifact, run)
+
     def test_zip_is_not_extracted_and_accepts_only_small_usage_record(self):
         for name, data, accepted in [('usage.json', json.dumps(fixture()[0]), True),
                                      ('../usage.json', '{}', False), ('usage.json', ' ' * 17000, False)]:
@@ -111,7 +124,7 @@ class ArtifactCollection(unittest.TestCase):
         self.run['path'] = '.github/workflows/explore.yml'
         self.listing = {'total_count': 1, 'artifacts': [self.artifact]}
         self.elapsed, self.downloads, self.revoked, self.exhausted = 0, 0, False, False
-        self.runner_name = None
+        self.runner_name, self.other_jobs = None, []
         self.more, self.pages_read = {}, []
         config = Config('example', (REPO,), {'explorer': BotDefinition('explore.yml', ('explore',))}, None)
         self.reader = UsageArtifacts(config, api=self, downloader=self.download, clock=lambda: self.elapsed)
@@ -130,7 +143,7 @@ class ArtifactCollection(unittest.TestCase):
             return self.listing if number == 1 else self.more.get(number, {'artifacts': []})
         if endpoint.endswith('/jobs?per_page=100'):
             job = {'name': 'explore', 'runner_name': self.runner_name} if self.runner_name else None
-            return {'jobs': [job] if job else []}
+            return {'jobs': ([job] if job else []) + self.other_jobs}
         self.assertEqual(endpoint, 'repos/example/site/actions/runs/42/attempts/1')
         return self.run
 
@@ -246,6 +259,13 @@ class ArtifactCollection(unittest.TestCase):
         self.runner_name = 'GitHub Actions 4'
         plain = self.reader.collect(NOW)
         self.assertIsNone(plain['samples'][0]['instance'])
+
+    def test_an_explorer_past_the_first_takes_the_instance_of_its_own_job(self):
+        # A split run: GitHub names the second explorer's job "explore (2)", and it ran on another lane.
+        self.artifact['name'] = 'vv-usage-qae-explorer-1-2'
+        self.runner_name = 'box-ci-qae-2-1700000000'
+        self.other_jobs = [{'name': 'explore (2)', 'runner_name': 'box-ci-qae-3-1700000000'}]
+        self.assertEqual(self.reader.collect(NOW)['samples'][0]['instance'], 3)
 
     def test_a_spent_call_budget_keeps_the_history_already_read(self):
         self.assertEqual(len(self.reader.collect(NOW)['samples']), 1)

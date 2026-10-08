@@ -293,7 +293,7 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
 - `--criteria` is the PR body; the list under its `## Acceptance criteria` heading is the required
   set, numbered `AC1`, `AC2`, ... in order. A body without that heading lists none, whatever else it
   holds: read as a plain list, a Dependabot body was 105 criteria, one for each line of a changelog.
-- `--verdict` is the verdict text, normally the QAE's PR comment. Every criterion needs exactly one
+- `--verdict` is the verdict text, normally the file a QAE explorer wrote. Every criterion needs exactly one
   line `acceptance-check: ACn -- PASS -- <evidence>`, and the evidence must carry at least one anchor
   that resolves in the working tree: `<path>::<test title>` with the title verbatim in that file,
   or `<path>:<line>` / `<path>:<start>-<end>` inside the file's length.
@@ -353,9 +353,12 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
   the diff, read by code, is the claim, and the harness's review comment states the skip and its
   reason on the pull request ([the list](../harnesses/qae/README.md#which-pull-requests-need-a-check)).
 
-In a workflow the two files come from `gh pr view <n> --json body --jq .body` and from the newest
-PR comment containing `acceptance-check:`. Who writes that comment is the harness's business (the
-plan's explorer); this gate only decides whether what was written is a verdict.
+In a workflow the first file comes from `gh pr view <n> --json body --jq .body`. The second is
+whatever wrote the verdict. In the QAE harness it is the file each explorer left in the run's own
+evidence, which the workflow copies beside the step logs and the verify job reads from the
+download: never a pull request comment, so nobody can paste one and a run never reads another
+run's. Who writes it is the harness's business (the plan's explorer); this gate only decides
+whether what was written is a verdict.
 
 ## Wired gates: pinned tools
 
@@ -755,8 +758,9 @@ feature-map --dir docs/features --surface page 'content/**/*.md'
 
 A harness is a parameterised workflow that produces the declared inputs a wired gate grades. The
 first is the QAE harness in [`harnesses/qae/`](../harnesses/qae/README.md): an explore job whose
-model drives a real browser and writes step logs, screenshots and a verdict comment; a verify job
-that feeds those to `acceptance-verdict` and keeps one review comment on the pull request saying
+model drives a real browser and writes step logs, screenshots and a verdict (one job, or several in
+parallel that each walk a share of a large pull request's criteria); a verify job
+that feeds those, merged, to `acceptance-verdict` and keeps one review comment on the pull request saying
 whether QA passed, needs changes, was not required, or could not run. The consumer owns `runs-on`, the
 design references and role sign-ins its site step supplies, how its site is started (or
 which reachable preview it uses, and on the Codex lane the cookies the browser starts with when that

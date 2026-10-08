@@ -16,6 +16,22 @@ inputs:
       declare or leave its ticket's requirements away. An empty file links no ticket. Empty (the default)
       reads none.
     default: ""
+  max-shards:
+    description: >-
+      The most explorers a pull request's criteria may be split across, to run in parallel (the `shards`
+      output). One walk is a criterion as one role it names at one width, an explorer is sized for six, and
+      1 (the default) never splits. More needs that many QAE runners at once; with fewer the explorers queue.
+    default: "1"
+  manifest:
+    description: >-
+      The QAE manifest, relative to the workspace, as the workflow fetched it: the --widths of its
+      qae-artifacts line count toward the walks the shards are sized to. Empty (the default) counts one width.
+    default: ""
+  entries:
+    description: >-
+      The QAE gate list itself, one gate per line, in place of `manifest`, as a wrapper passes it to
+      actions/gates.
+    default: ""
 outputs:
   count:
     description: How many criteria the document lists. 0 when it needs no check, and 0 when it lists none.
@@ -30,6 +46,13 @@ outputs:
       The text of the `ticket` file, unchanged (empty without one), so the jobs after this one judge the
       ticket this job counted rather than fetching it again.
     value: ${{ steps.read.outputs.ticket }}
+  shards:
+    description: >-
+      The explore job's matrix, a JSON array with one value per explorer: `[""]` for one, `["",2,3]` for
+      three (never more than `max-shards`). The first value is blank and stands for 1 (`matrix.shard || 1`):
+      GitHub names a matrix job `<name> (<value>)` and leaves a blank value out, so the first explorer keeps
+      the job's own name, and a required check or a dashboard that names `qae-explore` still finds it.
+    value: ${{ steps.read.outputs.shards }}
 runs:
   using: composite
   steps:
@@ -40,11 +63,20 @@ runs:
         VV_PATH: ${{ inputs.path }}
         VV_CHANGED: ${{ inputs.changed-files }}
         VV_TICKET: ${{ inputs.ticket }}
+        VV_MAX_SHARDS: ${{ inputs.max-shards }}
+        VV_MANIFEST: ${{ inputs.manifest }}
+        VV_ENTRIES: ${{ inputs.entries }}
       run: |
         set -euo pipefail
-        args=(criteria "$VV_PATH")
+        args=(criteria "$VV_PATH" --max-shards "$VV_MAX_SHARDS")
         if [ -n "$VV_CHANGED" ]; then args+=(--changed-files "$VV_CHANGED"); fi
         if [ -n "$VV_TICKET" ]; then args+=(--ticket "$VV_TICKET"); fi
+        manifest="$VV_MANIFEST"
+        if [ -n "$VV_ENTRIES" ]; then
+          manifest="$RUNNER_TEMP/vibe-verifier-qae-entries"
+          printf '%s\n' "$VV_ENTRIES" > "$manifest"
+        fi
+        if [ -n "$manifest" ]; then args+=(--manifest "$manifest"); fi
         out=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}")
         echo "$out"
         # The first line decides; the lines after it name each criterion's annotations, for the log.
@@ -57,3 +89,8 @@ runs:
         # The ticket's text as a multi-line output, under a delimiter its text cannot hold.
         delimiter="VV_TICKET_$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
         { echo "ticket<<$delimiter"; if [ -n "$VV_TICKET" ]; then cat "$VV_TICKET"; echo; fi; echo "$delimiter"; } >> "$GITHUB_OUTPUT"
+        # The `shards: [1,2,3]` line as the explore job's matrix, the first value blank (see the output's
+        # description). A pull request that needs no check prints no such line and gets the one explorer.
+        shards=$(printf '%s\n' "$out" | sed -n 's/^shards: \[1\(\(,[0-9][0-9]*\)*\)\]$/[""\1]/p')
+        if [ -z "$shards" ]; then shards='[""]'; fi
+        echo "shards=$shards" >> "$GITHUB_OUTPUT"

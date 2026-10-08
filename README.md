@@ -182,7 +182,7 @@ The explorer can navigate and observe. The verifier independently checks that ev
 
 With a [feature map](docs/feature-map.md), the explorer can also re-walk the features each pull request's changes touch (at most three, chosen from the map's own source globs with shared files left out, and at most three states of each), and the verifier then requires an anchored PASS over at least one walked step for each of them too. A state it did not walk is reported, never failed.
 
-Review receipts explicitly name a head SHA. QAE instead uses the pull-request workflow checkout and artifacts from the same run; its verdict comment is selected by bot identity, without a SHA/run-ID match. The consumer must supply the intended application revision, and configure the required checks to include explorer failures. See the [revision-binding limits](docs/threat-model.md#revision-binding-limits).
+Review receipts explicitly name a head SHA. QAE instead uses the pull-request workflow checkout and artifacts from the same run, its verdict included: the gate reads the verdict file in that run's evidence, never a comment. The consumer must supply the intended application revision, and configure the required checks to include explorer failures. See the [revision-binding limits](docs/threat-model.md#revision-binding-limits).
 
 The review harness and default Claude explorer need Claude authentication. A Codex explorer lane can use a self-hosted runner holding a ChatGPT login; browser testing also needs an application it can start or reach. The regular gates need no AI account. CI and model usage may incur charges under the selected providers' plans.
 
