@@ -28,5 +28,5 @@ Add `cognitive-complexity` and `max-file-lines` to `.vibe-verifier`.
 
 - A moved file is compared with itself at its old path, so a move never blocks.
 - A file whose over-limit costs got worse is a finding even when its count of them is unchanged. Costs are compared by rank (highest first), not by function name, so the finding lists every over-limit function in the file and the message carries both cost lists.
-- The comparison is with the merge base, so an improvement that landed on the base branch after the pull request started is not held against it.
+- `cognitive-complexity` compares with the merge base, so an improvement that landed on the base branch after the pull request started is not held against it. `max-file-lines` still reads the base branch's tip.
 - Splitting one over-limit function into two that are both still over the limit raises the count and is a finding: finish the split so each part is under the limit.

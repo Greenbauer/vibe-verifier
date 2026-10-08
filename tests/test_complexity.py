@@ -129,6 +129,13 @@ class CognitiveComplexity(unittest.TestCase):
         git(repo, "checkout", "-q", "feat/x")
         result = gate("cognitive-complexity", repo, "--base-ref", "main")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # Whether the file existed is asked of the merge base too: main deleting it does not make it new here.
+        git(repo, "checkout", "-q", "main")
+        git(repo, "rm", "-q", "src/a.ts")
+        git(repo, "commit", "-q", "-m", "delete it on main")
+        git(repo, "checkout", "-q", "feat/x")
+        result = gate("cognitive-complexity", repo, "--base-ref", "main")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_a_cost_the_report_does_not_carry_is_cannot_run_never_zero(self):
         sys.path.insert(0, str(ROOT / "gates"))
