@@ -229,14 +229,15 @@
     const now = Date.now();
     const opened = href ? `Open ${pull.repository} pull request ${pull.number} on GitHub: ${pull.title}` : null;
     const reason = pull.attention_reason || "";
+    const ready = pull.merge_ready && !pull.stale, aged = Number.isFinite(pull.checks_age_seconds);
     return el(href ? "a" : "div", {
       class: `pr-row${pull.stale ? " stale-row" : ""}`,
       href, target: href ? "_blank" : null, rel: href ? "noreferrer" : null,
-      "aria-label": opened ? opened + (pull.merge_ready ? ". Fully merge-ready" : "") : null
+      "aria-label": opened ? opened + (ready ? ". Fully merge-ready" : "") : null
     },
     el("span", { class: "pr-identity" },
-      el("b", { class: pull.merge_ready ? "merge-ready" : null, title: pull.merge_ready ? "Fully merge-ready" : null }, pull.title),
-      el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
+      el("b", { class: ready ? "merge-ready" : null, title: ready ? "Fully merge-ready" : null }, pull.title),
+      el("small", { class: aged ? "check-age" : null }, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}${aged ? ` · checks ${since(pull.checks_sampled_at, now)} ago` : ""}`)),
     el("span", { class: "pr-work", title: reason || null }, badge(category), ...workDetail(pull)),
     progress(pull, now),
     el("span", { class: "pr-age" },

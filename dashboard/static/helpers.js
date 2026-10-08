@@ -171,7 +171,7 @@
 
   function flattenPulls(snapshot) {
     return (snapshot.github.repositories || []).flatMap(repository =>
-      (repository.pulls || []).map(pull => ({ ...pull, stale: repository.stale, source_error: repository.source_error }))
+      (repository.pulls || []).map(pull => ({ ...pull, stale: Boolean(pull.stale || repository.stale), source_error: repository.source_error }))
     );
   }
 
@@ -221,9 +221,11 @@
 
   function combinedCategory(pull) {
     // A skipped check is not a result, so it never outranks a pass; "skipped" shows only when every check skipped.
+    // A pull request never detailed has no rows; the cheap pass's rollup is the badge until detail arrives.
+    const rows = [...(pull.checks || []), ...(pull.statuses || []), ...(pull.expected || [])];
+    if (!rows.length && ["success", "failed", "pending"].includes(pull.rollup_category)) return pull.rollup_category;
     const order = ["failed", "cancelled", "pending", "unknown", "success", "skipped"];
-    const categories = [...(pull.checks || []), ...(pull.statuses || []), ...(pull.expected || [])].map(row => row.category);
-    return order.find(value => categories.includes(value)) || "unknown";
+    return order.find(value => rows.some(row => row.category === value)) || "unknown";
   }
 
   function meterSegments(totals) {

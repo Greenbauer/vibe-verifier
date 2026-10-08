@@ -395,8 +395,16 @@ of widening the meter.
 The title is green when the pull request is fully merge-ready: GitHub's merge state is clean
 (not a draft, not behind the base, and not blocked or conflicting), every current-head check
 is green (skipped checks may sit beside at least one success, and a check that is not required
-still counts), and every review thread is resolved and has a reply. A thread list that did not
-load completely, or a merge state GitHub has not calculated, keeps the title white.
+still counts), and every review thread is resolved and has a reply. That is only painted from a
+check reading taken on this pass. A reading older than one pass (three minutes) is not green,
+the row is dimmed, and the line under the title says how old the checks are (`checks 4m ago`).
+A fresh reading shows no such age. When the head has moved, the row keeps the previous push's
+checks and says newer ones are loading. A check state that no longer matches says the same
+about the checks already on screen. A pull request this process has never read is the only
+row that says checks are not loaded yet, and its badge is the overall state from the cheap
+pass. A thread list that did not
+load completely, or a merge state GitHub has not calculated, keeps the title white. A stale
+row is never green, even when an older reading had said it was merge-ready.
 GitHub reports the merge state for whoever asks. A base branch that restricts who may push answers
 "blocked" to the dashboard's read-only token for every pull request, including one its allowed
 pushers see as clean. On such a branch "blocked" counts as clean when GitHub reports no conflict and
@@ -462,7 +470,10 @@ math, the class on a row's age number, the push line under the meter, the curren
 local assets, the tab icon route, and the approved palette.
 `tests/test_dashboard_pull_age.py` covers pull-request age units and color.
 `tests/test_dashboard_pull_signals.py` covers the latest push's kind and time, merge-ready
-titles, and the unresolved-comment count. `tests/test_dashboard_usage_charts.py` covers the usage
+titles, and the unresolved-comment count. `tests/test_dashboard_fresh.py` covers a head or
+rollup change leaving the title white and first in the detail queue, check-reading age, the
+cheap pass under an exhausted detail budget, the head beat's hourly calls, and the first
+paint after a long idle. `tests/test_dashboard_usage_charts.py` covers the usage
 charts' clock-hour mapping, observed and unobserved hours, usual-day averages, scales, and pace.
 `tests/test_dashboard_usage_quota.py` covers the subscription bars: window labels, pace tick, color,
 reset countdown, and one block per provider. The repository's existing unittest command runs all
@@ -476,7 +487,10 @@ configuration or captured telemetry. See [collection/cache behavior](dashboard-d
 
 The server refreshes GitHub and usage sources in the background; the page retains search focus
 during refresh. The page asks for new data every 30 seconds while it is visible; a hidden
-tab skips those requests, so it spends no GitHub calls, and loads once when shown again. If that
+tab skips those requests, so it spends no GitHub calls, and loads once when shown again. The
+first paint after a quiet spell is the cached rows, already not green where the check reading
+is older than three minutes. It does not wait for GitHub. A beat every three minutes keeps
+heads current while the tab is hidden, without re-reading check detail. If that
 request fails, the page keeps the last snapshot and says the refresh failed. Numeric usage artifacts are read
 every five minutes through the current GitHub credentials, verified against their run/attempt/head
 and configured workflow, and parsed without extracting files or copying model content. Each scan

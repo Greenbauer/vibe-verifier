@@ -158,5 +158,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def make_server(config: Config, port: int, service: DashboardService | None = None) -> DashboardServer:
-    return DashboardServer(("127.0.0.1", port), service or LiveService(config), config.proxy_origin,
-                           Favicon(config.owner))
+    service = service or LiveService(config)
+    start = getattr(service, "start_head_beat", None)
+    if start:
+        start()
+    return DashboardServer(("127.0.0.1", port), service, config.proxy_origin, Favicon(config.owner))
