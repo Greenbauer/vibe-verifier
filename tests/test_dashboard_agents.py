@@ -121,11 +121,11 @@ class QaeInstances(unittest.TestCase):
                          {"bot": "explorer", "instance": 2, "input_tokens": 20, "output_tokens": 0},
                          {"bot": "explorer", "input_tokens": 7, "output_tokens": 0}]}}
         view = agent_view(self.roster(), github, telemetry, NOW)
-        self.assertEqual([row["name"] for row in view["rows"]], ["QAE 1", "QAE 2", "QAE 3", "QAE"])
-        self.assertEqual([row["state"] for row in view["rows"]], ["working", "idle", "idle", "idle"])
+        self.assertEqual([row["name"] for row in view["rows"]], ["QAE 1", "QAE 2", "QAE 3"])
+        self.assertEqual([row["state"] for row in view["rows"]], ["working", "idle", "idle"])
         self.assertEqual([row["category"] for row in view["rows"][1]["recent_7d"]], ["failed"])
         tokens = {sample["bot"]: sample["input_tokens"] for sample in view["usage"]["samples"]}
-        self.assertEqual(tokens, {"ci-qae-1": 10, "ci-qae-2": 20, "ci-qae": 7})
+        self.assertEqual(tokens, {"ci-qae-1": 10, "ci-qae-2": 20, "explorer": 7})
         self.assertNotIn("SWE", [row["name"] for row in view["rows"]])
 
     def test_a_run_with_no_instance_stays_on_plain_qae(self):

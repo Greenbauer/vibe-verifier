@@ -338,16 +338,16 @@
     const bots = (snapshot.agents?.rows || []).map(agent => ({ name: agent.name, color: BOT_META[agent.role].color,
       burn: VVCharts.hourlyBurn(samples.filter(sample => sample.bot === agent.id), now, through) }));
     const observed = bots.map(bot => bot.burn).filter(Boolean);
-    const all = { name: "All bots", color: "rgba(255,255,255,0.6)", all: true, burn: observed.length ? VVCharts.sumBurns(observed) : null,
-      ...paceHeader(plan.delta_points ?? null) };
+    const loose = samples.filter(sample => !(snapshot.agents?.rows || []).some(agent => agent.id === sample.bot));
+    const burns = [...observed, VVCharts.hourlyBurn(loose, now, through)].filter(Boolean);
+    const all = { name: "All bots", color: "rgba(255,255,255,0.6)", all: true, looseTokens: loose.reduce((sum, sample) => sum + (sample.input_tokens || 0) + (sample.output_tokens || 0), 0), burn: burns.length ? VVCharts.sumBurns(burns) : null, ...paceHeader(plan.delta_points ?? null) };
     const shared = VVCharts.ceiling(observed);
     return el("section", { class: "panel usage-charts" }, el("h2", {}, "Token burn pattern"),
-      el("p", { class: "muted" }, "Tokens each bot used, hour by hour. Solid: last 24 hours. Dashed: a usual day. Flat: the pace that lasts until the plan resets."),
+      el("p", { class: "muted" }, "Tokens each bot used, hour by hour. Solid: last 24 hours. Dashed: a usual day. Flat: the even pace, the same as the tick."),
       el("div", { class: "burn-cards" }, bots.map(bot => burnCard(bot, shared, now, null)),
         burnCard(all, VVCharts.ceiling(all.burn ? [all.burn] : [], pace), now, pace)),
       paceNote(plan));
   }
-
   // "12% under pace": the plan's fill against an even burn of its window, in points.
   function paceHeader(delta) {
     if (delta === null) return {};
@@ -365,8 +365,8 @@
       `Window size measured from the bots: ${VVCharts.short(plan.window_tokens)} tokens since the window began made ${plan.used_percent}% of it, ` +
       `so it holds about ${VVCharts.short(plan.allowance_tokens)}. If anything else uses this plan, the line assumes the bots keep their current share.`;
     return el("p", { class: "muted pace-note", title: sized },
-      `Flat line on All bots: ${VVCharts.short(plan.tokens_per_hour)} tokens an hour uses the rest of ${plan.plan} ` +
-      `(${plan.window}, ${plan.used_percent}% used) exactly when it resets ${formatTime(plan.resets_at)}.`);
+      `Flat line on All bots: ${VVCharts.short(plan.tokens_per_hour)} tokens an hour is the even pace of ${plan.plan} ` +
+      `(${plan.window}, ${plan.used_percent}% used), the same as the tick, through ${formatTime(plan.resets_at)}.`);
   }
 
   // One card: name and last-24h peak, the hour-of-day chart (or "Not yet observed"), and its totals.
@@ -381,12 +381,12 @@
       return card;
     }
     const usual = `prior ${days}-day hourly average`;
-    const method = days === null ? "Tokens in the last 24 hours. A usual day appears once every hour has an observed prior day." :
-      `Tokens in the last 24 hours, and a usual day averaged over the ${days} prior day${days === 1 ? "" : "s"} observed so far${days < 6 ? " (not a full week yet)" : ""}.`;
+    const aside = row.looseTokens ? ` ${VVCharts.short(row.looseTokens)} tokens are not on a numbered bot.` : "";
+    const method = (days === null ? "Tokens in the last 24 hours. A usual day appears once every hour has an observed prior day." : `Tokens in the last 24 hours, and a usual day averaged over the ${days} prior day${days === 1 ? "" : "s"} observed so far${days < 6 ? " (not a full week yet)" : ""}.`) + aside;
     card.append(VVCharts.drawBurn(burn, { color: row.color, maximum, nowMs: now, pace, usualTitle: `${row.name}: ${usual}`,
       label: `${row.name}: tokens per clock hour, ${days === null ? "no usual day yet" : `against the ${usual}`}`,
-      paceTitle: `Pace to reset: ${Math.round(pace).toLocaleString()} tokens per hour spends the remaining allowance exactly at its reset.` }),
-    el("div", { class: "burn-totals", title: method }, VVCharts.totals(burn)));
+      paceTitle: pace === null ? null : `Even pace: ${Math.round(pace).toLocaleString()} tokens per hour, the same as the tick.` }),
+    el("div", { class: "burn-totals", title: method }, VVCharts.totals(burn) + (row.looseTokens ? ` · ${VVCharts.short(row.looseTokens)} not on a numbered bot` : "")));
     return card;
   }
 

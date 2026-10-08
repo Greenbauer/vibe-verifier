@@ -1,10 +1,12 @@
-"""The All-bots pace line: tokens per hour that spend a plan's remainder exactly at its reset.
+"""The All-bots pace line: the even pace, the same comparison as the tick on the usage bar.
 
-Percent is the plan's own unit, and in it the pace is exact: (100 - used%) / hours left. The charts
-are tokens, so the line needs the window's size in tokens. A source may report it
-(`allowance_tokens`). Otherwise it is sized from the plotted bots' tokens since the window began
-divided by the window's used percent. When other use shares the plan, that reads the bots' tokens
-as standing for all of it, which holds while the bots keep their share; the page says so.
+The line is the plan's size in tokens divided by the window's length in hours. Being above the line
+for an hour means the same thing as being right of the tick. ``tokens_per_hour`` is that even pace,
+not the rate that would spend the remainder by reset. ``delta_points`` is how far the used percent
+sits from the same even burn. The size is the reported allowance when a plan gives one, otherwise
+the plotted bots' tokens since the window began divided by the used percent. When other use shares
+the plan, that reads the bots' tokens as standing for all of it, which holds while the bots keep
+their share; the page says so.
 """
 from __future__ import annotations
 
@@ -89,5 +91,8 @@ def plan_pace(usage: dict, now: datetime) -> dict:
         if window_tokens == 0:
             return none("no bot tokens are recorded since the plan's window began.")
         allowance, sized_from = window_tokens / (used / 100), "bot_tokens"
-    return {**result, "tokens_per_hour": allowance * (1 - min(used, 100) / 100) / remaining * 3600,
+    minutes = window.get("window_minutes")
+    if not minutes:
+        return none("no plan reports both a window length and a reset time.")
+    return {**result, "tokens_per_hour": allowance / (minutes / 60),
             "allowance_tokens": round(allowance), "window_tokens": window_tokens, "sized_from": sized_from}

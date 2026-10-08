@@ -1,4 +1,4 @@
-"""The All-bots pace line spends a plan's remainder exactly at its reset, in the lines' own unit."""
+"""The All-bots pace line is the even pace of the plan window, the same comparison as the tick."""
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -38,7 +38,7 @@ class DerivedPace(unittest.TestCase):
         self.assertNotIn("Partial capture.", history["completeness"])
         pace = plan_pace(usage([sample(10, 400)], partial=False), NOW)
         self.assertEqual(pace["sized_from"], "bot_tokens")
-        self.assertAlmostEqual(pace["tokens_per_hour"], 600 / 96)
+        self.assertAlmostEqual(pace["tokens_per_hour"], 1000 / 168)
 
     def test_a_gap_inside_the_plan_window_still_refuses_the_line(self):
         history = {"hard_partial": False, "listing_complete": False,
@@ -57,9 +57,9 @@ class DerivedPace(unittest.TestCase):
         self.assertEqual(pace["window_tokens"], 400)
         self.assertEqual(pace["allowance_tokens"], 1000)
         self.assertEqual(pace["plan"], "ChatGPT subscription")
-        # 600 tokens left over 96 hours; as a share of the window it is the plan's own (100 - 40)% / 96h.
-        self.assertAlmostEqual(pace["tokens_per_hour"], 600 / 96)
-        self.assertAlmostEqual(pace["tokens_per_hour"] / pace["allowance_tokens"] * 100, (100 - 40) / 96)
+        # Even pace: the 1,000-token window over its 168 hours. The header's delta uses the same burn.
+        self.assertAlmostEqual(pace["tokens_per_hour"], 1000 / 168)
+        self.assertLess(pace["delta_points"], 0)
 
     def test_header_delta_is_fill_minus_elapsed_share_of_the_window(self):
         # 72 of 168 hours elapsed is 42.9% of the window; 40% used is 2.9 points under an even burn.
@@ -82,10 +82,24 @@ class DerivedPace(unittest.TestCase):
                     "window_minutes": 10080}]
         self.assertEqual(plan_pace(usage([sample(1, 400)], windows), NOW)["window"], "7d")
 
-    def test_a_full_plan_paces_at_zero(self):
+    def test_a_full_plan_still_has_an_even_pace(self):
         windows = [{"name": "7d", "used_percent": 100.0, "resets_at": iso(RESET), "allowance_tokens": None,
                     "window_minutes": 10080}]
-        self.assertEqual(plan_pace(usage([sample(1, 400)], windows), NOW)["tokens_per_hour"], 0)
+        pace = plan_pace(usage([sample(1, 400)], windows), NOW)
+        self.assertEqual(pace["allowance_tokens"], 400)
+        self.assertAlmostEqual(pace["tokens_per_hour"], 400 / 168)
+
+    def test_the_line_matches_the_tick_when_the_plan_is_ahead(self):
+        # 25% of 168 hours elapsed, 62% used. The line is allowance / window hours, and both say ahead.
+        reset = NOW + timedelta(hours=126)
+        windows = [{"name": "7d", "used_percent": 62.0, "resets_at": iso(reset),
+                    "allowance_tokens": None, "window_minutes": 10080}]
+        pace = plan_pace(usage([sample(10, 620)], windows), NOW)
+        self.assertEqual(pace["allowance_tokens"], 1000)
+        self.assertAlmostEqual(pace["tokens_per_hour"], 1000 / 168)
+        self.assertAlmostEqual(pace["delta_points"], 62 - 25)
+        self.assertGreater(pace["delta_points"], 0)
+        self.assertGreater(620 / 42, pace["tokens_per_hour"])
 
 
 class NoPace(unittest.TestCase):
@@ -121,17 +135,18 @@ class NoPace(unittest.TestCase):
 
 
 class ReportedAllowance(unittest.TestCase):
-    def windows(self):
+    def windows(self, **changes):
         return [{"name": "7d", "used_percent": 25.0, "resets_at": iso(RESET), "allowance_tokens": 1_000_000,
-                 "window_minutes": None}]
+                 "window_minutes": 10080, **changes}]
 
     def test_reported_size_paces_tokens_billed_to_that_account(self):
         pace = plan_pace(usage([sample(1, 400, "subscription-0")], self.windows()), NOW)
         self.assertEqual(pace["sized_from"], "reported")
-        self.assertAlmostEqual(pace["tokens_per_hour"], 750_000 / 96)
+        self.assertAlmostEqual(pace["tokens_per_hour"], 1_000_000 / 168)
+        self.assertAlmostEqual(pace["tokens_per_hour"] * (10080 / 60), pace["allowance_tokens"])
 
     def test_reported_size_for_another_account_draws_nothing(self):
-        pace = plan_pace(usage([sample(1, 400)], self.windows()), NOW)
+        pace = plan_pace(usage([sample(1, 400)], self.windows(window_minutes=None)), NOW)
         self.assertIsNone(pace["tokens_per_hour"])
         self.assertIsNone(pace["delta_points"])  # no window length, so no elapsed share
 

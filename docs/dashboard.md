@@ -128,8 +128,11 @@ a list is a repository named `all`, not the whole owner.
 shown in the UI. Names retain configured numbers. A workflow mapping is one unnumbered roster
 entry, SWE or QAE. A QAE entry is shown once per lane instance (QAE 1, QAE 2, and so on) when its
 runs used a numbered runner, or when the host reports `qae_concurrency`, including an instance that
-has not run. A run whose runner is not a lane instance stays on the unnumbered QAE, and that card
-appears only when it has a run or tokens. An owner who lists a reviewer still sees one SWE. Omit
+has not run. When `qae_concurrency` is set, those instances are the whole QAE roster: no plain QAE
+card appears. Tokens that belong to no instance still count in All bots, and that card says how
+many of them are unattributed. When the host reports no instance count, a run or sample with no
+lane instance stays on the unnumbered QAE, and that card appears only when it has a run or tokens.
+An owner who lists a reviewer still sees one SWE. Omit
 `workflow_role` for a persistent agent whose ID is supplied by the runtime collector. An omitted
 roster shows no invented agents. See
 [agent identities](dashboard-agents.md) for the runtime contract.
@@ -276,8 +279,12 @@ are aggregate CPU sampled percent, memory bytes, and workspace-filesystem bytes.
 fills with how much is in use, so a fuller bar means less headroom; disk used is total minus free.
 
 Displayed agent state comes from an explicit identity mapping. Aggregate CI mappings use GitHub
-activity: active jobs prove working, and a complete active scan permits idle. A mapped QAE is one
-card per lane instance, from the job's runner name and the host's `qae_concurrency`. Runner listener
+activity: a job that had a runner and was not skipped proves working while it is in progress, and a
+complete active scan permits idle. A mapped QAE is one card per lane instance, from the job's runner
+name and the host's `qae_concurrency`. When that count is set there is no extra plain QAE. A role's
+runs include its workflow in every repository the dashboard covers, matched by the run path's file
+name, including a required workflow from another repository of the same owner. Those jobs come from
+the pull-request detail already read, so this adds no GitHub calls. Runner listener
 health never establishes agent health. Persistent SWE/QAE identities use their own runtime state
 and history, including paused. A missing runtime is unknown. A stale one keeps its last state and is marked stale. Numbered identities cannot
 be mapped to aggregate CI job roles. Recent history uses structural run outcomes and timestamps.
@@ -285,9 +292,10 @@ Unavailable or incomplete history is labeled separately from a complete history 
 
 Quota windows can omit `allowance_tokens` and `window_minutes` (the window's length, at most 31
 days). The charts show each bot separately and then all bots combined. The All bots card draws a
-flat pace line: the tokens per hour that spend the rest of the plan's window exactly at its reset,
-which is (100% minus used%) of the window divided by the hours left. The server computes it once
-(`dashboard/pace.py`) and the page draws that number. The window's size in tokens comes from one of
+flat pace line: the even pace, the same as the white tick on the usage bar. It is the plan's size
+in tokens divided by the window's length in hours. Being above the line for an hour means the same
+thing as being right of the tick. The server computes it once
+(`dashboard/pace.py`) and the page draws that number. `tokens_per_hour` is that even pace. The window's size in tokens comes from one of
 two places:
 
 - **Reported.** A window with `allowance_tokens` uses it, but only when every plotted sample belongs
