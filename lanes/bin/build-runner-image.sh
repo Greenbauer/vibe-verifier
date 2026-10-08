@@ -11,6 +11,12 @@
 # stays the tools alone. An image tag without its store is not a usable image: the converge paths
 # below ignore one and build again.
 #
+# On a btrfs store (the build reads the store's filesystem, as the slot helper does) golden-<tag> is
+# a subvolume, so that a job's store is `btrfs subvolume snapshot` of it and not a copied tree. It
+# is created as one before the preload container mounts it, renamed from .new with mv like a
+# directory (rename works on a subvolume inside one filesystem; here that is checked only against
+# the tests' stand-in), and pruned with `btrfs subvolume delete`.
+#
 # Linux-only: runs as root on the lane's machine (Ubuntu 24.04 amd64, bash 5, GNU coreutils,
 # util-linux), from <lane name>-image-build.timer (written by bin/provision-lane.sh) and by the
 # operator for a lane's first image. It drives the host Docker daemon and needs the sysbox-runc
@@ -123,11 +129,31 @@ BUILD_CTR=""
 BASE_TAG=""
 NEW_TAG=""
 NEW_STORE=""
+STORE_FS=""
+
+# make_store <dir>: an empty preloaded store: a subvolume on btrfs, a directory on anything else.
+make_store() {
+  if [ "$STORE_FS" = btrfs ]; then
+    btrfs subvolume create "$1" >/dev/null && chmod 0700 "$1"
+  else
+    install -d -m 0700 "$1"
+  fi
+}
+
+# remove_store <dir>: a preloaded store, an unfinished one, or the verify snapshot. On btrfs a
+# subvolume goes in one call; what btrfs will not delete as one (a plain directory, a link) is
+# removed as before.
+remove_store() {
+  [ -e "$1" ] || [ -L "$1" ] || return 0
+  if [ "$STORE_FS" = btrfs ] && [ ! -L "$1" ] && btrfs subvolume delete "$1" >/dev/null 2>&1; then return 0; fi
+  rm -rf "$1"
+}
+
 cleanup() {
   if [ -n "$BUILD_CTR" ]; then docker rm -f "$BUILD_CTR" >/dev/null 2>&1 || true; fi
   if [ -n "$NEW_TAG" ]; then docker image rm "$NEW_TAG" >/dev/null 2>&1 || true; fi
   if [ -n "$BASE_TAG" ]; then docker image rm "$BASE_TAG" >/dev/null 2>&1 || true; fi
-  if [ -n "$NEW_STORE" ]; then rm -rf "$NEW_STORE" "$STORE_DIR/verify-$$"; fi
+  if [ -n "$NEW_STORE" ]; then remove_store "$NEW_STORE"; remove_store "$STORE_DIR/verify-$$"; fi
   if [ -n "$STAGE" ]; then rm -rf "$STAGE"; fi
 }
 trap cleanup EXIT
@@ -211,7 +237,7 @@ prune() {
       *.new) ;;
       *) [ -z "$(image_id "$IMAGE:$tag")" ] || continue ;;
     esac
-    rm -rf "$dir" && log "pruned store $dir"
+    remove_store "$dir" && log "pruned store $dir"
   done
   # The base build leaves its layers in Docker's build cache, and the layers of a tag removed above
   # stay there with nothing sharing them. Nothing else on the machine is trusted to clear them, so
@@ -332,8 +358,8 @@ build_image() {
   docker rm -f "$BUILD_CTR" >/dev/null 2>&1 || true
   store="$(store_of "$tag")"
   NEW_STORE="$store.new"
-  rm -rf "$NEW_STORE"
-  install -d -m 0700 "$NEW_STORE" || die "cannot create $NEW_STORE (is the store filesystem mounted?)"
+  remove_store "$NEW_STORE"
+  make_store "$NEW_STORE" || die "cannot create $NEW_STORE (is the store filesystem mounted?)"
 
   log "building $BASE_TAG (linux/amd64)"
   run_logged build docker build --platform linux/amd64 --progress=plain -t "$BASE_TAG" "$CONTEXT"
@@ -365,7 +391,8 @@ build_image() {
   [ "$entry" = "$ENTRYPOINT_JSON" ] || die "$NEW_TAG has ENTRYPOINT $entry, expected $ENTRYPOINT_JSON"
   keep="$(docker image inspect -f "{{index .Config.Labels \"$KEEP_LABEL_KEY\"}}" "$NEW_TAG")" || die "cannot inspect $NEW_TAG"
   [ "$keep" = "$KEEP_LABEL_VALUE" ] || die "$NEW_TAG lacks the label $KEEP_LABEL_KEY=$KEEP_LABEL_VALUE; a machine's legacy disk-watch job would prune it between jobs"
-  rm -rf "$store"
+  remove_store "$store"
+  # A rename inside the store filesystem, which leaves a subvolume a subvolume.
   mv "$NEW_STORE" "$store" || die "cannot move $NEW_STORE to $store"
   NEW_STORE="$store"
   if [ "${#PROJECT_ROOTS[@]}" -gt 0 ]; then
@@ -395,12 +422,14 @@ done <<< "$settings"
 PRELOAD_TEXT="$(python3 "$REPO_ROOT/lib/lanes.py" preload "$HOST_YML" "$LANE")" || die "cannot read the $LANE lane's preload map from $HOST_YML"
 STATE_DIR="${RUNNERS_LANE_STATE_DIR:-/var/lib/$NAME}"
 STORE_DIR="${RUNNERS_LANE_STORE_DIR:-$STATE_DIR/store}"
+STORE_FS="$(stat -f -c %T "$STORE_DIR" 2>/dev/null || true)"
 IMAGE_ENV="$STATE_DIR/image.env"
 map_projects
 runtimes="$(docker info --format '{{json .Runtimes}}')" || die "docker info failed; is the host Docker daemon running?"
 [[ "$runtimes" == *'"sysbox-runc"'* ]] \
   || not_here "no sysbox-runc runtime on this host: the $NAME lane is not provisioned here (bin/provision-host.sh installs Sysbox)"
-# The store filesystem must be there and take reflinks (XFS): a job's snapshot is one.
+# The store filesystem must be there and take reflinks (XFS, btrfs): on XFS a job's snapshot is a
+# reflink copy, and btrfs, where it is a subvolume snapshot, takes reflinks too.
 reflink_probe="$STORE_DIR/.reflink-probe.$$"
 if ! { [ -d "$STORE_DIR" ] && : > "$reflink_probe" && cp --reflink=always "$reflink_probe" "$reflink_probe.copy"; } 2>/dev/null; then
   rm -f "$reflink_probe" "$reflink_probe.copy"

@@ -51,7 +51,8 @@ writes `/run/<name>/<kind>/<n>/jit` (0400) and `job`, and starts `<name>-<kind>@
 slot unit's `ExecStartPre=+bin/lane-slot.sh prepare <kind> <n>` refuses without those files,
 asserts the lane's firewall rules, re-creates the slot's sparse ext4 image and mounts it at
 `/var/lib/<name>/slot-<kind>-<n>`, and makes a reflink snapshot of the preloaded inner Docker store
-(for a wait slot an empty store, "Waiting jobs" below).
+(a btrfs snapshot where the lane's store is btrfs, "A btrfs store" below; for a wait slot an empty
+store, "Waiting jobs" below).
 `ExecStart` runs one `docker run --rm --runtime=sysbox-runc` with the lane's limits, its own 4-core
 `--cpuset-cpus` (so `nproc` is 4, like a hosted runner), the slot on `/home/runner`, the snapshot on
 `/var/lib/docker` and the JIT file read-only at `/run/jit`. `ExecStopPost=+bin/lane-slot.sh cleanup`
@@ -228,10 +229,52 @@ Sysbox copies nothing at container start (the container's first line about 1 s a
 against 56 to 66 s when Sysbox copied a 5.6 GB store, 2026-09-26). Sysbox's own per-container data
 stays under `/var/lib/sysbox`, the machine's one sparse ext4 image (`sysbox.image`,
 `var-lib-sysbox.mount` with `discard`, required by `sysbox-mgr`). `--check` prints each lane's
-worst case (store plus `slots` plus `wait.slots`, times `slot_disk_gb`) and the Sysbox image against the free space.
+worst case (store plus `slots` plus `wait.slots`, times `slot_disk_gb`) and the Sysbox image against the free space:
+the room under the sparse images, read with `df` on the directory that holds them, whatever
+filesystem is inside them.
 On the host's own Docker a lane leaves only its runner image: the image build keeps the newest three
 dated tags and, after every run, drops the Docker build-cache records unused for a week
 (`image/README.md`), so a lane needs no other job on the machine to prune behind it.
+
+**A btrfs store.** With `store_fs: btrfs` the store filesystem is btrfs, and a job's store is a
+snapshot, not a copied tree. Every job on an XFS store copies and later deletes a tree of about
+225,000 inodes, and the disk is one budget whatever the slot count, which caps a lane near 2.3 job
+starts a minute. On btrfs the image build makes each `golden-<tag>` a subvolume, `prepare` takes
+`btrfs subvolume snapshot` of it, and `cleanup` (and `prepare`, for a leftover) deletes it with
+`btrfs subvolume delete`, which returns at once and leaves the freeing to the kernel. A wait slot
+gets an empty subvolume. So there is no copy to pace: no trash, no room rule, and nothing for the
+reaper, whose unit stays installed, so that both kinds of store have one provisioner, and finds an
+empty trash. A snapshot that cannot be made fails the job closed. Measured by hand on a lane's
+machine, 2026-10-08, in a throwaway 14 GB btrfs image, not with this code (Sysbox 0.7.1, kernel
+6.8): a snapshot took 9 to 26 ms, against 22 to 50 s for the reflink copy; a job container on a
+snapshot had its inner dockerd ready in 2 s, on `overlay2` over btrfs, with all nine preloaded
+images there; the kit's own smoke started six preloaded Supabase stacks in 40 to 72 s each with no
+image pulled (51 to 117 s that evening on a reflink copy); a delete returned in 3 to 138 ms and the
+kernel had freed five snapshots 24 s later, against 30 to 130 s for each tree delete under load.
+The slot helper follows the store it finds (`stat -f` on the store), never the key: an XFS store
+behaves exactly as described above whatever the host file says, until the store itself is converted
+("Converting a lane's store" below). It deletes only the path it derived for the slot (or the
+smoke's and the build's `<word>-<digits>` name, never a `golden-*` one), and removes a link there
+without following it.
+
+The provisioner makes a new lane's store as the key says: a sparse image formatted with
+`mkfs.btrfs`'s own defaults (no option of it has been measured on a lane, so none is set), mounted with
+`loop,noatime,discard=async`. `noatime`, because under the default (`relatime`) the first read of
+a file in a fresh snapshot updates its access time and so copies its metadata, which btrfs(5)
+names as `relatime`'s worst case (many files, older than a day, read just after a snapshot), and
+that is how every job starts. `discard=async`, so that what a deleted snapshot held goes back to
+the sparse image as on XFS: btrfs(5) calls it the preferred mode, gathering freed extents into
+larger chunks before the TRIM, where the synchronous mode (a plain `discard`) can degrade
+performance. A store that already exists is mounted as what
+it is and never converted by `--apply`: when it differs from the key, `--apply` changes nothing,
+prints an OPERATOR ACTION gate, and `--check` fails with a `store_fs_type=` line until they agree.
+`--check` names the store's type in its `store_fs=mounted (<device> <type> <size>)` line and in the
+smoke's snapshot line, and prints the trash, reaper and disk lines for either kind. Nothing in the
+kit reads the room inside a btrfs store: its `df` is an estimate, and what a deleted snapshot held
+comes back only once the kernel has cleaned up, after the delete has returned. `--remove` deletes a
+slot's leftover subvolume with `btrfs subvolume delete`. No machine has run this code on a btrfs
+store yet: the measurements are the manual experiment's, and the tests stub `btrfs`, `mkfs.btrfs`,
+`mount` and `stat -f`.
 
 **The runner image contract.** `/var/lib/<name>/image.env` holds `KNOWN_CI_IMAGE_TAG=<tag>` for
 `<image>:<tag>`, and its preloaded store is `/var/lib/<name>/store/golden-<tag>`; the units read
@@ -239,7 +282,9 @@ the file at every start, so a rebuilt image reaches the next job without touchin
 image's side (the entrypoint, the JIT hand-off, exit codes, the preload) is `image/README.md`.
 
 **Host prerequisites.** jq, python3-yaml, python3-jwt and python3-cryptography (the scripts read
-JSON and the host file, and the token refresh signs its App JWT). Docker CE, installed only where it is absent, at the versions
+JSON and the host file, and the token refresh signs its App JWT), and btrfs-progs, which every
+host gets so that a lane's host file can say `store_fs: btrfs` (a lane that does refuses a host
+without it). Docker CE, installed only where it is absent, at the versions
 `image/Dockerfile` pins, from Docker's apt repository with its key checked against the pinned
 sha256. Sysbox CE 0.7.1 from its release `.deb`, sha256-pinned, installed through Sysbox's
 no-Docker-restart path: `daemon.json` first gets `bip` (docker0's live address) and Docker 29's
@@ -283,6 +328,7 @@ lanes:
     warm_max_age_sec: <int>            # optional, 1200 when absent
     slot_disk_gb: <int>
     store_disk_gb: <int>
+    store_fs: xfs | btrfs              # optional, xfs when absent: the store's filesystem ("Disk")
     check_ports: [..]                  # the host ports the smoke proves a slot cannot reach
 dashboards:                            # optional: the Vibe Verifier dashboards ("Dashboards" below)
   - name: <name>                       # the instance: account vibe-dashboard-<name>, /etc/vibe-dashboard/<name>
@@ -305,6 +351,7 @@ dashboards:                            # optional: the Vibe Verifier dashboards 
   pattern; paths are absolute, plain and free of `..`; sizes use systemd's suffixes in `slice` and
   docker's in `container`; `cpu_weight` is 1..10000; ports are 1..65535 without duplicates;
 - on a lane with a warm pool, `warm_max_age_sec` is below `runtime_max_sec`;
+- `store_fs` is `xfs` or `btrfs`;
 - `preload` directories are plain relative paths named `supabase`; an org lane has exactly one
   `preload` entry per repository in `repos` (`"-"` for one without a Supabase project), so a
   repository added to the lane cannot silently cold-pull;
@@ -353,11 +400,12 @@ pull refuses to move while either has local edits; the units the scripts write s
 
 Each script is dry-run by default. `--apply` converges, `--check` is a read-only report that exits
 non-zero until converged (the lane's includes the smoke proofs), and `--remove` plans the teardown
-(`--remove --apply` performs it):
+(`--remove --apply` performs it); a lane's `--convert-store` plans the move of its store to btrfs
+("Converting a lane's store" below):
 
 ```bash
 bin/provision-host.sh <host> [--check | --apply | --remove [--apply]]
-bin/provision-lane.sh <host> <lane> [--check | --apply | --remove [--apply]]
+bin/provision-lane.sh <host> <lane> [--check | --apply | --remove [--apply] | --convert-store [--apply]]
 bin/provision-dashboards.sh <host> [--check | --apply | --remove [--apply]]
 flock -o /run/<lane>-runner-build.lock bin/build-runner-image.sh <host> <lane> [--refresh] [--if-provisioned]
 ```
@@ -380,6 +428,9 @@ for reading one host file from somewhere else by hand.
 - for an org lane, the App's organization permission "Self-hosted runners: Read and write", and
   the runner group `runner_group` with exactly the lane's `repos`;
 - the lane's first image: `flock -o /run/<lane>-runner-build.lock /opt/runner-lanes/lanes/bin/build-runner-image.sh <host> <lane>`;
+- for a lane whose host file says `store_fs: btrfs` while its store is XFS, the conversion:
+  `/opt/runner-lanes/lanes/bin/provision-lane.sh <host> <lane> --convert-store --apply`
+  ("Converting a lane's store" below);
 - for the machine, the deploy key (the gate names the values repository by the origin of the
   machine's values checkout) and `/etc/runners-host`.
 
@@ -401,6 +452,75 @@ lane the file still lists). `--remove` stops the store reaper once every slot ha
 empties the store's trash. It keeps the host's Docker and Sysbox, the store filesystem with its
 preloaded stores, the runner image, the App key, the lane's user and its Codex stores, and the
 (then inert) firewall rules.
+
+## Converting a lane's store
+
+A lane made before `store_fs` existed has an XFS store. To move it to btrfs ("A btrfs store" above):
+
+1. The machine's kit must know the key: a host file that names `store_fs` is refused by a kit from
+   before it. Then set `store_fs: btrfs` for the lane in `hosts/<host>.yml` and merge. The
+   machine's pull applies it and changes nothing on the lane: `--apply` ends at the gate that names
+   the next command, and `--check` fails with
+   `store_fs_type=xfs host_file=btrfs (not converged: ...)`. The lane keeps taking jobs on its XFS
+   store, as before.
+2. On the machine, as root, read the plan. It changes nothing:
+   `/opt/runner-lanes/lanes/bin/provision-lane.sh <host> <lane> --convert-store`. It prints the
+   preloaded stores it would carry over with their sizes (`golden-<tag>` for the current tag and for
+   every tag whose image is still there, which is what the image build keeps; a store no image
+   names and an unfinished one stay behind), the room it needs under `/var/lib/<lane>`, and each
+   command as a `DRY-RUN:` line.
+3. Convert, at a time when the lane may take no job for a while:
+   `/opt/runner-lanes/lanes/bin/provision-lane.sh <host> <lane> --convert-store --apply`.
+4. `provision-lane.sh <host> <lane> --check`, and once the lane has run jobs on the new store,
+   remove the XFS image with the `rm` command the conversion printed.
+
+**What it does, in order,** each step a `RUN:` line:
+
+- refuses, before it stops anything, unless the host file says `store_fs: btrfs`, the store is
+  mounted, the filesystem under `/var/lib/<lane>` has room for the copies beside the XFS image
+  (their sizes plus 1 GB), and no image build holds the lane's build lock. It then holds that lock
+  and the machine's apply lock until it ends, so neither a build nor a pull's apply runs meanwhile;
+- stops the listener's health timer, then the listener, so nothing starts a slot;
+- stops every slot that is not on a job, the way the listener's own idle stop does: the
+  `idle-stop` marker, the runner's removal from GitHub, which GitHub refuses for a runner on a job,
+  and only then the unit's stop. It waits up to 15 minutes for the slots that are on a job. Past
+  that it gives up: the store was not touched, and the listener, its health timer and the reaper's
+  timer are started again;
+- stops the reaper, unmounts the store, renames the XFS image to
+  `/var/lib/<lane>/store.img.xfs-<UTC time>`, and never deletes it;
+- makes a new sparse btrfs image at `/var/lib/<lane>/store.img`, rewrites the store's mount unit
+  for btrfs, and mounts it at the same path;
+- mounts the XFS image read-only at `/var/lib/<lane>/store-xfs` and copies each carried
+  `golden-<tag>` into a new subvolume, under the unfinished store's name (`golden-<tag>.new`) until
+  it is whole, then renames it. No image is rebuilt;
+- checks that the store is btrfs and that the slot helper can make and delete a snapshot of the
+  current tag's store, as a job's `prepare` and `cleanup` will;
+- starts the reaper's timer, the listener and its health timer again, and prints where the XFS
+  image is and the command that removes it.
+
+**Downtime.** The lane takes no job from the listener's stop to its start: the wait for running
+jobs (15 minutes at most), then the copies. A copy was estimated at about 2 minutes for a store of
+225,000 inodes; no conversion has been timed, so read the plan's sizes and expect minutes per
+store. Jobs queued meanwhile stay queued on GitHub and start when the listener is back. Idle slots
+are stopped, so a warm pool is refilled after the conversion, on the new store.
+
+**When it fails.** From the unmount to the last check, any failure (a format, a mount, a copy, the
+check itself), and an interrupt or a dropped session, puts the XFS store back: the new image is
+deleted, the XFS image renamed to its path, the mount unit rewritten for XFS and mounted, and the
+listener started again. The run exits non-zero and says `Convert: <store> is the XFS store again`.
+The conversion can be run again. What it cannot undo is a run killed outright (`kill -9`, the
+machine going down) between the unmount and the check. Then, by hand: `systemctl stop` the
+listener, `umount /var/lib/<lane>/store-xfs` if it is mounted, `systemctl stop` the store's mount
+unit (`systemd-escape -p --suffix=mount /var/lib/<lane>/store` prints its name),
+`mv /var/lib/<lane>/store.img.xfs-<UTC time> /var/lib/<lane>/store.img`, and
+`provision-lane.sh <host> <lane> --apply`, which writes the XFS mount unit again, mounts the store
+and starts the listener.
+
+**Afterwards.** Run on a store that is already btrfs, `--convert-store` does nothing. The lane's
+next `--apply` is converged. The kit converts in this direction only: a btrfs store under a host
+file that says `xfs` (or nothing) is left as it is, with a gate that says to set the key. To go
+back to XFS while the XFS image is still there, restore it by hand as above and take the key out
+of the host file.
 
 ## Running more QAE jobs at once
 

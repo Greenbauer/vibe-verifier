@@ -58,7 +58,9 @@ QAE_KEYS = {"codex_store", "qae_concurrency"}
 WAIT_KEYS = {"label", "slots", "memory"}
 # Keys a lane may leave out, with the value an absent one takes. warm_max_age_sec is how long a warm
 # slot's unit may stay active before the listener recycles it (listener/README.md, "Warm recycle").
-LANE_OPTIONAL_KEYS = {"warm_max_age_sec": 1200}
+# store_fs is the filesystem of the lane's store: xfs is what every lane had before the key.
+LANE_OPTIONAL_KEYS = {"warm_max_age_sec": 1200, "store_fs": "xfs"}
+STORE_FILESYSTEMS = ("xfs", "btrfs")
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -167,6 +169,18 @@ def _warm_max_age(raw: dict, runtime_max_sec: int, warm_pool: bool, block: str) 
             f"{block}.warm_max_age_sec ({default} when absent) must be below runtime_max_sec "
             f"({runtime_max_sec}) on a lane with a warm pool"
         )
+    return value
+
+
+def _store_fs(raw: dict, block: str) -> str:
+    """store_fs, or xfs when absent: the filesystem bin/provision-lane.sh makes a new store with.
+
+    The slot helper follows the store it finds, not this key, so the key never changes how a lane
+    that is running treats its store; converting one is an explicit command (README.md).
+    """
+    value = raw.get("store_fs", LANE_OPTIONAL_KEYS["store_fs"])
+    if not isinstance(value, str) or value not in STORE_FILESYSTEMS:
+        raise ValueError(f"{block}.store_fs must be one of {', '.join(STORE_FILESYSTEMS)} (xfs when absent)")
     return value
 
 
@@ -310,6 +324,7 @@ def _load_lane(raw: object, index: int) -> Lane:
         wait_label=wait_label,
         wait_slots=wait_slots,
         wait_memory=wait_memory,
+        store_fs=_store_fs(raw, block),
     )
 
 
