@@ -4,7 +4,7 @@ The dashboard reads GitHub through the locally authenticated `gh api` command. I
 
 ## Collection flow
 
-Each refresh checks the REST core rate limit, then scans configured repositories with at most four workers. A repository scan:
+Each refresh checks the REST core rate limit, then lists open pull requests for every repository before it reads any repository's runs or jobs. A configured list is one pulls request each. `repositories: all` is one repository list and one owner-wide search, then a pulls request only for a repository the search says has an open pull request. Detail is spent next, least-recently sampled first (never sampled before that), so a busy head of the list cannot take the whole 200-call budget on every pass. A pull request that was listed but not detailed stays on the page with `Checks are not loaded yet`. A 403 or 404 still leaves that pull request unavailable. Bot workflow names are read after that, with whatever budget remains. A repository scan, once its detail is reached:
 
 1. Refreshes direct subscription evidence when the five-minute inventory cache expires.
 2. Lists open pull requests.

@@ -337,7 +337,7 @@ dashboards:                            # optional: the Vibe Verifier dashboards 
     lane: <lane>                       # one of this machine's lanes: its App mints the read token, its listener feeds the telemetry
     port: <int>                        # the loopback port
     bridge_account: <user>             # optional: the account whose forward carries the HTTPS route to the port
-    config: {version: 1, owner, repositories, bots, proxy_origin, agents}   # dashboard.json, less telemetry_file
+    config: {version: 1, owner, repositories, bots, proxy_origin, agents}   # dashboard.json, less telemetry_file; repositories is a non-empty OWNER/NAME list, or the string all
 ```
 
 `lib/lanes.py` refuses a file that breaks any of these rules, before any script changes anything:

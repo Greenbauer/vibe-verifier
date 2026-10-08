@@ -43,7 +43,8 @@ restart. `tests/test_dashboard_favicon.py` covers the avatar, the fallback, and 
 
 ## Start it
 
-Requirements are Python 3, `gh`, and an existing `gh` login that can read every selected repository.
+Requirements are Python 3, `gh`, and an existing `gh` login that can read every selected repository,
+or every repository of the owner when `repositories` is `all`.
 Keep both local JSON files owned by the account running the server and not group- or world-writable.
 
 ```bash
@@ -116,8 +117,14 @@ narrowed read-only GitHub token and local telemetry, and the accounts and files 
 
 ## Configuration contract
 
-Configuration is read once at startup. Restart to change it. Every repository must belong to the
-one configured owner. `bots` maps CI workflow stages; `agents` declares the identities
+The configuration file is read once at startup. Restart to change the file. Every repository must
+belong to the one configured owner. `repositories` is either a non-empty list of `OWNER/NAME`, or
+the exact string `all`. The two shapes are different JSON types. A list is that selection until
+restart. `all` is every non-archived repository of the owner, discovered again on each refresh, so
+a repository that appears or is archived shows up or drops out without a restart. `octocat/all` in
+a list is a repository named `all`, not the whole owner.
+
+`bots` maps CI workflow stages; `agents` declares the identities
 shown in the UI. Names retain configured numbers. A workflow mapping is one unnumbered roster
 entry, SWE or QAE. A QAE entry is shown once per lane instance (QAE 1, QAE 2, and so on) when its
 runs used a numbered runner, or when the host reports `qae_concurrency`, including an instance that
@@ -148,8 +155,18 @@ roster shows no invented agents. See
 `telemetry_file` is optional and must be absolute. Deleting it makes telemetry unavailable without
 affecting GitHub data. `proxy_origin` is optional; omit it for local-only mode. It must be one exact
 HTTPS origin with a hostname and optional valid port, with no trailing slash, credentials, path,
-query, fragment, wildcard, or control character. Configuration is immutable after startup. Selected
-repository coverage is labeled as selected coverage, never as the whole account or organization.
+query, fragment, wildcard, or control character. The file is immutable after startup. A list is
+labeled `Selected repositories`. `all` is labeled `All repositories of <owner>`. A repository with
+no open pull request has no group and is not in the filter. While `all` is still being read the
+banner says `Reading repositories.`; if that read fails and there is no earlier set, it says
+`Repository list is unavailable.` and does not claim the owner has zero repositories.
+
+With `all`, an installation token reads `GET /installation/repositories`. A person's `gh` login is
+refused there, which is expected, and then an organization reads `GET /orgs/{owner}/repos` while a
+user reads `GET /users/{owner}/repos?type=owner`. Which of those repositories have an open pull
+request is one `GET /search/issues` (`org:` or `user:`, from the owner's type). A repository the
+search leaves out is not read further. Search can lag a new pull request by a refresh. A configured
+list does not use that search: each named repository is listed on its own.
 
 ## Optional private HTTPS proxy
 

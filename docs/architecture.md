@@ -146,7 +146,7 @@ When confirmed, it opens pull requests that change the planned workflow pin line
 
 ### 7. Read-only observability
 
-The optional dashboard reads GitHub state and local telemetry through read-only operations. Its HTTP server accepts `GET` only and exposes no mutation controls; the local `gh` login can have broader permissions, so credential scope remains the operator's responsibility. On a Linux host, the [host kit](dashboard-host.md) replaces that login with an hour-long GitHub App token that a root timer mints for exactly the configured repositories and read permissions.
+The optional dashboard reads GitHub state and local telemetry through read-only operations. Its HTTP server accepts `GET` only and exposes no mutation controls; the local `gh` login can have broader permissions, so credential scope remains the operator's responsibility. On a Linux host, the [host kit](dashboard-host.md) replaces that login with an hour-long GitHub App token that a root timer mints for read permissions, narrowed to the configured repositories, or to the whole installation when the dashboard's `repositories` is `all`.
 
 It can show:
 

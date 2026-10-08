@@ -11,7 +11,7 @@ from urllib.parse import quote, urlencode
 
 from .config import BOT_KEYS, BotDefinition, Config
 from .gh_api import ApiError, GitHubAPI
-from .pull_signals import face_fields, load_signals
+from .pull_signals import face_fields
 from .bot_runs import recent_bot_runs, runner_name
 from .util import category, elapsed_seconds, github_url, iso_time, parse_time, status_category
 
@@ -21,6 +21,8 @@ WORKFLOW_CACHE_AGE = timedelta(minutes=5)
 # History reads jobs only for this many of a workflow's newest completed runs. A configured job name
 # that never runs would otherwise read every run of the last seven days, hundreds in a busy repository.
 HISTORY_RUN_LIMIT = 50
+# Shown on a pull request that was listed but whose checks did not fit in this pass's budget.
+CHECKS_NOT_LOADED = "Checks are not loaded yet"
 
 
 def _endpoint(path: str, **query: object) -> str:
@@ -39,8 +41,11 @@ def _time_key(row: dict, *keys: str) -> datetime:
 # The start of a pin whose ruleset history GitHub refused: every run counts as at the current pin.
 PIN_UNKNOWN = datetime.min.replace(tzinfo=timezone.utc)
 
+# Imported after _endpoint: owner_set reads that helper from this module while it loads.
+from .owner_set import OwnerSet
 
-class GitHubCollector:
+
+class GitHubCollector(OwnerSet):
     def __init__(self, config: Config, api: GitHubAPI | None = None, *, clock=None):
         self.config = config
         self.api = api or GitHubAPI()
@@ -50,6 +55,12 @@ class GitHubCollector:
         self._job_lock = threading.Lock()
         self._workflows: dict[str, tuple[datetime, set[str]]] = {}
         self._pins: dict[tuple, tuple[str, datetime]] = {}
+        # Detail finished, and detail started. Never-finished repositories are read before ones
+        # that finished, and one that was started but did not finish waits behind ones not started.
+        self._detailed_at: dict[str, datetime] = {}
+        self._attempted_at: dict[str, datetime] = {}
+        self._listing: str | None = None
+        self._kind: str | None = None
 
     def clear_private_cache(self) -> None:
         with self._job_lock:
@@ -57,6 +68,10 @@ class GitHubCollector:
             self._completed_jobs.clear()
             self._workflows.clear()
             self._pins.clear()
+        self._detailed_at.clear()
+        self._attempted_at.clear()
+        self._listing = None
+        self._kind = None
         self.api.clear_cache()
 
     def _prune_job_cache(self, now: datetime) -> None:
@@ -295,28 +310,6 @@ class GitHubCollector:
         from .required_checks import branch_rules
         return branch_rules(self.api, repository, base)
 
-    def _repository(self, repository: str, inventory: dict) -> dict:
-        rows = self.api.items(_endpoint("repos/%s/pulls" % repository, state="open", per_page=100))
-        pulls, errors, rules = [], [], {}
-        signals = load_signals(self.api, repository, len(rows))
-        for row in rows:
-            try:
-                base = (row.get("base") or {}).get("ref")
-                if isinstance(base, str) and base not in rules:
-                    rules[base] = self._branch_rules(repository, base)
-                pulls.append(self._pull(repository, row, inventory, rules.get(base, []),
-                                        signals.get(row.get("number"))))
-            except ApiError as error:
-                identity = self._pull_identity(repository, row, inventory)
-                face = face_fields(None, signals.get(row.get("number")), evidence=False,
-                                   draft=identity["draft"], checks=[], statuses=[], expected=[])
-                pulls.append({**identity, **face, "head_changed": False, "evidence_available": False,
-                              "unavailable": True, "attention": True,
-                              "attention_reason": "Current-head evidence is unavailable",
-                              "checks": [], "statuses": [], "expected": [], "runs": [],
-                              "source_error": error.code})
-                errors.append({"pull": row.get("number"), "code": error.code})
-        return {"repository": repository, **inventory, "pulls": pulls, "errors": errors}
 
     def _bot_row(self, repository: str, role: str, run: dict, job: dict) -> dict:
         return {"bot": role, "repository": repository, "run_id": run.get("id"),
@@ -393,28 +386,29 @@ class GitHubCollector:
         self._workflows[repository] = (self.clock(), names)
         return names
 
-    def _bots(self, now: datetime, readable_repositories=None) -> dict:
+    def _bots(self, now: datetime, readable_repositories=None, names=None) -> dict:
         groups: dict[tuple[str, str], list[str]] = {}
         all_rows = {role: {"active": [], "completed": [], "active_complete": True,
                            "history_complete": True, "active_at": [], "history_at": [],
                            "floors": []} for role in BOT_KEYS}
         errors = []
-        readable = set(self.config.repositories if readable_repositories is None else readable_repositories)
+        repositories = self.config.repositories if names is None else names
+        readable = set(repositories if readable_repositories is None else readable_repositories)
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             futures = {repository: pool.submit(self._workflow_names, repository)
-                       for repository in self.config.repositories if repository in readable}
-            for repository in self.config.repositories:
+                       for repository in repositories if repository in readable}
+            for repository in repositories:
                 try:
                     if repository not in futures:
                         raise ApiError("unavailable")
-                    names = futures[repository].result()
+                    workflow_names = futures[repository].result()
                 except ApiError as error:
                     errors.append({"repository": repository, "phase": "workflows", "code": error.code})
                     for value in all_rows.values():
                         value["active_complete"] = value["history_complete"] = False
                     continue
                 for role, definition in self.config.bots.items():
-                    if definition.workflow in names:
+                    if definition.workflow in workflow_names:
                         groups.setdefault((repository, definition.workflow), []).append(role)
                     else:
                         # A successful owner-repo listing proves this workflow absent;
@@ -457,40 +451,3 @@ class GitHubCollector:
                                          "history": "complete" if history_complete else "partial"}}
         return {"partial": bool(errors), "roles": result, "errors": errors}
 
-    def _collect_repository(self, repository: str, inventory: dict[str, dict] | None) -> tuple:
-        known_inventory = (inventory or {}).get(repository)
-        try:
-            repo_inventory = known_inventory or self.inventory(repository)
-            row = self._repository(repository, repo_inventory)
-            row["sampled_at"] = iso_time(self.clock())
-            return repository, repo_inventory, row, None
-        except ApiError as error:
-            return repository, known_inventory, None, error.code
-
-    def collect(self, inventory: dict[str, dict] | None = None) -> dict:
-        now = self.clock().astimezone(timezone.utc)
-        with self._job_lock:
-            self._jobs = {}
-        self._prune_job_cache(now)
-        self.api.begin()
-        rate = self.api.rate()
-        inventories, by_repository, errors = {}, {}, []
-        with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(self.config.repositories))) as pool:
-            futures = [pool.submit(self._collect_repository, repository, inventory)
-                       for repository in self.config.repositories]
-            for future in futures:
-                repository, repo_inventory, row, code = future.result()
-                if repo_inventory:
-                    inventories[repository] = repo_inventory
-                if row:
-                    by_repository[repository] = row
-                if code:
-                    errors.append({"repository": repository, "code": code})
-        bots = self._bots(self.clock(), by_repository)
-        repository_rows = [by_repository[name] for name in self.config.repositories if name in by_repository]
-        return {"owner": self.config.owner, "sampled_at": iso_time(now), "repositories": repository_rows,
-                "coverage": {"selected": len(self.config.repositories), "readable": len(repository_rows),
-                             "label": "Selected repositories", "inventory": inventories},
-                "bots": bots, "errors": errors, "partial": bool(errors) or bots["partial"],
-                "api": {**rate, "calls": self.api.calls, "lowest_remaining": self.api.lowest_remaining,
-                        "max_calls": self.api.max_calls}}

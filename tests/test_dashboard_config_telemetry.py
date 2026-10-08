@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from dashboard.config import ConfigError, load_config
+from dashboard.config import ConfigError, coverage_label, load_config
 from dashboard.telemetry import read_telemetry
 
 
@@ -87,6 +87,33 @@ class ConfigIsolation(unittest.TestCase):
         bad["repositories"].append("example/foreign")
         with self.assertRaisesRegex(ConfigError, "outside configured owner"):
             load_config(self.write("bad.json", bad))
+
+    def test_repositories_all_is_the_whole_owner_and_every_other_shape_is_refused(self):
+        value = config_value()
+        value["repositories"] = "all"
+        loaded = load_config(self.write("all.json", value))
+        self.assertTrue(loaded.all_repositories)
+        self.assertEqual(loaded.repositories, ())
+        self.assertEqual(coverage_label(loaded), "All repositories of octocat")
+        named = config_value()
+        named["repositories"] = ["octocat/all"]
+        named_loaded = load_config(self.write("named-all.json", named))
+        self.assertFalse(named_loaded.all_repositories)
+        self.assertEqual(named_loaded.repositories, ("octocat/all",))
+        refused = {
+            "missing": "missing", "null": None, "empty": [], "blank": "", "star": "*",
+            "upper": "ALL", "capital": "All", "list of all": ["all"], "object": {"owner": "octocat"},
+            "number": 1, "bare name": "octocat/example",
+            "duplicate": ["octocat/example", "octocat/Example"],
+        }
+        for name, repositories in refused.items():
+            broken = config_value()
+            if repositories == "missing":
+                broken.pop("repositories")
+            else:
+                broken["repositories"] = repositories
+            with self.assertRaises(ConfigError, msg=name):
+                load_config(self.write("bad-%s.json" % name, broken))
 
     def test_two_instances_keep_their_owners_immutable_and_separate(self):
         first = load_config(self.write("first.json", config_value("octocat")))

@@ -153,6 +153,22 @@
     return { used, total, percent: used / total * 100 };
   }
 
+  function repositoriesWithPulls(pulls) {
+    return [...new Set(pulls.map(pull => pull.repository))].sort();
+  }
+
+  // selected null means the owner-wide list has not been read. A number, including zero, is a count.
+  function coverageBanner(coverage, github) {
+    const refreshing = Boolean(github && github.refreshing);
+    if (coverage.selected == null) {
+      return refreshing ? "Reading repositories." : "Repository list is unavailable.";
+    }
+    const stale = Boolean(github && github.stale);
+    const errors = (github && github.errors) || [];
+    const text = `${coverage.label}: ${coverage.selected}. ${coverage.readable} read successfully in this sample.`;
+    return text + (errors.length || stale ? " Some GitHub data is unavailable or stale." : "");
+  }
+
   function flattenPulls(snapshot) {
     return (snapshot.github.repositories || []).flatMap(repository =>
       (repository.pulls || []).map(pull => ({ ...pull, stale: repository.stale, source_error: repository.source_error }))
@@ -352,7 +368,7 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, ageClass, formatTime, bytes,
-    badge, diskUsage, flattenPulls, filterPulls, groupPulls, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, restoreViewState,
+    badge, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, restoreViewState,
     parseRoute, routeHash, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel,
     quotaTone, quotaCountdown, quotaGroups };
 });

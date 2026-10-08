@@ -28,22 +28,43 @@ class LiveService(DashboardService):
         self._usage_generation = 0
         self._usage_revoked = False
 
+    def _discovered_repositories(self):
+        """Repositories usage should read. None means the owner-wide set is not known yet."""
+        if not self.config.all_repositories:
+            return self.config.repositories
+        with self._condition:
+            github = self._github
+        coverage = (github or {}).get("coverage") or {}
+        if github is None or coverage.get("selected") is None:
+            return None
+        return tuple(row["repository"] for row in github.get("repositories", [])
+                     if isinstance(row, dict) and isinstance(row.get("repository"), str))
+
     def _refresh_usage(self, reader=None, generation=None):
         with self._usage_lock:
             reader = reader or self.usage_reader
             generation = self._usage_generation if generation is None else generation
+        names = self._discovered_repositories()
         value, failed = None, False
         try:
-            value = reader.collect()
+            if names is not None:
+                # A configured list is the reader's own config, so collect() keeps the signature
+                # existing callers use. A discovered set is passed through.
+                if names == tuple(self.config.repositories):
+                    value = reader.collect()
+                else:
+                    value = reader.collect(repositories=names)
         except (ApiError, OSError, ValueError):
             failed = True
         finally:
             with self._usage_lock:
-                if generation == self._usage_generation:
+                if generation == self._usage_generation and names is not None:
                     self._usage_result = value
                     self._usage_next = self.monotonic() + USAGE_REFRESH_SECONDS
                     if failed:
                         self.usage_reader = UsageArtifacts(self.config)
+                elif generation == self._usage_generation:
+                    self._usage_next = self.monotonic() + USAGE_REFRESH_SECONDS
                 self._usage_running = False
 
     def snapshot(self, **kwargs):

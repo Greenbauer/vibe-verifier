@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-from .config import BOT_KEYS, Config
+from .config import BOT_KEYS, Config, coverage_label
 from .gh_api import ApiError
 from .github import GitHubCollector, recent_bot_runs
 from .telemetry import read_telemetry
@@ -35,11 +35,17 @@ class DashboardService:
         self._refreshing = False
 
     def _empty_github(self, code: str) -> dict:
-        repositories = [self._unavailable_repository(repository, code)
-                        for repository in self.config.repositories]
+        # A list already names its repositories. `all` has not discovered any yet, so an empty
+        # list must not read as "this owner has no repositories".
+        if self.config.all_repositories:
+            repositories, selected = [], None
+        else:
+            repositories = [self._unavailable_repository(repository, code)
+                            for repository in self.config.repositories]
+            selected = len(self.config.repositories)
         return {"owner": self.config.owner, "sampled_at": None, "repositories": repositories,
-                "coverage": {"selected": len(self.config.repositories), "readable": 0,
-                             "label": "Selected repositories", "inventory": {}},
+                "coverage": {"selected": selected, "readable": 0,
+                             "label": coverage_label(self.config), "inventory": {}},
                 "bots": {"partial": True, "roles": {}, "errors": [{"code": code}]},
                 "errors": [{"code": code}], "partial": True,
                 "api": {"calls": 0, "max_calls": self.collector.api.max_calls}}
@@ -61,7 +67,8 @@ class DashboardService:
         for row in current.values():
             row.setdefault("sampled_at", sampled_at)
             row["stale"] = False
-        for repository in self.config.repositories:
+        names = self._repository_names(fresh)
+        for repository in names:
             if repository in current:
                 continue
             code = errors.get(repository, "unavailable")
@@ -71,9 +78,18 @@ class DashboardService:
                 current[repository] = row
             else:
                 current[repository] = self._unavailable_repository(repository, code, fresh)
-        fresh["repositories"] = [current[name] for name in self.config.repositories]
+        fresh["repositories"] = [current[name] for name in names]
+        fresh.pop("repository_names", None)
         fresh["coverage"]["readable"] = sum(not row.get("unavailable") for row in fresh["repositories"])
         return fresh
+
+    def _repository_names(self, fresh: dict) -> list[str]:
+        if not self.config.all_repositories:
+            return list(self.config.repositories)
+        names = fresh.get("repository_names")
+        if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+            raise ApiError("invalid_response")
+        return names
 
     @staticmethod
     def _unavailable_repository(repository: str, code: str, source: dict | None = None) -> dict:
