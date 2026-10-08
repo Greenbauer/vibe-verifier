@@ -30,7 +30,7 @@ for rules whose severity is below `error`.
 A gate may also qualify a pass that checked less than it could (`qualify` in
 [`gates/_contract.py`](../gates/_contract.py)): the runner's summary then reads `PASS (<note>)`, not
 a bare `PASS`. `feature-map` does it when no `--surface` is declared, so it checked anchors and globs
-but not whether every surface is owned.
+but not whether every surface is owned, and when the branch predates the map, so it checked nothing.
 
 **`--soak` never masks exit 2.** Soak exists so a new gate can collect signal before it blocks
 anything. A gate that cannot run has produced no signal, and a soak that is silently broken looks
@@ -320,7 +320,11 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
   explorer left unwalked, and the gate prints it and never judges it. A FAIL is a finding that says a
   walked step no longer matches the feature file, and how to clear it: fix the regression, or update
   the file in the pull request when it means the new behaviour. Without `--artifacts` the re-walk
-  cannot be judged: exit 2.
+  cannot be judged: exit 2. A head with no feature file follows
+  [the `feature-map` gate's rule](feature-map.md#a-head-with-no-map): a branch that predates the map
+  has no feature to re-walk, so the gate asks for no line, says why, and qualifies its pass
+  `re-walk not run: the branch predates the feature map`; a pull request that removed the map is
+  exit 2, as is a missing map nothing explains.
 - A criterion's own text may carry [annotations](../harnesses/qae/README.md#design-references-and-roles),
   held to its step log `qae/ACn.md` under `--artifacts`. `[ref: <key>]` names a design reference: the
   criterion is refused unless `--references FILE` (the JSON object of key to image sha256 the workflow
@@ -738,8 +742,8 @@ Universal checks:
 ## Feature map
 
 `feature-map` keeps a [feature map](feature-map.md) (one Markdown file per user-facing feature under
-`docs/features/`) true against the code at the head. A pure gate: it reads the tracked files and
-nothing else.
+`docs/features/`) true against the code at the head. A pure gate: it reads the tracked files, and
+the base only when the head has no map.
 
 ```
 feature-map --surface route src/routes.ts '^\s*path: "([^"]+)"'
@@ -757,8 +761,16 @@ feature-map --dir docs/features --surface page 'content/**/*.md'
   subscribes clean.
 - With no `--surface`, anchors and globs are checked and the pass is qualified
   `completeness not checked`, with an advisory finding saying why.
-- Exit 2 when the map has no feature file, or a `--surface` is malformed, matches no tracked file or
-  finds no surface.
+- Exit 2 when a `--surface` is malformed, matches no tracked file or finds no surface.
+- A head with no feature file is judged by what the base says of it, from the commits alone
+  ([the three cases](feature-map.md#a-head-with-no-map)). The merge base of the base and the head has
+  feature files: the pull request removed the map, a finding. The merge base has none and the base has
+  some: the branch predates the map, which landed on the base after the branch left it, so the gate
+  passes without checking anything and says so (an advisory finding naming the base to take, and the
+  pass qualified `not checked: the branch predates the feature map`); the map is checked once the
+  branch takes the base. Anything else is exit 2, as a missing map always was: no base resolves, the
+  base and the head share no merge base (a shallow clone), or the base has no map either. A pull
+  request that brings the first map has one at its head and is judged on it.
 
 ## Harnesses
 

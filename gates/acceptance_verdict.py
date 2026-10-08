@@ -37,6 +37,12 @@ prints and does not judge. A FAIL is a finding, and says a step that was walked 
 the feature file: the pull request fixes the regression or, when it means the new behaviour, updates
 the file. A feature with a line and no walked step was not re-walked, which is a finding too.
 
+A head whose map has no feature file is judged as the feature-map gate judges it (gates/_features.py).
+A branch that predates the map (its merge base with the base has no feature file, and the base has
+some) has no feature to re-walk: the gate says so, asks for no regression-check line, and its pass
+is labelled `re-walk not run: the branch predates the feature map`. A branch that removed the map
+(the merge base has feature files) is exit 2, like a map that cannot be read.
+
 A criterion's annotations (harnesses/qae/README.md) are held to the run's evidence, its step log
 `qae/ACn.md` under --artifacts:
 
@@ -71,7 +77,7 @@ import re
 
 from _acceptance import (ANCHOR_FORMS, anchors, annotations, body_criteria, check_lines, declares_none,
                          named_references, png_size, resolves, said, ticket_items, verdict)
-from _contract import CannotRun, Finding, run_gate, tracked_files
+from _contract import CannotRun, Finding, qualify, run_gate, tracked_files
 from _features import add_selection_arguments, describe, selection
 
 GATE = "acceptance-verdict"
@@ -232,6 +238,8 @@ def regression_findings(args, verdict, tracked):
     if not args.artifacts:
         raise CannotRun("--features needs --artifacts, the run's evidence: each re-walk's step log is read there")
     chosen, features = selection(args.repo, args, args.base_ref)
+    if chosen.predates:
+        qualify("re-walk not run: the branch predates the feature map")
     for line in describe(chosen) or ["re-walk: no feature's source globs match a changed file"]:
         print("%s: %s" % (GATE, line))
     lines, skipped = check_lines(verdict, REGRESSION_TOKEN), check_lines(verdict, SKIP_TOKEN)

@@ -23,7 +23,9 @@ inputs:
     default: qae-inputs/features
 outputs:
   count:
-    description: How many features were selected. 0 when the re-walk is off or no feature is touched.
+    description: >-
+      How many features were selected. 0 when the re-walk is off, no feature is touched, or the branch
+      predates the feature map (it has no feature file until it takes the base).
     value: ${{ steps.select.outputs.count }}
 runs:
   using: composite
