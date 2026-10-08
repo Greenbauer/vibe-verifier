@@ -496,5 +496,55 @@ console.log(JSON.stringify({
         self.assertTrue(all(part in css for part in held))
         self.assertIn("content.scrollTo?.(0, 0)", app)
         self.assertFalse("min-height: auto" in css or "top: 102px" in css)
+
+    def test_usage_page_lists_each_qae_and_draws_a_prior_day_line(self):
+        result = self.node(r"""
+const fs=require('fs');
+const make=tag=>({tag,attrs:{},children:[],style:{setProperty(k,v){this[k]=v;}},setAttribute(k,v){this.attrs[k]=v;},
+  append(...c){this.children.push(...c);},replaceChildren(...c){this.children=c;}});
+global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
+const VVCharts=require('./dashboard/static/charts.js');
+const {BOT_META}=require('./dashboard/static/helpers.js');
+const app=fs.readFileSync('./dashboard/static/app.js','utf8');
+const chartsSource=app.match(/\n(  function usageCharts\([\s\S]*?)\n  function renderUsage\(/)[1];
+const botsSource=app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function coverage/)[1];
+function el(tag,attrs={},...children){
+  const node=make(tag); node.attrs=attrs; node.children=children.flat().filter(v=>v!=null); return node;
+}
+const text=node=>typeof node==='string'?node:(node.children||[]).map(text).join(' ');
+const walk=node=>!node||typeof node==='string'?[]:[node,...(node.children||[]).flatMap(walk)];
+const rows=[1,2,3].map(n=>({id:'ci-qae-'+n,name:'QAE '+n,role:'qae',state:'idle',recent_2h:[],coverage:{history:'complete'}}));
+const snapshot={agents:{rows}};
+const strip=el('div');
+const dom={querySelector:()=>strip};
+const badge=status=>el('span',{},status);
+function recentRunLabel(value, recent) {
+  if (recent[0]?.category === 'failed') return 'Latest run failed';
+  if (recent.length) return 'Last 2h';
+  return value.coverage?.history === 'complete' ? 'No runs in 2h' : 'History incomplete';
+}
+new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel',botsSource)(
+  el,BOT_META,snapshot,{failureBot:null},badge,()=>{},value=>value,dom,recentRunLabel);
+global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
+const at=hours=>new Date(Date.now()-hours*3600000).toISOString();
+const samples=[];
+for (const row of rows) for (const hours of [31,30,3,2])
+  samples.push({account:'a',bot:row.id,timestamp:at(hours),input_tokens:40,output_tokens:0});
+const usage={sampled_at:new Date().toISOString(),accounts:[],
+  pace:{tokens_per_hour:100,plan:'ChatGPT subscription',window:'7d',used_percent:25,resets_at:at(-10),
+    delta_points:-4,sized_from:'bot_tokens',window_tokens:400,allowance_tokens:1600},samples};
+const cards=new Function('el','BOT_META','VVCharts','snapshot','formatTime',chartsSource+'\nreturn usageCharts;')(
+  el,BOT_META,VVCharts,snapshot,()=>'RESET')(usage).children[2].children;
+const names=node=>walk(node).filter(item=>item.attrs&&item.attrs.class==='bot-name').map(text);
+console.log(JSON.stringify({
+  strip:names(strip),
+  cards:cards.map(card=>text(card.children[0].children[0].children[0]).split(' · ')[0]),
+  usual:cards.map(card=>walk(card).some(node=>node.attrs&&node.attrs.class==='burn-usual'))
+}));
+""")
+        self.assertEqual(result["strip"], ["QAE 1", "QAE 2", "QAE 3"])
+        self.assertEqual(result["cards"], ["QAE 1", "QAE 2", "QAE 3", "All bots"])
+        self.assertEqual(result["usual"], [True, True, True, True])
+
 if __name__ == "__main__":
     unittest.main()

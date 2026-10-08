@@ -6,7 +6,8 @@ from datetime import timedelta
 from .collector_view import join_runner_jobs
 from .gh_api import ApiError
 from .service import DashboardService, PRIVATE_FAILURES
-from .usage_artifacts import UsageArtifacts
+from .pace import plan_window_start
+from .usage_artifacts import UsageArtifacts, apply_plan_window
 from .util import parse_time
 from .agents import agent_view
 
@@ -64,6 +65,9 @@ class LiveService(DashboardService):
                                  args=(self.usage_reader, self._usage_generation), daemon=True).start()
             usage = copy.deepcopy(self._usage_result) if not revoked else None
         if usage:
+            telemetry = value.get('telemetry') or {}
+            quota = telemetry.get('usage') if telemetry.get('available') and isinstance(telemetry.get('usage'), dict) else None
+            apply_plan_window(usage, plan_window_start(quota or {}))
             observed = parse_time(usage.get('sampled_at'))
             age = self.wall_clock() - observed if observed else None
             usage['stale'] = (usage.get('stale', False) or age is None or

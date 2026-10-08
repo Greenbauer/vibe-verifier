@@ -117,10 +117,14 @@ narrowed read-only GitHub token and local telemetry, and the accounts and files 
 ## Configuration contract
 
 Configuration is read once at startup. Restart to change it. Every repository must belong to the
-one configured owner. `bots` maps CI workflow stages; `agents` declares the SWE/QAE identities
-shown in the UI. Names retain configured numbers. A workflow mapping describes aggregate CI activity
-and is allowed only for unnumbered SWE or QAE. Omit `workflow_role` for a persistent agent whose
-ID is supplied by the runtime collector. An omitted roster shows no invented agents. See
+one configured owner. `bots` maps CI workflow stages; `agents` declares the identities
+shown in the UI. Names retain configured numbers. A workflow mapping is one unnumbered roster
+entry, SWE or QAE. A QAE entry is shown once per lane instance (QAE 1, QAE 2, and so on) when its
+runs used a numbered runner, or when the host reports `qae_concurrency`, including an instance that
+has not run. A run whose runner is not a lane instance stays on the unnumbered QAE, and that card
+appears only when it has a run or tokens. An owner who lists a reviewer still sees one SWE. Omit
+`workflow_role` for a persistent agent whose ID is supplied by the runtime collector. An omitted
+roster shows no invented agents. See
 [agent identities](dashboard-agents.md) for the runtime contract.
 
 ```json
@@ -134,7 +138,6 @@ ID is supplied by the runtime collector. An omitted roster shows no invented age
     "verifier": {"workflow": "verify.yml", "jobs": ["verify"]}
   },
   "agents": [
-    {"id": "ci-swe", "name": "SWE", "role": "swe", "workflow_role": "reviewer"},
     {"id": "ci-qae", "name": "QAE", "role": "qae", "workflow_role": "explorer"}
   ],
   "telemetry_file": "/absolute/path/telemetry.json",
@@ -256,7 +259,8 @@ are aggregate CPU sampled percent, memory bytes, and workspace-filesystem bytes.
 fills with how much is in use, so a fuller bar means less headroom; disk used is total minus free.
 
 Displayed agent state comes from an explicit identity mapping. Aggregate CI mappings use GitHub
-activity: active jobs prove working, and a complete active scan permits idle. Runner listener
+activity: active jobs prove working, and a complete active scan permits idle. A mapped QAE is one
+card per lane instance, from the job's runner name and the host's `qae_concurrency`. Runner listener
 health never establishes agent health. Persistent SWE/QAE identities use their own runtime state
 and history, including paused. A missing runtime is unknown. A stale one keeps its last state and is marked stale. Numbered identities cannot
 be mapped to aggregate CI job roles. Recent history uses structural run outcomes and timestamps.

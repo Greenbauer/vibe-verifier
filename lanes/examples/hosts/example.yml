@@ -78,7 +78,6 @@ dashboards:
         verifier: {workflow: qae-explore.yml, jobs: [qae-verify]}
       proxy_origin: https://worker-1.example.ts.net:8443
       agents:
-        - {id: ci-swe, name: SWE, role: swe, workflow_role: reviewer}
         - {id: ci-qae, name: QAE, role: qae, workflow_role: explorer}
   # No bridge account: the HTTPS route's proxy runs as root on this machine.
   - name: acme
@@ -96,5 +95,4 @@ dashboards:
         verifier: {workflow: qae.yml, jobs: [qae-verify]}
       proxy_origin: https://worker-1.example.ts.net:8444
       agents:
-        - {id: ci-swe, name: SWE, role: swe, workflow_role: reviewer}
         - {id: ci-qae, name: QAE, role: qae, workflow_role: explorer}

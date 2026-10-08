@@ -54,12 +54,12 @@ check((ob.user, ob.home, ob.bridge, ob.slice, ob.top_slice) == ("orbit-ci", "/va
 check(listener_config(ob) == (fixtures / "orbit-ci.json").read_text(encoding="utf-8"), "orbit-ci's listener config, byte for byte")
 
 # ---- their dashboards -------------------------------------------------------------------------------
-CI_ROLES = [{"id": "ci-swe", "name": "SWE", "role": "swe", "workflow_role": "reviewer"}, {"id": "ci-qae", "name": "QAE", "role": "qae", "workflow_role": "explorer"}]
+CI_ROLES = [{"id": "ci-qae", "name": "QAE", "role": "qae", "workflow_role": "explorer"}]
 dashes = {d.name: d for d in example.dashboards + vps.dashboards}
 check([(d.name, d.lane.name, d.port, d.bridge_account) for d in example.dashboards] == [("greenbauer", "greenbauer-ci", 8765, "dashboard-forward"), ("acme", "acme-ci", 8766, None)],
       "the example serves greenbauer on 8765 behind a bridge account and acme on 8766 without one")
 check([(d.name, d.lane.name, d.port, d.bridge_account) for d in vps.dashboards] == [("orbit", "orbit-ci", 8766, None)], "vps-1 serves orbit on 8766, with no bridge account")
-check(all(d.config["agents"] == CI_ROLES for d in dashes.values()), "every dashboard's agents are the CI roles")
+check(all(d.config["agents"] == CI_ROLES for d in dashes.values()), "every dashboard's agents are the QAE roster")
 check({name: (d.config["owner"], len(d.config["repositories"]), d.config["proxy_origin"]) for name, d in dashes.items()} == {
     "greenbauer": ("Greenbauer", 1, "https://worker-1.example.ts.net:8443"), "acme": ("acme", 2, "https://worker-1.example.ts.net:8444"),
     "orbit": ("orbit-labs", 3, "https://vps-1.example.ts.net:8444")}, "each dashboard keeps its owner, repositories and HTTPS route")

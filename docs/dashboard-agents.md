@@ -1,7 +1,8 @@
 # Dashboard agent identities
 
-The operator requires SWE and QAE identities, retaining numbers where present. Workflow
-stages such as review, exploration, and deterministic verification are not separate agents.
+The roster is the identities an owner configures, retaining numbers where present. A mapped
+QAE is shown once per lane instance. Workflow stages such as review, exploration, and
+deterministic verification are not separate agents. An owner who lists a reviewer still sees SWE.
 
 ## Requirements and verification
 
@@ -10,8 +11,10 @@ stages such as review, exploration, and deterministic verification are not separ
 - Attribute runtime state, recent outcomes (at most five in two hours), failures, and usage
   through the same identity. Never infer agent health from runner availability.
   Verify stale, missing, foreign, and populated telemetry cases.
-- An explicit CI workflow mapping may show aggregate CI activity under an unnumbered role;
-  it does not claim a numbered persistent agent. Deterministic checks remain in PR progress.
+- An explicit CI workflow mapping may show one SWE, or one QAE split into lane instances
+  (QAE 1, QAE 2, and so on), from that workflow's jobs. It does not claim a numbered persistent
+  agent. A run whose runner name is not a lane instance stays on the unnumbered QAE, shown only
+  when it has activity. Deterministic checks remain in PR progress.
 - Keep the combined usage chart and individual agent charts, distinct SWE/QAE colors,
   owner isolation, and the existing runner/PR views. Verify a populated browser and tests.
 - Keep status cards content-sized and packed against the left edge, with no outer strip

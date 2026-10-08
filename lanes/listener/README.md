@@ -122,10 +122,17 @@ adds `"repos": {"exclude": ["some-repo"], "refresh_sec": 600}`.
 | `budget.qae_concurrency` | The most `qae` slots at once, lane-wide. At least 1 when the `qae` kind is configured, and at most `slots`. |
 | `admission.container_memory_bytes` | One slot container's memory limit. |
 | `admission.reserve_bytes` | Memory the host keeps beyond the lane's containers. |
-| `runner.name_prefix` | JIT runners are named `<name_prefix>-<kind>-<n>-<unix time>`. |
+| `runner.name_prefix` | JIT runners are named `<name_prefix>-<kind>-<n>-<unix time>`. See the runner-name contract below. |
 | `runner.work_folder` | The runner's work folder inside the container. |
 | `idle_stop_sec` | How long a slot may sit idle before an idle stop may pick it. |
 | `warm_max_age_sec` | Optional, 1200 when absent. How long a warm slot's unit may be active before the slot is recycled. With a warm pool the slot unit's `RuntimeMaxSec` is this plus the lane block's `runtime_max_sec` (the job budget); without one the key has no effect. Keep it below `runtime_max_sec` minus the longest job the lane expects: a job then still fits when a recycle comes up to one more `warm_max_age_sec` late (the listener was down, or a job was waiting on the set). |
+
+## Runner name contract
+
+A JIT runner's name is `<name_prefix>-<kind>-<n>-<unix time>`. `name_prefix` matches
+`[A-Za-z0-9][A-Za-z0-9-]*` and may contain hyphens, `kind` is `ci`, `qae`, or `wait`, `n` starts at
+1, and the last field is unix seconds. The dashboard reads this shape off the job's `runner_name`
+to tell QAE instances apart. A name that does not match is not an instance.
 
 ## The run-dir contract
 

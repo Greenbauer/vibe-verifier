@@ -28,6 +28,12 @@ def _endpoint(path: str, **query: object) -> str:
     return path + ("?" + urlencode(values) if values else "")
 
 
+def _runner_name(value: object) -> str | None:
+    if isinstance(value, str) and value.isascii() and value.isprintable() and 0 < len(value) <= 128:
+        return value
+    return None
+
+
 def _time_key(row: dict, *keys: str) -> datetime:
     for key in keys:
         value = parse_time(row.get(key))
@@ -168,7 +174,8 @@ class GitHubCollector:
                          "queue_seconds": elapsed_seconds(row.get("created_at"), row.get("started_at"), self.clock()),
                          "elapsed_seconds": elapsed_seconds(row.get("started_at"), row.get("completed_at"), self.clock()),
                          "html_url": github_url(row.get("html_url"), self.config.owner),
-                         "runner_id": row.get("runner_id"), "steps": self._clean_steps(row.get("steps"))})
+                         "runner_id": row.get("runner_id"), "runner_name": _runner_name(row.get("runner_name")),
+                         "steps": self._clean_steps(row.get("steps"))})
         with self._job_lock:
             self._jobs[key] = jobs
             completed_at = _time_key(run, "updated_at")
@@ -322,7 +329,8 @@ class GitHubCollector:
                 "attempt": run.get("run_attempt") or 1, "job_id": job["id"], "name": job["name"],
                 "status": job["status"], "conclusion": job["conclusion"], "category": job["category"],
                 "started_at": job["started_at"], "completed_at": job["completed_at"],
-                "elapsed_seconds": job["elapsed_seconds"], "html_url": job["html_url"]}
+                "elapsed_seconds": job["elapsed_seconds"], "html_url": job["html_url"],
+                "runner_name": job.get("runner_name")}
 
     def _bot_workflow(self, repository: str, workflow: str, roles: list[str], now: datetime) -> dict:
         rows = {role: {"active": [], "completed": []} for role in roles}
