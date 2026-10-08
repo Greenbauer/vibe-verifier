@@ -177,8 +177,8 @@ quota_history   hourly used percent of each quota window
 ```
 
 `quota_history` was added without a new version. A snapshot written before it has no such field:
-the collector starts the history empty from its next quota reading, and the dashboard reads the
-file as one with no history yet.
+the collector's next run starts the history from the quota reading that snapshot already holds, and
+the dashboard reads the older file as one with no history yet.
 
 The host section is:
 

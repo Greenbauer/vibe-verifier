@@ -120,8 +120,8 @@ and refuses a telemetry file over 2 MiB, and a week of 30-second samples is abou
 snapshot's `quota_history` is published whole, because the Bot usage page draws it: one reading per
 plan window per clock hour for seven days, about 3 KiB a window once it holds a week and under
 0.2 MiB at the collector's limit of 64 windows. State written before the collector kept that history
-needs no migration: the history starts with the next quota reading (within five minutes), gains a
-point an hour, and the page says so until there is one. Before the
+needs no migration: the next run starts it from the quota reading the state already holds, it gains
+a point an hour from then on, and the card says when its readings start. Before the
 new file replaces the old one, the dashboard's own reader must accept it; otherwise the old file stays
 and the unit fails. The published file is the collector snapshot only: there is no runner-registration
 inventory and no agent-runtime record. Without a CI lane on the host, leave the telemetry timer off and
