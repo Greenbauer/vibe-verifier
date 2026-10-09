@@ -333,8 +333,10 @@ as `entries:` instead, as it does to `actions/gates`. Without either, one width 
 
 - [`actions/qae-inputs`](../../actions/qae-inputs/action.yml) is given the explorer's number
   (`matrix.shard || 1`) and how many there are (`strategy.job-total`). It shares the criteria out,
-  the same way in every explore job: in document order each criterion goes whole to the explorer
-  with the fewest walks so far, the lowest-numbered on a tie. It declares the sentence the prompt
+  the same way in every explore job: largest walks first, each criterion goes whole to the explorer
+  with the fewest walks so far, the lowest-numbered on a tie. Equal-sized criteria keep document
+  order. This avoids placing a late multi-role criterion on an already busy explorer. Each final
+  share keeps document order and original criterion numbers. It declares the sentence the prompt
   gives that explorer: "Your share of the criteria is AC1, AC4, TC2: you are explorer 2 of 3. Walk
   only those, and write a verdict line for each of them and for no other criterion; ...". The model
   never works its share out, and the explore job's log names the share. On the Claude lane the turn

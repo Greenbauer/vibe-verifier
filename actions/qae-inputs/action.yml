@@ -27,9 +27,10 @@ inputs:
   shards:
     description: >-
       How many explorers the criteria job split the criteria across (`strategy.job-total` in the explore
-      job). Every explore job shares the criteria out the same way: in document order each goes whole to
+      job). Every explore job shares the criteria out the same way: largest walks first, each goes whole to
       the explorer with the fewest walks so far, and the first starts with the walks of the feature re-walk
-      in qae-inputs/features, so the features step runs before this one in every explore job.
+      in qae-inputs/features, so the features step runs before this one in every explore job. Equal-sized
+      criteria and each final share keep document order and original criterion numbers.
     default: "1"
 outputs:
   references:
