@@ -109,11 +109,12 @@ body (`--criteria`, default qae-inputs/pr-body.md) and of the ticket (`--ticket`
 qae-inputs/ticket.md; absent is none) once per role it names and per width, plus each feature to re-walk
 (`--features`, default qae-inputs/features), which is one walk per three states the manifest's
 acceptance-verdict line lets the explorer walk of it (`--max-states`, default 3). With `--shard K --shards N`
-the explorer is one of N that share the criteria (`criteria --max-shards` decided N). In document order each
+the explorer is one of N that share the criteria (`criteria --max-shards` decided N). Largest walks first, each
 criterion goes whole to the explorer with the fewest walks so far, the lowest-numbered on a tie, and the first
 explorer starts with the walks of the feature re-walk, which only it does, so it takes fewer criteria and
 reaches the re-walk in its time. Every explorer counts the features the same way, to make the same
-assignment, and for one past the first `--features DIR` and its listing are then removed: it is not handed
+assignment; equal-sized criteria and each final share keep document order and original criterion numbers.
+For one past the first `--features DIR` and its listing are then removed: it is not handed
 them. The cap is sized to the explorer's own share, and `--share FILE` gets the one sentence that names that
 share for its prompt (an empty line for one explorer). It prints `references: <n>`, one
 `<key>: <width>x<height>` line each, `widths: <list>` (or `widths: none`) and, with `--turns`,
@@ -1019,16 +1020,20 @@ def explorer_turns(items, widths, features, states):
 
 
 def shard_shares(items, widths, shards, rewalk=0):
-    """Each of `shards` explorers' share of the criteria `items`, in shard order. In document order, a criterion
+    """Each of `shards` explorers' share of the criteria `items`, in shard order. Largest walks first, a criterion
     goes whole to the explorer with the fewest walks so far, the lowest-numbered on a tie. The first starts
     with `rewalk` walks, those of the feature re-walk only it does: a selected feature with no walked step is
     a finding, so the explorer that carries the re-walk takes fewer criteria and reaches it in its time. Every
-    explore job makes this assignment for itself, from the same inputs, so they agree."""
+    explore job makes this assignment for itself, from the same inputs, so they agree. Equal-sized criteria
+    and each final share keep document order, without changing criterion numbers."""
     shares, loads = [[] for _ in range(shards)], [rewalk] + [0] * (shards - 1)
-    for item in items:
+    positions = {item[0]: index for index, item in enumerate(items)}
+    for item in sorted(items, key=lambda item: criterion_walks(item[1], widths), reverse=True):
         least = loads.index(min(loads))
         shares[least].append(item)
         loads[least] += criterion_walks(item[1], widths)
+    for share in shares:
+        share.sort(key=lambda item: positions[item[0]])
     return shares
 
 

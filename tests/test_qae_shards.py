@@ -225,9 +225,9 @@ class Share(unittest.TestCase):
         files = {"qae-inputs/pr-body.md": body("a [as: admin, rep, viewer]", "b", "c", "d", "e")}
         self.assertEqual([share for share, _ in self.shares(files, 2)], ["AC1, AC5", "AC2, AC3, AC4"])
 
-    def test_the_tickets_criteria_are_shared_out_after_the_pull_requests(self):
+    def test_ticket_criteria_share_the_same_walk_budget_and_keep_their_numbers(self):
         files = {"qae-inputs/pr-body.md": body("a", "b", "c", "d"), "qae-inputs/ticket.md": "- t1\n- t2 [as: admin, rep]\n- t3\n"}
-        self.assertEqual([share for share, _ in self.shares(files, 2)], ["AC1, AC3, TC1, TC3", "AC2, AC4, TC2"])
+        self.assertEqual([share for share, _ in self.shares(files, 2)], ["AC3, TC1, TC2", "AC1, AC2, AC4, TC3"])
 
     def test_one_explorer_walks_every_criterion_and_is_told_nothing(self):
         result, declared, _ = self.run_action({"qae-inputs/pr-body.md": body("a", "b")}, 1, 1)
@@ -255,10 +255,10 @@ class Share(unittest.TestCase):
             self.assertEqual(os.path.isfile(os.path.join(repo, "qae-inputs", "features.md")), handed)
 
     def test_an_explorer_whose_whole_load_is_the_re_walk_is_told_to_walk_no_criterion(self):
-        # Two criteria, of two walks and of six, and three features: both criteria go to the second explorer.
-        files = {"qae-inputs/pr-body.md": body("a", "b [as: admin, rep, viewer]"), "qae-inputs/features.md": "# Features to re-walk\n"}
+        # Two criteria of two walks each and three features: both criteria go to the second explorer.
+        files = {"qae-inputs/pr-body.md": body("a", "b"), "qae-inputs/features.md": "# Features to re-walk\n"}
         files.update({"qae-inputs/features/%s.md" % name: "# %s\n" % name for name in ("cart", "search", "sign-in")})
-        self.assertEqual(self.shares(files, 2), [("no criterion", 130), ("AC1, AC2", 240)])
+        self.assertEqual(self.shares(files, 2), [("no criterion", 130), ("AC1, AC2", 160)])
 
     def test_an_explorer_left_with_nothing_to_walk_fails_before_a_model_runs(self):
         # The criteria job counted two criteria and the body now lists one: it was edited between the jobs.
