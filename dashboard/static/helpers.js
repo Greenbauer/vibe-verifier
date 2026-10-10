@@ -308,7 +308,7 @@
     return Math.round(Math.min(100, Math.max(0, used)));
   }
 
-  // Points the fill sits ahead of an even burn. Same comparison as the plan pace line:
+  // Points the fill sits ahead of an even burn, the diagonal on the subscription burn chart:
   // used percent minus the share of the window already elapsed. Null until the window has started.
   function quotaPace(window, now) {
     const minutes = window.window_minutes;
@@ -329,6 +329,17 @@
     if (pace.delta > 1) return `${points} ${noun} ahead of an even ${even}% burn`;
     if (pace.delta < -1) return `${points} ${noun} behind an even ${even}% burn`;
     return `on pace with an even ${even}% burn`;
+  }
+
+  // "12% under pace" for a card's header, with its hover: a plan window's fill against an even burn
+  // of it, in points. A null delta (no window to pace) says nothing.
+  function paceHeader(delta) {
+    if (delta === null) return {};
+    if (delta > 1) return { pace: `${Math.round(delta)}% ahead of pace`,
+      paceTitle: `${Math.round(delta)} points ahead of an even burn: spending the plan faster than its window resets.` };
+    if (delta < -1) return { pace: `${Math.round(-delta)}% under pace`,
+      paceTitle: `${Math.round(-delta)} points behind an even burn: headroom.` };
+    return { pace: "on pace", paceTitle: "On pace with the plan's reset window." };
   }
 
   // Shown only once the fill is more than a point off an even burn.
@@ -389,6 +400,6 @@
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, ageClass, formatTime, bytes,
     badge, agedState, sourceStamp, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, restoreViewState,
-    parseRoute, routeHash, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel,
+    parseRoute, routeHash, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, paceHeader, quotaDeltaLabel,
     quotaTone, quotaCountdown, quotaGroups };
 });

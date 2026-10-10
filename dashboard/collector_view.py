@@ -3,6 +3,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 from .collector import project_host, project_rate_limits
+from .quota_history import project as project_history, window_history
 from .util import parse_time, iso_time
 
 
@@ -29,7 +30,8 @@ def fresh(section, now):
 
 
 def collector_view(value, config, now):
-    if (set(value) != {"version", "owner", "observed_at", "hosts", "accounts", "samples"} or
+    # `quota_history` is optional: a snapshot written before the collector kept one has no history yet.
+    if (set(value) - {"quota_history"} != {"version", "owner", "observed_at", "hosts", "accounts", "samples"} or
             value.get("version") != 1 or value.get("owner", "").lower() != config.owner.lower() or
             not isinstance(value.get("hosts"), list) or len(value["hosts"]) != 1 or
             not isinstance(value.get("accounts"), list) or len(value["accounts"]) != 1):
@@ -84,6 +86,7 @@ def collector_view(value, config, now):
     usage = {"available": False, "reason": "not_provided"}
     if account.get("observed_at"):
         limits = project_rate_limits(account.get("rate_limits"))
+        history = project_history(value.get("quota_history", []))
         from datetime import datetime, timezone
         accounts = []
         for limit in limits:
@@ -93,7 +96,8 @@ def collector_view(value, config, now):
                 windows.append({"name": _window_label(minutes),
                                 "used_percent": window["used_percent"],
                                 "resets_at": iso_time(datetime.fromtimestamp(window["resets_at"], timezone.utc)),
-                                "allowance_tokens": None, "window_minutes": minutes})
+                                "allowance_tokens": None, "window_minutes": minutes,
+                                "history": window_history(history, limit["limit_id"], window, account["observed_at"])})
             # Each metered feature is its own plan. A Codex plan's 5-hour and 7-day windows stay together.
             accounts.append({"id": "collector:%s" % limit["limit_id"], "label": _model_label(limit["limit_id"]),
                              "provider": "OpenAI", "quota_windows": windows})
