@@ -836,6 +836,9 @@ same. What differs, and why:
   setting as its own argv value and prints only the validated configured settings in the
   workflow log. For example, a consumer can add `model: gpt-6.1-sol` and
   `reasoning-effort: high` to the action's `with:` block after checking its CLI model metadata.
+  The CLI is locked to `0.162.0`. Check availability using that version and the runner's
+  account: older clients can receive a filtered model catalog, and metadata from another
+  client or account does not prove the chosen model is available to this invocation.
   This fixes reproducibility of selection, not incomplete walks or inaccurate evidence:
   the explorer can still finish before the job timeout, and every acceptance gate still applies.
 - **Three settings a non-interactive Codex run needs**, each found on the first spike (2026-09-23,

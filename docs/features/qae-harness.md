@@ -36,6 +36,7 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - `tests/test_qae_codex_settings.py::test_empty_inputs_preserve_runner_selection`
 - `tests/test_qae_codex_settings.py::test_explicit_settings_are_independent_arguments`
 - `tests/test_qae_codex_settings.py::test_invalid_settings_fail_before_codex_without_echoing_them`
+- `tests/test_qae_codex.py::test_the_locked_cli_supports_current_explicit_models_on_every_platform`
 - `tests/test_qae_artifacts.py::test_a_step_without_a_screenshot_fails`
 - `tests/test_qae_artifacts.py::test_an_error_a_third_party_page_logged_is_not_judged`
 - `tests/test_qae_console_pages.py::test_a_hosted_pages_own_error_passes_and_only_because_of_the_record`
@@ -76,6 +77,7 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 ## Gotchas
 
 - The Codex action accepts optional `model` and `reasoning-effort` inputs; empty preserves the runner defaults. The action validates identifiers and effort values before invoking Codex, passes settings as separate arguments, and logs only the configured values. Selection does not guarantee a complete walk or a truthful verdict.
+- The Codex CLI is locked to `0.162.0`, including its platform binaries. Model availability can be client-version filtered; verify the chosen model and effort with the pinned client and the actual runner account, not another client's catalog.
 
 - The explore templates must stay byte-identical outside the explorer block, and the inline prompts must equal prompt.md.
 - A console line names the resource an error is about, never the page that logged it. The page comes from `console-pages.jsonl`, which `actions/qae-browser/console-pages.js` writes through playwright-mcp's `--init-page`. A consumer copy of the Claude lane without that argument writes no record, and every console error is judged as before. The hook depends on the pinned build, and the catalog's `qae-browser` CI job runs it in the real browser.
