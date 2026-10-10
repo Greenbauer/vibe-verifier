@@ -4,6 +4,12 @@ inputs:
   prompt-file:
     description: The prompt to run, written by the workflow (the harness prompt with this pull request's numbers filled in).
     required: true
+  model:
+    description: Optional Codex model identifier. Empty preserves the runner's model selection.
+    default: ""
+  reasoning-effort:
+    description: Optional advertised reasoning effort (low, medium, high, xhigh, max or ultra). Empty preserves the runner's selection; the chosen model must support it.
+    default: ""
   mcp:
     description: The playwright-mcp entry point, from actions/qae-browser. Empty runs the prompt with no browser (the keepalive).
     default: ""
@@ -84,6 +90,8 @@ runs:
       env:
         CODEX: ${{ steps.install.outputs.codex }}
         PROMPT_FILE: ${{ inputs.prompt-file }}
+        MODEL: ${{ inputs.model }}
+        REASONING_EFFORT: ${{ inputs.reasoning-effort }}
         MCP: ${{ inputs.mcp }}
         ARTIFACTS: ${{ inputs.artifacts }}
         STORAGE_STATE: ${{ inputs.storage-state }}
@@ -92,6 +100,20 @@ runs:
         VV_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
         set -euo pipefail
+        settings=()
+        if [ -n "$MODEL" ]; then
+          if [[ ! "$MODEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "::error::model must be an identifier containing only letters, digits, dots, underscores and hyphens, starting with a letter or digit"
+            exit 2
+          fi
+          settings+=(--model "$MODEL")
+        fi
+        case "$REASONING_EFFORT" in
+          "") ;;
+          low|medium|high|xhigh|max|ultra) settings+=(-c "model_reasoning_effort=\"$REASONING_EFFORT\"") ;;
+          *) echo "::error::reasoning-effort must be low, medium, high, xhigh, max or ultra"; exit 2 ;;
+        esac
+        printf 'QAE Codex configured model=%s reasoning_effort=%s\n' "${MODEL:-runner-default}" "${REASONING_EFFORT:-runner-default}"
         mkdir -p "$ARTIFACTS/qae"
         # Both files hold credential values: written owner-only outside the workspace, and removed by
         # the redaction step after the explorer.
@@ -200,7 +222,7 @@ runs:
           --output "$RUNNER_TEMP/vv-usage/usage.json" \
           --role qae-explorer --job-key explore --account-alias "$USAGE_ACCOUNT_ALIAS" \
           codex -- "$CODEX" exec --json --ephemeral --skip-git-repo-check --sandbox danger-full-access \
-          -c 'approval_policy="never"' "${browser[@]}" \
+          -c 'approval_policy="never"' "${settings[@]}" "${browser[@]}" \
           -o "$ARTIFACTS/final.md" "$(cat "$PROMPT_FILE")" < /dev/null
     - name: Redact the secrets from the artifacts
       # playwright-mcp's secrets replace a value only where a tool result holds it exactly as
