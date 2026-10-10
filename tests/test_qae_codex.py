@@ -191,6 +191,22 @@ class Action(unittest.TestCase):
         self.assertIn('"node_modules/@openai/codex"', lock)
         self.assertIn('"node_modules/@openai/codex-linux-x64"', lock)
 
+    def test_the_locked_cli_supports_current_explicit_models_on_every_platform(self):
+        manifest = json.loads((ROOT / "tools" / "codex" / "package.json").read_text())
+        lock = json.loads((ROOT / "tools" / "codex" / "package-lock.json").read_text())
+        version = manifest["dependencies"]["@openai/codex"]
+        # Older clients receive a filtered model catalog; 0.162.0 was verified
+        # to advertise gpt-6.1-sol with high effort for subscription accounts.
+        self.assertGreaterEqual(tuple(map(int, version.split("."))), (0, 162, 0))
+        self.assertEqual(lock["packages"][""]["dependencies"]["@openai/codex"], version)
+        cli = lock["packages"]["node_modules/@openai/codex"]
+        self.assertEqual(cli["version"], version)
+        for dependency in cli["optionalDependencies"]:
+            with self.subTest(platform=dependency):
+                binary = lock["packages"]["node_modules/" + dependency]
+                self.assertTrue(binary["version"].startswith(version + "-"))
+                self.assertTrue(binary["integrity"].startswith("sha512-"))
+
 
 
 COOKIE = {"name": "_vercel_jwt", "value": "test-cookie-value.0123456789_abcdef-ghijkl",
