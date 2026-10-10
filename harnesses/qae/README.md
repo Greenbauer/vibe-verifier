@@ -827,6 +827,17 @@ same. What differs, and why:
   reads "do not post anything" in this lane. The comment is for people; the verify job reads the
   file. The post is tried up to five times, because one GitHub 5xx would otherwise fail a finished
   exploration's job.
+- **Caller-owned model settings.** `actions/qae-codex` accepts optional `model` and
+  `reasoning-effort` inputs. Both default to empty, which preserves the runner's selection;
+  the action never claims which model or effort that default chose. A model identifier starts
+  with a letter or digit and uses only ASCII letters, digits, dots, underscores and hyphens.
+  Effort accepts `low`, `medium`, `high`, `xhigh`, `max` or `ultra`; choose a value advertised
+  by the selected model. Invalid values fail before Codex starts. The action passes each
+  setting as its own argv value and prints only the validated configured settings in the
+  workflow log. For example, a consumer can add `model: gpt-6.1-sol` and
+  `reasoning-effort: high` to the action's `with:` block after checking its CLI model metadata.
+  This fixes reproducibility of selection, not incomplete walks or inaccurate evidence:
+  the explorer can still finish before the job timeout, and every acceptance gate still applies.
 - **Three settings a non-interactive Codex run needs**, each found on the first spike (2026-09-23,
   zack.land on a laptop): `--sandbox danger-full-access`, because under `workspace-write` Codex
   cancels the browser's navigate and run-code calls client-side while screenshots and snapshots still

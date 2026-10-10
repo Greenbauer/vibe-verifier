@@ -240,7 +240,7 @@ class StorageState(unittest.TestCase):
                                              "RUNNER_TEMP": self.temp, "GITHUB_ACTION_PATH": str(ACTION.parent),
                                              "GITHUB_REPOSITORY": "octo/demo", "GITHUB_RUN_ID": "1",
                                              "GITHUB_RUN_ATTEMPT": "1", "VV_HEAD_SHA": "0" * 40,
-                                             "USAGE_ACCOUNT_ALIAS": ""}))
+                                             "USAGE_ACCOUNT_ALIAS": "", "MODEL": "", "REASONING_EFFORT": ""}))
 
     def browser_args(self):
         return json.loads(Path(self.work, "args").read_text())
@@ -424,7 +424,7 @@ class StorageState(unittest.TestCase):
                                                "RUNNER_TEMP": self.temp, "GITHUB_ACTION_PATH": str(ACTION.parent),
                                                "GITHUB_REPOSITORY": "octo/demo", "GITHUB_RUN_ID": "1",
                                                "GITHUB_RUN_ATTEMPT": "1", "VV_HEAD_SHA": "0" * 40,
-                                               "USAGE_ACCOUNT_ALIAS": ""}))
+                                               "USAGE_ACCOUNT_ALIAS": "", "MODEL": "", "REASONING_EFFORT": ""}))
         self.assertEqual(result.returncode, 2)
         self.assertIn("::error::the storage state gone.json is not a readable JSON file", result.stdout)
         self.assertFalse(os.path.exists(os.path.join(self.work, "args")))
