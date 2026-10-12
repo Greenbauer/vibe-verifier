@@ -54,6 +54,9 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - `tests/test_features.py::test_a_branch_that_predates_the_map_is_not_re_walked_and_not_failed`
 - `tests/test_features.py::test_a_pull_request_that_removes_the_map_cannot_be_re_walked`
 - `tests/test_qa_review.py::test_changes_needed_lists_each_criterion_as_the_explorer_judged_it`
+- `tests/test_qa_review.py::test_a_usage_limit_tells_the_driver_to_walk_by_hand`
+- `tests/test_qa_review.py::test_any_other_explore_failure_keeps_the_plain_body`
+- `tests/test_usage.py::test_a_failed_run_annotates_its_last_error_for_the_qa_review`
 - `tests/test_qae_annotations.py::test_a_reference_the_workflow_did_not_supply_is_the_operators_to_supply`
 - `tests/test_qae_annotations.py::test_a_pass_missing_a_role_is_refused`
 - `tests/test_qae_annotations.py::test_the_declared_digests_reach_the_gate_on_the_manifest_line`

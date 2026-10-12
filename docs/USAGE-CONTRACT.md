@@ -7,7 +7,7 @@ The source for U1 through U6 is the approved dashboard usage scope dated 2026-09
 | ID | Checkable requirement | Proof before integration |
 | --- | --- | --- |
 | U1 | One versioned record identifies the provider, role, optional caller-owned account alias, repository owner/name, full head revision, run, attempt, job, observation time, availability, and validated token integers. Missing usage is unavailable or partial, never zero. | Schema fixtures and validation tests. |
-| U2 | The Codex runner consumes JSONL without logging or retaining it, adds only `turn.completed.usage`, keeps `final.md`, forwards signals to its child, and returns the child's exit status after writing any partial usage. | Fake Codex subprocess tests for success, failure, malformed events, large lines, content privacy, and signals. |
+| U2 | The Codex runner consumes JSONL without logging or retaining it, adds only `turn.completed.usage`, keeps `final.md`, forwards signals to its child, and returns the child's exit status after writing any partial usage. A run that exits non-zero prints one failure annotation with the message of its last `error` or `turn.failed` event (the CLI's own error, at most 1000 characters), which `vibe-verifier qa-review` reads to tell a model usage limit from any other failure. | Fake Codex subprocess tests for success, failure, malformed events, large lines, content privacy, signals, and the failure annotation. |
 | U3 | Claude collection reads only the final top-level result usage from the bounded execution file. It does not add assistant-message usage or `modelUsage`. Skipped, missing, failed, and malformed sources remain explicit without changing review receipt rules. | Claude execution-file fixtures and workflow ordering tests. |
 | U4 | Each applicable source job uploads only `usage.json` as `vv-usage-<role>-<run_attempt>` (a QAE explorer past the first of a split run appends `-<explorer>`) for 7 days through the repository's established pinned upload action. No new permission or secret is added. | Harness and action structure tests. |
 | U5 | Tests cover normal and multi-event use, partial failure, real zero use, absent use, duplicate-source avoidance, cache fields, invalid numbers and types, arbitrary secret-shaped content, path and size bounds, and exit preservation. Files remain at most 500 lines. | Focused unit tests, existing harness tests, workflow lint, and the file-length gate. |
@@ -50,7 +50,7 @@ Every artifact contains one file named `usage.json`:
 
 `account_alias` is either `null` or an explicit logical alias supplied by the workflow owner. `null` means unmapped. Importers must not assume that two unmapped records, or two records from the same provider, use the same subscription. The field must not contain an email address, billing identity, credential, or access token.
 
-The only model-process values admitted to the artifact are non-negative integer token counts. Metadata comes from the GitHub run. Prompts, messages, results, tool output, stderr, execution files, and raw event streams are never copied into the artifact or collector logs.
+The only model-process values admitted to the artifact are non-negative integer token counts. Metadata comes from the GitHub run. Prompts, messages, results, tool output, stderr, execution files, and raw event streams are never copied into the artifact or collector logs; the one exception is U2's failure annotation, which carries the Codex CLI's own error message and no model content.
 
 ## Provider mappings
 

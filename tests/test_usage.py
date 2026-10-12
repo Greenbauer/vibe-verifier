@@ -203,6 +203,22 @@ class CodexUsage(CollectorCase):
                          ("partial", "provider_failed"))
         self.assertEqual(self.record()["usage"]["input_tokens"], 5)
 
+    def test_a_failed_run_annotates_its_last_error_for_the_qa_review(self):
+        # stderr is not kept, so the failure annotation is where a failed run says why; vibe-verifier
+        # qa-review reads it to tell a model usage limit from any other failure. Newlines are escaped.
+        limit = "You've hit your usage limit. Try again at 9:00 AM.\n100% used"
+        run = self.run_fake([{"type": "thread.started"}, {"type": "error", "message": "Reconnecting... 1/5"},
+                             {"type": "turn.failed", "error": {"message": limit}}], exit_code=1)
+        self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
+        self.assertIn("::error::Codex ended with an error: You've hit your usage limit. Try again at 9:00 AM.%0A100%25 used\n",
+                      run.stdout)
+        self.assertEqual(run.stdout.count("::error::"), 1)
+
+    def test_a_run_that_succeeds_or_names_no_error_annotates_nothing(self):
+        for lines, code in (([{"type": "error", "message": "Reconnecting... 1/5"}, self.completed(1, 0, 1, 0)], 0),
+                            ([{"type": "message", "message": "You've hit your usage limit."}], 1)):
+            self.assertNotIn("::error::", self.run_fake(lines, exit_code=code).stdout)
+
     def test_an_invalid_later_event_cannot_partly_change_the_last_valid_total(self):
         invalid = self.completed(100, 200, 2**63, 300)
         run = self.run_fake([self.completed(5, 4, 3, 2), invalid])

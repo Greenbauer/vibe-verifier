@@ -1,5 +1,5 @@
 name: Vibe Verifier QA review
-description: Post the QAE's one review comment on a pull request (passed, changes needed, not required, could not run), or edit it in place.
+description: Post the QAE's one review comment on a pull request (passed, changes needed, not required, could not run), or edit it in place. A failed explore job is read through its failure annotations, so the verify job needs `actions read` and `checks read` for the model usage limit body.
 inputs:
   criteria:
     description: The PR body the run read, relative to the workspace.
@@ -36,6 +36,7 @@ runs:
         VV_PR: ${{ github.event.pull_request.number }}
         VV_HEAD: ${{ github.event.pull_request.head.sha }}
         VV_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        VV_RUN_ID: ${{ github.run_id }}
         VV_CRITERIA: ${{ inputs.criteria }}
         VV_VERDICT: ${{ inputs.verdict }}
         VV_TICKET: ${{ inputs.ticket }}
@@ -47,7 +48,7 @@ runs:
         set -euo pipefail
         args=(qa-review --repo "$VV_REPO" --pr "$VV_PR" --head "$VV_HEAD" --run-url "$VV_RUN"
               --criteria "$VV_CRITERIA" --explore-result "$VV_EXPLORE" --gates-outcome "$VV_GATES"
-              --not-required "$VV_NOT_REQUIRED" --carried-from "$VV_CARRIED")
+              --not-required "$VV_NOT_REQUIRED" --carried-from "$VV_CARRIED" --run-id "$VV_RUN_ID")
         if [ -n "$VV_VERDICT" ]; then args+=(--verdict "$VV_VERDICT"); fi
         if [ -n "$VV_TICKET" ]; then args+=(--ticket "$VV_TICKET"); fi
         python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}"

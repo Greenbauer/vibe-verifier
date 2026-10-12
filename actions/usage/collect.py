@@ -15,6 +15,7 @@ from pathlib import Path
 MAX_SOURCE_BYTES = 16 * 1024 * 1024
 MAX_JSONL_LINE_BYTES = 1024 * 1024
 MAX_TOKEN_COUNT = 2**63 - 1
+MAX_ERROR_CHARS = 1000
 TOKEN_FIELDS = ("input_tokens", "cached_input_tokens", "cache_creation_input_tokens",
                 "output_tokens", "reasoning_output_tokens")
 ALIAS = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$")
@@ -186,11 +187,22 @@ def codex_event_usage(event):
     }
 
 
-def consume_codex_line(raw, totals):
+def codex_error(event):
+    """The message of a Codex `error` or `turn.failed` event (the CLI's own error, never model text), else None."""
+    if not isinstance(event, dict):
+        return None
+    source = event.get("error") if event.get("type") == "turn.failed" else event if event.get("type") == "error" else None
+    message = source.get("message") if isinstance(source, dict) else None
+    return message.strip()[:MAX_ERROR_CHARS] if isinstance(message, str) and message.strip() else None
+
+
+def consume_codex_line(raw, totals, errors):
     try:
         event = json.loads(raw)
     except (UnicodeError, json.JSONDecodeError) as error:
         raise ExpectedSourceError("invalid JSONL event") from error
+    if codex_error(event):
+        errors.append(codex_error(event))
     addition = codex_event_usage(event)
     if addition is None:
         return False
@@ -206,6 +218,7 @@ def stream_codex(stdout):
     totals = empty_codex_usage()
     valid_events = 0
     invalid = False
+    errors = []
     while True:
         raw = stdout.readline(MAX_JSONL_LINE_BYTES + 1)
         if not raw:
@@ -216,16 +229,24 @@ def stream_codex(stdout):
                 raw = stdout.readline(MAX_JSONL_LINE_BYTES + 1)
             continue
         try:
-            valid_events += int(consume_codex_line(raw, totals))
+            valid_events += int(consume_codex_line(raw, totals, errors))
         except ExpectedSourceError:
             invalid = True
-    return totals, valid_events, invalid
+    return totals, valid_events, invalid, errors[-1] if errors else None
 
 
 def shell_status(returncode, forwarded_signal):
     if forwarded_signal:
         return 128 + forwarded_signal
     return 128 - returncode if returncode < 0 else returncode
+
+
+def annotate_failure(exit_status, last_error):
+    """The failed step's annotation: the one place a failed run says why (stderr is not kept), and what
+    `vibe-verifier qa-review` reads to tell a model usage limit from any other failure."""
+    if exit_status and last_error:
+        escaped = last_error.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print("::error::Codex ended with an error: %s" % escaped, flush=True)
 
 
 def collect_codex(args):
@@ -255,7 +276,7 @@ def collect_codex(args):
 
     old_handlers = {number: signal.signal(number, forward) for number in (signal.SIGINT, signal.SIGTERM)}
     try:
-        totals, valid_events, invalid = stream_codex(child.stdout)
+        totals, valid_events, invalid, last_error = stream_codex(child.stdout)
         returncode = child.wait()
     finally:
         for number, handler in old_handlers.items():
@@ -277,6 +298,7 @@ def collect_codex(args):
         value = unavailable(args, "openai", reason)
     write_record(args.output, value)
     print("usage collector: provider run ended; metrics %s" % value["status"], flush=True)
+    annotate_failure(exit_status, last_error)
     return exit_status
 
 
