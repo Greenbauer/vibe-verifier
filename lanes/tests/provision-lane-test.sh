@@ -1274,6 +1274,8 @@ expect $? "it stops the health check first, then the listener, then an idle slot
 before '^systemctl stop box-ci-ci@1.service$' '^systemctl stop box-ci-store-reaper.timer box-ci-store-reaper.service$' && before '^systemctl stop box-ci-store-reaper.timer' "^systemctl stop ${STORE_UNIT//\\/\\\\}\$" \
   && before "^systemctl stop ${STORE_UNIT//\\/\\\\}\$" '^mkfs.btrfs' && ! grep -q '^sleep' "$CALLLOG"
 expect $? "the store is unmounted only once no slot runs and the reaper is stopped, and with no slot on a job it waits for nothing"
+before '^systemctl stop box-ci-store-reaper.timer box-ci-store-reaper.service$' '^systemctl reset-failed box-ci-store-reaper.service$' && before '^systemctl reset-failed box-ci-store-reaper.service$' "^systemctl stop ${STORE_UNIT//\\/\\\\}\$"
+expect $? "the reaper this run stopped has its failed state cleared at once, so --check right after the conversion does not report a failed reaper"
 [ "$(head -n 1 "$IMG")" = btrfs ] && [ "$(old_images)" = 1 ] && [ "$(head -n 1 "$S"/state/store.img.xfs-*)" = xfs ] && grep -qx "mkfs.btrfs -q $IMG" "$CALLLOG" && grep -qx "truncate -s 40G $IMG" "$CALLLOG" && ! grep -q '^mkfs.xfs' "$CALLLOG"
 expect $? "the XFS image is kept under a dated name beside a new 40G btrfs image at the store's path"
 grep -qx "Type=btrfs" "$S/units/$STORE_UNIT" && grep -qx "Options=loop,noatime,discard=async" "$S/units/$STORE_UNIT" && grep -qx "$STORE btrfs" "$S/st/mount-types" && ! grep -qx "$STORE xfs" "$S/st/mount-types" \
