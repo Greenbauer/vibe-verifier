@@ -558,9 +558,29 @@ judges the site's; without it, a 401 or 500 from the API is on a host the gate s
 template's builds and starts the site on the runner and declares `http://localhost:3000`. A
 repository whose pull requests already get a reachable preview builds nothing on the runner: it drops
 `npm ci` and `cache: npm` (node stays, for the browser toolchain), grants the explore job
-`deployments: read`, and puts a step like this in place of the build and start. It waits for the
-newest `Preview` deployment of the head commit that the host reports to GitHub (Vercel does) and
-declares that deployment's URL:
+`checks: read` and `statuses: read`, and finds the preview in place of the build and start. When a
+job of the repository's own sets the preview up (pointing it at a branch database, say), that job
+records the address it proved and the site step reads it with the
+[preview action](../../actions/preview/README.md), which waits for that job's check to pass:
+
+```yaml
+      - name: Find the preview under test   # CONSUMER
+        id: preview
+        uses: Greenbauer/vibe-verifier/actions/preview@0000000000000000000000000000000000000000 # CONSUMER: pin
+        with:
+          check: sync-preview-branch   # CONSUMER: the check whose job records the address
+      - name: Declare the preview under test   # CONSUMER
+        id: site
+        env:
+          URL: ${{ steps.preview.outputs.url }}
+        run: |
+          mkdir -p qae-artifacts/qae qae-inputs
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+```
+
+A repository whose previews have no setup job of its own has nothing to record from. It grants
+`deployments: read` instead and waits for the newest `Preview` deployment of the head commit that
+the host reports to GitHub (Vercel does), which works only while the host writes those records:
 
 ```yaml
       - name: Resolve the preview under test   # CONSUMER

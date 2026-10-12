@@ -1,0 +1,58 @@
+name: Vibe Verifier preview
+description: Record the address of a pull request's preview from the job that proved it, or wait for that job to pass and find the address. One answer for every check that tests the preview.
+inputs:
+  record:
+    description: The preview address to record (https://...), from the job that set the preview up and proved it serves. Empty (the default) finds the address instead.
+    default: ""
+  check:
+    description: To find, the name of the check whose job records the address. The step waits for it to pass on the commit.
+    default: ""
+  sha:
+    description: The commit whose preview it is. Defaults to the pull request's head.
+    default: ${{ github.event.pull_request.head.sha }}
+  repository:
+    description: The repository, owner/name.
+    default: ${{ github.repository }}
+  wait-minutes:
+    description: To find, how long to wait for the check to pass, queued or running.
+    default: "40"
+  running-minutes:
+    description: To find, how long the check may spend running (in_progress) before the wait fails. Empty (the default) allows the whole wait.
+    default: ""
+  token:
+    description: A token that can write commit statuses (to record) or read checks and statuses (to find).
+    default: ${{ github.token }}
+outputs:
+  url:
+    description: The address found, with no trailing slash. Empty when recording.
+    value: ${{ steps.preview.outputs.url }}
+runs:
+  using: composite
+  steps:
+    - name: Record or find the preview
+      id: preview
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        RECORD: ${{ inputs.record }}
+        CHECK: ${{ inputs.check }}
+        SHA: ${{ inputs.sha }}
+        REPO: ${{ inputs.repository }}
+        WAIT_MINUTES: ${{ inputs.wait-minutes }}
+        RUNNING_MINUTES: ${{ inputs.running-minutes }}
+      run: |
+        set -euo pipefail
+        [ -n "$SHA" ] || { echo "::error::no commit to record or find a preview for: pass sha outside a pull request event"; exit 1; }
+        if [ -n "$RECORD" ]; then
+          python3 "$GITHUB_ACTION_PATH/preview.py" record --repo "$REPO" --sha "$SHA" --url "$RECORD"
+          echo "url=" >> "$GITHUB_OUTPUT"
+        else
+          [ -n "$CHECK" ] || { echo "::error::to find a preview, name the check that records it (check:)"; exit 1; }
+          # The finder prints the address alone on success and its ::error:: line on failure, both on
+          # stdout; a failure's line is printed again here so the workflow shows it.
+          rc=0
+          url=$(python3 "$GITHUB_ACTION_PATH/preview.py" find --repo "$REPO" --sha "$SHA" --check "$CHECK" --wait-minutes "$WAIT_MINUTES" --running-minutes "${RUNNING_MINUTES:-0}") || rc=$?
+          [ "$rc" -eq 0 ] || { printf '%s\n' "$url"; exit "$rc"; }
+          echo "preview of $SHA: $url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+        fi
