@@ -813,7 +813,9 @@ must include one of each width, read from the PNG header; the explore job tells 
 widths, from the same manifest line as the base has it, in `qae-inputs/widths`. With `--ticket FILE`
 the ticket's criteria (`qae/TCn.md` logs) are held to the same rules, their `expected-refusal:`
 declarations count, and a pull request that declares `- None:` is still judged when its ticket lists
-criteria.
+criteria. With `--features DIR --changed-files FILE` (the acceptance-verdict line's selection options),
+a numbered Verify step of a feature the re-walk selected declares an expected refusal the same way,
+on its own line in the pull request's copy of the file ([feature map](feature-map.md#expected-refusals-in-a-re-walk)).
 
 The second harness is the review harness in [`harnesses/review/`](../harnesses/review/README.md).
 Its wired gate, `review-receipt`, reads three declared files: the newest

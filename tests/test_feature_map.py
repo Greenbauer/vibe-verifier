@@ -400,13 +400,14 @@ class Parse(unittest.TestCase):
         self.assertEqual(feature.surfaces, [("route", "/login", 11)])
         self.assertEqual([(anchor.path, anchor.title, anchor.start, anchor.end) for anchor, _ in feature.anchors],
                          [("test/login.test.ts", "rejects a wrong password with a message", 0, 0), ("app/login.ts", "", 1, 2)])
-        self.assertEqual((feature.steps, feature.malformed), (0, []))  # Sub-features and Gotchas bullets are not read
+        self.assertEqual((feature.steps, feature.malformed), ([], []))  # Sub-features and Gotchas bullets are not read
 
     def test_headings_match_in_any_case_and_steps_and_nested_bullets_stay_prose(self):
         text = ("## SURFACES\n\n- source: `a/**`\n\n## verify\n\n1. Open the page.\n   - a nested note\n"
                 "2) Click save.\n\n### Detail\n\n- `t.test.ts::a long enough title`\n")
         feature = _features.parse(text, "a", "a.md")
-        self.assertEqual((feature.steps, len(feature.anchors), feature.malformed), (2, 1, []))
+        self.assertEqual((feature.steps, len(feature.anchors), feature.malformed),
+                         ([("1", "1. Open the page."), ("2", "2) Click save.")], 1, []))
 
 
 if __name__ == "__main__":

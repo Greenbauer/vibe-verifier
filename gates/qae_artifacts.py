@@ -27,6 +27,9 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
                              their step logs `qae/TCn.md` are held to the rules a criterion's are,
                              their `expected-refusal:` declarations count, and a pull request that
                              declares `- None:` still needs a run when its ticket lists criteria
+    --features DIR           the feature map, with --changed-files and the selection options of the
+    --changed-files FILE     acceptance-verdict line (docs/feature-map.md): a numbered Verify step of
+                             a feature the re-walk selected may declare `expected-refusal:` too (see 5)
 
 1. Every step in every step log has its screenshot: `qae/ACn.md` line `- step k:` needs a
    non-empty `qae/ACn-step-k.png`. A step without a picture is a claim, not evidence. A feature
@@ -77,6 +80,16 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    dropped). A 5xx, another status, another URL, and any other console error still fail, and a
    declaration of any status but a handled refusal (400, 401, 403, 404, 409 or 422), or a path with
    no site to resolve it, is a finding.
+   A feature re-walk walks a feature's Verify steps, and some are refusals by design (a wrong password
+   answered 400, a signed-out API call answered 401), so with --features a numbered step declares its
+   own: `2. Sign in with a wrong password: the form says so (expected-refusal: 400 /auth/v1/token?grant_type=password)`.
+   Only the features the re-walk selected count, chosen as acceptance-verdict chooses them (from the
+   base's Surfaces, the changed paths and the same options), and the declaration is read from the step's
+   own line in the pull request's copy of the file, the copy the explorer was handed, outside HTML
+   comments. Reach, Gotchas and test bullets declare nothing. A step names no host it cannot know: a
+   path resolves against the site and every further declared origin as a criterion's does, so a
+   refusal on an API host each preview gets its own (a per-branch Supabase project) is a path on a host
+   the site file declares. A URL is for a host that never changes.
 6. With --widths, each criterion was checked at every declared viewport width: among the step
    screenshots of each `qae/ACn.md`, one is that many pixels wide, read from the PNG's header (a
    browser screenshot is as wide as its viewport). A step screenshot that is not a PNG is a finding.
@@ -96,6 +109,7 @@ import urllib.parse
 
 from _acceptance import body_criteria, declares_none, named_references, png_size, ticket_items
 from _contract import CannotRun, Finding, run_gate
+from _features import add_selection_arguments, parse, selection
 
 GATE = "qae-artifacts"
 STEP_LINE = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):", re.IGNORECASE)
@@ -399,6 +413,20 @@ def read_declared(path, label):
     return read(path)
 
 
+def feature_steps(args):
+    """(label, line) for each numbered Verify step of every feature the re-walk selected, as the pull
+    request's copy of its file has it with HTML comments removed: the steps the explorer was handed."""
+    if not args.features:
+        return []
+    chosen, features = selection(args.repo, args, args.base_ref)
+    steps = []
+    for fid, _ in chosen.selected:
+        path = features[fid].path
+        feature = parse(HTML_COMMENT.sub("", read(os.path.join(args.repo, path))), fid, path)
+        steps += [("%s step %s" % (path, number), line) for number, line in feature.steps]
+    return steps
+
+
 def check(args):
     root = args.artifacts
     if not root or not os.path.isdir(root):
@@ -414,7 +442,7 @@ def check(args):
     sites = declared_sites(args.site_file) if args.site_file else [args.site] if args.site else []
     console_allow = [re.compile(pattern) for pattern in (args.allow_console or [])]
     request_allow = [re.compile(pattern) for pattern in (args.allow_request or [])]
-    items = ([] if reason else body_criteria(HTML_COMMENT.sub("", body))) + ticket
+    items = ([] if reason else body_criteria(HTML_COMMENT.sub("", body))) + ticket + feature_steps(args)
     expected, declared = expected_refusals(items, sites)
     return (declared
             + steps_have_screenshots(root)
@@ -433,6 +461,7 @@ def add_arguments(parser):
     site = parser.add_mutually_exclusive_group()
     site.add_argument("--site", metavar="URL-PREFIX", default=None)
     site.add_argument("--site-file", metavar="FILE", default=None)
+    add_selection_arguments(parser)
 
 
 if __name__ == "__main__":
