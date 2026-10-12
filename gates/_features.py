@@ -11,7 +11,9 @@ in any order; others (a `## Sub-features` list, say) are allowed and not read:
                                          checked against what the gate's `--surface <kind>` finds
     ## Reach      how a user gets there, in the product's own words (prose, not read here)
     ## Verify     `- `<path>::<exact test title>`` bullets (or `<path>:<line>` / `<path>:<start>-<end>`),
-                  each resolving in the tree, and optionally numbered browser steps (`1. ...`)
+                  each resolving in the tree, and optionally numbered browser steps (`1. ...`); a
+                  step's own line may declare the refusal it expects, `expected-refusal: <status>
+                  <path-or-URL>`, which gates/qae_artifacts.py reads for a re-walked feature
     ## Gotchas    traps a change or a verification run tends to hit (prose, not read here)
 
 In Surfaces and Verify every top-level `- ` bullet must have one of the shapes above: a bullet that
@@ -39,7 +41,7 @@ from _contract import CannotRun, glob_to_regex, resolve_base
 SECTION = re.compile(r"^##[ \t]+(?P<name>\S.*?)[ \t]*$")
 SURFACE = re.compile(r"^- (?P<kind>[a-z][a-z0-9-]*): `(?P<value>[^`]+)`[ \t]*$")
 VERIFY_BULLET = re.compile(r"^- `(?P<anchor>[^`]+)`[ \t]*$")
-STEP = re.compile(r"^[0-9]+[.)][ \t]+\S")
+STEP = re.compile(r"^(?P<n>[0-9]+)[.)][ \t]+\S")
 # The id is the token a QAE verdict line names the feature by, so it is one word.
 FEATURE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 INDEX = "README.md"
@@ -55,7 +57,7 @@ class Feature:
         self.sources = []    # (glob, line)
         self.surfaces = []   # (kind, value, line)
         self.anchors = []    # (Anchor, line)
-        self.steps = 0       # numbered browser steps under Verify
+        self.steps = []      # (step number as written, line): numbered browser steps under Verify
         self.malformed = []  # (line, message)
 
 
@@ -86,8 +88,9 @@ def read_surface(feature, number, line):
 
 
 def read_verify(feature, number, line):
-    if STEP.match(line):
-        feature.steps += 1
+    step = STEP.match(line)
+    if step:
+        feature.steps.append((step.group("n"), line))
     elif line.startswith("- "):
         bullet = VERIFY_BULLET.match(line)
         anchor = parse_anchor(bullet.group("anchor")) if bullet else None

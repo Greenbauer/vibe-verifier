@@ -66,7 +66,10 @@ Signed out, open `/login`. Create Account goes to `/signup`; Forgot password goe
   state it checks (which user is signed in, which record exists first): a re-walk that never creates
   the state a bug needs never meets the bug. Each numbered step is one state of the feature, and a
   [re-walk](#re-walking-the-features-a-pull-request-touches) covers a few of them, not all, so a step
-  must stand on its own, without the steps before it.
+  must stand on its own, without the steps before it. A step that walks into a refusal by design (a
+  wrong password, a signed-out API call) declares it on its own line, as a criterion does:
+  `` 2. Sign in with a wrong password: the form says so (expected-refusal: 400 /auth/v1/token?grant_type=password). ``
+  See [expected refusals](#expected-refusals-in-a-re-walk).
 - **Gotchas** are the traps a change or a verification run tends to hit.
 
 Every top-level `- ` bullet under Surfaces and Verify must have one of the shapes above. A bullet
@@ -220,6 +223,28 @@ selected each. After the criteria the explorer re-walks each feature in part:
 regression-check: sign-in -- PASS -- still signs in (qae/features/sign-in.md::step 2: signed in as the test user -> the dashboard)
 regression-skip: sign-in -- 3, 4, 6
 ```
+
+**Expected refusals in a re-walk.** `qae-artifacts` fails a run on any request answered 400 or worse,
+and some Verify steps are refusals by design: a sign-in step that submits a wrong password (the auth
+API answers 400), a signed-out `GET /api/v1/orders` (401), a missing file (404). Before 2026-10-12
+only a pull request's criterion could declare one, so every pull request that touched those features
+had to copy the declarations into its body (a consumer's run on 2026-10-09 failed on exactly these
+three while its verdict passed). Now the step declares it, once, in the feature file:
+
+- Give the `qae-artifacts` line the same selection options as the `acceptance-verdict` line
+  (`--features docs/features --changed-files qae-inputs/changed-files`, plus any `--max-features` or
+  `--shared-over`). It selects the features itself, by the same rule, and reads declarations only from
+  those: a feature that was not re-walked declares nothing.
+- The declaration is `expected-refusal: <status> <path-or-URL>` on a numbered Verify step's own line,
+  read from the pull request's copy of the file (the copy the explorer was handed), outside HTML
+  comments. Reach, Gotchas and test bullets declare nothing, and neither does anything the explorer
+  writes. The rules are a criterion's: only 400, 401, 403, 404, 409 or 422, and the URL must match
+  exactly, query included; any other status or URL still fails the run.
+- **A host the file cannot name.** A path resolves against the site and against every further origin
+  the site file declares. So a refusal on an API host each preview gets its own (a per-branch Supabase
+  project, `https://<ref>.supabase.co`) is written as a path, `/auth/v1/token?grant_type=password`,
+  and the explore job's site step declares that host as a further origin, which it must anyway for
+  the host's requests to be judged at all. Write a full URL only for a host that never changes.
 
 **What a FAIL means.** A step that was walked showed the feature no longer works the way its file
 describes. A state the explorer did not get to, or could not set up, is never a FAIL: it goes on

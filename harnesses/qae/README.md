@@ -100,6 +100,11 @@ step selects nothing and nothing changes.
   regression or, when the pull request means the new behaviour, update the feature file in that
   pull request. `qae-artifacts` checks the feature step logs' screenshots like the criteria's; the
   review comment lists each re-walked feature and the states left unwalked.
+- A Verify step that is a refusal by design (a wrong password answered 400) declares it on its own
+  line, `expected-refusal: <status> <path-or-URL>`, when the `qae-artifacts` line carries the same
+  `--features` and `--changed-files` as the `acceptance-verdict` line; it then reads the declarations
+  of the features it selects by the same rule
+  ([feature map](../../docs/feature-map.md#expected-refusals-in-a-re-walk)).
 
 A consumer whose workflow was copied before the bound keeps the old prompt, which tells the explorer
 to walk every state: bump the pins, then copy the template's re-walk paragraph and step 3 (the prompt
@@ -930,7 +935,9 @@ written; the match is exact, query included. A 5xx at the same URL, the same 401
 and every other console error still fail, and a declaration of another status, or a path with no
 site, is itself a finding. Because the declaration is a criterion, the explorer must still show the
 refusal happens, and a reviewer reads the allowance as part of the spec. An HTML comment does not
-declare anything.
+declare anything. A [re-walked feature](#re-walking-the-features-a-pull-request-touches)'s Verify
+step declares the same way on its own line, so a refusal the feature walks by design is written once
+in its file rather than in every pull request that touches it.
 
 ### An error a page outside the site logged
 
