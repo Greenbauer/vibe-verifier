@@ -54,11 +54,12 @@
       workDetail(item, now));
   }
 
+  // One card per column, its items as rows inside it, like the pull-request groups.
   function workColumn(key, title, subtitle, items, now, collapsed = false) {
-    const cards = items.length ? items.map(item => workCard(item, now)) : [el("p", { class: "muted" }, "None.")];
-    const head = el("div", { class: "work-column-head" }, el("h2", {}, `${title} (${items.length})`), el("small", { class: "muted" }, subtitle));
-    return el("section", { class: `panel work-column work-${key}`, "aria-label": title }, head,
-      collapsed && items.length ? el("details", {}, el("summary", {}, "Show"), cards) : cards);
+    const rows = items.length ? items.map(item => workCard(item, now)) : [el("p", { class: "work-empty muted" }, "None.")];
+    return el("section", { class: `work-column work-${key}`, "aria-label": title },
+      el("h2", { class: "work-column-title" }, `${title} (${items.length})`, el("small", {}, subtitle)),
+      el("div", { class: "work-list" }, collapsed && items.length ? el("details", {}, el("summary", {}, "Show"), rows) : rows));
   }
 
   function render(content, snapshot, { heading, empty, sourceBanner }) {
