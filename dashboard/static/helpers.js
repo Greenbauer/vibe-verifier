@@ -13,7 +13,9 @@
     success: "Succeeded", failed: "Failed", skipped: "Skipped", cancelled: "Cancelled",
     pending: "Pending", running: "Running", waiting: "Waiting", unknown: "Unknown", working: "Working", idle: "Idle",
     paused: "Paused", down: "Down", ready: "Ready", busy: "Busy", provisionable: "On demand",
-    offline: "Offline", allocated: "Occupied"
+    offline: "Offline", allocated: "Occupied",
+    submitted: "Queued", backlog: "Backlog", in_progress: "In progress", in_review: "In review",
+    pr_ready: "PR ready", await_answer: "Awaiting answer", blocked: "Blocked", merged: "Merged", closed: "Closed"
   };
 
   // Filters and the selected bot, saved per tab. Where you are lives in the URL instead.
@@ -36,7 +38,7 @@
   // so an older #/pr/<owner>/<repo>/<number> hash is not a view and falls back to the list.
   function parseRoute(hash) {
     const view = /^#\/(\w+)$/.exec(hash || "")?.[1];
-    return { view: ["prs", "usage", "capacity"].includes(view) ? view : "prs" };
+    return { view: ["prs", "work", "usage", "capacity"].includes(view) ? view : "prs" };
   }
 
   function routeHash(route) {
@@ -71,6 +73,31 @@
     } catch (_) {
       return null;
     }
+  }
+
+  // A link the work view may open: HTTPS only, any host, since a work source names its own app.
+  function httpsUrl(value) {
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && !url.username && !url.password ? url.href : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // The work board's columns, each oldest first, every item carrying its source's label. An open item
+  // that waits on a person is in `waiting` only; otherwise a queued one is to do and the rest in progress.
+  function workGroups(work, now) {
+    const groups = { todo: [], progress: [], waiting: [], done: [], stale: 0 };
+    (work?.sources || []).forEach(source => (source.items || []).forEach(item => {
+      const row = { ...item, source: source.label, source_kind: source.kind };
+      const column = row.phase === "done" ? "done" : row.waiting ? "waiting" : row.phase === "queued" ? "todo" : "progress";
+      groups[column].push(row);
+      if (column !== "done" && ageClass(row.updated_at, now) === "age-red") groups.stale += 1;
+    }));
+    const order = (a, b) => String(a.created_at).localeCompare(String(b.created_at));
+    ["todo", "progress", "waiting", "done"].forEach(key => groups[key].sort(order));
+    return groups;
   }
 
   function link(label, url, owner, className) {
@@ -308,7 +335,7 @@
     return Math.round(Math.min(100, Math.max(0, used)));
   }
 
-  // Points the fill sits ahead of an even burn. Same comparison as the plan pace line:
+  // Points the fill sits ahead of an even burn, the diagonal on the subscription burn chart:
   // used percent minus the share of the window already elapsed. Null until the window has started.
   function quotaPace(window, now) {
     const minutes = window.window_minutes;
@@ -329,6 +356,17 @@
     if (pace.delta > 1) return `${points} ${noun} ahead of an even ${even}% burn`;
     if (pace.delta < -1) return `${points} ${noun} behind an even ${even}% burn`;
     return `on pace with an even ${even}% burn`;
+  }
+
+  // "12% under pace" for a card's header, with its hover: a plan window's fill against an even burn
+  // of it, in points. A null delta (no window to pace) says nothing.
+  function paceHeader(delta) {
+    if (delta === null) return {};
+    if (delta > 1) return { pace: `${Math.round(delta)}% ahead of pace`,
+      paceTitle: `${Math.round(delta)} points ahead of an even burn: spending the plan faster than its window resets.` };
+    if (delta < -1) return { pace: `${Math.round(-delta)}% under pace`,
+      paceTitle: `${Math.round(-delta)} points behind an even burn: headroom.` };
+    return { pace: "on pace", paceTitle: "On pace with the plan's reset window." };
   }
 
   // Shown only once the fill is more than a point off an even burn.
@@ -389,6 +427,7 @@
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, ageClass, formatTime, bytes,
     badge, agedState, sourceStamp, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, restoreViewState,
-    parseRoute, routeHash, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel,
+    parseRoute, routeHash, httpsUrl, workGroups, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, paceHeader,
+    quotaDeltaLabel,
     quotaTone, quotaCountdown, quotaGroups };
 });

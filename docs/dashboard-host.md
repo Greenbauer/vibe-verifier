@@ -69,6 +69,7 @@ swap a file between root writing and renaming it, and the helpers refuse such a 
 | `/etc/vibe-dashboard/NAME/dashboard.json` | `vibe-dashboard-NAME`, 0600 | the [dashboard configuration](dashboard.md#configuration-contract); `telemetry_file` is `/var/lib/vibe-dashboard/NAME/telemetry.json`, or absent without a CI lane on this host |
 | `/etc/vibe-dashboard/NAME/host.env` | root, 0644 | `PORT`, `APP`, `INSTALLATION`, `LOGIN` (below) |
 | `/etc/vibe-dashboard/NAME/app.pem` | root, 0600 | the GitHub App's private key |
+| `/etc/vibe-dashboard/NAME/<id>.token` | `vibe-dashboard-NAME`, 0600 | optional: a [work source](dashboard.md#work-view)'s key, one file per source, named by the source's `token_file`; placed by hand, never in a repository |
 | `/etc/vibe-dashboard/NAME/collector.json` | root, 0600 | the collector's [local-mode configuration](dashboard-collector.md#configuration), for this host's lane |
 
 `host.env` takes one `KEY=value` per line, with comments only on their own lines:
@@ -116,7 +117,12 @@ Every 30 seconds the telemetry timer runs `bin/vibe-dashboard-host telemetry`. I
 [collector](dashboard-collector.md) in local mode, which samples this machine in-process (no SSH, no
 `sudo`) into root-only state that keeps seven days of samples. It then publishes that snapshot to the
 dashboard's `telemetry_file` without the `samples` history: the dashboard never reads those samples
-and refuses a telemetry file over 2 MiB, and a week of 30-second samples is about 3.8 MiB. Before the
+and refuses a telemetry file over 2 MiB, and a week of 30-second samples is about 3.8 MiB. The
+snapshot's `quota_history` is published whole, because the Bot usage page draws it: one reading per
+plan window per clock hour for seven days, about 3 KiB a window once it holds a week and under
+0.2 MiB at the collector's limit of 64 windows. State written before the collector kept that history
+needs no migration: the next run starts it from the quota reading the state already holds, it gains
+a point an hour from then on, and the card says when its readings start. Before the
 new file replaces the old one, the dashboard's own reader must accept it; otherwise the old file stays
 and the unit fails. The published file is the collector snapshot only: there is no runner-registration
 inventory and no agent-runtime record. Without a CI lane on the host, leave the telemetry timer off and

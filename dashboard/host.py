@@ -214,7 +214,8 @@ def refresh_telemetry(config_path: str, user: str, collector_path: str, state: P
     snapshot = json.loads(state.read_text(encoding="utf-8"))
     # The state keeps seven days of raw samples (20,160 at a 30-second interval, about 3.8 MiB). The
     # dashboard never reads them, and it refuses a telemetry file over 2 MiB, which the full history
-    # passes after about three and a half days, so only the current sections are published.
+    # passes after about three and a half days, so only the current sections are published, with the
+    # hourly quota history the page draws (about 3 KiB a window once it holds a week).
     published = json.dumps({**snapshot, "samples": []}, separators=(",", ":"), sort_keys=True) + "\n"
 
     def readable(draft: Path) -> bool:

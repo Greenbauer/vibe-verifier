@@ -245,6 +245,10 @@ class Host(unittest.TestCase):
         view = read_telemetry(load_config(self.config))
         self.assertTrue(view["available"])
         self.assertTrue(view["capacity"]["available"])
+        # The hourly quota history is small and the page draws it, so it is published whole.
+        self.assertEqual(published["quota_history"], json.loads(state.read_text())["quota_history"])
+        window = view["usage"]["accounts"][0]["quota_windows"][0]
+        self.assertEqual([point["used_percent"] for point in window["history"]], [window["used_percent"]])
 
     def test_telemetry_the_dashboard_would_refuse_keeps_the_old_file(self):
         self.telemetry.write_text("previous\n")

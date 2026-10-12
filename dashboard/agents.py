@@ -207,4 +207,4 @@ def agent_view(config, github, telemetry, now):
         rows.extend(added)
         samples.extend(taken)
     plotted = {**usage, "samples": samples}
-    return {"rows": rows, "usage": {**plotted, "pace": plan_pace(plotted, now)}}
+    return {"rows": rows, "usage": {**plotted, "pace_points": plan_pace(plotted, now)}}

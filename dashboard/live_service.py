@@ -11,6 +11,7 @@ from .state_store import USAGE_DOCUMENTS, restore_usage, usage_state
 from .usage_artifacts import UsageArtifacts, apply_plan_window
 from .util import parse_time
 from .agents import agent_view
+from .work import WorkFeed
 
 USAGE_REFRESH_SECONDS = 300
 # A refresh starts at most one interval after the last one ended and then takes its own time, so a
@@ -22,6 +23,7 @@ class LiveService(DashboardService):
     def __init__(self, config, **kwargs):
         super().__init__(config, **kwargs)
         self.usage_reader = UsageArtifacts(config)
+        self.work = WorkFeed(config)
         self._usage_result = None
         self._usage_next = 0
         self._usage_lock = threading.Lock()
@@ -162,4 +164,5 @@ class LiveService(DashboardService):
                 telemetry.update(available=True, usage=usage)
         join_runner_jobs(value['telemetry'], value['github'])
         value['agents'] = agent_view(self.config, value['github'], value['telemetry'], self.wall_clock())
+        value['work'] = self.work.snapshot()
         return value
