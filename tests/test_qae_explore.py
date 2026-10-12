@@ -400,6 +400,9 @@ class Review(unittest.TestCase):
         text = TEMPLATE.read_text()
         verify = text[text.index("\n  verify:\n"):]
         self.assertIn("      pull-requests: write   # the QA review comment, and nothing else\n", verify)
+        # Read access only, to tell a model usage limit from any other failed explore job (actions/qa-review).
+        self.assertIn("      actions: read    # the explore jobs of this run, and\n", verify)
+        self.assertIn("      checks: read     # their failure annotations", verify)
         self.assertNotIn("issues: write", text)
 
     def test_the_inputs_step_leaves_the_verdict_empty_for_the_evidence_to_fill(self):

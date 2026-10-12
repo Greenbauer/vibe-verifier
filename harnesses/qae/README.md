@@ -571,6 +571,7 @@ qa-review`) keeps one comment on the pull request, edited in place on every run,
 | Heading | When |
 |---|---|
 | `## QA review: not required ✅` | the pull request needs no check; the comment gives the reason |
+| `## QA review: could not run, model usage limit ⚠️` | every explore job that failed failed on the model's usage limit; the comment says when it resets and tells the agent driving the pull request to walk the criteria by hand ([below](#when-the-explorer-hits-a-usage-limit)) |
 | `## QA review: could not run ⚠️` | the explore job did not finish, or the verify job stopped before its gates ran, so nothing was judged |
 | `## QA review: passed ✅` | the gates passed |
 | `## QA review: changes needed ❌` | the gates refused |
@@ -582,6 +583,36 @@ or no verdict), names the head commit it judged, and links the run. It edits onl
 on every run the explorer makes, for people to read: the gate's input is the verdict file in the run's
 evidence, never a comment. On a pull request from a fork the workflow token is
 read-only, so the review step cannot post there and fails the verify job.
+
+### When the explorer hits a usage limit
+
+A subscription's usage limit fails the explore job before the explorer walks anything. The review
+then says so, with the reset time the limit message gave, instead of the plain "could not run":
+the agent driving the pull request (in any session, on any harness) does the QA walk by hand
+until the reset, in place of waiting on it (operator directive, 2026-10-12):
+
+1. Open the pull request's preview at the current head and walk every bullet under
+   `## Acceptance criteria` (and the ticket's criteria), at each width on the `--widths` of the
+   manifest's `qae-artifacts` line.
+2. Post the evidence as a pull request comment: one line per criterion, PASS or FAIL, with the head
+   it was walked on, what was done and what the page showed.
+3. Rerun the workflow after the reset (`gh run rerun <run id>`), so the QAE judges the head itself.
+
+The checks stay red throughout: the review posts no verdict, and a hand walk is evidence for the
+reviewer, never a pass. The fact is structural, never the explorer's prose: `qa-review` lists the
+run's latest jobs, and when every failed `qae-explore` job (each explorer of a split run, and
+`<caller> / qae-explore` in a reusable workflow) carries a failure annotation with the limit message,
+it is a usage limit. The Claude lane's pinned action fails with "Claude Code returned an error
+result: You've hit your limit · resets 9am (UTC)" and writes no execution log in that case (measured
+on Greenbauer/zack.land run 38286901786: the explorer's usage record says `no_artifact`), so the
+annotation is the one record of it; `actions/qae-codex` prints the Codex CLI's last error as one
+(`You've hit your usage limit. ... try again at <time>.`). A server-side rate limit ("not your usage
+limit") does not match: a rerun fixes that one. Any other failure, one explorer of several failing
+for another reason, or annotations the job cannot read keep the plain "could not run" body. Reading
+them needs `actions: read` and `checks: read` on the verify job, which both templates grant; a
+consumer workflow copied before 2026-10-12 lacks them and keeps the plain body until it adds them.
+An annotation is text any step of that job can print, so a pull request's own build script could
+fake one; that only swaps one could-not-run body for another and never turns a check green.
 
 ## A reachable preview instead of a site on the runner
 
@@ -935,7 +966,9 @@ same. What differs, and why:
 - **Usage stays numeric.** `actions/qae-codex` consumes `codex exec --json` without printing or
   retaining the JSONL stream, sums only validated `turn.completed.usage` integers, and uploads the
   same dedicated 7-day artifact as the Claude lane. It still writes `qae-artifacts/final.md` for
-  the existing flow and returns the Codex process status after preserving partial usage. The
+  the existing flow and returns the Codex process status after preserving partial usage. A run
+  that fails prints the CLI's last error message as its one failure annotation, which is how the
+  QA review tells a [usage limit](#when-the-explorer-hits-a-usage-limit) from any other failure. The
   weekly keepalive has no browser MCP and does not upload an explorer usage artifact. See
   [`docs/USAGE-CONTRACT.md`](../../docs/USAGE-CONTRACT.md) for the shared schema and privacy rules.
 
