@@ -37,10 +37,8 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    A step line naming `reference <key>` is a comparison with that design reference, and its finding
    says so: the explorer once logged one without saving its screenshot.
 2. The console holds no error outside the allowlist: every `[ERROR]` line in `console-*.log`, and
-   every uncaught exception or unhandled rejection, which playwright-mcp writes with no level tag:
-   the error's stack over several lines (`Error: boom`, then `    at <url>:1:49`), or the value
-   thrown when it is not an Error. An allowlist pattern is matched against an exception's whole
-   entry, stack included, and against a console error's line without its tag.
+   every uncaught exception or rejection, which playwright-mcp writes untagged as the error's stack
+   (or the value thrown); an allowlist pattern is matched against its whole entry, stack included.
    A `Failed to load resource` line for a host other than the declared site and its further
    declared origins is not judged, the same way a third-party request is not. Any other console
    error still is. A site whose API answers on another host declares that host too, or a 401 or 500
@@ -50,12 +48,11 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    fails to reach its own analytics is not the site's failure. A console line names the script or
    resource the error is about, never the page that logged it, so the page is read from the record
    the harness keeps beside the console logs (`console-pages.jsonl`, written by
-   actions/qae-browser/console-pages.js: the page's URL and the digest of the error's first line, for
-   a console error and for an uncaught exception alike). Every page that logged the line must be an
-   http(s) page outside the declared site and its further origins, and the line must not be about a
-   URL of the site: the script or resource it ends with, or any script in an exception's stack. An error with no record is judged, so
-   a run without the record is judged as before, and so is one a page of the site logged, whatever
-   it is about: the site's page failing to load a third-party script may be the site's own doing
+   actions/qae-browser/console-pages.js: the page's URL and the digest of the error's first line).
+   Every page that logged the line must be an http(s) page outside the declared site and its further
+   origins, and the line must not be about a URL of the site (for an exception, a script in its
+   stack). An error with no record is judged, so a run without the record is judged as before, and
+   so is one a page of the site logged, whatever it is about: the site's page failing to load a third-party script may be the site's own doing
    (its content security policy, a wrong URL).
 3. The session log exists (`session-*/session.md`, written by `--save-session`) and shows the
    browser was driven: at least one `browser_navigate` call.
@@ -118,13 +115,11 @@ from _features import add_selection_arguments, parse, selection
 
 GATE = "qae-artifacts"
 STEP_LINE = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):", re.IGNORECASE)
-# A console log entry starts with its offset, and its text may run on over the lines after it. The
-# offset is negative for what a tab logged before playwright-mcp opened its log: a tab a link opened
-# is already loading by then (`[      -4ms] [ERROR] ...`, from the pinned build, 2026-10-08).
+# A console log entry: its offset, then text that may run on over the lines after it. The offset is
+# negative for what a tab a link opened logged before playwright-mcp opened its log (2026-10-08).
 CONSOLE_ENTRY = re.compile(r"^\[\s*-?[0-9]+ms\]\s+(?P<text>.*)$")
-# A console message's level tag: `[ERROR] <text> @ <url>:<line>`. An uncaught exception or rejection
-# has none: the log holds the error's stack (`Error: boom` then `    at <url>:1:49` lines), or the
-# value thrown when it is not an Error (`rejected string`), from the pinned build, 2026-10-12.
+# A message's level tag, `[ERROR] <text> @ <url>:<line>`. An uncaught exception or rejection has none:
+# its stack (`Error: boom`, then `    at <url>:1:49` lines) or the value thrown (pinned build, 2026-10-12).
 LEVEL = re.compile(r"^\[(?P<level>[A-Z]+)\]\s+")
 # A frame of an exception's stack names the script the exception came through: `    at f (<url>:1:49)`.
 STACK_FRAME = re.compile(r"^\s+at\s.*?(?P<url>https?://[^\s)]+)")
