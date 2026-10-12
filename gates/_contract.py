@@ -148,6 +148,13 @@ def glob_to_regex(glob):
     return re.compile("^" + out + "$")
 
 
+# What a Python test file is called, around the stem of what it tests: pytest's two names, and the
+# hyphen and dot forms of test files that are run by path. Every gate that tells a Python test from
+# source reads these, so new-source-has-test, cognitive-complexity and changed-code-mutation agree.
+PY_TEST_NAMES = ("test_%s.py", "%s_test.py", "test-%s.py", "%s-test.py", "%s.test.py")
+PY_TESTS = ["**/" + name % "*" for name in PY_TEST_NAMES]
+
+
 def matches(path, globs):
     return any(glob_to_regex(glob).match(path) for glob in globs)
 

@@ -237,6 +237,16 @@ class PythonCognitiveComplexity(unittest.TestCase):
         self.assertIn("1 at the base, 2 now", result.stdout)
         self.assertNotIn("test_a.py", gate("cognitive-complexity", repo, "--all").stdout)
 
+    def test_python_tests_by_every_name_are_not_measured_and_near_names_are(self):
+        tests = ["pkg/test_a.py", "pkg/a_test.py", "tests/test-a.py", "tests/a-test.py", "tests/a.test.py", "tests/conftest.py"]
+        repo = branch_with(self, {"README.md": "x\n"}, {path: PY_TANGLED for path in tests})
+        result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commit(repo, {"pkg/latest.py": PY_TANGLED, "pkg/a-tests.py": PY_TANGLED}, "sources whose names end like tests")
+        result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~2", "--format", "json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(sorted({f["path"] for f in json.loads(result.stdout)["findings"]}), ["pkg/a-tests.py", "pkg/latest.py"])
+
     def test_a_python_function_that_gets_worse_fails_though_the_count_is_the_same(self):
         deeper = PY_TANGLED.replace("    for x in c:\n", "    for x in c:\n        if x < 0:\n            if a > b:\n                total -= 2\n", 1)
         self.assertNotEqual(deeper, PY_TANGLED)
