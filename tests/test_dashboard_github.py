@@ -357,6 +357,24 @@ class ApiTransport(unittest.TestCase):
             api.one("repos/o/r/actions/runs/1/attempts/1/jobs")
         self.assertEqual(len(commands), 3)
 
+    def test_the_rest_reserve_is_low_below_half_of_the_core_counter_until_its_reset(self):
+        # Background passes read this: the token's REST counter is shared with CI. Another family's
+        # counter, such as search's 30 a minute, does not count.
+        now, answers = [100], []
+
+        def runner(command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, http(200, "{}", extra=answers.pop(0)), "")
+        api = GitHubAPI(runner=runner, clock=lambda: now[0])
+        api.begin()
+        self.assertFalse(api.core_reserve_low())
+        for resource, remaining, low in (("core", 2600, False), ("search", 1, False), ("core", 2499, True)):
+            answers.append(("X-Ratelimit-Resource: " + resource, "X-Ratelimit-Remaining: %d" % remaining,
+                            "X-Ratelimit-Limit: %d" % (5000 if resource == "core" else 30), "X-Ratelimit-Reset: 700"))
+            api.one("repos/o/r/pulls/1")
+            self.assertEqual(api.core_reserve_low(), low, resource)
+        now[0] = 700
+        self.assertFalse(api.core_reserve_low())
+
     def test_the_lowest_remaining_count_on_any_response_is_reported(self):
         answers = [(0, http(200, "{}", extra=("X-Ratelimit-Remaining: 3370",)), ""),
                    (1, http(403, "{}", extra=("X-Ratelimit-Remaining: 0", "X-Ratelimit-Reset: 700")),

@@ -120,6 +120,21 @@ class LiveService(DashboardService):
         capture_ci_usage = not self.config.agents or any(agent.workflow_role for agent in self.config.agents)
         return capture_ci_usage and not revoked and not self._usage_running and self.monotonic() >= self._usage_next
 
+    def _start_usage(self, revoked):
+        """Start a token-history read in the background when one is due. The caller holds the usage lock."""
+        if self._usage_due(revoked):
+            self._usage_running = True
+            threading.Thread(target=self._refresh_usage,
+                             args=(self.usage_reader, self._usage_generation), daemon=True).start()
+
+    def keep_current(self):
+        """The beat keeps every source current while no page is open, not only GitHub's pull requests."""
+        super().keep_current()
+        if self._discovered_repositories() is not None:
+            with self._usage_lock:
+                self._start_usage(self._usage_revoked)
+        self.work.snapshot()
+
     @forgets_kept_state
     def snapshot(self, **kwargs):
         value = super().snapshot(nonblocking=True, **kwargs)
@@ -132,10 +147,8 @@ class LiveService(DashboardService):
                 # collecting. Its old generation cannot publish after revocation.
                 self._reset_usage()
             self._usage_revoked = revoked
-            if listed and self._usage_due(revoked):
-                self._usage_running = True
-                threading.Thread(target=self._refresh_usage,
-                                 args=(self.usage_reader, self._usage_generation), daemon=True).start()
+            if listed:
+                self._start_usage(revoked)
             usage = copy.deepcopy(self._usage_result) if not revoked else None
         if usage:
             telemetry = value.get('telemetry') or {}

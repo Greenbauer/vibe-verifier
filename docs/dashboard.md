@@ -242,7 +242,7 @@ days and red after two weeks, and the summary line counts open items not updated
 so a stale backlog reads as stale. A row's details hold the request text, amendments or follow-ups,
 and asks, as plain text.
 
-Sources are read in the background at most every five minutes while a page polls, one after another.
+Sources are read in the background every five minutes, whether or not a page is open, one after another.
 A source that fails keeps its last items, marked stale with the reason (`unreachable`, `unavailable`,
 `invalid_response`, `tool_error`); a refused key (`rejected`) forgets them, as lost GitHub access
 does. A source never read says why (`credential_missing`, `credential_unsafe`) instead of showing an
@@ -440,14 +440,15 @@ reported REST limit/remaining/reset values, and the lowest remaining count seen 
 (`lowest_remaining`; GitHub meters some endpoint families against a separate counter that the reported
 values omit). A spent counter pauses only its endpoint family until its reset. GraphQL is metered in points, so GitHub refuses a query that costs more than what is left while the counter still reads above zero; that pauses only the GraphQL reads, and the checks keep loading. Rate limits and source errors return partial or briefly
 stale data without advancing its successful sample timestamp. Authentication or access revocation
-clears derived repository data immediately, in memory and in the state directory. Any other failure (a rate limit, a timeout, a spent budget, a failure this version does not name) or a sample older than three minutes keeps the last pull requests and bot rows and marks them stale. A restart with a state directory does the same: the page is served the reading from before it, and the banner over the list says so until GitHub has been read again. The page does the same when its own refresh fails: it keeps the last snapshot and says the refresh failed. A page opened while the service is down tries again every five seconds while it is visible, one request at a time.
+clears derived repository data immediately, in memory and in the state directory. Any other failure (a rate limit, a timeout, a spent budget, a failure this version does not name) keeps the last pull requests and bot rows, and the banner over the list says some GitHub data is unavailable. A restart with a state directory serves the reading from before it while that reading is under three minutes old; an older one is not served until GitHub has been read again. When the page's own request fails it keeps the last snapshot and says the refresh failed. A page opened while the service is down tries again every five seconds while it is visible, one request at a time.
 
-Old data says that it is old where it is read. The header line gives a stale reading's age before
-anything else (`GitHub sampled Oct 8, 2026, 3:02 PM · 4m 10s ago · stale`). A bot whose state was read
-some time ago keeps that state's name with its age, in gray (`Idle · 4m 10s ago`), on the strip:
-working and idle are claims about now, and an old reading cannot make them. Its completed runs
-keep their own times. A stale pull request row is dimmed and never green, and says how old its
-checks are once they are more than three minutes old (the title rules below).
+Every fetch is answered from a current reading: the server reads GitHub in the background whether
+or not a page is open (see [collection](dashboard-data.md#cache-and-timestamp-contracts)), and a fetch whose
+reading is more than three minutes old waits for the pass under way. So the page never changes how
+it looks to say data is old: no dimmed rows, no yellow ages, no "stale" or "refreshing" flags in
+the header, no gray bot states. The header says when the reading on screen was taken
+(`GitHub sampled Oct 8, 2026, 3:02 PM`). An old check reading is still never green (the title rules
+below).
 
 The dashboard shows source-proven failures, cancellations, waiting jobs, and current elapsed times.
 The pull request list groups pull requests by repository. A repository with no open pull request
@@ -474,9 +475,8 @@ The title is green when the pull request is fully merge-ready: GitHub's merge st
 (not a draft, not behind the base, and not blocked or conflicting), every current-head check
 is green (skipped checks may sit beside at least one success, and a check that is not required
 still counts), and every review thread is resolved and has a reply. That is only painted from a
-check reading taken on this pass. A reading older than one pass (three minutes) is not green,
-the row is dimmed, and the line under the title says how old the checks are (`checks 4m ago`).
-A fresh reading shows no such age. When the head has moved, the row keeps the previous push's
+check reading taken on this pass. A reading older than one pass (three minutes) is not green;
+the row looks the same otherwise. When the head has moved, the row keeps the previous push's
 checks and says newer ones are loading. A check state that no longer matches says the same
 about the checks already on screen. A pull request this process has never read is the only
 row that says checks are not loaded yet, and its badge is the overall state from the cheap
@@ -580,14 +580,12 @@ inspection. CI runs the complete suite on Ubuntu. This public repository contain
 configuration or captured telemetry. See [collection/cache behavior](dashboard-data.md) and the
 [numeric usage artifact contract](USAGE-CONTRACT.md).
 
-The server refreshes GitHub and usage sources in the background; the page retains search focus
-during refresh. The page asks for new data every 30 seconds while it is visible; a hidden
-tab skips those requests, so it spends no GitHub calls, and loads once when shown again. The
-first paint after a quiet spell is the cached rows, already not green where the check reading
-is older than three minutes. It does not wait for GitHub. A beat wakes every 15 seconds and
-reads heads when the last head sample is 150 seconds old, so that sample stays under three
-minutes while the tab is hidden. It does not re-read check detail. A pull request that opened
-since the last full pass appears from that reading, with checks not loaded yet. If a refresh
+The server keeps GitHub, usage and Work sources current in the background whether or not a page
+is open; the page retains search focus during refresh. The page asks for new data every 30 seconds
+while it is visible, and loads once when a hidden tab is shown again. A beat wakes every 15 seconds:
+it runs a full GitHub pass once the last one ended a minute ago, and otherwise reads heads when the
+last head sample is 150 seconds old. A pull request that opened since the last full pass appears
+from a head reading, with checks not loaded yet. If a refresh
 request fails, the page keeps the last snapshot and says the refresh failed. Numeric usage artifacts are read
 every five minutes through the current GitHub credentials, verified against their run/attempt/head
 and configured workflow, and parsed without extracting files or copying model content. Each scan

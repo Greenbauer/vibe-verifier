@@ -21,6 +21,10 @@ from .util import parse_time
 ACTIVE_TTL_SECONDS = 60
 INVENTORY_TTL_SECONDS = 300
 STALE_GRACE_SECONDS = 180
+# A fetch is answered from a reading whose pass ended within this long, or waits for the pass under
+# way. Passes run in the background one ACTIVE_TTL_SECONDS after the last ended, so in steady
+# operation no fetch waits: only the first after a start, or after GitHub could not be read.
+CURRENT_SECONDS = STALE_GRACE_SECONDS
 
 
 def forgets_kept_state(snapshot):
@@ -45,6 +49,8 @@ class DashboardService:
         self.wall_clock = wall_clock or (lambda: datetime.now(timezone.utc))
         self._github: dict | None = None
         self._github_at = 0.0
+        # Wall-clock end of the pass behind self._github; a kept reading's own start stands in for it.
+        self._github_done: datetime | None = None
         self._inventory: dict[str, dict] = {}
         self._inventory_at = 0.0
         self._condition = threading.Condition()
@@ -66,6 +72,7 @@ class DashboardService:
         if github is not None:
             # Due at once: this process has not read GitHub yet.
             self._github, self._github_at = github, float("-inf")
+            self._github_done = parse_time(github.get("sampled_at"))
 
     def _keep(self, result: dict) -> None:
         if self.store is None:
@@ -240,6 +247,7 @@ class DashboardService:
                 self.store.clear()
             self._github = result
             self._github_at = completed_mono
+            self._github_done = self.wall_clock().astimezone(timezone.utc) if result.get("sampled_at") else None
             if new_inventory:
                 self._inventory = {**self._inventory, **new_inventory}
                 self._inventory_at = completed_mono
@@ -250,18 +258,45 @@ class DashboardService:
         self._perform_refresh(now_mono, now)
 
     def start_head_beat(self) -> None:
-        """Keep heads warm while the page is closed. One cheap read per beat, never the detail."""
+        """Keep the reading current while no page is open: a full pass when one is due, otherwise
+        the cheap head read. The first tick is at once, so a page opened after a start has a pass."""
         if self._beat_thread is not None:
             return
         self._beat_thread = threading.Thread(target=self._beat_loop, name="dashboard-head-beat", daemon=True)
         self._beat_thread.start()
 
     def _beat_loop(self) -> None:
-        while not self._beat_stop.wait(HEAD_TICK_SECONDS):
+        while True:
             try:
-                self.run_head_beat()
+                self.keep_current()
             except Exception:
-                continue
+                pass
+            if self._beat_stop.wait(HEAD_TICK_SECONDS):
+                return
+
+    def keep_current(self) -> None:
+        if not self.run_background_pass():
+            self.run_head_beat()
+
+    def run_background_pass(self) -> bool:
+        """Read GitHub in full on this thread when the last pass ended ACTIVE_TTL_SECONDS ago. Skipped
+        while the token's shared hourly REST budget is below half: CI spends the same counter."""
+        reserve = getattr(getattr(self.collector, "api", None), "core_reserve_low", None)
+        if callable(reserve) and reserve():
+            return False
+        now_mono, now = self.monotonic(), self.wall_clock().astimezone(timezone.utc)
+        with self._condition:
+            due = self._github is None or now_mono - self._github_at >= ACTIVE_TTL_SECONDS
+            if not due or self._refreshing or self._beating:
+                return False
+            self._refreshing = True
+        self._perform_refresh(now_mono, now)
+        return True
+
+    def _current(self) -> bool:
+        """Whether the reading's pass ended within CURRENT_SECONDS. The caller holds the condition."""
+        done, now = self._github_done, self.wall_clock().astimezone(timezone.utc)
+        return done is not None and timedelta(0) <= now - done <= timedelta(seconds=CURRENT_SECONDS)
 
     def run_head_beat(self) -> dict | None:
         """Refresh heads on the cached snapshot. Skips while a full pass runs or the head sample is still young."""
@@ -350,34 +385,28 @@ class DashboardService:
     @forgets_kept_state
     def snapshot(self, *, force: bool = False, nonblocking: bool = False) -> dict:
         now_mono, now = self.monotonic(), self.wall_clock().astimezone(timezone.utc)
-        run_refresh = False
-        thread = None
         with self._condition:
             waited = False
             while (self._refreshing or self._beating) and not nonblocking:
                 waited = True
                 self._condition.wait()
             due = force or self._github is None or now_mono - self._github_at >= ACTIVE_TTL_SECONDS
-            if due and not self._refreshing and not self._beating and not waited:
+            start = due and not self._refreshing and not self._beating and not waited
+            if start:
                 self._refreshing = True
-                if nonblocking:
-                    thread = threading.Thread(target=self._background_refresh, args=(now_mono, now),
-                                              name="dashboard-github-refresh", daemon=True)
-                else:
-                    run_refresh = True
-            if not run_refresh:
-                github = copy.deepcopy(self._github or self._empty_github("loading"))
-                github["refreshing"] = self._refreshing
-        if thread:
-            thread.start()
-        if run_refresh:
+        if start and nonblocking:
+            threading.Thread(target=self._background_refresh, args=(now_mono, now),
+                             name="dashboard-github-refresh", daemon=True).start()
+        elif start:
             self._perform_refresh(now_mono, now)
-            with self._condition:
-                github = copy.deepcopy(self._github)
-                github["refreshing"] = False
-        # The cached rows paint immediately. A head read cannot make a title green, because
-        # green needs this pass's check detail, so the first paint after a quiet spell does
-        # not wait on GitHub. Anything older than one beat is already not green.
+        with self._condition:
+            # A reading too old to be current is not served while the pass that replaces it runs.
+            while self._refreshing and not self._current():
+                self._condition.wait()
+            github = copy.deepcopy(self._github or self._empty_github("loading"))
+            github["refreshing"] = self._refreshing
+        # A head read cannot make a title green, because green needs a pass's check detail.
+        # Anything older than one beat is not green.
         observed = self.wall_clock().astimezone(timezone.utc)
         github = self._expire(github, observed)
         withhold_stale_pulls(github, observed)

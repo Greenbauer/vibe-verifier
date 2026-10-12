@@ -25,6 +25,18 @@ class LiveComposition(unittest.TestCase):
         self.service = LiveService(Config('example', ('example/repo',), {}, None), wall_clock=lambda: NOW)
         self.service._usage_next = float('inf')
 
+    def test_the_beat_keeps_usage_and_work_current_with_no_page_open(self):
+        self.service._usage_next = 0
+        calls = []
+        self.service._refresh_usage = lambda reader, generation: calls.append('usage')
+        self.service.work.snapshot = lambda: calls.append('work')
+        with patch('dashboard.live_service.DashboardService.keep_current', lambda service: calls.append('github')):
+            self.service.keep_current()
+        for thread in threading.enumerate():
+            if thread is not threading.current_thread() and thread.daemon:
+                thread.join(1)
+        self.assertEqual(sorted(calls), ['github', 'usage', 'work'])
+
     def test_empty_history_preserves_partial_capture_notice_alongside_quota(self):
         self.service._usage_result = {'available': True, 'accounts': [], 'samples': [],
                                       'partial': True, 'completeness': 'Partial capture.'}

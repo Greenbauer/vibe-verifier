@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-  const { BOT_META, element: el, link, safeUrl, duration, since, ageClass, formatTime, bytes, badge, agedState, sourceStamp,
+  const { BOT_META, element: el, link, safeUrl, duration, since, ageClass, formatTime, bytes, badge, botState, sourceStamp,
     diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark,
     quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, paceHeader, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
   const content = document.querySelector("#content");
@@ -55,7 +55,7 @@
 
   function renderChrome() {
     document.querySelector("#owner").textContent = snapshot.owner;
-    document.querySelector("#source-stamp").textContent = sourceStamp(snapshot.github, Date.now());
+    document.querySelector("#source-stamp").textContent = sourceStamp(snapshot.github);
     document.querySelectorAll(".sidebar button").forEach(button => {
       button.hidden = button.dataset.view === "work" && !snapshot.work?.configured;
       if (button.dataset.view === state.view) button.setAttribute("aria-current", "page");
@@ -80,7 +80,7 @@
     for (const value of agents) {
       const role = value.id;
       const meta = { name: value.name, ...BOT_META[value.role] };
-      const recent = value.recent_2h || [], shown = agedState(value, Date.now());
+      const recent = value.recent_2h || [], shown = botState(value);
       const button = el("button", {
         class: `bot-pill${recent[0]?.category === "failed" ? " has-failure" : ""}`,
         title: value.source || "Agent data unavailable",
@@ -99,7 +99,7 @@
   function coverage() {
     const value = snapshot.github.coverage;
     const unavailable = value.selected == null && !snapshot.github.refreshing;
-    const warning = unavailable || Boolean((snapshot.github.errors || []).length || snapshot.github.stale);
+    const warning = unavailable || Boolean((snapshot.github.errors || []).length);
     return sourceBanner(coverageBanner(value, snapshot.github), warning ? "warning" : "");
   }
 
@@ -227,15 +227,15 @@
     const href = safeUrl(pull.html_url, snapshot.owner);
     const now = Date.now();
     const opened = href ? `Open ${pull.repository} pull request ${pull.number} on GitHub: ${pull.title}` : null;
-    const reason = pull.attention_reason || "", ready = pull.merge_ready && !pull.stale, aged = Number.isFinite(pull.checks_age_seconds);
+    const reason = pull.attention_reason || "", ready = pull.merge_ready && !pull.stale;
     return el(href ? "a" : "div", {
-      class: `pr-row${pull.stale ? " stale-row" : ""}`,
+      class: "pr-row",
       href, target: href ? "_blank" : null, rel: href ? "noreferrer" : null,
       "aria-label": opened ? opened + (ready ? ". Fully merge-ready" : "") : null
     },
     el("span", { class: "pr-identity" },
       el("b", { class: ready ? "merge-ready" : null, title: ready ? "Fully merge-ready" : null }, pull.title),
-      el("small", { class: aged ? "check-age" : null }, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}${aged ? ` · checks ${since(pull.checks_sampled_at, now)} ago` : ""}`)),
+      el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
     el("span", { class: "pr-work", title: reason || null }, badge(category), ...workDetail(pull)),
     progress(pull, now),
     el("span", { class: "pr-age" },

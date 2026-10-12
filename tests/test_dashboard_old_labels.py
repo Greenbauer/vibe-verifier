@@ -1,4 +1,5 @@
-"""Old data says how old it is: the header line, the banner, the bot strip, and the page's retry."""
+"""The page never changes how it looks to say a reading is old: no age, no gray, no "stale" or
+"refreshing" flag. The server keeps every fetch current instead. A real read failure still says so."""
 
 import json
 import subprocess
@@ -32,58 +33,51 @@ const settle=()=>new Promise(done=>setImmediate(done));
 """
 
 
-class ThePageSaysHowOld(unittest.TestCase):
+class NoOldDataSignals(unittest.TestCase):
     def node(self, source):
         result = subprocess.run(["node", "-e", source], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
-    def test_an_old_state_keeps_its_name_with_its_age_and_is_never_the_present_tense(self):
+    def test_a_bot_state_is_shown_as_read_whatever_its_age(self):
         result = self.node(r"""
-const h=require('./dashboard/static/helpers.js'), now=Date.parse('2026-10-08T15:04:10Z'), at='2026-10-08T15:00:00Z';
-console.log(JSON.stringify({
- fresh:[h.agedState({state:'working',sampled_at:at},now),h.agedState({state:'idle',stale:false,sampled_at:at},now)],
- old:[h.agedState({state:'idle',stale:true,sampled_at:at},now),h.agedState({state:'working',stale:true,sampled_at:at},now)],
- undated:h.agedState({state:'paused',stale:true},now), unknown:[h.agedState({stale:true,sampled_at:at},now),h.agedState({state:'unknown',stale:true},now)]}));
+const h=require('./dashboard/static/helpers.js'), at='2026-10-08T15:00:00Z';
+console.log(JSON.stringify([h.botState({state:'working',sampled_at:at}),h.botState({state:'idle',stale:true,sampled_at:at}),
+ h.botState({state:'paused',stale:true}),h.botState({stale:true,sampled_at:at})]));
 """)
-        self.assertEqual(result["fresh"], [{"status": "working", "label": "Working"}, {"status": "idle", "label": "Idle"}])
-        self.assertEqual(result["old"], [{"status": "unknown", "label": "Idle · 4m 10s ago"},
-                                         {"status": "unknown", "label": "Working · 4m 10s ago"}])
-        self.assertEqual(result["undated"], {"status": "unknown", "label": "Paused · stale"})
-        self.assertEqual(result["unknown"], [{"status": "unknown", "label": "Unknown"}] * 2)
+        self.assertEqual(result, [{"status": "working", "label": "Working"}, {"status": "idle", "label": "Idle"},
+                                  {"status": "paused", "label": "Paused"}, {"status": "unknown", "label": "Unknown"}])
 
-    def test_the_header_and_the_banner_say_a_reading_is_old_and_where_it_came_from(self):
+    def test_the_header_and_the_banner_carry_no_age_and_a_read_failure_still_shows(self):
         result = self.node(r"""
-const h=require('./dashboard/static/helpers.js'), now=Date.parse('2026-10-08T15:04:10Z'), at='2026-10-08T15:00:00Z';
+const h=require('./dashboard/static/helpers.js'), at='2026-10-08T15:00:00Z';
 const time=h.formatTime(at), coverage={label:'Selected repositories',selected:2,readable:2};
 console.log(JSON.stringify({time,
- stamps:[h.sourceStamp({sampled_at:at},now),h.sourceStamp({sampled_at:at,refreshing:true},now),h.sourceStamp({sampled_at:at,stale:true},now),
-  h.sourceStamp({sampled_at:at,stale:true,refreshing:true,restored:true},now),h.sourceStamp({refreshing:true},now),h.sourceStamp({},now)],
- banners:[h.coverageBanner(coverage,{}),h.coverageBanner(coverage,{stale:true}),h.coverageBanner(coverage,{stale:true,restored:true})]}));
+ stamps:[h.sourceStamp({sampled_at:at}),h.sourceStamp({sampled_at:at,stale:true,refreshing:true,restored:true}),
+  h.sourceStamp({refreshing:true}),h.sourceStamp({})],
+ banners:[h.coverageBanner(coverage,{}),h.coverageBanner(coverage,{stale:true,restored:true}),h.coverageBanner(coverage,{errors:[{code:'unavailable'}]})]}));
 """)
         time = result["time"]
-        self.assertEqual(result["stamps"], [
-            "GitHub sampled %s" % time, "GitHub sampled %s · refreshing" % time, "GitHub sampled %s · 4m 10s ago · stale" % time,
-            "GitHub sampled %s · 4m 10s ago · stale · refreshing" % time, "Fetching GitHub data…", "GitHub unavailable"])
+        self.assertEqual(result["stamps"], ["GitHub sampled %s" % time, "GitHub sampled %s" % time,
+                                            "Fetching GitHub data…", "GitHub unavailable"])
         counted = "Selected repositories: 2. 2 read successfully in this sample."
-        self.assertEqual(result["banners"], [counted, counted + " Some GitHub data is unavailable or stale.",
-                                             counted + " This is the reading from before a restart; GitHub is being read again."])
+        self.assertEqual(result["banners"], [counted, counted, counted + " Some GitHub data is unavailable."])
 
-    def test_the_bot_strip_draws_an_old_state_in_gray_with_its_age_and_the_header_uses_the_stamp(self):
+    def test_the_bot_strip_draws_an_old_state_like_a_new_one_and_the_header_uses_the_stamp(self):
         result = self.node(r"""
 const app=require('fs').readFileSync('./dashboard/static/app.js','utf8'), h=require('./dashboard/static/helpers.js');
 const make=tag=>({tag,attrs:{},children:[],style:{setProperty(){}},append(...c){this.children.push(...c)},replaceChildren(...c){this.children=c}});
 const el=(tag,attrs={},...c)=>Object.assign(make(tag),{attrs,children:c.flat().filter(v=>v!=null)});
 const at=new Date(Date.now()-250000).toISOString(), strip=el('div');
 const rows=[{id:'swe',name:'SWE',role:'swe',state:'idle',stale:true,sampled_at:at,recent_2h:[]},{id:'qae',name:'QAE',role:'qae',state:'working',recent_2h:[]}];
-new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel','agedState',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function coverage/)[1])(
- el,h.BOT_META,{agents:{rows}},{},(status,label)=>el('span',{class:'badge status-'+status},label),()=>{},v=>v,{querySelector:()=>strip},()=>'Last 2h',h.agedState);
+new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel','botState',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function coverage/)[1])(
+ el,h.BOT_META,{agents:{rows}},{},(status,label)=>el('span',{class:'badge status-'+status},label),()=>{},v=>v,{querySelector:()=>strip},()=>'Last 2h',h.botState);
 const pills=strip.children.filter(n=>n.tag==='button');
 console.log(JSON.stringify({badges:pills.map(p=>p.children[1]).map(b=>[b.attrs.class,b.children[0]]),labels:pills.map(p=>p.attrs['aria-label']),
- stamp:app.includes('textContent = sourceStamp(snapshot.github, Date.now());')}));
+ stamp:app.includes('textContent = sourceStamp(snapshot.github);')}));
 """)
-        self.assertEqual(result["badges"], [["badge status-unknown", "Idle · 4m 10s ago"], ["badge status-working", "Working"]])
-        self.assertEqual(result["labels"], ["SWE: Idle · 4m 10s ago. Open usage and recent outcomes",
+        self.assertEqual(result["badges"], [["badge status-idle", "Idle"], ["badge status-working", "Working"]])
+        self.assertEqual(result["labels"], ["SWE: Idle. Open usage and recent outcomes",
                                             "QAE: Working. Open usage and recent outcomes"])
         self.assertTrue(result["stamp"])
 
