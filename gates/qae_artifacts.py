@@ -36,7 +36,9 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    re-walk's log, `qae/features/<id>.md`, is held to the same rule (`qae/features/<id>-step-k.png`).
    A step line naming `reference <key>` is a comparison with that design reference, and its finding
    says so: the explorer once logged one without saving its screenshot.
-2. The console holds no error outside the allowlist: every `[ERROR]` line in `console-*.log`.
+2. The console holds no error outside the allowlist: every `[ERROR]` line in `console-*.log`, and
+   every uncaught exception or rejection, which playwright-mcp writes untagged as the error's stack
+   (or the value thrown); an allowlist pattern is matched against its whole entry, stack included.
    A `Failed to load resource` line for a host other than the declared site and its further
    declared origins is not judged, the same way a third-party request is not. Any other console
    error still is. A site whose API answers on another host declares that host too, or a 401 or 500
@@ -46,11 +48,11 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    fails to reach its own analytics is not the site's failure. A console line names the script or
    resource the error is about, never the page that logged it, so the page is read from the record
    the harness keeps beside the console logs (`console-pages.jsonl`, written by
-   actions/qae-browser/console-pages.js: the page's URL and the digest of the error's line). Every
-   page that logged the line must be an http(s) page outside the declared site and its further
-   origins, and the line must not be about a URL of the site. An error with no record is judged, so
-   a run without the record is judged as before, and so is one a page of the site logged, whatever
-   it is about: the site's page failing to load a third-party script may be the site's own doing
+   actions/qae-browser/console-pages.js: the page's URL and the digest of the error's first line).
+   Every page that logged the line must be an http(s) page outside the declared site and its further
+   origins, and the line must not be about a URL of the site (for an exception, a script in its
+   stack). An error with no record is judged, so a run without the record is judged as before, and
+   so is one a page of the site logged, whatever it is about: the site's page failing to load a third-party script may be the site's own doing
    (its content security policy, a wrong URL).
 3. The session log exists (`session-*/session.md`, written by `--save-session`) and shows the
    browser was driven: at least one `browser_navigate` call.
@@ -113,9 +115,14 @@ from _features import add_selection_arguments, parse, selection
 
 GATE = "qae-artifacts"
 STEP_LINE = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):", re.IGNORECASE)
-# The offset is negative for what a tab logged before playwright-mcp opened its log: a tab a link
-# opened is already loading by then (`[      -4ms] [ERROR] ...`, from the pinned build, 2026-10-08).
-CONSOLE_ERROR = re.compile(r"^\[\s*-?[0-9]+ms\]\s+\[ERROR\]\s+(?P<message>.*)$")
+# A console log entry: its offset, then text that may run on over the lines after it. The offset is
+# negative for what a tab a link opened logged before playwright-mcp opened its log (2026-10-08).
+CONSOLE_ENTRY = re.compile(r"^\[\s*-?[0-9]+ms\]\s+(?P<text>.*)$")
+# A message's level tag, `[ERROR] <text> @ <url>:<line>`. An uncaught exception or rejection has none:
+# its stack (`Error: boom`, then `    at <url>:1:49` lines) or the value thrown (pinned build, 2026-10-12).
+LEVEL = re.compile(r"^\[(?P<level>[A-Z]+)\]\s+")
+# A frame of an exception's stack names the script the exception came through: `    at f (<url>:1:49)`.
+STACK_FRAME = re.compile(r"^\s+at\s.*?(?P<url>https?://[^\s)]+)")
 TOOL_CALL = re.compile(r"^### Tool call: (?P<name>\S+)\s*$", re.MULTILINE)
 # `3. [GET] http://host/path => [404] Not Found` or `=> [FAILED] net::ERR_...`, as the tool renders it;
 # inside a JSON result the newline is escaped, so the line is matched without anchors.
@@ -275,12 +282,39 @@ def logging_pages(root):
     return pages
 
 
+def console_errors(text):
+    """(line number, kind, message) per error a console log holds: a console error ("console error",
+    its first line without the tag, `<text> @ <url>:<line>`), and an uncaught exception or rejection
+    ("uncaught exception", the whole entry: the stack's lines, or the value thrown)."""
+    entries = []
+    for number, line in enumerate(text.splitlines(), 1):
+        match = CONSOLE_ENTRY.match(line)
+        if match:
+            entries.append((number, [match.group("text")]))
+        elif entries:
+            entries[-1][1].append(line)
+    for number, lines in entries:
+        level = LEVEL.match(lines[0])
+        if not level:
+            yield number, "uncaught exception", "\n".join(lines)
+        elif level.group("level") == "ERROR":
+            yield number, "console error", lines[0][level.end():]
+
+
+def about(message):
+    """The URLs a console error is about: the script or resource at the end of its line, and for an
+    uncaught exception every script its stack came through."""
+    first, _, stack = message.partition("\n")
+    location = LOCATION.search(first)
+    frames = [frame.group("url") for frame in map(STACK_FRAME.match, stack.splitlines()) if frame]
+    return ([location.group("url")] if location else []) + frames
+
+
 def logged_off_site(message, pages, sites):
     """True when every page that logged this console error is an http(s) page outside the origins
     this run judges, and the error is not about a URL on one of them either."""
-    logged_on = pages.get(hashlib.sha256(message.encode("utf-8")).hexdigest())
-    about = LOCATION.search(message)
-    if not logged_on or (about and judged(about.group("url"), sites)):
+    logged_on = pages.get(hashlib.sha256(message.split("\n")[0].encode("utf-8")).hexdigest())
+    if not logged_on or any(judged(url, sites) for url in about(message)):
         return False
     return all(is_origin(page) and not judged(page, sites) for page in logged_on)
 
@@ -288,17 +322,14 @@ def logged_off_site(message, pages, sites):
 def console_is_clean(root, allowed, expected, sites):
     findings, seen, pages = [], set(), logging_pages(root)
     for log in sorted(glob.glob(os.path.join(root, "console-*.log"))):
-        for number, line in enumerate(read(log).splitlines(), 1):
-            match = CONSOLE_ERROR.match(line)
-            if not match:
-                continue
-            message = match.group("message")
+        for number, kind, message in console_errors(read(log)):
             if any(pattern.search(message) for pattern in allowed) or message in seen:
                 continue
             if resource_error_is_excused(message, expected, sites) or logged_off_site(message, pages, sites):
                 continue
             seen.add(message)
-            findings.append(Finding("console error outside the allowlist: %s" % message[:200], relative(log, root), number))
+            shown = " ".join(line.strip() for line in message.splitlines())
+            findings.append(Finding("%s outside the allowlist: %s" % (kind, shown[:200]), relative(log, root), number))
     return findings
 
 

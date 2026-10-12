@@ -45,6 +45,9 @@ def session_with(requests):
 # A hosted page failing to reach its own analytics, as Chromium logs it: the line names the resource.
 BLOCKED = "Failed to load resource: net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin @ https://api.pay.example/pageviews?id=1:0"
 
+# An uncaught exception whose message runs over two lines, as the console log holds it after the offset.
+THROWN = "Error: boom\nline two\n    at a (http://localhost:3000/app.js:1:44)\n    at http://localhost:3000/:1:95\n"
+
 
 def page_record(*logged):
     """console-pages.jsonl as the harness writes it: one line per (page, console error) pair."""
@@ -176,6 +179,30 @@ class QaeArtifacts(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("console error outside the allowlist", result.stdout)
         self.assertEqual(self.run_gate("--allow-console", "/_vercel/insights/script\\.js").returncode, 0)
+
+    def test_an_uncaught_exception_fails_like_a_console_error(self):
+        # As the pinned playwright-mcp writes a page's uncaught exception and its rejections: no level
+        # tag, the stack over several lines, or the value itself (tests/test_qae_console_pages.py).
+        for thrown, shown in ((THROWN, "Error: boom line two at a (http://localhost:3000/app.js:1:44)"),
+                              ("rejected string\n", "rejected string")):
+            with self.subTest(shown):
+                write(self.root, {"console-1.log": "[   606ms] [LOG] two\nlines @ http://localhost:3000/app.js:0\n[   700ms] " + thrown})
+                result = self.run_gate()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("console-1.log:3: uncaught exception outside the allowlist: " + shown, result.stdout)
+                self.assertNotIn("lines @", result.stdout)
+        # The allowlist reads the whole entry, so a pattern can name the script the exception came through.
+        write(self.root, {"console-1.log": "[   700ms] " + THROWN})
+        self.assertEqual(self.run_gate("--allow-console", r"localhost:3000/app\.js").returncode, 0)
+
+    def test_an_exception_a_third_party_page_threw_is_judged_by_its_stack(self):
+        stack = THROWN.replace("http://localhost:3000", "https://pay.example")
+        write(self.root, {"console-2.log": "[   15ms] " + stack, "console-pages.jsonl": page_record(("https://pay.example/checkout", "Error: boom"))})
+        result = self.run_gate("--site", "http://localhost:3000")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # The same exception thrown through a script of the site is the site's, whichever page logged it.
+        write(self.root, {"console-2.log": "[   15ms] " + THROWN})
+        self.assertIn("uncaught exception outside the allowlist: Error: boom", self.run_gate("--site", "http://localhost:3000").stdout)
 
     def test_failed_request_fails_unless_allowlisted(self):
         write(self.root, {"session-1/session.md": session_with(CLEAN_REQUESTS + ["[GET] http://localhost:3000/api/quote => [500] Internal Server Error"])})
