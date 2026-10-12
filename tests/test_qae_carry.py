@@ -249,8 +249,12 @@ class CarriedWalk(unittest.TestCase):
                 self.assertIn("      actions: read", criteria)
                 self.assertIn("          token: ${{ secrets.GITHUB_TOKEN }}   # carries", criteria)
                 self.assertIn("      carry: ${{ steps.criteria.outputs.carry }}", criteria)
-                # The verify job decides on the criteria job's facts and reads none of its own.
-                self.assertNotIn("actions: read", verify)
+                # The verify job decides on the criteria job's facts and reads none of its own: its criteria
+                # step is given no token. (Its `actions: read` is for qa-review's usage-limit check.)
+                step = verify[verify.index("      - name: Read the criteria\n"):]
+                step = step[:step.index("\n      - ", 1)]
+                self.assertIn("actions/criteria@", step)
+                self.assertNotIn("token:", step)
                 self.assertIn("CARRY: ${{ needs.criteria.outputs.carry }}", verify)
                 self.assertIn("          carry: qae-inputs/carry.json", verify)
                 self.assertIn("carried-from: ${{ steps.criteria.outputs.carried-from }}", verify)
