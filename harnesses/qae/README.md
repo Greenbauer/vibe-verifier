@@ -429,14 +429,49 @@ names because a markdown file elsewhere can be a page the site renders. A reposi
 is visible. When nothing needs checking, the explore job builds nothing and the verify job runs no
 gate.
 
+### A walk that still holds
+
+An update that merges the default branch into a pull request (the [pull sync](../../actions/pull-sync/README.md),
+or its author) is a new head, and without more the explorer would walk every criterion again even when
+nothing a browser could see changed. Given a token that can read the repository's actions (the template
+passes `GITHUB_TOKEN` to the criteria job's `actions/criteria` step and gives that job `actions: read`),
+the criteria job carries the last walk's verdict instead when all of these hold:
+
+- an earlier run of the same workflow for this pull request (GitHub lists the pull request on the run,
+  and the run started after the pull request was opened, since GitHub also lists a closed pull request's
+  old runs against a new one from the same branch name; a fork's runs never count) concluded
+  success and left explorer evidence (an artifact named `qae-artifacts-*`): it walked the criteria and
+  passed. A run that walked nothing, a carried one among them, leaves none, so a carry points at a walk;
+- that run's head is an ancestor of this one, and every file that differs between them is one the list
+  above calls unrendered (GitHub's compare; a list of 300 files, which GitHub may have cut, never carries);
+- none of those files is that run's own workflow file or one of this catalog's manifests
+  (`.vibe-verifier*`, which the verify job's gates read), so a pass forged by editing either and then
+  reverting the edit is never carried;
+- this head has every commit of the base branch: the walk tested the head merged with the base, so only
+  a head that has the whole base is a tree the earlier walk vouches for (the pull sync's update is one);
+- the pull request's body, which holds the criteria, was not edited after that run started, and the
+  verify job reads the same body the criteria job did (a digest of it travels with the facts);
+- the workflow supplies no ticket criteria.
+
+Every fact comes from GitHub's own records (`actions/criteria/carry_facts.py`), never from a comment,
+and a read that fails carries nothing. The criteria job passes the facts it read to the verify job (its
+`carry` output, written to `qae-inputs/carry.json`), which decides on them rather than reading its own,
+so the two jobs cannot disagree about a carry. The explore job is then skipped, the verify job runs no
+gate, and the QA review says `passed on an earlier head` and names the run. Measured on 2026-10-12 over
+the merges of the two weeks before, a quarter touched only such files (from 4% in one repository to 51%
+in another), so about one update in four skips the walk. The consumer's own tests still run on every
+head.
+
 ## Dependency updates
 
 A Dependabot pull request could not go green on a Claude-lane consumer, for three reasons, all seen on
 one consumer's four security updates (2026-10-06):
 
 - **The explorer refused the run.** `claude-code-action` stops a run a bot started unless
-  `allowed_bots` names the bot. The template names `dependabot[bot]` and no other: `*` would let any
-  App that can open a pull request start the explorer with a body it wrote.
+  `allowed_bots` names the bot. The template names `dependabot[bot]`, and the repository's own pull
+  sync bot when its `PULL_SYNC_BOT` variable names one (an update by the [pull sync](../../actions/pull-sync/README.md)
+  makes that bot the run's actor), and no other: `*` would let any App that can open a pull request
+  start the explorer with a body it wrote.
 - **The run had no model token.** A run Dependabot starts reads the Dependabot secret store, never
   the Actions one (its log says `Secret source: Dependabot`), so `CLAUDE_CODE_OAUTH_TOKEN` is empty
   there until the repository adds it to that store. The workflow's `permissions:` apply to that run's

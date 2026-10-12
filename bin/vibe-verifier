@@ -165,7 +165,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATES = os.path.join(ROOT, "gates")
 sys.path.insert(0, GATES)
 from _acceptance import (REFERENCE_KEY, annotations, body_criteria as read_criteria, check_lines,  # noqa: E402
-                         declares_none, not_required, png_size, said, ticket_items, verdict)
+                         carried, declares_none, not_required, png_size, said, ticket_items, verdict)
 from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
 from _features import add_selection_arguments, describe, selection  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
@@ -942,11 +942,15 @@ def criteria_command(args):
         text = read_text(args.file)
         changed = [line for line in read_text(args.changed_files).splitlines() if line] if args.changed_files else None
         ticket_text = read_text(args.ticket) if args.ticket else ""
-    except OSError as error:
+        carry = json.loads(read_text(args.carry)) if args.carry else None
+    except (OSError, ValueError) as error:
         return fail("could not read %s" % error)
-    reason = not_required(text, changed, ticket_text)
+    reason = not_required(text, changed, ticket_text, carry)
     if reason:
         print("none: %s" % reason)
+        walk = carried(carry, text) if read_criteria(text) and not declares_none(text) else None
+        if walk:
+            print("carried: %s %s" % (walk["head"], walk["url"]))
         return 0
     ticket, problem = ticket_items(ticket_text, args.ticket)
     wanted = ([] if declares_none(text) else read_criteria(text)) + ticket
@@ -1190,6 +1194,7 @@ REVIEW_HEADINGS = {
     "passed": "## QA review: passed \u2705",
     "changes-needed": "## QA review: changes needed \u274c",
     "not-required": "## QA review: not required \u2705",
+    "carried": "## QA review: passed on an earlier head \u2705",
     "could-not-run": "## QA review: could not run \u26a0\ufe0f",
 }
 
@@ -1204,7 +1209,7 @@ def review_state(args):
     criterion to walk: the verify job's first step fails when the criteria job that decided it did not
     finish, so its gates never run and that case lands on could-not-run too."""
     if args.not_required:
-        return "not-required"
+        return "carried" if args.carried_from else "not-required"
     if args.explore_result not in EXPLORE_DONE or args.gates_outcome not in ("success", "failure"):
         return "could-not-run"
     return "passed" if args.gates_outcome == "success" else "changes-needed"
@@ -1240,6 +1245,8 @@ def review_body(state, args):
     lines = [REVIEW_MARKER, REVIEW_HEADINGS[state], ""]
     if state == "not-required":
         lines.append("No browser check on %s: %s." % (head, args.not_required.rstrip(".")))
+    elif state == "carried":
+        lines.append("No new browser check on %s: %s. The criteria were not edited since." % (head, args.not_required.rstrip(".")))
     elif state == "could-not-run":
         stopped = ("The explore job ended `%s`" % args.explore_result if args.explore_result not in EXPLORE_DONE
                    else "The verify job stopped before its gates ran")
@@ -1321,6 +1328,8 @@ def main():
                         "many explorers the criteria are split across: enough for six walks each, at most N")
     reader.add_argument("--manifest", metavar="FILE", help="with --max-shards, the QAE manifest: the --widths of its "
                         "qae-artifacts line, judged from the base, count toward the walks")
+    reader.add_argument("--carry", metavar="FILE", help="what actions/criteria/carry_facts.py read about the pull "
+                        "request's last QAE walk: when its verdict still holds, prints `none:` naming it and `carried: <sha> <url>`")
     reader.add_argument("--repo", default=".")
     reader.add_argument("--base-ref", default=None)
     inputs = commands.add_parser("qae-inputs", help="copy the site step's design references into the QAE evidence, "
@@ -1378,6 +1387,8 @@ def main():
     review.add_argument("--explore-result", required=True, help="the explore job's result (success, skipped, failure, cancelled)")
     review.add_argument("--gates-outcome", default="", help="the gates step's outcome (success, failure, skipped)")
     review.add_argument("--not-required", default="", metavar="REASON", help="why no browser check is needed; empty when one is")
+    review.add_argument("--carried-from", default="", metavar="SHA", help="with --not-required, the head whose passing "
+                        "walk this head carries (the criteria action's carried-from output)")
     args = parser.parse_args()
     if args.command == "list":
         print("\n".join(available()))

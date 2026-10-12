@@ -226,7 +226,7 @@ class Template(unittest.TestCase):
         Path(work, "body.md").write_text(NONE)
         env = clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x", "PR_NUMBER": "7", "REPO": "o/r",
                          "SITE_URL": "http://localhost:3000", "SITE_ORIGINS": "", "REFERENCES": "", "TICKET": TICKET + "\n",
-                         "SHARDS": '[""]', "EXPLORE_ATTEMPT": "1"})
+                         "SHARDS": '[""]', "EXPLORE_ATTEMPT": "1", "CARRY": ""})
         explore = workdir(self)
         ran = subprocess.run(["bash", "-e", "-c", step_script("- name: Write the explorer's input", "- name: Select the features")],
                              cwd=explore, capture_output=True, text=True, env=env)

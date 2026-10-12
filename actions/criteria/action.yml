@@ -32,6 +32,20 @@ inputs:
       The QAE gate list itself, one gate per line, in place of `manifest`, as a wrapper passes it to
       actions/gates.
     default: ""
+  token:
+    description: >-
+      A token that can read the repository's actions, contents and pull requests (the job's GITHUB_TOKEN
+      with `actions: read`). Given, a pull request whose last QAE walk passed, and that changed since only
+      in files no browser can see, with its body not edited since, needs no new walk: its verdict is
+      carried (carry_facts.py says what is read). Empty (the default) never carries. The facts read are
+      the `carry` output; a later job passes them back as `carry` to decide on the same facts.
+    default: ""
+  carry:
+    description: >-
+      The facts an earlier job's run of this action read (its `carry` output), written to a file,
+      relative to the workspace, in place of `token`: the verify job decides on the facts the criteria
+      job decided on, so the two cannot disagree about a carry.
+    default: ""
 outputs:
   count:
     description: How many criteria the document lists. 0 when it needs no check, and 0 when it lists none.
@@ -41,6 +55,12 @@ outputs:
       Why no browser check is needed (the reason the document declares, or that every changed path is
       unrendered); empty when one is.
     value: ${{ steps.read.outputs.declared-none }}
+  carried-from:
+    description: The head whose passing walk this head carries, when it does (see `token`); empty otherwise.
+    value: ${{ steps.read.outputs.carried-from }}
+  carry:
+    description: The facts read with `token`, as one line of JSON, for a later job's `carry`; empty without them.
+    value: ${{ steps.read.outputs.carry }}
   ticket:
     description: >-
       The text of the `ticket` file, unchanged (empty without one), so the jobs after this one judge the
@@ -66,9 +86,31 @@ runs:
         VV_MAX_SHARDS: ${{ inputs.max-shards }}
         VV_MANIFEST: ${{ inputs.manifest }}
         VV_ENTRIES: ${{ inputs.entries }}
+        GH_TOKEN: ${{ inputs.token }}
+        VV_REPO: ${{ github.repository }}
+        VV_PR: ${{ github.event.pull_request.number }}
+        VV_HEAD: ${{ github.event.pull_request.head.sha }}
+        VV_BRANCH: ${{ github.event.pull_request.head.ref }}
+        VV_BASE: ${{ github.event.pull_request.base.ref }}
+        VV_CARRY: ${{ inputs.carry }}
+        VV_RUN_ID: ${{ github.run_id }}
       run: |
         set -euo pipefail
         args=(criteria "$VV_PATH" --max-shards "$VV_MAX_SHARDS")
+        carry=""
+        if [ -n "${VV_CARRY:-}" ]; then
+          # An empty file: the earlier job read no facts, so nothing is carried.
+          if [ -s "$VV_CARRY" ]; then carry="$VV_CARRY"; fi
+        elif [ -n "${GH_TOKEN:-}" ] && [ -n "${VV_PR:-}" ]; then
+          carry="$RUNNER_TEMP/vibe-verifier-carry.json"
+          python3 "$GITHUB_ACTION_PATH/carry_facts.py" --repo "$VV_REPO" --pr "$VV_PR" --head "$VV_HEAD" \
+            --branch "$VV_BRANCH" --base "$VV_BASE" --run-id "$VV_RUN_ID" --body "$VV_PATH" --out "$carry"
+        fi
+        carry_json=""
+        if [ -n "$carry" ]; then
+          args+=(--carry "$carry")
+          carry_json=$(python3 -c 'import json, sys; print(json.dumps(json.load(open(sys.argv[1]))))' "$carry")
+        fi
         if [ -n "$VV_CHANGED" ]; then args+=(--changed-files "$VV_CHANGED"); fi
         if [ -n "$VV_TICKET" ]; then args+=(--ticket "$VV_TICKET"); fi
         manifest="$VV_MANIFEST"
@@ -94,3 +136,7 @@ runs:
         shards=$(printf '%s\n' "$out" | sed -n 's/^shards: \[1\(\(,[0-9][0-9]*\)*\)\]$/[""\1]/p')
         if [ -z "$shards" ]; then shards='[""]'; fi
         echo "shards=$shards" >> "$GITHUB_OUTPUT"
+        # The carried walk's head, and the facts it was decided on for a later job (one JSON line).
+        carried=$(printf '%s\n' "$out" | sed -n 's/^carried: \([0-9a-f]\{40\}\) .*/\1/p')
+        echo "carried-from=$carried" >> "$GITHUB_OUTPUT"
+        echo "carry=$carry_json" >> "$GITHUB_OUTPUT"

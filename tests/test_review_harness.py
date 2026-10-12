@@ -372,6 +372,14 @@ class ReviewHarness(unittest.TestCase):
         self.assertIn("continue-on-error: true", fallback)
         self.assertNotIn("always()", gate)
 
+    def test_cursor_and_the_repositorys_pull_sync_bot_may_start_a_review(self):
+        # An update by the pull sync makes its bot the actor of the run, and claude-code-action refuses a
+        # bot it is not told about, so a synced pull request's review went red. The repository names its
+        # bot in the PULL_SYNC_BOT variable, which a pull request cannot change; both accounts allow it.
+        lines = re.findall(r"^ +allowed_bots: (.*)$", TEMPLATE.read_text(), re.MULTILINE)
+        self.assertEqual(lines, ["${{ vars.PULL_SYNC_BOT && format('cursor,cursor[bot],{0}', vars.PULL_SYNC_BOT) "
+                                 "|| 'cursor,cursor[bot]' }}"] * 2)
+
     def test_the_receipt_is_posted_by_the_workflow_after_the_review(self):
         text = TEMPLATE.read_text()
         self.assertLess(text.index("- name: Review\n"), text.index("- name: Post the receipt"))

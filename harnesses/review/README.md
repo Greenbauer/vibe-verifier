@@ -114,6 +114,10 @@ for a second account's subscription, recommended), remove the old `claude-review
 put any repository-specific review focus under a heading in CLAUDE.md. The subscription PR's own
 run is the first review.
 
+A repository that runs the [pull sync](../../actions/pull-sync/README.md) also sets the `PULL_SYNC_BOT`
+repository variable to its bot's login (`<app>[bot]`): an update makes that bot the run's actor, and
+`claude-code-action` refuses a bot that `allowed_bots` does not name. Cursor's bot is allowed always.
+
 A change to `review.yml` reaches a copy only when the copy is edited: `apply-down` moves the pins,
 and `consumers` reports a copy that differs from this file outside the lines the consumer owns as
 drift until it is copied again.

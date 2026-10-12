@@ -33,6 +33,9 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 ## Verify
 
 - `tests/test_acceptance.py::test_one_anchored_pass_per_criterion_passes`
+- `tests/test_qae_carry.py::test_a_walk_followed_only_by_unrendered_changes_is_carried`
+- `tests/test_qae_carry.py::test_anything_a_browser_could_see_needs_a_new_walk`
+- `tests/test_qae_carry.py::test_the_newest_walked_run_of_the_same_workflow_is_the_one`
 - `tests/test_qae_codex_settings.py::test_empty_inputs_preserve_runner_selection`
 - `tests/test_qae_codex_settings.py::test_explicit_settings_are_independent_arguments`
 - `tests/test_qae_codex_settings.py::test_invalid_settings_fail_before_codex_without_echoing_them`
@@ -61,7 +64,7 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - `tests/test_qae_ticket.py::test_a_declared_none_does_not_drop_the_tickets_criteria`
 - `tests/test_qae_ticket.py::test_the_ticket_reaches_the_explorer_and_the_gate`
 - `tests/test_qae_ticket.py::test_a_dependency_update_passes_on_its_supplied_criteria_alone`
-- `tests/test_qae_explore.py::test_dependabot_is_the_one_bot_whose_pull_requests_reach_the_explorer`
+- `tests/test_qae_explore.py::test_dependabot_and_the_repositorys_pull_sync_bot_are_the_bots_that_reach_the_explorer`
 - `tests/test_runner.py::test_the_qae_browser_toolchain_installs_from_its_lockfile`
 - `tests/test_qae_explore.py::test_a_re_run_never_reads_an_earlier_attempts_evidence`
 - `tests/test_qae_shards.py::test_each_explorer_is_judged_on_the_newest_attempt_it_ran_in`
@@ -78,6 +81,7 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 
 ## Gotchas
 
+- A carried walk is found by its artifact, so a consumer whose explore job uploads no `qae-artifacts-*` artifact, or keeps artifacts for less time than its pull requests stay open, never carries. The criteria job also needs `actions: read`; without it the facts read fails, a warning says so, and the run walks as before. The verify job reads no facts of its own: it decides on the criteria job's `carry` output.
 - The Codex action accepts optional `model` and `reasoning-effort` inputs; empty preserves the runner defaults. The action validates identifiers and effort values before invoking Codex, passes settings as separate arguments, and logs only the configured values. Selection does not guarantee a complete walk or a truthful verdict.
 - The Codex CLI is locked to `0.162.0`, including its platform binaries. Model availability can be client-version filtered; verify the chosen model and effort with the pinned client and the actual runner account, not another client's catalog.
 
