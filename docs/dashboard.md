@@ -228,7 +228,7 @@ PR number into a GitHub link; `app_origin` (an HTTPS origin) links the item to
 `<app_origin>/plans/<id>` or `<app_origin>/calls/<id>`. A design reference shows its label only: the
 links a server signs expire.
 
-The board has four columns, each oldest first:
+The board has four columns, each oldest first. A column is one card with its items as rows, like the pull-request groups:
 
 - **To do**: `submitted` or `backlog`, not picked up yet.
 - **In progress**: any other open status, claimed or being built.
@@ -237,9 +237,9 @@ The board has four columns, each oldest first:
   item here is in no other column. On a phone the columns stack and this one comes first.
 - **Done**: `merged` or `closed`, behind a Show toggle.
 
-Every card shows when the item was created and last updated; the update age is yellow after three
+Every row shows when the item was created and last updated; the update age is yellow after three
 days and red after two weeks, and the summary line counts open items not updated in over two weeks,
-so a stale backlog reads as stale. A card's details hold the request text, amendments or follow-ups,
+so a stale backlog reads as stale. A row's details hold the request text, amendments or follow-ups,
 and asks, as plain text.
 
 Sources are read in the background at most every five minutes while a page polls, one after another.
