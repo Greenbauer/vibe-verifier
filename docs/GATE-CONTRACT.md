@@ -458,7 +458,10 @@ not the base the ratchet compares with, and entries for rules the gate does not 
 otherwise fail every run as unused. Inline eslint comments (`eslint-disable`, `/* eslint rule: off */`)
 are ignored the same way (`--no-inline-config`). Python files go to complexipy, whose `# noqa: complexipy` and
 `# complexipy: ignore` comments are neutralized before measuring for the same reason. Both gates
-measure JS, TS and Python files by default; `--source` narrows them.
+measure JS, TS and Python files by default; `--source` narrows them. `cognitive-complexity` never
+measures a test: JS and TS test files, `conftest.py`, and any file named `test_*.py`, `*_test.py`,
+`test-*.py`, `*-test.py` or `*.test.py` (the Python test names `new-source-has-test` reads, one list
+in `gates/_contract.py`). `max-file-lines` measures tests too.
 
 ### Changed-code mutation
 
@@ -525,8 +528,8 @@ changed-code-mutation --project apps/web --break 70 --soak
   (`{a,b}`), which no escape makes literal. That last is read from Stryker's own
   "Found N of M file(s) to be mutated" line, because a file whose changed lines hold no mutant is
   absent from its report.
-- **Python files.** A changed `.py` file (Python tests, `test_*.py`, `*_test.py` and `conftest.py`,
-  always excluded) goes to mutmut 3.8, pinned in `tools/changed-code-mutation-python/` (see
+- **Python files.** A changed `.py` file (Python tests, `conftest.py` and any file named `test_*.py`,
+  `*_test.py`, `test-*.py`, `*-test.py` or `*.test.py`, always excluded) goes to mutmut 3.8, pinned in `tools/changed-code-mutation-python/` (see
   [Python toolchains](#python-toolchains)), and its mutants join the same score. mutmut runs the
   project's own pytest in the project's own interpreter, `--python` (default `python3`; a relative
   path is the repository's, such as `--python .venv/bin/python`): its package is appended to the end

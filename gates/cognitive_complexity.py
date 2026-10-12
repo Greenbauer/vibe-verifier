@@ -17,6 +17,8 @@ does not name them): a function that grows fails the file unless a costlier one 
 enough to take the lower rank, and a file whose highest cost rises always fails. An over-limit
 function may be touched, renamed, moved within its file or improved. Functions nobody touched
 never block. --all measures every tracked source file against the limit instead, for an audit.
+Tests are never measured: a Python test is conftest.py or a file named as in _contract.PY_TEST_NAMES
+(test_*.py, *_test.py, test-*.py, *-test.py, *.test.py), the names new-source-has-test reads.
 
     --max N          the limit (default 15)
     --source GLOB    what counts as source (repeatable; default: JS, TS and Python files)
@@ -28,14 +30,14 @@ import re
 import subprocess
 import tempfile
 
-from _contract import CannotRun, Finding, changed_files, git, matches, renamed, resolve_base, run_gate, tracked_files
+from _contract import PY_TESTS, CannotRun, Finding, changed_files, git, matches, renamed, resolve_base, run_gate, tracked_files
 from _tools import NODE_TOOLS, ensure_node_tool, ensure_python_tool
 
 GATE = "cognitive-complexity"
 RULE = "sonarjs/cognitive-complexity"
 DEFAULT_SOURCE = ["**/*." + ext for ext in ("ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "py")]
 ALWAYS_EXCLUDED = ["**/*.d.ts", "**/node_modules/**", "**/*.test.*", "**/*.spec.*", "**/__tests__/**",
-                   "**/test_*.py", "**/*_test.py", "**/conftest.py"]
+                   "**/conftest.py"] + PY_TESTS
 # eslint applies the eslint-suppressions.json in its working directory (bulk suppressions). The consumer's is
 # for its own config: against this one rule its other entries look unused (eslint exits 2), and its count
 # for this rule would hide what the ratchet counts. Read from the catalog, not the cache, whose key is the lockfile.

@@ -181,6 +181,17 @@ class StandInStryker(unittest.TestCase):
         self.assertEqual(self.captured()["config"]["mutate"], ["src/a.ts:1-1"])
         self.assertEqual(self.captured()["cwd"], os.path.realpath(repo))
 
+    def test_python_tests_by_every_name_are_not_mutated_and_near_names_are(self):
+        tests = ["pkg/test_a.py", "pkg/a_test.py", "tests/test-a.py", "tests/a-test.py", "tests/a.test.py", "tests/conftest.py"]
+        repo = self.repo({"README.md": "x\n"}, dict({path: "def test_a():\n    pass\n" for path in tests}, **{"src/a.ts": "export const a = 1;\n"}))
+        result = self.run_gate(repo, "--max-files", "1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.captured()["config"]["mutate"], ["src/a.ts:1-1"])
+        commit(repo, {"pkg/latest.py": "x = 1\n"}, "a source whose name ends like a test")
+        result = self.run_gate(repo, "--max-files", "1", base="HEAD~2")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("2 changed source files, over --max-files 1", result.stderr)
+
     def test_no_changed_source_passes_without_a_test_runner(self):
         repo = self.repo({"src/a.ts": "export const a = 1;\n"}, {"src/a.test.ts": "x\n", "README.md": "y\n"}, vitest=None)
         result = self.run_gate(repo)

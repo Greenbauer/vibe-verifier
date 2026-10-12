@@ -25,16 +25,12 @@ import os
 import posixpath
 import re
 
-from _contract import Finding, added_files, matches, resolve_base, run_gate, tracked_files
+from _contract import PY_TEST_NAMES, PY_TESTS, Finding, added_files, matches, resolve_base, run_gate, tracked_files
 
 GATE = "new-source-has-test"
 
 EXTENSIONS = ("ts", "tsx", "js", "jsx", "mjs", "cjs")
 DEFAULT_SOURCE = ["**/*." + ext for ext in EXTENSIONS] + ["**/*.py"]
-# What a Python test file is called, around the stem of what it tests: pytest's two names, and the
-# hyphen and dot forms of test files that are run by path.
-PY_TEST_NAMES = ("test_%s.py", "%s_test.py", "test-%s.py", "%s-test.py", "%s.test.py")
-PY_TESTS = ["**/" + name % "*" for name in PY_TEST_NAMES]
 TEST_FILES = ["**/*.test.*", "**/*.spec.*", "**/__tests__/**"] + PY_TESTS
 ALWAYS_EXCLUDED = TEST_FILES + [
     "**/*.d.ts", "**/*.types.ts", "**/index.*", "**/*.stories.*", "**/*.config.*",
