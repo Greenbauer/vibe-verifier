@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from dashboard.config import BotDefinition, Config
 from dashboard.gh_api import ApiError
-from dashboard.service import DashboardService
+from dashboard.service import ACTIVE_TTL_SECONDS, CURRENT_SECONDS, DashboardService
 
 
 NOW = datetime(2026, 9, 30, 15, 0, tzinfo=timezone.utc)
@@ -157,22 +157,106 @@ class BlockingCollector:
         return source_sample(NOW)
 
 
-class NonblockingRefresh(unittest.TestCase):
-    def test_concurrent_requests_share_one_background_refresh_and_return_loading_fast(self):
+class EveryFetchIsCurrent(unittest.TestCase):
+    def fetch(self, service, result):
+        thread = threading.Thread(target=lambda: result.append(service.snapshot(nonblocking=True)))
+        thread.start()
+        return thread
+
+    def test_fetches_with_no_current_reading_share_one_pass_and_wait_for_it(self):
         collector = BlockingCollector()
         service = DashboardService(config(), collector, monotonic=lambda: 0, wall_clock=lambda: NOW)
-        began = time.monotonic()
-        first = service.snapshot(nonblocking=True)
-        self.assertLess(time.monotonic() - began, 0.2)
-        self.assertTrue(first["github"]["refreshing"])
+        results = []
+        fetches = [self.fetch(service, results) for _ in range(5)]
         self.assertTrue(collector.started.wait(1))
-        snapshots = [service.snapshot(nonblocking=True) for _ in range(5)]
-        self.assertTrue(all(row["github"]["refreshing"] for row in snapshots))
-        self.assertEqual(collector.calls, 1)
+        time.sleep(0.1)
+        self.assertEqual(results, [])
         collector.release.set()
-        loaded = service.snapshot()
+        for fetch in fetches:
+            fetch.join(2)
         self.assertEqual(collector.calls, 1)
-        self.assertEqual(loaded["github"]["repositories"][0]["pulls"], [{"number": 1}])
+        self.assertEqual([row["github"]["repositories"][0]["pulls"] for row in results], [[{"number": 1}]] * 5)
+
+    def test_a_current_reading_is_served_at_once_while_the_next_pass_runs(self):
+        collector = BlockingCollector()
+        collector.release.set()
+        mono, wall = MutableClock(0), MutableClock(NOW)
+        service = DashboardService(config(), collector, monotonic=mono, wall_clock=wall)
+        service.snapshot()
+        collector.release.clear()
+        mono.value, wall.value = 61, NOW + timedelta(seconds=61)
+        began = time.monotonic()
+        served = service.snapshot(nonblocking=True)["github"]
+        self.assertLess(time.monotonic() - began, 0.2)
+        self.assertTrue(served["refreshing"])
+        self.assertEqual(collector.calls, 2)
+        collector.release.set()
+
+    def test_a_reading_older_than_the_current_window_is_not_served_while_its_replacement_runs(self):
+        collector = BlockingCollector()
+        collector.release.set()
+        mono, wall = MutableClock(0), MutableClock(NOW)
+        service = DashboardService(config(), collector, monotonic=mono, wall_clock=wall)
+        service.snapshot()
+        collector.release.clear()
+        mono.value, wall.value = 600, NOW + timedelta(seconds=CURRENT_SECONDS + 1)
+        results = []
+        fetch = self.fetch(service, results)
+        fetch.join(0.3)
+        self.assertEqual(results, [])
+        collector.release.set()
+        fetch.join(2)
+        self.assertFalse(results[0]["github"]["refreshing"])
+
+    def test_a_failed_pass_ends_the_wait_and_serves_the_last_reading(self):
+        mono, wall = MutableClock(0), MutableClock(NOW)
+        collector = FakeCollector([source_sample(NOW), ApiError("unavailable")])
+        service = DashboardService(config(), collector, monotonic=mono, wall_clock=wall)
+        service.snapshot()
+        mono.value, wall.value = 600, NOW + timedelta(seconds=600)
+        github = service.snapshot(nonblocking=True)["github"]
+        deadline = time.monotonic() + 2
+        while github["refreshing"] and time.monotonic() < deadline:
+            github = service.snapshot(nonblocking=True)["github"]
+        self.assertEqual((github["errors"], github["repositories"][0]["pulls"]), ([{"code": "unavailable"}], [{"number": 1}]))
+
+
+class Reserve:
+    def __init__(self, low):
+        self.low = low
+
+    def core_reserve_low(self):
+        return self.low
+
+
+class TheBackgroundPass(unittest.TestCase):
+    def service(self, values, low=False):
+        collector = FakeCollector(values)
+        collector.api = Reserve(low)
+        mono = MutableClock(0)
+        return DashboardService(config(), collector, monotonic=mono, wall_clock=lambda: NOW), collector, mono
+
+    def test_a_pass_runs_with_no_page_open_once_the_last_ended_a_minute_ago(self):
+        service, collector, mono = self.service([source_sample(NOW), source_sample(NOW)])
+        self.assertTrue(service.run_background_pass())
+        mono.value = ACTIVE_TTL_SECONDS - 1
+        self.assertFalse(service.run_background_pass())
+        mono.value = ACTIVE_TTL_SECONDS
+        self.assertTrue(service.run_background_pass())
+        self.assertEqual(len(collector.inventories), 2)
+
+    def test_no_background_pass_runs_while_the_shared_rest_budget_is_below_half(self):
+        service, collector, _ = self.service([source_sample(NOW)], low=True)
+        self.assertFalse(service.run_background_pass())
+        self.assertEqual(collector.inventories, [])
+
+    def test_the_beat_reads_heads_only_when_no_pass_is_due(self):
+        service, _, _ = self.service([source_sample(NOW)])
+        beats = []
+        service.run_head_beat = lambda: beats.append(1)
+        service.keep_current()
+        service.keep_current()
+        self.assertEqual(beats, [1])
 
 
 if __name__ == "__main__":

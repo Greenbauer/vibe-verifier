@@ -172,20 +172,16 @@
     return element("span", { class: `badge status-${status}`, text: label || STATUS_LABELS[status] || status });
   }
 
-  // A state read some time ago keeps its name and gains its age, in gray: it is not the present.
-  function agedState(row, now) {
-    const state = row.state || "unknown", label = STATUS_LABELS[state] || state;
-    if (!row.stale || state === "unknown") return { status: state, label };
-    const age = elapsedSeconds(row.sampled_at, now);
-    return { status: "unknown", label: `${label} · ${age == null ? "stale" : `${ageLabel(age)} ago`}` };
+  // A bot's state as last read. The server keeps every source current, so no age is shown.
+  function botState(row) {
+    const state = row.state || "unknown";
+    return { status: state, label: STATUS_LABELS[state] || state };
   }
 
-  // The header's line about GitHub. A stale reading says how old it is before anything else.
-  function sourceStamp(github, now) {
+  // The header's line about GitHub: when the reading on screen was taken.
+  function sourceStamp(github) {
     if (!github.sampled_at) return github.refreshing ? "Fetching GitHub data…" : "GitHub unavailable";
-    const age = github.stale ? elapsedSeconds(github.sampled_at, now) : null;
-    const flags = [age == null ? "" : `${ageLabel(age)} ago`, github.stale ? "stale" : "", github.refreshing ? "refreshing" : ""];
-    return [`GitHub sampled ${formatTime(github.sampled_at)}`, ...flags.filter(Boolean)].join(" · ");
+    return `GitHub sampled ${formatTime(github.sampled_at)}`;
   }
 
   // The capacity meters show how full a resource is. Disk telemetry reports free space, so derive used.
@@ -206,12 +202,9 @@
     if (coverage.selected == null) {
       return refreshing ? "Reading repositories." : "Repository list is unavailable.";
     }
-    const stale = Boolean(github && github.stale);
     const errors = (github && github.errors) || [];
     const text = `${coverage.label}: ${coverage.selected}. ${coverage.readable} read successfully in this sample.`;
-    // A reading kept across a restart is the whole page until this process has read GitHub itself.
-    if (github && github.restored) return `${text} This is the reading from before a restart; GitHub is being read again.`;
-    return text + (errors.length || stale ? " Some GitHub data is unavailable or stale." : "");
+    return text + (errors.length ? " Some GitHub data is unavailable." : "");
   }
 
   function flattenPulls(snapshot) {
@@ -426,7 +419,7 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, ageClass, formatTime, bytes,
-    badge, agedState, sourceStamp, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, restoreViewState,
+    badge, botState, sourceStamp, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, restoreViewState,
     parseRoute, routeHash, httpsUrl, workGroups, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, paceHeader,
     quotaDeltaLabel,
     quotaTone, quotaCountdown, quotaGroups };

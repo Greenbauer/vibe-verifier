@@ -147,14 +147,22 @@ class ServesTheLastReading(RestartCase):
         self.assertFalse(rows[1]["pulls"][0]["merge_ready"])
         self.assertEqual([row.get("restored") for row in rows], [None, True])
 
-    def test_a_first_start_shows_loading_and_then_keeps_what_it_read(self):
+    def held_fetch(self, service, collector):
+        """A page fetch made while the pass it needs is held in flight, and its result once released."""
+        collector.hold, result = threading.Event(), {}
+        fetch = threading.Thread(target=lambda: result.update(service.snapshot(nonblocking=True)))
+        fetch.start()
+        fetch.join(0.3)
+        self.assertTrue(fetch.is_alive(), "the fetch must wait for the pass")
+        return collector.hold, fetch, result
+
+    def test_a_first_start_waits_for_its_first_pass_and_keeps_what_it_read(self):
         service, collector = self.start(reading())
-        collector.hold = threading.Event()
-        github = service.snapshot(nonblocking=True)["github"]
-        self.assertEqual((github["sampled_at"], github["errors"]), (None, [{"code": "loading"}]))
-        self.assertNotIn("restored", github)
-        collector.hold.set()
-        service.snapshot()
+        hold, fetch, result = self.held_fetch(service, collector)
+        hold.set()
+        fetch.join(2)
+        self.assertEqual(result["github"]["sampled_at"], NOW.isoformat())
+        self.assertNotIn("restored", result["github"])
         self.assertEqual(self.files(), ["reading.json.z"])
 
     def test_a_failed_pass_does_not_replace_the_kept_reading(self):
@@ -170,11 +178,11 @@ class ServesTheLastReading(RestartCase):
         first.snapshot(force=True)
         self.wall = NOW + timedelta(hours=24, seconds=1)
         service, collector = self.start(reading(self.wall))
-        collector.hold = threading.Event()
-        self.assertEqual(service.snapshot(nonblocking=True)["github"]["repositories"][0]["pulls"], [])
+        hold, fetch, result = self.held_fetch(service, collector)
         self.assertEqual(self.files(), [])
-        collector.hold.set()
-        self.assertEqual(len(service.snapshot()["github"]["repositories"][0]["pulls"]), 1)
+        hold.set()
+        fetch.join(2)
+        self.assertEqual(result["github"]["sampled_at"], self.wall.isoformat())
 
     def test_another_selection_of_repositories_never_sees_the_kept_reading(self):
         first, _ = self.start(reading())
@@ -374,7 +382,7 @@ class TheHeadBeat(RestartCase):
                 service, collector = self.quiet()
                 collector.beat = ApiError(code)
                 service.run_head_beat()
-                github = service.snapshot(nonblocking=True)["github"]
+                github = service._github
                 self.assertEqual((github["errors"], [row["pulls"] for row in github["repositories"]]), ([{"code": code}], [[], []]))
                 self.assertEqual((self.files(), collector.cleared), ([], 1))
 

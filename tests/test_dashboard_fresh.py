@@ -404,7 +404,7 @@ class BeatCollector:
 
 
 class RowAge(unittest.TestCase):
-    def test_a_stale_row_shows_its_check_age_and_is_not_green(self):
+    def test_a_stale_row_is_not_green_and_looks_like_any_other_row(self):
         script = r"""
 const fs = require('fs');
 const helpers = require('./dashboard/static/helpers.js');
@@ -448,10 +448,11 @@ console.log(JSON.stringify({
                                             capture_output=True, text=True).stdout)
         self.assertEqual(result["freshClass"], "merge-ready")
         self.assertNotIn("checks ", result["freshText"])
-        self.assertIn("stale-row", result["staleClass"])
+        # An old reading is never green, and the row does not change how it looks to say so.
+        self.assertEqual(result["staleClass"], "pr-row")
         self.assertNotIn("merge-ready", result["staleTitle"])
-        self.assertIn("checks ", result["staleText"])
-        self.assertIn("ago", result["staleText"])
+        self.assertNotIn("checks ", result["staleText"])
+        self.assertNotIn("ago", result["staleText"])
         self.assertTrue(result["keptStale"])
         self.assertTrue(result["repoStale"])
         self.assertIn("previous push", result["behindText"])

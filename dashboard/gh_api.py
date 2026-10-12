@@ -85,6 +85,8 @@ class GitHubAPI:
         self.graphql_points = 0
         self.graphql_points_total = 0
         self.lowest_remaining: int | None = None
+        # The token's hourly REST counter as its last response reported it: (remaining, limit, reset).
+        self.core: tuple[int, int, float] | None = None
         self.backoff_until = 0.0
         self._family_backoff: dict[str, float] = {}
         self._lock = threading.Lock()
@@ -236,7 +238,18 @@ class GitHubAPI:
             with self._lock:
                 lowest = self.lowest_remaining
                 self.lowest_remaining = int(remaining) if lowest is None else min(lowest, int(remaining))
+        limit, reset = headers.get("x-ratelimit-limit", ""), headers.get("x-ratelimit-reset", "")
+        if headers.get("x-ratelimit-resource") == "core" and remaining.isdigit() and limit.isdigit() and reset.isdigit():
+            with self._lock:
+                self.core = (int(remaining), int(limit), float(reset))
         return remaining
+
+    def core_reserve_low(self) -> bool:
+        """True while less than half the token's hourly REST counter is left, until it resets. The
+        counter is shared with everything else that uses the token, CI included."""
+        with self._lock:
+            core = self.core
+        return core is not None and core[0] * 2 < core[1] and self.clock() < core[2]
 
     def _pause(self, family: str, headers: dict[str, str], spent: bool) -> None:
         """A spent hourly counter pauses only that family. Anything else pauses every request briefly."""
