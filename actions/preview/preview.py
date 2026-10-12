@@ -118,10 +118,15 @@ def wait_for_check(args, reader):
     """Every budget is counted in polls of --poll-seconds, so a test that sleeps 0 between polls
     sees the same budgets as a real run."""
     polls = max(1, args.wait_minutes * 60 // args.poll_seconds)
-    skipped_polls = max(1, -(-SKIPPED_SECONDS // args.poll_seconds))
     running_minutes = args.running_minutes or args.wait_minutes
-    running_polls = running_minutes * 60 // args.poll_seconds
-    skipped = running = 0
+    # The polls a kind of verdict may be seen before the wait fails, and what it then says.
+    budgets = {
+        "only skipped": (max(1, -(-SKIPPED_SECONDS // args.poll_seconds)) - 1,
+                         '"%s" has only skipped runs on %s: no preview. Re-run once the preview has synced.'),
+        "in_progress": (running_minutes * 60 // args.poll_seconds,
+                        '"%%s" ran for %d minutes on %%s without passing' % running_minutes),
+    }
+    seen = dict.fromkeys(budgets, 0)
     verdict = "none"
     for _ in range(polls):
         lines = reader.read(["repos/%s/commits/%s/check-runs" % (args.repo, args.sha), "--paginate",
@@ -130,21 +135,17 @@ def wait_for_check(args, reader):
         verdict = "unread" if lines is None else newest_run(lines)
         if verdict == "completed success":
             return
-        if verdict == "only skipped":
-            skipped += 1
-            if skipped >= skipped_polls:
-                fail('"%s" has only skipped runs on %s: no preview. Re-run once the preview has synced.'
-                     % (args.check, args.sha))
         if verdict in ("completed failure", "completed cancelled", "completed timed_out"):
             fail('"%s" ended in %s, so %s has no preview' % (args.check, verdict.split()[1], args.sha))
-        if verdict.startswith("in_progress"):
-            running += 1
-            if running > running_polls:
-                fail('"%s" ran for %d minutes on %s without passing' % (args.check, running_minutes, args.sha))
+        kind = verdict.split()[0] if verdict.startswith("in_progress") else verdict
+        if kind in seen:
+            seen[kind] += 1
+            if seen[kind] > budgets[kind][0]:
+                fail(budgets[kind][1] % (args.check, args.sha))
         time.sleep(args.interval)
     fail('"%s" did not pass for %s within %d minutes; it ran for about %d of them, and was queued for a '
          "runner or not yet created the rest (last seen: %s)"
-         % (args.check, args.sha, args.wait_minutes, running * args.poll_seconds // 60, verdict))
+         % (args.check, args.sha, args.wait_minutes, seen["in_progress"] * args.poll_seconds // 60, verdict))
 
 
 def find(args):
