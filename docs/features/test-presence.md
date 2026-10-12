@@ -21,5 +21,5 @@ Add `new-source-has-test` to `.vibe-verifier`; `--source` and `--exclude` narrow
 ## Gotchas
 
 - It proves a test exists, not that it tests anything; `changed-code-mutation` measures that.
-- A Python file is a test only by name: `test_*.py`, `*_test.py`, `test-*.py`, `*-test.py` or `*.test.py`.
+- A Python file is a test only by name: `test_*.py`, `*_test.py`, `test-*.py`, `*-test.py` or `*.test.py`. The list lives in `gates/_contract.py`, and `cognitive-complexity` and `changed-code-mutation` read the same one.
   A helper the tests import is source, and needs a test that imports it.

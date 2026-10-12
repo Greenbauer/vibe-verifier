@@ -488,8 +488,9 @@ A lane made before `store_fs` existed has an XFS store. To move it to btrfs ("A 
   and only then the unit's stop. It waits up to 15 minutes for the slots that are on a job. Past
   that it gives up: the store was not touched, and the listener, its health timer and the reaper's
   timer are started again;
-- stops the reaper, unmounts the store, renames the XFS image to
-  `/var/lib/<lane>/store.img.xfs-<UTC time>`, and never deletes it;
+- stops the reaper and clears the failed state a reaper stopped mid-run is left in (otherwise
+  `--check` right after the conversion reports a failed reaper until its next run), unmounts the
+  store, renames the XFS image to `/var/lib/<lane>/store.img.xfs-<UTC time>`, and never deletes it;
 - makes a new sparse btrfs image at `/var/lib/<lane>/store.img`, rewrites the store's mount unit
   for btrfs, and mounts it at the same path;
 - mounts the XFS image read-only at `/var/lib/<lane>/store-xfs` and copies each carried

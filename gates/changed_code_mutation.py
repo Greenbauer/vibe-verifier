@@ -14,7 +14,8 @@ together. Below --break the gate fails and lists every surviving mutant at its l
 it replaced. Mutants that timed out, did not compile, crashed the runner or carry a
 `// Stryker disable` comment are left out of the score and reported; so are changed Python lines
 mutmut makes no mutant on (decorated functions, nested classes, `# pragma: no mutate`). No mutant
-on the changed lines is a pass.
+on the changed lines is a pass. Tests are never mutated: a Python test is conftest.py or a file named as
+in _contract.PY_TEST_NAMES (test_*.py, *_test.py, test-*.py, *-test.py, *.test.py), the names new-source-has-test reads.
 
 The project's own test runner and dependencies must be installed before the gate runs: Vitest
 2.x to 4.x (`npm ci`) for JS and TS, pytest in --python's environment for Python. Without them,
@@ -38,14 +39,14 @@ import sys
 import tempfile
 import time
 
-from _contract import CannotRun, Finding, changed_files, git, matches, renamed, resolve_base, run_gate, tracked_files
+from _contract import PY_TESTS, CannotRun, Finding, changed_files, git, matches, renamed, resolve_base, run_gate, tracked_files
 from _mutation_python import clip, mutate
 from _tools import ensure_node_tool, run_tool
 
 GATE = "changed-code-mutation"
 DEFAULT_SOURCE = ["**/*." + ext for ext in ("ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "py")]
 ALWAYS_EXCLUDED = ["**/*.test.*", "**/*.spec.*", "**/__tests__/**", "**/*.d.ts", "**/*.config.*", "**/*.stories.*",
-                   "**/node_modules/**", "**/test_*.py", "**/*_test.py", "**/conftest.py"]
+                   "**/node_modules/**", "**/conftest.py"] + PY_TESTS
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 # Under Vitest 5 the pinned Stryker 10.0.0 kills no mutant at all (measured 2026-10-05: 8 of 8 survived
 # a test that kills all 8 under Vitest 2.1.9, 3.2.7 and 4.1.10), so outside this range there is no verdict.
