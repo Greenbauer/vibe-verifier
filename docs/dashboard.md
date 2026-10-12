@@ -440,11 +440,11 @@ reported REST limit/remaining/reset values, and the lowest remaining count seen 
 (`lowest_remaining`; GitHub meters some endpoint families against a separate counter that the reported
 values omit). A spent counter pauses only its endpoint family until its reset. GraphQL is metered in points, so GitHub refuses a query that costs more than what is left while the counter still reads above zero; that pauses only the GraphQL reads, and the checks keep loading. Rate limits and source errors return partial or briefly
 stale data without advancing its successful sample timestamp. Authentication or access revocation
-clears derived repository data immediately, in memory and in the state directory. Any other failure (a rate limit, a timeout, a spent budget, a failure this version does not name) keeps the last pull requests and bot rows, and the banner over the list says some GitHub data is unavailable. A restart with a state directory serves the reading from before it while that reading is under three minutes old; an older one is not served until GitHub has been read again. When the page's own request fails it keeps the last snapshot and says the refresh failed. A page opened while the service is down tries again every five seconds while it is visible, one request at a time.
+clears derived repository data immediately, in memory and in the state directory. Any other failure (a rate limit, a timeout, a spent budget, a failure this version does not name) keeps the last pull requests and bot rows, and the banner over the list says some GitHub data is unavailable. A restart with a state directory serves the reading from before it; one over three minutes old is served only after the fetch has waited up to 8 seconds for GitHub. When the page's own request fails it keeps the last snapshot and says the refresh failed. A page opened while the service is down tries again every five seconds while it is visible, one request at a time.
 
 Every fetch is answered from a current reading: the server reads GitHub in the background whether
 or not a page is open (see [collection](dashboard-data.md#cache-and-timestamp-contracts)), and a fetch whose
-reading is more than three minutes old waits for the pass under way. So the page never changes how
+reading is more than three minutes old waits up to 8 seconds for the pass under way. So the page never changes how
 it looks to say data is old: no dimmed rows, no yellow ages, no "stale" or "refreshing" flags in
 the header, no gray bot states. The header says when the reading on screen was taken
 (`GitHub sampled Oct 8, 2026, 3:02 PM`). An old check reading is still never green (the title rules

@@ -25,6 +25,9 @@ STALE_GRACE_SECONDS = 180
 # way. Passes run in the background one ACTIVE_TTL_SECONDS after the last ended, so in steady
 # operation no fetch waits: only the first after a start, or after GitHub could not be read.
 CURRENT_SECONDS = STALE_GRACE_SECONDS
+# The longest a fetch waits for that pass before it is served what there is. A cold pass can take
+# minutes, and the deploy health check gives a restarted dashboard 10 seconds a request.
+FETCH_WAIT_SECONDS = 8
 
 
 def forgets_kept_state(snapshot):
@@ -400,9 +403,10 @@ class DashboardService:
         elif start:
             self._perform_refresh(now_mono, now)
         with self._condition:
-            # A reading too old to be current is not served while the pass that replaces it runs.
-            while self._refreshing and not self._current():
-                self._condition.wait()
+            # A reading too old to be current waits a few seconds for the pass that replaces it.
+            deadline = time.monotonic() + FETCH_WAIT_SECONDS
+            while self._refreshing and not self._current() and time.monotonic() < deadline:
+                self._condition.wait(deadline - time.monotonic())
             github = copy.deepcopy(self._github or self._empty_github("loading"))
             github["refreshing"] = self._refreshing
         # A head read cannot make a title green, because green needs a pass's check detail.

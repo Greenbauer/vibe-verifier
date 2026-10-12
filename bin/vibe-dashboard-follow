@@ -152,8 +152,8 @@ class CheckRuns:
 
 def healthy(port: int, seconds: float = HEALTH_SECONDS) -> bool:
     """The dashboard on this loopback port answers GET /api/dashboard with 200 and version 1 before the
-    deadline. A restarted server binds within a second or two; its first answer serves cached or
-    loading data, so this does not wait on GitHub."""
+    deadline. A restarted server binds within a second or two; its first answer waits at most 8
+    seconds on GitHub (dashboard/service.py FETCH_WAIT_SECONDS), inside each request's 10."""
     deadline = time.monotonic() + seconds
     while True:
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)

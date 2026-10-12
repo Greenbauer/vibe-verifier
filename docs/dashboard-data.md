@@ -40,7 +40,7 @@ Only a job whose GitHub status is `in_progress` makes a bot `working`. A queued 
 - Repository `sampled_at` records when that repository was read successfully.
 - Bot `sampled_at` records an active observation or a complete active scan. `history_sampled_at` records observed history; separate coverage fields identify partial results.
 - A full pass runs in the background one minute after the last one ended, whether or not a page is open, so a fetch is answered from a reading at most about one pass old. Background passes stop while the token's hourly REST counter (`X-Ratelimit-Resource: core` on a real response) is below half, until it resets: CI spends the same counter. Measured 2026-10-12 with a page open, which costs the same: a steady pass on three live dashboards made 6 to 200 counted calls (304s are free) and took 30 to 150 seconds.
-- A fetch whose reading's pass ended more than 180 seconds ago (a first start, a kept reading that old, or background passes held back) waits for the pass under way; concurrent fetches share it. A pass that fails ends the wait, and the fetch gets the last reading with the error.
+- A fetch whose reading's pass ended more than 180 seconds ago (a first start, a kept reading that old, or background passes held back) waits up to 8 seconds for the pass under way, then is served what there is; concurrent fetches share that pass. The bound keeps a cold pass, which can take minutes, from stalling a reload or the deploy health check. A pass that fails ends the wait, and the fetch gets the last reading with the error.
 - Subscription inventory is reused for five minutes. Reusing it does not reset its age.
 - Fully completed job lists are cached by repository, run ID, and run attempt until the run is seven days old. Active or partly completed jobs are never placed in that cache.
 - Any failure other than lost access keeps the last repository rows and bot history and marks them stale: a rate limit, a timeout, a spent budget, an unreadable answer, and a failure code this version does not name. Age does the same after 180 seconds: the rows stay, `stale` becomes true, and the two-hour and seven-day history windows still drop runs by their own timestamps. A pull request is merge-ready only when its checks were read on this pass and are still within that 180 seconds. An older check reading keeps the row, including its checks, clears the green title, sets the pull's `stale`, and sets `checks_age_seconds`. A head or rollup that has since changed keeps those same checks and says newer ones are loading. A failed page refresh keeps the last snapshot on screen, with those same titles cleared. The page does not draw `stale` or `checks_age_seconds`: they only keep a title from turning green.
@@ -97,7 +97,7 @@ subscription inventory and the rate-limit pauses are not kept.
   just listed to this token.
 
 On a start with a kept `reading` whose pass ended under 180 seconds ago, the page is served that
-reading at once, with `github.restored` true, while the first pass runs; an older one waits for it. Every repository row and every bot in it is `stale`, the reading
+reading at once, with `github.restored` true, while the first pass runs; an older one is served after up to 8 seconds' wait for it. Every repository row and every bot in it is `stale`, the reading
 keeps its own `sampled_at`, and no pull request in it is merge-ready: a title turns green only on
 checks this process read. A pass that fails without losing access keeps showing it. A row carried
 from it into a later reading, because that repository could not be read, keeps `restored` true.
@@ -116,4 +116,4 @@ serve, and `tests/test_dashboard_restart_usage.py` the same for token history.
 
 ## Blocking and nonblocking snapshots
 
-`snapshot()` remains blocking and is used by tests and direct measurements. `snapshot(nonblocking=True)` returns the cached snapshot when its pass ended within 180 seconds, and otherwise waits for the daemon refresh under way. Concurrent callers share that refresh. Collection does not hold the cache read lock, and a failed background refresh releases the refresh slot so a later request can retry.
+`snapshot()` remains blocking and is used by tests and direct measurements. `snapshot(nonblocking=True)` returns the cached snapshot when its pass ended within 180 seconds, and otherwise waits up to 8 seconds for the daemon refresh under way. Concurrent callers share that refresh. Collection does not hold the cache read lock, and a failed background refresh releases the refresh slot so a later request can retry.
