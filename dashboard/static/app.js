@@ -429,46 +429,42 @@
     item.asks.forEach(ask => parts.push(
       el("h3", {}, `Ask · ${formatTime(ask.raised_at)}${ask.open ? " · awaiting a ruling" : ""}`), workText(ask.question),
       ask.ruling ? el("p", {}, el("b", {}, `Ruling (${formatTime(ask.ruled_at)}): `), ask.ruling) : null));
+    if (!parts.length) return null;
     return el("details", { class: "work-detail" },
       el("summary", {}, `Request${item.updates.length ? ` and ${item.updates.length} ${kind.toLowerCase()}${item.updates.length === 1 ? "" : "s"}` : ""}${item.asks.length ? `, ${item.asks.length} ask${item.asks.length === 1 ? "" : "s"}` : ""}`),
       parts);
   }
 
-  function workRow(item, now) {
+  function workCard(item, now) {
     const updated = ageClass(item.updated_at, now);
-    const facts = [
-      item.source,
-      item.requester ? `from ${item.requester}` : null,
-      item.claimed_by ? `claimed by ${item.claimed_by}` : (item.phase === "done" ? null : "unclaimed"),
-      `created ${since(item.created_at, now)} ago`
-    ].filter(Boolean).join(" · ");
-    return el("article", { class: "work-row" },
-      el("div", { class: "work-main" },
-        el("div", { class: "work-title" }, el("span", { class: "mono muted" }, item.label), " ",
-          item.item_url ? externalLink(item.title, item.item_url) : el("b", {}, item.title)),
-        el("small", { class: "muted" }, facts),
-        item.todo ? el("p", { class: "work-todo" }, item.todo.reason) : null,
-        workDetail(item, now)),
-      el("div", { class: "work-side" }, badge(item.status),
-        el("small", { class: updated || "muted" }, `updated ${since(item.updated_at, now)} ago`),
+    const who = [item.requester ? `from ${item.requester}` : null,
+      item.claimed_by ? `claimed by ${item.claimed_by}` : (item.phase === "done" ? null : "unclaimed")].filter(Boolean).join(" · ");
+    return el("article", { class: "work-card" },
+      el("div", { class: "work-card-head" }, el("span", { class: "mono muted" }, item.label), badge(item.status)),
+      el("div", { class: "work-title" }, item.item_url ? externalLink(item.title, item.item_url) : el("b", {}, item.title)),
+      el("small", { class: "muted" }, [item.source, who].filter(Boolean).join(" · ")),
+      el("small", {}, el("span", { class: "muted" }, `created ${since(item.created_at, now)} ago · `),
+        el("span", { class: updated || "muted" }, `updated ${since(item.updated_at, now)} ago`)),
+      item.waiting ? el("p", { class: "work-reason" }, item.waiting.reason) : null,
+      el("div", { class: "work-links" },
         item.pr_number ? (externalLink(`PR #${item.pr_number}`, item.pr_url) || el("small", {}, `PR #${item.pr_number}`)) : null,
-        externalLink("Preview", item.preview_url)));
+        externalLink("Preview", item.preview_url)),
+      workDetail(item, now));
   }
 
-  function workSection(title, subtitle, items, now, open = true) {
-    const body = items.length ? items.map(item => workRow(item, now)) : [el("p", { class: "muted" }, "None.")];
-    const head = el("div", { class: "panel-title" }, el("h2", {}, `${title} (${items.length})`), el("span", { class: "muted" }, subtitle));
-    return open ? el("section", { class: "panel" }, head, el("div", { class: "work-list" }, body))
-      : el("details", { class: "panel" }, el("summary", {}, head), el("div", { class: "work-list" }, body));
+  function workColumn(key, title, subtitle, items, now, collapsed = false) {
+    const cards = items.length ? items.map(item => workCard(item, now)) : [el("p", { class: "muted" }, "None.")];
+    const head = el("div", { class: "work-column-head" }, el("h2", {}, `${title} (${items.length})`), el("small", { class: "muted" }, subtitle));
+    return el("section", { class: `panel work-column work-${key}`, "aria-label": title }, head,
+      collapsed && items.length ? el("details", {}, el("summary", {}, "Show"), cards) : cards);
   }
 
   function renderWork() {
     const work = snapshot.work || { configured: false, sources: [] };
-    content.replaceChildren(heading("Work", "Plans and requests a session could pick up, and what waits on a person."));
+    content.replaceChildren(heading("Work", "Plans and requests: what is to do, in progress, waiting on you, and done."));
     if (!work.configured) { content.append(empty("No work sources", "This dashboard has no work_sources configured.")); return; }
     const now = Date.now();
     work.sources.forEach(source => {
-      source.items.forEach(item => { item.source_kind = source.kind; });
       const sampled = source.sampled_at ? `${source.label}: read ${formatTime(source.sampled_at)}` : source.label;
       if (source.loading) content.append(sourceBanner(`${source.label}: reading…`));
       else if (source.error) content.append(sourceBanner(`${sampled}. ${WORK_ERRORS[source.error] || "The source could not be read."}${source.available ? " Showing the last reading." : ""}`, "warning"));
@@ -477,12 +473,12 @@
     });
     const groups = workGroups(work, now);
     content.append(el("p", { class: "muted work-summary" },
-      `${groups.todo.length} waiting on a person · ${groups.active.length} in flight · ${groups.queued.length} queued · ${groups.stale} not updated in over two weeks`));
-    content.append(
-      workSection("Waiting on a person", "Blocked, an Ask without a ruling, or a PR waiting on a merge", groups.todo, now),
-      workSection("In flight", "Being worked, oldest first", groups.active, now),
-      workSection("Queued", "Not picked up yet, oldest first; red means no update in over two weeks", groups.queued, now),
-      workSection("Done", "Merged or closed", groups.done, now, false));
+      `${groups.todo.length} to do · ${groups.progress.length} in progress · ${groups.waiting.length} waiting on you · ${groups.stale} open items not updated in over two weeks`));
+    content.append(el("div", { class: "work-board" },
+      workColumn("todo", "To do", "Not picked up yet, oldest first", groups.todo, now),
+      workColumn("progress", "In progress", "Claimed or being built", groups.progress, now),
+      workColumn("waiting", "Waiting on you", "Blocked, an Ask without a ruling, or a PR to merge", groups.waiting, now),
+      workColumn("done", "Done", "Merged or closed", groups.done, now, true)));
   }
 
   function metric(label, value, percent) {

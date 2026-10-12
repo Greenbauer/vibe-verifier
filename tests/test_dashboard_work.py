@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dashboard.config import ConfigError, WorkSource, load_config
-from dashboard.work import McpClient, WorkError, WorkFeed, _rpc_message, collect_calls, collect_plans, read_token
+from dashboard.work import McpClient, RestClient, WorkError, WorkFeed, _rpc_message, collect_calls, collect_plans, read_token
 from test_dashboard_config_telemetry import config_value
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -47,7 +47,7 @@ class FakeServer:
         self.calls.append((body["method"], body["params"].get("name"), body["params"].get("arguments"),
                            request.get_header("Authorization")))
         if self.status != 200:
-            raise urllib.error.HTTPError(request.full_url, self.status, "denied", {}, None)
+            raise urllib.error.HTTPError(request.full_url, self.status, "denied", {}, io.BytesIO())
         if body["method"] == "initialize":
             result = {"protocolVersion": "2025-06-18", "capabilities": {}}
         else:
@@ -71,6 +71,20 @@ class Reply(io.BytesIO):
         return False
 
 
+class FakeApi:
+    """Answers GETs like the plans read API: JSON, 404 for an unknown plan."""
+
+    def __init__(self, routes, status=200):
+        self.routes, self.status, self.calls = routes, status, []
+
+    def __call__(self, request, timeout):
+        self.calls.append((request.get_method(), request.full_url, request.get_header("Authorization")))
+        path = request.full_url.split("/api/v1", 1)[1]
+        if self.status != 200 or path not in self.routes:
+            raise urllib.error.HTTPError(request.full_url, self.status if self.status != 200 else 404, "no", {}, io.BytesIO())
+        return Reply(json.dumps(self.routes[path]))
+
+
 def plans_server():
     plans = [plan_row("06f21214-0000", "submitted"),
              plan_row("dec46811-0000", "merged", prNumber=258),
@@ -85,11 +99,13 @@ def plans_server():
                           "amendments": [{"amendmentId": "a1", "body": "first", "createdAt": "2026-08-14T11:36:00Z"},
                                          {"amendmentId": "a2", "body": "second", "createdAt": "2026-09-01T09:00:00Z"}]},
     }
-    return FakeServer({
-        "list_plans": lambda arguments: {"plans": plans},
-        "get_plan": lambda arguments: {**next(row for row in plans if row["planId"] == arguments["planId"]),
-                                       **details[arguments["planId"]]},
-    })
+    routes = {"/plans?limit=100": {"plans": plans}}
+    for row in plans:
+        if row["planId"] in details:
+            routes["/plans/" + row["planId"]] = {**row, **details[row["planId"]]}
+    # Listed, then removed before its read: a 404 the list still shows without detail.
+    plans.append(plan_row("9a682a92-0000", "submitted"))
+    return FakeApi(routes)
 
 
 def calls_server():
@@ -188,10 +204,16 @@ class Protocol(unittest.TestCase):
             _rpc_message(stream, 9)
 
     def test_the_bearer_goes_in_the_header_and_failures_have_codes(self):
-        server = plans_server()
-        McpClient("https://queue.example.test/api/mcp", "secret", server).call("list_plans", {"limit": 1})
+        server = calls_server()
+        McpClient("https://queue.example.test/api/mcp", "secret", server).call("list_open_calls", {"limit": 1})
         self.assertEqual([call[0] for call in server.calls], ["initialize", "tools/call"])
         self.assertTrue(all(call[3] == "Bearer secret" for call in server.calls))
+        api = plans_server()
+        RestClient("https://q.example.test/api/v1/", "secret", api).get("/plans?limit=100")
+        self.assertEqual(api.calls, [("GET", "https://q.example.test/api/v1/plans?limit=100", "Bearer secret")])
+        with self.assertRaises(WorkError) as missing:
+            RestClient("https://q.example.test/api/v1", "x", api).get("/plans/unknown")
+        self.assertEqual(missing.exception.code, "not_found")
         with self.assertRaises(WorkError) as rejected:
             McpClient("https://q.example.test", "x", FakeServer({}, status=401)).call("list_plans", {})
         self.assertEqual(rejected.exception.code, "rejected")
@@ -205,28 +227,30 @@ class Queues(unittest.TestCase):
     source = WorkSource("plans", "Plans", "plans", "https://q.example.test/api/mcp", Path("/x"),
                         "octocat/example", "https://q.example.test")
 
-    def test_plans_read_every_amendment_oldest_first_and_only_read_tools_are_called(self):
+    def test_plans_read_every_amendment_oldest_first_with_gets_only(self):
         server = plans_server()
-        items, truncated = collect_plans(McpClient("https://q.example.test", "t", server), self.source)
+        items, truncated = collect_plans(RestClient("https://q.example.test/api/v1", "t", server), self.source)
         self.assertFalse(truncated)
         by_id = {item["id"]: item for item in items}
-        self.assertEqual({call[1] for call in server.calls if call[1]}, {"list_plans", "get_plan"})
+        self.assertEqual({call[0] for call in server.calls}, {"GET"})
         # A done plan is listed without reading its detail.
-        self.assertNotIn("dec46811-0000", [call[2].get("planId") for call in server.calls if call[1] == "get_plan"])
+        self.assertNotIn("https://q.example.test/api/v1/plans/dec46811-0000", [call[1] for call in server.calls])
+        # A plan removed between the list and its read stays listed, without detail.
+        self.assertFalse(by_id["9a682a92-0000"]["detail"])
         self.assertEqual(by_id["dec46811-0000"]["phase"], "done")
-        self.assertIsNone(by_id["dec46811-0000"]["todo"])
+        self.assertIsNone(by_id["dec46811-0000"]["waiting"])
         live = by_id["5ad53758-0000"]
         self.assertEqual(live["status"], "pr_ready")
         self.assertEqual([update["body"] for update in live["updates"]], ["first", "second"])
-        self.assertEqual(live["todo"], {"who": "operator", "reason": "PR #738 waits on review and merge"})
+        self.assertEqual(live["waiting"], {"who": "operator", "reason": "PR #738 waits on review and merge"})
         self.assertEqual(live["pr_url"], "https://github.com/octocat/example/pull/738")
         self.assertEqual(live["item_url"], "https://q.example.test/plans/5ad53758-0000")
         self.assertEqual(live["preview_url"], "https://example-git-branch.example.test")
         self.assertEqual(live["claimed_by"], "dev@example.test")
         self.assertEqual(live["updated_at"], "2026-10-08T19:05:04Z")
-        self.assertEqual(by_id["5d2e1d27-0000"]["todo"]["reason"], "Blocked, with no reason recorded")
+        self.assertEqual(by_id["5d2e1d27-0000"]["waiting"]["reason"], "Blocked, with no reason recorded")
         queued = by_id["06f21214-0000"]
-        self.assertEqual((queued["phase"], queued["todo"], queued["body"]), ("queued", None, "# Plan\nBody"))
+        self.assertEqual((queued["phase"], queued["waiting"], queued["body"]), ("queued", None, "# Plan\nBody"))
 
     def test_calls_show_follow_ups_and_an_ask_without_a_ruling_waits_on_the_requester(self):
         source = WorkSource("calls", "Calls", "calls", "https://q.example.test/api/mcp", Path("/x"))
@@ -238,13 +262,13 @@ class Queues(unittest.TestCase):
         self.assertEqual(blocked["updates"], [{"body": "also this", "created_at": "2026-08-12T10:00:00Z", "refs": ["Login screen"]}])
         self.assertEqual(blocked["asks"][0]["ruling"], "The left one")
         self.assertFalse(blocked["asks"][0]["open"])
-        self.assertEqual(blocked["todo"]["reason"], "Blocked, with no reason recorded")
+        self.assertEqual(blocked["waiting"]["reason"], "Blocked, with no reason recorded")
         self.assertEqual(blocked["requester"], "Boss")
         self.assertIsNone(blocked["item_url"])
         waiting = by_id["bbbb-2"]
-        self.assertEqual(waiting["todo"], {"who": "requester", "reason": "Ask awaiting a ruling: Ship on Friday?"})
+        self.assertEqual(waiting["waiting"], {"who": "requester", "reason": "Ask awaiting a ruling: Ship on Friday?"})
         self.assertEqual(waiting["claimed_by"], "another session")
-        self.assertEqual(by_id["cccc-3"]["todo"]["who"], "operator")
+        self.assertEqual(by_id["cccc-3"]["waiting"]["who"], "operator")
         self.assertIsNone(by_id["cccc-3"]["pr_url"])
 
 
@@ -259,7 +283,7 @@ class Feed(unittest.TestCase):
         self.wall = [NOW]
 
     def feed(self, opener):
-        source = WorkSource("plans", "Plans", "plans", "https://q.example.test/api/mcp", self.token)
+        source = WorkSource("plans", "Plans", "plans", "https://q.example.test/api/v1", self.token)
 
         class Config:
             work_sources = (source,)
@@ -274,17 +298,17 @@ class Feed(unittest.TestCase):
         servers = {"current": plans_server()}
         feed = self.feed(lambda request, timeout: servers["current"](request, timeout))
         first = feed.snapshot(background=False)["sources"][0]
-        self.assertEqual((first["error"], first["stale"], len(first["items"])), (None, False, 4))
+        self.assertEqual((first["error"], first["stale"], len(first["items"])), (None, False, 5))
         # Not due again until the refresh interval has passed.
-        servers["current"] = FakeServer({}, status=503)
-        self.assertEqual(len(feed.snapshot(background=False)["sources"][0]["items"]), 4)
+        servers["current"] = FakeApi({}, status=503)
+        self.assertEqual(len(feed.snapshot(background=False)["sources"][0]["items"]), 5)
         self.clock[0] += 301
         self.wall[0] += timedelta(minutes=5)
         failed = feed.snapshot(background=False)["sources"][0]
         self.assertEqual((failed["error"], failed["stale"], failed["available"], len(failed["items"])),
-                         ("unavailable", True, True, 4))
+                         ("unavailable", True, True, 5))
         self.clock[0] += 301
-        servers["current"] = FakeServer({}, status=401)
+        servers["current"] = FakeApi({}, status=401)
         lost = feed.snapshot(background=False)["sources"][0]
         self.assertEqual((lost["error"], lost["available"], lost["items"]), ("rejected", False, []))
 
@@ -300,31 +324,32 @@ class Page(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
-    def test_items_group_oldest_first_and_a_waiting_item_is_listed_once(self):
+    def test_the_board_columns_are_oldest_first_and_a_waiting_item_is_in_one_column(self):
         result = self.node(r'''
 const {workGroups, parseRoute, httpsUrl} = require('./dashboard/static/helpers.js');
 const now = Date.parse('2026-10-12T15:00:00Z');
-const item = (id, phase, created, updated, todo) => ({id, phase, created_at: created, updated_at: updated, todo});
-const work = {sources: [{label: 'Plans', items: [
+const item = (id, phase, created, updated, waiting) => ({id, phase, created_at: created, updated_at: updated, waiting});
+const work = {sources: [{label: 'Plans', kind: 'plans', items: [
   item('q-new', 'queued', '2026-10-08T00:00:00Z', '2026-10-08T00:00:00Z', null),
   item('q-old', 'queued', '2026-04-14T00:00:00Z', '2026-05-15T00:00:00Z', null),
   item('blocked', 'active', '2026-09-25T00:00:00Z', '2026-10-08T00:00:00Z', {who: 'requester', reason: 'Blocked'}),
+  item('asked', 'queued', '2026-09-20T00:00:00Z', '2026-10-08T00:00:00Z', {who: 'requester', reason: 'Ask'}),
   item('working', 'active', '2026-08-10T00:00:00Z', '2026-10-08T00:00:00Z', null),
   item('merged', 'done', '2026-05-01T00:00:00Z', '2026-08-12T00:00:00Z', null)]}]};
 const g = workGroups(work, now);
 const ids = key => g[key].map(row => row.id);
-console.log(JSON.stringify({todo: ids('todo'), active: ids('active'), queued: ids('queued'), done: ids('done'),
-  stale: g.stale, source: g.todo[0].source, route: parseRoute('#/work').view,
+console.log(JSON.stringify({todo: ids('todo'), progress: ids('progress'), waiting: ids('waiting'), done: ids('done'),
+  stale: g.stale, source: g.waiting[0].source, kind: g.waiting[0].source_kind, route: parseRoute('#/work').view,
   links: [httpsUrl('https://preview.example.test/x'), httpsUrl('http://preview.example.test'),
           httpsUrl('javascript:alert(1)'), httpsUrl('https://u:p@x.test')]}));
 ''')
-        self.assertEqual(result["todo"], ["blocked"])
-        self.assertEqual(result["active"], ["working"])
-        self.assertEqual(result["queued"], ["q-old", "q-new"])
+        self.assertEqual(result["todo"], ["q-old", "q-new"])
+        self.assertEqual(result["progress"], ["working"])
+        self.assertEqual(result["waiting"], ["asked", "blocked"])
         self.assertEqual(result["done"], ["merged"])
         # Only open items count as not updated in two weeks; the merged one does not.
         self.assertEqual(result["stale"], 1)
-        self.assertEqual(result["source"], "Plans")
+        self.assertEqual((result["source"], result["kind"]), ("Plans", "plans"))
         self.assertEqual(result["route"], "work")
         self.assertEqual(result["links"], ["https://preview.example.test/x", None, None, None])
 

@@ -196,55 +196,60 @@ list does not use that search: each named repository is listed on its own.
 
 ## Work view
 
-`#/work` lists the plans and requests a session could pick up, and what waits on a person. It appears
-in the menu only when the configuration has `work_sources`, a list of at most eight read-only queues:
+`#/work` is a board of the plans and requests a session could pick up, and of what waits on a person.
+It appears in the menu only when the configuration has `work_sources`, a list of at most eight
+read-only queues:
 
 ```json
 "work_sources": [
-  {"id": "plans", "label": "Plans", "kind": "plans", "endpoint": "https://plans.example.test/api/mcp",
+  {"id": "plans", "label": "Plans", "kind": "plans", "endpoint": "https://plans.example.test/api/v1",
    "token_file": "/etc/vibe-dashboard/example/plans.token", "repository": "octocat/example",
-   "app_origin": "https://plans.example.test"}
+   "app_origin": "https://plans.example.test"},
+  {"id": "calls", "label": "Calls", "kind": "calls", "endpoint": "https://calls.example.test/api/mcp",
+   "token_file": "/etc/vibe-dashboard/example/calls.token"}
 ]
 ```
 
-Each source is an MCP server reached over HTTPS (streamable HTTP, `Authorization: Bearer`), with
-the bearer read from `token_file` on every refresh. The file must be a regular file of the account
-running the dashboard that no other account can read (mode 0600), so a replaced key is used without a
-restart and the key never enters the configuration. `id` is a lowercase slug, `label` what the page
-shows. `kind` says which tools the server has; the dashboard calls only these read tools:
+Each source is reached over HTTPS with `Authorization: Bearer`, the bearer read from `token_file` on
+every refresh. The file must be a regular file of the account running the dashboard that no other
+account can read (mode 0600), so a replaced key is used without a restart and the key never enters
+the configuration. Give each source a read-only key where the source has one. `id` is a lowercase
+slug, `label` what the page shows. `kind` says how the source is read; the dashboard makes only
+these reads:
 
-| `kind` | Lists with | Reads each open item with | What an item carries |
-|---|---|---|---|
-| `plans` | `list_plans` `{limit: 100}` | `get_plan` `{planId}` | the plan body, every amendment oldest first, status (the server's PR-derived one), claimant, PR, preview, blocked reason |
-| `calls` | `list_open_calls` `{limit: 100}` | `get_call` `{callId}` | the brief, every follow-up with its design references, every ask with its ruling, status, submitter, claim, PR, preview |
+| `kind` | `endpoint` is | Lists with | Reads each open item with | What an item carries |
+|---|---|---|---|---|
+| `plans` | a read API's base URL | `GET <endpoint>/plans?limit=100`, answering `{"plans": [...]}` | `GET <endpoint>/plans/<planId>` | the plan body (`planMarkdown`), every amendment oldest first (`amendments`), status, claimant, PR, preview, blocked reason |
+| `calls` | an MCP server (streamable HTTP) | the `list_open_calls` tool, `{limit: 100}` | the `get_call` tool, `{callId}` | the brief, every follow-up with its design references, every ask with its ruling, status, submitter, claim, PR, preview |
 
-A merged or closed item is listed without reading its detail. `repository` (OWNER/NAME of the
-configured owner) turns a PR number into a GitHub link; `app_origin` (an HTTPS origin) links the item
-to `<app_origin>/plans/<id>` or `<app_origin>/calls/<id>`. A design reference shows its label only:
-the links a server signs expire.
+A merged or closed item is listed without reading its detail, and an item that is gone by the time
+it is read (404) stays listed without one. `repository` (OWNER/NAME of the configured owner) turns a
+PR number into a GitHub link; `app_origin` (an HTTPS origin) links the item to
+`<app_origin>/plans/<id>` or `<app_origin>/calls/<id>`. A design reference shows its label only: the
+links a server signs expire.
 
-The page groups items, oldest first:
+The board has four columns, each oldest first:
 
-- **Waiting on a person**: an ask with no ruling, a `blocked` item (with its reason, or "no reason
-  recorded"), an `await_answer` item, or a `pr_ready` item (its PR waits on review and merge). Each
-  is listed here once, not again under its phase.
-- **In flight**: any other status that is not queued or done.
-- **Queued**: `submitted` or `backlog`.
-- **Done**: `merged` or `closed`, collapsed.
+- **To do**: `submitted` or `backlog`, not picked up yet.
+- **In progress**: any other open status, claimed or being built.
+- **Waiting on you**: an ask with no ruling, a `blocked` item (with its reason, or "no reason
+  recorded"), an `await_answer` item, or a `pr_ready` item (its PR waits on review and merge). An
+  item here is in no other column. On a phone the columns stack and this one comes first.
+- **Done**: `merged` or `closed`, behind a Show toggle.
 
-Every row shows when it was created and last updated; the update age is yellow after three days and
-red after two weeks, and the summary line counts open items not updated in over two weeks, so a stale
-queue reads as stale. A row's details hold the request text, amendments or follow-ups, and asks, as
-plain text.
+Every card shows when the item was created and last updated; the update age is yellow after three
+days and red after two weeks, and the summary line counts open items not updated in over two weeks,
+so a stale backlog reads as stale. A card's details hold the request text, amendments or follow-ups,
+and asks, as plain text.
 
 Sources are read in the background at most every five minutes while a page polls, one after another.
 A source that fails keeps its last items, marked stale with the reason (`unreachable`, `unavailable`,
 `invalid_response`, `tool_error`); a refused key (`rejected`) forgets them, as lost GitHub access
 does. A source never read says why (`credential_missing`, `credential_unsafe`) instead of showing an
-empty queue. Nothing is kept across a restart, and the dashboard never writes to a source: there is
+empty board. Nothing is kept across a restart, and the dashboard never writes to a source: there is
 no claim, status, amend, or answer control. More than 100 items in a source shows the oldest 100 and
-says so. `tests/test_dashboard_work.py` covers the configuration, the key file, the protocol, both
-kinds, the groups, and failure handling.
+says so. `tests/test_dashboard_work.py` covers the configuration, the key file, both transports, both
+kinds, the columns, and failure handling.
 
 ## Optional private HTTPS proxy
 

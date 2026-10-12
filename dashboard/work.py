@@ -1,14 +1,15 @@
 """Read-only work queues: plans and calls a session could pick up, and what waits on a person.
 
-Each configured source is an MCP server reached over HTTPS with a bearer read from a local file. Two
-kinds are understood, by the tools they expose:
+Each configured source is reached over HTTPS with a bearer read from a local file. Two kinds:
 
-- ``plans``: ``list_plans`` (rows with ``planId``, ``planLabel``, ``status``, ``claimedBy``,
-  ``blockedReason``, ...) and ``get_plan`` (the row plus ``planMarkdown`` and every amendment).
-- ``calls``: ``list_open_calls`` (rows with ``id``, ``label``, ``status``, ``submitter``, ``claim``,
-  ...) and ``get_call`` (the row plus ``brief``, ``followups``, ``designRefs`` and ``asks``).
+- ``plans``: a read API. ``GET <endpoint>/plans?limit=100`` answers ``{"plans": [...]}`` (rows with
+  ``planId``, ``planLabel``, ``status``, ``claimedBy``, ``blockedReason``, ...) and
+  ``GET <endpoint>/plans/<planId>`` the row plus ``planMarkdown`` and every amendment.
+- ``calls``: an MCP server. ``list_open_calls`` (rows with ``id``, ``label``, ``status``,
+  ``submitter``, ``claim``, ...) and ``get_call`` (the row plus ``brief``, ``followups``,
+  ``designRefs`` and ``asks``).
 
-Only those read tools are ever called. A source that fails keeps its last items, marked stale with
+Only those reads are ever made. A source that fails keeps its last items, marked stale with
 the failure's code; a source never read shows the code and no items, not an empty queue.
 """
 
@@ -95,6 +96,39 @@ def _rpc_message(raw: str, request_id: int) -> dict:
     raise WorkError("invalid_response", "no reply to request %d" % request_id)
 
 
+def _fetch(opener, request: urllib.request.Request) -> tuple[str, str | None]:
+    """The body and MCP session header of one HTTPS exchange, or a WorkError with the page's code."""
+    try:
+        with opener(request, timeout=TIMEOUT_SECONDS) as response:
+            session = response.headers.get("Mcp-Session-Id")
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as error:
+        error.close()
+        code = "rejected" if error.code in (401, 403) else "not_found" if error.code == 404 else "unavailable"
+        raise WorkError(code, "HTTP %d" % error.code) from None
+    except (urllib.error.URLError, OSError, TimeoutError) as error:
+        raise WorkError("unreachable", str(error)) from None
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise WorkError("invalid_response", "reply too large")
+    return raw.decode("utf-8", "replace"), session
+
+
+class RestClient:
+    """GETs JSON from a read API under ``endpoint`` with a bearer."""
+
+    def __init__(self, endpoint: str, token: str, opener=None):
+        self.endpoint, self.token = endpoint.rstrip("/"), token
+        self.opener = opener or urllib.request.urlopen
+
+    def get(self, path: str) -> object:
+        headers = {"Authorization": "Bearer " + self.token, "Accept": "application/json"}
+        raw, _ = _fetch(self.opener, urllib.request.Request(self.endpoint + path, None, headers, method="GET"))
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            raise WorkError("invalid_response", "%s did not return JSON" % path) from None
+
+
 class McpClient:
     """A minimal MCP client over streamable HTTP: initialize once, then call tools."""
 
@@ -112,21 +146,10 @@ class McpClient:
         if self.session:
             headers["Mcp-Session-Id"] = self.session
         body = json.dumps({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}).encode()
-        request = urllib.request.Request(self.endpoint, body, headers, method="POST")
-        try:
-            with self.opener(request, timeout=TIMEOUT_SECONDS) as response:
-                session = response.headers.get("Mcp-Session-Id")
-                raw = response.read(MAX_RESPONSE_BYTES + 1)
-        except urllib.error.HTTPError as error:
-            raise WorkError("rejected" if error.code in (401, 403) else "unavailable",
-                            "HTTP %d" % error.code) from None
-        except (urllib.error.URLError, OSError, TimeoutError) as error:
-            raise WorkError("unreachable", str(error)) from None
-        if len(raw) > MAX_RESPONSE_BYTES:
-            raise WorkError("invalid_response", "reply too large")
+        raw, session = _fetch(self.opener, urllib.request.Request(self.endpoint, body, headers, method="POST"))
         if session and not self.session:
             self.session = session
-        message = _rpc_message(raw.decode("utf-8", "replace"), request_id)
+        message = _rpc_message(raw, request_id)
         if "error" in message or not isinstance(message.get("result"), dict):
             raise WorkError("tool_error", str((message.get("error") or {}).get("message", "no result"))[:200])
         return message["result"]
@@ -175,7 +198,7 @@ def _item_id(value: object) -> str | None:
     return value if isinstance(value, str) and 0 < len(value) <= 100 else None
 
 
-def todo(item: dict) -> dict | None:
+def waiting(item: dict) -> dict | None:
     """What a person must do before this item moves, or None. Structural fields only."""
     open_asks = [ask for ask in item["asks"] if ask["open"]]
     if open_asks:
@@ -208,7 +231,7 @@ def _finish(item: dict, source: WorkSource, path: str) -> dict:
         item["pr_url"] = None
     item["item_url"] = "%s/%s/%s" % (source.app_origin, path, quote(item["id"], safe="")) if source.app_origin else None
     item["phase"] = phase(item["status"])
-    item["todo"] = None if item["phase"] == "done" else todo(item)
+    item["waiting"] = None if item["phase"] == "done" else waiting(item)
     return item
 
 
@@ -226,18 +249,24 @@ def _base(row: dict, id_key: str, label_key: str) -> dict | None:
     }
 
 
-def collect_plans(client: McpClient, source: WorkSource) -> tuple[list[dict], bool]:
-    rows = client.call("list_plans", {"limit": MAX_ITEMS})
+def collect_plans(client: RestClient, source: WorkSource) -> tuple[list[dict], bool]:
+    rows = client.get("/plans?limit=%d" % MAX_ITEMS)
     rows = rows.get("plans") if isinstance(rows, dict) else None
     if not isinstance(rows, list):
-        raise WorkError("invalid_response", "list_plans returned no plans")
+        raise WorkError("invalid_response", "the plan list returned no plans")
     items = []
     for row in rows:
         item = _base(row, "planId", "planLabel") if isinstance(row, dict) else None
         if item is None or row.get("removed") is True:
             continue
         if item["status"] not in DONE:
-            detail = client.call("get_plan", {"planId": item["id"]})
+            try:
+                detail = client.get("/plans/" + quote(item["id"], safe=""))
+            except WorkError as error:
+                # Removed between the list and the read: list it without its detail.
+                if error.code != "not_found":
+                    raise
+                detail = None
             if isinstance(detail, dict):
                 row = {**row, **detail}
                 item.update(status=str(row.get("status") or item["status"])[:40], detail=True,
@@ -293,7 +322,7 @@ def collect_calls(client: McpClient, source: WorkSource) -> tuple[list[dict], bo
     return items, len(rows) >= MAX_ITEMS
 
 
-COLLECTORS = {"plans": collect_plans, "calls": collect_calls}
+COLLECTORS = {"plans": (RestClient, collect_plans), "calls": (McpClient, collect_calls)}
 
 
 class WorkFeed:
@@ -313,8 +342,8 @@ class WorkFeed:
 
     def _read(self, source: WorkSource) -> dict:
         try:
-            client = McpClient(source.endpoint, read_token(source.token_file, self.uid), self.opener)
-            items, truncated = COLLECTORS[source.kind](client, source)
+            transport, collect = COLLECTORS[source.kind]
+            items, truncated = collect(transport(source.endpoint, read_token(source.token_file, self.uid), self.opener), source)
             return {"items": items, "truncated": truncated, "sampled_at": iso_time(self.wall_clock()), "error": None}
         except WorkError as error:
             return {"error": error.code}

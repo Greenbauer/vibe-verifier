@@ -85,18 +85,18 @@
     }
   }
 
-  // Work items, oldest first within a group, each carrying its source's label. An open item that waits
-  // on a person is listed once, under `todo`, not again under its phase.
+  // The work board's columns, each oldest first, every item carrying its source's label. An open item
+  // that waits on a person is in `waiting` only; otherwise a queued one is to do and the rest in progress.
   function workGroups(work, now) {
-    const groups = { todo: [], active: [], queued: [], done: [], stale: 0 };
+    const groups = { todo: [], progress: [], waiting: [], done: [], stale: 0 };
     (work?.sources || []).forEach(source => (source.items || []).forEach(item => {
-      const row = { ...item, source: source.label };
-      if (row.todo && row.phase !== "done") groups.todo.push(row);
-      else (groups[row.phase] || groups.active).push(row);
-      if (row.phase !== "done" && ageClass(row.updated_at, now) === "age-red") groups.stale += 1;
+      const row = { ...item, source: source.label, source_kind: source.kind };
+      const column = row.phase === "done" ? "done" : row.waiting ? "waiting" : row.phase === "queued" ? "todo" : "progress";
+      groups[column].push(row);
+      if (column !== "done" && ageClass(row.updated_at, now) === "age-red") groups.stale += 1;
     }));
     const order = (a, b) => String(a.created_at).localeCompare(String(b.created_at));
-    ["todo", "active", "queued", "done"].forEach(key => groups[key].sort(order));
+    ["todo", "progress", "waiting", "done"].forEach(key => groups[key].sort(order));
     return groups;
   }
 
