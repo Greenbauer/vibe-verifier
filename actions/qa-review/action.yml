@@ -19,6 +19,9 @@ inputs:
   not-required:
     description: Why no browser check is needed (the criteria action's declared-none output); empty when one is.
     default: ""
+  carried-from:
+    description: The head whose passing walk this head carries (the criteria action's carried-from output); empty when none.
+    default: ""
   token:
     description: A token that may comment on the pull request.
     required: true
@@ -39,11 +42,12 @@ runs:
         VV_EXPLORE: ${{ inputs.explore-result }}
         VV_GATES: ${{ inputs.gates-outcome }}
         VV_NOT_REQUIRED: ${{ inputs.not-required }}
+        VV_CARRIED: ${{ inputs.carried-from }}
       run: |
         set -euo pipefail
         args=(qa-review --repo "$VV_REPO" --pr "$VV_PR" --head "$VV_HEAD" --run-url "$VV_RUN"
               --criteria "$VV_CRITERIA" --explore-result "$VV_EXPLORE" --gates-outcome "$VV_GATES"
-              --not-required "$VV_NOT_REQUIRED")
+              --not-required "$VV_NOT_REQUIRED" --carried-from "$VV_CARRIED")
         if [ -n "$VV_VERDICT" ]; then args+=(--verdict "$VV_VERDICT"); fi
         if [ -n "$VV_TICKET" ]; then args+=(--ticket "$VV_TICKET"); fi
         python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}"

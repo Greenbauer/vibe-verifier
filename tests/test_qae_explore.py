@@ -115,7 +115,7 @@ class SiteOrigins(unittest.TestCase):
         bin_dir = stub_bin(self, {"gh": "exit 0\n"})
         result = subprocess.run(["bash", "-e", "-c", verify_inputs_script()], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x", "PR_NUMBER": "7",
-                                               "REPO": "o/r", "SITE_URL": site, "SITE_ORIGINS": origins, "REFERENCES": "", "TICKET": ""}))
+                                               "REPO": "o/r", "SITE_URL": site, "SITE_ORIGINS": origins, "REFERENCES": "", "TICKET": "", "CARRY": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return Path(work, "qae-inputs", "site-url").read_text()
 
@@ -167,7 +167,7 @@ class SiteUrl(unittest.TestCase):
         script = verify_inputs_script()
         result = subprocess.run(["bash", "-e", "-c", script], cwd=self.work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
-                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": preview, "SITE_ORIGINS": "", "REFERENCES": "", "TICKET": ""}))
+                                               "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": preview, "SITE_ORIGINS": "", "REFERENCES": "", "TICKET": "", "CARRY": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(Path(self.work, "qae-inputs", "site-url").read_text(), preview + "\n")
         # The run's artifacts: the preview answered 500, the local default 404; only the declared site counts.
@@ -202,13 +202,13 @@ class Steps(unittest.TestCase):
         self.assertEqual(comment_rules, ["Bash(gh pr comment ${{ github.event.pull_request.number }} --body-file qae-artifacts/verdict.md)"])
         self.assertIn("gh pr comment ${{ github.event.pull_request.number }} --body-file qae-artifacts/verdict.md\n", text)
 
-    def test_dependabot_is_the_one_bot_whose_pull_requests_reach_the_explorer(self):
-        # claude-code-action refuses a run a bot started unless allowed_bots names it, so no Dependabot
-        # pull request could be walked (a consumer's four security updates, 2026-10-06). Named, never
-        # "*": that lets any App able to open a pull request start the explorer with a body it wrote.
+    def test_dependabot_and_the_repositorys_pull_sync_bot_are_the_bots_that_reach_the_explorer(self):
+        # claude-code-action refuses a run a bot started unless allowed_bots names it (Dependabot's, 2026-10-06; the
+        # pull sync's update, whose bot the repository names in PULL_SYNC_BOT). Never "*": any App able to open a PR.
         text = TEMPLATE.read_text()
         explorer = text[text.index("- name: Explore the acceptance criteria in a real browser"):text.index("- name: Collect numeric usage")]
-        self.assertEqual(re.findall(r"^ +allowed_bots: (.*)$", explorer, re.MULTILINE), ["dependabot[bot]"])
+        self.assertEqual(re.findall(r"^ +allowed_bots: (.*)$", explorer, re.MULTILINE), [
+            "${{ vars.PULL_SYNC_BOT && format('dependabot[bot],{0}', vars.PULL_SYNC_BOT) || 'dependabot[bot]' }}"])
 
     def test_a_consumer_can_tell_the_explorer_how_to_sign_in(self):
         # The file is written by the consumer's build step, which runs before the model, and the
@@ -265,7 +265,7 @@ class FeatureRewalk(unittest.TestCase):
         script = step_script("- name: Write the explorer's input", "- name: Select the features to re-walk")
         result = subprocess.run(["bash", "-e", "-c", script], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
-                                               "PR_NUMBER": "7", "REPO": "o/r", "TICKET": ""}))
+                                               "PR_NUMBER": "7", "REPO": "o/r", "TICKET": "", "CARRY": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(Path(work, "qae-inputs", "changed-files").read_text(), "app/auth/login.ts\napp/old.ts\n")
 
@@ -415,7 +415,7 @@ class Review(unittest.TestCase):
         result = subprocess.run(["bash", "-e", "-c", verify_inputs_script()], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
                                                "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": "http://localhost:3000",
-                                               "SITE_ORIGINS": "", "REFERENCES": "", "TICKET": ""}))
+                                               "SITE_ORIGINS": "", "REFERENCES": "", "TICKET": "", "CARRY": ""}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(Path(work, "qae-inputs", "verdict.md").read_text(), "")
         self.assertEqual(Path(work, "qae-inputs", "changed-files").read_text(), "app/page.tsx\n")
@@ -488,6 +488,8 @@ class TurnCap(unittest.TestCase):
         self.assertNotIn("--max-turns 8", text)
         self.assertIn("        id: references\n        uses: Greenbauer/vibe-verifier/actions/qae-inputs@", text)
         self.assertIn("    value: ${{ steps.prepare.outputs.max-turns }}\n", (ROOT / "actions" / "qae-inputs" / "action.yml").read_text())
+
+
 
 
 if __name__ == "__main__":

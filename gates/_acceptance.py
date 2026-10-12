@@ -17,6 +17,7 @@ A criterion's own text may carry annotations a QAE run is held to (harnesses/qae
 `[ref: <key>]` names a design reference the workflow supplies, and `[as: <role>, <role>]` the roles
 to walk the criterion as.
 """
+import hashlib
 import os
 import re
 import struct
@@ -199,7 +200,46 @@ def unrendered(path):
             or name.startswith((".vibe-verifier", "LICENSE")))
 
 
-def not_required(text, changed, ticket=""):
+def carried(facts, text=None):
+    """The earlier QAE walk whose verdict still holds for this head, or None.
+
+    `facts` is what actions/criteria/carry_facts.py read from GitHub: the newest earlier run of the same
+    workflow for the pull request that passed and left explorer evidence, the files that differ between
+    its head and this one, how many base commits this head lacks, and when the body was last edited.
+    The verdict holds when that head is an ancestor of this one (an update merged into it, or later
+    commits on top), every file that changed since is one no browser can see and none is that run's own
+    workflow file, this head has the whole base (the walk tested the head merged with the base, so a
+    head behind it is not the tree that was walked), and the body, which holds the criteria, was not
+    edited since that run started. A compare GitHub may have cut short, or an empty one, never carries.
+    The workflow file rule closes a forged pass: a commit that rewrites the workflow to pass, then one
+    that restores it, would otherwise leave a carried pass behind a final diff that shows neither. The
+    same holds for this catalog's manifests (`.vibe-verifier*`), which the verify job's gates read from
+    the checkout, so a change to one never carries either. A run older than the pull request belongs to
+    another pull request from a branch of the same name, which GitHub lists against this one, so it never
+    carries. `text`, the body the deciding job read, must be the body the facts were read with
+    (`body_sha256`): a body edited between the criteria and the verify job carries nothing.
+    """
+    run = (facts or {}).get("run")
+    compare = (facts or {}).get("compare") or {}
+    if not run or compare.get("status") != "ahead" or compare.get("cut") or not compare.get("files"):
+        return None
+    if facts.get("base_behind") != 0 or run.get("path") in compare["files"]:
+        return None
+    if any(name.rsplit("/", 1)[-1].startswith(".vibe-verifier") for name in compare["files"]):
+        return None
+    if not facts.get("pull_created_at") or run["created_at"] <= facts["pull_created_at"]:
+        return None
+    if text is not None and hashlib.sha256(text.encode()).hexdigest() != facts.get("body_sha256"):
+        return None
+    if not all(map(unrendered, compare["files"])):
+        return None
+    edited = facts.get("body_edited_at")
+    if edited and edited >= run["created_at"]:
+        return None
+    return run
+
+
+def not_required(text, changed, ticket="", carry=None):
     """Why a pull request needs no browser check, or None when it does.
 
     `text` is its body, `changed` its changed paths (a rename lists both names) and `ticket` the text of
@@ -211,12 +251,20 @@ def not_required(text, changed, ticket=""):
     An empty path list proves nothing, so it never exempts. A body lists criteria only under an
     `Acceptance criteria` heading (body_criteria): read as a plain list, a short body with no headings
     would never be exempt (found on the first consumer PR, 2026-10-05).
+    A pull request that lists criteria needs no new walk when an earlier walk of them still holds
+    (`carried`, from `carry`): its reason names that walk.
     """
     if any(ticket_items(ticket)):
         return None
     declared = declares_none(text)
-    if declared or body_criteria(text) or not changed or not all(map(unrendered, changed)):
+    if declared:
         return declared
+    if body_criteria(text):
+        walk = carried(carry, text)
+        return walk and ("QA passed on `%s` (%s), and every file changed since (%d) is CI configuration or "
+                         "documentation no site renders" % (walk["head"][:8], walk["url"], len(carry["compare"]["files"])))
+    if not changed or not all(map(unrendered, changed)):
+        return None
     return "every changed file (%d) is CI configuration or documentation no site renders" % len(changed)
 
 

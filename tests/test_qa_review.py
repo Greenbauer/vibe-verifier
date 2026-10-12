@@ -51,10 +51,10 @@ class QaReview(unittest.TestCase):
     def writes(self):
         return [c for c in self.calls() if c["method"] != "GET"]
 
-    def review(self, explore="success", gates="success", not_required="", verdict=True, ticket=None):
+    def review(self, explore="success", gates="success", not_required="", verdict=True, ticket=None, carried=""):
         args = ["qa-review", "--repo", "acme/site", "--pr", "7", "--head", HEAD, "--run-url", RUN,
                 "--criteria", self.criteria, "--explore-result", explore, "--gates-outcome", gates,
-                "--not-required", not_required]
+                "--not-required", not_required, "--carried-from", carried]
         args += ["--ticket", ticket] if ticket else []
         return runner(*args, *(["--verdict", self.verdict] if verdict else []), env=self.env)
 
@@ -132,6 +132,13 @@ class QaReview(unittest.TestCase):
         self.assertEqual(body.splitlines()[1], "## QA review: not required ✅")
         self.assertIn("No browser check on `01234567`: %s." % reason, body)
         self.assertNotIn("AC1", body)
+
+    def test_a_carried_walk_says_which_head_passed(self):
+        reason = ("QA passed on `aaaaaaaa` (https://github.com/acme/site/actions/runs/5), and every file changed since (2) "
+                  "is CI configuration or documentation no site renders")
+        body = self.posted(explore="skipped", gates="skipped", not_required=reason, verdict=False, carried="a" * 40)
+        self.assertEqual(body.splitlines()[1], "## QA review: passed on an earlier head ✅")
+        self.assertIn("No new browser check on `01234567`: %s. The criteria were not edited since." % reason, body)
 
     def test_could_not_run_when_the_explore_job_did_not_finish(self):
         body = self.posted(explore="failure", gates="failure")
@@ -216,7 +223,7 @@ class QaReview(unittest.TestCase):
         action_path = ROOT / "actions" / "qa-review"
         env = clean_env(dict(self.env, GITHUB_ACTION_PATH=str(action_path), GH_TOKEN="x", VV_REPO="acme/site",
                              VV_PR="7", VV_HEAD=HEAD, VV_RUN=RUN, VV_CRITERIA=self.criteria, VV_VERDICT=self.verdict,
-                             VV_TICKET="", VV_EXPLORE="success", VV_GATES="failure", VV_NOT_REQUIRED=""))
+                             VV_TICKET="", VV_EXPLORE="success", VV_GATES="failure", VV_NOT_REQUIRED="", VV_CARRIED=""))
         result = subprocess.run(["bash", "-e", "-c", script], capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         body = self.writes()[0]["body"]["body"]

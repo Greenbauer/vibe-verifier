@@ -303,7 +303,7 @@ class Template(unittest.TestCase):
         text = TEMPLATE.read_text()
         env = clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x", "PR_NUMBER": "7", "REPO": "o/r",
                          "SITE_URL": "http://localhost:3000", "SITE_ORIGINS": "", "REFERENCES": declared, "TICKET": "",
-                         "SHARDS": '[""]', "EXPLORE_ATTEMPT": "1"})
+                         "SHARDS": '[""]', "EXPLORE_ATTEMPT": "1", "CARRY": ""})
         for step in ("- name: Write the declared inputs", "- name: Merge the evidence and read the verdict"):
             script = step_script(text, step, "- name: Run the QA gates")
             result = subprocess.run(["bash", "-e", "-c", script], cwd=verify, capture_output=True, text=True, env=env)

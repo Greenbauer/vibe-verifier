@@ -38,10 +38,12 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read   # the runs and artifacts of the last walk, to carry its verdict (actions/criteria)
     outputs:
       count: ${{ steps.criteria.outputs.count }}
       ticket: ${{ steps.criteria.outputs.ticket }}
       shards: ${{ steps.criteria.outputs.shards }}
+      carry: ${{ steps.criteria.outputs.carry }}
     steps:
       - name: Write the criteria inputs
         # The PR body and its changed paths. A rename lists both names: moving a page into docs/ still
@@ -87,6 +89,7 @@ jobs:
           ticket: qae-inputs/ticket.md
           manifest: qae-inputs/manifest
           max-shards: 1   # CONSUMER: the most explorers one pull request's criteria are split across
+          token: ${{ secrets.GITHUB_TOKEN }}   # carries a passing walk's verdict across an update no browser can see
 
   explore:
     name: qae-explore
@@ -479,6 +482,7 @@ jobs:
           SITE_ORIGINS: ${{ needs.explore.outputs.site-origins }}
           REFERENCES: ${{ needs.explore.outputs.references }}
           TICKET: ${{ needs.criteria.outputs.ticket }}
+          CARRY: ${{ needs.criteria.outputs.carry }}
         run: |
           set -euo pipefail
           mkdir -p qae-inputs
@@ -498,6 +502,8 @@ jobs:
           printf '%s\n' "$REFERENCES" > qae-inputs/references.json
           # The ticket's criteria as the criteria job read them (empty: no ticket), for the gates' --ticket.
           printf '%s' "$TICKET" > qae-inputs/ticket.md
+          # The facts the criteria job decided a carry on (empty: none read), so this job decides alike.
+          printf '%s' "$CARRY" > qae-inputs/carry.json
       - name: Read the criteria
         id: criteria
         uses: Greenbauer/vibe-verifier/actions/criteria@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
@@ -505,6 +511,7 @@ jobs:
           path: qae-inputs/pr-body.md
           changed-files: qae-inputs/changed-files
           ticket: qae-inputs/ticket.md
+          carry: qae-inputs/carry.json   # the criteria job's facts, so both jobs decide a carry alike
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: steps.criteria.outputs.count != '0'
         # Every explorer's evidence, of every attempt of this run, each in a directory named for its
@@ -523,7 +530,7 @@ jobs:
         # reads it under that one name: every explorer's lines are appended to it.
         # qae-inputs/verdict.md is the explorers' verdicts/<explorer>.md, in order: the files the
         # workflow copied in this run. No pull request comment is read, so nobody can paste a verdict,
-        # and a run never takes another run's.
+        # and a run never takes another run's verdict (a carried walk runs no explorer and no gate).
         if: steps.criteria.outputs.count != '0'
         env:
           SHARDS: ${{ needs.criteria.outputs.shards }}
@@ -604,4 +611,5 @@ jobs:
           explore-result: ${{ needs.explore.result }}
           gates-outcome: ${{ steps.gates.outcome }}
           not-required: ${{ steps.criteria.outputs.declared-none }}
+          carried-from: ${{ steps.criteria.outputs.carried-from }}
           token: ${{ secrets.GITHUB_TOKEN }}

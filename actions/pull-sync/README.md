@@ -65,13 +65,18 @@ jobs:
 ## The token
 
 - It must be able to write contents and pull requests in the repository: an update is a merge commit
-  on the pull request's branch, and the conflict label is a write to the pull request.
-- Not yet measured: whether an update that brings in a change under `.github/workflows/` also needs
-  an App's workflows permission. If it does, that update is refused and the run exits 1, naming it.
+  on the pull request's branch, and the conflict label is a write to the pull request. It must also
+  read checks: the plan reads whether each head's checks are still running, and without it GitHub
+  answers "Resource not accessible by integration" (seen on a consumer's first run, 2026-10-12).
+- Measured on 2026-10-08: an update that brings in changed files under `.github/workflows/` goes
+  through with contents and pull requests write; no workflows permission was needed.
 - It must not be the workflow's `GITHUB_TOKEN`. GitHub starts no workflow for an event that token
   causes, so the updated head would have no checks at all.
-- The token's identity becomes the actor of every workflow the update starts. A workflow that refuses
-  runs started by a bot (the review harness's `allowed_bots`, for one) has to allow that identity first.
+- The token's identity becomes the actor of every workflow the update starts, and `claude-code-action`
+  refuses a run a bot started unless `allowed_bots` names it. The catalog's review harness and Claude
+  QAE explorer allow the bot a repository names in its `PULL_SYNC_BOT` variable (`<app>[bot]`), so set
+  that variable, and copy those templates at or after the commit that added it, before turning the
+  sync on. Without it every update turns the pull request's review red.
 
 ## Limits
 
@@ -79,4 +84,5 @@ jobs:
   list, on more than 100, and on a repository with hundreds GitHub can time out the read itself.
 - "Ready" means the head's checks passed. It does not read review threads or approvals.
 - A new head makes every per-head verdict stale. The review harness answers an update that touches
-  none of the pull request's files with a receipt refresh; the QAE harness explores again.
+  none of the pull request's files with a receipt refresh; the QAE harness carries the last passing walk when
+  the update brought only files no browser can see, and explores again otherwise.
