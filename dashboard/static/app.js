@@ -142,7 +142,7 @@
     if (!known) return el("span", { class: "push-line", title: "Last push unavailable" }, "Last push unavailable");
     const when = since(push.pushed_at, now);
     return el("span", { class: "push-line", title: `${when} · ${push.kind}` },
-      el("span", { class: ageClass(push.pushed_at, now) }, when), el("span", { class: "push-kind" }, `· ${push.kind}`));
+      el("span", { class: ageClass(push.pushed_at, now, "push") }, when), el("span", { class: "push-kind" }, `· ${push.kind}`));
   }
 
   function progress(pull, now = Date.now()) {

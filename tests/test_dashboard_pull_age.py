@@ -50,6 +50,24 @@ console.log(JSON.stringify({
         self.assertIn(".pr-age .age-yellow, .progress-copy .age-yellow { color: var(--yellow); }", css)
         self.assertIn(".pr-age .age-red, .progress-copy .age-red { color: var(--red); }", css)
 
+    def test_last_push_turns_yellow_after_three_hours_and_red_after_a_day(self):
+        result = node(r'''
+const h=require('./dashboard/static/helpers.js');
+const now=Date.parse('2026-10-06T00:00:00Z'), hour=3600;
+const at=seconds=>new Date(now-seconds*1000).toISOString();
+const tone=seconds=>h.ageClass(at(seconds),now,'push');
+console.log(JSON.stringify({
+ twoHours:tone(2*hour+5*60), threeHours:tone(3*hour), justOverThreeHours:tone(3*hour+1),
+ oneDay:tone(24*hour), justOverADay:tone(24*hour+1), sixMonths:tone(180*24*hour),
+ unavailable:h.ageClass(null,now,'push')
+}));
+''')
+        self.assertEqual(result, {
+            "twoHours": None, "threeHours": None, "justOverThreeHours": "age-yellow",
+            "oneDay": "age-yellow", "justOverADay": "age-red", "sixMonths": "age-red",
+            "unavailable": None,
+        })
+
 
 if __name__ == "__main__":
     unittest.main()

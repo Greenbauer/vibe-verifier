@@ -4,6 +4,7 @@ import copy
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 
 from dashboard.config import BotDefinition, Config
@@ -207,6 +208,23 @@ class EveryFetchIsCurrent(unittest.TestCase):
         collector.release.set()
         fetch.join(2)
         self.assertFalse(results[0]["github"]["refreshing"])
+
+    def test_a_fetch_waits_a_bounded_time_then_is_served_the_last_reading(self):
+        # A cold pass can take minutes; the deploy health check gives a restarted dashboard 10 seconds.
+        collector = BlockingCollector()
+        collector.release.set()
+        mono, wall = MutableClock(0), MutableClock(NOW)
+        service = DashboardService(config(), collector, monotonic=mono, wall_clock=wall)
+        service.snapshot()
+        collector.release.clear()
+        mono.value, wall.value = 600, NOW + timedelta(seconds=CURRENT_SECONDS + 1)
+        with patch("dashboard.service.FETCH_WAIT_SECONDS", 0.2):
+            began = time.monotonic()
+            github = service.snapshot(nonblocking=True)["github"]
+        self.assertLess(time.monotonic() - began, 1)
+        self.assertTrue(github["refreshing"])
+        self.assertEqual(github["repositories"][0]["pulls"], [{"number": 1}])
+        collector.release.set()
 
     def test_a_failed_pass_ends_the_wait_and_serves_the_last_reading(self):
         mono, wall = MutableClock(0), MutableClock(NOW)
