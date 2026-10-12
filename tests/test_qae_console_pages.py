@@ -22,6 +22,8 @@ HOOK = ROOT / "actions" / "qae-browser" / "console-pages.js"
 # What an analytics endpoint answers a page of another origin: Chromium refuses the response and logs
 # `Failed to load resource: net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin @ <its URL>:0`, with no status.
 BLOCKED = "net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin"
+# A page whose script throws: playwright-mcp logs the error's stack, with no level tag.
+THROWS = "<script>throw new Error('boom')</script>"
 
 
 class Hook(unittest.TestCase):
@@ -113,10 +115,16 @@ class Live(unittest.TestCase):
         os.makedirs(os.path.join(self.root, "qae"))
         self.analytics = Server(self)
         beacon = '<img src="%s/pageviews?from=%%s">' % self.analytics.url
-        self.hosted = Server(self, {"/checkout": "<title>hosted</title><h1>Hosted checkout</h1>" + beacon % "hosted"})
+        self.hosted = Server(self, {"/checkout": "<title>hosted</title><h1>Hosted checkout</h1>" + beacon % "hosted",
+                                    "/throws": "<title>hosted</title><h1>Hosted</h1>" + THROWS})
+        link = '<title>site</title><h1>Shop</h1><a id="pay" target="_blank" href="%s/%s?session=1">Pay</a>'
         self.site = Server(self, {
-            "/": '<title>site</title><h1>Shop</h1><a id="pay" target="_blank" href="%s/checkout?session=1">Pay</a>' % self.hosted.url,
+            "/": link % (self.hosted.url, "checkout"),
             "/broken": "<title>site</title><h1>Broken</h1>" + beacon % "site",
+            "/throws": "<title>site</title><h1>Throws</h1>" + THROWS,
+            "/rejects": "<title>site</title><h1>Rejects</h1><script>Promise.reject(new Error('rejected boom'))</script>",
+            "/rejects-value": "<title>site</title><h1>Rejects</h1><script>Promise.reject('rejected string')</script>",
+            "/pay-throws": link % (self.hosted.url, "throws"),
         })
 
     def explore(self, path, click=None):
@@ -137,8 +145,8 @@ class Live(unittest.TestCase):
     def console(self):
         return "".join(log.read_text() for log in sorted(Path(self.root).glob("console-*.log")))
 
-    def run_gate(self):
-        return gate("qae-artifacts", self.repo, "--artifacts", self.root, "--site", self.site.url + "/")
+    def run_gate(self, *args):
+        return gate("qae-artifacts", self.repo, "--artifacts", self.root, "--site", self.site.url + "/", *args)
 
     def test_a_hosted_pages_own_error_passes_and_only_because_of_the_record(self):
         self.explore("/", click="#pay")
@@ -158,6 +166,36 @@ class Live(unittest.TestCase):
         result = self.run_gate()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("console error outside the allowlist: Failed to load resource: " + BLOCKED, result.stdout)
+
+    def test_an_uncaught_exception_on_the_sites_page_fails_unless_allowlisted(self):
+        self.explore("/throws")
+        self.assertRegex(self.console(), r"(?m)^\[ *[0-9]+ms\] Error: boom\n    at %s/throws:1:[0-9]+$" % self.site.url)
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("uncaught exception outside the allowlist: Error: boom at %s/throws:1:" % self.site.url, result.stdout)
+        self.assertEqual(self.run_gate("--allow-console", "^Error: boom$").returncode, 1)
+        result = self.run_gate("--allow-console", "^Error: boom\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_an_unhandled_rejection_fails_whether_or_not_it_is_an_error(self):
+        for path, shown in (("/rejects", "Error: rejected boom at %s/rejects:1:" % self.site.url), ("/rejects-value", "rejected string")):
+            with self.subTest(path):
+                self.explore(path)
+                result = self.run_gate()
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("uncaught exception outside the allowlist: " + shown, result.stdout)
+                for log in Path(self.root).glob("console-*.log"):
+                    log.unlink()
+
+    def test_a_hosted_pages_own_exception_passes_and_only_because_of_the_record(self):
+        self.explore("/pay-throws", click="#pay")
+        self.assertIn("Error: boom\n    at %s/throws" % self.hosted.url, self.console())
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        os.remove(os.path.join(self.root, "console-pages.jsonl"))
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("uncaught exception outside the allowlist: Error: boom at %s/throws" % self.hosted.url, result.stdout)
 
 
 if __name__ == "__main__":
