@@ -97,38 +97,41 @@ def _https_url(value: object, where: str, *, origin_only: bool) -> str:
     return value
 
 
+def _work_repository(value: object, owner: str) -> str | None:
+    if value is None:
+        return None
+    parts = value.split("/") if isinstance(value, str) else []
+    if len(parts) != 2 or parts[0].lower() != owner.lower() or not REPOSITORY.fullmatch(parts[1]):
+        raise ConfigError("work source repository must be OWNER/NAME of the configured owner")
+    return owner + "/" + parts[1]
+
+
+def _parse_work_source(row: object, owner: str) -> WorkSource:
+    if not isinstance(row, dict):
+        raise ConfigError("work source must be an object")
+    _only_keys(row, {"id", "label", "kind", "endpoint", "token_file", "repository", "app_origin"}, "work source")
+    identity, label, kind, token_file = row.get("id"), row.get("label"), row.get("kind"), row.get("token_file")
+    if not isinstance(identity, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", identity):
+        raise ConfigError("work source id must be a lowercase slug")
+    if not isinstance(label, str) or not 0 < len(label) <= 60:
+        raise ConfigError("work source label must be 1 to 60 characters")
+    if kind not in WORK_KINDS:
+        raise ConfigError("work source kind must be one of: %s" % ", ".join(WORK_KINDS))
+    if not isinstance(token_file, str) or not Path(token_file).is_absolute():
+        raise ConfigError("work source token_file must be an absolute path")
+    app_origin = row.get("app_origin")
+    return WorkSource(identity, label, kind, _https_url(row.get("endpoint"), "work source endpoint", origin_only=False),
+                      Path(token_file), _work_repository(row.get("repository"), owner),
+                      None if app_origin is None else _https_url(app_origin, "work source app_origin", origin_only=True))
+
+
 def _parse_work_sources(value: object, owner: str) -> tuple[WorkSource, ...]:
     if not isinstance(value, list) or len(value) > 8:
         raise ConfigError("work_sources must be a list of at most 8 sources")
-    result, ids = [], set()
-    for row in value:
-        if not isinstance(row, dict):
-            raise ConfigError("work source must be an object")
-        _only_keys(row, {"id", "label", "kind", "endpoint", "token_file", "repository", "app_origin"}, "work source")
-        identity, label, kind = row.get("id"), row.get("label"), row.get("kind")
-        if not isinstance(identity, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", identity) or identity in ids:
-            raise ConfigError("work source id must be a unique lowercase slug")
-        if not isinstance(label, str) or not 0 < len(label) <= 60:
-            raise ConfigError("work source label must be 1 to 60 characters")
-        if kind not in WORK_KINDS:
-            raise ConfigError("work source kind must be one of: %s" % ", ".join(WORK_KINDS))
-        token_file = row.get("token_file")
-        if not isinstance(token_file, str) or not Path(token_file).is_absolute():
-            raise ConfigError("work source token_file must be an absolute path")
-        repository = row.get("repository")
-        if repository is not None:
-            parts = repository.split("/") if isinstance(repository, str) else []
-            if len(parts) != 2 or parts[0].lower() != owner.lower() or not REPOSITORY.fullmatch(parts[1]):
-                raise ConfigError("work source repository must be OWNER/NAME of the configured owner")
-            repository = owner + "/" + parts[1]
-        app_origin = row.get("app_origin")
-        if app_origin is not None:
-            app_origin = _https_url(app_origin, "work source app_origin", origin_only=True)
-        ids.add(identity)
-        result.append(WorkSource(identity, label, kind,
-                                 _https_url(row.get("endpoint"), "work source endpoint", origin_only=False),
-                                 Path(token_file), repository, app_origin))
-    return tuple(result)
+    sources = tuple(_parse_work_source(row, owner) for row in value)
+    if len({source.id for source in sources}) != len(sources):
+        raise ConfigError("work source ids must be unique")
+    return sources
 
 
 @dataclass(frozen=True)

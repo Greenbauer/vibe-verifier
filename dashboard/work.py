@@ -249,79 +249,92 @@ def _base(row: dict, id_key: str, label_key: str) -> dict | None:
     }
 
 
-def collect_plans(client: RestClient, source: WorkSource) -> tuple[list[dict], bool]:
-    rows = client.get("/plans?limit=%d" % MAX_ITEMS)
-    rows = rows.get("plans") if isinstance(rows, dict) else None
-    if not isinstance(rows, list):
-        raise WorkError("invalid_response", "the plan list returned no plans")
-    items = []
-    for row in rows:
-        item = _base(row, "planId", "planLabel") if isinstance(row, dict) else None
-        if item is None or row.get("removed") is True:
-            continue
-        if item["status"] not in DONE:
-            try:
-                detail = client.get("/plans/" + quote(item["id"], safe=""))
-            except WorkError as error:
-                # Removed between the list and the read: list it without its detail.
-                if error.code != "not_found":
-                    raise
-                detail = None
-            if isinstance(detail, dict):
-                row = {**row, **detail}
-                item.update(status=str(row.get("status") or item["status"])[:40], detail=True,
-                            pr_number=_number(row.get("prNumber")), preview_url=_https(row.get("previewUrl")),
-                            updated_at=_time(row.get("updatedAt")) or item["updated_at"],
-                            body=_text(row.get("planMarkdown"), MAX_BODY))
-                item["updates"] = [
-                    {"body": _text(update.get("body"), MAX_UPDATE) or "", "created_at": _time(update.get("createdAt")), "refs": []}
-                    for update in (row.get("amendments") or [])[:MAX_UPDATES] if isinstance(update, dict)]
-        item["claimed_by"] = _text(row.get("claimedBy"), 120)
-        item["requester"] = None
-        item["blocked_reason"] = _text(row.get("blockedReason"), 500)
-        item["status_text"] = None
-        items.append(_finish(item, source, "plans"))
-    return items, len(rows) >= MAX_ITEMS
+def _rows(value: object) -> list[dict]:
+    """The objects in a list a source returned; anything else reads as none."""
+    return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
 
 
 def _refs(rows: object) -> list[str]:
-    return [_text(ref.get("label"), 120) or _text(ref.get("kind"), 40) or "design reference"
-            for ref in (rows if isinstance(rows, list) else []) if isinstance(ref, dict)]
+    return [_text(ref.get("label"), 120) or _text(ref.get("kind"), 40) or "design reference" for ref in _rows(rows)]
+
+
+def _updates(rows: object) -> list[dict]:
+    return [{"body": _text(update.get("body"), MAX_UPDATE) or "", "created_at": _time(update.get("createdAt")),
+             "refs": _refs(update.get("designRefs"))} for update in _rows(rows)[:MAX_UPDATES]]
+
+
+def _asks(rows: object) -> list[dict]:
+    asks = []
+    for ask in _rows(rows):
+        ruling = ask.get("ruling") if isinstance(ask.get("ruling"), dict) else None
+        asks.append({"question": _text(ask.get("body"), MAX_UPDATE) or "", "raised_at": _time(ask.get("raisedAt")),
+                     "ruling": _text((ruling or {}).get("text"), MAX_UPDATE),
+                     "ruled_at": _time((ruling or {}).get("answeredAt")), "open": ruling is None})
+    return asks
+
+
+def _plan_detail(client: RestClient, plan_id: str) -> dict | None:
+    """The plan's own read, or None when it was removed between the list and the read."""
+    try:
+        detail = client.get("/plans/" + quote(plan_id, safe=""))
+    except WorkError as error:
+        if error.code != "not_found":
+            raise
+        return None
+    return detail if isinstance(detail, dict) else None
+
+
+def _plan(client: RestClient, source: WorkSource, row: dict) -> dict | None:
+    item = _base(row, "planId", "planLabel")
+    if item is None or row.get("removed") is True:
+        return None
+    detail = None if item["status"] in DONE else _plan_detail(client, item["id"])
+    if detail is not None:
+        row = {**row, **detail}
+        item.update(status=str(row.get("status") or item["status"])[:40], detail=True,
+                    pr_number=_number(row.get("prNumber")), preview_url=_https(row.get("previewUrl")),
+                    updated_at=_time(row.get("updatedAt")) or item["updated_at"],
+                    body=_text(row.get("planMarkdown"), MAX_BODY), updates=_updates(row.get("amendments")))
+    item.update(claimed_by=_text(row.get("claimedBy"), 120), requester=None,
+                blocked_reason=_text(row.get("blockedReason"), 500), status_text=None)
+    return _finish(item, source, "plans")
+
+
+def collect_plans(client: RestClient, source: WorkSource) -> tuple[list[dict], bool]:
+    listing = client.get("/plans?limit=%d" % MAX_ITEMS)
+    rows = listing.get("plans") if isinstance(listing, dict) else None
+    if not isinstance(rows, list):
+        raise WorkError("invalid_response", "the plan list returned no plans")
+    items = [_plan(client, source, row) for row in _rows(rows)]
+    return [item for item in items if item], len(rows) >= MAX_ITEMS
+
+
+def _call(client: McpClient, source: WorkSource, row: dict) -> dict | None:
+    item = _base(row, "id", "label")
+    if item is None:
+        return None
+    detail = client.call("get_call", {"callId": item["id"]})
+    if isinstance(detail, dict):
+        row = {**row, **detail}
+        item.update(status=str(row.get("status") or item["status"])[:40], detail=True,
+                    body=_text(row.get("brief"), MAX_BODY), refs=_refs(row.get("designRefs")),
+                    updates=_updates(row.get("followups")), asks=_asks(row.get("asks")))
+    submitter = row.get("submitter") if isinstance(row.get("submitter"), dict) else {}
+    # A session that blocks a call says why in its status description.
+    note = _text(row.get("statusDescription"), 500)
+    blocked = item["status"] == "blocked"
+    item.update(requester=_text(submitter.get("name") or submitter.get("email"), 120),
+                claimed_by={"mine": "this dashboard's account", "other": "another session"}.get(row.get("claim")),
+                blocked_reason=note if blocked else None, status_text=None if blocked else note)
+    return _finish(item, source, "calls")
 
 
 def collect_calls(client: McpClient, source: WorkSource) -> tuple[list[dict], bool]:
     rows = client.call("list_open_calls", {"limit": MAX_ITEMS})
     if not isinstance(rows, list):
         raise WorkError("invalid_response", "list_open_calls returned no list")
-    items = []
-    for row in rows:
-        item = _base(row, "id", "label") if isinstance(row, dict) else None
-        if item is None:
-            continue
-        detail = client.call("get_call", {"callId": item["id"]})
-        if isinstance(detail, dict):
-            row = {**row, **detail}
-            item.update(status=str(row.get("status") or item["status"])[:40], detail=True,
-                        body=_text(row.get("brief"), MAX_BODY), refs=_refs(row.get("designRefs")))
-            item["updates"] = [
-                {"body": _text(update.get("body"), MAX_UPDATE) or "", "created_at": _time(update.get("createdAt")),
-                 "refs": _refs(update.get("designRefs"))}
-                for update in (row.get("followups") or [])[:MAX_UPDATES] if isinstance(update, dict)]
-            item["asks"] = [
-                {"question": _text(ask.get("body"), MAX_UPDATE) or "", "raised_at": _time(ask.get("raisedAt")),
-                 "ruling": _text((ask.get("ruling") or {}).get("text"), MAX_UPDATE),
-                 "ruled_at": _time((ask.get("ruling") or {}).get("answeredAt")),
-                 "open": not isinstance(ask.get("ruling"), dict)}
-                for ask in (row.get("asks") or []) if isinstance(ask, dict)]
-        submitter = row.get("submitter") if isinstance(row.get("submitter"), dict) else {}
-        item["requester"] = _text(submitter.get("name") or submitter.get("email"), 120)
-        item["claimed_by"] = {"mine": "this dashboard's account", "other": "another session"}.get(row.get("claim"))
-        # A session that blocks a call says why in its status description.
-        note = _text(row.get("statusDescription"), 500)
-        item["blocked_reason"] = note if item["status"] == "blocked" else None
-        item["status_text"] = None if item["status"] == "blocked" else note
-        items.append(_finish(item, source, "calls"))
-    return items, len(rows) >= MAX_ITEMS
+    items = [_call(client, source, row) for row in _rows(rows)]
+    return [item for item in items if item], len(rows) >= MAX_ITEMS
 
 
 COLLECTORS = {"plans": (RestClient, collect_plans), "calls": (McpClient, collect_calls)}
@@ -351,16 +364,19 @@ class WorkFeed:
             return {"error": error.code}
 
     def refresh(self) -> None:
-        for source in self.sources:
-            fresh = self._read(source)
+        try:
+            for source in self.sources:
+                fresh = self._read(source)
+                with self._lock:
+                    previous = self._readings.get(source.id, {})
+                    # Lost access forgets what it showed, as GitHub's does; any other failure keeps it, stale.
+                    keep = fresh["error"] and fresh["error"] != "rejected"
+                    self._readings[source.id] = {**previous, **fresh} if keep else fresh
+        finally:
+            # A defect in one pass must not stop every later one.
             with self._lock:
-                previous = self._readings.get(source.id, {})
-                # Lost access forgets what it showed, as GitHub's does; any other failure keeps it, stale.
-                keep = fresh["error"] and fresh["error"] != "rejected"
-                self._readings[source.id] = {**previous, **fresh} if keep else fresh
-        with self._lock:
-            self._running = False
-            self._next = self.monotonic() + REFRESH_SECONDS
+                self._running = False
+                self._next = self.monotonic() + REFRESH_SECONDS
 
     def snapshot(self, *, background: bool = True) -> dict:
         if not self.sources:

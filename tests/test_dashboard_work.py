@@ -316,6 +316,23 @@ class Feed(unittest.TestCase):
         lost = feed.snapshot(background=False)["sources"][0]
         self.assertEqual((lost["error"], lost["available"], lost["items"]), ("rejected", False, []))
 
+    def test_a_malformed_list_field_reads_as_empty_and_the_next_pass_still_runs(self):
+        plans = [plan_row("aaaa-0000", "in_progress")]
+        api = FakeApi({"/plans?limit=100": {"plans": plans},
+                       "/plans/aaaa-0000": {**plans[0], "amendments": {"a": 1}, "planMarkdown": "body"}})
+        feed = self.feed(api)
+        item = feed.snapshot(background=False)["sources"][0]["items"][0]
+        self.assertEqual((item["updates"], item["body"]), ([], "body"))
+        # A pass that fails anyway must not leave the feed marked as refreshing forever.
+        recovered = FakeApi({"/plans?limit=100": {"plans": plans}})
+        feed.opener = lambda request, timeout: (_ for _ in ()).throw(RuntimeError("defect"))
+        self.clock[0] += 301
+        with self.assertRaises(RuntimeError):
+            feed.snapshot(background=False)
+        feed.opener = recovered
+        self.clock[0] += 301
+        self.assertEqual(len(feed.snapshot(background=False)["sources"][0]["items"]), 1)
+
     def test_a_missing_credential_shows_its_code_not_an_empty_queue(self):
         self.token.unlink()
         row = self.feed(plans_server()).snapshot(background=False)["sources"][0]
@@ -362,7 +379,8 @@ console.log(JSON.stringify({todo: ids('todo'), progress: ids('progress'), waitin
         self.assertIn('<button data-view="work" hidden>Work</button>', index)
         app = (ROOT / "dashboard/static/app.js").read_text()
         self.assertIn('work: "Work"', app)
-        self.assertIn('.hidden = !snapshot.work?.configured', app)
+        self.assertIn('button.hidden = button.dataset.view === "work" && !snapshot.work?.configured', app)
+        self.assertIn('<script src="/assets/work.js"></script>', index)
 
 
 if __name__ == "__main__":
