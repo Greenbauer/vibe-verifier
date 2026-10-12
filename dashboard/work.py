@@ -316,8 +316,10 @@ def collect_calls(client: McpClient, source: WorkSource) -> tuple[list[dict], bo
         submitter = row.get("submitter") if isinstance(row.get("submitter"), dict) else {}
         item["requester"] = _text(submitter.get("name") or submitter.get("email"), 120)
         item["claimed_by"] = {"mine": "this dashboard's account", "other": "another session"}.get(row.get("claim"))
-        item["blocked_reason"] = None
-        item["status_text"] = _text(row.get("statusDescription"), 500)
+        # A session that blocks a call says why in its status description.
+        note = _text(row.get("statusDescription"), 500)
+        item["blocked_reason"] = note if item["status"] == "blocked" else None
+        item["status_text"] = None if item["status"] == "blocked" else note
         items.append(_finish(item, source, "calls"))
     return items, len(rows) >= MAX_ITEMS
 

@@ -109,7 +109,7 @@ def plans_server():
 
 
 def calls_server():
-    calls = [call_row("aaaa-1", "blocked"), call_row("bbbb-2", "await_answer", claim="other"), call_row("cccc-3", "pr_ready", prNumber=12)]
+    calls = [call_row("aaaa-1", "blocked"), call_row("dddd-4", "blocked", statusDescription="Waiting on a key."), call_row("bbbb-2", "await_answer", claim="other"), call_row("cccc-3", "pr_ready", prNumber=12)]
     details = {
         "aaaa-1": {"brief": "do it", "followups": [{"id": "f1", "body": "also this", "createdAt": "2026-08-12T10:00:00Z",
                                                     "designRefs": [{"label": "Login screen", "kind": "screenshot", "url": "https://x.test/s?sig=1"}]}],
@@ -119,6 +119,7 @@ def calls_server():
             {"body": "Old question", "raisedAt": "2026-08-20T10:00:00Z", "ruling": {"text": "yes", "answeredAt": "2026-08-21T10:00:00Z"}},
             {"body": "Ship on Friday?", "raisedAt": "2026-09-01T10:00:00Z", "ruling": None}]},
         "cccc-3": {"brief": "c", "followups": [], "designRefs": [], "asks": []},
+        "dddd-4": {"brief": "d", "followups": [], "designRefs": [], "asks": []},
     }
     return FakeServer({
         "list_open_calls": lambda arguments: calls,
@@ -269,6 +270,9 @@ class Queues(unittest.TestCase):
         self.assertEqual(waiting["waiting"], {"who": "requester", "reason": "Ask awaiting a ruling: Ship on Friday?"})
         self.assertEqual(waiting["claimed_by"], "another session")
         self.assertEqual(by_id["cccc-3"]["waiting"]["who"], "operator")
+        # A blocked call's status description is its reason, shown once.
+        self.assertEqual(by_id["dddd-4"]["waiting"]["reason"], "Blocked: Waiting on a key.")
+        self.assertIsNone(by_id["dddd-4"]["status_text"])
         self.assertIsNone(by_id["cccc-3"]["pr_url"])
 
 
