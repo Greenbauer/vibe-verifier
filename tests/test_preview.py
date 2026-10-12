@@ -18,8 +18,10 @@ REPO, SHA = "acme/app", "a" * 40
 
 # Serves $FAKE/state.json. "runs" is a list of answers, one per read of the check's runs (the last
 # repeats): each a list of [started_at, status, conclusion]. "statuses" is the commit's statuses.
-# "fail_reads" fails that many reads first; "refuse_writes" fails every write. Writes go to
-# $FAKE/writes, one JSON line each.
+# "fail_reads" fails that many reads first, "fail_calls" the reads at those call numbers (from 0);
+# "refuse_writes" fails every write. Writes go to $FAKE/writes, one JSON line each, and every call's
+# argv to $FAKE/argv. A check-runs read that does not page through every run, or does not filter by
+# the check's name, is refused like a broken call, so no test passes on a read that would miss runs.
 FAKE_GH = '''#!/usr/bin/env python3
 import json, os, sys
 root, argv = os.environ["FAKE"], sys.argv[1:]
@@ -27,6 +29,8 @@ state = json.load(open(os.path.join(root, "state.json")))
 counter = os.path.join(root, "calls")
 calls = int(open(counter).read()) if os.path.exists(counter) else 0
 open(counter, "w").write(str(calls + 1))
+with open(os.path.join(root, "argv"), "a") as handle:
+    handle.write(json.dumps(argv) + "\\n")
 if "-X" in argv:
     if state.get("refuse_writes"):
         sys.stderr.write("HTTP 403: Resource not accessible by integration\\n")
@@ -34,11 +38,14 @@ if "-X" in argv:
     with open(os.path.join(root, "writes"), "a") as handle:
         handle.write(json.dumps([argv[argv.index("-X") + 1], argv[3], json.load(sys.stdin)]) + "\\n")
     sys.exit(0)
-if calls < state.get("fail_reads", 0):
+if calls < state.get("fail_reads", 0) or calls in state.get("fail_calls", []):
     sys.stderr.write("HTTP 502: Bad Gateway\\n")
     sys.exit(1)
 endpoint = argv[1]
 if endpoint.endswith("/check-runs"):
+    if "--paginate" not in argv or "check_name=sync-preview-branch" not in argv:
+        sys.stderr.write("unpaged or unfiltered check-runs read\\n")
+        sys.exit(9)
     reads = os.path.join(root, "run-reads")
     n = int(open(reads).read()) if os.path.exists(reads) else 0
     open(reads, "w").write(str(n + 1))
@@ -51,6 +58,7 @@ elif endpoint.endswith("/statuses"):
 '''
 
 PASSED = [["2026-10-12T15:00:00Z", "completed", "success"]]
+ADDRESS = {"context": "preview", "created_at": "2026-10-12T15:01:00Z", "target_url": "https://p.vercel.app"}
 
 
 class Preview(unittest.TestCase):
@@ -125,6 +133,24 @@ class Preview(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn('"sync-preview-branch" ended in failure', result.stdout)
 
+    def test_a_timed_out_check_means_no_preview(self):
+        self.serve(runs=[[["2026-10-12T15:00:00Z", "completed", "timed_out"]]])
+        result = self.find()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('"sync-preview-branch" ended in timed_out', result.stdout)
+
+    def test_a_newer_success_beats_an_older_failure(self):
+        self.serve(runs=[[["2026-10-12T14:00:00Z", "completed", "failure"], PASSED[0]]], statuses=[ADDRESS])
+        self.assertEqual(self.find().stdout, "https://p.vercel.app\n")
+
+    def test_the_check_runs_are_read_by_name_on_every_page(self):
+        self.serve(runs=[PASSED], statuses=[ADDRESS])
+        self.assertEqual(self.find().returncode, 0)
+        first = json.loads((self.fake / "argv").read_text().splitlines()[0])
+        self.assertEqual(first[:2], ["api", "repos/%s/commits/%s/check-runs" % (REPO, SHA)])
+        for flag in ("--paginate", "check_name=sync-preview-branch", "per_page=100"):
+            self.assertIn(flag, first)
+
     def test_a_newer_skipped_run_does_not_hide_the_real_one(self):
         self.serve(runs=[[["2026-10-12T15:05:00Z", "completed", "skipped"], PASSED[0]]],
                    statuses=[{"context": "preview", "created_at": "2026-10-12T15:01:00Z", "target_url": "https://p.vercel.app"}])
@@ -178,6 +204,40 @@ class Preview(unittest.TestCase):
         self.serve(runs=[PASSED], fail_reads=5,
                    statuses=[{"context": "preview", "created_at": "2026-10-12T15:01:00Z", "target_url": "https://p.vercel.app"}])
         self.assertEqual(self.find().stdout, "https://p.vercel.app\n")
+
+    def test_an_answer_starts_the_failed_read_count_again(self):
+        # Five failed reads, an answer (still running), five more, then the pass: ten failures in
+        # all, never six in a row.
+        running = [["2026-10-12T15:00:00Z", "in_progress", ""]]
+        self.serve(runs=[running, PASSED], fail_calls=[0, 1, 2, 3, 4, 6, 7, 8, 9, 10], statuses=[ADDRESS])
+        result = self.find()
+        self.assertEqual(result.stdout, "https://p.vercel.app\n", result.stderr)
+
+    def test_failed_reads_neither_stretch_the_wait_nor_count_as_running(self):
+        # A one-minute wait is two polls, failed or not, and a failed poll is not a running one.
+        self.serve(runs=[[]], fail_calls=[0])
+        result = self.find("--wait-minutes", "1", "--running-minutes", "1")
+        self.assertIn("did not pass", result.stdout)
+        self.assertIn("ran for about 0 of them", result.stdout)
+        self.assertEqual(int((self.fake / "calls").read_text()), 2)
+
+    def test_a_failed_check_is_still_red_after_a_failed_read(self):
+        self.serve(runs=[[["2026-10-12T15:00:00Z", "completed", "failure"]]], fail_calls=[0])
+        self.assertIn("ended in failure", self.find().stdout)
+
+    def test_a_failed_statuses_read_after_the_pass_is_tried_again(self):
+        self.serve(runs=[PASSED], fail_calls=[1], statuses=[ADDRESS])
+        result = self.find()
+        self.assertEqual(result.stdout, "https://p.vercel.app\n")
+        self.assertIn("/statuses failed (1 in a row)", result.stderr)
+
+    def test_a_record_with_no_address_is_passed_over(self):
+        self.serve(runs=[PASSED], statuses=[ADDRESS, {"context": "preview", "created_at": "2026-10-12T16:00:00Z", "target_url": None}])
+        self.assertEqual(self.find().stdout, "https://p.vercel.app\n")
+
+    def test_the_wait_says_where_the_check_was_last_seen(self):
+        self.serve(runs=[[["2026-10-12T15:00:00Z", "queued", ""]]])
+        self.assertIn("(last seen: queued", self.find("--wait-minutes", "1").stdout)
 
     def test_six_failed_reads_in_a_row_exit_2_naming_the_call(self):
         self.serve(runs=[PASSED], fail_reads=6)
