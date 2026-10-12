@@ -136,7 +136,7 @@ console.log(JSON.stringify(rows));
         self.assertEqual(result["mixed"]["workLines"], ["2 checks queued"])
         self.assertEqual(result["passed"]["counts"], "All passed")
         self.assertEqual(result["passed"]["pushWhen"], "1d")
-        self.assertIsNone(result["passed"]["pushClass"])
+        self.assertEqual(result["passed"]["pushClass"], "age-yellow")
         self.assertEqual(result["passed"]["pushKind"], "· bug fix")
         self.assertEqual(result["passed"]["workLines"], ["No current-head failure observed"])
         self.assertEqual(result["passed"]["reason"], "")

@@ -105,7 +105,8 @@
     return safe ? element("a", { href: safe, class: className || "evidence-link", target: "_blank", rel: "noreferrer" }, label) : null;
   }
 
-  const DAY = 24 * 60 * 60;
+  const HOUR = 60 * 60;
+  const DAY = 24 * HOUR;
   const WEEK = 7 * DAY;
   const MONTH = 30 * DAY;
   const YEAR = 365 * DAY;
@@ -148,10 +149,18 @@
     return seconds == null ? "Unavailable" : ageLabel(seconds);
   }
 
-  function ageClass(value, now) {
+  // Seconds after which an age turns yellow, then red. A pull request's open age is slow;
+  // the time since its last push is not.
+  const AGE_LIMITS = {
+    pull: { yellow: 3 * DAY, red: 2 * WEEK },
+    push: { yellow: 3 * HOUR, red: DAY }
+  };
+
+  function ageClass(value, now, kind = "pull") {
     const seconds = elapsedSeconds(value, now);
-    if (seconds == null || seconds <= 3 * DAY) return null;
-    return seconds > 2 * WEEK ? "age-red" : "age-yellow";
+    const limits = AGE_LIMITS[kind];
+    if (seconds == null || seconds <= limits.yellow) return null;
+    return seconds > limits.red ? "age-red" : "age-yellow";
   }
 
   function formatTime(value) {

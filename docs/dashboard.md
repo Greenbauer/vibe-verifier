@@ -460,8 +460,9 @@ From a day through seven days it counts whole days, with no hours. Past seven da
 whole weeks, past thirty days whole months, and from a year whole years. The number stays the
 default text color through three days, turns yellow after that, and turns red after two weeks.
 An age of exactly three days or exactly two weeks keeps the younger color.
-The latest push uses those same units and colors, on the right of the line under the check
-meter, in the same size and weight as that line. Its right edge lines up with the meter, not
+The latest push uses those same units, on the right of the line under the check meter, in the
+same size and weight as that line. Its time turns yellow after three hours and red after a day;
+exactly three hours or exactly a day keeps the younger color. Its right edge lines up with the meter, not
 with the comment mark beside the meter. The kind of push follows the time on that same line:
 feature, bug fix, refactor, performance, docs, test, chore, ci,
 build, style, revert, work in progress, or update when the commit message has no such prefix.
