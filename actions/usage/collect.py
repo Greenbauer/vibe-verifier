@@ -241,6 +241,14 @@ def shell_status(returncode, forwarded_signal):
     return 128 - returncode if returncode < 0 else returncode
 
 
+def annotate_failure(exit_status, last_error):
+    """The failed step's annotation: the one place a failed run says why (stderr is not kept), and what
+    `vibe-verifier qa-review` reads to tell a model usage limit from any other failure."""
+    if exit_status and last_error:
+        escaped = last_error.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print("::error::Codex ended with an error: %s" % escaped, flush=True)
+
+
 def collect_codex(args):
     command = list(args.command)
     if command[:1] == ["--"]:
@@ -290,11 +298,7 @@ def collect_codex(args):
         value = unavailable(args, "openai", reason)
     write_record(args.output, value)
     print("usage collector: provider run ended; metrics %s" % value["status"], flush=True)
-    if exit_status and last_error:
-        # The step's failure annotation: the one place a failed run says why (stderr is not kept), and
-        # what `vibe-verifier qa-review` reads to tell a model usage limit from any other failure.
-        escaped = last_error.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-        print("::error::Codex ended with an error: %s" % escaped, flush=True)
+    annotate_failure(exit_status, last_error)
     return exit_status
 
 

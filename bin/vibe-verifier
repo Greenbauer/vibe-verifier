@@ -1240,20 +1240,22 @@ def explorer_limits(repo, run_id):
         jobs = gh_json("repos/%s/actions/runs/%s/jobs?filter=latest&per_page=100" % (repo, run_id)).get("jobs", [])
         failed = [job for job in jobs if EXPLORE_JOB.fullmatch(job.get("name", "").split(" / ")[-1])
                   and job.get("conclusion") == "failure"]
-        resets = []
-        for job in failed:
-            notes = gh_json("repos/%s/check-runs/%s/annotations?per_page=100" % (repo, job["id"]))
-            found = [USAGE_LIMIT.search(note.get("message") or "") for note in notes
-                     if note.get("annotation_level") == "failure"]
-            found = [match for match in found if match]
-            if not found:
-                return None
-            reset = LIMIT_RESET.search(found[0].group("rest").strip())
-            resets.append(reset.group("when").strip() if reset else "")
+        resets = [job_limit(repo, job["id"]) for job in failed]
     except (CannotRead, ValueError, KeyError, TypeError, AttributeError) as error:
         print("::warning::could not tell why the explore job failed: %s" % error)
         return None
-    return resets or None
+    return resets if resets and None not in resets else None
+
+
+def job_limit(repo, job_id):
+    """The reset time a job's usage-limit failure annotation names ('' for none), or None when it has none."""
+    notes = gh_json("repos/%s/check-runs/%s/annotations?per_page=100" % (repo, job_id))
+    found = [USAGE_LIMIT.search(note.get("message") or "") for note in notes if note.get("annotation_level") == "failure"]
+    found = [match for match in found if match]
+    if not found:
+        return None
+    reset = LIMIT_RESET.search(found[0].group("rest").strip())
+    return reset.group("when").strip() if reset else ""
 
 
 def review_criteria(criteria_text, verdict_text, ticket_text=""):
@@ -1281,6 +1283,23 @@ def explorer_said(carried):
     return "no verdict" if len(carried) != 1 else "explorer says PASS" if verdict(carried[0]) == "PASS" else "explorer says FAIL"
 
 
+def usage_limit_lines(head, limits):
+    """The usage-limit review's text: when the limit resets, and the QA walk the driver does by hand until then."""
+    resets = sorted(set(reset for reset in limits if reset))
+    when = "it resets %s" % " / ".join(resets) if resets else "its message names no reset time"
+    return ["The explorer hit its model usage limit on %s (%s), so nothing was checked and these checks "
+            "stay red. Until the reset, the agent driving this pull request does the QA walk by hand:" % (head, when),
+            "",
+            "1. Open this pull request's preview at the current head and walk every bullet under "
+            "`## Acceptance criteria` (and the ticket's criteria, when it has any), at each width on the "
+            "`--widths` of the `qae-artifacts` line in the QAE manifest (`.vibe-verifier-qae`).",
+            "2. Post the evidence as a pull request comment: one line per criterion, PASS or FAIL, with "
+            "the head it was walked on, what was done and what the page showed (a screenshot or its text).",
+            "3. Rerun this workflow after the reset, so the QAE judges the head itself.",
+            "",
+            "A hand walk is evidence for the reviewer, never a verdict: only a rerun turns these checks green."]
+
+
 def review_body(state, args, limits=None):
     head = "`%s`" % args.head[:8]
     lines = [REVIEW_MARKER, REVIEW_HEADINGS[state], ""]
@@ -1289,19 +1308,7 @@ def review_body(state, args, limits=None):
     elif state == "carried":
         lines.append("No new browser check on %s: %s. The criteria were not edited since." % (head, args.not_required.rstrip(".")))
     elif state == "usage-limit":
-        resets = sorted(set(reset for reset in limits if reset))
-        when = "it resets %s" % " / ".join(resets) if resets else "its message names no reset time"
-        lines += ["The explorer hit its model usage limit on %s (%s), so nothing was checked and these checks "
-                  "stay red. Until the reset, the agent driving this pull request does the QA walk by hand:" % (head, when),
-                  "",
-                  "1. Open this pull request's preview at the current head and walk every bullet under "
-                  "`## Acceptance criteria` (and the ticket's criteria, when it has any), at each width on the "
-                  "`--widths` of the `qae-artifacts` line in the QAE manifest (`.vibe-verifier-qae`).",
-                  "2. Post the evidence as a pull request comment: one line per criterion, PASS or FAIL, with "
-                  "the head it was walked on, what was done and what the page showed (a screenshot or its text).",
-                  "3. Rerun this workflow after the reset, so the QAE judges the head itself.",
-                  "",
-                  "A hand walk is evidence for the reviewer, never a verdict: only a rerun turns these checks green."]
+        lines += usage_limit_lines(head, limits)
     elif state == "could-not-run":
         stopped = ("The explore job ended `%s`" % args.explore_result if args.explore_result not in EXPLORE_DONE
                    else "The verify job stopped before its gates ran")
