@@ -2,7 +2,7 @@
   "use strict";
   const { BOT_META, element: el, link, safeUrl, duration, since, ageClass, formatTime, bytes, badge, agedState, sourceStamp,
     diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark,
-    quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
+    quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups, httpsUrl, workGroups } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
   const state = { ...VV.restoreViewState(null), ...VV.parseRoute(location.hash) };
@@ -56,6 +56,7 @@
   function renderChrome() {
     document.querySelector("#owner").textContent = snapshot.owner;
     document.querySelector("#source-stamp").textContent = sourceStamp(snapshot.github, Date.now());
+    document.querySelector('.sidebar button[data-view="work"]').hidden = !snapshot.work?.configured;
     document.querySelectorAll(".sidebar button").forEach(button => {
       if (button.dataset.view === state.view) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
@@ -401,6 +402,89 @@
     content.append(failurePanel());
   }
 
+  const WORK_ERRORS = {
+    credential_missing: "No credential file on this host yet.", credential_unsafe: "The credential file is not private to the dashboard account.",
+    credential_unreadable: "The credential file cannot be read.", rejected: "The source refused the credential.",
+    unreachable: "The source could not be reached.", unavailable: "The source answered with an error.",
+    invalid_response: "The source answered in a shape this dashboard does not read.", tool_error: "The source refused the request."
+  };
+
+  function externalLink(label, url) {
+    const safe = httpsUrl(url);
+    return safe ? el("a", { href: safe, class: "evidence-link", target: "_blank", rel: "noreferrer" }, label) : null;
+  }
+
+  function workText(text) { return el("div", { class: "work-text" }, text); }
+
+  function workDetail(item, now) {
+    if (!item.detail) return null;
+    const parts = [];
+    if (item.status_text) parts.push(el("p", { class: "muted" }, item.status_text));
+    if (item.body) parts.push(el("h3", {}, "Request"), workText(item.body));
+    if (item.refs.length) parts.push(el("p", { class: "muted" }, `Design references: ${item.refs.join(" · ")}`));
+    const kind = item.source_kind === "calls" ? "Follow-up" : "Amendment";
+    item.updates.forEach((update, index) => parts.push(
+      el("h3", {}, `${kind} ${index + 1} · ${formatTime(update.created_at)} · ${since(update.created_at, now)} ago`), workText(update.body),
+      update.refs.length ? el("p", { class: "muted" }, `Design references: ${update.refs.join(" · ")}`) : null));
+    item.asks.forEach(ask => parts.push(
+      el("h3", {}, `Ask · ${formatTime(ask.raised_at)}${ask.open ? " · awaiting a ruling" : ""}`), workText(ask.question),
+      ask.ruling ? el("p", {}, el("b", {}, `Ruling (${formatTime(ask.ruled_at)}): `), ask.ruling) : null));
+    return el("details", { class: "work-detail" },
+      el("summary", {}, `Request${item.updates.length ? ` and ${item.updates.length} ${kind.toLowerCase()}${item.updates.length === 1 ? "" : "s"}` : ""}${item.asks.length ? `, ${item.asks.length} ask${item.asks.length === 1 ? "" : "s"}` : ""}`),
+      parts);
+  }
+
+  function workRow(item, now) {
+    const updated = ageClass(item.updated_at, now);
+    const facts = [
+      item.source,
+      item.requester ? `from ${item.requester}` : null,
+      item.claimed_by ? `claimed by ${item.claimed_by}` : (item.phase === "done" ? null : "unclaimed"),
+      `created ${since(item.created_at, now)} ago`
+    ].filter(Boolean).join(" · ");
+    return el("article", { class: "work-row" },
+      el("div", { class: "work-main" },
+        el("div", { class: "work-title" }, el("span", { class: "mono muted" }, item.label), " ",
+          item.item_url ? externalLink(item.title, item.item_url) : el("b", {}, item.title)),
+        el("small", { class: "muted" }, facts),
+        item.todo ? el("p", { class: "work-todo" }, item.todo.reason) : null,
+        workDetail(item, now)),
+      el("div", { class: "work-side" }, badge(item.status),
+        el("small", { class: updated || "muted" }, `updated ${since(item.updated_at, now)} ago`),
+        item.pr_number ? (externalLink(`PR #${item.pr_number}`, item.pr_url) || el("small", {}, `PR #${item.pr_number}`)) : null,
+        externalLink("Preview", item.preview_url)));
+  }
+
+  function workSection(title, subtitle, items, now, open = true) {
+    const body = items.length ? items.map(item => workRow(item, now)) : [el("p", { class: "muted" }, "None.")];
+    const head = el("div", { class: "panel-title" }, el("h2", {}, `${title} (${items.length})`), el("span", { class: "muted" }, subtitle));
+    return open ? el("section", { class: "panel" }, head, el("div", { class: "work-list" }, body))
+      : el("details", { class: "panel" }, el("summary", {}, head), el("div", { class: "work-list" }, body));
+  }
+
+  function renderWork() {
+    const work = snapshot.work || { configured: false, sources: [] };
+    content.replaceChildren(heading("Work", "Plans and requests a session could pick up, and what waits on a person."));
+    if (!work.configured) { content.append(empty("No work sources", "This dashboard has no work_sources configured.")); return; }
+    const now = Date.now();
+    work.sources.forEach(source => {
+      source.items.forEach(item => { item.source_kind = source.kind; });
+      const sampled = source.sampled_at ? `${source.label}: read ${formatTime(source.sampled_at)}` : source.label;
+      if (source.loading) content.append(sourceBanner(`${source.label}: reading…`));
+      else if (source.error) content.append(sourceBanner(`${sampled}. ${WORK_ERRORS[source.error] || "The source could not be read."}${source.available ? " Showing the last reading." : ""}`, "warning"));
+      else if (source.stale) content.append(sourceBanner(`${sampled}. This reading is stale.`, "warning"));
+      if (source.truncated) content.append(sourceBanner(`${source.label}: showing the oldest ${source.items.length} items only.`, "warning"));
+    });
+    const groups = workGroups(work, now);
+    content.append(el("p", { class: "muted work-summary" },
+      `${groups.todo.length} waiting on a person · ${groups.active.length} in flight · ${groups.queued.length} queued · ${groups.stale} not updated in over two weeks`));
+    content.append(
+      workSection("Waiting on a person", "Blocked, an Ask without a ruling, or a PR waiting on a merge", groups.todo, now),
+      workSection("In flight", "Being worked, oldest first", groups.active, now),
+      workSection("Queued", "Not picked up yet, oldest first; red means no update in over two weeks", groups.queued, now),
+      workSection("Done", "Merged or closed", groups.done, now, false));
+  }
+
   function metric(label, value, percent) {
     const row = el("div", { class: "host-metric" }, el("span", {}, label), el("b", {}, value));
     if (Number.isFinite(percent)) row.append(el("div", { class: "metric-meter", role: "meter", "aria-valuenow": percent,
@@ -445,11 +529,12 @@
   function render() {
     if (!snapshot) return;
     renderChrome();
-    if (state.view === "usage") renderUsage();
+    if (state.view === "work") renderWork();
+    else if (state.view === "usage") renderUsage();
     else if (state.view === "capacity") renderCapacity();
     else renderPulls();
     rememberView();
-    const title = { prs: "Pull requests", usage: "Bot usage", capacity: "Capacity" }[state.view];
+    const title = { prs: "Pull requests", work: "Work", usage: "Bot usage", capacity: "Capacity" }[state.view];
     document.title = `${title} · Vibe Verifier`;
     if (refreshFailed) content.prepend(sourceBanner("Could not refresh. Showing the last sample.", "warning"));
     announce(`Showing ${state.view}`);

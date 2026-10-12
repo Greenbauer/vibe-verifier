@@ -1,8 +1,8 @@
 # Local CI dashboard pilot
 
 The dashboard is an optional, read-only companion. It shows open pull requests from one configured
-GitHub owner, current-head checks and Actions jobs, explicit bot workflow history, and optional local
-usage/capacity telemetry. It does not change the existing Vibe Verifier runner or gates.
+GitHub owner, current-head checks and Actions jobs, explicit bot workflow history, optional local
+usage/capacity telemetry, and optional [work queues](#work-view). It does not change the existing Vibe Verifier runner or gates.
 
 The static view adapts the compact layout, CSS structure, and pure interaction patterns from the
 operator-approved local dashboard prototype dated 2026-09-30. Its synthetic preview records were not
@@ -10,7 +10,7 @@ copied into the live dashboard. Live mode has no built-in data.
 
 ## Navigation, back/forward, and refresh
 
-The current view lives in the URL hash: `#/prs`, `#/usage`, or `#/capacity`. Every view change adds
+The current view lives in the URL hash: `#/prs`, `#/work`, `#/usage`, or `#/capacity`. Every view change adds
 a browser history entry, so the back and forward buttons move between views, and refreshing or
 opening a copied link lands on the same view. An empty or unknown hash, including an older
 `#/pr/<owner>/<repo>/<number>` link, shows pull requests and is rewritten to `#/prs` in place. The
@@ -193,6 +193,58 @@ user reads `GET /users/{owner}/repos?type=owner`. Which of those repositories ha
 request is one `GET /search/issues` (`org:` or `user:`, from the owner's type). A repository the
 search leaves out is not read further. Search can lag a new pull request by a refresh. A configured
 list does not use that search: each named repository is listed on its own.
+
+## Work view
+
+`#/work` lists the plans and requests a session could pick up, and what waits on a person. It appears
+in the menu only when the configuration has `work_sources`, a list of at most eight read-only queues:
+
+```json
+"work_sources": [
+  {"id": "plans", "label": "Plans", "kind": "plans", "endpoint": "https://plans.example.test/api/mcp",
+   "token_file": "/etc/vibe-dashboard/example/plans.token", "repository": "octocat/example",
+   "app_origin": "https://plans.example.test"}
+]
+```
+
+Each source is an MCP server reached over HTTPS (streamable HTTP, `Authorization: Bearer`), with
+the bearer read from `token_file` on every refresh. The file must be a regular file of the account
+running the dashboard that no other account can read (mode 0600), so a replaced key is used without a
+restart and the key never enters the configuration. `id` is a lowercase slug, `label` what the page
+shows. `kind` says which tools the server has; the dashboard calls only these read tools:
+
+| `kind` | Lists with | Reads each open item with | What an item carries |
+|---|---|---|---|
+| `plans` | `list_plans` `{limit: 100}` | `get_plan` `{planId}` | the plan body, every amendment oldest first, status (the server's PR-derived one), claimant, PR, preview, blocked reason |
+| `calls` | `list_open_calls` `{limit: 100}` | `get_call` `{callId}` | the brief, every follow-up with its design references, every ask with its ruling, status, submitter, claim, PR, preview |
+
+A merged or closed item is listed without reading its detail. `repository` (OWNER/NAME of the
+configured owner) turns a PR number into a GitHub link; `app_origin` (an HTTPS origin) links the item
+to `<app_origin>/plans/<id>` or `<app_origin>/calls/<id>`. A design reference shows its label only:
+the links a server signs expire.
+
+The page groups items, oldest first:
+
+- **Waiting on a person**: an ask with no ruling, a `blocked` item (with its reason, or "no reason
+  recorded"), an `await_answer` item, or a `pr_ready` item (its PR waits on review and merge). Each
+  is listed here once, not again under its phase.
+- **In flight**: any other status that is not queued or done.
+- **Queued**: `submitted` or `backlog`.
+- **Done**: `merged` or `closed`, collapsed.
+
+Every row shows when it was created and last updated; the update age is yellow after three days and
+red after two weeks, and the summary line counts open items not updated in over two weeks, so a stale
+queue reads as stale. A row's details hold the request text, amendments or follow-ups, and asks, as
+plain text.
+
+Sources are read in the background at most every five minutes while a page polls, one after another.
+A source that fails keeps its last items, marked stale with the reason (`unreachable`, `unavailable`,
+`invalid_response`, `tool_error`); a refused key (`rejected`) forgets them, as lost GitHub access
+does. A source never read says why (`credential_missing`, `credential_unsafe`) instead of showing an
+empty queue. Nothing is kept across a restart, and the dashboard never writes to a source: there is
+no claim, status, amend, or answer control. More than 100 items in a source shows the oldest 100 and
+says so. `tests/test_dashboard_work.py` covers the configuration, the key file, the protocol, both
+kinds, the groups, and failure handling.
 
 ## Optional private HTTPS proxy
 
@@ -482,7 +534,11 @@ shows as soon as anything reports on the head. Elapsed time alone never asserts 
   at once when access is revoked. Delete the directory after stopping the process to remove them.
 - Telemetry: created and atomically replaced by an optional collector, read only by this process,
   bounded to a current snapshot plus seven days of samples, and unavailable when deleted.
-- GitHub records: never created, updated, or deleted by this dashboard. There are no retry, cancel,
+- Work queues: read from each source at most every five minutes while viewed, held only in memory,
+  replaced by the next reading, forgotten when the source refuses the key, and gone when the process
+  stops. The key file is the operator's: create it, replace it to rotate the key, delete it (and the
+  source's entry) to stop reading.
+- GitHub records and work items: never created, updated, or deleted by this dashboard. There are no retry, cancel,
   merge, pause, send, save, or publish controls.
 
 ## Verification map

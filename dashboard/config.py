@@ -65,6 +65,73 @@ def _parse_agents(value: object) -> tuple[AgentDefinition, ...]:
 
 
 @dataclass(frozen=True)
+class WorkSource:
+    """A read-only queue of work items behind an MCP server (dashboard/work.py)."""
+    id: str
+    label: str
+    kind: str
+    endpoint: str
+    token_file: Path
+    repository: str | None = None
+    app_origin: str | None = None
+
+
+WORK_KINDS = ("plans", "calls")
+
+
+def _https_url(value: object, where: str, *, origin_only: bool) -> str:
+    """An HTTPS URL with a hostname and no credentials, fragment or control character."""
+    bad = ConfigError("%s must be an HTTPS %s" % (where, "origin" if origin_only else "URL"))
+    if (not isinstance(value, str) or len(value) > 512 or "*" in value
+            or any(ord(char) < 33 or ord(char) == 127 for char in value)):
+        raise bad
+    try:
+        parsed = urlsplit(value)
+        parsed.port
+    except ValueError:
+        raise bad from None
+    if (parsed.scheme != "https" or not parsed.hostname or not HOSTNAME.fullmatch(parsed.hostname)
+            or parsed.username is not None or parsed.password is not None or parsed.fragment
+            or (origin_only and (parsed.path or parsed.query or value != "https://" + parsed.netloc))):
+        raise bad
+    return value
+
+
+def _parse_work_sources(value: object, owner: str) -> tuple[WorkSource, ...]:
+    if not isinstance(value, list) or len(value) > 8:
+        raise ConfigError("work_sources must be a list of at most 8 sources")
+    result, ids = [], set()
+    for row in value:
+        if not isinstance(row, dict):
+            raise ConfigError("work source must be an object")
+        _only_keys(row, {"id", "label", "kind", "endpoint", "token_file", "repository", "app_origin"}, "work source")
+        identity, label, kind = row.get("id"), row.get("label"), row.get("kind")
+        if not isinstance(identity, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", identity) or identity in ids:
+            raise ConfigError("work source id must be a unique lowercase slug")
+        if not isinstance(label, str) or not 0 < len(label) <= 60:
+            raise ConfigError("work source label must be 1 to 60 characters")
+        if kind not in WORK_KINDS:
+            raise ConfigError("work source kind must be one of: %s" % ", ".join(WORK_KINDS))
+        token_file = row.get("token_file")
+        if not isinstance(token_file, str) or not Path(token_file).is_absolute():
+            raise ConfigError("work source token_file must be an absolute path")
+        repository = row.get("repository")
+        if repository is not None:
+            parts = repository.split("/") if isinstance(repository, str) else []
+            if len(parts) != 2 or parts[0].lower() != owner.lower() or not REPOSITORY.fullmatch(parts[1]):
+                raise ConfigError("work source repository must be OWNER/NAME of the configured owner")
+            repository = owner + "/" + parts[1]
+        app_origin = row.get("app_origin")
+        if app_origin is not None:
+            app_origin = _https_url(app_origin, "work source app_origin", origin_only=True)
+        ids.add(identity)
+        result.append(WorkSource(identity, label, kind,
+                                 _https_url(row.get("endpoint"), "work source endpoint", origin_only=False),
+                                 Path(token_file), repository, app_origin))
+    return tuple(result)
+
+
+@dataclass(frozen=True)
 class Config:
     owner: str
     repositories: tuple[str, ...]
@@ -74,6 +141,7 @@ class Config:
     agents: tuple[AgentDefinition, ...] = ()
     # True when repositories is the string "all": the set is discovered on each refresh.
     all_repositories: bool = False
+    work_sources: tuple[WorkSource, ...] = ()
 
 
 def coverage_label(config: Config) -> str:
@@ -167,7 +235,8 @@ def load_config(filename: str | os.PathLike[str], uid: int | None = None) -> Con
     value = _read_json(path, uid)
     if not isinstance(value, dict):
         raise ConfigError("configuration must be a JSON object")
-    _only_keys(value, {"version", "owner", "repositories", "bots", "telemetry_file", "proxy_origin", "agents"},
+    _only_keys(value, {"version", "owner", "repositories", "bots", "telemetry_file", "proxy_origin", "agents",
+                            "work_sources"},
                "configuration")
     if value.get("version") != 1:
         raise ConfigError("configuration version must be 1")
@@ -204,4 +273,4 @@ def load_config(filename: str | os.PathLike[str], uid: int | None = None) -> Con
         _owned_regular_file(telemetry_path, uid, may_be_missing=True)
     return Config(owner, tuple(canonical), _parse_bots(value.get("bots")), telemetry_path,
                   _parse_proxy_origin(value.get("proxy_origin")), _parse_agents(value.get("agents", [])),
-                  all_repositories)
+                  all_repositories, _parse_work_sources(value.get("work_sources", []), owner))

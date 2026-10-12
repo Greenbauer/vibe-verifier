@@ -463,7 +463,7 @@ console.log(JSON.stringify({limits:text(lanes.children[0]),cards:cards.map(card=
             self.assertIn(color, css)
         for color in ("#809cff", "#50d6e8"):
             self.assertIn(color, helpers)
-        self.assertEqual(html.count('data-view="'), 3)
+        self.assertEqual(html.count('data-view="'), 4)
         self.assertNotIn("footer", html.lower())
     def test_workspace_nav_stays_put_while_the_view_scrolls(self):
         css = (ROOT / "dashboard/static/styles.css").read_text()

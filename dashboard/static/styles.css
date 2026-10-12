@@ -181,6 +181,25 @@ a.pr-row { color: inherit; text-decoration: none; cursor: pointer; }
 .status-pending, .status-working, .status-busy, .status-provisionable, .status-cancelled { color: var(--yellow); }
 .status-skipped, .status-unknown { color: var(--muted); }
 
+.status-pr_ready, .status-merged { color: var(--green); }
+.status-blocked, .status-await_answer { color: var(--red); }
+.status-in_progress, .status-in_review { color: var(--yellow); }
+.status-submitted, .status-backlog, .status-closed { color: var(--muted); }
+.work-summary { margin-top: 10px; }
+.work-list { margin-top: 8px; }
+.work-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); }
+.work-row:first-child { border-top: 0; }
+.work-main { min-width: 0; display: grid; gap: 3px; }
+.work-title { overflow-wrap: anywhere; }
+.work-side { display: grid; justify-items: end; align-content: start; gap: 4px; font-size: 12px; }
+.work-side .age-yellow { color: var(--yellow); }
+.work-side .age-red { color: var(--red); }
+.work-todo { color: var(--yellow); font-size: 12px; }
+.work-detail summary, details.panel > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+details.panel > summary { list-style: none; }
+.work-detail h3 { margin-top: 10px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.work-text { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 360px; overflow: auto;
+  padding: 8px; background: var(--row); border-radius: 5px; }
 .panel { margin-top: 13px; padding: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; }
 .panel > h2 + p { margin-top: 5px; }
 .empty { padding: 36px 18px; text-align: center; }
@@ -229,6 +248,8 @@ a.pr-row { color: inherit; text-decoration: none; cursor: pointer; }
 }
 
 @media (max-width: 650px) {
+  .work-row { grid-template-columns: minmax(0, 1fr); }
+  .work-side { justify-items: start; grid-auto-flow: column; justify-content: start; align-items: center; gap: 10px; }
   .topbar { flex-wrap: wrap; gap: 8px 12px; padding: 8px 12px; }
   .source-stamp { width: 100%; margin-left: 35px; }
   main { padding: 16px 11px; }

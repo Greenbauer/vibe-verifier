@@ -13,7 +13,9 @@
     success: "Succeeded", failed: "Failed", skipped: "Skipped", cancelled: "Cancelled",
     pending: "Pending", running: "Running", waiting: "Waiting", unknown: "Unknown", working: "Working", idle: "Idle",
     paused: "Paused", down: "Down", ready: "Ready", busy: "Busy", provisionable: "On demand",
-    offline: "Offline", allocated: "Occupied"
+    offline: "Offline", allocated: "Occupied",
+    submitted: "Queued", backlog: "Backlog", in_progress: "In progress", in_review: "In review",
+    pr_ready: "PR ready", await_answer: "Awaiting answer", blocked: "Blocked", merged: "Merged", closed: "Closed"
   };
 
   // Filters and the selected bot, saved per tab. Where you are lives in the URL instead.
@@ -36,7 +38,7 @@
   // so an older #/pr/<owner>/<repo>/<number> hash is not a view and falls back to the list.
   function parseRoute(hash) {
     const view = /^#\/(\w+)$/.exec(hash || "")?.[1];
-    return { view: ["prs", "usage", "capacity"].includes(view) ? view : "prs" };
+    return { view: ["prs", "work", "usage", "capacity"].includes(view) ? view : "prs" };
   }
 
   function routeHash(route) {
@@ -71,6 +73,31 @@
     } catch (_) {
       return null;
     }
+  }
+
+  // A link the work view may open: HTTPS only, any host, since a work source names its own app.
+  function httpsUrl(value) {
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && !url.username && !url.password ? url.href : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Work items, oldest first within a group, each carrying its source's label. An open item that waits
+  // on a person is listed once, under `todo`, not again under its phase.
+  function workGroups(work, now) {
+    const groups = { todo: [], active: [], queued: [], done: [], stale: 0 };
+    (work?.sources || []).forEach(source => (source.items || []).forEach(item => {
+      const row = { ...item, source: source.label };
+      if (row.todo && row.phase !== "done") groups.todo.push(row);
+      else (groups[row.phase] || groups.active).push(row);
+      if (row.phase !== "done" && ageClass(row.updated_at, now) === "age-red") groups.stale += 1;
+    }));
+    const order = (a, b) => String(a.created_at).localeCompare(String(b.created_at));
+    ["todo", "active", "queued", "done"].forEach(key => groups[key].sort(order));
+    return groups;
   }
 
   function link(label, url, owner, className) {
@@ -389,6 +416,6 @@
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, since, ageClass, formatTime, bytes,
     badge, agedState, sourceStamp, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, restoreViewState,
-    parseRoute, routeHash, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel,
+    parseRoute, routeHash, httpsUrl, workGroups, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, quotaDeltaLabel,
     quotaTone, quotaCountdown, quotaGroups };
 });
