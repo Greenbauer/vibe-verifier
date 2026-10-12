@@ -222,6 +222,10 @@ It binds to loopback, can optionally sit behind a trusted private HTTPS proxy, a
 
 After a merge, every other open pull request is behind the default branch. The optional [pull sync action](actions/pull-sync/README.md) updates them with GitHub's own "update branch", a few at a time so the runners are not flooded: ready pull requests first, the rest about once a day, never one with checks running, and never past a cap on how many may be in flight. A pull request that conflicts is labelled `sync-conflict` and left to its owner. It is a dry run until told to act.
 
+## Preview address
+
+A pull request's preview has one address, and the job that sets the preview up is the one that knows it. The optional [preview action](actions/preview/README.md) records that address on the pull request's head as a `preview` commit status, and every check that tests the preview waits for that job and reads the address, instead of each reading the host's deployment records and guessing which build to test.
+
 ## Self-hosted runner lanes
 
 The optional [runner-lane kit](lanes/README.md) runs each CI job in its own disposable Sysbox container on a Linux machine you own. A small listener keeps a GitHub runner scale set per kind of job and starts one container for each job GitHub assigns it; the container takes that one job and exits, and nothing it did survives into the next. The kit is the engine only: which machine, organization, GitHub App and repositories a lane serves is a host file in your own private repository, and a machine keeps both checkouts on their `main` by itself. No gate depends on it, and where a consumer's jobs run stays that consumer's `runs-on:` choice.
