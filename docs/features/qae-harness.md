@@ -39,6 +39,8 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - `tests/test_qae_codex.py::test_the_locked_cli_supports_current_explicit_models_on_every_platform`
 - `tests/test_qae_artifacts.py::test_a_step_without_a_screenshot_fails`
 - `tests/test_qae_artifacts.py::test_an_error_a_third_party_page_logged_is_not_judged`
+- `tests/test_qae_feature_refusals.py::test_a_selected_features_step_declares_its_refusal_on_the_site_and_on_a_further_origin`
+- `tests/test_qae_feature_refusals.py::test_a_feature_the_re_walk_did_not_select_declares_nothing`
 - `tests/test_qae_console_pages.py::test_a_hosted_pages_own_error_passes_and_only_because_of_the_record`
 - `tests/test_qae_secret_names.py::test_the_name_entered_through_run_code_signs_in`
 - `tests/test_qae_secret_names.py::test_without_the_hook_the_same_sign_in_sends_the_name_and_fails_the_gate`
