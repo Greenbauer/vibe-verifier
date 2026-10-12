@@ -374,6 +374,12 @@ console.log(JSON.stringify({todo: ids('todo'), progress: ids('progress'), waitin
         self.assertEqual(result["route"], "work")
         self.assertEqual(result["links"], ["https://preview.example.test/x", None, None, None])
 
+    def test_the_boards_node_tests_pass(self):
+        result = subprocess.run(["node", "--test", "--test-reporter=tap", str(ROOT / "dashboard/static/work.test.js")],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"(?m)^# pass [1-9]")
+
     def test_the_work_button_starts_hidden_and_the_view_has_a_title(self):
         index = (ROOT / "dashboard/static/index.html").read_text()
         self.assertIn('<button data-view="work" hidden>Work</button>', index)
