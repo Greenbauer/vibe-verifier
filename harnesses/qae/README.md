@@ -369,8 +369,8 @@ as `entries:` instead, as it does to `actions/gates`. Without either, one width 
   that explorer left any in, so running one failed explorer again is enough (measured on a re-run of
   one matrix job, 2026-10-08: the verify job sees every attempt's artifacts). Two explorers that
   left the same path with different content fail the step: nothing is overwritten. The one
-  exception is the page record, one line per console error, which the gate reads under one name:
-  every explorer's lines are appended to it. An explorer that
+  exception is the page record, one line per console error or uncaught exception, which the gate reads under
+  one name: every explorer's lines are appended to it. An explorer that
   left no verdict has no `verdicts/<n>.md`, its criteria have no verdict line, and
   `acceptance-verdict` refuses them. A copy of each verdict is still posted as a comment, one per
   explorer, for people to read.
@@ -915,7 +915,8 @@ and refuses on structural facts:
 
 1. every `- step k:` line in a step log has a non-empty `qae/ACn-step-k.png` (a step naming
    `reference <key>` is reported as that comparison);
-2. no `[ERROR]` in any `console-*.log` outside `--allow-console` patterns, except Chromium's
+2. no `[ERROR]` and no uncaught exception in any `console-*.log` outside `--allow-console`
+   patterns ([below](#an-uncaught-exception)), except Chromium's
    `Failed to load resource` line for a host other than the declared site and its further declared
    origins, which is judged (and skipped) like that host's request in 4, and an error only pages
    outside the site logged ([below](#an-error-a-page-outside-the-site-logged));
@@ -959,6 +960,31 @@ declare anything. A [re-walked feature](#re-walking-the-features-a-pull-request-
 step declares the same way on its own line, so a refusal the feature walks by design is written once
 in its file rather than in every pull request that touches it.
 
+### An uncaught exception
+
+A script that throws, and a promise rejected with no handler, are the page's `pageerror`, and
+playwright-mcp writes them to the console log with no level tag. Checked in the pinned browser
+(2026-10-12), against a page holding `<script>throw new Error('boom')</script>`:
+
+```
+[     161ms] Error: boom
+    at http://127.0.0.1:55472/error:1:31
+```
+
+An `Error` is written as its stack, so the entry runs over several lines (more when its message
+does); anything else thrown or rejected is written as the value (`rejected string`, `Object`). A page
+that crashed is written the same way, as its bundle reads (`Error: Page crashed and was reset to
+about:blank.`, not reproduced here). Until
+2026-10-12 the gate read only `[ERROR]` lines and passed a run whose site threw.
+
+The gate reads each console entry as its offset line and the lines after it that carry no offset.
+An entry with a level tag is judged when the tag is `[ERROR]`, by that line; an entry without one is
+an uncaught exception, judged whole: an `--allow-console` pattern is matched against the entry,
+stack included, so a pattern can name the script it came through (`--allow-console
+'widget\.example/embed\.js'`). The finding reads `uncaught exception outside the allowlist`. The
+page record below covers exceptions too, by the first line of the entry, and an exception is about
+every script in its stack.
+
 ### An error a page outside the site logged
 
 A criterion can send the explorer to a page the site does not serve: a hosted checkout or sign-in
@@ -974,16 +1000,18 @@ is not the current tab unless the explorer selects it, and the session log then 
 but never ties a console log to it.
 
 So the harness records the page. [`console-pages.js`](../../actions/qae-browser/console-pages.js)
-is loaded into playwright-mcp with `--init-page`, and for each console error it appends one line to
+is loaded into playwright-mcp with `--init-page`, and for each console error and each uncaught
+exception (the page's `console` and `pageerror` events) it appends one line to
 `console-pages.jsonl` in the artifact directory: the URL of the page the tab showed (query and
-fragment dropped) and the SHA-256 of the error's line as the console log holds it. No text is
+fragment dropped) and the SHA-256 of the error's first line as the console log holds it. No text is
 copied, so the record is not a second place a credential can land.
 
 With a site declared, the gate does not judge a console error when all three hold:
 
 - the record names at least one page for that line;
 - every page it names is an `http(s)` page outside the declared site and its further origins;
-- the line is not about a URL of the site or of those origins.
+- the line is not about a URL of the site or of those origins: the script or resource it ends with,
+  or for an uncaught exception any script in its stack.
 
 Everything else is judged as before:
 
