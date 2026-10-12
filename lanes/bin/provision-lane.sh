@@ -1371,7 +1371,13 @@ quiesce_lane() {
   fi
   # The reaper last: each slot that stopped retired its copy and started it. What it leaves in the
   # trash stays behind in the XFS image.
-  if [ -f "$UNIT_DIR/$REAPER_TIMER" ]; then run_mutation systemctl stop "$REAPER_TIMER" "$REAPER_SERVICE"; fi
+  if [ -f "$UNIT_DIR/$REAPER_TIMER" ]; then
+    run_mutation systemctl stop "$REAPER_TIMER" "$REAPER_SERVICE"
+    # A reaper stopped mid-run ends "failed (signal)", which --check reports as a reaper that could
+    # not delete a retired copy until its next run (seen on a live conversion, 2026-10-08). The stop
+    # is this run's, not a failure of the reaper's, so its state is cleared here.
+    run_mutation systemctl reset-failed "$REAPER_SERVICE" || true
+  fi
 }
 
 # Starts again what quiesce_lane found running, and only that.
