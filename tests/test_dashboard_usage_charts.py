@@ -116,15 +116,15 @@ console.log(JSON.stringify(c.sumBurns([a,b])));
 
 
 class Drawing(unittest.TestCase):
-    def test_bot_cards_share_a_ceiling_and_all_bots_scales_to_itself_with_its_pace(self):
+    def test_bot_cards_share_a_ceiling_and_all_bots_scales_to_itself(self):
         result = node(r"""
 const c=require('./dashboard/static/charts.js');
 const blank=()=>Array(24).fill(null);
 const quiet={last24h:blank(),avg:blank()}, busy={last24h:blank(),avg:blank()};
 quiet.last24h[1]=10; busy.last24h[2]=400; busy.avg[5]=900;
-console.log(JSON.stringify({shared:c.ceiling([quiet,busy]),own:c.ceiling([quiet],50),zero:c.ceiling([{last24h:[0],avg:[null]}])}));
+console.log(JSON.stringify({shared:c.ceiling([quiet,busy]),own:c.ceiling([quiet]),zero:c.ceiling([{last24h:[0],avg:[null]}])}));
 """)
-        self.assertEqual(result, {"shared": 900, "own": 50, "zero": 1})
+        self.assertEqual(result, {"shared": 900, "own": 10, "zero": 1})
 
     def test_smoothing_never_dips_below_the_zero_baseline(self):
         result = node(r"""
@@ -160,14 +160,14 @@ console.log(JSON.stringify({paths,now}));
 
 
 class Cards(unittest.TestCase):
-    def test_unobserved_bots_say_so_and_only_all_bots_gets_the_pace_line(self):
+    def test_unobserved_bots_say_so_and_no_card_draws_a_pace_in_tokens(self):
         app = (ROOT / "dashboard/static/app.js").read_text()
         source = re.search(r"\n(  function usageCharts\([\s\S]*?)\n  function renderUsage\(", app).group(1)
         result = node(r"""
 const VVCharts={...require('./dashboard/static/charts.js')};
-const {BOT_META}=require('./dashboard/static/helpers.js');
+const {BOT_META,paceHeader}=require('./dashboard/static/helpers.js');
 const drawn=[];
-VVCharts.drawBurn=(burn,options)=>(drawn.push({maximum:options.maximum,pace:options.pace}),{tag:'chart'});
+VVCharts.drawBurn=(burn,options)=>(drawn.push({maximum:options.maximum,options:Object.keys(options).sort()}),{tag:'chart'});
 function el(tag,attrs={},...children){
   const node={tag,attrs,children:children.flat().filter(value=>value!==null&&value!==undefined)};
   node.append=(...items)=>node.children.push(...items); return node;
@@ -175,23 +175,18 @@ function el(tag,attrs={},...children){
 const text=node=>typeof node==='string'?node:(node.children||[]).map(text).join(' ');
 const snapshot={agents:{rows:[{id:'ci-swe',name:'SWE',role:'swe'},{id:'ci-qae',name:'QAE',role:'qae'},{id:'qae-2',name:'QAE2',role:'qae'}]}};
 const at=hours=>new Date(Date.now()-hours*3600000).toISOString();
-const usage={sampled_at:new Date().toISOString(),accounts:[],
-  pace:{tokens_per_hour:3600,plan:'ChatGPT subscription',window:'7d',used_percent:40,resets_at:at(-10),delta_points:-11.6,
-        sized_from:'bot_tokens',window_tokens:940,allowance_tokens:2350},
+const usage={sampled_at:new Date().toISOString(),accounts:[],pace_points:-11.6,
   samples:[{account:'a',bot:'ci-swe',timestamp:at(2),input_tokens:40,output_tokens:0},
            {account:'a',bot:'ci-qae',timestamp:at(3),input_tokens:900,output_tokens:0}]};
-const formatTime=value=>'RESET';
-const build=new Function('el','BOT_META','VVCharts','snapshot','formatTime',SOURCE+'\nreturn usageCharts;');
-const charts=build(el,BOT_META,VVCharts,snapshot,formatTime);
+const build=new Function('el','BOT_META','VVCharts','snapshot','paceHeader',SOURCE+'\nreturn usageCharts;');
+const charts=build(el,BOT_META,VVCharts,snapshot,paceHeader);
 const section=charts(usage);
-const cards=section.children[2].children, note=section.children[3];
+const cards=section.children[2].children;
 const head=section=>section.children[2].children[3].children[0].children[0];
-const header=delta=>text(head(charts({...usage,pace:{...usage.pace,delta_points:delta}})));
-const missing=charts({...usage,pace:{tokens_per_hour:null,reason:'the plan shows 0% used, so its size cannot be measured yet.'}});
+const header=delta=>text(head(charts({...usage,pace_points:delta})));
 console.log(JSON.stringify({drawn,names:cards.map(card=>card.children[0].children[0].children[0]),
-  qae2:text(cards[2]),allClass:cards[3].attrs.class,note:text(note),noteTitle:note.attrs.title,
-  missing:text(missing.children[3]),missingPace:drawn[drawn.length-1].pace,
-  header:text(head(section)),headerTitle:head(section).attrs.title,missingHeader:text(head(missing)),
+  qae2:text(cards[2]),allClass:cards[3].attrs.class,parts:section.children.map(child=>child.tag),caption:text(section.children[1]),
+  header:text(head(section)),headerTitle:head(section).attrs.title,missingHeader:header(null),noPace:header(undefined),
   ahead:header(21.2),even:header(0.6),swe:text(cards[0].children[0].children[0])}));
 """.replace("SOURCE", json.dumps(source)))
         self.assertEqual(result["names"], ["SWE", "QAE", "QAE2", "All bots · 12% under pace"])
@@ -199,20 +194,17 @@ console.log(JSON.stringify({drawn,names:cards.map(card=>card.children[0].childre
         self.assertIn("all-bots", result["allClass"])
         bots, everyone = result["drawn"][:2], result["drawn"][2]
         self.assertEqual([row["maximum"] for row in bots], [900, 900])
-        self.assertEqual([row["pace"] for row in bots], [None, None])
-        self.assertEqual(everyone["pace"], 3600)
-        self.assertEqual(everyone["maximum"], 3600)
-        self.assertEqual(result["note"], "Flat line on All bots: 4k tokens an hour is the even pace of ChatGPT subscription "
-                                         "(7d, 40% used), the same as the tick, through RESET.")
-        self.assertIn("940 tokens since the window began made 40% of it, so it holds about 2k", result["noteTitle"])
-        self.assertIn("keep their current share", result["noteTitle"])
-        self.assertEqual(result["missing"], "No flat pace line: the plan shows 0% used, so its size cannot be measured yet.")
-        self.assertIsNone(result["missingPace"])
+        # All bots scales to its own busiest hour: nothing in tokens stands for the plan, on any card.
+        self.assertEqual(everyone["maximum"], 900)
+        self.assertEqual({tuple(row["options"]) for row in result["drawn"]},
+                         {("color", "label", "maximum", "nowMs", "usualTitle")})
+        self.assertEqual(result["parts"], ["h2", "p", "div"])
+        self.assertEqual(result["caption"], "Tokens each bot used, hour by hour. Solid: last 24 hours. Dashed: a usual day.")
         self.assertEqual(result["header"], "All bots · 12% under pace")
         self.assertEqual(result["headerTitle"], "12 points behind an even burn: headroom.")
         self.assertEqual(result["ahead"], "All bots · 21% ahead of pace")
         self.assertEqual(result["even"], "All bots · on pace")
-        self.assertEqual(result["missingHeader"], "All bots")
+        self.assertEqual([result["missingHeader"], result["noPace"]], ["All bots", "All bots"])
         self.assertEqual(result["swe"], "SWE")
 
     def test_three_qae_cards_and_a_prior_day_usual_line(self):
@@ -222,7 +214,7 @@ console.log(JSON.stringify({drawn,names:cards.map(card=>card.children[0].childre
 const make=tag=>({tag,attrs:{},children:[],style:{},setAttribute(k,v){this.attrs[k]=v;},append(...c){this.children.push(...c);}});
 global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
 const VVCharts=require('./dashboard/static/charts.js');
-const {BOT_META}=require('./dashboard/static/helpers.js');
+const {BOT_META,paceHeader}=require('./dashboard/static/helpers.js');
 function el(tag,attrs={},...children){
   const node={tag,attrs,children:children.flat().filter(value=>value!==null&&value!==undefined)};
   node.append=(...items)=>node.children.push(...items); return node;
@@ -238,12 +230,9 @@ const samples=[];
 for (const bot of ['ci-qae-1','ci-qae-2','ci-qae-3']) {
   for (const hours of [31,30,3,2]) samples.push({account:'a',bot,timestamp:at(hours),input_tokens:40,output_tokens:0});
 }
-const usage={sampled_at:new Date().toISOString(),accounts:[],
-  pace:{tokens_per_hour:3600,plan:'ChatGPT subscription',window:'7d',used_percent:40,resets_at:at(-10),
-    delta_points:-11.6,sized_from:'bot_tokens',window_tokens:900,allowance_tokens:2250},
-  samples};
-const build=new Function('el','BOT_META','VVCharts','snapshot','formatTime',SOURCE+'\nreturn usageCharts;');
-const cards=build(el,BOT_META,VVCharts,snapshot,()=>'RESET')(usage).children[2].children;
+const usage={sampled_at:new Date().toISOString(),accounts:[],pace_points:-11.6,samples};
+const build=new Function('el','BOT_META','VVCharts','snapshot','paceHeader',SOURCE+'\nreturn usageCharts;');
+const cards=build(el,BOT_META,VVCharts,snapshot,paceHeader)(usage).children[2].children;
 const usual=card=>walk(card).some(node=>node.attrs&&node.attrs.class==='burn-usual');
 console.log(JSON.stringify({
   names:cards.map(card=>text(card.children[0].children[0].children[0]).split(' · ')[0]),
@@ -260,7 +249,7 @@ console.log(JSON.stringify({
 const make=tag=>({tag,attrs:{},children:[],style:{},setAttribute(k,v){this.attrs[k]=v;},append(...c){this.children.push(...c);}});
 global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
 const VVCharts=require('./dashboard/static/charts.js');
-const {BOT_META}=require('./dashboard/static/helpers.js');
+const {BOT_META,paceHeader}=require('./dashboard/static/helpers.js');
 function el(tag,attrs={},...children){
   const node={tag,attrs,children:children.flat().filter(value=>value!==null&&value!==undefined)};
   node.append=(...items)=>node.children.push(...items); return node;
@@ -275,9 +264,9 @@ const usage={available:true,sampled_at:at(0),samples:[
   {account:'a',bot:'ci-qae-1',timestamp:at(1),input_tokens:100,output_tokens:0},
   {account:'a',bot:'explorer',timestamp:at(1),input_tokens:40,output_tokens:7},
   {account:'a',bot:'explorer',timestamp:at(48),input_tokens:9000,output_tokens:0}],
-  pace:{tokens_per_hour:null,reason:'unused',delta_points:null}};
-const build=new Function('el','BOT_META','VVCharts','snapshot',SOURCE+'\nreturn usageCharts;');
-const cards=build(el,BOT_META,VVCharts,snapshot)(usage).children[2].children;
+  pace_points:null};
+const build=new Function('el','BOT_META','VVCharts','snapshot','paceHeader',SOURCE+'\nreturn usageCharts;');
+const cards=build(el,BOT_META,VVCharts,snapshot,paceHeader)(usage).children[2].children;
 const all=cards[3];
 const totals=all.children.find(child=>child.attrs&&child.attrs.class==='burn-totals');
 console.log(JSON.stringify({names:cards.map(card=>text(card.children[0].children[0].children[0]).split(' · ')[0]),

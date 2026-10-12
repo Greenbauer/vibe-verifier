@@ -98,7 +98,7 @@ def normalize(value, artifact, run, repository, now):
 
 
 def _gap_inside(result, window_start):
-    """A capture with no counts blocks the pace only when it falls inside the plan window."""
+    """A capture with no counts makes the history partial only when it falls inside the plan window."""
     for stamp in result.get("gaps") or []:
         when = parse_time(stamp)
         if window_start is None or when is None or when >= window_start:
@@ -109,8 +109,8 @@ def _gap_inside(result, window_start):
 def apply_plan_window(result, window_start):
     """`partial` means token history since the plan window began is incomplete.
 
-    A listing that never reaches the seven-day cutoff is still complete for the pace when the
-    oldest artifact it did read is at or before the window start. An unreadable artifact, a
+    A listing that never reaches the seven-day cutoff is still complete when the oldest artifact it
+    did read is at or before the window start (`pace.plan_window_start`). An unreadable artifact, a
     partial sample, or a budget stop stays partial either way. A capture that reports no counts
     does too, when that capture is inside the window. Results from before this field existed
     are left alone.
