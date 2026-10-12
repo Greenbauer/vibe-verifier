@@ -291,18 +291,13 @@ a.pr-row { color: inherit; text-decoration: none; cursor: pointer; }
 .burn-chart line, .burn-chart path { vector-effect: non-scaling-stroke; }
 .burn-hourline { stroke: rgba(255, 255, 255, .06); }
 .burn-hour { position: absolute; bottom: 2px; transform: translateX(-50%); color: rgba(255, 255, 255, .4); font-size: 8px; line-height: 1; }
-.burn-pace { stroke: rgba(255, 255, 255, .35); stroke-width: 1; stroke-dasharray: 4 3; }
 .burn-usual { fill: none; stroke-opacity: .45; stroke-width: 1.5; stroke-dasharray: 2 3; }
 .burn-line { fill: none; stroke-width: 2; }
-.burn-dot { stroke-width: 5; stroke-linecap: round; }
-.burn-level { position: absolute; left: 6px; margin-top: 2px; color: rgba(255, 255, 255, .4); font-size: 8px; line-height: 1; }
 .burn-tail { stroke-opacity: .45; }
 .burn-now { stroke: rgba(255, 255, 255, .95); stroke-width: 1; }
 .burn-empty { height: 126px; margin-top: 6px; display: grid; place-items: center; font-size: 11px; }
 @media (min-width: 700px) { .burn-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 1340px) { .burn-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-/* Plan windows are few, so each card takes the width there is: one window fills the row. */
-.burn-cards.plan-cards { grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); }
 .coverage-note { margin: 7px 0; font-size: 10px; }
 .subscription-panel { margin-top: 0; padding: 10px 14px; }
 .lane-limits { margin-bottom: 10px; font-size: 12px; }
