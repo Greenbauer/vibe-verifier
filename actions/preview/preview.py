@@ -19,18 +19,22 @@ pull request's checks list then shows a `preview` row whose link is the preview 
 or not the host wrote anything. A later record on the same commit (a re-sync) is newer, and newest
 wins.
 
-    find --repo <owner/name> --sha <commit> --check <name> [--wait-minutes 40]
+    find --repo <owner/name> --sha <commit> --check <name> [--wait-minutes 40] [--running-minutes N]
 
 waits for the check named --check (the job that records) to pass on the commit, then prints the
-newest recorded address and nothing else. Of that check's runs on the commit, the newest one that
+newest recorded address and nothing else. Two clocks: the whole wait is --wait-minutes, and inside
+it the check may spend at most --running-minutes actually running (default: the whole wait). Time
+the check spends queued for a runner, or not yet created, is not the check being slow, so only polls
+that see it `in_progress` count against the running budget. One poll every --poll-seconds (30): every
+job of a repository shares its token's hourly request budget, and several checks may wait at once. Of that check's runs on the commit, the newest one that
 was not skipped decides: a label event can add a newer skipped run while the real one runs, and a
 commit can collect many skipped runs, so every page of runs is read. Because the check records
 before it can pass, a passed check with no address is a broken recorder, not a wait: it fails at
 once, naming the check.
 
 Exit 0: recorded, or the address printed. Exit 1: there is no preview to give (the check failed,
-was cancelled or timed out, has only skipped runs for three minutes, did not pass within
---wait-minutes, or passed and recorded nothing), or a record was refused. Exit 2: GitHub could not
+was cancelled or timed out, has only skipped runs for three minutes, ran past --running-minutes,
+did not pass within --wait-minutes, or passed and recorded nothing), or a record was refused. Exit 2: GitHub could not
 be read six times in a row. Errors are printed as `::error::` lines, so a workflow shows them.
 Reads and writes go through `gh` with the token in GH_TOKEN; a record needs `statuses: write`, a
 find `checks: read` and `statuses: read`.
@@ -43,10 +47,8 @@ import time
 
 CONTEXT = "preview"
 FAILED_READS_ALLOWED = 6
-# Polls of only-skipped runs before a commit is judged to have no preview: three minutes at the
-# default interval. The counts are fixed in polls, so a test that sleeps 0 sees the same budget.
-SKIPPED_POLLS = 18
-DEFAULT_INTERVAL = 10
+# Only-skipped runs for this long mean the commit has no preview, rather than holding the wait.
+SKIPPED_SECONDS = 180
 
 
 class Unreadable(Exception):
@@ -113,8 +115,14 @@ def record(args):
 
 
 def wait_for_check(args, reader):
-    polls = max(1, args.wait_minutes * 60 // DEFAULT_INTERVAL)
-    skipped = 0
+    """Every budget is counted in polls of --poll-seconds, so a test that sleeps 0 between polls
+    sees the same budgets as a real run."""
+    polls = max(1, args.wait_minutes * 60 // args.poll_seconds)
+    skipped_polls = max(1, -(-SKIPPED_SECONDS // args.poll_seconds))
+    running_minutes = args.running_minutes or args.wait_minutes
+    running_polls = running_minutes * 60 // args.poll_seconds
+    skipped = running = 0
+    verdict = "none"
     for _ in range(polls):
         lines = reader.read(["repos/%s/commits/%s/check-runs" % (args.repo, args.sha), "--paginate",
                              "--method", "GET", "-f", "check_name=" + args.check, "-f", "per_page=100",
@@ -124,13 +132,19 @@ def wait_for_check(args, reader):
             return
         if verdict == "only skipped":
             skipped += 1
-            if skipped >= SKIPPED_POLLS:
+            if skipped >= skipped_polls:
                 fail('"%s" has only skipped runs on %s: no preview. Re-run once the preview has synced.'
                      % (args.check, args.sha))
         if verdict in ("completed failure", "completed cancelled", "completed timed_out"):
             fail('"%s" ended in %s, so %s has no preview' % (args.check, verdict.split()[1], args.sha))
+        if verdict.startswith("in_progress"):
+            running += 1
+            if running > running_polls:
+                fail('"%s" ran for %d minutes on %s without passing' % (args.check, running_minutes, args.sha))
         time.sleep(args.interval)
-    fail('"%s" did not pass for %s within %d minutes' % (args.check, args.sha, args.wait_minutes))
+    fail('"%s" did not pass for %s within %d minutes; it ran for about %d of them, and was queued for a '
+         "runner or not yet created the rest (last seen: %s)"
+         % (args.check, args.sha, args.wait_minutes, running * args.poll_seconds // 60, verdict))
 
 
 def find(args):
@@ -160,11 +174,15 @@ def main():
         command = commands.add_parser(name)
         command.add_argument("--repo", required=True)
         command.add_argument("--sha", required=True)
-        command.add_argument("--interval", type=float, default=DEFAULT_INTERVAL, help="seconds between polls")
+        command.add_argument("--poll-seconds", type=int, default=30, help="seconds between polls; every budget is counted in polls")
+        command.add_argument("--interval", type=float, help="seconds actually slept between polls (default: --poll-seconds)")
     commands.choices["record"].add_argument("--url", required=True)
     commands.choices["find"].add_argument("--check", required=True)
     commands.choices["find"].add_argument("--wait-minutes", type=int, default=40)
+    commands.choices["find"].add_argument("--running-minutes", type=int, default=0)
     args = parser.parse_args()
+    if args.interval is None:
+        args.interval = args.poll_seconds
     record(args) if args.command == "record" else find(args)
 
 

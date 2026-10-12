@@ -16,6 +16,7 @@ From a workflow, `uses: Greenbauer/vibe-verifier/actions/preview@<sha>` with `re
 - `tests/test_preview.py::test_record_writes_a_preview_status_on_the_commit`
 - `tests/test_preview.py::test_find_prints_the_newest_recorded_address_once_the_check_passes`
 - `tests/test_preview.py::test_a_newer_skipped_run_does_not_hide_the_real_one`
+- `tests/test_preview.py::test_only_running_time_counts_against_the_running_budget`
 - `tests/test_preview.py::test_a_passed_check_with_no_address_fails_at_once_naming_the_recorder`
 - `tests/test_preview.py::test_six_failed_reads_in_a_row_exit_2_naming_the_call`
 - `tests/test_preview.py::test_the_action_shows_why_a_find_failed`

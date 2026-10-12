@@ -14,8 +14,11 @@ inputs:
     description: The repository, owner/name.
     default: ${{ github.repository }}
   wait-minutes:
-    description: To find, how long to wait for the check to pass.
+    description: To find, how long to wait for the check to pass, queued or running.
     default: "40"
+  running-minutes:
+    description: To find, how long the check may spend running (in_progress) before the wait fails. Empty (the default) allows the whole wait.
+    default: ""
   token:
     description: A token that can write commit statuses (to record) or read checks and statuses (to find).
     default: ${{ github.token }}
@@ -36,6 +39,7 @@ runs:
         SHA: ${{ inputs.sha }}
         REPO: ${{ inputs.repository }}
         WAIT_MINUTES: ${{ inputs.wait-minutes }}
+        RUNNING_MINUTES: ${{ inputs.running-minutes }}
       run: |
         set -euo pipefail
         [ -n "$SHA" ] || { echo "::error::no commit to record or find a preview for: pass sha outside a pull request event"; exit 1; }
@@ -47,7 +51,7 @@ runs:
           # The finder prints the address alone on success and its ::error:: line on failure, both on
           # stdout; a failure's line is printed again here so the workflow shows it.
           rc=0
-          url=$(python3 "$GITHUB_ACTION_PATH/preview.py" find --repo "$REPO" --sha "$SHA" --check "$CHECK" --wait-minutes "$WAIT_MINUTES") || rc=$?
+          url=$(python3 "$GITHUB_ACTION_PATH/preview.py" find --repo "$REPO" --sha "$SHA" --check "$CHECK" --wait-minutes "$WAIT_MINUTES" --running-minutes "${RUNNING_MINUTES:-0}") || rc=$?
           [ "$rc" -eq 0 ] || { printf '%s\n' "$url"; exit "$rc"; }
           echo "preview of $SHA: $url"
           echo "url=$url" >> "$GITHUB_OUTPUT"

@@ -49,7 +49,10 @@ record wins. A record GitHub refuses three times fails the step, so the job cann
 ```
 
 It waits up to `wait-minutes` (40) for the named check to pass on the head, then outputs the newest
-recorded address as `url`. Of the check's runs on the commit, the newest one that was not skipped
+recorded address as `url`. `running-minutes` bounds only the time the check spends running: polls that
+see it queued for a runner, or not yet created, do not count, because a check waiting for a free
+runner is not a slow check. It polls every 30 seconds, since every job of a repository shares its
+token's hourly request budget. Of the check's runs on the commit, the newest one that was not skipped
 decides, and every page of runs is read: a label event can add a newer skipped run while the real
 one runs. It fails, with an error naming why:
 
@@ -57,6 +60,7 @@ one runs. It fails, with an error naming why:
 |---|---|
 | failed, was cancelled or timed out | 1 |
 | has only skipped runs for three minutes | 1 |
+| ran longer than `running-minutes` | 1 |
 | did not pass within `wait-minutes` | 1 |
 | passed, but its job recorded no address (a missing record step; re-running will not help) | 1 |
 | could not be read from GitHub six times in a row | 2 |

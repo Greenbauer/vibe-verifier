@@ -139,14 +139,32 @@ class Preview(unittest.TestCase):
         result = self.find()
         self.assertEqual(result.returncode, 1)
         self.assertIn("only skipped runs", result.stdout)
-        self.assertEqual(self.run_reads(), 18)
+        self.assertEqual(self.run_reads(), 6)
+        self.find("--poll-seconds", "10")
+        self.assertEqual(self.run_reads(), 6 + 18)
 
     def test_a_check_that_never_passes_fails_at_the_end_of_the_wait(self):
         self.serve(runs=[[]])
         result = self.find("--wait-minutes", "1")
         self.assertEqual(result.returncode, 1)
         self.assertIn("did not pass", result.stdout)
-        self.assertEqual(self.run_reads(), 6)
+        self.assertIn("ran for about 0 of them", result.stdout)
+        self.assertEqual(self.run_reads(), 2)
+
+    def test_only_running_time_counts_against_the_running_budget(self):
+        queued = [["2026-10-12T15:00:00Z", "queued", ""]]
+        running = [["2026-10-12T15:00:00Z", "in_progress", ""]]
+        # Queued for ten minutes, then running for two and passing: inside a 3-minute running budget.
+        self.serve(runs=[queued] * 20 + [running] * 4 + [PASSED],
+                   statuses=[{"context": "preview", "created_at": "2026-10-12T15:01:00Z", "target_url": "https://p.vercel.app"}])
+        self.assertEqual(self.find("--running-minutes", "3").stdout, "https://p.vercel.app\n")
+
+    def test_a_check_running_past_its_budget_fails(self):
+        self.serve(runs=[[["2026-10-12T15:00:00Z", "in_progress", ""]]])
+        result = self.find("--running-minutes", "2")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ran for 2 minutes", result.stdout)
+        self.assertEqual(self.run_reads(), 5)
 
     def test_a_passed_check_with_no_address_fails_at_once_naming_the_recorder(self):
         self.serve(runs=[PASSED], statuses=[{"context": "ci", "created_at": "2026-10-12T15:01:00Z", "target_url": "https://x"}])
