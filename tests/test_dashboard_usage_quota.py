@@ -168,5 +168,25 @@ console.log(JSON.stringify({
         self.assertNotIn("margin", tick)
 
 
+class UsagePage(unittest.TestCase):
+    def test_the_page_has_the_bars_and_the_token_charts_and_no_subscription_burn_panel(self):
+        # The operator removed the Subscription burn panel on 2026-10-12: a window that carries a
+        # history must not bring it back.
+        result = node(r"""
+const app=require('fs').readFileSync('./dashboard/static/app.js','utf8');
+const src=app.match(/\n  function renderUsage\(\) \{[\s\S]*?\n  \}\n/)[0];
+const content={children:[],replaceChildren(...c){this.children=c},append(...c){this.children.push(...c)}};
+const part=name=>()=>name,el=(_,attrs)=>attrs.class;
+const window={name:'7 days',used_percent:30,resets_at:new Date(Date.now()+86400000).toISOString(),window_minutes:10080,
+  history:[{at:new Date().toISOString(),used_percent:30}]};
+const usage={available:true,stale:false,accounts:[{label:'Codex',quota_windows:[window]}],samples:[],completeness:'note'};
+new Function('snapshot','content','heading','sourceBanner','formatTime','subscriptionPanel','usageCharts','el','failurePanel',
+  src+'\nrenderUsage();')({agents:{usage}},content,part('heading'),part('banner'),v=>v,part('bars'),part('token charts'),el,part('failures'));
+console.log(JSON.stringify({parts:content.children,named:/[Ss]ubscription burn|planCharts|planBurn/.test(app+require('fs').readFileSync('./dashboard/static/charts.js','utf8'))}));
+""")
+        self.assertEqual(result["parts"], ["heading", "bars", "token charts", "muted coverage-note", "failures"])
+        self.assertFalse(result["named"])
+
+
 if __name__ == "__main__":
     unittest.main()

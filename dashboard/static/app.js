@@ -366,35 +366,13 @@
     return card;
   }
 
-  // The subscription burn: one card per plan window that keeps a history. No such window, as on a
-  // host with no collector, means no panel.
-  function planCharts(accounts, usage, now = Date.now()) {
-    const cards = accounts.flatMap(account => account.quota_windows.map(window => planCard(account, window, usage, now)));
-    return cards.some(Boolean) ? el("section", { class: "panel usage-charts" }, el("h2", {}, "Subscription burn"),
-      el("p", { class: "muted" }, "Percent of each plan window used, across the window. Solid: the bar's readings, one an hour. Dashed: the even pace, the same as the tick."),
-      el("div", { class: "burn-cards plan-cards" }, cards)) : null;
-  }
-
-  // A reading that is no longer current says how old it is, like every other old value on the page.
-  function planCard(account, window, usage, now) {
-    const burn = VVCharts.planBurn(window, now), pace = quotaPace(window, now), head = paceHeader(pace ? pace.delta : null);
-    if (!burn) return null;
-    const name = `${account.label} · ${quotaWindowLabel(window)}`, color = "rgba(255,255,255,0.6)";
-    const read = `${quotaDisplayPercent(window.used_percent)}% used${usage.stale ? ` · read ${since(usage.sampled_at, now)} ago` : ""}`;
-    return el("article", { class: "burn-card", style: `--accent:${color}` },
-      el("div", { class: "burn-head" }, el("b", { title: head.paceTitle }, head.pace ? `${name} · ${head.pace}` : name), el("span", {}, read)),
-      burn.count ? [VVCharts.drawPlan(burn, { color, label: `${name}: percent used across the window, against the even pace` }),
-        el("div", { class: "burn-totals" }, VVCharts.planTotals(burn, formatTime(burn.since)))]
-        : el("p", { class: "burn-empty muted" }, "No history yet. One reading an hour is kept from now on."));
-  }
-
   function renderUsage() {
     const usage = snapshot.agents?.usage;
     content.replaceChildren(heading("Bot usage", "Measured tokens and subscription capacity."));
     if (usage?.available) {
       if (usage.stale) content.append(sourceBanner(`Usage telemetry is stale. Last sample: ${formatTime(usage.sampled_at)}.`, "warning"));
       const quotas = usage.accounts.filter(account => account.quota_windows.length);
-      if (quotas.length) content.append(...[subscriptionPanel(quotas), planCharts(quotas, usage)].filter(Boolean));
+      if (quotas.length) content.append(subscriptionPanel(quotas));
       content.append(usageCharts(usage), el("p", { class: "muted coverage-note" }, usage.completeness));
     } else content.append(usageCharts({ samples: [], accounts: [] }), sourceBanner("Usage source is unavailable.", "warning"));
     content.append(failurePanel());

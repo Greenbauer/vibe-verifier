@@ -179,96 +179,11 @@
     return framed(chart, LABELLED_HOURS.map(hour => ({ x: x(hour), text: hourLabel(hour) })));
   }
 
-  // Gridlines across a plan window: local midnights for a window of two days or more, named by
-  // weekday (by date past eight days), and clock hours for a shorter one. Stepped so there are at
-  // most eight. x is the share of the window elapsed.
-  function windowTicks(start, reset) {
-    const span = reset - start, byDay = span >= 2 * DAY, step = Math.ceil(span / (byDay ? DAY : HOUR) / 8);
-    const dated = span > 8 * DAY ? { month: "short", day: "numeric" } : { weekday: "short" };
-    const at = new Date(start), ticks = [];
-    if (byDay) at.setHours(24, 0, 0, 0);
-    else at.setMinutes(60, 0, 0);
-    while (at.getTime() < reset) {
-      ticks.push({ x: (at.getTime() - start) / span, label: byDay ? at.toLocaleDateString([], dated) : hourLabel(at.getHours()) });
-      if (byDay) at.setDate(at.getDate() + step);
-      else at.setHours(at.getHours() + step);
-    }
-    return ticks;
-  }
-
-  /**
-   * One plan window through time, for the subscription burn chart. x is the share of the window
-   * elapsed (0 at its start, 1 at its reset) and y is percent used, so the even pace is the straight
-   * line from 0% to 100%: what the tick on the usage bar marks, and `pointsPerHour` in the plan's own
-   * unit. Percent used is drawn, not points per hour: readings are whole percents, and a week-long
-   * plan gains one every hour and forty minutes at the even pace, so an hourly rate is a string of
-   * zeros and ones until it is smoothed over half a day. `runs` are the hourly readings, split
-   * wherever a clock hour has none, so a gap is never drawn across. Null when the window keeps no
-   * history (no collector reads it) or reports no length.
-   */
-  function planBurn(window, nowMs) {
-    const span = window.window_minutes * 60000, reset = Date.parse(window.resets_at), start = reset - span;
-    if (!Array.isArray(window.history) || !(span > 0) || !Number.isFinite(reset)) return null;
-    const share = time => Math.min(1, Math.max(0, (time - start) / span)), hour = time => Math.floor(time / HOUR);
-    const readings = window.history.map(point => ({ time: Date.parse(point.at), used: point.used_percent }));
-    const runs = [];
-    readings.forEach((reading, index) => {
-      if (index === 0 || hour(reading.time) - hour(readings[index - 1].time) > 1) runs.push([]);
-      runs[runs.length - 1].push({ x: share(reading.time), y: reading.used });
-    });
-    return { runs, count: readings.length, since: readings.length ? readings[0].time : null, now: share(nowMs),
-      pointsPerHour: 100 * HOUR / span, ticks: windowTicks(start, reset) };
-  }
-
-  // "0.6" for a week-long window, "20" for a five-hour one.
-  function pacePoints(burn) {
-    return String(Number(burn.pointsPerHour.toPrecision(2)));
-  }
-
-  // "Even pace 0.6 points an hour · 28 hourly readings since Oct 7, 6:11 PM". sinceText is burn.since, formatted.
-  function planTotals(burn, sinceText) {
-    return `Even pace ${pacePoints(burn)} points an hour · ${burn.count} hourly reading${burn.count === 1 ? "" : "s"} since ${sinceText}`;
-  }
-
-  /**
-   * Draw one plan window (see planBurn): a faint line at each tick and at half used, the even pace as
-   * the wider-dash diagonal, each run of readings as a solid line (a reading with no neighbour is a
-   * dot), and the now marker. options: color, label.
-   */
-  function drawPlan(burn, options) {
-    const top = PAD_T, bottom = PAD_T + INNER_H, round = n => Math.round(n * 10) / 10;
-    const x = share => PAD_L + INNER_W * share, y = percent => bottom - INNER_H * percent / 100;
-    const chart = svg("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", height: H, preserveAspectRatio: "none",
-      role: "img", "aria-label": options.label });
-    const vertical = (share, className) => svg("line", { x1: x(share), x2: x(share), y1: top, y2: bottom, class: className });
-    burn.ticks.forEach(tick => chart.append(vertical(tick.x, "burn-hourline")));
-    chart.append(svg("line", { x1: x(0), x2: x(1), y1: y(50), y2: y(50), class: "burn-hourline" }));
-    const pace = svg("line", { x1: x(0), x2: x(1), y1: y(0), y2: y(100), class: "burn-pace" });
-    pace.append(svg("title", {}, `Even pace: ${pacePoints(burn)} points an hour, 100% over the window, the same as the tick.`));
-    chart.append(pace);
-    burn.runs.forEach(run => {
-      const d = run.map((point, index) => `${index ? "L" : "M"} ${round(x(point.x))} ${round(y(point.y))}`).join(" ");
-      chart.append(svg("path", run.length > 1 ? { class: "burn-line", stroke: options.color, d }
-        : { class: "burn-line burn-dot", stroke: options.color, d: `${d} h 0` }));
-    });
-    chart.append(vertical(burn.now, "burn-now"));
-    const frame = framed(chart, burn.ticks.map(tick => ({ x: x(tick.x), text: tick.label })));
-    [100, 50].forEach(level => {
-      const label = document.createElement("span");
-      label.className = "burn-level";
-      label.style.top = `${y(level) / H * 100}%`;
-      label.textContent = `${level}%`;
-      frame.append(label);
-    });
-    return frame;
-  }
-
   function short(value) {
     if (value >= 1000000) return `${(value / 1000000).toFixed(1)}m`;
     if (value >= 1000) return `${Math.round(value / 1000)}k`;
     return String(Math.round(value));
   }
 
-  return { hourLabel, hourlyBurn, sumBurns, ceiling, smoothPath, runs, totals, drawBurn, short,
-    windowTicks, planBurn, planTotals, drawPlan };
+  return { hourLabel, hourlyBurn, sumBurns, ceiling, smoothPath, runs, totals, drawBurn, short };
 });

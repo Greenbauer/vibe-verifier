@@ -335,7 +335,7 @@
     return Math.round(Math.min(100, Math.max(0, used)));
   }
 
-  // Points the fill sits ahead of an even burn, the diagonal on the subscription burn chart:
+  // Points the fill sits ahead of an even burn, the tick on the usage bar:
   // used percent minus the share of the window already elapsed. Null until the window has started.
   function quotaPace(window, now) {
     const minutes = window.window_minutes;
