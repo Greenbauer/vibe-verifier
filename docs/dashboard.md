@@ -474,14 +474,16 @@ From a day through seven days it counts whole days, with no hours. Past seven da
 whole weeks, past thirty days whole months, and from a year whole years. The number stays the
 default text color through three days, turns yellow after that, and turns red after two weeks.
 An age of exactly three days or exactly two weeks keeps the younger color.
-A line of its own under the check meter's counts shows how long CI has taken on the head, in
-those same units and in the same size and weight as the counts. While any check is still open it is
+The right of the line under the check meter shows how long CI has taken on the head, in those
+same units and in the same size and weight as that line. When the counts leave too little room,
+it wraps onto a line of its own, still on the right. While any check is still open it is
 "CI running" and counts from the first check's start; once every check has finished it is "CI
 took" and stops at the last check's finish. Before any check has started it is "CI waiting",
 counted from the push. The time turns yellow after an hour and red after three hours; exactly an
 hour or exactly three hours keeps the younger color. A head with no checks, and a row whose checks
 are still from the previous push, show "pushed <age> ago" instead, which turns yellow after three
-hours and red after a day. The kind of push follows the time on that same line, and
+hours and red after a day. Its right edge lines up with the meter, not
+with the comment mark beside the meter. The kind of push follows the time on that same line, and
 the tooltip adds how long ago the push was:
 feature, bug fix, refactor, performance, docs, test, chore, ci,
 build, style, revert, work in progress, or update when the commit message has no such prefix.
@@ -538,7 +540,7 @@ count of queued checks. The attention reason is the line when none of those appl
 the column tooltip and the screen-reader text when a more specific line is shown. Each of those
 lines stays on one line and truncates, with the full text in its title.
 The text under the meter counts every outcome except passed, or says all passed. The CI time
-and the latest push's kind are the line under it. A head with no checks at all says so and never
+and the latest push's kind are the right-hand side of that same line. A head with no checks at all says so and never
 renders as complete, and the push line sits under that notice too.
 A job that has not started has no steps yet, but it is still one waiting check, so the meter
 shows as soon as anything reports on the head. Elapsed time alone never asserts that a job is stuck.
