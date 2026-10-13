@@ -1,0 +1,4 @@
+# Gates the CI test job runs after it installs pytest (tests/requirements-pytest.txt) into .venv-tests.
+# Only dashboard/: the gate modules are tested by running them as scripts, and mutmut sees only the
+# code a test runs in its own process.
+changed-code-mutation --source dashboard/**/*.py --python .venv-tests/bin/python
