@@ -251,9 +251,13 @@ def usage_state(reader, result: dict) -> dict:
 
 
 def _record_entry(row: object) -> tuple | None:
-    if isinstance(row, list) and len(row) == 3 and isinstance(row[0], str) and _whole(row[1]) and isinstance(row[2], dict):
-        return (row[0], row[1]), row[2]
-    return None
+    if not (isinstance(row, list) and len(row) == 3 and isinstance(row[0], str) and _whole(row[1]) and isinstance(row[2], dict)):
+        return None
+    # A sample kept before samples carried their cache reads is read again, so the plan line can weight it.
+    sample = row[2].get("sample")
+    if isinstance(sample, dict) and "cached_input_tokens" not in sample:
+        return None
+    return (row[0], row[1]), row[2]
 
 
 def restore_usage(reader, store: StateStore) -> dict | None:
