@@ -363,7 +363,8 @@ class CachesAcrossARestart(StoreCase):
     def test_usage_records_and_the_last_result_come_back(self):
         result = {"available": True, "sampled_at": NOW.isoformat(), "accounts": [{"id": "a"}], "samples": [{"bot": "explorer"}]}
         before = UsageArtifacts(config(), api=GitHubAPI(runner=None), downloader=None)
-        before.cache = {(REPO, 9): {"sample": {"timestamp": NOW.isoformat()}, "_lookup": (REPO, 42, 1, ("explore",))},
+        before.cache = {(REPO, 9): {"sample": {"timestamp": NOW.isoformat(), "cached_input_tokens": 0},
+                                    "_lookup": (REPO, 42, 1, ("explore",))},
                         (REPO, 10): {"gap_at": NOW.isoformat()}}
         before.api.import_cache([["repos/octocat/example/actions/artifacts?per_page=100&page=1", 'W/"page"', {"artifacts": []}]])
         for name, document in usage_state(before, result).items():
@@ -374,6 +375,14 @@ class CachesAcrossARestart(StoreCase):
         self.assertEqual(sorted(after.cache), [(REPO, 9), (REPO, 10)])
         self.assertEqual(after.cache[(REPO, 9)]["_lookup"], [REPO, 42, 1, ["explore"]])
         self.assertEqual(len(after.api.export_cache()), 1)
+
+    def test_a_sample_kept_before_cache_reads_were_recorded_is_read_again(self):
+        old = {"sample": {"timestamp": NOW.isoformat(), "input_tokens": 5, "output_tokens": 1}}
+        new = {"sample": {**old["sample"], "cached_input_tokens": 3}}
+        self.store.save("usage", {"result": None, "records": [[REPO, 9, old], [REPO, 10, new], [REPO, 11, {"gap_at": "x"}]]})
+        reader = UsageArtifacts(config(), api=object(), downloader=None)
+        restore_usage(reader, self.store)
+        self.assertEqual(sorted(reader.cache), [(REPO, 10), (REPO, 11)])
 
     def test_a_usage_document_of_another_shape_gives_no_result_and_keeps_only_whole_records(self):
         self.store.save("usage", {"result": {"accounts": "many"}, "records": [[REPO, 9, {"gap_at": "x"}], [REPO, "9", {}], [REPO, 9], 4]})
