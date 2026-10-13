@@ -42,6 +42,20 @@ class OsvScanner(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual({f["message"].split(" ")[0] for f in findings(result)}, {"urllib3"})
 
+    def test_a_bump_that_keeps_an_advisory_the_old_version_had_is_not_a_finding(self):
+        # requests 2.20.0 fixed PYSEC-2018-28 and still carries advisories 2.19.0 had too. Keyed by version,
+        # every one of them read as new, so a pull request that removed a vulnerability failed: replayed
+        # over a consumer's history, a bump that closed 24 alerts was a finding.
+        repo = self.branch({"requirements.txt": VULNERABLE}, {"requirements.txt": "requests==2.20.0\n"})
+        result = self.run_gate(repo)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_dependency_file_with_no_packages_passes(self):
+        # osv-scanner exits 128 when it finds no package at all; that is nothing vulnerable, not a failure to run.
+        repo = self.branch({"README.md": "x\n"}, {"requirements.txt": "# nothing pinned yet\n"})
+        result = self.run_gate(repo)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_any_requirements_file_name_and_an_npm_lockfile_are_read(self):
         repo = self.branch({"README.md": "x\n"}, {"requirements/dev.txt": VULNERABLE, "web/package-lock.json": LOCK})
         result = self.run_gate(repo)

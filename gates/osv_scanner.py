@@ -4,10 +4,12 @@
 osv-scanner, pinned as a release binary (the digests in _tools.TOOLS), reads each changed dependency
 file at HEAD and at the merge base against the OSV database (osv.dev): Python requirements files and
 poetry.lock, uv.lock, Pipfile.lock, pdm.lock; npm, pnpm and yarn lockfiles. A ratchet per
-vulnerability: a finding is a vulnerability of a package version in the file at HEAD that the file did
-not have at the base (one per alias group, so a PYSEC id and its GHSA twin are one finding). Adding or
-bumping a dependency to a vulnerable version fails; a vulnerability published later against a pin
-nobody touched never blocks unrelated work, and --all reports every one, for an audit.
+vulnerability: a finding is a vulnerability of a package in the file at HEAD that the file did not
+have for that package at the base, at any version (one per alias group, so a PYSEC id and its GHSA
+twin are one finding). Adding a vulnerable dependency fails, and so does a bump that brings an
+advisory the package did not have; a bump that fixes some advisories and keeps others passes, since
+it made nothing worse. A vulnerability published later against a pin nobody touched never blocks
+unrelated work, and --all reports every one, for an audit.
 
 Only what the file states is read (--no-resolve): a requirements line that is not pinned with == is
 read at its lower bound, and nothing is resolved through a package index, so the verdict does not
@@ -36,7 +38,8 @@ ALWAYS_EXCLUDED = ["**/node_modules/**"]
 
 
 def scan(binary, root, files):
-    """{path: {(package, version, vulnerability): message}} for every known vulnerability in the files under root."""
+    """{path: {(package, version, vulnerability ids): message}} for every known vulnerability in the files under
+    root, one entry per alias group."""
     if not files:
         return {}
     args = []
@@ -44,6 +47,8 @@ def scan(binary, root, files):
         args += ["--lockfile", ("requirements.txt:" if matches(path, REQUIREMENTS) else "") + path]
     result = subprocess.run([binary, "scan", "source", "--no-resolve", "--format", "json", *args], cwd=root,
                             capture_output=True, text=True)
+    if result.returncode == 128:  # the scanner's code for no package in any file: nothing to be vulnerable
+        return {}
     if result.returncode not in (0, 1):  # 1: vulnerabilities found
         raise CannotRun("osv-scanner exited %d: %s" % (result.returncode, (result.stderr.strip() or "no output").splitlines()[-1]))
     try:
@@ -57,8 +62,8 @@ def scan(binary, root, files):
         for item in entry.get("packages") or []:
             package = item["package"]
             for group in item.get("groups") or []:
-                ids = sorted(group["ids"])
-                key = (package["name"].lower(), package.get("version", ""), ids[0])
+                ids = tuple(sorted(group["ids"]))
+                key = (package["name"].lower(), package.get("version", ""), ids)
                 found.setdefault(path, {})[key] = "%s %s (%s): known vulnerability %s" % (
                     package["name"], package.get("version", "?"), package.get("ecosystem", "?"), " / ".join(ids))
     return found
@@ -92,9 +97,16 @@ def scan_at_base(binary, repo, base, files):
 
 
 def findings(repo, found, before):
-    return [Finding(message, path, line_of(repo, path, key[0]))
-            for path, vulnerabilities in sorted(found.items())
-            for key, message in sorted(vulnerabilities.items()) if key not in before.get(path, {})]
+    """A Finding per vulnerability in found that its package did not already have in the same file in before,
+    at whatever version: a bump that keeps an advisory is not what made the file vulnerable to it."""
+    result = []
+    for path, vulnerabilities in sorted(found.items()):
+        had = {}
+        for (name, _, ids) in before.get(path, {}):
+            had.setdefault(name, set()).update(ids)
+        result += [Finding(message, path, line_of(repo, path, name))
+                   for (name, _, ids), message in sorted(vulnerabilities.items()) if not had.get(name, set()) & set(ids)]
+    return result
 
 
 def check(args):
