@@ -163,6 +163,20 @@ class RealMutmut(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("score 100%", result.stderr)
 
+    def test_a_test_that_leaves_a_child_process_behind_still_gets_a_verdict(self):
+        # mutmut runs the suite once in its own process before the mutants. A child a test started there
+        # and never waited for was then taken for a mutant's worker when it exited, and mutmut crashed
+        # with a KeyError: this catalog's own dashboard tests did it on the first pull request that
+        # changed dashboard code.
+        # The test has to reach the changed function: mutmut reruns only the tests that do.
+        leaves_a_child = IMPORTING_TEST + (
+            "\n\ndef test_starts_a_process_and_does_not_wait():\n    import subprocess, sys\n"
+            "    subprocess.Popen([sys.executable, '-c', 'pass'])\n    assert discount(50, False) == 50\n")
+        repo = self.project({"shop/price.py": PRICE_BEFORE, "tests/test_price.py": leaves_a_child}, {"shop/price.py": PRICE_AFTER})
+        result = self.run_gate(repo)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("score 100%", result.stderr)
+
     def test_failing_tests_cannot_run(self):
         repo = self.project({"shop/price.py": PRICE_BEFORE, "tests/test_price.py": "def test_broken():\n    assert False\n"},
                             {"shop/price.py": PRICE_AFTER})
