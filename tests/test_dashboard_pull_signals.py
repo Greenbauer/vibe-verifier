@@ -10,7 +10,7 @@ from dashboard.gh_api import ApiError, GitHubAPI
 from dashboard.github import GitHubCollector
 from dashboard.pull_signals import (
     classify_push, comment_count, load_signals, merge_ready, merge_state_for_a_pusher, pull_face,
-    read_pull_page, signals_from_node, thread_summary,
+    link_merged_pulls, read_pull_page, signals_from_node, thread_summary,
 )
 from dashboard.required_checks import PUSH_RESTRICTED
 
@@ -47,8 +47,49 @@ class PushKind(unittest.TestCase):
         self.assertEqual(classify_push([sync, pushed("fix: close", at)], "main")["kind"], "bug fix")
         develop = pushed("Merge branch 'develop' into feat/quote", at, parents=2)
         self.assertEqual(classify_push([develop], "develop")["kind"], "sync with develop")
-        self.assertEqual(classify_push([develop], "main")["kind"], "merge")
+        self.assertEqual(classify_push([develop], "main"),
+                         {"pushed_at": at, "kind": "merged in develop", "merged_branch": "develop"})
         self.assertEqual(classify_push([pushed("sync with main", at)], "main")["kind"], "sync with main")
+
+    def test_a_hand_written_merge_of_the_base_is_a_sync(self):
+        at = "2026-10-13T12:33:48Z"
+        for headline in ("Merge main (#43 keep the banner readable) into feat/rates-table…",
+                         "Merge main into fix/sign-in-copy",
+                         "Merge origin/main into fix/x",
+                         "Merge branch 'main' of github.com:octocat/example into fix/x"):
+            self.assertEqual(classify_push([pushed(headline, at, parents=2)], "main"),
+                             {"pushed_at": at, "kind": "sync with main"}, headline)
+        # One parent is a commit that only says "Merge", not a merge.
+        self.assertEqual(classify_push([pushed("Merge main navigation into the header", at)], "main")["kind"], "update")
+
+    def test_a_merge_of_another_branch_names_the_branch(self):
+        at = "2026-10-13T12:35:48Z"
+        stacked = pushed("Merge remote-tracking branch 'origin/feat/rates-table' into …", at, parents=2)
+        self.assertEqual(classify_push([stacked], "main"),
+                         {"pushed_at": at, "kind": "merged in feat/rates-table",
+                          "merged_branch": "feat/rates-table"})
+        github = pushed("Merge pull request #12 from octocat/feat/dates", at, parents=2)
+        self.assertEqual(classify_push([github], "main")["merged_branch"], "feat/dates")
+        self.assertEqual(classify_push([pushed("Merge commit 'abc123' into fix/x", at, parents=2)], "main"),
+                         {"pushed_at": at, "kind": "merged another branch"})
+        self.assertEqual(classify_push([stacked, pushed("fix: close", at)], "main"),
+                         {"pushed_at": at, "kind": "bug fix"})
+
+    def test_a_merged_branch_that_is_an_open_pull_names_that_pull(self):
+        at = "2026-10-13T12:35:48Z"
+        found = {
+            12: {"head_ref": "feat/rates-table", "push": {"pushed_at": at, "kind": "sync with main"}},
+            13: {"head_ref": "feat/quote-lines", "push": {"pushed_at": at, "kind": "merged in feat/rates-table",
+                                                                "merged_branch": "feat/rates-table"}},
+            900: {"head_ref": "fix/x", "push": {"pushed_at": at, "kind": "merged in gone/branch",
+                                                 "merged_branch": "gone/branch"}},
+            901: {"head_ref": "fix/y", "push": None},
+        }
+        linked = link_merged_pulls(found)
+        self.assertEqual(linked[13], {"push": {"pushed_at": at, "kind": "picked up #12"}})
+        self.assertEqual(linked[900]["push"], {"pushed_at": at, "kind": "merged in gone/branch"})
+        self.assertEqual(linked[12]["push"]["kind"], "sync with main")
+        self.assertNotIn("head_ref", linked[901])
 
     def test_without_a_push_time_the_newest_commit_time_stands_in(self):
         row = {"headline": "fix: close", "pushed_at": None, "committed_at": "2026-09-30T13:00:00Z", "parents": 1}
@@ -405,6 +446,22 @@ class CollectedPull(unittest.TestCase):
         # None open asks nothing; more than a page asks a page at a time.
         self.assertEqual(asked, [(3, True), (50, True)])
 
+    def test_a_branch_merged_from_an_open_pull_on_another_page_names_that_pull(self):
+        def node(number, head, headline):
+            return {"number": number, "baseRefName": "main", "headRefName": head, "reviewDecision": None,
+                    "reviewThreads": {"pageInfo": {"hasNextPage": False}, "nodes": []},
+                    "commits": {"nodes": [commit(headline, "2026-10-13T12:35:48Z", 2)]}}
+        pages = [
+            {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": True, "endCursor": "abc"},
+             "nodes": [node(13, "feat/quote-lines", "Merge remote-tracking branch 'origin/feat/rates-table' into x")]}}}},
+            {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": False, "endCursor": None},
+             "nodes": [node(12, "feat/rates-table", "Merge main (#43 keep the banner readable) into feat/rates-table")]}}}},
+        ]
+        found = load_signals(RecordingAPI({}, {}, lambda query, variables: pages.pop(0)), REPO, 60)
+        self.assertEqual(found[13]["push"], {"pushed_at": "2026-10-13T12:35:48Z", "kind": "picked up #12"})
+        self.assertEqual(found[12]["push"], {"pushed_at": "2026-10-13T12:35:48Z", "kind": "sync with main"})
+        self.assertNotIn("head_ref", found[13])
+
 
 class CommentMark(unittest.TestCase):
     def test_the_message_icon_shows_unresolved_comments_beside_the_meter(self):
@@ -425,8 +482,9 @@ function createElementNS(ns, tag) {
   return node;
 }
 global.document={createElementNS};
-const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','since','ageClass', slice+'return progress;')(
-  el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass);
+const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','since','ageClass','ageLabel','secondsClass','ciTiming', slice+'return progress;')(
+  el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass,
+  helpers.ageLabel, helpers.secondsClass, helpers.ciTiming);
 const base={runs:[], checks:[{name:'test', category:'success', status:'completed'}], statuses:[], expected:[]};
 function marks(node) {
   const found=[];

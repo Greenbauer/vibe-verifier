@@ -33,8 +33,8 @@ function createElementNS(ns, tag) {
 }
 global.document={createElementNS};
 const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','since','ageClass',
-  progressSource+'return progress;')(el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel,
-  helpers.unresolvedMark, helpers.since, helpers.ageClass);
+  'ageLabel','secondsClass','ciTiming', progressSource+'return progress;')(el, helpers.checkTotals, helpers.meterSegments,
+  helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass, helpers.ageLabel, helpers.secondsClass, helpers.ciTiming);
 const prRow=new Function('el','safeUrl','snapshot','combinedCategory','badge','progress','since','ageClass','runningWork',
   rowSource+'return prRow;')(el, helpers.safeUrl, {owner:'octocat'}, helpers.combinedCategory,
   status=>el('span',{class:'badge'}, status), progress, helpers.since, helpers.ageClass, helpers.runningWork);
@@ -92,7 +92,7 @@ const rows={
     unresolved_comments:1, review_threads:1, comments_complete:true, comment_count:1,
     push:{pushed_at:'2026-09-15T00:00:00Z', kind:'sync with a very long base branch name'},
     checks:[
-      {name:'unit', category:'success', status:'completed'},
+      {name:'unit', category:'success', status:'completed', started_at:'2026-10-05T22:00:00Z', completed_at:'2026-10-05T22:10:00Z'},
       {name:'lint', category:'pending', status:'queued'},
       {name:'review', category:'pending', status:'queued'},
       {name:'e2e', category:'skipped', status:'completed'},
@@ -100,7 +100,15 @@ const rows={
     ]})),
   passed:summarize(prRow({...base, attention_reason:'No current-head failure observed',
     push:{pushed_at:'2026-10-05T00:00:00Z', kind:'bug fix'},
-    checks:[{name:'unit', category:'success', status:'completed'}]})),
+    checks:[{name:'unit', category:'success', status:'completed', started_at:'2026-10-05T00:00:30Z', completed_at:'2026-10-05T00:42:30Z'},
+      {name:'lint', category:'success', status:'completed', started_at:'2026-10-05T00:01:00Z', completed_at:'2026-10-05T00:05:00Z'}]})),
+  waiting:summarize(prRow({...base, push:{pushed_at:'2026-10-05T23:57:00Z', kind:'picked up #12'},
+    checks:[{name:'lint', category:'pending', status:'queued'}]})),
+  slow:summarize(prRow({...base, push:{pushed_at:'2026-10-05T19:30:00Z', kind:'sync with main'},
+    checks:[{name:'e2e', category:'pending', status:'in_progress', started_at:'2026-10-05T19:40:00Z'}]})),
+  moved:summarize(prRow({...base, head_changed:true, push:{pushed_at:'2026-10-05T00:00:00Z', kind:'feature'},
+    checks:[{name:'e2e', category:'pending', status:'in_progress', started_at:'2026-10-05T19:40:00Z'}]})),
+  unchecked:summarize(prRow({...base, push:{pushed_at:'2026-10-05T22:00:00Z', kind:'docs'}})),
   none:summarize(prRow({...base, attention_reason:'Current-head evidence is unavailable', push:null})),
   running:summarize(prRow({...base, attention_reason:'Current-head work is still running',
     push:{pushed_at:'2026-10-04T00:00:00Z', kind:'feature'},
@@ -127,16 +135,29 @@ console.log(JSON.stringify(rows));
 ''')
         self.assertEqual(result["mixed"]["age"], ["5d", "PR age", "age-yellow", 1])
         self.assertEqual(result["mixed"]["counts"], "2 waiting · 2 skipped")
-        self.assertEqual(result["mixed"]["pushWhen"], "3w")
-        self.assertEqual(result["mixed"]["pushClass"], "age-red")
+        # A queued check keeps CI running from the first start, not from the push three weeks ago.
+        self.assertEqual(result["mixed"]["pushWhen"], "CI running 2h 0m")
+        self.assertEqual(result["mixed"]["pushClass"], "age-yellow")
         self.assertEqual(result["mixed"]["pushKind"], "· sync with a very long base branch name")
-        self.assertEqual(result["mixed"]["pushTitle"], "3w · sync with a very long base branch name")
+        self.assertEqual(result["mixed"]["pushTitle"], "CI running 2h 0m · pushed 3w ago · sync with a very long base branch name")
+        # Once every check is done the time stops: first start to last finish.
+        self.assertEqual(result["passed"]["pushWhen"], "CI took 42m 0s")
+        self.assertIsNone(result["passed"]["pushClass"])
+        self.assertEqual(result["passed"]["pushTitle"], "CI took 42m 0s · pushed 1d ago · bug fix")
+        self.assertEqual(result["waiting"]["pushWhen"], "CI waiting 3m 0s")
+        self.assertEqual(result["waiting"]["pushKind"], "· picked up #12")
+        self.assertEqual(result["slow"]["pushWhen"], "CI running 4h 20m")
+        self.assertEqual(result["slow"]["pushClass"], "age-red")
+        # Checks from the previous push say nothing about this push's CI.
+        self.assertEqual(result["moved"]["pushWhen"], "pushed 1d ago")
+        self.assertEqual(result["moved"]["pushClass"], "age-yellow")
+        self.assertEqual(result["moved"]["pushTitle"], "pushed 1d ago · feature")
+        self.assertEqual(result["unchecked"]["pushWhen"], "pushed 2h 0m ago")
+        self.assertEqual(result["unchecked"]["pushKind"], "· docs")
         self.assertEqual(result["mixed"]["markInCaption"], 0)
         self.assertTrue(result["mixed"]["markBesideMeter"])
         self.assertEqual(result["mixed"]["workLines"], ["2 checks queued"])
         self.assertEqual(result["passed"]["counts"], "All passed")
-        self.assertEqual(result["passed"]["pushWhen"], "1d")
-        self.assertEqual(result["passed"]["pushClass"], "age-yellow")
         self.assertEqual(result["passed"]["pushKind"], "· bug fix")
         self.assertEqual(result["passed"]["workLines"], ["No current-head failure observed"])
         self.assertEqual(result["passed"]["reason"], "")
