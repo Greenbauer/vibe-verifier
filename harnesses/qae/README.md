@@ -197,17 +197,47 @@ lacks `--references` is refused with that instruction.
 
 ## The ticket's criteria
 
-Opt-in. A pull request's own `## Acceptance criteria` list is written by whoever opened it, so a
-requirement its ticket states can go missing from it, or the list can be `- None:`. A consumer whose
-pull requests implement tickets in a tracker can supply the ticket's criteria, and the harness then
-holds the pull request to them as well.
+A pull request's own `## Acceptance criteria` list is written by whoever opened it, so a requirement
+its ticket states can go missing from it, or the list can be `- None:`. On 2026-10-13 a consumer's
+pull request was reported complete while requirements of the plan it implemented were never graded:
+the explorer walked only the author's list, because the ticket step wrote an empty file. The template
+now reads the ticket by default, and the harness holds the pull request to its criteria as well.
 
-- The criteria job's `Write the ticket's criteria` step is the consumer's. Its default writes an empty
-  `qae-inputs/ticket.md`, which links no ticket. Replace it with a step that writes the acceptance
-  criteria of the ticket the pull request implements, read with the PR body's grammar: a
-  `## Acceptance criteria` list (a ticket body that has that section can be written as it is), or a
-  plain list with no headings. For tickets that are GitHub issues linked as `Closes #123` (the job
-  then needs `issues: read`):
+- The criteria job's `Write the ticket's criteria` step is the consumer's. Its default,
+  `actions/ticket`, reads a spec kept as a Markdown file in the repository: the body links each section
+  it implements with a line
+
+  ```
+  Ticket: docs/plans/continuation.md#b-notification-selection-and-responses
+  ```
+
+  where the anchor is the one GitHub gives the section's heading. The file is read at the base commit,
+  so a pull request cannot rewrite the spec it is graded against, and every list item of the section
+  (subsections included, nested items joined to their parent) is one criterion. A body with no
+  `Ticket:` line writes an empty `qae-inputs/ticket.md`, which links no ticket; a link that cannot be
+  read (the file absent at the base, no heading with that anchor, a section with no items) fails the
+  step.
+- A section that has an `Acceptance criteria` heading of its own, at any depth below it, gives only
+  that subsection's items: a plan section can hold its sources, data model and tests beside the
+  criteria a browser checks. An empty one is a section with no items and fails the step; it never
+  falls back to the whole section. (Linking the subsection's own anchor is fragile: GitHub numbers
+  repeated headings by order, `#acceptance-criteria-3`.)
+- Its `names:` input is a regular expression for the spec files a `Ticket:` line can point at
+  (`docs/plans/continuation\.md`). A body that names one outside a code fence and has no `Ticket:`
+  line fails the step, telling the author to link the section. It fails rather than warns: the
+  reported pull request named its plan only as a Markdown link, and a warning would have let it
+  through exactly as before. Match only sources a `Ticket:` line can link: a tracker key with no
+  readable tracker, or a file bodies cite for other reasons, would fail every such pull request. The
+  template leaves it empty, which asks for no line.
+- Write each item of a spec section as something a browser can check, as for the PR's own list. The
+  explorer FAILs an item that asks for what no browser can show (that a test exists or passes, that an
+  email reached an inbox, a log line, a value the site never displays), saying "not checkable in a
+  browser", and the gate refuses anything but an anchored PASS: such an item fails the run until the
+  spec says what a user would see instead, or the pull request links a section without it.
+- A spec kept elsewhere needs its own step in place of the default (a declared custom), writing the ticket's criteria with
+  the PR body's grammar: a `## Acceptance criteria` list (a ticket body that has that section can be
+  written as it is), or a plain list with no headings. For tickets that are GitHub issues linked as
+  `Closes #123` (the job then needs `issues: read`):
 
   ```yaml
         - name: Write the ticket's criteria   # CONSUMER
@@ -221,6 +251,9 @@ holds the pull request to them as well.
             else : > qae-inputs/ticket.md; fi
   ```
 
+  This is not the default: no subscribed repository's pull requests close a GitHub issue (checked
+  2026-10-13), and an issue body can be edited at any time, by the pull request's author too, so it is
+  never read at the base the way a file is.
   Any other tracker works the same way: find the ticket's key in the branch name or the PR body, fetch
   it with a token the step holds (a repository secret; the criteria job runs no model), and write its
   criteria. Fail the step when a linked ticket cannot be fetched, so a broken lookup never reads as "no

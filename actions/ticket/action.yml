@@ -1,0 +1,34 @@
+name: Vibe Verifier ticket
+description: Write the acceptance criteria of the plan section a pull request's body links with a `Ticket:` line, read at the base commit.
+inputs:
+  body:
+    description: The PR body, relative to the workspace.
+    required: true
+  out:
+    description: >-
+      Where to write the ticket's criteria, relative to the workspace (actions/criteria's `ticket`). An empty
+      file when the body links none.
+    required: true
+  names:
+    description: >-
+      A regular expression for the spec files a `Ticket:` line can point at (`docs/plans/continuation\.md`). A body
+      that names one outside a code fence and has no `Ticket:` line fails the step, because it names requirements
+      QAE would otherwise never be given. Match only sources a `Ticket:` line can link: a tracker key or a file
+      bodies cite for other reasons would fail every such pull request. Empty (the default) asks for none.
+    default: ""
+  token:
+    description: A token that can read the repository's contents at the base commit.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Write the ticket's criteria
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        VV_BODY: ${{ inputs.body }}
+        VV_OUT: ${{ inputs.out }}
+        VV_REPO: ${{ github.repository }}
+        VV_BASE: ${{ github.event.pull_request.base.sha }}
+        VV_NAMES: ${{ inputs.names }}
+      run: python3 "$GITHUB_ACTION_PATH/ticket.py" --body "$VV_BODY" --repo "$VV_REPO" --base "$VV_BASE" --out "$VV_OUT" --names "$VV_NAMES"

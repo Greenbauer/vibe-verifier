@@ -149,7 +149,7 @@ class Template(unittest.TestCase):
         self.assertEqual((empty.returncode, calls), (1, 0))
 
     def test_every_catalog_pin_is_the_placeholder_a_consumer_replaces(self):
-        for template, count in ((CODEX, 8), (KEEPALIVE, 1)):
+        for template, count in ((CODEX, 9), (KEEPALIVE, 1)):
             pins = re.findall(r"vibe-verifier/actions/[\w-]+@(\S+)( #[^\n]*)?", template.read_text())
             self.assertEqual(len(pins), count, template.name)
             for sha, comment in pins:
