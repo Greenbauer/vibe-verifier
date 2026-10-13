@@ -227,6 +227,10 @@ After a merge, every other open pull request is behind the default branch. The o
 
 A pull request's preview has one address, and the job that sets the preview up is the one that knows it. The optional [preview action](actions/preview/README.md) records that address on the pull request's head as a `preview` commit status, and every check that tests the preview waits for that job and reads the address, instead of each reading the host's deployment records and guessing which build to test.
 
+## Browser seats
+
+A browser suite that signs in to a per-PR preview usually runs on one worker, because every test shares one seeded account. The optional [browser seats action](actions/browser-seats/README.md) is the contract for running it in parallel: the preview seeds N seats, each its own copy of the test accounts and their data (seat 0 stays the reference seat for everything that is not the suite), the action checks them and hands them to the suite, and worker k signs in as seat k inside the suite's one job. On its first consumer a 37-minute suite ran in 10.7.
+
 ## Self-hosted runner lanes
 
 The optional [runner-lane kit](lanes/README.md) runs each CI job in its own disposable Sysbox container on a Linux machine you own. A small listener keeps a GitHub runner scale set per kind of job and starts one container for each job GitHub assigns it; the container takes that one job and exits, and nothing it did survives into the next. The kit is the engine only: which machine, organization, GitHub App and repositories a lane serves is a host file in your own private repository, and a machine keeps both checkouts on their `main` by itself. No gate depends on it, and where a consumer's jobs run stays that consumer's `runs-on:` choice.
