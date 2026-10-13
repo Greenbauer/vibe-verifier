@@ -35,7 +35,10 @@ once, naming the check.
 Exit 0: recorded, or the address printed. Exit 1: there is no preview to give (the check failed,
 was cancelled or timed out, has only skipped runs for three minutes, ran past --running-minutes,
 did not pass within --wait-minutes, or passed and recorded nothing), or a record was refused. Exit 2: GitHub could not
-be read six times in a row. Errors are printed as `::error::` lines, so a workflow shows them.
+be read six times in a row. Exit 3: --wait-minutes ended with the check's run still queued or
+running, so a preview may yet come: a job that cannot wait longer can hand the wait to a second job
+on this code alone (the action's `handover`). A commit with no run of the check at the end of the
+wait is exit 1, never 3. Errors are printed as `::error::` lines, so a workflow shows them.
 Reads and writes go through `gh` with the token in GH_TOKEN; a record needs `statuses: write`, a
 find `checks: read` and `statuses: read`.
 """
@@ -47,6 +50,8 @@ import time
 
 CONTEXT = "preview"
 FAILED_READS_ALLOWED = 6
+# The wait ended with the check's run neither passed nor ended: it is still owed.
+STILL_OWED = 3
 # Only-skipped runs for this long mean the commit has no preview, rather than holding the wait.
 SKIPPED_SECONDS = 180
 
@@ -114,6 +119,25 @@ def record(args):
     fail("could not record the preview of %s as a `%s` status; the job needs `statuses: write`" % (args.sha, CONTEXT))
 
 
+def read_verdict(args, reader, answered):
+    """(verdict, answered): the check's verdict on this poll, "unread" when GitHub did not answer,
+    and the last verdict GitHub did answer, which a failed read leaves as it was."""
+    lines = reader.read(["repos/%s/commits/%s/check-runs" % (args.repo, args.sha), "--paginate",
+                         "--method", "GET", "-f", "check_name=" + args.check, "-f", "per_page=100",
+                         "--jq", '.check_runs[] | "\\(.started_at // "")\\t\\(.status)\\t\\(.conclusion)"'])
+    if lines is None:
+        return "unread", answered
+    verdict = newest_run(lines)
+    return verdict, verdict
+
+
+def wait_ended_code(answered):
+    """The exit code of a wait that ran out. STILL_OWED when the last answer named a run that has not
+    ended; 1 when it named none, only skipped ones, or one that ended without passing: no longer wait
+    would see those pass."""
+    return 1 if answered.split()[0] in ("none", "only", "completed") else STILL_OWED
+
+
 def wait_for_check(args, reader):
     """Every budget is counted in polls of --poll-seconds, so a test that sleeps 0 between polls
     sees the same budgets as a real run."""
@@ -127,12 +151,9 @@ def wait_for_check(args, reader):
                         '"%%s" ran for %d minutes on %%s without passing' % running_minutes),
     }
     seen = dict.fromkeys(budgets, 0)
-    verdict = "none"
+    verdict = answered = "none"
     for _ in range(polls):
-        lines = reader.read(["repos/%s/commits/%s/check-runs" % (args.repo, args.sha), "--paginate",
-                             "--method", "GET", "-f", "check_name=" + args.check, "-f", "per_page=100",
-                             "--jq", '.check_runs[] | "\\(.started_at // "")\\t\\(.status)\\t\\(.conclusion)"'])
-        verdict = "unread" if lines is None else newest_run(lines)
+        verdict, answered = read_verdict(args, reader, answered)
         if verdict == "completed success":
             return
         if verdict in ("completed failure", "completed cancelled", "completed timed_out"):
@@ -145,7 +166,8 @@ def wait_for_check(args, reader):
         time.sleep(args.interval)
     fail('"%s" did not pass for %s within %d minutes; it ran for about %d of them, and was queued for a '
          "runner or not yet created the rest (last seen: %s)"
-         % (args.check, args.sha, args.wait_minutes, seen["in_progress"] * args.poll_seconds // 60, verdict))
+         % (args.check, args.sha, args.wait_minutes, seen["in_progress"] * args.poll_seconds // 60, verdict),
+         code=wait_ended_code(answered))
 
 
 def find(args):

@@ -20,9 +20,13 @@ From a workflow, `uses: Greenbauer/vibe-verifier/actions/preview@<sha>` with `re
 - `tests/test_preview.py::test_a_passed_check_with_no_address_fails_at_once_naming_the_recorder`
 - `tests/test_preview.py::test_six_failed_reads_in_a_row_exit_2_naming_the_call`
 - `tests/test_preview.py::test_the_action_shows_why_a_find_failed`
+- `tests/test_preview.py::test_a_wait_that_ends_with_the_check_queued_or_running_exits_3`
+- `tests/test_preview.py::test_a_handover_passes_with_no_address_when_the_check_is_still_running`
+- `tests/test_preview.py::test_a_handover_still_fails_a_check_that_failed_or_never_ran`
 
 ## Gotchas
 
 - Record the immutable build address, not a branch alias: a later push moves the alias.
 - A passed check with no `preview` status is a missing record step, not a slow one. The finder fails at once and says re-running will not help.
+- `handover: "true"` passes only the finder's exit 3 (the wait ended with the check's run still queued or running), with an empty `url`. It is for the first job of a two-job wait; the job that uses the address must wait again without it, or a check that never passed is read as a pass.
 - The finder trusts the recording job as far as it trusts the check it waits for: a pull request can edit both.
