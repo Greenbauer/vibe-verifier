@@ -23,34 +23,37 @@ class SeatError(ValueError):
     """A seat list a suite must not run on; the message names the seat and never a password."""
 
 
+def check_login(number: int, role: str, login: object, email_domain: str) -> str:
+    """The login's email, lower-cased, once it has an email and a password on the domain."""
+    email = login.get("email") if isinstance(login, dict) else None
+    password = login.get("password") if isinstance(login, dict) else None
+    if not isinstance(email, str) or not email.strip():
+        raise SeatError(f"seat {number}'s {role} has no email")
+    if not isinstance(password, str) or not password:
+        raise SeatError(f"seat {number}'s {role} has no password")
+    if email_domain and not email.lower().endswith("@" + email_domain.lower()):
+        raise SeatError(f"seat {number}'s {role} is not an @{email_domain} login")
+    return email.strip().lower()
+
+
 def check(seats: object, email_domain: str = "", max_seats: int = 8) -> list[dict]:
     """The seats, unchanged, once every rule in the README's contract holds."""
     if not isinstance(seats, list) or not seats:
         raise SeatError("the seats must be a non-empty JSON list, seat 0 first")
     if len(seats) > max_seats:
         raise SeatError(f"{len(seats)} seats, over the {max_seats} allowed (max-seats)")
-    roles = None
-    emails: dict[str, int] = {}
+    if not all(isinstance(seat, dict) and seat for seat in seats):
+        raise SeatError("every seat must be an object of role -> login")
+    roles = sorted(seats[0])
+    owner: dict[str, int] = {}
     for number, seat in enumerate(seats):
-        if not isinstance(seat, dict) or not seat:
-            raise SeatError(f"seat {number} must be an object of role -> login")
-        if roles is None:
-            roles = sorted(seat)
-        elif sorted(seat) != roles:
+        if sorted(seat) != roles:
             raise SeatError(f"seat {number} has roles {sorted(seat)}, seat 0 has {roles}")
         for role, login in seat.items():
-            email = login.get("email") if isinstance(login, dict) else None
-            password = login.get("password") if isinstance(login, dict) else None
-            if not isinstance(email, str) or not email.strip():
-                raise SeatError(f"seat {number}'s {role} has no email")
-            if not isinstance(password, str) or not password:
-                raise SeatError(f"seat {number}'s {role} has no password")
-            if email_domain and not email.lower().endswith("@" + email_domain.lower()):
-                raise SeatError(f"seat {number}'s {role} is not an @{email_domain} login")
-            key = email.strip().lower()
-            if key in emails:
-                raise SeatError(f"seat {number}'s {role} is the same login as seat {emails[key]}'s")
-            emails[key] = number
+            email = check_login(number, role, login, email_domain)
+            if email in owner:
+                raise SeatError(f"seat {number}'s {role} is the same login as seat {owner[email]}'s")
+            owner[email] = number
     return seats
 
 

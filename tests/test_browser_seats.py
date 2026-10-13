@@ -1,10 +1,12 @@
 """The browser-seats contract, both halves: the action's step checks a seat list and writes its
-outputs, and select.mjs gives a suite's worker k seat k from those outputs. Driven through the
-action's own step and through node, because those are what a consumer runs."""
+outputs, and select.mjs gives a suite's worker k seat k from those outputs (its own tests are
+select.test.mjs, run here on the action's real output). Driven through the action's own step, the
+engine's command line and node, because those are what a consumer runs."""
 import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,7 +14,8 @@ from pathlib import Path
 from helpers import ROOT, clean_env
 
 ACTION = ROOT / "actions" / "browser-seats" / "action.yml"
-SELECT = ROOT / "actions" / "browser-seats" / "select.mjs"
+ENGINE = ROOT / "actions" / "browser-seats" / "seats.py"
+SELECT_TEST = ROOT / "actions" / "browser-seats" / "select.test.mjs"
 
 
 def seat(number, domain="preview.example.test"):
@@ -87,54 +90,27 @@ class ActionTest(unittest.TestCase):
                 self.assertNotIn("pw-", result.stdout)
 
 
-@unittest.skipUnless(shutil.which("node"), "node runs the suite side of the contract")
-class SelectTest(unittest.TestCase):
-    ROLES = {"traveler": ["E2E_TRAVELER_EMAIL", "E2E_TRAVELER_PASSWORD"],
-             "partner": ["E2E_PARTNER_EMAIL", "E2E_PARTNER_PASSWORD"]}
-
-    def node(self, body):
-        script = f"import * as seats from {json.dumps(SELECT.as_uri())};\n{body}"
-        result = subprocess.run(["node", "--input-type=module", "-e", script],
+    def test_from_a_clone_the_engine_checks_a_seat_list(self):
+        (self.dir / "seats.json").write_text(json.dumps([seat(0), seat(1)]))
+        result = subprocess.run([sys.executable, str(ENGINE), "--file", str(self.dir / "seats.json")],
                                 capture_output=True, text=True, env=clean_env())
-        self.assertEqual(result.returncode, 0, result.stderr)
-        return json.loads(result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("workers=2\n", result.stdout)
+        missing = subprocess.run([sys.executable, str(ENGINE), "--file", str(self.dir / "absent.json")],
+                                 capture_output=True, text=True, env=clean_env())
+        self.assertEqual(missing.returncode, 1)
+        self.assertIn("::error::the seats file is missing or is not JSON", missing.stdout)
 
-    def select(self, index, extra):
-        environment = {"E2E_TRAVELER_EMAIL": "traveler+s0@preview.example.test",
-                       "E2E_TRAVELER_PASSWORD": "pw-traveler-0", "E2E_PARTNER_EMAIL": "partner+s0@preview.example.test",
-                       "E2E_PARTNER_PASSWORD": "pw-partner-0"}
-        if index is not None:
-            environment["TEST_PARALLEL_INDEX"] = str(index)
-        return self.node(
-            f"const env = {json.dumps(environment)};\n"
-            "let seat, error = null;\n"
-            f"try {{ seat = seats.selectSeat(env, {json.dumps(extra)}, {json.dumps(self.ROLES)}); }}"
-            " catch (e) { error = e.message; }\n"
-            "console.log(JSON.stringify({ seat, env, error }));")
-
-    def test_the_action_output_gives_worker_k_seat_k(self):
-        extra = json.dumps([seat(1), seat(2), seat(3)], separators=(",", ":"))
-        self.assertEqual(self.node(f"console.log(seats.workersFor({json.dumps(extra)}));"), 4)
-        for index in range(4):
-            with self.subTest(worker=index):
-                picked = self.select(index, extra)
-                self.assertEqual(picked["seat"], index)
-                self.assertEqual(picked["env"]["E2E_TRAVELER_EMAIL"], f"traveler+s{index}@preview.example.test")
-                self.assertEqual(picked["env"]["E2E_PARTNER_PASSWORD"], f"pw-partner-{index}")
-
-    def test_a_run_without_extra_seats_keeps_every_worker_on_seat_0(self):
-        self.assertEqual(self.node("console.log(seats.workersFor(''));"), 1)
-        for index in (None, 0, 3):
-            with self.subTest(worker=index):
-                picked = self.select(index, "")
-                self.assertEqual(picked["seat"], 0)
-                self.assertEqual(picked["env"]["E2E_TRAVELER_EMAIL"], "traveler+s0@preview.example.test")
-
-    def test_a_worker_without_a_seat_refuses_to_share_one(self):
-        extra = json.dumps([seat(1)])
-        self.assertIn("worker 2 has no seat", self.select(2, extra)["error"])
-        broken = json.dumps([{"traveler": {"email": "x@preview.example.test"}}])
-        self.assertIn("seat 1 needs an email and password", self.select(1, broken)["error"])
+    @unittest.skipUnless(shutil.which("node"), "node runs the suite side of the contract")
+    def test_the_suite_side_gives_worker_k_seat_k_from_the_action_output(self):
+        """select.test.mjs, handed the `extra-seats` value this action really wrote."""
+        result, outputs = self.step([seat(n) for n in range(4)])
+        self.assertEqual(result.returncode, 0, result.stdout)
+        run = subprocess.run(["node", "--test", str(SELECT_TEST)], capture_output=True, text=True,
+                             env=clean_env({"EXTRA_SEATS": outputs["extra-seats"]}))
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertRegex(run.stdout, r"# pass 3\b")
+        self.assertRegex(run.stdout, r"# fail 0\b")
 
 
 if __name__ == "__main__":

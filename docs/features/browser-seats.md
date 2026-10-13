@@ -17,9 +17,8 @@ From a workflow, `uses: Greenbauer/vibe-verifier/actions/browser-seats@<sha>` wi
 - `tests/test_browser_seats.py::test_four_seats_make_four_workers_and_hand_on_seats_1_to_3_masked`
 - `tests/test_browser_seats.py::test_one_seat_runs_one_worker_and_masks_no_empty_list`
 - `tests/test_browser_seats.py::test_a_list_a_suite_must_not_run_on_fails_before_any_browser`
-- `tests/test_browser_seats.py::test_the_action_output_gives_worker_k_seat_k`
-- `tests/test_browser_seats.py::test_a_run_without_extra_seats_keeps_every_worker_on_seat_0`
-- `tests/test_browser_seats.py::test_a_worker_without_a_seat_refuses_to_share_one`
+- `tests/test_browser_seats.py::test_from_a_clone_the_engine_checks_a_seat_list`
+- `tests/test_browser_seats.py::test_the_suite_side_gives_worker_k_seat_k_from_the_action_output`
 
 ## Gotchas
 
