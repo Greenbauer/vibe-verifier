@@ -72,47 +72,64 @@ def slug(text):
     return re.sub(r"[^\w\- ]", "", text).replace(" ", "-")
 
 
-def section_items(document, anchor):
-    """The list items of the section whose heading's anchor is `anchor`, one string each."""
-    lines = document.splitlines()
-    seen, start, level = {}, None, None
+def headings(lines):
+    """Each heading outside a code fence, as (index, level, text)."""
     for index, line in unfenced(lines):
         heading = HEADING.match(line)
-        if not heading:
-            continue
-        base = slug(heading.group("text"))
+        if heading:
+            yield index, len(heading.group("marks")), heading.group("text")
+
+
+def find_section(lines, anchor):
+    """(index, level) of the heading whose GitHub anchor is `anchor`; a repeated heading's is numbered -1, -2."""
+    seen = {}
+    for index, level, text in headings(lines):
+        base = slug(text)
         count = seen.get(base, 0)
         seen[base] = count + 1
         if (base if count == 0 else "%s-%d" % (base, count)) == anchor:
-            start, level = index, len(heading.group("marks"))
+            return index, level
+    raise Unreadable("no heading has the anchor #%s" % anchor)
+
+
+def criteria_subsection(lines, start, level):
+    """The section's own `Acceptance criteria` subsection, when it has one: the part a browser checks."""
+    for index, sub, text in headings(lines):
+        if index <= start:
+            continue
+        if sub <= level:
             break
-    if start is None:
-        raise Unreadable("no heading has the anchor #%s" % anchor)
-    # The section's own `Acceptance criteria` subsection, when it has one, is the part a browser checks.
-    for index, line in unfenced(lines):
-        heading = HEADING.match(line) if index > start else None
-        if heading and len(heading.group("marks")) <= level:
-            break
-        if heading and CRITERIA.match(heading.group("text")):
-            start, level = index, len(heading.group("marks"))
-            break
-    # `top` is the indent of the list being read (None outside one). After a blank line, only an item or an
-    # indented line continues it; an unindented paragraph ends it.
-    items, top, blank = [], None, False
+        if CRITERIA.match(text):
+            return index, sub
+    return start, level
+
+
+def body_lines(lines, start, level):
+    """The lines of the section that starts at `start`, None standing for each subsection's heading."""
     for index, line in unfenced(lines):
         if index <= start:
             continue
         heading = HEADING.match(line)
-        if heading:
-            if len(heading.group("marks")) <= level:
-                break
-            top = None
-            continue
-        if not line.strip():
-            blank = True
+        if heading and len(heading.group("marks")) <= level:
+            return
+        yield None if heading else line
+
+
+def indent_of(line, item):
+    return len((item.group("indent") if item else re.match(r"[ \t]*", line).group(0)).expandtabs(4))
+
+
+def list_items(section):
+    """Each list item of the section's lines, nested items and continuation lines joined to their parent."""
+    # `top` is the indent of the list being read (None outside one). After a blank line, only an item or an
+    # indented line continues it; an unindented paragraph ends it. A subsection's heading ends it too.
+    items, top, blank = [], None, False
+    for line in section:
+        if line is None or not line.strip():
+            top, blank = (None, blank) if line is None else (top, True)
             continue
         item = ITEM.match(line)
-        indent = len((item.group("indent") if item else re.match(r"[ \t]*", line).group(0)).expandtabs(4))
+        indent = indent_of(line, item)
         if item and (top is None or indent <= top):
             top = indent
             items.append(item.group("text").strip())
@@ -121,6 +138,15 @@ def section_items(document, anchor):
         else:
             top = None
         blank = False
+    return items
+
+
+def section_items(document, anchor):
+    """The list items of the section whose heading's anchor is `anchor` (of its own Acceptance criteria
+    subsection, when it has one), one string each."""
+    lines = document.splitlines()
+    start, level = criteria_subsection(lines, *find_section(lines, anchor))
+    items = list_items(body_lines(lines, start, level))
     if not items:
         raise Unreadable("the section #%s lists no items" % anchor)
     return items
