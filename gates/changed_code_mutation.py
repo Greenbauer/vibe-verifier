@@ -191,17 +191,20 @@ def verdict(killed, undetected, excluded, threshold):
     return [Finding(summary)] + [Finding(text, path, line) for (path, line), text in undetected]
 
 
-def check(args):
-    if not 0 <= args.break_score <= 100:
-        raise CannotRun("--break must be between 0 and 100")
+def project_of(args):
+    """(--project normalized, its directory, the prefix its files have in the repository); one outside the
+    repository or not a directory cannot run."""
     project = posixpath.normpath(args.project.replace(os.sep, "/"))
     if project.startswith("../") or project == ".." or posixpath.isabs(project):
         raise CannotRun("--project %s is outside the repository" % args.project)
     project_dir = os.path.join(args.repo, project)
     if not os.path.isdir(project_dir):
         raise CannotRun("--project %s is not a directory" % args.project)
-    prefix = "" if project == "." else project + "/"
-    base = resolve_base(args.repo, args.base_ref)
+    return project, project_dir, "" if project == "." else project + "/"
+
+
+def judged_ranges(args, base, project, prefix):
+    """{path under the project: changed line spans} for every changed source file under it with any."""
     tracked = set(tracked_files(args.repo))
     excluded = ALWAYS_EXCLUDED + (args.exclude or [])
     files = [p for p in changed_files(args.repo, base)
@@ -216,6 +219,28 @@ def check(args):
             spans = changed_ranges(args.repo, base, path, moved.get(path, path))
             if spans:
                 ranges[path[len(prefix):]] = spans
+    return ranges
+
+
+def stryker_run(args, project, project_dir, prefix, script):
+    """stryker_results() of StrykerJS on the JS and TS ranges, under the project's own Vitest."""
+    version = project_vitest(project_dir)
+    if version is None:
+        raise CannotRun("no vitest is installed for %s: install the project's dependencies (npm ci) before this gate, "
+                        "which runs the project's own Vitest" % project)
+    major = re.match(r"(\d+)\.", version)
+    if not major or int(major.group(1)) not in VITEST_MAJORS:
+        raise CannotRun("vitest %s is not 2.x to 4.x, the versions the pinned StrykerJS kills mutants under" % version)
+    tool = ensure_node_tool(GATE)
+    return stryker_results(stryker(tool, project_dir, script, args.timeout), prefix)
+
+
+def check(args):
+    if not 0 <= args.break_score <= 100:
+        raise CannotRun("--break must be between 0 and 100")
+    project, project_dir, prefix = project_of(args)
+    base = resolve_base(args.repo, args.base_ref)
+    ranges = judged_ranges(args, base, project, prefix)
     if not ranges:
         return []
     if len(ranges) > args.max_files:
@@ -226,15 +251,7 @@ def check(args):
     killed, undetected, excluded = 0, [], []
     deadline = time.monotonic() + args.timeout
     if script:
-        version = project_vitest(project_dir)
-        if version is None:
-            raise CannotRun("no vitest is installed for %s: install the project's dependencies (npm ci) before this gate, "
-                            "which runs the project's own Vitest" % project)
-        major = re.match(r"(\d+)\.", version)
-        if not major or int(major.group(1)) not in VITEST_MAJORS:
-            raise CannotRun("vitest %s is not 2.x to 4.x, the versions the pinned StrykerJS kills mutants under" % version)
-        tool = ensure_node_tool(GATE)
-        killed, undetected, excluded = stryker_results(stryker(tool, project_dir, script, args.timeout), prefix)
+        killed, undetected, excluded = stryker_run(args, project, project_dir, prefix, script)
     if python:
         more = mutate(args.repo, prefix, python, args.python, max(deadline - time.monotonic(), 1))
         killed, undetected, excluded = killed + more[0], undetected + more[1], excluded + more[2]

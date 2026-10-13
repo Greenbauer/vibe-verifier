@@ -586,10 +586,11 @@ after a restart, and the page's single retry while it has nothing to show.
 an in-flight refresh. The collector and usage-artifact test files cover the native source contracts.
 `tests/test_dashboard_host.py` covers the Linux host's token minting, telemetry publishing, and unit
 templates, and `test_dashboard_follow.py` the follower's check-run gate and rollback.
-`tests/test_dashboard_server_ui.py` covers loopback HTTP, proxy and direct routing headers,
-read-only methods, Host/Origin/traversal, XSS-safe JSON and DOM construction, filters, account usage
+`tests/test_dashboard_server.py` covers loopback HTTP, proxy and direct routing headers,
+read-only methods, Host/Origin/traversal, XSS-safe JSON, local assets and the tab icon route.
+`tests/test_dashboard_server_ui.py` covers DOM construction, filters, account usage
 math, the class on a row's age number, the push line under the meter, the current-work names,
-local assets, the tab icon route, and the approved palette.
+and the approved palette.
 `tests/test_dashboard_pull_age.py` covers pull-request age units and color.
 `tests/test_dashboard_push_kind.py` covers the latest push's label and time, and
 `tests/test_dashboard_pull_signals.py` reading it from GitHub, merge-ready titles, and the

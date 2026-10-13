@@ -3,11 +3,16 @@ requirements, packs, and the runner replaying a pull request offline."""
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from helpers import ROOT, commit, gate, git, make_repo, runner, write
+
+sys.path.insert(0, str(ROOT / "gates"))
+import _rule_yaml  # noqa: E402
+import repo_rules  # noqa: E402
 
 RULE = """id: no-console-log
 language: TypeScript
@@ -418,6 +423,26 @@ class Runner(unittest.TestCase):
             self.assertNotIn("src/a.ts", result.stdout)  # touched, but its console.log was already at the base
             self.assertNotIn("src/c.ts", result.stdout)  # on main after the merge base, not this pull request's
             self.assertRegex(result.stdout, r"repo-rules\s+FAIL")
+
+
+class Readers(unittest.TestCase):
+    def test_a_scalar_is_read_plain_quoted_or_as_a_block(self):
+        for text, read in (("  plain  ", "plain"), ("'it''s'", "it's"), ('"a\\tb"', "a\tb"), ('"\\x"', "\\x"),
+                           ("|\n  first\n  second", "first\n  second"), ("~", ""), ("null", ""), ("'", "'")):
+            self.assertEqual(_rule_yaml.scalar(text), read, text)
+        self.assertEqual(_rule_yaml.value({"message": ("'Use x'", [])}, "message"), "Use x")
+        self.assertEqual(_rule_yaml.value({}, "message"), "")
+
+    def test_an_ast_grep_scan_that_fails_or_reports_nothing_on_exit_1_cannot_run(self):
+        work = tempfile.mkdtemp(prefix="vv-fake-sg-")
+        self.addCleanup(shutil.rmtree, work, True)
+        for code, text in ((2, "boom"), (1, "")):
+            fake = Path(work, "sg-%d" % code)
+            fake.write_text("#!/bin/sh\necho %s >&2\nexit %d\n" % (text, code))
+            fake.chmod(0o755)
+            with self.assertRaises(repo_rules.CannotRun) as raised:
+                repo_rules.scan(str(fake), [work], work, ["a.ts"])
+            self.assertEqual(str(raised.exception), "ast-grep scan exited %d: %s" % (code, text or "no output"))
 
 
 if __name__ == "__main__":

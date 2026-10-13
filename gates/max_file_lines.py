@@ -40,20 +40,22 @@ def check(args):
     moved = {} if args.all else renamed(args.repo, base)
     # The changed files are the changes since the merge base, so that is where each one's old length is read.
     start = None if args.all else git(args.repo, "merge-base", base, "HEAD").strip()
-    findings = []
-    for path in sorted(p for p in candidates if p in tracked and matches(p, source) and not matches(p, excluded)):
-        with open(os.path.join(args.repo, path), encoding="utf-8", errors="replace") as handle:
-            now = line_count(handle.read())
-        if now <= args.max:
-            continue
-        if args.all:
-            findings.append(Finding("%d lines, over the %d allowed" % (now, args.max), path))
-            continue
-        before = length_at(args.repo, start, moved.get(path, path))
-        if before is not None and now <= before:
-            continue
-        findings.append(Finding("%d lines, over the %d allowed (%s)" % (now, args.max, "new file" if before is None else "%d at the base" % before), path))
-    return findings
+    files = sorted(p for p in candidates if p in tracked and matches(p, source) and not matches(p, excluded))
+    return [finding for finding in (judge(args, path, start, moved) for path in files) if finding]
+
+
+def judge(args, path, start, moved):
+    """The finding for one candidate file, or None when it is within the limit or did not grow."""
+    with open(os.path.join(args.repo, path), encoding="utf-8", errors="replace") as handle:
+        now = line_count(handle.read())
+    if now <= args.max:
+        return None
+    if args.all:
+        return Finding("%d lines, over the %d allowed" % (now, args.max), path)
+    before = length_at(args.repo, start, moved.get(path, path))
+    if before is not None and now <= before:
+        return None
+    return Finding("%d lines, over the %d allowed (%s)" % (now, args.max, "new file" if before is None else "%d at the base" % before), path)
 
 
 def add_arguments(parser):

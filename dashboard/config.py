@@ -227,6 +227,29 @@ def _parse_proxy_origin(value: object) -> str | None:
     return value
 
 
+def _parse_repositories(repositories: object, owner: str) -> tuple[list[str], bool]:
+    """The canonical OWNER/NAME list and whether the configuration means every repository."""
+    # Either a non-empty list of this owner's repositories, or the exact string "all"
+    # (every non-archived repository of the owner, discovered on each refresh). The two
+    # shapes are different JSON types, so a list cannot mean "all" and the string cannot
+    # name a repository.
+    if repositories == "all":
+        return [], True
+    if not isinstance(repositories, list) or not repositories:
+        raise ConfigError('repositories must be a non-empty list of OWNER/NAME or the string "all"')
+    canonical = []
+    for repository in repositories:
+        if not isinstance(repository, str) or repository.count("/") != 1:
+            raise ConfigError("each repository must be OWNER/NAME")
+        repo_owner, name = repository.split("/", 1)
+        if repo_owner.lower() != owner.lower() or not REPOSITORY.fullmatch(name):
+            raise ConfigError("repository %r is outside configured owner %s" % (repository, owner))
+        canonical.append(owner + "/" + name)
+    if len(set(name.lower() for name in canonical)) != len(canonical):
+        raise ConfigError("repositories contains a duplicate")
+    return canonical, False
+
+
 def load_config(filename: str | os.PathLike[str], uid: int | None = None) -> Config:
     """Load once at process startup; callers retain the returned frozen value.
 
@@ -246,27 +269,7 @@ def load_config(filename: str | os.PathLike[str], uid: int | None = None) -> Con
     owner = value.get("owner")
     if not isinstance(owner, str) or not OWNER.fullmatch(owner):
         raise ConfigError("owner is not a valid GitHub owner")
-    # Either a non-empty list of this owner's repositories, or the exact string "all"
-    # (every non-archived repository of the owner, discovered on each refresh). The two
-    # shapes are different JSON types, so a list cannot mean "all" and the string cannot
-    # name a repository.
-    repositories = value.get("repositories", None)
-    if repositories == "all":
-        canonical, all_repositories = [], True
-    elif isinstance(repositories, list) and repositories:
-        all_repositories = False
-        canonical = []
-        for repository in repositories:
-            if not isinstance(repository, str) or repository.count("/") != 1:
-                raise ConfigError("each repository must be OWNER/NAME")
-            repo_owner, name = repository.split("/", 1)
-            if repo_owner.lower() != owner.lower() or not REPOSITORY.fullmatch(name):
-                raise ConfigError("repository %r is outside configured owner %s" % (repository, owner))
-            canonical.append(owner + "/" + name)
-        if len(set(name.lower() for name in canonical)) != len(canonical):
-            raise ConfigError("repositories contains a duplicate")
-    else:
-        raise ConfigError('repositories must be a non-empty list of OWNER/NAME or the string "all"')
+    canonical, all_repositories = _parse_repositories(value.get("repositories", None), owner)
     telemetry = value.get("telemetry_file")
     telemetry_path = None
     if telemetry is not None:

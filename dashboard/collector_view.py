@@ -28,6 +28,74 @@ def fresh(section, now):
             observed is not None and timedelta(0) <= now - observed <= timedelta(minutes=5))
 
 
+def _occupied_lane(row):
+    lane = {"id": "%s-%s" % (row["kind"], row["index"]),
+            "state": "allocated" if row["state"] == "allocated" else "unknown",
+            "registered": None, "labels": [row["kind"]]}
+    if row["state"] == "allocated":
+        lane["runner_id"] = row["runner_id"]
+        lane["allocated_at"] = row["allocated_at"]
+        if row.get("job_name") and row.get("job_repository"):
+            # The host recorded this job at start. It is busy whether or not an open pull
+            # request carries it. join_runner_jobs still replaces it when GitHub has a match.
+            lane["state"] = "busy"
+            lane["job"] = {"repository": row["job_repository"], "name": row["job_name"],
+                           "url": row.get("job_url")}
+        elif row["target_repository"]:
+            # An organization-scope allocation names no repository; join_runner_jobs then finds
+            # the job by runner ID alone.
+            lane["job"] = {"repository": row["target_repository"],
+                           "name": "Runner allocated; job match pending", "url": None}
+    return lane
+
+
+def _host_view(raw_host, config, now):
+    """The capacity section and the explorer's bot state for an observed host."""
+    host = project_host(raw_host, SimpleNamespace(owner=config.owner, host_label="Shared runner machine"))
+    current = fresh(raw_host, now)
+    lanes = [_occupied_lane(row) for row in host["slots"]["occupied"]]
+    listener_up = host["listener"]["state"] == "up"
+    for index in range(host["slots"]["remaining_on_demand"]):
+        lanes.append({"id": "on-demand-%s" % (index + 1),
+                      "state": "provisionable" if listener_up else "unknown",
+                      "registered": False, "labels": []})
+    capacity = {"available": True, "sampled_at": raw_host["observed_at"], "stale": not current,
+                "host": {"cpu_percent": host["cpu"]["busy_percent"],
+                         "memory_used_bytes": host["memory"]["total_bytes"] - host["memory"]["available_bytes"],
+                         "memory_total_bytes": host["memory"]["total_bytes"],
+                         "workspace_disk_free_bytes": host["workspace"]["free_bytes"],
+                         "workspace_disk_total_bytes": host["workspace"]["total_bytes"]},
+                "limits": {**host["lane_limits"], "slots": host["slots"]["limit"],
+                           "qae_concurrency": host["slots"]["qae_concurrency"],
+                           "wait_slots": host["slots"].get("wait_limit", 0)},
+                "listener_state": host["listener"]["state"], "lanes": lanes}
+    qae_allocated = any(row["kind"] == "qae" for row in host["slots"]["occupied"])
+    state = "down" if host["listener"]["state"] == "down" else "idle" if listener_up and not qae_allocated else "unknown"
+    return capacity, {"owner": config.owner, "bot": "explorer", "state": state,
+                      "detail": "Owner's QAE runner listener"}
+
+
+def _usage_view(account, now):
+    """The usage section for an observed account: one plan per metered feature."""
+    limits = project_rate_limits(account.get("rate_limits"))
+    from datetime import datetime, timezone
+    accounts = []
+    for limit in limits:
+        windows = []
+        for window in limit["windows"]:
+            minutes = window["duration_minutes"]
+            windows.append({"name": _window_label(minutes),
+                            "used_percent": window["used_percent"],
+                            "resets_at": iso_time(datetime.fromtimestamp(window["resets_at"], timezone.utc)),
+                            "allowance_tokens": None, "window_minutes": minutes})
+        # Each metered feature is its own plan. A Codex plan's 5-hour and 7-day windows stay together.
+        accounts.append({"id": "collector:%s" % limit["limit_id"], "label": _model_label(limit["limit_id"]),
+                         "provider": "OpenAI", "quota_windows": windows})
+    return {"available": True, "sampled_at": account["observed_at"], "stale": not fresh(account, now),
+            "accounts": accounts, "samples": [],
+            "completeness": "Subscription percentage is account-wide and may include other activity. Per-bot token history starts with captured runs."}
+
+
 def collector_view(value, config, now):
     if (set(value) != {"version", "owner", "observed_at", "hosts", "accounts", "samples"} or
             value.get("version") != 1 or value.get("owner", "").lower() != config.owner.lower() or
@@ -40,68 +108,27 @@ def collector_view(value, config, now):
     capacity = {"available": False, "reason": "not_provided"}
     states = []
     if raw_host.get("observed_at"):
-        host = project_host(raw_host, SimpleNamespace(owner=config.owner, host_label="Shared runner machine"))
-        current = fresh(raw_host, now)
-        lanes = []
-        for row in host["slots"]["occupied"]:
-            lane = {"id": "%s-%s" % (row["kind"], row["index"]),
-                    "state": "allocated" if row["state"] == "allocated" else "unknown",
-                    "registered": None, "labels": [row["kind"]]}
-            if row["state"] == "allocated":
-                lane["runner_id"] = row["runner_id"]
-                lane["allocated_at"] = row["allocated_at"]
-                if row.get("job_name") and row.get("job_repository"):
-                    # The host recorded this job at start. It is busy whether or not an open pull
-                    # request carries it. join_runner_jobs still replaces it when GitHub has a match.
-                    lane["state"] = "busy"
-                    lane["job"] = {"repository": row["job_repository"], "name": row["job_name"],
-                                   "url": row.get("job_url")}
-                elif row["target_repository"]:
-                    # An organization-scope allocation names no repository; join_runner_jobs then finds
-                    # the job by runner ID alone.
-                    lane["job"] = {"repository": row["target_repository"],
-                                   "name": "Runner allocated; job match pending", "url": None}
-            lanes.append(lane)
-        listener_up = host["listener"]["state"] == "up"
-        for index in range(host["slots"]["remaining_on_demand"]):
-            lanes.append({"id": "on-demand-%s" % (index + 1),
-                          "state": "provisionable" if listener_up else "unknown",
-                          "registered": False, "labels": []})
-        capacity = {"available": True, "sampled_at": raw_host["observed_at"], "stale": not current,
-                    "host": {"cpu_percent": host["cpu"]["busy_percent"],
-                             "memory_used_bytes": host["memory"]["total_bytes"] - host["memory"]["available_bytes"],
-                             "memory_total_bytes": host["memory"]["total_bytes"],
-                             "workspace_disk_free_bytes": host["workspace"]["free_bytes"],
-                             "workspace_disk_total_bytes": host["workspace"]["total_bytes"]},
-                    "limits": {**host["lane_limits"], "slots": host["slots"]["limit"],
-                               "qae_concurrency": host["slots"]["qae_concurrency"],
-                               "wait_slots": host["slots"].get("wait_limit", 0)},
-                    "listener_state": host["listener"]["state"], "lanes": lanes}
-        qae_allocated = any(row["kind"] == "qae" for row in host["slots"]["occupied"])
-        state = "down" if host["listener"]["state"] == "down" else "idle" if listener_up and not qae_allocated else "unknown"
-        states.append({"owner": config.owner, "bot": "explorer", "state": state,
-                       "detail": "Owner's QAE runner listener"})
+        capacity, state = _host_view(raw_host, config, now)
+        states.append(state)
     usage = {"available": False, "reason": "not_provided"}
     if account.get("observed_at"):
-        limits = project_rate_limits(account.get("rate_limits"))
-        from datetime import datetime, timezone
-        accounts = []
-        for limit in limits:
-            windows = []
-            for window in limit["windows"]:
-                minutes = window["duration_minutes"]
-                windows.append({"name": _window_label(minutes),
-                                "used_percent": window["used_percent"],
-                                "resets_at": iso_time(datetime.fromtimestamp(window["resets_at"], timezone.utc)),
-                                "allowance_tokens": None, "window_minutes": minutes})
-            # Each metered feature is its own plan. A Codex plan's 5-hour and 7-day windows stay together.
-            accounts.append({"id": "collector:%s" % limit["limit_id"], "label": _model_label(limit["limit_id"]),
-                             "provider": "OpenAI", "quota_windows": windows})
-        usage = {"available": True, "sampled_at": account["observed_at"], "stale": not fresh(account, now),
-                 "accounts": accounts, "samples": [],
-                 "completeness": "Subscription percentage is account-wide and may include other activity. Per-bot token history starts with captured runs."}
+        usage = _usage_view(account, now)
     return {"available": True, "capacity": capacity, "usage": usage,
             "bots": {"available": bool(states), "sampled_at": raw_host.get("observed_at"), "stale": not fresh(raw_host, now), "states": states}}
+
+
+def _active_jobs(github):
+    """In-progress jobs on a runner, keyed by (repository, runner ID) and by (None, runner ID)."""
+    jobs = {}
+    for repository in github.get("repositories", []):
+        if repository.get("unavailable"):
+            continue
+        for job in (job for pull in repository.get("pulls", []) for run in pull.get("runs", [])
+                    for job in run.get("jobs", [])):
+            if job.get("runner_id") and job.get("status") == "in_progress":
+                jobs[(repository["repository"], job["runner_id"])] = job
+                jobs[(None, job["runner_id"])] = {**job, "repository": repository["repository"]}
+    return jobs
 
 
 def join_runner_jobs(telemetry, github):
@@ -109,16 +136,7 @@ def join_runner_jobs(telemetry, github):
     capacity = telemetry.get("capacity", {})
     if not capacity.get("available"):
         return
-    jobs = {}
-    for repository in github.get("repositories", []):
-        if repository.get("unavailable"):
-            continue
-        for pull in repository.get("pulls", []):
-            for run in pull.get("runs", []):
-                for job in run.get("jobs", []):
-                    if job.get("runner_id") and job.get("status") == "in_progress":
-                        jobs[(repository["repository"], job["runner_id"])] = job
-                        jobs[(None, job["runner_id"])] = {**job, "repository": repository["repository"]}
+    jobs = _active_jobs(github)
     for lane in capacity.get("lanes", []):
         assignment = lane.get("job")
         job = jobs.get((assignment["repository"] if assignment else None, lane.get("runner_id")))

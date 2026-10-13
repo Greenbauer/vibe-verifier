@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from dashboard.config import Config, BotDefinition
 from dashboard.gh_api import ApiError
-from dashboard.usage_artifacts import UsageArtifacts, apply_plan_window, decode_archive, normalize
+from dashboard.usage_artifacts import NAME, UsageArtifacts, _tally, apply_plan_window, decode_archive, normalize
 
 NOW = datetime(2026, 9, 30, 12, tzinfo=timezone.utc)
 REPO = 'example/site'
@@ -81,6 +81,28 @@ class ArtifactValidation(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.normalize(value, artifact, run)
 
+    def test_identity_and_counts_are_refused_with_their_reason(self):
+        for version in (2, True, '1'):
+            value, artifact, run = fixture()
+            value['schema_version'] = version
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, '^invalid identity$'):
+                self.normalize(value, artifact, run)
+        value, artifact, run = fixture()
+        del artifact['name']
+        with self.assertRaisesRegex(ValueError, '^invalid identity$'):
+            self.normalize(value, artifact, run)
+        for name, usage in [('none', None), ('missing', {'input_tokens': 1}),
+                            ('extra', dict(fixture()[0]['usage'], text_tokens=1))]:
+            value, artifact, run = fixture()
+            value['usage'] = usage
+            with self.subTest(usage=name), self.assertRaisesRegex(ValueError, '^invalid usage$'):
+                self.normalize(value, artifact, run)
+        for key in ('input_tokens', 'output_tokens'):
+            value, artifact, run = fixture()
+            value['usage'][key] = None
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, '^invalid count$'):
+                self.normalize(value, artifact, run)
+
     def test_unmapped_accounts_remain_distinct(self):
         value, artifact, run = fixture()
         first = self.normalize(value, artifact, run)
@@ -126,6 +148,8 @@ class ArtifactCollection(unittest.TestCase):
         self.elapsed, self.downloads, self.revoked, self.exhausted = 0, 0, False, False
         self.runner_name, self.other_jobs, self.failure = None, [], None
         self.more, self.pages_read = {}, []
+        # Page one of a repository other than REPO, which is its whole listing.
+        self.others, self.job_reads = {}, 0
         config = Config('example', (REPO,), {'explorer': BotDefinition('explore.yml', ('explore',))}, None)
         self.reader = UsageArtifacts(config, api=self, downloader=self.download, clock=lambda: self.elapsed)
 
@@ -141,9 +165,13 @@ class ArtifactCollection(unittest.TestCase):
             raise ApiError(self.failure)
         if '/actions/artifacts?per_page=100&page=' in endpoint:
             number = int(endpoint.rsplit('=', 1)[1])
+            repository = endpoint[len('repos/'):].split('/actions/', 1)[0]
+            if repository in self.others:
+                return self.others[repository] if number == 1 else {'artifacts': []}
             self.pages_read.append(number)
             return self.listing if number == 1 else self.more.get(number, {'artifacts': []})
         if endpoint.endswith('/jobs?per_page=100'):
+            self.job_reads += 1
             job = {'name': 'explore', 'runner_name': self.runner_name} if self.runner_name else None
             return {'jobs': ([job] if job else []) + self.other_jobs}
         self.assertEqual(endpoint, 'repos/example/site/actions/runs/42/attempts/1')
@@ -188,6 +216,64 @@ class ArtifactCollection(unittest.TestCase):
         self.elapsed, self.revoked = 602, False
         self.reader.collect(NOW)
         self.assertFalse(self.reader.lost_access)
+
+    def test_a_record_names_why_its_source_is_refused(self):
+        matched = NAME.fullmatch(self.artifact['name'])
+        artifact = dict(self.artifact, workflow_run={'head_sha': 'a' * 40})
+        with self.assertRaisesRegex(ValueError, '^missing source$'):
+            self.reader._record(REPO, artifact, matched, NOW)
+        self.run['path'] = '.github/workflows/unrelated.yml'
+        with self.assertRaisesRegex(ValueError, '^unexpected source workflow$'):
+            self.reader._record(REPO, self.artifact, matched, NOW)
+
+    def test_expired_unnamed_and_old_artifacts_are_skipped_without_making_the_history_partial(self):
+        self.artifact['size_in_bytes'] = 65536
+        unnamed = {key: value for key, value in self.artifact.items() if key != 'name'}
+        old = dict(self.artifact, created_at='2026-09-20T00:00:00Z')
+        undated = {key: value for key, value in self.artifact.items() if key != 'created_at'}
+        self.listing = {'artifacts': [dict(self.artifact, expired=True), unnamed, old, undated, self.artifact]}
+        result = self.reader.collect(NOW)
+        self.assertEqual(len(result['samples']), 1)
+        self.assertEqual(self.downloads, 1)
+        self.assertFalse(result['hard_partial'])
+        self.assertEqual(result['covered_until'], '2026-09-23T12:00:00Z')
+
+    def test_an_artifact_with_a_bad_id_or_size_is_partial_and_the_rest_are_read(self):
+        self.artifact['size_in_bytes'] = 1
+        bad = [dict(self.artifact, id=10, size_in_bytes=0), dict(self.artifact, id=10, size_in_bytes=65537),
+               dict(self.artifact, id='10'), dict(self.artifact, id=10, size_in_bytes='500')]
+        self.listing = {'artifacts': bad + [self.artifact]}
+        result = self.reader.collect(NOW)
+        self.assertEqual(len(result['samples']), 1)
+        self.assertTrue(result['hard_partial'])
+
+    def test_cached_records_are_kept_and_their_instance_is_read_once(self):
+        self.runner_name = 'box-ci-qae-2-1700000000'
+        self.reader.collect(NOW)
+        self.assertEqual(self.job_reads, 1)
+        self.reader.cache = {(REPO, 8): self.reader.cache[(REPO, 9)]}
+        self.listing = {'artifacts': [dict(self.artifact, id=8), self.artifact]}
+        self.elapsed = 301
+        result = self.reader.collect(NOW)
+        self.assertEqual([sample['instance'] for sample in result['samples']], [2, 2])
+        self.assertEqual((self.downloads, self.job_reads), (2, 2))
+        self.elapsed = 602
+        self.reader.collect(NOW)
+        self.assertEqual((self.downloads, self.job_reads), (2, 2))
+
+    def test_every_repository_counts_toward_listing_completeness_and_partial_history(self):
+        repositories = (REPO, 'example/other')
+        self.others['example/other'] = {'artifacts': []}
+        self.listing = {'artifacts': self.filler('2026-09-30T11:30:00Z')}
+        self.more = {n: {'artifacts': self.filler('2026-09-30T11:30:00Z')} for n in range(2, 10)}
+        result = self.reader.collect(NOW, repositories=repositories)
+        self.assertFalse(result['hard_partial'])
+        self.assertFalse(result['listing_complete'])
+        self.assertEqual(result['covered_until'], '2026-09-30T11:30:00Z')
+        self.listing, self.more = {'artifacts': [dict(self.artifact, size_in_bytes=0)]}, {}
+        self.elapsed = 301
+        result = self.reader.collect(NOW, repositories=repositories)
+        self.assertTrue(result['hard_partial'])
 
     def filler(self, created, count=100):
         return [{'id': 1000 + index, 'name': 'build-output', 'expired': False, 'size_in_bytes': 10,
@@ -297,6 +383,20 @@ class ArtifactCollection(unittest.TestCase):
         self.elapsed, self.failure = 301 * 4, None
         self.assertFalse(self.reader.collect(NOW)['partial'])
         self.assertEqual(self.downloads, 1)
+
+
+class Tally(unittest.TestCase):
+    def test_accounts_samples_and_gaps_are_split_and_any_missing_or_partial_record_is_partial(self):
+        account = {'id': 'openai:a', 'label': 'a', 'provider': 'openai', 'quota_windows': []}
+        partial = {'account': account, 'sample': {'input_tokens': 1, 'partial': True}}
+        whole = {'account': account, 'sample': {'input_tokens': 2, 'partial': False}}
+        accounts, samples, gaps, hard = _tally([None, {'gap_at': '2026-09-30T11:00:00Z'}, partial, whole])
+        self.assertEqual(accounts, {'openai:a': account})
+        self.assertEqual(samples, [partial['sample'], whole['sample']])
+        self.assertEqual(gaps, ['2026-09-30T11:00:00Z'])
+        self.assertTrue(hard)
+        self.assertTrue(_tally([None, whole])[3])
+        self.assertFalse(_tally([whole])[3])
 
 
 if __name__ == '__main__':

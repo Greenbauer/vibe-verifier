@@ -5,23 +5,18 @@ from __future__ import annotations
 import base64
 import copy
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
-from .config import BOT_KEYS, BotDefinition, Config
+from .config import Config
 from .gh_api import ApiError, GitHubAPI
 from .pull_signals import face_fields
 from .required_workflows import RequiredWorkflows
-from .bot_runs import bot_job_ran, pulls_bot_jobs, recent_bot_runs, runner_name
+from .bot_runs import runner_name
 from .util import category, elapsed_seconds, github_url, iso_time, parse_time, status_category
 
 MAX_WORKERS = 4
 JOB_CACHE_AGE = timedelta(days=7)
-WORKFLOW_CACHE_AGE = timedelta(minutes=5)
-# History reads jobs only for this many of a workflow's newest completed runs. A configured job name
-# that never runs would otherwise read every run of the last seven days, hundreds in a busy repository.
-HISTORY_RUN_LIMIT = 50
 # Shown on a pull request that was listed but whose checks did not fit in this pass's budget.
 CHECKS_NOT_LOADED = "Checks are not loaded yet"
 
@@ -42,11 +37,42 @@ def _time_key(row: dict, *keys: str) -> datetime:
 # The start of a pin whose ruleset history GitHub refused: every run counts as at the current pin.
 PIN_UNKNOWN = datetime.min.replace(tzinfo=timezone.utc)
 
-# Imported after _endpoint: owner_set reads that helper from this module while it loads.
+
+def _newest_attempts(rows: list[dict]) -> dict[int, dict]:
+    """The newest attempt of each workflow run, by run id."""
+    newest = {}
+    for row in rows:
+        run_id, attempt = row.get("id"), row.get("run_attempt") or 1
+        if isinstance(run_id, int) and (run_id not in newest or attempt > (newest[run_id].get("run_attempt") or 1)):
+            newest[run_id] = row
+    return newest
+
+
+def _newest(rows: list, key, rank) -> set[int]:
+    """Indexes of the highest-ranked row for each key; the first wins a tie."""
+    latest = {}
+    for index, row in enumerate(rows):
+        if key(row) not in latest or rank(row) > latest[key(row)][0]:
+            latest[key(row)] = (rank(row), index)
+    return {index for _, index in latest.values()}
+
+
+def _kept_runs(runs: list[dict], jobs: list[tuple], keep: set[int]) -> list[dict]:
+    """Each run with only its kept jobs. A run left with none is dropped, unless it never had any."""
+    current = []
+    for run_index, run in enumerate(runs):
+        run_jobs = [job for index, (owner, job) in enumerate(jobs) if owner == run_index and index in keep]
+        if run_jobs or not run["jobs"]:
+            current.append({**run, "jobs": run_jobs})
+    return current
+
+
+# Imported after _endpoint: owner_set and github_bots read helpers from this module while they load.
+from .github_bots import BotHistory
 from .owner_set import OwnerSet
 
 
-class GitHubCollector(OwnerSet):
+class GitHubCollector(OwnerSet, BotHistory):
     def __init__(self, config: Config, api: GitHubAPI | None = None, *, clock=None):
         self.config = config
         self.api = api or GitHubAPI()
@@ -216,13 +242,8 @@ class GitHubCollector(OwnerSet):
         self._required.learn(repository, rows)
         candidates = [row for row in rows if row.get("head_sha") == sha and row.get("check_suite_id") in suite_ids
                       and ((row.get("repository") or {}).get("full_name") or repository).lower() == repository.lower()]
-        newest = {}
-        for row in candidates:
-            run_id, attempt = row.get("id"), row.get("run_attempt") or 1
-            if isinstance(run_id, int) and (run_id not in newest or attempt > (newest[run_id].get("run_attempt") or 1)):
-                newest[run_id] = row
         result = []
-        for row in newest.values():
+        for row in _newest_attempts(candidates).values():
             jobs = self._run_jobs(repository, row)
             result.append({"id": row.get("id"), "suite_id": row.get("check_suite_id"),
                            "name": str(row.get("name") or "GitHub Actions")[:200], "path": row.get("path"),
@@ -250,26 +271,13 @@ class GitHubCollector(OwnerSet):
         run and check suite, so one job can appear several times. Older copies are superseded."""
         created = {run["suite_id"]: _time_key(run, "created_at") for run in runs}
         workflow = {run["suite_id"]: run["path"] or run["name"] for run in runs}
-
-        def newest(rows: list, key, rank) -> set[int]:
-            latest = {}
-            for index, row in enumerate(rows):
-                if key(row) not in latest or rank(row) > latest[key(row)][0]:
-                    latest[key(row)] = (rank(row), index)
-            return {index for _, index in latest.values()}
-
-        keep = newest(checks, lambda row: (row["provider"], workflow.get(row["suite_id"]), row["name"]),
-                      lambda row: (created.get(row["suite_id"]) or _time_key(row, "started_at"), row["id"] or 0))
+        keep = _newest(checks, lambda row: (row["provider"], workflow.get(row["suite_id"]), row["name"]),
+                       lambda row: (created.get(row["suite_id"]) or _time_key(row, "started_at"), row["id"] or 0))
         checks = [row for index, row in enumerate(checks) if index in keep]
         jobs = [(run_index, job) for run_index, run in enumerate(runs) for job in run["jobs"]]
-        keep = newest(jobs, lambda pair: (workflow[runs[pair[0]]["suite_id"]], pair[1]["name"]),
-                      lambda pair: (created[runs[pair[0]]["suite_id"]], pair[1]["id"] or 0))
-        current = []
-        for run_index, run in enumerate(runs):
-            run_jobs = [job for index, (owner, job) in enumerate(jobs) if owner == run_index and index in keep]
-            if run_jobs or not run["jobs"]:
-                current.append({**run, "jobs": run_jobs})
-        return checks, current
+        keep = _newest(jobs, lambda pair: (workflow[runs[pair[0]]["suite_id"]], pair[1]["name"]),
+                       lambda pair: (created[runs[pair[0]]["suite_id"]], pair[1]["id"] or 0))
+        return checks, _kept_runs(runs, jobs, keep)
 
     @staticmethod
     def _attention(evidence: list[dict], runs: list[dict], expected: list[dict]) -> tuple[bool, str]:
@@ -326,170 +334,3 @@ class GitHubCollector(OwnerSet):
     def _branch_rules(self, repository: str, base: str) -> list[dict]:
         from .required_checks import branch_rules
         return branch_rules(self.api, repository, base)
-
-
-    def _bot_row(self, repository: str, role: str, run: dict, job: dict) -> dict:
-        return {"bot": role, "repository": repository, "run_id": run.get("id"),
-                "attempt": run.get("run_attempt") or run.get("attempt") or 1, "job_id": job["id"], "name": job["name"],
-                "status": job["status"], "conclusion": job["conclusion"], "category": job["category"],
-                "started_at": job["started_at"], "completed_at": job["completed_at"],
-                "elapsed_seconds": job["elapsed_seconds"], "html_url": job["html_url"],
-                "runner_name": job.get("runner_name")}
-
-    def _bot_workflow(self, repository: str, workflow: str, roles: list[str], now: datetime, base: str) -> dict:
-        rows = {role: {"active": [], "completed": []} for role in roles}
-        errors, active_complete, history_complete, floor = [], False, False, None
-        role_jobs = {role: set(self.config.bots[role].jobs) for role in roles}
-        try:
-            active_runs = self.api.items(_endpoint(base, status="in_progress", per_page=100), "workflow_runs")
-            for run in active_runs:
-                if ((run.get("repository") or {}).get("full_name") or repository).lower() != repository.lower():
-                    continue
-                for job in self._run_jobs(repository, run):
-                    if job["status"] != "in_progress" or not bot_job_ran(job):
-                        continue
-                    for role in roles:
-                        if job["name"] in role_jobs[role]:
-                            rows[role]["active"].append(self._bot_row(repository, role, run, job))
-            active_complete = True
-        except ApiError as error:
-            errors.append({"repository": repository, "workflow": workflow,
-                           "phase": "active", "code": self._runs_error(repository, workflow, base, error)})
-
-        active_at = self.clock()
-        cutoff = now - JOB_CACHE_AGE
-        try:
-            endpoint = _endpoint(base, status="completed", created=">=" + cutoff.date().isoformat(), per_page=100)
-            # GitHub pages are not a completion-time ordering. Gather lightweight run
-            # metadata before sorting, so a recent rerun on a later page is not skipped.
-            runs = [run for page, _ in self.api.page_items(endpoint, "workflow_runs") for run in page
-                    if ((run.get("repository") or {}).get("full_name") or repository).lower() == repository.lower()
-                    and _time_key(run, "created_at") >= cutoff]
-            runs.sort(key=lambda run: _time_key(run, "updated_at", "created_at"), reverse=True)
-            for index, run in enumerate(runs):
-                latest_five = [recent_bot_runs(rows[role]["completed"], now, 168) for role in roles]
-                updated = parse_time(run.get("updated_at"))
-                if (updated and updated < now - timedelta(hours=2)
-                        and all(len(recent) >= 5 and updated <= parse_time(recent[-1]["completed_at"])
-                                for recent in latest_five)):
-                    break
-                if index == HISTORY_RUN_LIMIT:
-                    # This run and every later one finished no later than this run's update time;
-                    # _bots decides per role whether its newest results make them irrelevant.
-                    floor = _time_key(run, "updated_at", "created_at")
-                    break
-                for job in self._run_jobs(repository, run):
-                    if job["status"] != "completed" or not job.get("completed_at") or not bot_job_ran(job):
-                        continue
-                    for role in roles:
-                        if job["name"] in role_jobs[role]:
-                            rows[role]["completed"].append(self._bot_row(repository, role, run, job))
-            history_complete = True
-        except ApiError as error:
-            errors.append({"repository": repository, "workflow": workflow,
-                           "phase": "history", "code": self._runs_error(repository, workflow, base, error)})
-        return {"rows": rows, "active_complete": active_complete,
-                "history_complete": history_complete, "history_floor": floor, "errors": errors,
-                "active_at": active_at, "history_at": self.clock()}
-
-    def _runs_error(self, repository: str, workflow: str, base: str, error: ApiError) -> str:
-        if not self._required.forget(repository, workflow, error.code, base):
-            return error.code
-        with self._job_lock:
-            self._workflows.pop(repository, None)
-        return "unavailable"
-
-    def _workflow_names(self, repository: str) -> set[str]:
-        now = self.clock()
-        cached = self._workflows.get(repository)
-        if cached and timedelta(0) <= now - cached[0] < WORKFLOW_CACHE_AGE:
-            return cached[1]
-        rows = self.api.items(_endpoint("repos/%s/actions/workflows" % repository, per_page=100), "workflows")
-        names = {row["path"].rsplit("/", 1)[-1] for row in rows if isinstance(row.get("path"), str)}
-        self._workflows[repository] = (self.clock(), names)
-        return names
-
-    def _bots(self, now: datetime, readable_repositories=None, names=None) -> dict:
-        groups: dict[tuple[str, str, str], list[str]] = {}
-        all_rows = {role: {"active": [], "completed": [], "active_complete": True,
-                           "history_complete": True, "active_at": [], "history_at": [],
-                           "floors": []} for role in BOT_KEYS}
-        errors = []
-        repositories = self.config.repositories if names is None else names
-        readable = set(repositories if readable_repositories is None else readable_repositories)
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {repository: pool.submit(self._workflow_names, repository)
-                       for repository in repositories if repository in readable}
-            for repository in repositories:
-                try:
-                    if repository not in futures:
-                        raise ApiError("unavailable")
-                    workflow_names = futures[repository].result()
-                except ApiError as error:
-                    errors.append({"repository": repository, "phase": "workflows", "code": error.code})
-                    for value in all_rows.values():
-                        value["active_complete"] = value["history_complete"] = False
-                    continue
-                self._required.search_or_mark(self.api, repository, self.config.bots, workflow_names, errors, all_rows)
-                for role, definition in self.config.bots.items():
-                    base = self._required.runs(repository, definition.workflow, workflow_names)
-                    if base:
-                        groups.setdefault((repository, definition.workflow, base), []).append(role)
-                    else:
-                        # A successful owner-repo listing proves this workflow absent;
-                        # a workflow endpoint 404 alone cannot distinguish revoked access.
-                        all_rows[role]["active_at"].append(self.clock())
-                        all_rows[role]["history_at"].append(self.clock())
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {key: pool.submit(self._bot_workflow, *key[:2], roles, now, key[2])
-                       for key, roles in groups.items()}
-            for key, future in futures.items():
-                outcome = future.result()
-                errors.extend(outcome["errors"])
-                for role in groups[key]:
-                    value = all_rows[role]
-                    value["active"].extend(outcome["rows"][role]["active"])
-                    value["completed"].extend(outcome["rows"][role]["completed"])
-                    value["active_complete"] &= outcome["active_complete"]
-                    value["history_complete"] &= outcome["history_complete"]
-                    if outcome["history_floor"]:
-                        value["floors"].append(outcome["history_floor"])
-                    value["active_at"].append(outcome["active_at"])
-                    value["history_at"].append(outcome["history_at"])
-        self._take_pull_jobs(readable_repositories, all_rows)
-        result = {}
-        for role, value in all_rows.items():
-            active = sorted(value["active"], key=lambda row: _time_key(row, "started_at"), reverse=True)
-            history = recent_bot_runs(value["completed"], now, 168)
-            active_complete, history_complete = value["active_complete"], value["history_complete"]
-            # A scan cut short by HISTORY_RUN_LIMIT is complete for this role only when its five newest
-            # results, across every repository, are all newer than the runs that scan skipped.
-            if value["floors"] and (len(history) < 5 or parse_time(history[-1]["completed_at"]) < max(value["floors"])):
-                history_complete = False
-            state = "working" if active else "idle" if active_complete else "unknown"
-            result[role] = {"state": state, "state_source": "github_actions" if state != "unknown" else "unavailable",
-                            "sampled_at": iso_time(min(value["active_at"])) if value["active_at"] and (active_complete or active) else None,
-                            "history_sampled_at": iso_time(min(value["history_at"])) if value["history_at"] and (history_complete or history) else None,
-                            "active": active, "recent_2h": recent_bot_runs(value["completed"], now, 2),
-                            "recent_7d": history,
-                            "latest_failure": history[0] if history and history[0]["category"] == "failed" else None,
-                            "coverage": {"active": "complete" if active_complete else "unavailable",
-                                         "history": "complete" if history_complete else "partial"}}
-        return {"partial": bool(errors), "roles": result, "errors": errors}
-
-    def _take_pull_jobs(self, payloads: object, all_rows: dict) -> None:
-        """Required-workflow jobs already fetched on open pulls. Adds no API calls."""
-        seen = {(row["repository"], row["job_id"])
-                for value in all_rows.values() for row in value["active"] + value["completed"]}
-        for repository, role, run, job in pulls_bot_jobs(payloads, self.config.bots):
-            identity = (repository, job.get("id"))
-            if identity in seen or role not in all_rows:
-                continue
-            seen.add(identity)
-            row = self._bot_row(repository, role, run, job)
-            bucket = all_rows[role]
-            if job.get("status") == "in_progress":
-                bucket["active"].append(row)
-            elif job.get("status") == "completed" and job.get("completed_at"):
-                bucket["completed"].append(row)
-

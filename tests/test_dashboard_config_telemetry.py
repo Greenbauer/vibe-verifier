@@ -6,8 +6,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from dashboard.config import ConfigError, coverage_label, load_config
-from dashboard.telemetry import read_telemetry
+from dashboard.config import AgentDefinition, Config, ConfigError, coverage_label, load_config
+from dashboard.telemetry import HISTORY, TelemetryError, _agents, _lanes, _usage, read_telemetry
 
 
 NOW = datetime(2026, 9, 30, 15, 0, tzinfo=timezone.utc)
@@ -85,7 +85,7 @@ class ConfigIsolation(unittest.TestCase):
         self.assertEqual(good.repositories, ("octocat/example",))
         bad = config_value()
         bad["repositories"].append("example/foreign")
-        with self.assertRaisesRegex(ConfigError, "outside configured owner"):
+        with self.assertRaisesRegex(ConfigError, "^repository 'example/foreign' is outside configured owner octocat$"):
             load_config(self.write("bad.json", bad))
 
     def test_repositories_all_is_the_whole_owner_and_every_other_shape_is_refused(self):
@@ -106,13 +106,16 @@ class ConfigIsolation(unittest.TestCase):
             "number": 1, "bare name": "octocat/example",
             "duplicate": ["octocat/example", "octocat/Example"],
         }
+        reasons = {"list of all": "^each repository must be OWNER/NAME$",
+                   "duplicate": "^repositories contains a duplicate$"}
         for name, repositories in refused.items():
             broken = config_value()
             if repositories == "missing":
                 broken.pop("repositories")
             else:
                 broken["repositories"] = repositories
-            with self.assertRaises(ConfigError, msg=name):
+            reason = reasons.get(name, '^repositories must be a non-empty list of OWNER/NAME or the string "all"$')
+            with self.assertRaisesRegex(ConfigError, reason, msg=name):
                 load_config(self.write("bad-%s.json" % name, broken))
 
     def test_two_instances_keep_their_owners_immutable_and_separate(self):
@@ -253,6 +256,96 @@ class TelemetryContract(unittest.TestCase):
         self.assertEqual(result["capacity"]["sampled_at"], iso(NOW - timedelta(minutes=6)))
         self.assertEqual(result["capacity"]["lanes"][0]["state"], "busy")
         self.assertEqual(result["capacity"]["lanes"][0]["job"]["name"], "test")
+
+
+class TelemetryRows(unittest.TestCase):
+    """Each row of a section keeps exactly its fields, and each invalid shape is refused with its reason."""
+    config = Config("octocat", ("octocat/example",), {}, None,
+                    agents=(AgentDefinition("swe-runner", "SWE2", "swe"),))
+    url = "https://github.com/octocat/example/actions/runs/1"
+
+    def refuse(self, call, reason, cases):
+        for name, value in cases.items():
+            with self.subTest(case=name), self.assertRaisesRegex(TelemetryError, "^%s$" % reason):
+                call(value)
+
+    def lane(self, **fields):
+        row = {"id": "lane-01", "state": "busy", "registered": True, "labels": ["linux"],
+               "job": {"repository": "octocat/example", "name": "test", "url": self.url}}
+        row.update(fields)
+        return {key: value for key, value in row.items() if value is not None}
+
+    def test_lanes_keep_their_fields_and_refuse_each_invalid_row(self):
+        labels = ["linux"] * 20
+        self.assertEqual(_lanes([self.lane(labels=labels, runner_id=7), self.lane(id="lane-02", runner_id=1, job=None),
+                                 self.lane(id="lane-03", state="ready", registered=False, labels=None, job=None)],
+                                self.config),
+                         [{"id": "lane-01", "state": "busy", "registered": True, "labels": labels, "runner_id": 7,
+                           "job": {"repository": "octocat/example", "name": "test", "url": self.url}},
+                          {"id": "lane-02", "state": "busy", "registered": True, "labels": ["linux"], "runner_id": 1},
+                          {"id": "lane-03", "state": "ready", "registered": False, "labels": []}])
+        lanes = lambda rows: _lanes(rows, self.config)
+        self.refuse(lanes, "lane row is invalid", {"not an object": ["lane-01"], "extra field": [self.lane(host="a")]})
+        self.refuse(lanes, "lane identity or state is invalid", {
+            "id pattern": [self.lane(id="lane 01")], "state": [self.lane(state="sleeping")],
+            "duplicate": [self.lane(), self.lane()]})
+        self.refuse(lanes, "lane registered must be true, false, or null", {"text": [self.lane(registered="yes")]})
+        self.refuse(lanes, "lane labels are invalid", {"text": [self.lane(labels="linux")],
+                                                       "too many": [self.lane(labels=labels + ["x"])]})
+        self.refuse(lanes, "text field is invalid", {"long label": [self.lane(labels=["x" * 61])]})
+        self.refuse(lanes, "runner id must be a positive integer", {
+            "zero": [self.lane(runner_id=0)], "negative": [self.lane(runner_id=-1)],
+            "boolean": [self.lane(runner_id=True)], "text": [self.lane(runner_id="7")]})
+        self.refuse(lanes, "lane job is invalid", {"text": [self.lane(job="test")],
+                                                   "extra field": [self.lane(job={"name": "test", "log": "x"})]})
+        self.refuse(lanes, "a busy lane must identify its same-owner job", {
+            "unregistered": [self.lane(registered=False, runner_id=7, job=None)],
+            "no runner": [self.lane(job=None)]})
+
+    def usage(self, accounts=None, samples=None):
+        window = {"name": "7 days", "used_percent": 25, "resets_at": iso(NOW + timedelta(days=2))}
+        account = {"id": "account-a", "label": "Primary", "provider": "p" * 60, "quota_windows": [window] * 10}
+        sample = {"owner": "octocat", "account": "account-a", "bot": "reviewer",
+                  "timestamp": iso(NOW - HISTORY), "input_tokens": 3, "output_tokens": 4}
+        return {"sampled_at": iso(NOW), "accounts": [account] if accounts is None else accounts,
+                "samples": [sample] if samples is None else samples, "completeness": "Complete."}
+
+    def test_usage_keeps_its_fields_and_refuses_each_invalid_account_or_sample(self):
+        result = _usage(self.usage(), self.config, NOW)
+        self.assertEqual([(row["id"], row["label"], row["provider"], len(row["quota_windows"]))
+                          for row in result["accounts"]], [("account-a", "Primary", "p" * 60, 10)])
+        self.assertEqual(result["samples"], [{"account": "account-a", "bot": "reviewer", "timestamp": iso(NOW - HISTORY),
+                                              "input_tokens": 3, "output_tokens": 4}])
+        bare = {"id": "account-b", "label": "Second", "provider": "Example"}
+        self.assertEqual(_usage(self.usage(accounts=[bare], samples=[]), self.config, NOW)["accounts"],
+                         [dict(bare, quota_windows=[])])
+        account, sample = self.usage()["accounts"][0], self.usage()["samples"][0]
+        accounts = lambda rows: _usage(self.usage(accounts=rows, samples=[]), self.config, NOW)
+        samples = lambda rows: _usage(self.usage(samples=rows), self.config, NOW)
+        self.refuse(accounts, "usage account is invalid", {"not an object": ["account-a"],
+                                                           "extra field": [dict(account, email="a")]})
+        self.refuse(accounts, "usage account id is invalid", {"id pattern": [dict(account, id="account a")],
+                                                              "duplicate": [account, account]})
+        self.refuse(accounts, "quota_windows is invalid", {
+            "text": [dict(account, quota_windows="7 days")],
+            "too many": [dict(account, quota_windows=account["quota_windows"] + account["quota_windows"][:1])]})
+        self.refuse(accounts, "text field is invalid", {"long provider": [dict(account, provider="p" * 61)]})
+        self.refuse(samples, "token sample is invalid", {"not an object": ["sample"],
+                                                         "missing field": [{key: value for key, value in sample.items() if key != "bot"}]})
+        self.refuse(samples, "token sample references an unknown account or bot", {
+            "account": [dict(sample, account="account-z")], "bot": [dict(sample, bot="stranger")]})
+
+    def test_agent_runs_keep_their_fields_and_refuse_each_invalid_run(self):
+        run = {"id": "run-1", "completed_at": iso(NOW - HISTORY), "category": "cancelled", "elapsed_seconds": 5}
+        old = dict(run, id="run-0", completed_at=iso(NOW - HISTORY - timedelta(seconds=1)))
+        agents = lambda runs: _agents({"sampled_at": iso(NOW), "rows": [{"id": "swe-runner", "state": "idle",
+                                                                          "runs": runs}]}, self.config, NOW)
+        self.assertEqual(agents([old, run])["rows"][0]["runs"], [
+            {"id": "run-1", "completed_at": iso(NOW - HISTORY), "category": "cancelled", "elapsed_seconds": 5.0,
+             "name": "SWE2 run", "repository": None, "html_url": None}])
+        self.refuse(agents, "agent run is invalid", {
+            "not an object": ["run-1"], "extra field": [dict(run, log="private")],
+            "id pattern": [dict(run, id="run 1")], "category": [dict(run, category="skipped")]})
 
 
 if __name__ == "__main__":

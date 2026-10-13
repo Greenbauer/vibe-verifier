@@ -7,7 +7,8 @@ from urllib.parse import urlencode
 
 from dashboard.config import BotDefinition, Config
 from dashboard.gh_api import ApiError
-from dashboard.github import HISTORY_RUN_LIMIT, GitHubCollector
+from dashboard.github import GitHubCollector
+from dashboard.github_bots import HISTORY_RUN_LIMIT
 from dashboard.required_workflows import workflow_runs
 from dashboard.service import DashboardService
 
@@ -120,6 +121,9 @@ class BotStates(unittest.TestCase):
         self.assertEqual(result["roles"]["reviewer"]["state"], "unknown")
         self.assertEqual(result["roles"]["reviewer"]["coverage"],
                          {"active": "unavailable", "history": "partial"})
+        self.assertEqual(result["errors"], [
+            {"repository": REPO, "workflow": WORKFLOW, "phase": "active", "code": "unavailable"},
+            {"repository": REPO, "workflow": WORKFLOW, "phase": "history", "code": "request_budget_exhausted"}])
 
     def test_newer_success_clears_failure_highlight(self):
         old_failure, new_success = run(1, "completed", 20), run(2, "completed", 10)

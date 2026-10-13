@@ -128,6 +128,23 @@ class CacheFreshness(unittest.TestCase):
         self.assertEqual(len(kept["bots"]["roles"]["reviewer"]["recent_7d"]), 1)
         self.assertEqual(kept["bots"]["roles"]["reviewer"]["state"], "working")
 
+    def test_a_late_bot_reading_is_stale_and_names_its_latest_failure(self):
+        value = source_sample(NOW)
+        value["bots"]["roles"]["reviewer"]["recent_7d"] = [completed(30, "failed"), completed(119)]
+        wall = MutableClock(NOW)
+        service = DashboardService(config(), FakeCollector([value, ApiError("unavailable")]),
+                                   monotonic=lambda: 0, wall_clock=wall)
+        github = service.snapshot(force=True)["github"]
+        reviewer = github["bots"]["roles"]["reviewer"]
+        self.assertNotIn("stale", reviewer)
+        self.assertFalse(github["bots"]["partial"])
+        self.assertEqual(reviewer["latest_failure"]["run_id"], 30)
+        wall.value = NOW + timedelta(seconds=181)
+        github = service.snapshot(force=True)["github"]
+        self.assertTrue(github["bots"]["roles"]["reviewer"]["stale"])
+        self.assertTrue(github["bots"]["partial"])
+        self.assertTrue(github["partial"])
+
     def test_history_windows_use_the_current_clock_on_cache_hits(self):
         wall = MutableClock(NOW)
         collector = FakeCollector([source_sample(NOW)])
