@@ -193,6 +193,12 @@ class HistoryBounds(unittest.TestCase):
                     return []
                 return super().items(requested, key)
 
+            def page_items(self, requested, key=None):
+                if requested == f"repos/{other}/actions/runs?per_page=100":
+                    self.calls.append(("pages", requested, key))
+                    return iter([([], True), ([], False)])
+                return super().page_items(requested, key)
+
         api = AbsentAPI(completed=[run(1, "completed")],
                         jobs={jobs_endpoint(1): [job(1, "review", "completed", "success")]})
         collector = GitHubCollector(selected, api, clock=lambda: NOW)
@@ -208,6 +214,8 @@ class HistoryBounds(unittest.TestCase):
         self.assertEqual(sum("/attempts/" in call[1] for call in api.calls), 1)
         self.assertEqual(sum("/actions/workflows?" in call[1] for call in api.calls), 2)
         self.assertFalse(any(f"repos/{other}/actions/workflows/" in call[1] for call in api.calls))
+        # Searched once for a ruleset-required copy, not on every listing.
+        self.assertEqual(sum(f"repos/{other}/actions/runs?" in call[1] for call in api.calls), 1)
         collector.clear_private_cache()
         self.assertEqual(collector._workflows, {})
         self.assertEqual(collector._completed_jobs, {})
@@ -323,8 +331,70 @@ class RunnerNames(unittest.TestCase):
         self.assertEqual([row["job_id"] for row in rows], [22])
 
 
+class RulesetRequiredHistory(unittest.TestCase):
+    """A workflow an organization ruleset requires is absent from the repository's workflow list
+    and its by-file runs endpoint; its runs are listed under a per-repository required id."""
+
+    REQUIRED = f"repos/{REPO}/actions/required_workflows/77/runs"
+
+    def api(self, required_runs):
+        test = self
+
+        class RequiredAPI(BotAPI):
+            def items(self, requested, key=None):
+                self.calls.append(("items", requested, key))
+                if requested == f"repos/{REPO}/actions/workflows?per_page=100":
+                    return []
+                if requested.startswith(test.REQUIRED + "?status=in_progress"):
+                    return []
+                if isinstance(required_runs, Exception) and test.REQUIRED in requested:
+                    raise required_runs
+                return copy.deepcopy(self.jobs[requested])
+
+            def page_items(self, requested, key=None):
+                self.calls.append(("pages", requested, key))
+                if requested == f"repos/{REPO}/actions/runs?per_page=100":
+                    # A full first page: only that one page is read.
+                    yield [{"id": 1, "path": ".github/workflows/" + WORKFLOW,
+                            "workflow_url": f"https://api.github.com/{test.REQUIRED.rsplit('/', 1)[0]}"}], True
+                    raise AssertionError("a second page of runs was read")
+                if not requested.startswith(test.REQUIRED + "?status=completed"):
+                    raise AssertionError(requested)
+                if isinstance(required_runs, Exception):
+                    raise required_runs
+                yield copy.deepcopy(required_runs), False
+
+        return RequiredAPI(jobs={jobs_endpoint(1): [job(1, "review", "completed", "success")]})
+
+    def test_history_of_a_required_workflow_is_read_through_its_required_id(self):
+        api = self.api([run(1, "completed")])
+        result = GitHubCollector(config(), api, clock=lambda: NOW)._bots(NOW)
+        self.assertEqual([row["run_id"] for row in result["roles"]["reviewer"]["recent_7d"]], [1])
+        self.assertEqual(result["roles"]["explorer"]["coverage"]["history"], "complete")
+        self.assertFalse(any(f"/actions/workflows/{WORKFLOW}/runs" in call[1] for call in api.calls))
+
+    def test_an_id_learned_from_pull_runs_needs_no_search(self):
+        api = self.api([run(1, "completed")])
+        collector = GitHubCollector(config(), api, clock=lambda: NOW)
+        collector._learn_required(REPO, [{"path": ".github/workflows/" + WORKFLOW,
+                                          "workflow_url": "https://api.github.com/" + self.REQUIRED[:-5]}])
+        result = collector._bots(NOW)
+        self.assertEqual(len(result["roles"]["reviewer"]["recent_7d"]), 1)
+        self.assertFalse(any(f"repos/{REPO}/actions/runs?" in call[1] for call in api.calls))
+
+    def test_a_stale_required_id_is_forgotten_not_reported_as_lost_access(self):
+        api = self.api(ApiError("not_found"))
+        collector = GitHubCollector(config(), api, clock=lambda: NOW)
+        result = collector._bots(NOW)
+        self.assertEqual({error["code"] for error in result["errors"]}, {"unavailable"})
+        self.assertFalse(DashboardService._source_error_codes({"bots": result}) & {"not_found"})
+        self.assertEqual(collector._required[REPO], {})
+        collector._bots(NOW)
+        self.assertEqual(sum(f"repos/{REPO}/actions/runs?" in call[1] for call in api.calls), 2)
+
+
 class RequiredWorkflow(unittest.TestCase):
-    def test_a_consumer_run_is_found_from_pulls_already_read_and_adds_no_calls(self):
+    def test_a_consumer_run_is_found_from_pulls_already_read_and_adds_no_history_calls(self):
         consumer = "octocat/app"
         calls = []
 
@@ -338,6 +408,9 @@ class RequiredWorkflow(unittest.TestCase):
                 raise AssertionError(requested)
 
             def page_items(self, requested, key=None):
+                calls.append(requested)
+                if requested == f"repos/{consumer}/actions/runs?per_page=100":
+                    return iter([([], False)])
                 raise AssertionError(requested)
 
         when = (NOW - timedelta(minutes=30)).isoformat()
@@ -365,7 +438,8 @@ class RequiredWorkflow(unittest.TestCase):
         self.assertEqual(role["active"][0]["attempt"], 2)
         self.assertEqual([row["job_id"] for row in role["recent_7d"]], [2])
         self.assertEqual([row["runner_name"] for row in role["recent_2h"]], ["box-ci-qae-2-1700000000"])
-        self.assertEqual(calls, [f"repos/{consumer}/actions/workflows?per_page=100"])
+        self.assertEqual(calls, [f"repos/{consumer}/actions/workflows?per_page=100",
+                                 f"repos/{consumer}/actions/runs?per_page=100"])
 
 
 if __name__ == "__main__":

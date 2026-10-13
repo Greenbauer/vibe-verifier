@@ -78,6 +78,10 @@ class HeadAPI:
             return parts[parts.index("commits") + 1].split("?")[0]
         return OLD
 
+    def page_items(self, endpoint, key=None):
+        self.take(endpoint)
+        yield [], False
+
     def items(self, endpoint, key=None):
         self.take(endpoint)
         if "/pulls?" in endpoint:

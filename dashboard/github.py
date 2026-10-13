@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,9 @@ WORKFLOW_CACHE_AGE = timedelta(minutes=5)
 # History reads jobs only for this many of a workflow's newest completed runs. A configured job name
 # that never runs would otherwise read every run of the last seven days, hundreds in a busy repository.
 HISTORY_RUN_LIMIT = 50
+# A workflow an organization ruleset requires is not in the repository's workflow list, and its
+# runs are listed only under this per-repository id, which each run's workflow_url carries.
+REQUIRED_WORKFLOW_URL = re.compile(r"/actions/required_workflows/(\d+)$")
 # Shown on a pull request that was listed but whose checks did not fit in this pass's budget.
 CHECKS_NOT_LOADED = "Checks are not loaded yet"
 
@@ -54,6 +58,9 @@ class GitHubCollector(OwnerSet):
         self._completed_jobs: dict[tuple[str, int, int], tuple[datetime, list[dict]]] = {}
         self._job_lock = threading.Lock()
         self._workflows: dict[str, tuple[datetime, set[str]]] = {}
+        # Repository -> workflow file name -> required workflow id, learned from run rows.
+        self._required: dict[str, dict[str, int]] = {}
+        self._searched_required: set[str] = set()
         self._pins: dict[tuple, tuple[str, datetime]] = {}
         # Detail finished, and detail started. Never-finished repositories are read before ones
         # that finished, and one that was started but did not finish waits behind ones not started.
@@ -74,6 +81,8 @@ class GitHubCollector(OwnerSet):
             self._jobs.clear()
             self._completed_jobs.clear()
             self._workflows.clear()
+            self._required.clear()
+            self._searched_required.clear()
             self._pins.clear()
         self._detailed_at.clear()
         self._attempted_at.clear()
@@ -207,9 +216,17 @@ class GitHubCollector(OwnerSet):
                 self._completed_jobs[key] = (completed_at + JOB_CACHE_AGE, jobs)
         return copy.deepcopy(jobs)
 
+    def _learn_required(self, repository: str, rows: list[dict]) -> None:
+        for row in rows:
+            match = REQUIRED_WORKFLOW_URL.search(str(row.get("workflow_url") or ""))
+            if match and isinstance(row.get("path"), str):
+                with self._job_lock:
+                    self._required.setdefault(repository, {})[row["path"].rsplit("/", 1)[-1]] = int(match.group(1))
+
     def _actions_runs(self, repository: str, sha: str, suite_ids: set[int]) -> list[dict]:
         rows = self.api.items(_endpoint("repos/%s/actions/runs" % repository, head_sha=sha, per_page=100),
                               "workflow_runs")
+        self._learn_required(repository, rows)
         candidates = [row for row in rows if row.get("head_sha") == sha and row.get("check_suite_id") in suite_ids
                       and ((row.get("repository") or {}).get("full_name") or repository).lower() == repository.lower()]
         newest = {}
@@ -332,11 +349,19 @@ class GitHubCollector(OwnerSet):
                 "elapsed_seconds": job["elapsed_seconds"], "html_url": job["html_url"],
                 "runner_name": job.get("runner_name")}
 
-    def _bot_workflow(self, repository: str, workflow: str, roles: list[str], now: datetime) -> dict:
+    def _runs_base(self, repository: str, workflow: str, names: set[str]) -> str | None:
+        """Where a workflow's runs are listed, or None when the repository does not run it."""
+        if workflow in names:
+            return "repos/%s/actions/workflows/%s/runs" % (repository, quote(workflow, safe=""))
+        required = self._required.get(repository, {}).get(workflow)
+        return "repos/%s/actions/required_workflows/%s/runs" % (repository, required) if required else None
+
+    def _bot_workflow(self, repository: str, workflow: str, roles: list[str], now: datetime,
+                      base: str | None = None) -> dict:
         rows = {role: {"active": [], "completed": []} for role in roles}
         errors, active_complete, history_complete, floor = [], False, False, None
         role_jobs = {role: set(self.config.bots[role].jobs) for role in roles}
-        base = "repos/%s/actions/workflows/%s/runs" % (repository, quote(workflow, safe=""))
+        base = base or "repos/%s/actions/workflows/%s/runs" % (repository, quote(workflow, safe=""))
         try:
             active_runs = self.api.items(_endpoint(base, status="in_progress", per_page=100), "workflow_runs")
             for run in active_runs:
@@ -351,7 +376,7 @@ class GitHubCollector(OwnerSet):
             active_complete = True
         except ApiError as error:
             errors.append({"repository": repository, "workflow": workflow,
-                           "phase": "active", "code": error.code})
+                           "phase": "active", "code": self._runs_error(repository, workflow, base, error)})
 
         active_at = self.clock()
         cutoff = now - JOB_CACHE_AGE
@@ -384,10 +409,21 @@ class GitHubCollector(OwnerSet):
             history_complete = True
         except ApiError as error:
             errors.append({"repository": repository, "workflow": workflow,
-                           "phase": "history", "code": error.code})
+                           "phase": "history", "code": self._runs_error(repository, workflow, base, error)})
         return {"rows": rows, "active_complete": active_complete,
                 "history_complete": history_complete, "history_floor": floor, "errors": errors,
                 "active_at": active_at, "history_at": self.clock()}
+
+    def _runs_error(self, repository: str, workflow: str, base: str, error: ApiError) -> str:
+        """A required workflow id goes stale when its ruleset is replaced. A 404 while scanning it is
+        not lost access, which would clear every cache: forget the id so the next listing learns it again."""
+        if "/required_workflows/" not in base or error.code != "not_found":
+            return error.code
+        with self._job_lock:
+            self._required.get(repository, {}).pop(workflow, None)
+            self._searched_required.discard(repository)
+            self._workflows.pop(repository, None)
+        return "unavailable"
 
     def _workflow_names(self, repository: str) -> set[str]:
         now = self.clock()
@@ -396,11 +432,21 @@ class GitHubCollector(OwnerSet):
             return cached[1]
         rows = self.api.items(_endpoint("repos/%s/actions/workflows" % repository, per_page=100), "workflows")
         names = {row["path"].rsplit("/", 1)[-1] for row in rows if isinstance(row.get("path"), str)}
+        known = names | set(self._required.get(repository, {}))
+        if (repository not in self._searched_required
+                and any(definition.workflow not in known for definition in self.config.bots.values())):
+            # A configured workflow the repository does not list may be required by a ruleset; its
+            # id is on its runs. Open pulls' runs teach it for free; for a repository with none,
+            # one page of the newest runs is read once, and again only after an id goes stale.
+            pages = self.api.page_items(_endpoint("repos/%s/actions/runs" % repository, per_page=100),
+                                        "workflow_runs")
+            self._learn_required(repository, next(iter(pages), ([], False))[0])
+            self._searched_required.add(repository)
         self._workflows[repository] = (self.clock(), names)
         return names
 
     def _bots(self, now: datetime, readable_repositories=None, names=None) -> dict:
-        groups: dict[tuple[str, str], list[str]] = {}
+        groups: dict[tuple[str, str, str], list[str]] = {}
         all_rows = {role: {"active": [], "completed": [], "active_complete": True,
                            "history_complete": True, "active_at": [], "history_at": [],
                            "floors": []} for role in BOT_KEYS}
@@ -421,16 +467,17 @@ class GitHubCollector(OwnerSet):
                         value["active_complete"] = value["history_complete"] = False
                     continue
                 for role, definition in self.config.bots.items():
-                    if definition.workflow in workflow_names:
-                        groups.setdefault((repository, definition.workflow), []).append(role)
+                    base = self._runs_base(repository, definition.workflow, workflow_names)
+                    if base:
+                        groups.setdefault((repository, definition.workflow, base), []).append(role)
                     else:
                         # A successful owner-repo listing proves this workflow absent;
                         # a workflow endpoint 404 alone cannot distinguish revoked access.
                         all_rows[role]["active_at"].append(self.clock())
                         all_rows[role]["history_at"].append(self.clock())
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {(repository, workflow): pool.submit(self._bot_workflow, repository, workflow, roles, now)
-                       for (repository, workflow), roles in groups.items()}
+            futures = {key: pool.submit(self._bot_workflow, key[0], key[1], roles, now, key[2])
+                       for key, roles in groups.items()}
             for key, future in futures.items():
                 outcome = future.result()
                 errors.extend(outcome["errors"])
