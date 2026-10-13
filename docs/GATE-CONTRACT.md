@@ -549,7 +549,8 @@ changed-code-mutation --project apps/web --break 70 --soak
   each against the tests that reach its function. When mutmut writes no coverage (it exits 1 both
   when the suite fails and when no test reaches a changed function), the gate runs the project's
   pytest once itself: a failing suite is exit 2, a passing one makes every mutant on the changed lines
-  not covered. mutmut makes no mutant in a decorated function, a method of a nested class, or a line
+  not covered. mutmut makes no mutant in a decorated function (unless its only decorator is a bare
+  `@staticmethod` or `@classmethod`), a method of a nested class, or a line
   marked `# pragma: no mutate` (Python's escape hatch, with the reason in the comment); changed lines
   there are printed as left out and never scored. Like Stryker's `perTest` coverage, a test reaches
   a function only in its own process: code a test runs as a separate process (a CLI it calls) is not
