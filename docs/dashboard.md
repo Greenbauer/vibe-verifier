@@ -373,10 +373,21 @@ Unavailable or incomplete history is labeled separately from a complete history 
 Quota windows can omit `allowance_tokens` and `window_minutes` (the window's length, at most 31
 days). A plan's pace is in the plan's own unit: 100% over the window's length, which is what the
 white tick on the usage bar marks. It needs the window's length and reset and nothing about the
-bots. A provider reports a plan as a percent used, never as a size in tokens, so the page draws no
-pace in tokens: a size worked out from the bots' tokens follows how much the bots use, because
-other use shares the plan and a plan does not meter raw tokens. A reported `allowance_tokens` is
-shown in the bar's hover and draws no line either.
+bots. A reported `allowance_tokens` is shown in the bar's hover and draws no line.
+
+The All bots chart is drawn in the same unit, percent of the plan an hour, with a flat line at the
+pace that spends the rest exactly at the reset: (100% minus used%) over the hours left
+(`usage.plan_line`, `dashboard/pace.py`). The line is exact and needs no tokens. To put the bots on
+that scale, each sample whose account has the plan's provider gets `plan_percent`: its tokens
+weighted the way the plan counts them (OpenAI's Codex credit rates make a cached input token a tenth
+of a fresh one, or less, and an output token five times), times the window's used percent over the
+weighted tokens those samples spent since the window began. Raw counts, which are mostly cache
+reads, swung too much to size a plan (107m tokens at 49% used, then 227m at 57% four hours later).
+The plan's percent is account-wide, so this reads the bots' tokens as standing for all of its use,
+which holds while they keep their share; the note's hover says so, and says when token history is
+incomplete (the bots' share then reads high). With no billed tokens in the window, or a window
+longer than the seven days of kept samples, All bots stays in tokens and the line is still drawn.
+The other bot cards stay in tokens.
 
 The All bots header states one plan's fill against an even burn of its window, in points: used
 percent minus the share of the window elapsed, as `12% under pace`, `21% ahead of pace` or
