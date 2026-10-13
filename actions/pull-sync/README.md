@@ -15,10 +15,13 @@ in [`pull_sync.py`](pull_sync.py), which is the whole engine; this page is how t
 | Ready: not a draft, every check on its head passed | Updated, oldest first |
 | Anything else (red, draft, no checks) | Updated once its head commit is 24 hours old. An update is a head commit, so that is at most once a day unless the author pushes an older commit back |
 
-At most two pull requests may hold a slot at once (`max-in-flight`), counting the ones people pushed.
-A pull request holds a slot while any check on its head is unfinished, and while its head has no
-checks at all and is newer than 30 minutes, because they may not have registered yet. A pull request
-with no free slot waits for a later run. An update is refused by GitHub when the head moved
+At most two updates may be in flight at once (`max-in-flight`). A pull request holds a slot when its
+head is an update, a merge commit GitHub made (what "update branch" makes, from this action or the
+button), and any check on that head is unfinished, or it has no checks yet and is newer than 30
+minutes, because they may not have registered yet. A head someone pushed holds no slot, however busy:
+the cap bounds the runner time this action adds, and a pull request whose author keeps pushing never
+keeps a green one behind (on a consumer whose heads run checks for two hours, counting those starved
+every green pull request, 2026-10-13). A pull request with no free slot waits for a later run. An update is refused by GitHub when the head moved
 since the run read it, so it never lands on top of a push it did not see.
 
 GitHub works out whether a pull request merges cleanly only when asked, so right after a merge it
