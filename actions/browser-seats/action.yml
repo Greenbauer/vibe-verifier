@@ -1,0 +1,37 @@
+name: Vibe Verifier browser seats
+description: Check a preview's seeded seats and hand them to a browser suite that runs one worker per seat, so parallel workers never share an account or its data.
+inputs:
+  seats-file:
+    description: >-
+      A JSON list of the preview's seats, seat 0 (the reference seat) first, relative to the workspace.
+      A seat is an object of role -> {"email", "password"}, and every seat names the same roles. Write it
+      from your secret store with umask 077, after your install steps, and delete it when the suite ends.
+    required: true
+  email-domain:
+    description: Every login must be on this domain (for example the preview's test domain). Empty (the default) checks none.
+    default: ""
+  max-seats:
+    description: The most seats a list may hold. A list over it fails rather than starting more browsers than the runner was sized for.
+    default: "8"
+outputs:
+  workers:
+    description: The number of seats, which is the number of browser-suite workers to run.
+    value: ${{ steps.seats.outputs.workers }}
+  extra-seats:
+    description: >-
+      Seats 1 and up as compact JSON (masked), the value the suite reads so worker k signs in as seat k.
+      `[]` for a preview with one seat, whose suite runs one worker.
+    value: ${{ steps.seats.outputs.extra-seats }}
+runs:
+  using: composite
+  steps:
+    - name: Check the seats
+      id: seats
+      shell: bash
+      env:
+        SEATS_FILE: ${{ inputs.seats-file }}
+        EMAIL_DOMAIN: ${{ inputs.email-domain }}
+        MAX_SEATS: ${{ inputs.max-seats }}
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_ACTION_PATH/seats.py" --file "$SEATS_FILE" --email-domain "$EMAIL_DOMAIN" --max-seats "$MAX_SEATS"
