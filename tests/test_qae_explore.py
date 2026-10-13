@@ -228,7 +228,7 @@ class Steps(unittest.TestCase):
 
     def test_every_catalog_pin_is_the_placeholder_a_consumer_replaces(self):
         pins = re.findall(r"vibe-verifier/actions/[\w-]+@(\S+)( #[^\n]*)?", TEMPLATE.read_text())
-        self.assertEqual(len(pins), 8)
+        self.assertEqual(len(pins), 9)
         for sha, comment in pins:
             self.assertEqual(sha, "0" * 40)
             self.assertIn("CONSUMER: pin the commit you subscribe to", comment)

@@ -160,6 +160,22 @@ class Gates(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("qae/TC2.md: step 1 has no screenshot", result.stdout)
 
+    def test_a_ticket_criterion_no_browser_can_check_fails_and_never_passes(self):
+        # A plan section's "Tests:" item (a consumer's plan family had one, 2026-10-13): the explorer FAILs it
+        # with no step to anchor, and the gate refuses that; a PASS anchored to a step that is not in its log too.
+        ticket = "## Acceptance criteria\n\n- Tests: extend cart-total.test.ts with the empty-cart case\n"
+        unverifiable = VERDICT.splitlines()[0] + "\nacceptance-check: TC1 -- FAIL -- not checkable in a browser: asks that a test exists\n"
+        result = self.verdict_gate(BODY, ticket, unverifiable)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("TC1 is not a PASS", result.stdout)
+        claimed = VERDICT.splitlines()[0] + "\nacceptance-check: TC1 -- PASS -- tests exist (qae/TC1.md::step 1: read the test file -> it is there)\n"
+        self.assertEqual(self.verdict_gate(BODY, ticket, claimed).returncode, 1)
+        prompt = " ".join((ROOT / "harnesses" / "qae" / "prompt.md").read_text().split())
+        self.assertIn('A criterion that asks for something no browser can show (that a test exists or passes, that an email '
+                      'reached an inbox, a log line, a stored value the site never displays) is one you could not check: FAIL '
+                      'it, saying "not checkable in a browser" and what it asks for, and never PASS it on the strength of a '
+                      'nearby screen.', prompt)
+
     def test_an_annotation_on_a_ticket_criterion_is_held_to_its_log(self):
         write(self.artifacts, {"qae/TC2.md": "- step 1: checked out -> the cart's total\n"})
         result = self.verdict_gate(BODY, TICKET, VERDICT.replace("as shopper: checked out", "checked out"))
@@ -208,14 +224,121 @@ class Template(unittest.TestCase):
             if line.startswith(("acceptance-verdict ", "qae-artifacts ")):
                 self.assertIn("--ticket qae-inputs/ticket.md", line)
 
-    def test_the_default_step_links_no_ticket(self):
-        work = workdir(self)
-        os.mkdir(os.path.join(work, "qae-inputs"))
-        text = TEMPLATE.read_text()
-        step = text[text.index("- name: Write the ticket's criteria"):text.index("- name: Read the criteria\n        # A PR")]
-        command = re.search(r"run: '([^']*)'", step).group(1)
-        self.assertEqual(subprocess.run(["bash", "-e", "-c", command], cwd=work).returncode, 0)
-        self.assertEqual(Path(work, "qae-inputs", "ticket.md").read_text(), "")
+    def test_the_default_step_reads_the_linked_plan_section(self):
+        for template in (TEMPLATE, TEMPLATE.with_name("explore-codex.yml")):
+            text = template.read_text()
+            step = text[text.index("- name: Write the ticket's criteria"):text.index("- name: Read the criteria\n        # A PR")]
+            self.assertIn("uses: Greenbauer/vibe-verifier/actions/ticket@", step, template.name)
+            self.assertIn("body: qae-inputs/pr-body.md\n", step, template.name)
+            self.assertIn("out: qae-inputs/ticket.md\n", step, template.name)
+            self.assertIn("names: ''   # CONSUMER", step, template.name)
+
+
+PLAN = ("# Continuation plan\n\n## Families\n\n### A. Shell\n\n- Badge counts notifications\n\n"
+        "### B. Notifications (C010-C013; F037/F042 shared)\n\nSources: the legacy modal.\n\n"
+        "- Mark All selects every informational row\n  without a write\n"
+        "- Read confirms the count\n  - Cancel keeps the selection\n\n"
+        "Notes that end the list.\n\n#### Roles\n\n1. Each seat walks it at 375 pixels\n\n"
+        "```\n- not an item\n### B. Notifications (C010-C013; F037/F042 shared)\n```\n\n"
+        "### C. Dashboard\n\n- Folders collapse\n\n### C. Dashboard\n\n- The second C\n\n### Empty\n\nNo list.\n")
+ANCHOR = "b-notifications-c010-c013-f037f042-shared"
+
+
+class TicketLink(unittest.TestCase):
+    """actions/ticket: a `Ticket: <path>#<anchor>` line in the body makes the plan section, read at the base
+    commit, the ticket's criteria; no line links none; a link that cannot be read fails, never "no ticket"."""
+
+    def setUp(self):
+        self.fixtures = workdir(self)
+        write(self.fixtures, {"o/r/docs/plan.md": PLAN})
+        bin_dir = workdir(self)
+        Path(bin_dir, "gh").write_text("#!/bin/sh\nexec %s %s \"$@\"\n" % (sys.executable, ROOT / "tests" / "fake_gh.py"))
+        os.chmod(os.path.join(bin_dir, "gh"), 0o755)
+        self.env = clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "FAKE_GH_ROOT": self.fixtures})
+        self.work = workdir(self)
+
+    def run_ticket(self, body, *extra):
+        write(self.work, {"body.md": body})
+        out = os.path.join(self.work, "ticket.md")
+        result = subprocess.run([sys.executable, str(ROOT / "actions" / "ticket" / "ticket.py"), "--body",
+                                 os.path.join(self.work, "body.md"), "--repo", "o/r", "--base", "b" * 40, "--out", out, *extra],
+                                capture_output=True, text=True, env=self.env)
+        return result, (Path(out).read_text() if os.path.exists(out) else None)
+
+    def test_the_linked_section_is_the_ticket_read_at_the_base(self):
+        result, text = self.run_ticket(BODY + "\nTicket: docs/plan.md#%s\n" % ANCHOR)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        criteria = text[text.index("## Acceptance criteria"):]
+        self.assertEqual(criteria.splitlines()[2:], [
+            "- Mark All selects every informational row without a write",
+            "- Read confirms the count Cancel keeps the selection",
+            "- Each seat walks it at 375 pixels"])
+        self.assertIn("ref=" + "b" * 40, Path(self.fixtures, "calls.log").read_text())
+        self.assertIn("ticket: 3 criteria", result.stdout)
+        # The criteria job reads them as TC1-TC3 beside the body's AC1.
+        write(self.work, {"pr-body.md": BODY})
+        read = runner("criteria", os.path.join(self.work, "pr-body.md"), "--ticket", os.path.join(self.work, "ticket.md"))
+        self.assertEqual(read.stdout.splitlines()[0], "criteria: 4", read.stdout + read.stderr)
+
+    def test_a_sections_own_acceptance_criteria_are_its_only_criteria(self):
+        # A plan family holds sources, data-model and test bullets beside the criteria a browser checks.
+        plan = ("# Plan\n\n## Families\n\n### G1. Checkout\n\nSources: legacy.\n\n- Data model: one row per order line\n"
+                "- Tests: extend cart-total.test.ts\n\n#### Acceptance criteria\n\n- Pay names the total [as: shopper]\n"
+                "- Cancel keeps the cart\n\n##### Roles\n\n- A guest pays once\n\n#### Tests\n\n- not a criterion\n\n"
+                "### G2. Receipts\n\n- Receipts show totals\n\n#### Acceptance criteria\n\n- The receipt lists every line\n\n"
+                "### G3. Search\n\n- Search finds a product\n")
+        write(self.fixtures, {"o/r/docs/plan.md": plan})
+        result, text = self.run_ticket("Ticket: docs/plan.md#g1-checkout\nTicket: docs/plan.md#g2-receipts\nTicket: docs/plan.md#g3-search\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(text[text.index("## Acceptance criteria"):].splitlines()[2:], [
+            "- Pay names the total [as: shopper]", "- Cancel keeps the cart", "- A guest pays once",
+            "- The receipt lists every line", "- Search finds a product"])
+        # An empty one is a section with no items, never the whole section.
+        write(self.fixtures, {"o/r/docs/plan.md": plan.replace("- The receipt lists every line\n", "To be written.\n")})
+        result, _ = self.run_ticket("Ticket: docs/plan.md#g2-receipts\n")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("lists no items", result.stderr)
+
+    def test_a_repeated_heading_takes_githubs_numbered_anchor(self):
+        _, text = self.run_ticket("Ticket: docs/plan.md#c-dashboard-1\n")
+        self.assertTrue(text.endswith("## Acceptance criteria\n\n- The second C\n"), text)
+
+    def test_two_links_are_one_ticket(self):
+        result, text = self.run_ticket("Ticket: docs/plan.md#a-shell\nTicket: `docs/plan.md#c-dashboard`\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(text.endswith("- Badge counts notifications\n- Folders collapse\n"), text)
+
+    def test_no_link_writes_an_empty_ticket(self):
+        result, text = self.run_ticket(BODY + "\n```\nTicket: docs/plan.md#a-shell\n```\n")
+        self.assertEqual((result.returncode, text), (0, ""), result.stderr)
+        self.assertIn("none linked", result.stdout)
+
+    def test_a_body_that_names_a_ticket_without_linking_it_fails(self):
+        # A consumer's pull request named its plan only as a Markdown link, and QAE graded the author's list alone.
+        names = ("--names", r"TKT-[0-9]+|docs/plan\.md")
+        for body in ("Implements TKT-2286.\n", "From the [plan](docs/plan.md), families G1 and G2.\n"):
+            result, text = self.run_ticket(BODY + "\n" + body, *names)
+            self.assertEqual(result.returncode, 2, body)
+            self.assertIn("names `", result.stderr)
+            self.assertIn("add a line `Ticket: <path>#<heading anchor>`", result.stderr)
+            self.assertIsNone(text, body)
+        # A linked section satisfies it; a name inside a code fence is not a name; no pattern asks for nothing.
+        result, text = self.run_ticket("Implements TKT-2286.\nTicket: docs/plan.md#a-shell\n", *names)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(text.endswith("- Badge counts notifications\n"), text)
+        self.assertEqual(self.run_ticket("```\nTKT-2286\n```\n", *names)[1], "")
+        self.assertEqual(self.run_ticket("Implements TKT-2286.\n")[1], "")
+
+    def test_a_link_that_cannot_be_read_fails(self):
+        for line, says in (("Ticket: docs/plan.md#no-such-family", "no heading has the anchor #no-such-family"),
+                           ("Ticket: docs/gone.md#a-shell", "docs/gone.md cannot be read at the base commit"),
+                           ("Ticket: docs/plan.md#empty", "lists no items"),
+                           ("Ticket: ../secrets.md#a", "is not a link"),
+                           ("Ticket: family B", "is not a link")):
+            result, text = self.run_ticket(BODY + "\n" + line + "\n")
+            self.assertEqual(result.returncode, 2, line)
+            self.assertIn(says, result.stderr, line)
+            self.assertIsNone(text, line)
 
     def test_the_ticket_reaches_the_explorer_and_the_gate(self):
         work = workdir(self)

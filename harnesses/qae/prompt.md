@@ -87,6 +87,10 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
    A feature of which you walked no state gets its regression-skip line and no regression-check
    line. Never write PASS for anything you did not see in the browser. The text after :: must be
    copied verbatim from the step log line, because a gate checks that it is there.
+   A criterion that asks for something no browser can show (that a test exists or passes, that an
+   email reached an inbox, a log line, a stored value the site never displays) is one you could not
+   check: FAIL it, saying "not checkable in a browser" and what it asks for, and never PASS it on
+   the strength of a nearby screen.
 4. Post the verdict as a pull request comment, with exactly this command (no other form is allowed):
      gh pr comment PR_NUMBER --body-file qae-artifacts/verdict.md
 
