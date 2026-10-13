@@ -119,16 +119,20 @@ def regressions(path, hits, base_hits):
     return [Finding("%s (%s)" % (text, why), path, line) for line, text in hits]
 
 
+def source_files(args, paths):
+    """The paths that count as source (--source, less --exclude and ALWAYS_EXCLUDED), sorted."""
+    source, excluded = args.source or DEFAULT_SOURCE, ALWAYS_EXCLUDED + (args.exclude or [])
+    return sorted(p for p in paths if matches(p, source) and not matches(p, excluded))
+
+
 def check(args):
-    source = args.source or DEFAULT_SOURCE
-    excluded = ALWAYS_EXCLUDED + (args.exclude or [])
     tracked = set(tracked_files(args.repo))
     if args.all:
-        files = sorted(p for p in tracked if matches(p, source) and not matches(p, excluded))
+        files = source_files(args, tracked)
         return [Finding("%s (this file has it at the base too; --all reports everything)" % text, path, line)
                 for path, hits in sorted(measure(args.repo, files, args.max).items()) for line, text in hits]
     base = resolve_base(args.repo, args.base_ref)
-    files = sorted(p for p in changed_files(args.repo, base) if p in tracked and matches(p, source) and not matches(p, excluded))
+    files = source_files(args, (p for p in changed_files(args.repo, base) if p in tracked))
     if not files:
         return []
     head = measure(args.repo, files, args.max)
@@ -136,20 +140,25 @@ def check(args):
     # The files above are the changes since the merge base, so that is the commit to measure them at. The base
     # ref's tip may have moved on: read there, a function someone else improved since would count against this change.
     start = git(args.repo, "merge-base", base, "HEAD").strip()
+    before = measure_at(args.repo, start, files, moved, args.max)
+    return [finding for path, hits in sorted(head.items()) for finding in regressions(path, hits, before.get(path, []))]
+
+
+def measure_at(repo, start, files, moved, limit):
+    """measure() for files as they are at commit start, each read at its path there (moved: {path: old path})."""
     with tempfile.TemporaryDirectory(prefix="vv-base-") as snapshot:
         at_base = []
         for path in files:
             origin = moved.get(path, path)  # a renamed file is compared with itself at its old path
-            probe = subprocess.run(["git", "-C", args.repo, "cat-file", "-e", "%s:%s" % (start, origin)], capture_output=True)
+            probe = subprocess.run(["git", "-C", repo, "cat-file", "-e", "%s:%s" % (start, origin)], capture_output=True)
             if probe.returncode != 0:
                 continue  # new in this pull request: any over-limit function is a finding
             target = os.path.join(snapshot, path)
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, "w", encoding="utf-8") as handle:
-                handle.write(git(args.repo, "show", "%s:%s" % (start, origin)))
+                handle.write(git(repo, "show", "%s:%s" % (start, origin)))
             at_base.append(path)
-        before = measure(snapshot, at_base, args.max)
-    return [finding for path, hits in sorted(head.items()) for finding in regressions(path, hits, before.get(path, []))]
+        return measure(snapshot, at_base, limit)
 
 
 def add_arguments(parser):

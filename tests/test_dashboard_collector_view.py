@@ -1,13 +1,16 @@
 """The real collector output must render owner capacity without invented readiness."""
 import json
+import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
+from dashboard import collector
 from dashboard.collector import refresh
-from dashboard.collector_view import join_runner_jobs
+from dashboard.collector_view import collector_view, join_runner_jobs
 from dashboard.config import Config
 from dashboard.telemetry import read_telemetry
 from test_dashboard_collector import config, quota, remote_host
@@ -75,6 +78,59 @@ class CollectorIntegration(unittest.TestCase):
             value = json.loads(path.read_text()); value['owner'] = 'other'
             path.write_text(json.dumps(value))
             self.assertFalse(read_telemetry(selected, NOW)['available'])
+
+    def view(self, host):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'telemetry.json'
+            refresh(config(), path, fetch=lambda *_: {'host': host, 'quota': {'status': 'ok', 'rate_limits': quota()}}, now=STAMP)
+            return collector_view(json.loads(path.read_text()), SimpleNamespace(owner='example-ci'), NOW)
+
+    def test_lanes_bot_state_and_usage_come_from_the_snapshot(self):
+        slot = {'kind': 'qae', 'index': 1, 'state': 'allocated', 'unit': {'active_state': 'active', 'sub_state': 'running'},
+                'target_repository': 'example-ci/widgets', 'set_id': 2, 'runner_id': 42, 'runner_name': 'runner-qae-1',
+                'allocated_at': STAMP}
+        unknown = {'kind': 'ci', 'index': 2, 'state': 'unknown', 'unit': {'active_state': 'active', 'sub_state': 'running'},
+                   'reason': 'job_unreadable'}
+        view = self.view(remote_host([slot, unknown]))
+        capacity = view['capacity']
+        self.assertEqual((capacity['available'], capacity['sampled_at'], capacity['stale'], capacity['listener_state']),
+                         (True, STAMP, False, 'up'))
+        self.assertEqual(capacity['host'], {'cpu_percent': 25.0, 'memory_used_bytes': 400, 'memory_total_bytes': 1000,
+                                            'workspace_disk_free_bytes': 1500, 'workspace_disk_total_bytes': 2000})
+        self.assertEqual((capacity['limits']['slots'], capacity['limits']['qae_concurrency'], capacity['limits']['wait_slots']),
+                         (8, 2, 0))
+        self.assertEqual(capacity['lanes'][:3], [
+            {'id': 'qae-1', 'state': 'allocated', 'registered': None, 'labels': ['qae'], 'runner_id': 42, 'allocated_at': STAMP,
+             'job': {'repository': 'example-ci/widgets', 'name': 'Runner allocated; job match pending', 'url': None}},
+            {'id': 'ci-2', 'state': 'unknown', 'registered': None, 'labels': ['ci']},
+            {'id': 'on-demand-1', 'state': 'provisionable', 'registered': False, 'labels': []}])
+        self.assertEqual(len(capacity['lanes']), 8)
+        self.assertEqual(view['bots']['states'], [{'owner': 'example-ci', 'bot': 'explorer', 'state': 'unknown',
+                                                   'detail': "Owner's QAE runner listener"}])
+        usage = view['usage']
+        self.assertEqual((usage['available'], usage['sampled_at'], usage['stale'], usage['samples']), (True, STAMP, False, []))
+        self.assertTrue(usage['completeness'].startswith('Subscription percentage is account-wide'))
+        self.assertEqual(usage['accounts'][0]['quota_windows'][0]['resets_at'], '2026-10-07T14:31:01Z')
+        self.assertEqual(self.view(remote_host())['bots']['states'][0]['state'], 'idle')
+        down = remote_host()
+        down['listener']['state'] = 'down'
+        view = self.view(down)
+        self.assertEqual(view['bots']['states'][0]['state'], 'down')
+        self.assertTrue(all(lane['state'] == 'unknown' for lane in view['capacity']['lanes']))
+
+    def test_runner_jobs_skip_unavailable_repositories_and_missing_lists(self):
+        lane = {'state': 'allocated', 'runner_id': 42, 'job': {'repository': 'example/repo', 'name': 'Allocated', 'url': None}}
+        telemetry = {'capacity': {'available': True, 'stale': False, 'lanes': [lane]}}
+        job = {'runner_id': 42, 'status': 'in_progress', 'name': 'Build'}
+        join_runner_jobs(telemetry, {'repositories': [
+            {'repository': 'example/repo', 'unavailable': True, 'pulls': [{'runs': [{'jobs': [job]}]}]}]})
+        join_runner_jobs(telemetry, {})
+        self.assertEqual(lane['state'], 'allocated')
+        join_runner_jobs(telemetry, {'repositories': [
+            {'repository': 'example/repo', 'unavailable': True}, {'repository': 'example/repo'},
+            {'repository': 'example/repo', 'pulls': [{}, {'runs': [{}, {'jobs': [job]}]}]}]})
+        self.assertEqual(lane['state'], 'busy')
+        self.assertEqual(lane['job'], {'repository': 'example/repo', 'name': 'Build', 'url': None})
 
     def test_allocation_becomes_busy_only_for_same_owner_matching_active_runner(self):
         lane = {'state': 'allocated', 'runner_id': 42, 'job': {'repository': 'example/repo', 'name': 'Allocated', 'url': None}}
@@ -145,3 +201,74 @@ class CollectorIntegration(unittest.TestCase):
         self.assertEqual(lanes['ci-1']['job']['name'], 'Default branch')
         self.assertEqual(lanes['ci-2']['state'], 'busy')
         self.assertEqual(lanes['ci-2']['job']['name'], 'Older run')
+
+
+class CollectorPackage(unittest.TestCase):
+    """collector.py through its package import: slot projection, the SSH read loop and quota kept between attempts."""
+
+    def test_each_slot_is_checked_against_its_own_pool_and_runner_fields(self):
+        base = {"kind": "ci", "index": 1, "state": "allocated",
+                "unit": {"active_state": "active", "sub_state": "running"},
+                "target_repository": "example-ci/repo", "set_id": 1, "runner_id": 1,
+                "runner_name": "runner-ci-1", "allocated_at": "2026-09-30T12:00:00Z"}
+        def project(*rows, wait_limit=1):
+            # An Ellipsis value leaves that field out of the slot.
+            host = remote_host([{key: value for key, value in dict(base, **row).items() if value is not ...}
+                                for row in rows])
+            host["slots"]["wait_limit"] = wait_limit
+            return collector.project_host(host, config())["slots"]["occupied"]
+        records = project({}, {"kind": "qae", "index": 8, "set_id": 5, "runner_id": 7}, {"kind": "wait"})
+        self.assertEqual([(row["kind"], row["index"], row["set_id"], row["runner_id"]) for row in records],
+                         [("ci", 1, 1, 1), ("qae", 8, 5, 7), ("wait", 1, 1, 1)])
+        self.assertEqual(records[0]["target_repository"], "example-ci/repo")
+        for reason in ("active-unit-without-job", "active_unit_without_job", "job_unreadable", "unit_state_unavailable"):
+            self.assertEqual(project({"state": "unknown", "reason": reason})[0]["reason"], reason)
+        refused = {"empty wait pool": ([{"kind": "wait"}], 0), "past the wait pool": ([{"kind": "wait", "index": 2}], 1),
+                   "past the shared pool": ([{"index": 9}], 1), "same slot twice": ([{}, {"runner_id": 2}], 1),
+                   "foreign target": ([{"target_repository": "other/repo"}], 1),
+                   "bad allocation time": ([{"allocated_at": "yesterday"}], 1), "zero set": ([{"set_id": 0}], 1),
+                   "no runner name": ([{"runner_name": ...}], 1), "unknown kind": ([{"kind": "build"}], 1),
+                   "unknown state": ([{"state": "free"}], 1)}
+        for name, (rows, wait_limit) in refused.items():
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                project(*rows, wait_limit=wait_limit)
+
+    def test_run_ssh_returns_stdout_and_refuses_failure_overflow_and_timeout(self):
+        script = [sys.executable, "-c"]
+        echo = "import sys; sys.stderr.write('noise'); sys.stdout.write(sys.stdin.read())"
+        self.assertEqual(collector._run_ssh(script + [echo], b"sampler source"), b"sampler source")
+        for command, timeout, code in (("raise SystemExit(3)", 5, "ssh_failed"),
+                                       ("import time; time.sleep(30)", 0.3, "ssh_timeout")):
+            with self.subTest(code=code), self.assertRaisesRegex(collector.CollectorError, code):
+                collector._run_ssh(script + [command], b"", timeout=timeout)
+        with mock.patch.object(collector, "MAX_REMOTE_OUTPUT", 8), \
+                self.assertRaisesRegex(collector.CollectorError, "remote_output_invalid"):
+            collector._run_ssh(script + ["print('x' * 64)"], b"")
+
+    def test_quota_between_attempts_keeps_the_last_result_and_its_error(self):
+        def accounts(output, *answers):
+            for now, answer in answers:
+                def fetch(_config, collect_quota, answer=answer):
+                    if isinstance(answer, Exception):
+                        raise answer
+                    return {"host": remote_host(), "quota": answer if collect_quota else None}
+                collector.refresh(config(), output, fetch, now)
+            return json.loads(output.read_text())["accounts"][0]
+        with tempfile.TemporaryDirectory() as directory:
+            account = accounts(Path(directory) / "ok.json",
+                               ("2026-09-30T12:00:00Z", {"status": "ok", "rate_limits": quota()}),
+                               ("2026-09-30T12:01:00Z", {"status": "ok", "rate_limits": []}))
+            self.assertEqual((account["available"], account["error"], account["rate_limits"]), (True, None, quota()))
+            self.assertEqual((account["observed_at"], account["last_attempt_at"]),
+                             ("2026-09-30T12:00:00Z", "2026-09-30T12:00:00Z"))
+            for answer, code in ((collector.CollectorError("ssh_timeout"), "ssh_timeout"),
+                                 ({"status": "listener_budget_invalid"}, "listener_budget_invalid"),
+                                 ({"status": "SECRET_MARKER"}, "quota_unavailable")):
+                with self.subTest(code=code):
+                    account = accounts(Path(directory) / ("%s.json" % code),
+                                       ("2026-09-30T12:00:00Z", {"status": "ok", "rate_limits": quota()}),
+                                       ("2026-09-30T12:05:00Z", answer),
+                                       ("2026-09-30T12:06:00Z", {"status": "ok", "rate_limits": quota()}))
+                    self.assertEqual((account["available"], account["error"], account["observed_at"],
+                                      account["last_attempt_at"], account["rate_limits"]),
+                                     (False, code, "2026-09-30T12:00:00Z", "2026-09-30T12:05:00Z", quota()))

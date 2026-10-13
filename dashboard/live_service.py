@@ -135,6 +135,21 @@ class LiveService(DashboardService):
                 self._start_usage(self._usage_revoked)
         self.work.snapshot()
 
+    def _age_usage(self, value, usage):
+        """Fit the token history to the plan window and mark it stale past USAGE_STALE_AFTER."""
+        telemetry = value.get('telemetry') or {}
+        quota = telemetry.get('usage') if telemetry.get('available') and isinstance(telemetry.get('usage'), dict) else None
+        apply_plan_window(usage, plan_window_start(quota or {}))
+        observed = parse_time(usage.get('sampled_at'))
+        age = self.wall_clock() - observed if observed else None
+        usage['stale'] = (usage.get('stale', False) or age is None or
+                          age < timedelta(0) or age > USAGE_STALE_AFTER)
+        usage['history_sampled_at'] = usage.get('sampled_at')
+        usage['history_stale'] = usage['stale']
+        if usage['stale']:
+            usage['completeness'] += ' Token history is stale; last observation: %s.' % (
+                usage.get('sampled_at') or 'unavailable')
+
     @forgets_kept_state
     def snapshot(self, **kwargs):
         value = super().snapshot(nonblocking=True, **kwargs)
@@ -151,19 +166,7 @@ class LiveService(DashboardService):
                 self._start_usage(revoked)
             usage = copy.deepcopy(self._usage_result) if not revoked else None
         if usage:
-            telemetry = value.get('telemetry') or {}
-            quota = telemetry.get('usage') if telemetry.get('available') and isinstance(telemetry.get('usage'), dict) else None
-            apply_plan_window(usage, plan_window_start(quota or {}))
-            observed = parse_time(usage.get('sampled_at'))
-            age = self.wall_clock() - observed if observed else None
-            usage['stale'] = (usage.get('stale', False) or age is None or
-                              age < timedelta(0) or age > USAGE_STALE_AFTER)
-            usage['history_sampled_at'] = usage.get('sampled_at')
-            usage['history_stale'] = usage['stale']
-            if usage['stale']:
-                usage['completeness'] += ' Token history is stale; last observation: %s.' % (
-                    usage.get('sampled_at') or 'unavailable')
-        if usage:
+            self._age_usage(value, usage)
             telemetry = value['telemetry']
             existing = telemetry.get('usage', {})
             if existing.get('available'):

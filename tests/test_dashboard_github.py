@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from dashboard.config import BotDefinition, Config
 from dashboard.gh_api import ApiError, GitHubAPI
-from dashboard.github import GitHubCollector
+from dashboard.github import GitHubCollector, _newest_attempts
 from dashboard.bot_runs import recent_bot_runs
 from dashboard.service import DashboardService
 
@@ -112,6 +112,14 @@ class CurrentHeadJoin(unittest.TestCase):
         self.assertEqual(result["checks"][0]["provider"], "Example checks")
         self.assertEqual(result["statuses"][0]["name"], "legacy/status")
         self.assertNotIn(("items", f"repos/{REPO}/actions/runs/11/attempts/1/jobs?per_page=100", "jobs"), api.calls)
+
+    def test_the_newest_attempt_wins_whatever_the_listing_order(self):
+        second, first, unnumbered = {"id": 11, "run_attempt": 2}, {"id": 11, "run_attempt": 1}, {"id": 12}
+        rows = [second, first, {"id": 12, "run_attempt": 1}, unnumbered, {"id": "11", "run_attempt": 9}]
+        newest = _newest_attempts(rows)
+        self.assertEqual(list(newest), [11, 12])
+        self.assertIs(newest[11], second)
+        self.assertIsNot(newest[12], unnumbered)  # no run_attempt is attempt 1, not newer than attempt 1
 
     def test_a_head_change_drops_all_old_evidence_instead_of_showing_it_as_current(self):
         result = GitHubCollector(config(), joined_api("b" * 40), clock=lambda: NOW)._pull(

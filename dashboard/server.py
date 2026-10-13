@@ -86,26 +86,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._deny(403, "forwarded headers are not accepted")
             return False
         if proxy_origin is not None and has_forwarded:
-            authority = urlsplit(proxy_origin).netloc
-            if len(forwarded_hosts) != 1 or len(forwarded_protocols) != 1:
-                self._deny(403, "incomplete forwarded origin")
-                return False
-            # A Host-preserving proxy (Tailscale serve, a default nginx proxy_pass) sends the
-            # public authority as Host; a rewriting proxy sends a loopback Host. Accept both.
-            if host not in allowed_hosts | {"localhost", authority}:
-                self._deny(421, "untrusted host")
-                return False
-            if forwarded_hosts[0] != authority or forwarded_protocols[0] != "https":
-                self._deny(403, "untrusted forwarded origin")
-                return False
-            if origins and origins[0] != proxy_origin:
-                self._deny(403, "untrusted origin")
-                return False
-            return True
+            return self._trusted_forwarded(host, allowed_hosts, origins, forwarded_hosts, forwarded_protocols)
         if host not in allowed_hosts:
             self._deny(421, "untrusted host")
             return False
         if origins and origins[0].lower() not in {"http://" + item for item in allowed_hosts}:
+            self._deny(403, "untrusted origin")
+            return False
+        return True
+
+    def _trusted_forwarded(self, host: str, allowed_hosts: set[str], origins: list[str],
+                           forwarded_hosts: list[str], forwarded_protocols: list[str]) -> bool:
+        """The checks for a request the configured proxy forwarded; denies and answers False on any miss."""
+        proxy_origin = self.server.proxy_origin
+        authority = urlsplit(proxy_origin).netloc
+        if len(forwarded_hosts) != 1 or len(forwarded_protocols) != 1:
+            self._deny(403, "incomplete forwarded origin")
+            return False
+        # A Host-preserving proxy (Tailscale serve, a default nginx proxy_pass) sends the
+        # public authority as Host; a rewriting proxy sends a loopback Host. Accept both.
+        if host not in allowed_hosts | {"localhost", authority}:
+            self._deny(421, "untrusted host")
+            return False
+        if forwarded_hosts[0] != authority or forwarded_protocols[0] != "https":
+            self._deny(403, "untrusted forwarded origin")
+            return False
+        if origins and origins[0] != proxy_origin:
             self._deny(403, "untrusted origin")
             return False
         return True

@@ -140,6 +140,19 @@ class LiveComposition(unittest.TestCase):
                 self.assertEqual(usage['history_stale'], stale)
                 self.assertEqual(usage['history_sampled_at'], observed)
 
+    def test_history_from_the_future_or_with_no_time_is_stale(self):
+        for observed, shown in [((NOW + timedelta(minutes=1)).isoformat(), None), (None, 'unavailable')]:
+            with self.subTest(observed=observed):
+                self.service._usage_result = {'available': True, 'sampled_at': observed, 'stale': False,
+                    'accounts': [], 'samples': [], 'completeness': 'Captured.'}
+                value = snapshot(); value['telemetry'] = {'available': False}
+                with patch('dashboard.live_service.DashboardService.snapshot', return_value=value):
+                    usage = self.service.snapshot()['telemetry']['usage']
+                self.assertTrue(usage['stale'])
+                self.assertTrue(usage['history_stale'])
+                self.assertEqual(usage['completeness'], 'Captured. Token history is stale; last observation: %s.'
+                                 % (shown or observed))
+
     def test_usage_source_failure_finishes_refresh_and_removes_old_history(self):
         self.service._usage_result = {'samples': [123]}
         self.service._usage_running = True

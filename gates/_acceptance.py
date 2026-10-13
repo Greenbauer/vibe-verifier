@@ -67,24 +67,35 @@ def criteria(text):
     lines = text.splitlines()
     heading = re.compile(r"^#{2,6}[ \t]+")
     if any(heading.match(line) for line in lines):
-        section, inside = [], False
-        for line in lines:
-            if CRITERIA_HEADING.match(line):
-                inside = True
-            elif inside and heading.match(line):
-                break
-            elif inside:
-                section.append(line)
-        items = [m.group("text").strip() for m in map(LIST_ITEM.match, section) if m]
+        items = _section_items(lines, heading)
     else:
-        items = []
-        for line in lines:
-            match = LIST_ITEM.match(line)
-            if match:
-                items.append(match.group("text").strip())
-            elif line.strip() and not line.lstrip().startswith("#"):
-                items.append(line.strip())
+        items = _plain_items(lines)
     return [("AC%d" % (n + 1), wording) for n, wording in enumerate(items)]
+
+
+def _section_items(lines, heading):
+    """The list items under the `Acceptance criteria` heading, up to the next heading."""
+    section, inside = [], False
+    for line in lines:
+        if CRITERIA_HEADING.match(line):
+            inside = True
+        elif inside and heading.match(line):
+            break
+        elif inside:
+            section.append(line)
+    return [m.group("text").strip() for m in map(LIST_ITEM.match, section) if m]
+
+
+def _plain_items(lines):
+    """Every list item, or non-empty line that is not a `#` comment, of a plain list."""
+    items = []
+    for line in lines:
+        match = LIST_ITEM.match(line)
+        if match:
+            items.append(match.group("text").strip())
+        elif line.strip() and not line.lstrip().startswith("#"):
+            items.append(line.strip())
+    return items
 
 
 def body_criteria(text):

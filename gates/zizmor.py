@@ -34,21 +34,21 @@ def check(args):
         report = json.loads(result.stdout or "[]")
     except ValueError as error:
         raise CannotRun("zizmor's JSON report could not be read: %s" % error)
-    findings = []
-    for item in report:
-        if item.get("ignored"):
-            continue
-        locations = item.get("locations") or [{}]
-        primary = next((loc for loc in locations if loc.get("symbolic", {}).get("kind") == "Primary"), locations[0])
-        symbolic, concrete = primary.get("symbolic", {}), primary.get("concrete", {})
-        path = symbolic.get("key", {}).get("Local", {}).get("verbatim_path")
-        row = concrete.get("location", {}).get("start_point", {}).get("row")
-        judged = item.get("determinations", {})
-        message = "%s: %s (%s severity, %s confidence) %s" % (
-            item.get("ident", "?"), symbolic.get("annotation") or item.get("desc", ""),
-            str(judged.get("severity", "?")).lower(), str(judged.get("confidence", "?")).lower(), item.get("url", ""))
-        findings.append(Finding(message.rstrip(), path or None, row + 1 if isinstance(row, int) else None))
-    return findings
+    return [item_finding(item) for item in report if not item.get("ignored")]
+
+
+def item_finding(item):
+    """The Finding for one item of zizmor's JSON report, placed at its primary location."""
+    locations = item.get("locations") or [{}]
+    primary = next((loc for loc in locations if loc.get("symbolic", {}).get("kind") == "Primary"), locations[0])
+    symbolic, concrete = primary.get("symbolic", {}), primary.get("concrete", {})
+    path = symbolic.get("key", {}).get("Local", {}).get("verbatim_path")
+    row = concrete.get("location", {}).get("start_point", {}).get("row")
+    judged = item.get("determinations", {})
+    message = "%s: %s (%s severity, %s confidence) %s" % (
+        item.get("ident", "?"), symbolic.get("annotation") or item.get("desc", ""),
+        str(judged.get("severity", "?")).lower(), str(judged.get("confidence", "?")).lower(), item.get("url", ""))
+    return Finding(message.rstrip(), path or None, row + 1 if isinstance(row, int) else None)
 
 
 def add_arguments(parser):

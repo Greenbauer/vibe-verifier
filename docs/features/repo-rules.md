@@ -7,6 +7,7 @@
 - gate: `repo-rules`
 - command: `rules-doc`
 - source: `gates/repo_rules.py`
+- source: `gates/_rule_yaml.py`
 - source: `gates/_tools.py`
 - source: `rules/**`
 - source: `skills/**`
