@@ -410,5 +410,17 @@ class Parse(unittest.TestCase):
                          ([("1", "1. Open the page."), ("2", "2) Click save.")], 1, []))
 
 
+    def test_a_feature_no_browser_can_walk_says_so_once_and_a_misspelt_declaration_is_a_finding(self):
+        text = "## Verify\n\nre-walk: none -- every state needs the cron secret\n1. With no credential, GET /api/cron: 401.\n"
+        feature = _features.parse(text, "a", "a.md")
+        self.assertEqual((feature.no_rewalk, len(feature.steps), feature.malformed),
+                         ("every state needs the cron secret", 1, []))
+        self.assertIsNone(_features.parse(LOGIN, "login", "docs/features/login.md").no_rewalk)
+        for bad in ("re-walk: none", "re-walk: skip -- secrets", "re-walk: none --  "):
+            parsed = _features.parse("## Verify\n\n%s\n" % bad, "a", "a.md")
+            self.assertIsNone(parsed.no_rewalk, bad)
+            self.assertEqual([line for line, _ in parsed.malformed], [3], bad)
+            self.assertIn("malformed re-walk declaration", parsed.malformed[0][1])
+
 if __name__ == "__main__":
     unittest.main()

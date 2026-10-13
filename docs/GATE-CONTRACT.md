@@ -319,7 +319,10 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
   each. A re-walk is partial by design: a `regression-skip: <id> -- <states>` line names what the
   explorer left unwalked, and the gate prints it and never judges it. A FAIL is a finding that says a
   walked step no longer matches the feature file, and how to clear it: fix the regression, or update
-  the file in the pull request when it means the new behaviour. Without `--artifacts` the re-walk
+  the file in the pull request when it means the new behaviour. A feature whose file (the base's copy
+  when the base has it) declares `re-walk: none -- <why>` in its Verify section is never selected:
+  [no browser can walk it](feature-map.md#a-feature-no-browser-can-walk), so no line is asked for, and
+  a missing line for a feature with no walked step says how to declare that. Without `--artifacts` the re-walk
   cannot be judged: exit 2. A head with no feature file follows
   [the `feature-map` gate's rule](feature-map.md#a-head-with-no-map): a branch that predates the map
   has no feature to re-walk, so the gate asks for no line, says why, and qualifies its pass

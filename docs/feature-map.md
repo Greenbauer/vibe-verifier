@@ -69,11 +69,14 @@ Signed out, open `/login`. Create Account goes to `/signup`; Forgot password goe
   must stand on its own, without the steps before it. A step that walks into a refusal by design (a
   wrong password, a signed-out API call) declares it on its own line, as a criterion does:
   `` 2. Sign in with a wrong password: the form says so (expected-refusal: 400 /auth/v1/token?grant_type=password). ``
-  See [expected refusals](#expected-refusals-in-a-re-walk).
+  See [expected refusals](#expected-refusals-in-a-re-walk). A feature no browser can walk at all,
+  because every state needs a secret, a cron or a system the explorer does not have, says so on a
+  line of its own in Verify, `re-walk: none -- <why>`, and is [never re-walked](#a-feature-no-browser-can-walk).
 - **Gotchas** are the traps a change or a verification run tends to hit.
 
 Every top-level `- ` bullet under Surfaces and Verify must have one of the shapes above. A bullet
 that does not is a finding, never skipped, because a typo would otherwise drop a claim without a word.
+So is a Verify line that starts `re-walk:` in any other shape than `re-walk: none -- <why>`.
 
 ## Keeping it true: the `feature-map` gate
 
@@ -178,6 +181,8 @@ else (no history, no outcomes):
   In the pilot, shared files made one pull request select about 18 of its 19 features.
 - At most `--max-features` (default 3) are selected: those owning the most changed paths, then by
   id. The run's log names the ones over the cap.
+- A feature whose file declares `re-walk: none -- <why>` is never selected and takes no place under
+  the cap ([a feature no browser can walk](#a-feature-no-browser-can-walk)).
 
 A feature file the base has selects by its Surfaces as the base has them, and one the pull request
 adds selects by its own, like a rule file under `repo-rules`: a pull request cannot take a feature
@@ -283,6 +288,30 @@ selects no feature, so list each feature's own files, not only the shared ones i
 made wholly in shared files picked none). A re-walk covers at most `--max-states` states of a
 feature, so a regression in a state it did not walk passes unseen; the skip line says which those
 were. And an anchored PASS proves a step was logged and photographed, not that the feature is right.
+
+### A feature no browser can walk
+
+Some features have no state a browser reaches: a cron route behind its secret, an operator endpoint
+behind a pipeline secret, a Slack button. The explorer has none of those, so it walks none of the
+states, writes the feature's `regression-skip` line, and the gate refuses the run, on every pull
+request that touches the feature's files (a consumer's server-only feature, 2026-10-12). The
+skip line cannot clear it: it is the explorer's prose, and a gate that took it would let an explorer
+skip every feature.
+
+The feature file says it instead, on a line of its own in the Verify section:
+
+```
+re-walk: none -- every state needs the cron secret, the operator secret or the chat bot's token
+```
+
+Such a feature is never selected and takes no place under `--max-features`; the selection names it
+(`no browser can walk it, not re-walked: <id> (<n> changed files): <why>`), the explorer is not
+handed it, and `acceptance-verdict` asks for no line. Like the Surfaces, the declaration is read from
+the base's copy when the base has the feature, so a pull request cannot declare its own re-walk away:
+the one that adds the line is still re-walked, and the next is not. A feature the pull request adds
+declares itself. Its Verify steps and tests still stand and the `feature-map` gate still checks
+their anchors; only the browser re-walk is off. A missing line for a feature of which no step was
+walked says how to declare it.
 
 ## Creating, updating and retiring features
 

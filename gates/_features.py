@@ -13,7 +13,9 @@ in any order; others (a `## Sub-features` list, say) are allowed and not read:
     ## Verify     `- `<path>::<exact test title>`` bullets (or `<path>:<line>` / `<path>:<start>-<end>`),
                   each resolving in the tree, and optionally numbered browser steps (`1. ...`); a
                   step's own line may declare the refusal it expects, `expected-refusal: <status>
-                  <path-or-URL>`, which gates/qae_artifacts.py reads for a re-walked feature
+                  <path-or-URL>`, which gates/qae_artifacts.py reads for a re-walked feature; and a
+                  feature no browser can walk (every state needs a secret, a cron or a system the
+                  explorer does not have) says so on a line of its own, `re-walk: none -- <why>`
     ## Gotchas    traps a change or a verification run tends to hit (prose, not read here)
 
 In Surfaces and Verify every top-level `- ` bullet must have one of the shapes above: a bullet that
@@ -23,7 +25,9 @@ does not is malformed, never skipped, because a typo would otherwise drop a clai
 whose own source globs match a changed file, ignoring a file so many features list that it says
 nothing about which one changed, best first, capped. The rule reads the map and nothing else (no
 history, no outcomes), and a feature file the base has selects by its base Surfaces, so a pull
-request cannot narrow its own re-walk by editing the map.
+request cannot narrow its own re-walk by editing the map. A feature whose file declares
+`re-walk: none -- <why>` is never selected, and takes no place under the cap; that declaration too is
+read from the base's copy when the base has the feature.
 
 `missing_map` judges a head with no feature file, for the drift gate and the re-walk alike, from the
 commits alone: the branch predates a map the base has since gained, which is no fault of the branch,
@@ -42,6 +46,7 @@ SECTION = re.compile(r"^##[ \t]+(?P<name>\S.*?)[ \t]*$")
 SURFACE = re.compile(r"^- (?P<kind>[a-z][a-z0-9-]*): `(?P<value>[^`]+)`[ \t]*$")
 VERIFY_BULLET = re.compile(r"^- `(?P<anchor>[^`]+)`[ \t]*$")
 STEP = re.compile(r"^(?P<n>[0-9]+)[.)][ \t]+\S")
+NO_REWALK = re.compile(r"^re-walk:[ \t]*none[ \t]+--[ \t]+(?P<why>\S.*?)[ \t]*$")
 # The id is the token a QAE verdict line names the feature by, so it is one word.
 FEATURE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 INDEX = "README.md"
@@ -58,6 +63,7 @@ class Feature:
         self.surfaces = []   # (kind, value, line)
         self.anchors = []    # (Anchor, line)
         self.steps = []      # (step number as written, line): numbered browser steps under Verify
+        self.no_rewalk = None  # why no browser can walk it, when Verify declares `re-walk: none -- <why>`
         self.malformed = []  # (line, message)
 
 
@@ -91,6 +97,13 @@ def read_verify(feature, number, line):
     step = STEP.match(line)
     if step:
         feature.steps.append((step.group("n"), line))
+    elif line.startswith("re-walk:"):
+        declared = NO_REWALK.match(line)
+        if declared:
+            feature.no_rewalk = declared.group("why")
+        else:
+            feature.malformed.append((number, "malformed re-walk declaration (write `re-walk: none -- <why no browser "
+                                              "can walk it>`): %s" % line))
     elif line.startswith("- "):
         bullet = VERIFY_BULLET.match(line)
         anchor = parse_anchor(bullet.group("anchor")) if bullet else None
@@ -209,6 +222,7 @@ class Selection(NamedTuple):
     dropped: list   # the same, for features over the cap
     shared: list    # [(changed path, [ids of the features whose globs match it])], not counted
     predates: Predates = None  # set when the branch predates the map: it has no feature to select
+    unwalkable: tuple = ()  # [(feature id, why, [changed paths it owns])]: touched, but declared `re-walk: none`
 
 
 def select(head, base, changed, cap, shared_over):
@@ -217,10 +231,12 @@ def select(head, base, changed, cap, shared_over):
 
     A changed path counts for every feature whose source globs match it, unless more than `shared_over`
     features match it: then it is shared (a stylesheet, a router) and counts for none. Features rank by
-    how many counted paths they own, then by id, and the first `cap` are selected.
+    how many counted paths they own, then by id, and the first `cap` are selected. A feature declared
+    `re-walk: none` (by the base's copy, when the base has one) is set aside before the cap.
     """
     globs = {feature.id: [glob_to_regex(glob) for glob, _ in (base.get(feature.id) or feature).sources]
              for feature in head}
+    unwalkable = {feature.id: (base.get(feature.id) or feature).no_rewalk for feature in head}
     owned, shared = {}, []
     for path in dict.fromkeys(changed):
         ids = listers(path, globs)
@@ -229,8 +245,10 @@ def select(head, base, changed, cap, shared_over):
             continue
         for fid in ids:
             owned.setdefault(fid, []).append(path)
-    ranked = sorted(owned, key=lambda fid: (-len(owned[fid]), fid))
-    return Selection([(fid, owned[fid]) for fid in ranked[:cap]], [(fid, owned[fid]) for fid in ranked[cap:]], shared)
+    ranked = sorted((fid for fid in owned if not unwalkable[fid]), key=lambda fid: (-len(owned[fid]), fid))
+    declared = tuple((fid, unwalkable[fid], owned[fid]) for fid in sorted(owned) if unwalkable[fid])
+    return Selection([(fid, owned[fid]) for fid in ranked[:cap]], [(fid, owned[fid]) for fid in ranked[cap:]], shared,
+                     unwalkable=declared)
 
 
 def listers(path, globs):
@@ -291,4 +309,6 @@ def describe(chosen):
     lines = ["re-walk: %s (%s)" % (fid, owns(paths)) for fid, paths in chosen.selected]
     lines += ["shared, not counted: %s (listed by %d features)" % (path, len(ids)) for path, ids in chosen.shared]
     lines += ["over the cap, not re-walked: %s (%s)" % (fid, owns(paths)) for fid, paths in chosen.dropped]
+    lines += ["no browser can walk it, not re-walked: %s (%s): %s" % (fid, owns(paths), why)
+              for fid, why, paths in chosen.unwalkable]
     return lines
