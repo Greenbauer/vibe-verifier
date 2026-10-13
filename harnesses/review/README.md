@@ -94,12 +94,13 @@ delta only starts further back.
   `First account: seven_day limit, resets 2026-10-06T09:00:00Z. Fallback account: the reviewer did
   not report which limit or when it resets.` Both come from the `rate_limit_info` of the rejected
   `rate_limit_event`: `rateLimitType` (`five_hour`, `seven_day`, ...) as it is written, and
-  `resetsAt`, which is epoch seconds (the Claude Agent SDK's type definitions, at the version the
-  pinned action installs, name both). An event that carries neither, or a limit proven only by the
-  final result, says the reviewer did not report them; nothing is guessed. The final error result's
-  text follows as `the reviewer said: ...`, quoted as it was written and cut to 200 characters: a
-  reset time inside that text is the reviewer's wording, shown for a person and never read. Nothing
-  else from the log is printed, and none of this decides pass, fail or `limited`.
+  `resetsAt`, a number of epoch seconds. The Claude Agent SDK's type definitions, at the version the
+  pinned action installs, name both fields; that the number is seconds was read from a real event,
+  whose reset lay two hours ahead of the clock. An event that carries neither, or a limit proven
+  only by the final result, says the reviewer did not report them; nothing is guessed. The final
+  error result's text follows as `the reviewer said: ...`, quoted as it was written and cut to 200
+  characters: a reset time inside that text is the reviewer's wording, shown for a person and never
+  read. Nothing else from the log is printed, and none of this decides pass, fail or `limited`.
 - **Unresolved threads block, when wired.** `--threads` in the manifest makes every unresolved
   review thread a finding, which is the operator's merge rule enforced by a machine on a plan with
   no branch protection. Resolve each thread (reply, then resolve), then re-run the workflow; with
