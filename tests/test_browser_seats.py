@@ -91,13 +91,20 @@ class ActionTest(unittest.TestCase):
 
 
     def test_from_a_clone_the_engine_checks_a_seat_list(self):
+        """Without GITHUB_OUTPUT (a clone) the outputs print; with it (a workflow) they go to the file."""
         (self.dir / "seats.json").write_text(json.dumps([seat(0), seat(1)]))
-        result = subprocess.run([sys.executable, str(ENGINE), "--file", str(self.dir / "seats.json")],
-                                capture_output=True, text=True, env=clean_env())
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("workers=2\n", result.stdout)
+        command = [sys.executable, str(ENGINE), "--file", str(self.dir / "seats.json")]
+        clone = {key: value for key, value in clean_env().items() if key != "GITHUB_OUTPUT"}
+        printed = subprocess.run(command, capture_output=True, text=True, env=clone)
+        self.assertEqual(printed.returncode, 0, printed.stdout + printed.stderr)
+        self.assertIn("workers=2\n", printed.stdout)
+        output = self.dir / "output"
+        written = subprocess.run(command, capture_output=True, text=True, env=dict(clone, GITHUB_OUTPUT=str(output)))
+        self.assertEqual(written.returncode, 0, written.stdout + written.stderr)
+        self.assertTrue(output.read_text().startswith("workers=2\nextra-seats=["))
+        self.assertNotIn("workers=", written.stdout)
         missing = subprocess.run([sys.executable, str(ENGINE), "--file", str(self.dir / "absent.json")],
-                                 capture_output=True, text=True, env=clean_env())
+                                 capture_output=True, text=True, env=clone)
         self.assertEqual(missing.returncode, 1)
         self.assertIn("::error::the seats file is missing or is not JSON", missing.stdout)
 
