@@ -222,7 +222,7 @@ It binds to loopback, can optionally sit behind a trusted private HTTPS proxy, a
 
 ## Pull request sync
 
-After a merge, every other open pull request is behind the default branch. The optional [pull sync action](actions/pull-sync/README.md) updates them with GitHub's own "update branch", a few at a time so the runners are not flooded: ready pull requests first, the rest about once a day, never one with checks running, and never past a cap on how many may be in flight. A pull request that conflicts is labelled `sync-conflict` and left to its owner. It is a dry run until told to act.
+After a merge, every other open pull request is behind the default branch. The optional [pull sync action](actions/pull-sync/README.md) updates them with GitHub's own "update branch", a few at a time so the runners are not flooded: ready pull requests first, the rest about once a day, never one with checks running, and never past a cap on how many updates may be in flight. A pull request that conflicts is labelled `sync-conflict` and left to its owner. It is a dry run until told to act.
 
 ## Preview address
 

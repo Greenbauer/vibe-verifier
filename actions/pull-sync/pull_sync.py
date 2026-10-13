@@ -15,10 +15,12 @@ runners can take:
   - ready: not a draft, and every check on its head passed. Updated first, oldest first.
   - stale: any other pull request, once its head commit is older than --stale-hours. An update is
     itself a head commit, so a pull request that is not ready is updated at most that often.
-  - slots: at most --max-in-flight pull requests of a repository may hold a slot at once, counting
-    the ones people pushed. A pull request holds one while any check on its head is unfinished, and
-    while its head has no checks at all and is newer than --quiet-minutes (they may not have
-    registered yet). A head whose checks have all finished holds none, however new it is.
+  - slots: at most --max-in-flight updates of a repository may be in flight at once. A pull request
+    holds a slot when its head is an update (a merge commit GitHub made, which is what "update
+    branch" makes, here or from the button) and any check on that head is unfinished, or it has no
+    checks yet and is newer than --quiet-minutes (they may not have registered yet). A head whose
+    checks have all finished holds none, however new it is, and a head someone pushed holds none:
+    the cap bounds the load this adds, and a busy pull request never keeps another one stale.
     A candidate with no free slot waits for a later run.
 
 Each update is GitHub's own "update branch" (a merge of the default branch into the head), sent
@@ -62,7 +64,7 @@ PULLS = """query($owner:String!,$name:String!,$base:String!){
         number isDraft isCrossRepository mergeable updatedAt baseRefName headRefOid
         labels(first:100){nodes{name}}
         headRef{compare(headRef:$base){aheadBy}}
-        commits(last:1){nodes{commit{committedDate statusCheckRollup{state contexts(first:1){
+        commits(last:1){nodes{commit{committedDate committedViaWeb parents{totalCount} statusCheckRollup{state contexts(first:1){
           checkRunCountsByState{state count} statusContextCountsByState{state count}}}}}}
       }
     }
@@ -148,10 +150,18 @@ def running(pull):
     return any(row["count"] for row in counts if row["state"] in UNFINISHED)
 
 
-def holds_slot(pull, now, quiet):
-    """Checks are running on its head, or it has none yet and is so new that they may not have registered."""
+def is_update(pull):
+    """Whether the head is a merge commit GitHub made: what "update branch" makes. A merge someone
+    made and pushed is not one, and holds no slot: the author chose to start those checks."""
     commit = head_commit(pull)
-    return running(pull) or (not commit["statusCheckRollup"] and now - when(commit["committedDate"]) < quiet)
+    return commit["committedViaWeb"] and commit["parents"]["totalCount"] == 2
+
+
+def holds_slot(pull, now, quiet):
+    """An update whose checks are running, or that has none yet and is so new they may not have registered."""
+    commit = head_commit(pull)
+    return is_update(pull) and (
+        running(pull) or (not commit["statusCheckRollup"] and now - when(commit["committedDate"]) < quiet))
 
 
 def labels(pull):

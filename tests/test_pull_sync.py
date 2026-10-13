@@ -67,9 +67,11 @@ def rollup(state, unfinished):
 
 
 def pull(number, behind=3, checks="SUCCESS", draft=False, mergeable="MERGEABLE", labels=(), base="main",
-         fork=False, updated=None, committed=None, head_ref=True, unfinished=None):
-    """A pull request as the engine's query returns it: by default green, quiet for two days, 3 behind.
-    `unfinished` is how many of its checks have not finished: one when the rollup says so, else none."""
+         fork=False, updated=None, committed=None, head_ref=True, unfinished=None, update=False, parents=None):
+    """A pull request as the engine's query returns it: by default green, quiet for two days, 3 behind,
+    its head a commit someone pushed. `unfinished` is how many of its checks have not finished: one when
+    the rollup says so, else none. `update` makes the head what "update branch" makes: a merge commit
+    GitHub made. `parents` overrides the head's parent count (two for an update, else one)."""
     if unfinished is None:
         unfinished = int(checks in ("PENDING", "EXPECTED"))
     return {
@@ -77,7 +79,8 @@ def pull(number, behind=3, checks="SUCCESS", draft=False, mergeable="MERGEABLE",
         "updatedAt": updated or ago(days=2), "baseRefName": base, "headRefOid": "%040x" % number,
         "labels": {"nodes": [{"name": name} for name in labels]},
         "headRef": {"compare": {"aheadBy": behind}} if head_ref else None,
-        "commits": {"nodes": [{"commit": {"committedDate": committed or ago(days=2),
+        "commits": {"nodes": [{"commit": {"committedDate": committed or ago(days=2), "committedViaWeb": update,
+                                          "parents": {"totalCount": parents or (2 if update else 1)},
                                           "statusCheckRollup": rollup(checks, unfinished) if checks else None}}]},
     }
 
@@ -158,14 +161,14 @@ class PullSync(unittest.TestCase):
             "#4 sync": "ready, 3 behind main",
             "#5 skip": "checks running",
         })
-        self.assertIn("3 holding a slot", result.stdout.splitlines()[0])
+        self.assertIn("0 holding a slot", result.stdout.splitlines()[0], "pushed by people, so no slot")
         self.assertEqual([write[1] for write in self.writes()], ["repos/octo/demo/pulls/4/update-branch"])
 
     def test_a_head_too_new_for_its_checks_to_have_registered_holds_a_slot(self):
         # What the previous run's update looks like to a run that follows it within seconds.
         # A head just as new whose checks have all finished (#4) holds none.
-        result = self.run_engine([pull(1, behind=0, checks=None, committed=ago(minutes=1)), pull(2), pull(3),
-                                  pull(4, behind=0, committed=ago(minutes=1))], "--act")
+        result = self.run_engine([pull(1, behind=0, checks=None, committed=ago(minutes=1), update=True), pull(2),
+                                  pull(3), pull(4, behind=0, committed=ago(minutes=1), update=True)], "--act")
         self.assertIn("1 holding a slot, 1 free slot(s)", result.stdout.splitlines()[0])
         self.assertEqual(self.rows(result)["#3 wait"], "ready, 3 behind main; no free slot")
         self.assertEqual([write[1] for write in self.writes()], ["repos/octo/demo/pulls/2/update-branch"])
@@ -206,11 +209,11 @@ class PullSync(unittest.TestCase):
     def test_slots_go_to_ready_pull_requests_first_and_count_checks_already_running(self):
         pulls = [
             pull(1, checks="FAILURE"),          # stale: listed first, served last
-            pull(2, checks="PENDING"),          # holds one of the three slots
+            pull(2, checks="PENDING", update=True),   # holds one of the three slots
             pull(3),
             pull(4),
             pull(5),
-            pull(6, base="release", checks="PENDING"),   # out of scope, and still holds a slot
+            pull(6, base="release", checks="PENDING", update=True),   # out of scope, and still holds a slot
         ]
         result = self.run_engine(pulls, "--act", "--max-in-flight", "3")
         self.assertIn("2 holding a slot, 1 free slot(s)", result.stdout.splitlines()[0])
@@ -221,8 +224,47 @@ class PullSync(unittest.TestCase):
         self.assertEqual(rows["#1 wait"], "stale, 3 behind main; no free slot")
         self.assertEqual([write[1] for write in self.writes()], ["repos/octo/demo/pulls/3/update-branch"])
 
+    def test_only_an_update_with_checks_running_holds_a_slot(self):
+        result = self.run_engine([
+            pull(1, behind=0, checks="PENDING", update=True),          # an update, running: holds one
+            pull(2, behind=0, update=True),                            # an update, finished: none
+            pull(3, behind=0, checks="PENDING", parents=2),            # a merge someone pushed: none
+            pull(4, behind=0, checks="PENDING", update=True, parents=1),   # a web edit, not a merge: none
+            pull(5, behind=0, checks="PENDING"),                       # a commit someone pushed: none
+        ], "--max-in-flight", "2")
+        self.assertIn("5 open, 1 holding a slot, 1 free slot(s)", result.stdout.splitlines()[0])
+
+    def test_pull_requests_busy_with_their_own_pushes_never_keep_a_green_one_behind(self):
+        # The run that kept a consumer's green pull request behind for hours: its two slots were held
+        # by checks other pull requests' authors started, so #400 waited at every run.
+        result = self.run_engine([
+            pull(400, behind=1),
+            pull(401, checks="PENDING", committed=ago(days=3)),   # behind and busy for days: never updated
+            pull(402, checks="FAILURE", unfinished=1, parents=2),
+            pull(404, mergeable="CONFLICTING", labels=["sync-conflict"]),
+            pull(405, behind=0, checks="PENDING"),
+        ], "--act")
+        self.assertIn("0 holding a slot, 2 free slot(s)", result.stdout.splitlines()[0])
+        self.assertEqual(self.rows(result), {
+            "#400 sync": "ready, 1 behind main",
+            "#401 skip": "checks running",
+            "#402 skip": "checks running",
+            "#404 conflict": "conflicts with main",
+            "#405 skip": "up to date",
+        })
+        self.assertEqual([write[1] for write in self.writes()], ["repos/octo/demo/pulls/400/update-branch"])
+
+    def test_the_next_run_counts_the_update_this_one_made(self):
+        # Right after #1's update its head is GitHub's merge with no checks yet; #2 and #3 are green and
+        # behind, so with one slot they wait for #1's checks to finish.
+        result = self.run_engine([pull(1, behind=0, checks=None, committed=ago(seconds=30), update=True),
+                                  pull(2), pull(3)], "--act", "--max-in-flight", "1")
+        self.assertIn("1 holding a slot, 0 free slot(s)", result.stdout.splitlines()[0])
+        self.assertEqual(self.writes(), [])
+
     def test_no_free_slot_means_no_update(self):
-        result = self.run_engine([pull(1, checks="PENDING"), pull(2, checks="PENDING"), pull(3)], "--act")
+        result = self.run_engine([pull(1, checks="PENDING", update=True), pull(2, checks="PENDING", update=True),
+                                  pull(3)], "--act")
         self.assertEqual(self.rows(result)["#3 wait"], "ready, 3 behind main; no free slot")
         self.assertEqual(self.writes(), [])
 
@@ -273,7 +315,8 @@ class PullSync(unittest.TestCase):
     def test_each_repository_is_planned_whatever_happened_to_the_others(self):
         result = self.run_engine([pull(1)], "--act", sync=("octo/gone", "octo/demo", "octo/held"), repos={
             "octo/gone": {"broken": True},
-            "octo/held": {"pulls": [pull(2), pull(3, checks="PENDING"), pull(4, checks="PENDING")]}})
+            "octo/held": {"pulls": [pull(2), pull(3, checks="PENDING", update=True),
+                                    pull(4, checks="PENDING", update=True)]}})
         self.assertEqual(result.returncode, 2)
         self.assertIn("cannot read octo/gone", result.stderr)
         self.assertEqual(result.stdout.splitlines(), [
