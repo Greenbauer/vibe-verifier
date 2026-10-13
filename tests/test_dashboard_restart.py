@@ -397,11 +397,19 @@ class TheHeadBeat(RestartCase):
 
 
 class Wiring(unittest.TestCase):
+    def setUp(self):
+        # make_server() starts the head beat, which reads GitHub through `gh` on its own thread and
+        # would leave that process running behind the test. The wiring is all these tests are about.
+        beat = patch.object(DashboardService, "start_head_beat")
+        self.beat = beat.start()
+        self.addCleanup(beat.stop)
+
     def test_the_launcher_hands_the_state_directory_to_the_service(self):
         with tempfile.TemporaryDirectory() as folder:
             server = make_server(config(), 0, state_dir=folder)
             try:
                 self.assertEqual(server.service.store.directory, Path(folder) / "octocat")
+                self.beat.assert_called_once_with()
             finally:
                 server.server_close()
             plain = make_server(config(), 0)
