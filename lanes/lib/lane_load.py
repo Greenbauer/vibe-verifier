@@ -392,7 +392,7 @@ def _load_dashboard(raw: object, index: int, lanes: tuple[Lane, ...]) -> Dashboa
 def load_host(path: str | Path) -> Host:
     """Parse and validate hosts/<host>.yml. Raises ValueError (or OSError) with the reason."""
     try:
-        document = yaml.load(Path(path).read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)
+        document = yaml.load(Path(path).read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)  # nosec B506: a SafeLoader subclass
     except yaml.YAMLError as exc:
         raise ValueError(f"{path}: not YAML: {exc}") from exc
     if not isinstance(document, dict) or not HOST_KEYS <= set(document) <= HOST_KEYS | HOST_OPTIONAL_KEYS:

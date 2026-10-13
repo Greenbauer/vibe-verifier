@@ -42,7 +42,7 @@ def mint(jwt_token: str, install_id: str) -> dict:
             "User-Agent": "runners-lane-token-refresh",
         },
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    with urllib.request.urlopen(req, timeout=15) as resp:  # nosec B310: a fixed https://api.github.com address
         return json.loads(resp.read())
 
 
