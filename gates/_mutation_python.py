@@ -16,8 +16,9 @@ files, under the gate's [tool.mutmut] table in place of any the project has:
    def line in the source). Only mutants on the changed lines are kept.
 3. Run: mutmut runs just those, each against the tests that reach its function.
 
-mutmut makes no mutant in a decorated function, a method of a nested class, or a line marked
-`# pragma: no mutate`; changed lines there are noted as left out and never scored.
+mutmut makes no mutant in a decorated function (unless its only decorator is a bare @staticmethod or
+@classmethod), a method of a nested class, or a line marked `# pragma: no mutate`; changed lines there
+are noted as left out and never scored.
 """
 import ast
 import json
@@ -77,11 +78,19 @@ def members(tree):
                     yield item, "x%s%s%s%s" % (CLASS_MARK, node.name, CLASS_MARK, item.name), "%s.%s" % (node.name, item.name)
 
 
+def mutmut_mutates(node):
+    """mutmut 3.8 copies a function for its trampoline only when it has no decorator, or when its one
+    decorator is a bare @staticmethod or @classmethod (mutation/file_mutation.py)."""
+    decorators = node.decorator_list
+    return not decorators or (len(decorators) == 1 and isinstance(decorators[0], ast.Name)
+                              and decorators[0].id in ("staticmethod", "classmethod"))
+
+
 def functions(source):
     """({mutmut's name for each function it mutates: its def line}, [(name, first, last) of each it skips])."""
     mutated, skipped = {}, []
     for node, key, name in members(ast.parse(source)):
-        if isinstance(node, FUNCTION) and not node.decorator_list:
+        if isinstance(node, FUNCTION) and mutmut_mutates(node):
             mutated[key] = node.lineno
         else:
             first = node.decorator_list[0].lineno if node.decorator_list else node.lineno

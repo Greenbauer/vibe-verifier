@@ -215,10 +215,13 @@ class Helpers(unittest.TestCase):
 
     def test_functions_names_what_mutmut_mutates_and_lists_what_it_skips(self):
         source = ("def a():\n    pass\n\n\nclass K:\n    def m(self):\n        pass\n\n    @property\n    def p(self):\n"
-                  "        return 1\n\n    class N:\n        def deep(self):\n            pass\n\n\n@cache\ndef d():\n    pass\n")
+                  "        return 1\n\n    class N:\n        def deep(self):\n            pass\n\n    @staticmethod\n"
+                  "    def s():\n        pass\n\n    @classmethod\n    def c(cls):\n        pass\n\n    @staticmethod\n"
+                  "    @cache\n    def sc():\n        pass\n\n\n@cache\ndef d():\n    pass\n")
         mutated, skipped = self.module.functions(source)
-        self.assertEqual(mutated, {"x_a": 1, "x\u01c1K\u01c1m": 6})
-        self.assertEqual(skipped, [("K.p", 9, 11), ("K.N", 13, 15), ("d", 18, 20)])
+        # mutmut 3.8 mutates a method whose only decorator is a bare @staticmethod or @classmethod.
+        self.assertEqual(mutated, {"x_a": 1, "x\u01c1K\u01c1m": 6, "x\u01c1K\u01c1s": 18, "x\u01c1K\u01c1c": 22})
+        self.assertEqual(skipped, [("K.p", 9, 11), ("K.N", 13, 15), ("K.sc", 25, 28), ("d", 31, 33)])
 
 
 if __name__ == "__main__":
