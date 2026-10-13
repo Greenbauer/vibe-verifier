@@ -1,4 +1,4 @@
-"""Latest push kind, merge-ready titles, and the unresolved-comment count."""
+"""The latest push as read from GitHub, merge-ready titles, and the unresolved-comment count."""
 import copy
 import json
 import subprocess
@@ -9,7 +9,7 @@ from dashboard.config import BotDefinition, Config
 from dashboard.gh_api import ApiError, GitHubAPI
 from dashboard.github import GitHubCollector
 from dashboard.pull_signals import (
-    classify_push, comment_count, load_signals, merge_ready, merge_state_for_a_pusher, pull_face,
+    comment_count, load_signals, merge_ready, merge_state_for_a_pusher, pull_face,
     read_pull_page, signals_from_node, thread_summary,
 )
 from dashboard.required_checks import PUSH_RESTRICTED
@@ -18,44 +18,6 @@ ROOT_UI = __import__("pathlib").Path(__file__).resolve().parent.parent
 NOW = datetime(2026, 9, 30, 15, 0, tzinfo=timezone.utc)
 REPO = "octocat/example"
 SHA = "a" * 40
-
-
-def pushed(headline, at, parents=1, committed=None):
-    return {"headline": headline, "pushed_at": at, "committed_at": committed or at, "parents": parents}
-
-
-class PushKind(unittest.TestCase):
-    def test_the_newest_push_is_labeled_and_older_pushes_are_ignored(self):
-        earlier, later = "2026-09-29T12:00:00Z", "2026-09-30T14:00:00Z"
-        rows = [pushed("feat: add the gate", earlier), pushed("fix(scope): close it", later),
-                pushed("Merge branch 'main' into fix/gate", later, parents=2)]
-        self.assertEqual(classify_push(rows, "main"), {"pushed_at": later, "kind": "bug fix"})
-        self.assertEqual(classify_push([pushed("feat(quote)!: dates", later)], "main")["kind"], "feature")
-        self.assertEqual(classify_push([pushed("feature: dates", later)], "main")["kind"], "feature")
-        self.assertEqual(classify_push([pushed("docs: notes", later)], "main")["kind"], "docs")
-        self.assertEqual(classify_push([pushed("hotfix: stop", later)], "main")["kind"], "bug fix")
-        self.assertEqual(classify_push([pushed("wip: scratch", later)], "main")["kind"], "work in progress")
-        self.assertEqual(classify_push([pushed("please review", later)], "main")["kind"], "update")
-        self.assertEqual(classify_push([pushed("fix:", later)], "main")["kind"], "update")
-        self.assertIsNone(classify_push([], "main"))
-
-    def test_a_base_merge_is_a_sync_unless_the_push_also_has_other_work(self):
-        at = "2026-09-30T14:10:00Z"
-        sync = pushed("Merge remote-tracking branch 'origin/main' into feat/quote", at, parents=2)
-        self.assertEqual(classify_push([pushed("feat: add", "2026-09-29T12:00:00Z"), sync], "main"),
-                         {"pushed_at": at, "kind": "sync with main"})
-        self.assertEqual(classify_push([sync, pushed("fix: close", at)], "main")["kind"], "bug fix")
-        develop = pushed("Merge branch 'develop' into feat/quote", at, parents=2)
-        self.assertEqual(classify_push([develop], "develop")["kind"], "sync with develop")
-        self.assertEqual(classify_push([develop], "main")["kind"], "merge")
-        self.assertEqual(classify_push([pushed("sync with main", at)], "main")["kind"], "sync with main")
-
-    def test_without_a_push_time_the_newest_commit_time_stands_in(self):
-        row = {"headline": "fix: close", "pushed_at": None, "committed_at": "2026-09-30T13:00:00Z", "parents": 1}
-        older = {"headline": "feat: add", "pushed_at": None, "committed_at": "2026-09-29T13:00:00Z", "parents": 1}
-        self.assertEqual(classify_push([older, row], "main"),
-                         {"pushed_at": "2026-09-30T13:00:00Z", "kind": "bug fix"})
-        self.assertIsNone(classify_push([{"headline": "fix: x", "pushed_at": None, "committed_at": None, "parents": 1}], "main"))
 
 
 def thread(resolved, replies):
@@ -405,6 +367,22 @@ class CollectedPull(unittest.TestCase):
         # None open asks nothing; more than a page asks a page at a time.
         self.assertEqual(asked, [(3, True), (50, True)])
 
+    def test_a_branch_merged_from_an_open_pull_on_another_page_names_that_pull(self):
+        def node(number, head, headline):
+            return {"number": number, "baseRefName": "main", "headRefName": head, "reviewDecision": None,
+                    "reviewThreads": {"pageInfo": {"hasNextPage": False}, "nodes": []},
+                    "commits": {"nodes": [commit(headline, "2026-10-13T12:35:48Z", 2)]}}
+        pages = [
+            {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": True, "endCursor": "abc"},
+             "nodes": [node(13, "feat/quote-lines", "Merge remote-tracking branch 'origin/feat/rates-table' into x")]}}}},
+            {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": False, "endCursor": None},
+             "nodes": [node(12, "feat/rates-table", "Merge main (#43 keep the banner readable) into feat/rates-table")]}}}},
+        ]
+        found = load_signals(RecordingAPI({}, {}, lambda query, variables: pages.pop(0)), REPO, 60)
+        self.assertEqual(found[13]["push"], {"pushed_at": "2026-10-13T12:35:48Z", "kind": "picked up #12"})
+        self.assertEqual(found[12]["push"], {"pushed_at": "2026-10-13T12:35:48Z", "kind": "sync with main"})
+        self.assertNotIn("head_ref", found[13])
+
 
 class CommentMark(unittest.TestCase):
     def test_the_message_icon_shows_unresolved_comments_beside_the_meter(self):
@@ -425,8 +403,9 @@ function createElementNS(ns, tag) {
   return node;
 }
 global.document={createElementNS};
-const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','since','ageClass', slice+'return progress;')(
-  el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass);
+const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','since','ageClass','ageLabel','secondsClass','ciTiming', slice+'return progress;')(
+  el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass,
+  helpers.ageLabel, helpers.secondsClass, helpers.ciTiming);
 const base={runs:[], checks:[{name:'test', category:'success', status:'completed'}], statuses:[], expected:[]};
 function marks(node) {
   const found=[];

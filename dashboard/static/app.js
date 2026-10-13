@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-  const { BOT_META, element: el, link, safeUrl, duration, since, ageClass, formatTime, bytes, badge, botState, sourceStamp,
+  const { BOT_META, element: el, link, safeUrl, duration, ageLabel, since, ageClass, secondsClass, ciTiming, formatTime, bytes, badge, botState, sourceStamp,
     diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark,
     quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, paceHeader, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
   const content = document.querySelector("#content");
@@ -136,13 +136,18 @@
     }, messageIcon(), mark.shown);
   }
 
+  // CI time on the head, then what the last push was. Checks still from the previous push
+  // say nothing about this one's CI, so that row shows how long ago it was pushed instead.
   function pushLine(pull, now) {
     const push = pull.push;
     const known = push && typeof push.pushed_at === "string" && typeof push.kind === "string" && push.kind;
-    if (!known) return el("span", { class: "push-line", title: "Last push unavailable" }, "Last push unavailable");
-    const when = since(push.pushed_at, now);
-    return el("span", { class: "push-line", title: `${when} · ${push.kind}` },
-      el("span", { class: ageClass(push.pushed_at, now, "push") }, when), el("span", { class: "push-kind" }, `· ${push.kind}`));
+    const ci = pull.head_changed ? null : ciTiming(pull, now);
+    const pushed = known ? `pushed ${since(push.pushed_at, now)} ago` : "Last push unavailable";
+    if (!ci && !known) return el("span", { class: "push-line", title: pushed }, pushed);
+    const when = !ci ? pushed : ci.seconds == null ? ci.label : `${ci.label} ${ageLabel(ci.seconds)}`;
+    const tone = ci ? secondsClass(ci.seconds, "ci") : ageClass(push.pushed_at, now, "push");
+    return el("span", { class: "push-line", title: [ci ? when : null, pushed, known ? push.kind : null].filter(Boolean).join(" · ") },
+      el("span", { class: tone }, when), known ? el("span", { class: "push-kind" }, `· ${push.kind}`) : null);
   }
 
   function progress(pull, now = Date.now()) {

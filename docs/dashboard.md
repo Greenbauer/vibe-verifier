@@ -474,14 +474,26 @@ From a day through seven days it counts whole days, with no hours. Past seven da
 whole weeks, past thirty days whole months, and from a year whole years. The number stays the
 default text color through three days, turns yellow after that, and turns red after two weeks.
 An age of exactly three days or exactly two weeks keeps the younger color.
-The latest push uses those same units, on the right of the line under the check meter, in the
-same size and weight as that line. Its time turns yellow after three hours and red after a day;
-exactly three hours or exactly a day keeps the younger color. Its right edge lines up with the meter, not
-with the comment mark beside the meter. The kind of push follows the time on that same line:
+A line of its own under the check meter's counts shows how long CI has taken on the head, in
+those same units and in the same size and weight as the counts. While any check is still open it is
+"CI running" and counts from the first check's start; once every check has finished it is "CI
+took" and stops at the last check's finish. Before any check has started it is "CI waiting",
+counted from the push. The time turns yellow after an hour and red after three hours; exactly an
+hour or exactly three hours keeps the younger color. A head with no checks, and a row whose checks
+are still from the previous push, show "pushed <age> ago" instead, which turns yellow after three
+hours and red after a day. The kind of push follows the time on that same line, and
+the tooltip adds how long ago the push was:
 feature, bug fix, refactor, performance, docs, test, chore, ci,
 build, style, revert, work in progress, or update when the commit message has no such prefix.
 A merge of the pull request's base branch is "sync with main" (or "sync with <base>" when the
-base is not main or master). When one push contains several commits, a sync of the base is
+base is not main or master), whether the message is git's ("Merge branch 'main' into x") or
+written by hand ("Merge main (#943 …) into x"). A merge of another branch is "picked up #N" when
+that branch is the head of open pull request #N in the same repository, "merged in <branch>"
+when it is not, and "merged another branch" when the message names no branch. A merge of the
+pull request's own branch (a `git pull` joining two copies of it) is "update". Apart from git's
+own "Merge branch '<base>'" wording, a message is read as a merge only on a commit with more than
+one parent, so "Merge main navigation into the header" on an ordinary commit stays an update. When one push contains several
+commits, a sync of the base is
 ignored if the push also contains other work, and the label is the kind of the newest other
 commit. The time is the commit's pushed time when GitHub has one, otherwise the commit time.
 If that read fails, the line says the last push is unavailable. A long kind truncates instead
@@ -525,8 +537,8 @@ running, failed checks are named the same way, then required checks that have no
 count of queued checks. The attention reason is the line when none of those apply, and it stays
 the column tooltip and the screen-reader text when a more specific line is shown. Each of those
 lines stays on one line and truncates, with the full text in its title.
-The text under the meter counts every outcome except passed, or says all passed. The latest
-push is the right-hand side of that same line. A head with no checks at all says so and never
+The text under the meter counts every outcome except passed, or says all passed. The CI time
+and the latest push's kind are the line under it. A head with no checks at all says so and never
 renders as complete, and the push line sits under that notice too.
 A job that has not started has no steps yet, but it is still one waiting check, so the meter
 shows as soon as anything reports on the head. Elapsed time alone never asserts that a job is stuck.
@@ -577,8 +589,9 @@ read-only methods, Host/Origin/traversal, XSS-safe JSON and DOM construction, fi
 math, the class on a row's age number, the push line under the meter, the current-work names,
 local assets, the tab icon route, and the approved palette.
 `tests/test_dashboard_pull_age.py` covers pull-request age units and color.
-`tests/test_dashboard_pull_signals.py` covers the latest push's kind and time, merge-ready
-titles, and the unresolved-comment count. `tests/test_dashboard_fresh.py` covers a head or
+`tests/test_dashboard_push_kind.py` covers the latest push's label and time, and
+`tests/test_dashboard_pull_signals.py` reading it from GitHub, merge-ready titles, and the
+unresolved-comment count. `tests/test_dashboard_fresh.py` covers a head or
 rollup change leaving the title white and first in the detail queue, check-reading age, the
 cheap pass under an exhausted detail budget, the head beat's hourly calls, and the first
 paint after a long idle. `tests/test_dashboard_usage_charts.py` covers the usage

@@ -25,6 +25,7 @@ query($owner: String!, $name: String!, $count: Int!, $cursor: String) {
       nodes {
         number
         baseRefName
+        headRefName
         reviewDecision
         reviewThreads(first: 100) {
           pageInfo { hasNextPage }
@@ -57,6 +58,9 @@ _KINDS = {
 _CONVENTIONAL = re.compile(
     r"^(?P<type>" + "|".join(_KINDS) + r")(?:\([^)\n]+\))?!?:\s+\S", re.IGNORECASE)
 _SYNC_MERGE = re.compile(r"^Merge (?:remote-tracking )?branch '([^']+)'", re.IGNORECASE)
+# A merge commit's own wording, git's or hand-written: "Merge main into x", "Merge origin/main (#9) into x".
+_MERGED = re.compile(r"^Merge (?!pull request\b|commit\b|tag\b)(?:remote-tracking )?(?:branch )?'?([^'\s]+)", re.IGNORECASE)
+_MERGED_PULL = re.compile(r"^Merge pull request #(\d+) from \S+?/(\S+)", re.IGNORECASE)
 _SYNC_SUBJECT = re.compile(r"^sync(?:ing)? with (\S+)", re.IGNORECASE)
 _CURSOR = re.compile(r"[A-Za-z0-9_\-=+/]{1,512}\Z")
 
@@ -85,20 +89,39 @@ def sync_label(base: str | None) -> str:
     return ("sync with %s" % name)[:40]
 
 
-def _kind(headline: str, parents: int, base: str | None) -> str:
+def merged_label(branch: str) -> str:
+    return ("merged in %s" % _branch_name(branch))[:40]
+
+
+def _merged_branch(text: str) -> str | None:
+    """The branch a merge commit's message names, when it names one."""
+    pulled = _MERGED_PULL.match(text)
+    if pulled:
+        return pulled.group(2)
+    merged = _MERGED.match(text)
+    return merged.group(1) if merged else None
+
+
+def _kind(headline: str, parents: int, base: str | None) -> tuple[str, str | None]:
+    """The label for one commit, and the branch it merged in when that branch is not the base."""
     text = headline.strip()
     merged = _SYNC_MERGE.match(text)
     if merged and _is_base(merged.group(1), base):
-        return sync_label(base)
+        return sync_label(base), None
     subject = _SYNC_SUBJECT.match(text)
     if subject and _is_base(subject.group(1).rstrip(".,:;"), base):
-        return sync_label(base)
+        return sync_label(base), None
+    branch = _merged_branch(text) if parents > 1 else None
+    if branch and _is_base(branch, base):
+        return sync_label(base), None
+    if branch:
+        return merged_label(branch), _branch_name(branch)
     conventional = _CONVENTIONAL.match(text)
     if conventional:
-        return _KINDS[conventional.group("type").lower()]
+        return _KINDS[conventional.group("type").lower()], None
     if parents > 1:
-        return "merge"
-    return "update"
+        return "merged another branch", None
+    return "update", None
 
 
 def _one_commit(item: object) -> dict | None:
@@ -154,13 +177,42 @@ def _push_kind(kinds: list[str], sync: str) -> str:
 
 
 def classify_push(commits: list[dict], base: str | None) -> dict | None:
-    """The newest push: when it landed, and one label for what it contained."""
+    """The newest push: when it landed, and one label for what it contained.
+
+    A push that merged in another branch also names that branch as merged_branch, which
+    link_merged_pulls turns into the pull request that owns it."""
     dated = _dated(commits)
     if not dated:
         return None
     group, when = _latest_group(dated)
-    kinds = [_kind(str(row.get("headline") or ""), int(row["parents"]), base) for row in group]
-    return {"pushed_at": when, "kind": _push_kind(kinds, sync_label(base))}
+    labeled = [_kind(str(row.get("headline") or ""), int(row["parents"]), base) for row in group]
+    kind = _push_kind([label for label, _ in labeled], sync_label(base))
+    push = {"pushed_at": when, "kind": kind}
+    branch = next((branch for label, branch in reversed(labeled) if label == kind and branch), None)
+    if branch:
+        push["merged_branch"] = branch
+    return push
+
+
+def link_merged_pulls(found: dict[int, dict]) -> dict[int, dict]:
+    """Name a merged-in branch by the open pull request whose head it is: "picked up #12".
+
+    A pull request's own branch merged into itself is a `git pull` joining two copies of the
+    same work, so it is an update."""
+    heads = {}
+    for number, signals in found.items():
+        head = signals.pop("head_ref", None)
+        if isinstance(head, str) and head:
+            heads[head.lower()] = number
+    for number, signals in found.items():
+        push = signals.get("push")
+        branch = push.pop("merged_branch", None) if isinstance(push, dict) else None
+        owner = heads.get(branch.lower()) if branch else None
+        if owner == number:
+            push["kind"] = "update"
+        elif owner is not None:
+            push["kind"] = "picked up #%d" % owner
+    return found
 
 
 def thread_summary(nodes: list[dict], complete: bool) -> dict:
@@ -194,6 +246,7 @@ def signals_from_node(node: dict) -> dict:
         summary = thread_summary(nodes, page.get("hasNextPage") is False)
     base = node.get("baseRefName") if isinstance(node.get("baseRefName"), str) else None
     summary["push"] = classify_push(_commit_rows(node), base)
+    summary["head_ref"] = node.get("headRefName") if isinstance(node.get("headRefName"), str) else None
     summary["review_decision"] = node.get("reviewDecision")
     return summary
 
@@ -284,8 +337,8 @@ def load_signals(api, repository: str, open_pulls: int) -> dict[int, dict]:
         found.update(page[0])
         cursor = page[1]
         if not cursor:
-            return found
-    return found
+            break
+    return link_merged_pulls(found)
 
 
 def read_pull_page(payload: object) -> tuple[dict[int, dict], str | None] | None:
