@@ -7,11 +7,12 @@ import copy
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
 from .config import BOT_KEYS, BotDefinition, Config
 from .gh_api import ApiError, GitHubAPI
 from .pull_signals import face_fields
+from .required_workflows import RequiredWorkflows
 from .bot_runs import bot_job_ran, pulls_bot_jobs, recent_bot_runs, runner_name
 from .util import category, elapsed_seconds, github_url, iso_time, parse_time, status_category
 
@@ -54,6 +55,7 @@ class GitHubCollector(OwnerSet):
         self._completed_jobs: dict[tuple[str, int, int], tuple[datetime, list[dict]]] = {}
         self._job_lock = threading.Lock()
         self._workflows: dict[str, tuple[datetime, set[str]]] = {}
+        self._required = RequiredWorkflows()
         self._pins: dict[tuple, tuple[str, datetime]] = {}
         # Detail finished, and detail started. Never-finished repositories are read before ones
         # that finished, and one that was started but did not finish waits behind ones not started.
@@ -75,6 +77,7 @@ class GitHubCollector(OwnerSet):
             self._completed_jobs.clear()
             self._workflows.clear()
             self._pins.clear()
+        self._required.clear()
         self._detailed_at.clear()
         self._attempted_at.clear()
         self._detail.clear()
@@ -210,6 +213,7 @@ class GitHubCollector(OwnerSet):
     def _actions_runs(self, repository: str, sha: str, suite_ids: set[int]) -> list[dict]:
         rows = self.api.items(_endpoint("repos/%s/actions/runs" % repository, head_sha=sha, per_page=100),
                               "workflow_runs")
+        self._required.learn(repository, rows)
         candidates = [row for row in rows if row.get("head_sha") == sha and row.get("check_suite_id") in suite_ids
                       and ((row.get("repository") or {}).get("full_name") or repository).lower() == repository.lower()]
         newest = {}
@@ -332,11 +336,10 @@ class GitHubCollector(OwnerSet):
                 "elapsed_seconds": job["elapsed_seconds"], "html_url": job["html_url"],
                 "runner_name": job.get("runner_name")}
 
-    def _bot_workflow(self, repository: str, workflow: str, roles: list[str], now: datetime) -> dict:
+    def _bot_workflow(self, repository: str, workflow: str, roles: list[str], now: datetime, base: str) -> dict:
         rows = {role: {"active": [], "completed": []} for role in roles}
         errors, active_complete, history_complete, floor = [], False, False, None
         role_jobs = {role: set(self.config.bots[role].jobs) for role in roles}
-        base = "repos/%s/actions/workflows/%s/runs" % (repository, quote(workflow, safe=""))
         try:
             active_runs = self.api.items(_endpoint(base, status="in_progress", per_page=100), "workflow_runs")
             for run in active_runs:
@@ -351,7 +354,7 @@ class GitHubCollector(OwnerSet):
             active_complete = True
         except ApiError as error:
             errors.append({"repository": repository, "workflow": workflow,
-                           "phase": "active", "code": error.code})
+                           "phase": "active", "code": self._runs_error(repository, workflow, base, error)})
 
         active_at = self.clock()
         cutoff = now - JOB_CACHE_AGE
@@ -384,10 +387,17 @@ class GitHubCollector(OwnerSet):
             history_complete = True
         except ApiError as error:
             errors.append({"repository": repository, "workflow": workflow,
-                           "phase": "history", "code": error.code})
+                           "phase": "history", "code": self._runs_error(repository, workflow, base, error)})
         return {"rows": rows, "active_complete": active_complete,
                 "history_complete": history_complete, "history_floor": floor, "errors": errors,
                 "active_at": active_at, "history_at": self.clock()}
+
+    def _runs_error(self, repository: str, workflow: str, base: str, error: ApiError) -> str:
+        if not self._required.forget(repository, workflow, error.code, base):
+            return error.code
+        with self._job_lock:
+            self._workflows.pop(repository, None)
+        return "unavailable"
 
     def _workflow_names(self, repository: str) -> set[str]:
         now = self.clock()
@@ -400,7 +410,7 @@ class GitHubCollector(OwnerSet):
         return names
 
     def _bots(self, now: datetime, readable_repositories=None, names=None) -> dict:
-        groups: dict[tuple[str, str], list[str]] = {}
+        groups: dict[tuple[str, str, str], list[str]] = {}
         all_rows = {role: {"active": [], "completed": [], "active_complete": True,
                            "history_complete": True, "active_at": [], "history_at": [],
                            "floors": []} for role in BOT_KEYS}
@@ -420,17 +430,19 @@ class GitHubCollector(OwnerSet):
                     for value in all_rows.values():
                         value["active_complete"] = value["history_complete"] = False
                     continue
+                self._required.search_or_mark(self.api, repository, self.config.bots, workflow_names, errors, all_rows)
                 for role, definition in self.config.bots.items():
-                    if definition.workflow in workflow_names:
-                        groups.setdefault((repository, definition.workflow), []).append(role)
+                    base = self._required.runs(repository, definition.workflow, workflow_names)
+                    if base:
+                        groups.setdefault((repository, definition.workflow, base), []).append(role)
                     else:
                         # A successful owner-repo listing proves this workflow absent;
                         # a workflow endpoint 404 alone cannot distinguish revoked access.
                         all_rows[role]["active_at"].append(self.clock())
                         all_rows[role]["history_at"].append(self.clock())
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {(repository, workflow): pool.submit(self._bot_workflow, repository, workflow, roles, now)
-                       for (repository, workflow), roles in groups.items()}
+            futures = {key: pool.submit(self._bot_workflow, *key[:2], roles, now, key[2])
+                       for key, roles in groups.items()}
             for key, future in futures.items():
                 outcome = future.result()
                 errors.extend(outcome["errors"])

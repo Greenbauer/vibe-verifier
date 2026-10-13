@@ -88,6 +88,10 @@ class BudgetAPI:
             return copy.deepcopy(self.rows)
         return []
 
+    def page_items(self, endpoint, key=None):
+        self.take(endpoint)
+        yield [], False
+
     def one(self, endpoint):
         self.take(endpoint)
         if endpoint.startswith("search/issues"):
@@ -300,12 +304,14 @@ class CallCost(unittest.TestCase):
         # No inventory was cached. A list reads two content paths for every repository.
         # `all` reads them only for the seven that have an open pull request.
         self.assertEqual(sum("/contents/" in endpoint for endpoint in listed_bare.api.log), 30)
-        self.assertEqual(len(listed_bare.api.log), 1 + 15 + 30 + 7 * 5 + 15)
+        # The last 15 in each cold count: no repository lists the bots' workflow, so each is
+        # searched once for a ruleset-required copy. A warm refresh does not search again.
+        self.assertEqual(len(listed_bare.api.log), 1 + 15 + 30 + 7 * 5 + 15 + 15)
         self.assertEqual(sum("/contents/" in endpoint for endpoint in bare.api.log), 14)
         self.assertEqual(sum("/actions/workflows" in endpoint for endpoint in bare.api.log), 15)
-        self.assertEqual(len(bare.api.log), 1 + 1 + 1 + 7 + 14 + 7 * 5 + 15)
-        self.assertEqual(list_workflows_cold, 1 + 15 + 7 * 5 + 15)
-        self.assertEqual(all_workflows_cold, 1 + 1 + 1 + 7 + 7 * 5 + 15)
+        self.assertEqual(len(bare.api.log), 1 + 1 + 1 + 7 + 14 + 7 * 5 + 15 + 15)
+        self.assertEqual(list_workflows_cold, 1 + 15 + 7 * 5 + 15 + 15)
+        self.assertEqual(all_workflows_cold, 1 + 1 + 1 + 7 + 7 * 5 + 15 + 15)
         self.assertEqual(len(list_warm), 1 + 15 + 7 * 5)
         self.assertEqual(len(all_warm), 1 + 1 + 1 + 7 + 7 * 5)
         self.assertEqual(sum("/pulls?" in endpoint for endpoint in all_warm), 7)

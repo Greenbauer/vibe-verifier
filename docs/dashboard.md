@@ -363,8 +363,11 @@ activity: a job that had a runner and was not skipped proves working while it is
 complete active scan permits idle. A mapped QAE is one card per lane instance, from the job's runner
 name and the host's `qae_concurrency`. When that count is set there is no extra plain QAE. A role's
 runs include its workflow in every repository the dashboard covers, matched by the run path's file
-name, including a required workflow from another repository of the same owner. Those jobs come from
-the pull-request detail already read, so this adds no GitHub calls. Runner listener
+name, including a required workflow from another repository of the same owner. Jobs on open pull
+requests come from the detail already read. A workflow an organization ruleset requires is not in
+the repository's own workflow list, so its past week of runs, including merged and closed pull
+requests, is read through the per-repository id GitHub puts on each of its runs; one page of a
+repository's newest runs is read once to find that id when no open pull request showed it. Runner listener
 health never establishes agent health. Persistent SWE/QAE identities use their own runtime state
 and history, including paused. A missing runtime is unknown. A stale one keeps its last state and is marked stale. Numbered identities cannot
 be mapped to aggregate CI job roles. Recent history uses structural run outcomes and timestamps.
