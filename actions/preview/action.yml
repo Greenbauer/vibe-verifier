@@ -19,12 +19,15 @@ inputs:
   running-minutes:
     description: To find, how long the check may spend running (in_progress) before the wait fails. Empty (the default) allows the whole wait.
     default: ""
+  handover:
+    description: To find, "true" in a job that hands the wait to a later job. When the wait ends with the check still queued or running, the step passes with an empty `url` instead of failing; every other failure still fails.
+    default: "false"
   token:
     description: A token that can write commit statuses (to record) or read checks and statuses (to find).
     default: ${{ github.token }}
 outputs:
   url:
-    description: The address found, with no trailing slash. Empty when recording.
+    description: The address found, with no trailing slash. Empty when recording, and when a `handover` wait ended with the check still queued or running.
     value: ${{ steps.preview.outputs.url }}
 runs:
   using: composite
@@ -40,6 +43,7 @@ runs:
         REPO: ${{ inputs.repository }}
         WAIT_MINUTES: ${{ inputs.wait-minutes }}
         RUNNING_MINUTES: ${{ inputs.running-minutes }}
+        HANDOVER: ${{ inputs.handover }}
       run: |
         set -euo pipefail
         [ -n "$SHA" ] || { echo "::error::no commit to record or find a preview for: pass sha outside a pull request event"; exit 1; }
@@ -52,6 +56,13 @@ runs:
           # stdout; a failure's line is printed again here so the workflow shows it.
           rc=0
           url=$(python3 "$GITHUB_ACTION_PATH/preview.py" find --repo "$REPO" --sha "$SHA" --check "$CHECK" --wait-minutes "$WAIT_MINUTES" --running-minutes "${RUNNING_MINUTES:-0}") || rc=$?
+          # 3 is the finder's "still queued or running at the end of the wait": the one failure a
+          # later job's wait can turn into an address, so the one a handover passes on.
+          if [ "$rc" -eq 3 ] && [ "$HANDOVER" = true ]; then
+            echo "::notice::${url#::error::}. Handing the wait over: this step found no address."
+            echo "url=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           [ "$rc" -eq 0 ] || { printf '%s\n' "$url"; exit "$rc"; }
           echo "preview of $SHA: $url"
           echo "url=$url" >> "$GITHUB_OUTPUT"

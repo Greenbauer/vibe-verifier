@@ -177,6 +177,28 @@ class Preview(unittest.TestCase):
         self.assertIn("ran for about 0 of them", result.stdout)
         self.assertEqual(self.run_reads(), 2)
 
+    def test_a_wait_that_ends_with_the_check_queued_or_running_exits_3(self):
+        for status in ("queued", "in_progress"):
+            with self.subTest(status):
+                self.serve(runs=[[["2026-10-12T15:00:00Z", status, "null"]]])
+                result = self.find("--wait-minutes", "1")
+                self.assertEqual(result.returncode, 3)
+                self.assertIn("did not pass", result.stdout)
+
+    def test_a_failed_last_read_keeps_the_answer_before_it(self):
+        self.serve(runs=[[["2026-10-12T15:00:00Z", "in_progress", "null"]]], fail_calls=[1])
+        result = self.find("--wait-minutes", "1")
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("(last seen: unread)", result.stdout)
+
+    def test_a_wait_that_ends_with_no_run_to_wait_for_exits_1(self):
+        # No run of the check, and a run that ended without passing: neither is a run a longer wait
+        # would see pass. (A run past its running budget is exit 1 above, before the wait ends.)
+        for runs in ([[]], [[["2026-10-12T15:00:00Z", "completed", "neutral"]]]):
+            with self.subTest(runs=runs):
+                self.serve(runs=runs)
+                self.assertEqual(self.find("--wait-minutes", "1").returncode, 1)
+
     def test_only_running_time_counts_against_the_running_budget(self):
         queued = [["2026-10-12T15:00:00Z", "queued", ""]]
         running = [["2026-10-12T15:00:00Z", "in_progress", ""]]
@@ -252,7 +274,7 @@ class Preview(unittest.TestCase):
         output = self.fake / "output"
         output.write_text("")
         env = dict(self.env, GITHUB_ACTION_PATH=str(ACTION.parent), GITHUB_OUTPUT=str(output),
-                   SHA=SHA, REPO=REPO, WAIT_MINUTES="1", RECORD="", CHECK="")
+                   SHA=SHA, REPO=REPO, WAIT_MINUTES="1", RECORD="", CHECK="", HANDOVER="false")
         env.update(inputs)
         return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env), output.read_text()
 
@@ -268,6 +290,31 @@ class Preview(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn('::error::"sync-preview-branch" ended in failure', result.stdout)
         self.assertEqual(output, "")
+
+    def test_a_handover_passes_with_no_address_when_the_check_is_still_running(self):
+        self.serve(runs=[[["2026-10-12T15:00:00Z", "in_progress", "null"]]])
+        result, output = self.action_step(CHECK="sync-preview-branch", HANDOVER="true")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('::notice::"sync-preview-branch" did not pass', result.stdout)
+        self.assertNotIn("::error::", result.stdout)
+        self.assertEqual(output, "url=\n")
+
+    def test_without_a_handover_a_check_still_running_fails(self):
+        self.serve(runs=[[["2026-10-12T15:00:00Z", "in_progress", "null"]]])
+        result, output = self.action_step(CHECK="sync-preview-branch")
+        self.assertEqual(result.returncode, 3)
+        self.assertIn('::error::"sync-preview-branch" did not pass', result.stdout)
+        self.assertEqual(output, "")
+
+    def test_a_handover_still_fails_a_check_that_failed_or_never_ran(self):
+        for runs, said in (([[["2026-10-12T15:00:00Z", "completed", "failure"]]], "ended in failure"), ([[]], "did not pass")):
+            with self.subTest(said):
+                self.serve(runs=runs)
+                result, output = self.action_step(CHECK="sync-preview-branch", HANDOVER="true")
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("::error::", result.stdout)
+                self.assertIn(said, result.stdout)
+                self.assertEqual(output, "")
 
     def test_the_action_records_when_given_an_address(self):
         self.serve(runs=[[]])
