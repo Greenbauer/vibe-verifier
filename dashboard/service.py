@@ -9,9 +9,10 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
+from .bot_runs import recent_bot_runs
 from .config import BOT_KEYS, Config, coverage_label
 from .gh_api import PRIVATE_FAILURES, ApiError
-from .github import GitHubCollector, recent_bot_runs
+from .github import GitHubCollector
 from .head_state import (
     HEAD_TICK_SECONDS, apply_head_reading, heads_due, read_cached_heads, withhold_stale_pulls)
 from .state_store import StateStore, collector_state, old_reading, restore_collector
@@ -207,13 +208,19 @@ class DashboardService:
         if self.store is not None:
             self.store.clear()
 
-    def _perform_refresh(self, requested_mono: float, requested_wall: datetime) -> None:
+    def _start_pass(self, requested_mono: float) -> tuple:
+        """Under the condition: the last reading, the forget count, whether to clear the collector's
+        cache first, and the inventory while it is younger than INVENTORY_TTL_SECONDS (else None)."""
         with self._condition:
             previous, forgets = copy.deepcopy(self._github), self._forgets
             clear, self._clear_before_pass = self._clear_before_pass, False
             inventory_fresh = (bool(self._inventory)
                                and requested_mono - self._inventory_at < INVENTORY_TTL_SECONDS)
             inventory = copy.deepcopy(self._inventory) if inventory_fresh else None
+        return previous, forgets, clear, inventory
+
+    def _perform_refresh(self, requested_mono: float, requested_wall: datetime) -> None:
+        previous, forgets, clear, inventory = self._start_pass(requested_mono)
         if clear:
             self._clear_collector_cache()
         new_inventory = None
@@ -344,21 +351,25 @@ class DashboardService:
         github.get("coverage", {})["readable"] = sum(
             not row.get("unavailable") for row in github.get("repositories", []))
         for role in github.get("bots", {}).get("roles", {}).values():
-            aged = any(stamp and not self._within_grace(stamp, now)
-                       for stamp in (role.get("sampled_at"), role.get("history_sampled_at")))
-            if aged:
-                role["stale"] = True
-                github.setdefault("bots", {})["partial"] = True
-                github["partial"] = True
-            role["recent_2h"] = recent_bot_runs(role.get("recent_2h", []), now, 2)
-            role["recent_7d"] = recent_bot_runs(role.get("recent_7d", []), now, 168)
-            history = role["recent_7d"]
-            role["latest_failure"] = history[0] if history and history[0].get("category") == "failed" else None
-            if role.get("active"):
-                role["state"] = "working"
+            self._expire_role(github, role, now)
         github["stale"] = any(row.get("stale") for row in github.get("repositories", [])) or any(
             role.get("stale") for role in github.get("bots", {}).get("roles", {}).values())
         return github
+
+    def _expire_role(self, github: dict, role: dict, now: datetime) -> None:
+        """Age one bot role: stale past the grace window, runs trimmed to their windows."""
+        aged = any(stamp and not self._within_grace(stamp, now)
+                   for stamp in (role.get("sampled_at"), role.get("history_sampled_at")))
+        if aged:
+            role["stale"] = True
+            github.setdefault("bots", {})["partial"] = True
+            github["partial"] = True
+        role["recent_2h"] = recent_bot_runs(role.get("recent_2h", []), now, 2)
+        role["recent_7d"] = recent_bot_runs(role.get("recent_7d", []), now, 168)
+        history = role["recent_7d"]
+        role["latest_failure"] = history[0] if history and history[0].get("category") == "failed" else None
+        if role.get("active"):
+            role["state"] = "working"
 
     def _merge_bot_states(self, github: dict, telemetry: dict) -> None:
         roles = github.setdefault("bots", {}).setdefault("roles", {})

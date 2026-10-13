@@ -90,41 +90,50 @@ def _host(value: object) -> dict:
     return result
 
 
+def _runner_id(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise TelemetryError("runner id must be a positive integer")
+    return value
+
+
+def _lane_job(job: object, config: Config) -> dict:
+    if not isinstance(job, dict) or set(job) - {"repository", "name", "url"}:
+        raise TelemetryError("lane job is invalid")
+    return {"repository": _repository(job.get("repository"), config),
+            "name": _text(job.get("name")),
+            "url": github_url(job.get("url"), config.owner)}
+
+
+def _lane(row: object, config: Config, seen: set) -> dict:
+    if not isinstance(row, dict) or set(row) - {"id", "state", "registered", "labels", "job", "runner_id"}:
+        raise TelemetryError("lane row is invalid")
+    lane_id, state = row.get("id"), row.get("state")
+    if not isinstance(lane_id, str) or not ID.fullmatch(lane_id) or lane_id in seen or state not in LANE_STATES:
+        raise TelemetryError("lane identity or state is invalid")
+    seen.add(lane_id)
+    registered = row.get("registered")
+    if registered not in (True, False, None):
+        raise TelemetryError("lane registered must be true, false, or null")
+    labels = row.get("labels", [])
+    if not isinstance(labels, list) or len(labels) > 20:
+        raise TelemetryError("lane labels are invalid")
+    lane = {"id": lane_id, "state": state, "registered": registered,
+            "labels": [_text(label, 60) for label in labels]}
+    if row.get("runner_id") is not None:
+        lane["runner_id"] = _runner_id(row["runner_id"])
+    job = row.get("job")
+    if job is not None:
+        lane["job"] = _lane_job(job, config)
+    elif state == "busy" and not (registered is True and lane.get("runner_id")):
+        raise TelemetryError("a busy lane must identify its same-owner job")
+    return lane
+
+
 def _lanes(value: object, config: Config) -> list[dict]:
     if not isinstance(value, list) or len(value) > MAX_LANES:
         raise TelemetryError("capacity.lanes is invalid")
-    lanes, seen = [], set()
-    for row in value:
-        if not isinstance(row, dict) or set(row) - {"id", "state", "registered", "labels", "job", "runner_id"}:
-            raise TelemetryError("lane row is invalid")
-        lane_id, state = row.get("id"), row.get("state")
-        if not isinstance(lane_id, str) or not ID.fullmatch(lane_id) or lane_id in seen or state not in LANE_STATES:
-            raise TelemetryError("lane identity or state is invalid")
-        seen.add(lane_id)
-        registered = row.get("registered")
-        if registered not in (True, False, None):
-            raise TelemetryError("lane registered must be true, false, or null")
-        labels = row.get("labels", [])
-        if not isinstance(labels, list) or len(labels) > 20:
-            raise TelemetryError("lane labels are invalid")
-        lane = {"id": lane_id, "state": state, "registered": registered,
-                "labels": [_text(label, 60) for label in labels]}
-        if row.get("runner_id") is not None:
-            runner_id = row["runner_id"]
-            if isinstance(runner_id, bool) or not isinstance(runner_id, int) or runner_id <= 0:
-                raise TelemetryError("runner id must be a positive integer")
-            lane["runner_id"] = runner_id
-        job = row.get("job")
-        if job is not None:
-            if not isinstance(job, dict) or set(job) - {"repository", "name", "url"}:
-                raise TelemetryError("lane job is invalid")
-            lane["job"] = {"repository": _repository(job.get("repository"), config),
-                           "name": _text(job.get("name")),
-                           "url": github_url(job.get("url"), config.owner)}
-        elif state == "busy" and not (registered is True and lane.get("runner_id")):
-            raise TelemetryError("a busy lane must identify its same-owner job")
-        lanes.append(lane)
-    return lanes
+    seen = set()
+    return [_lane(row, config, seen) for row in value]
 
 
 def _capacity(value: object, config: Config, now: datetime) -> dict:
@@ -153,6 +162,36 @@ def _window(row: object, now: datetime) -> dict:
             "allowance_tokens": allowance, "window_minutes": minutes}
 
 
+def _account(account: object, account_ids: set, now: datetime) -> dict:
+    if not isinstance(account, dict) or set(account) - {"id", "label", "provider", "quota_windows"}:
+        raise TelemetryError("usage account is invalid")
+    account_id = account.get("id")
+    if not isinstance(account_id, str) or not ID.fullmatch(account_id) or account_id in account_ids:
+        raise TelemetryError("usage account id is invalid")
+    account_ids.add(account_id)
+    windows = account.get("quota_windows", [])
+    if not isinstance(windows, list) or len(windows) > 10:
+        raise TelemetryError("quota_windows is invalid")
+    return {"id": account_id, "label": _text(account.get("label")),
+            "provider": _text(account.get("provider"), 60),
+            "quota_windows": [_window(item, now) for item in windows]}
+
+
+def _sample(sample: object, account_ids: set, config: Config, now: datetime) -> dict | None:
+    """A clean token sample, or None for one older than the history kept."""
+    if not isinstance(sample, dict) or set(sample) != {"owner", "account", "bot", "timestamp", "input_tokens", "output_tokens"}:
+        raise TelemetryError("token sample is invalid")
+    _same_owner(sample["owner"], config)
+    if sample["account"] not in account_ids or sample["bot"] not in (*BOT_KEYS, *(agent.id for agent in config.agents)):
+        raise TelemetryError("token sample references an unknown account or bot")
+    timestamp = _timestamp(sample["timestamp"], now)
+    if now - parse_time(timestamp) > HISTORY:
+        return None
+    return {"account": sample["account"], "bot": sample["bot"], "timestamp": timestamp,
+            "input_tokens": int(_number(sample["input_tokens"])),
+            "output_tokens": int(_number(sample["output_tokens"]))}
+
+
 def _usage(value: object, config: Config, now: datetime) -> dict:
     if value is None:
         return {"available": False, "reason": "not_provided"}
@@ -162,36 +201,16 @@ def _usage(value: object, config: Config, now: datetime) -> dict:
     accounts = value.get("accounts")
     if not isinstance(accounts, list) or len(accounts) > MAX_ACCOUNTS:
         raise TelemetryError("usage.accounts is invalid")
-    clean_accounts, account_ids = [], set()
-    for account in accounts:
-        if not isinstance(account, dict) or set(account) - {"id", "label", "provider", "quota_windows"}:
-            raise TelemetryError("usage account is invalid")
-        account_id = account.get("id")
-        if not isinstance(account_id, str) or not ID.fullmatch(account_id) or account_id in account_ids:
-            raise TelemetryError("usage account id is invalid")
-        account_ids.add(account_id)
-        windows = account.get("quota_windows", [])
-        if not isinstance(windows, list) or len(windows) > 10:
-            raise TelemetryError("quota_windows is invalid")
-        clean_accounts.append({"id": account_id, "label": _text(account.get("label")),
-                               "provider": _text(account.get("provider"), 60),
-                               "quota_windows": [_window(item, now) for item in windows]})
+    account_ids = set()
+    clean_accounts = [_account(account, account_ids, now) for account in accounts]
     samples = value.get("samples", [])
     if not isinstance(samples, list) or len(samples) > MAX_SAMPLES:
         raise TelemetryError("usage.samples is invalid")
     clean_samples = []
     for sample in samples:
-        if not isinstance(sample, dict) or set(sample) != {"owner", "account", "bot", "timestamp", "input_tokens", "output_tokens"}:
-            raise TelemetryError("token sample is invalid")
-        _same_owner(sample["owner"], config)
-        if sample["account"] not in account_ids or sample["bot"] not in (*BOT_KEYS, *(agent.id for agent in config.agents)):
-            raise TelemetryError("token sample references an unknown account or bot")
-        timestamp = _timestamp(sample["timestamp"], now)
-        if now - parse_time(timestamp) > HISTORY:
-            continue
-        clean_samples.append({"account": sample["account"], "bot": sample["bot"], "timestamp": timestamp,
-                              "input_tokens": int(_number(sample["input_tokens"])),
-                              "output_tokens": int(_number(sample["output_tokens"]))})
+        clean = _sample(sample, account_ids, config, now)
+        if clean:
+            clean_samples.append(clean)
     completeness = value.get("completeness")
     if not isinstance(completeness, str) or len(completeness) > 240:
         raise TelemetryError("usage.completeness must describe source coverage")
@@ -219,6 +238,23 @@ def _bots(value: object, config: Config, now: datetime) -> dict:
     return {"available": True, "sampled_at": sampled_at, "stale": stale, "states": states}
 
 
+def _agent_runs(rows: list, name: str, now: datetime) -> list[dict]:
+    """An agent's runs inside the history kept, each named for the agent."""
+    runs = []
+    for run in rows:
+        if (not isinstance(run, dict) or set(run) != {"id", "completed_at", "category", "elapsed_seconds"}
+                or not isinstance(run["id"], str) or not ID.fullmatch(run["id"])
+                or run["category"] not in {"success", "failed", "cancelled"}):
+            raise TelemetryError("agent run is invalid")
+        completed = _timestamp(run["completed_at"], now)
+        if now - parse_time(completed) > HISTORY:
+            continue
+        runs.append({"id": run["id"], "completed_at": completed, "category": run["category"],
+                     "elapsed_seconds": _number(run["elapsed_seconds"]),
+                     "name": name + " run", "repository": None, "html_url": None})
+    return runs
+
+
 def _agents(value: object, config: Config, now: datetime) -> dict:
     if value is None:
         return {"available": False}
@@ -236,18 +272,7 @@ def _agents(value: object, config: Config, now: datetime) -> dict:
                 or not isinstance(row.get("runs"), list) or len(row["runs"]) > 5):
             raise TelemetryError("agent identity or state is invalid")
         seen.add(row["id"])
-        runs = []
-        for run in row["runs"]:
-            if (not isinstance(run, dict) or set(run) != {"id", "completed_at", "category", "elapsed_seconds"}
-                    or not isinstance(run["id"], str) or not ID.fullmatch(run["id"])
-                    or run["category"] not in {"success", "failed", "cancelled"}):
-                raise TelemetryError("agent run is invalid")
-            completed = _timestamp(run["completed_at"], now)
-            if now - parse_time(completed) > HISTORY:
-                continue
-            runs.append({"id": run["id"], "completed_at": completed, "category": run["category"],
-                         "elapsed_seconds": _number(run["elapsed_seconds"]),
-                         "name": allowed[row["id"]].name + " run", "repository": None, "html_url": None})
+        runs = _agent_runs(row["runs"], allowed[row["id"]].name, now)
         clean.append({"id": row["id"], "state": row["state"], "runs": runs})
     return {"available": True, "sampled_at": sampled, "stale": stale, "rows": clean}
 

@@ -127,6 +127,22 @@ def _parse_time(value):
     except ValueError:
         return None
 
+def _drain(selector, deadline):
+    while selector.get_map():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise CollectorError("ssh_timeout")
+        events = selector.select(remaining)
+        if not events:
+            raise CollectorError("ssh_timeout")
+        for key, _ in events:
+            chunk = os.read(key.fileobj.fileno(), 8192)
+            if not chunk:
+                selector.unregister(key.fileobj)
+                continue
+            key.data.extend(chunk)
+            if len(key.data) > MAX_REMOTE_OUTPUT:
+                raise CollectorError("remote_output_invalid")
 def _run_ssh(command, source, timeout=30):
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     selector = selectors.DefaultSelector()
@@ -137,21 +153,7 @@ def _run_ssh(command, source, timeout=30):
         process.stdin.close()
         selector.register(process.stdout, selectors.EVENT_READ, stdout)
         selector.register(process.stderr, selectors.EVENT_READ, stderr)
-        while selector.get_map():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise CollectorError("ssh_timeout")
-            events = selector.select(remaining)
-            if not events:
-                raise CollectorError("ssh_timeout")
-            for key, _ in events:
-                chunk = os.read(key.fileobj.fileno(), 8192)
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    continue
-                key.data.extend(chunk)
-                if len(key.data) > MAX_REMOTE_OUTPUT:
-                    raise CollectorError("remote_output_invalid")
+        _drain(selector, deadline)
         remaining = deadline - time.monotonic()
         if remaining <= 0 or process.wait(timeout=remaining) != 0:
             raise CollectorError("ssh_failed")
@@ -240,6 +242,40 @@ def _host_job(item, config):
         detail["job_url"] = "https://github.com/%s/%s/actions/runs/%s/job/%s" % (
             config.owner, match.group(2), parsed.group(3), parsed.group(4))
     return detail
+def _allocation(item, config):
+    match = TARGET_RE.fullmatch(target) if isinstance(target := item.get("target_repository"), str) else None
+    if target is not None and (not match or match.group(1).casefold() != config.owner.casefold()):
+        raise ValueError
+    if not TOKEN_RE.fullmatch(item.get("runner_name", "")) or not _parse_time(item.get("allocated_at")):
+        raise ValueError
+    return {"target_repository": config.owner + "/" + match.group(2) if match else None,
+            "set_id": _integer(item.get("set_id"), 1),
+            "runner_id": _integer(item.get("runner_id"), 1),
+            "runner_name": item["runner_name"], "allocated_at": item["allocated_at"], **_host_job(item, config)}
+def _slot_record(item, config, limit, wait_limit, seen):
+    if not isinstance(item, dict):
+        raise ValueError
+    kind = _state(item.get("kind"), ("ci", "qae", "wait"))
+    ceiling = wait_limit if kind == "wait" else limit
+    if ceiling < 1:
+        raise ValueError
+    index = _integer(item.get("index"), 1, ceiling)
+    if (kind, index) in seen:
+        raise ValueError
+    seen.add((kind, index))
+    unit = item.get("unit")
+    if not isinstance(unit, dict):
+        raise ValueError
+    record = {"kind": kind, "index": index, "state": _state(
+        item.get("state"), ("allocated", "unknown")), "unit": {
+            "active_state": _state(unit.get("active_state")), "sub_state": _state(unit.get("sub_state"))}}
+    if record["state"] == "allocated":
+        record.update(_allocation(item, config))
+    else:
+        record["reason"] = _state(item.get("reason"), (
+            "active-unit-without-job", "active_unit_without_job", "job_unreadable",
+            "unit_state_unavailable"))
+    return record
 def project_host(raw, config):
     if not isinstance(raw, dict):
         raise ValueError
@@ -251,43 +287,11 @@ def project_host(raw, config):
     qae = _integer(slots.get("qae_concurrency"), 0, limit)
     raw_wait = slots.get("wait_limit", 0)
     wait_limit = _integer(0 if raw_wait is None else raw_wait, 0, 64)
-    records, seen = [], set()
+    seen = set()
     raw_records = slots.get("occupied")
     if not isinstance(raw_records, list) or len(raw_records) > 2 * limit + wait_limit:
         raise ValueError
-    for item in raw_records:
-        if not isinstance(item, dict):
-            raise ValueError
-        kind = _state(item.get("kind"), ("ci", "qae", "wait"))
-        ceiling = wait_limit if kind == "wait" else limit
-        if ceiling < 1:
-            raise ValueError
-        index = _integer(item.get("index"), 1, ceiling)
-        if (kind, index) in seen:
-            raise ValueError
-        seen.add((kind, index))
-        unit = item.get("unit")
-        if not isinstance(unit, dict):
-            raise ValueError
-        record = {"kind": kind, "index": index, "state": _state(
-            item.get("state"), ("allocated", "unknown")), "unit": {
-                "active_state": _state(unit.get("active_state")), "sub_state": _state(unit.get("sub_state"))}}
-        if record["state"] == "allocated":
-            match = TARGET_RE.fullmatch(target) if isinstance(target := item.get("target_repository"), str) else None
-            if target is not None and (not match or match.group(1).casefold() != config.owner.casefold()):
-                raise ValueError
-            if not TOKEN_RE.fullmatch(item.get("runner_name", "")) or not _parse_time(item.get("allocated_at")):
-                raise ValueError
-            record.update({"target_repository": config.owner + "/" + match.group(2) if match else None,
-                           "set_id": _integer(item.get("set_id"), 1),
-                           "runner_id": _integer(item.get("runner_id"), 1),
-                           "runner_name": item["runner_name"], "allocated_at": item["allocated_at"]})
-            record.update(_host_job(item, config))
-        else:
-            record["reason"] = _state(item.get("reason"), (
-                "active-unit-without-job", "active_unit_without_job", "job_unreadable",
-                "unit_state_unavailable"))
-        records.append(record)
+    records = [_slot_record(item, config, limit, wait_limit, seen) for item in raw_records]
     started_at = listener.get("started_at")
     if started_at is not None and (not isinstance(started_at, str) or len(started_at) > 100
                                    or any(ord(char) < 32 for char in started_at)):
@@ -427,6 +431,20 @@ def atomic_write(path, snapshot):
         except OSError:
             pass
         raise
+def _due_quota(response, host_ok, fetch_error, old_limits):
+    try:
+        quota = response.get("quota") if host_ok else None
+        if not isinstance(quota, dict) or quota.get("status") != "ok":
+            status = quota.get("status") if isinstance(quota, dict) else fetch_error
+            raise CollectorError(status if status in SAFE_ERRORS else "quota_unavailable")
+        return project_rate_limits(quota.get("rate_limits")), True, None
+    except (CollectorError, TypeError, ValueError) as error:
+        return old_limits, False, _error_code(error)
+def _kept_quota(previous, account_observed, old_limits):
+    old_account = previous.get("accounts", [{}])[0] if previous.get("accounts") else {}
+    quota_ok = bool(account_observed) and old_account.get("available") is True
+    old_error = old_account.get("error")
+    return old_limits, quota_ok, old_error if old_error in SAFE_ERRORS else (None if quota_ok else "quota_unavailable")
 def refresh(config, output, fetch=None, now=None):
     now = now or utc_now()
     previous = load_previous(output, config.owner)
@@ -443,24 +461,9 @@ def refresh(config, output, fetch=None, now=None):
     host = {**host_body, "observed_at": now if host_ok else host_observed,
             "last_attempt_at": now, "available": host_ok, "stale": not host_ok,
             "error": None if host_ok else fetch_error}
-    quota_ok, quota_error = False, None
-    if due:
-        try:
-            quota = response.get("quota") if host_ok else None
-            if not isinstance(quota, dict) or quota.get("status") != "ok":
-                status = quota.get("status") if isinstance(quota, dict) else fetch_error
-                raise CollectorError(status if status in SAFE_ERRORS else "quota_unavailable")
-            limits = project_rate_limits(quota.get("rate_limits"))
-            quota_ok = True
-        except (CollectorError, TypeError, ValueError) as error:
-            limits, quota_error = old_limits, _error_code(error)
-        account_attempt = now
-    else:
-        limits, account_attempt = old_limits, account_attempted
-        old_account = previous.get("accounts", [{}])[0] if previous.get("accounts") else {}
-        quota_ok = bool(account_observed) and old_account.get("available") is True
-        old_error = old_account.get("error")
-        quota_error = old_error if old_error in SAFE_ERRORS else (None if quota_ok else "quota_unavailable")
+    limits, quota_ok, quota_error = (_due_quota(response, host_ok, fetch_error, old_limits) if due
+                                     else _kept_quota(previous, account_observed, old_limits))
+    account_attempt = now if due else account_attempted
     account = {"label": "Configured Codex account", "scope": "account_wide", "rate_limits": limits,
                "observed_at": now if quota_ok and due else account_observed, "last_attempt_at": account_attempt,
                "available": quota_ok, "stale": not quota_ok, "error": None if quota_ok else quota_error}

@@ -53,14 +53,10 @@ def decode_archive(data: bytes) -> dict:
     return value
 
 
-def normalize(value, artifact, run, repository, now):
-    """Trust only fixed structural fields that agree with the source GitHub run."""
-    match = NAME.fullmatch(artifact.get("name", ""))
+def _check_source(value, artifact, run, repository, role, attempt):
+    """The record names the owner, repository, run, attempt, commit and role GitHub gives its artifact."""
     source = artifact.get("workflow_run") or {}
     owner = repository.split("/", 1)[0]
-    if not match or type(value.get("schema_version")) is not int or value["schema_version"] != 1:
-        raise ValueError("invalid identity")
-    role, attempt = match.group(1), int(match.group(2))
     if (str(value.get("owner", "")).lower() != owner.lower() or
             str(value.get("repository", "")).lower() != repository.lower() or
             (run.get("repository") or {}).get("full_name", "").lower() != repository.lower() or
@@ -69,6 +65,26 @@ def normalize(value, artifact, run, repository, now):
             value.get("head_sha") != source.get("head_sha") or value.get("head_sha") != run.get("head_sha") or
             value.get("role") != role):
         raise ValueError("source mismatch")
+
+
+def _counts(usage, provider):
+    """The record's token counts and its total input, which for Anthropic adds cached and cache-creation input."""
+    if not isinstance(usage, dict) or set(usage) != COUNTS:
+        raise ValueError("invalid usage")
+    numbers = {key: count(usage[key], key not in ("input_tokens", "output_tokens")) for key in COUNTS}
+    total_input = numbers["input_tokens"]
+    if provider == "anthropic":
+        total_input += numbers["cached_input_tokens"] + numbers["cache_creation_input_tokens"]
+    return numbers, total_input
+
+
+def normalize(value, artifact, run, repository, now):
+    """Trust only fixed structural fields that agree with the source GitHub run."""
+    match = NAME.fullmatch(artifact.get("name", ""))
+    if not match or type(value.get("schema_version")) is not int or value["schema_version"] != 1:
+        raise ValueError("invalid identity")
+    role, attempt = match.group(1), int(match.group(2))
+    _check_source(value, artifact, run, repository, role, attempt)
     observed = parse_time(value.get("observed_at"))
     if observed is None or not now - timedelta(days=7) <= observed <= now + timedelta(minutes=5):
         raise ValueError("expired sample")
@@ -83,12 +99,7 @@ def normalize(value, artifact, run, repository, now):
         if usage is not None:
             raise ValueError("unavailable with counts")
         return None
-    if not isinstance(usage, dict) or set(usage) != COUNTS:
-        raise ValueError("invalid usage")
-    numbers = {key: count(usage[key], key not in ("input_tokens", "output_tokens")) for key in COUNTS}
-    total_input = numbers["input_tokens"]
-    if provider == "anthropic":
-        total_input += numbers["cached_input_tokens"] + numbers["cache_creation_input_tokens"]
+    numbers, total_input = _counts(usage, provider)
     # Explicit aliases may combine runs. Unmapped runs remain separate accounts.
     account = provider + ":" + (alias or "%s:%s:%s" % (repository, run["id"], attempt))
     label = alias or "%s #%s (account unmapped)" % (repository.split("/", 1)[1], run["id"])
@@ -153,6 +164,28 @@ def download(repository, artifact_id):
         return data
 
 
+def _tally(records):
+    """Accounts by id, samples and gaps from the records; True when one is missing or partial."""
+    accounts, samples, gaps, hard = {}, [], [], False
+    for record in records:
+        if not record:
+            hard = True
+            continue
+        if "sample" not in record:
+            gaps.append(record.get("gap_at"))
+            continue
+        accounts[record["account"]["id"]] = record["account"]
+        samples.append(record["sample"])
+        hard |= record["sample"]["partial"]
+    return accounts, samples, gaps, hard
+
+
+def _covered_until(bounds):
+    """How far back every listing reached (the latest of their bounds), or None when one proved nothing."""
+    covered = None if not bounds or None in bounds else max(bounds)
+    return iso_time(covered) if covered else None
+
+
 class UsageArtifacts:
     def __init__(self, config, api=None, downloader=download, clock=time.monotonic):
         self.config = config
@@ -207,6 +240,73 @@ class UsageArtifacts:
                 return artifacts, True, oldest
         return artifacts, False, oldest
 
+    def _record(self, repository, artifact, matched, now):
+        """Read one usage artifact: a sample record, or a `gap_at` record for a capture with no counts."""
+        source = artifact.get("workflow_run") or {}
+        run_id = source.get("id")
+        if not isinstance(run_id, int):
+            raise ValueError("missing source")
+        attempt = int(matched.group(2))
+        run = self.api.one("repos/%s/actions/runs/%s/attempts/%s" % (repository, run_id, attempt))
+        definition = self.config.bots[ROLE[matched.group(1)]]
+        if str(run.get("path", "")).split("/")[-1] != definition.workflow:
+            raise ValueError("unexpected source workflow")
+        record = normalize(decode_archive(self.downloader(repository, artifact["id"])), artifact, run, repository, now)
+        if record is None:
+            record = {"gap_at": artifact.get("created_at")}
+        elif ROLE[matched.group(1)] == "explorer":
+            # Filled after the token reads, so a runner lookup cannot spend the
+            # budget the history itself needs.
+            record["_lookup"] = (repository, run_id, attempt, explorer_jobs(definition.jobs, matched.group(3)))
+        return record
+
+    def _read_repository(self, repository, artifacts, cutoff, now, records, seen):
+        """Add a repository's in-window records, cached or read, to `records`; True when one could not be read."""
+        hard = False
+        for artifact in artifacts:
+            matched = NAME.fullmatch(artifact.get("name", ""))
+            created = parse_time(artifact.get("created_at"))
+            if (not matched or artifact.get("expired") or created is None or created < cutoff):
+                continue
+            artifact_id = artifact.get("id")
+            size = artifact.get("size_in_bytes")
+            if (not isinstance(artifact_id, int) or not isinstance(size, int) or not 0 < size <= MAX_ARCHIVE):
+                hard = True
+                continue
+            key = (repository, artifact_id)
+            seen.add(key)
+            if key in self.cache:
+                records.append(self.cache[key])
+                continue
+            try:
+                record = self._record(repository, artifact, matched, now)
+                self.cache[key] = record
+                records.append(record)
+            except (ApiError, ValueError, TypeError, KeyError, zipfile.BadZipFile, OSError):
+                hard = True
+        return hard
+
+    def _carry_over(self, records, seen, listed, cutoff):
+        """Prune the cache to what this pass may keep, and add what it kept but did not see to `records`."""
+        # A repository this pass did not reach (a spent call budget, a rate limit, a timeout) keeps what
+        # earlier passes read, inside the window; the next pass reads it again. A listed repository
+        # keeps only what it still lists.
+        self.cache = {key: value for key, value in self.cache.items()
+                      if key in seen or (key[0] not in listed and _still_cached(value, cutoff))}
+        records.extend(value for key, value in self.cache.items() if key not in seen)
+
+    def _fill_instances(self, records):
+        """Name each explorer sample's lane instance, until a lookup cannot answer."""
+        for record in records:
+            lookup = record.get("_lookup") if isinstance(record, dict) else None
+            if not lookup or record.get("_instance_known"):
+                continue
+            number, known = self._qae_instance(*lookup)
+            if not known:
+                return
+            record["sample"]["instance"] = number
+            record["_instance_known"] = True
+
     def collect(self, now=None, window_start=None, repositories=None):
         now = now or datetime.now(timezone.utc)
         names = tuple(self.config.repositories if repositories is None else repositories)
@@ -219,92 +319,29 @@ class UsageArtifacts:
         self.lost_access = False
         cutoff = now - timedelta(days=7)
         records, hard, seen, listed = [], False, set(), set()
-        listing_complete, bounds, unproven = True, [], False
+        listing_complete, bounds = True, []
         try:
             for repository in names:
                 artifacts, complete, oldest = self._recent(repository, cutoff)
-                if complete:
-                    bounds.append(cutoff)
-                else:
-                    listing_complete = False
-                    if oldest is None:
-                        unproven = True
-                    else:
-                        bounds.append(oldest)
-                for artifact in artifacts:
-                    matched = NAME.fullmatch(artifact.get("name", ""))
-                    created = parse_time(artifact.get("created_at"))
-                    if (not matched or artifact.get("expired") or created is None or created < cutoff):
-                        continue
-                    artifact_id = artifact.get("id")
-                    size = artifact.get("size_in_bytes")
-                    if (not isinstance(artifact_id, int) or not isinstance(size, int) or not 0 < size <= MAX_ARCHIVE):
-                        hard = True
-                        continue
-                    key = (repository, artifact_id)
-                    seen.add(key)
-                    if key in self.cache:
-                        records.append(self.cache[key])
-                        continue
-                    try:
-                        source = artifact.get("workflow_run") or {}
-                        run_id = source.get("id")
-                        if not isinstance(run_id, int):
-                            raise ValueError("missing source")
-                        attempt = int(matched.group(2))
-                        run = self.api.one("repos/%s/actions/runs/%s/attempts/%s" % (repository, run_id, attempt))
-                        definition = self.config.bots[ROLE[matched.group(1)]]
-                        if str(run.get("path", "")).split("/")[-1] != definition.workflow:
-                            raise ValueError("unexpected source workflow")
-                        record = normalize(decode_archive(self.downloader(repository, artifact_id)), artifact, run, repository, now)
-                        if record is None:
-                            record = {"gap_at": artifact.get("created_at")}
-                        elif ROLE[matched.group(1)] == "explorer":
-                            # Filled after the token reads, so a runner lookup cannot spend the
-                            # budget the history itself needs.
-                            record["_lookup"] = (repository, run_id, attempt, explorer_jobs(definition.jobs, matched.group(3)))
-                        self.cache[key] = record
-                        records.append(record)
-                    except (ApiError, ValueError, TypeError, KeyError, zipfile.BadZipFile, OSError):
-                        hard = True
+                listing_complete &= complete
+                # A listing that stopped short with no dated artifact proves no coverage (None).
+                bounds.append(cutoff if complete else oldest)
+                hard |= self._read_repository(repository, artifacts, cutoff, now, records, seen)
                 listed.add(repository)
         except ApiError as error:
             hard = True
             if error.code in PRIVATE_FAILURES:
                 # Failed access invalidates prior private usage, including cached history.
                 self.cache, records, listed, self.lost_access = {}, [], set(), True
-        # A repository this pass did not reach (a spent call budget, a rate limit, a timeout) keeps what
-        # earlier passes read, inside the window; the next pass reads it again. A listed repository
-        # keeps only what it still lists.
-        self.cache = {key: value for key, value in self.cache.items()
-                      if key in seen or (key[0] not in listed and _still_cached(value, cutoff))}
-        records.extend(value for key, value in self.cache.items() if key not in seen)
-        for record in records:
-            lookup = record.get("_lookup") if isinstance(record, dict) else None
-            if not lookup or record.get("_instance_known"):
-                continue
-            number, known = self._qae_instance(*lookup)
-            if not known:
-                break
-            record["sample"]["instance"] = number
-            record["_instance_known"] = True
-        accounts, samples, gaps = {}, [], []
-        for record in records:
-            if not record:
-                hard = True
-                continue
-            if "sample" not in record:
-                gaps.append(record.get("gap_at"))
-                continue
-            accounts[record["account"]["id"]] = record["account"]
-            samples.append(record["sample"])
-            hard |= record["sample"]["partial"]
-        covered = None if unproven or not bounds else max(bounds)
+        self._carry_over(records, seen, listed, cutoff)
+        self._fill_instances(records)
+        accounts, samples, gaps, partial = _tally(records)
+        hard |= partial
         self.result = apply_plan_window(
             {"available": True, "sampled_at": iso_time(now), "stale": False,
              "accounts": list(accounts.values()), "samples": samples, "gaps": gaps,
              "hard_partial": hard, "listing_complete": listing_complete and not hard,
-             "covered_until": iso_time(covered) if covered else None},
+             "covered_until": _covered_until(bounds)},
             window_start)
         self.updated = self.clock()
         return self.result

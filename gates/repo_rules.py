@@ -54,6 +54,7 @@ import textwrap
 from collections import Counter
 
 from _contract import CannotRun, Finding, added_files, changed_files, git, renamed, resolve_base, run_gate, tracked_files
+from _rule_yaml import documents, has_content, value
 from _tools import ensure
 
 GATE = "repo-rules"
@@ -73,17 +74,6 @@ INTRO = ("`repo-rules` checks every pull request against these rules. A blocking
          "`ignores` globs.")
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 CHUNK = 500  # paths per ast-grep call, far below any platform's argument limit
-# The standard library reads no YAML, so ast-grep's own YAML grammar reads the rule files: each
-# document, each top-level key of a document, and each item of a top-level sequence.
-_TOP = ("utils: {top: {kind: block_mapping_pair, "
-        "inside: {kind: block_mapping, inside: {kind: block_node, inside: {kind: document}}}}}")
-READER = "\n---\n".join([
-    "id: doc\nlanguage: yaml\nrule: {kind: document}",
-    "id: key\nlanguage: yaml\n%s\nrule: {matches: top, has: {field: key, pattern: $KEY}}" % _TOP,
-    "id: item\nlanguage: yaml\n%s\nrule:\n  any:\n"
-    "    - {kind: block_sequence_item, inside: {kind: block_sequence, inside: {kind: block_node, inside: {matches: top}}}}\n"
-    "    - {kind: flow_node, inside: {kind: flow_sequence, inside: {kind: flow_node, inside: {matches: top}}}}" % _TOP,
-])
 
 
 def is_yaml(path):
@@ -109,6 +99,12 @@ def judged_files(args, base, directory, tracked):
     prefix = directory + "/"
     if base is None:
         return {p[len(prefix):]: read(args.repo, p) for p in tracked if p.startswith(prefix) and is_yaml(p)}, []
+    return base_files(args, base, directory, tracked)
+
+
+def base_files(args, base, directory, tracked):
+    """judged_files() with a base."""
+    prefix = directory + "/"
     at_base = [p for p in git(args.repo, "ls-tree", "-r", "-z", "--name-only", base, "--", directory).split("\0") if is_yaml(p)]
     files, differs = {}, []
     for path in at_base:
@@ -229,82 +225,45 @@ def relabel(text, root, origin):
     return text.strip()
 
 
-def scalar(text):
-    """A YAML scalar as a rule's id or message writes it: plain, quoted, or a block."""
-    text = text.strip()
-    if text[:1] in ("|", ">"):
-        return text.partition("\n")[2].strip()
-    if len(text) > 1 and text[0] == text[-1] == "'":
-        return text[1:-1].replace("''", "'")
-    if len(text) > 1 and text[0] == text[-1] == '"':
-        try:
-            return json.loads(text)
-        except ValueError:
-            return text[1:-1]
-    return "" if text in ("~", "null", "Null", "NULL") else text
-
-
-def documents(sg, work):
-    """{path under work: [({top-level key: (value, [each item of its sequence, as a scalar])}, text)]}, one per
-    YAML document. Only block mappings are read (`key: value` on its own line); a document of any other
-    shape is refused."""
-    result = subprocess.run([sg, "scan", "--inline-rules", READER, "--json=stream", "--", *sorted(os.listdir(work))],
-                            cwd=work, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise CannotRun("ast-grep could not read the rule files: %s" % (result.stderr.strip() or "no output"))
-    hits = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
-
-    def spans(rule):
-        return [(h["file"], h["range"]["byteOffset"]["start"], h["range"]["byteOffset"]["end"], h) for h in hits if h["ruleId"] == rule]
-    keys = {}
-    for path, start, end, hit in spans("key"):
-        label = hit["metaVariables"]["single"]["KEY"]["text"]
-        keys[(path, start, end)] = [scalar(label), hit["text"][len(label):].lstrip()[1:], []]  # value: past the key's colon
-    for path, offset, _, hit in spans("item"):
-        for (where, start, end), entry in keys.items():
-            if where == path and start <= offset < end:
-                entry[2].append(scalar(re.sub(r"^-(\s|$)", "", hit["text"])))  # a block item starts with its `- `
-    docs = {}
-    for path, start, end, hit in sorted(spans("doc"), key=lambda span: span[:3]):
-        docs.setdefault(path, []).append(({key: (value, items) for (where, s, _), (key, value, items) in keys.items()
-                                           if where == path and start <= s < end}, hit["text"]))
-    return docs
-
-
-def has_content(text):
-    """Whether a YAML document holds anything but comments and document markers."""
-    return any(line and not line.startswith("#") for line in (re.sub(r"^(---|\.\.\.)", "", raw).strip() for raw in text.splitlines()))
-
-
-def value(keys, key):
-    """A top-level key's scalar value, or "" when the document does not set it."""
-    return scalar(keys[key][0]) if key in keys else ""
-
-
 def read_rules(docs, origin):
     """{rule id: (project number, where, its top-level keys)} from documents(). Refuse a rule that cannot
     tell anyone what to do instead (no message) or that nothing proves (no rule test of its own
     directory with a valid and an invalid case)."""
     rules, cases, problems = {}, {}, []
+    for number, kind, where, keys, text in rule_documents(docs, origin):
+        if "id" not in keys:
+            if has_content(text):
+                problems.append("%s holds a document whose id cannot be read; write it as a block mapping, one "
+                                "`key: value` per line" % where)
+            continue
+        rule_id = value(keys, "id")
+        if kind == "rules":
+            if rule_id in rules and rules[rule_id][0] != number:
+                problems.append("rule %s is defined in both %s and %s" % (rule_id, rules[rule_id][1], where))
+            rules[rule_id] = (number, where, keys)
+        else:
+            tally = cases.setdefault((number, rule_id), [0, 0])  # a test counts only for its own directory's rule
+            tally[0] += len(keys.get("valid", ("", []))[1])
+            tally[1] += len(keys.get("invalid", ("", []))[1])
+    problems += unproven(rules, cases)
+    if problems:
+        raise CannotRun("\n".join(problems))
+    return rules
+
+
+def rule_documents(docs, origin):
+    """(project number, rules or tests, where, top-level keys, text) for each document of a rule or test file."""
     for path, entries in sorted(docs.items()):
         number, kind = path.split("/")[:2]
         if kind not in ("rules", "tests"):
             continue  # the source's sgconfig.yml, read by configure()
         for keys, text in entries:
-            if "id" not in keys:
-                if has_content(text):
-                    problems.append("%s holds a document whose id cannot be read; write it as a block mapping, one "
-                                    "`key: value` per line" % origin[path])
-                continue
-            rule_id = value(keys, "id")
-            if kind == "rules":
-                if rule_id in rules and rules[rule_id][0] != number:
-                    problems.append("rule %s is defined in both %s and %s" % (rule_id, rules[rule_id][1], origin[path]))
-                rules[rule_id] = (number, origin[path], keys)
-            else:
-                tally = cases.setdefault((number, rule_id), [0, 0])  # a test counts only for its own directory's rule
-                tally[0] += len(keys.get("valid", ("", []))[1])
-                tally[1] += len(keys.get("invalid", ("", []))[1])
+            yield number, kind, origin[path], keys, text
+
+
+def unproven(rules, cases):
+    """A problem for each rule of read_rules() without a message, or without a valid and an invalid test case."""
+    problems = []
     for rule_id, (number, where, keys) in sorted(rules.items()):
         valid, invalid = cases.get((number, rule_id), (0, 0))
         if not value(keys, "message"):
@@ -312,9 +271,7 @@ def read_rules(docs, origin):
         if not valid or not invalid:
             problems.append("rule %s (%s) has %d valid and %d invalid test cases under its directory's tests/; "
                             "it needs at least one of each" % (rule_id, where, valid, invalid))
-    if problems:
-        raise CannotRun("\n".join(problems))
-    return rules
+    return problems
 
 
 def verify(sg, work, origin, wheres):
@@ -331,17 +288,20 @@ def verify(sg, work, origin, wheres):
     return roots, {rule_id for rule_id, (_, _, keys) in rules.items() if value(keys, "severity") in ADVISORY}
 
 
+def scan_chunk(sg, project, root, paths):
+    """Every finding of one project's rules in paths (relative to root), as ast-grep reports them."""
+    result = subprocess.run([sg, "scan", "--config", os.path.join(project, CONFIG), "--off=unused-suppression",
+                             "--json=stream", "--", *paths], cwd=root, capture_output=True, text=True)
+    found = [json.loads(line) for line in result.stdout.splitlines() if line.strip()] if result.returncode in (0, 1) else []
+    if result.returncode not in (0, 1) or (result.returncode == 1 and not found):
+        raise CannotRun("ast-grep scan exited %d: %s" % (result.returncode, (result.stderr.strip() or "no output").splitlines()[-1]))
+    return found
+
+
 def scan(sg, roots, root, paths):
     """Every finding of every project's rules in paths (relative to root), in a stable order."""
-    hits = []
-    for project in roots:
-        for start in range(0, len(paths), CHUNK):
-            result = subprocess.run([sg, "scan", "--config", os.path.join(project, CONFIG), "--off=unused-suppression",
-                                     "--json=stream", "--", *paths[start:start + CHUNK]], cwd=root, capture_output=True, text=True)
-            found = [json.loads(line) for line in result.stdout.splitlines() if line.strip()] if result.returncode in (0, 1) else []
-            if result.returncode not in (0, 1) or (result.returncode == 1 and not found):
-                raise CannotRun("ast-grep scan exited %d: %s" % (result.returncode, (result.stderr.strip() or "no output").splitlines()[-1]))
-            hits += found
+    hits = [hit for project in roots for start in range(0, len(paths), CHUNK)
+            for hit in scan_chunk(sg, project, root, paths[start:start + CHUNK])]
     return sorted(hits, key=lambda h: (h["file"], h["range"]["start"]["line"], h["range"]["start"]["column"], h["ruleId"]))
 
 
@@ -471,30 +431,47 @@ def check(args):
         head = scan(sg, roots, args.repo, sorted(p for p in changed_files(args.repo, base) if p in listed))
         merge_base = git(args.repo, "merge-base", base, "HEAD").strip()
         moved = renamed(args.repo, base)
-        snapshot, at_base = os.path.join(work, "base"), []
-        for path in sorted({hit["file"] for hit in head}):
-            text = show(args.repo, merge_base, moved.get(path, path))  # a moved file is compared with itself at its old path
-            if text is None:
-                continue  # new in this pull request
-            os.makedirs(os.path.dirname(os.path.join(snapshot, path)), exist_ok=True)
-            with open(os.path.join(snapshot, path), "wb") as handle:
-                handle.write(text)
-            at_base.append(path)
+        snapshot = os.path.join(work, "base")
+        at_base = write_base(args.repo, merge_base, moved, sorted({hit["file"] for hit in head}), snapshot)
         before = Counter((hit["ruleId"], hit["file"]) for hit in scan(sg, roots, snapshot, at_base))
+    return stale + ratchet(args.repo, head, before, merge_base, moved, advisory)
+
+
+def write_base(repo, merge_base, moved, paths, snapshot):
+    """Write each of paths as the merge base has it under snapshot; return those it has (moved: {path: old path})."""
+    at_base = []
+    for path in paths:
+        text = show(repo, merge_base, moved.get(path, path))  # a moved file is compared with itself at its old path
+        if text is None:
+            continue  # new in this pull request
+        os.makedirs(os.path.dirname(os.path.join(snapshot, path)), exist_ok=True)
+        with open(os.path.join(snapshot, path), "wb") as handle:
+            handle.write(text)
+        at_base.append(path)
+    return at_base
+
+
+def ratchet(repo, head, before, merge_base, moved, advisory):
+    """The findings of the head's hits (head) in each file where a rule has more of them than at the merge base (before)."""
     now = Counter((hit["ruleId"], hit["file"]) for hit in head)
     findings = []
     for rule_id, path in sorted(key for key in now if now[key] > before[key]):
         hits = [hit for hit in head if (hit["ruleId"], hit["file"]) == (rule_id, path)]
-        lines = changed_lines(args.repo, merge_base, moved.get(path, path), path)
-        touched = [hit for hit in hits if lines is None or
-                   lines & set(range(hit["range"]["start"]["line"] + 1, hit["range"]["end"]["line"] + 2))]
+        lines = changed_lines(repo, merge_base, moved.get(path, path), path)
         counts = "in this file: %d at the merge base, %d now" % (before[(rule_id, path)], now[(rule_id, path)])
-        if touched:
-            findings += [finding(hit, advisory, " (%s)" % counts) for hit in touched]
-        else:
-            findings += [finding(hit, advisory, " (%s; none is on a line this pull request changed, so all are listed)" % counts)
-                         for hit in hits]
-    return stale + sorted(findings, key=lambda f: (f.path, f.line, f.message))
+        findings += rose(hits, lines, counts, advisory)
+    return sorted(findings, key=lambda f: (f.path, f.line, f.message))
+
+
+def rose(hits, lines, counts, advisory):
+    """The findings of one rule whose count in a file rose: its hits on the lines the pull request changed
+    (lines, None when all are), or every hit when none is."""
+    touched = [hit for hit in hits if lines is None or
+               lines & set(range(hit["range"]["start"]["line"] + 1, hit["range"]["end"]["line"] + 2))]
+    if touched:
+        return [finding(hit, advisory, " (%s)" % counts) for hit in touched]
+    return [finding(hit, advisory, " (%s; none is on a line this pull request changed, so all are listed)" % counts)
+            for hit in hits]
 
 
 def add_arguments(parser):

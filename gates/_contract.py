@@ -194,13 +194,18 @@ def report(gate, findings, fmt, soak):
         status = "pass" if not blocking else ("soak" if soak else "violations")
         print(json.dumps({"gate": gate, "status": status, "findings": [f.as_dict() for f in findings]}, indent=2))
     else:
-        for finding in findings:
-            print(_annotation(gate, finding, soak or finding.advisory) if fmt == "github" else _text(gate, finding))
-        if blocking:
-            print("%s: %d finding(s), %s" % (gate, len(blocking), "reported only (--soak)" if soak else "blocking"))
-        if len(findings) > len(blocking):
-            print("%s: %d advisory finding(s), not blocking" % (gate, len(findings) - len(blocking)))
+        _print_lines(gate, findings, blocking, fmt, soak)
     return EXIT_PASS if (soak or not blocking) else EXIT_VIOLATIONS
+
+
+def _print_lines(gate, findings, blocking, fmt, soak):
+    """The text and github formats: a line per finding, then the counts."""
+    for finding in findings:
+        print(_annotation(gate, finding, soak or finding.advisory) if fmt == "github" else _text(gate, finding))
+    if blocking:
+        print("%s: %d finding(s), %s" % (gate, len(blocking), "reported only (--soak)" if soak else "blocking"))
+    if len(findings) > len(blocking):
+        print("%s: %d advisory finding(s), not blocking" % (gate, len(findings) - len(blocking)))
 
 
 def run_gate(gate, description, check, add_arguments=None):

@@ -249,6 +249,21 @@ def annotate_failure(exit_status, last_error):
         print("::error::Codex ended with an error: %s" % escaped, flush=True)
 
 
+def codex_record(args, exit_status, totals, valid_events, invalid):
+    """The Codex run's record: its counts when any event carried them, else why there are none."""
+    if valid_events:
+        if exit_status:
+            value = record(args, "openai", "partial", "provider_failed", totals)
+        elif invalid:
+            value = record(args, "openai", "partial", "invalid_usage", totals)
+        else:
+            value = record(args, "openai", "complete", None, totals)
+    else:
+        reason = "provider_failed" if exit_status else ("invalid_usage" if invalid else "no_final_usage")
+        value = unavailable(args, "openai", reason)
+    return value
+
+
 def collect_codex(args):
     command = list(args.command)
     if command[:1] == ["--"]:
@@ -286,16 +301,7 @@ def collect_codex(args):
             os.killpg(child.pid, signal.SIGTERM)
             child.wait()
     exit_status = shell_status(returncode, forwarded["signal"])
-    if valid_events:
-        if exit_status:
-            value = record(args, "openai", "partial", "provider_failed", totals)
-        elif invalid:
-            value = record(args, "openai", "partial", "invalid_usage", totals)
-        else:
-            value = record(args, "openai", "complete", None, totals)
-    else:
-        reason = "provider_failed" if exit_status else ("invalid_usage" if invalid else "no_final_usage")
-        value = unavailable(args, "openai", reason)
+    value = codex_record(args, exit_status, totals, valid_events, invalid)
     write_record(args.output, value)
     print("usage collector: provider run ended; metrics %s" % value["status"], flush=True)
     annotate_failure(exit_status, last_error)

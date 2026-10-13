@@ -125,48 +125,48 @@ def parse_memory(text):
     return values["MemTotal:"], values["MemAvailable:"]
 
 
+def _read_output(selector, deadline, limit):
+    output = bytearray()
+    while selector.get_map():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        events = selector.select(remaining)
+        if not events:
+            raise TimeoutError
+        for key, _ in events:
+            chunk = os.read(key.fileobj.fileno(), 8192)
+            if not chunk:
+                selector.unregister(key.fileobj)
+                continue
+            output.extend(chunk)
+            if len(output) > limit:
+                raise OSError("command output is too large")
+    return output
+def _stop(process):
+    process.terminate()
+    try:
+        process.wait(timeout=0.5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
 def run_bounded(command, timeout=5, limit=MAX_PROCESS_OUTPUT):
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ)
-    output = bytearray()
     deadline = time.monotonic() + timeout
     try:
-        while selector.get_map():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError
-            events = selector.select(remaining)
-            if not events:
-                raise TimeoutError
-            for key, _ in events:
-                chunk = os.read(key.fileobj.fileno(), 8192)
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    continue
-                output.extend(chunk)
-                if len(output) > limit:
-                    raise OSError("command output is too large")
+        output = _read_output(selector, deadline, limit)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError
         returncode = process.wait(timeout=remaining)
     except (TimeoutError, subprocess.TimeoutExpired):
-        process.terminate()
-        try:
-            process.wait(timeout=0.5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
+        _stop(process)
         raise TimeoutError from None
     except Exception:
         if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=0.5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+            _stop(process)
         raise
     finally:
         selector.close()
@@ -304,32 +304,30 @@ def read_assignment(path, owner):
     if url:
         record["job_url"] = url
     return record
+def slot_record(owner, lane, kind, index, states, run_root):
+    """One slot's record, or None when its unit is down and no job file is there."""
+    props = states.get("%s-%s@%d.service" % (lane, kind, index))
+    active = safe_state(props.get("ActiveState")) if props else "unknown"
+    sub = safe_state(props.get("SubState")) if props else "unknown"
+    slot = os.path.join(run_root, lane, kind, str(index))
+    job = read_job(os.path.join(slot, "job"), owner, kind)
+    if job is None and active in ("inactive", "failed"):
+        return None
+    record = {"kind": kind, "index": index, "unit": {"active_state": active, "sub_state": sub}}
+    if job and "error" not in job:
+        record.update(job)
+        assignment = read_assignment(os.path.join(slot, "assignment"), owner)
+        if assignment:
+            record.update(assignment)
+        record["state"] = "allocated"
+    else:
+        record["state"] = "unknown"
+        record["reason"] = (job or {}).get(
+            "error", "unit_state_unavailable" if active == "unknown" else "active_unit_without_job")
+    return record
 def scan_slots(owner, lane, slots, states, run_root="/run", kinds=("ci", "qae"), wait_slots=0):
-    occupied = []
-    for kind, count in slot_spans(slots, kinds, wait_slots):
-        for index in range(1, count + 1):
-            unit = "%s-%s@%d.service" % (lane, kind, index)
-            props = states.get(unit)
-            active = safe_state(props.get("ActiveState")) if props else "unknown"
-            sub = safe_state(props.get("SubState")) if props else "unknown"
-            slot = os.path.join(run_root, lane, kind, str(index))
-            job = read_job(os.path.join(slot, "job"), owner, kind)
-            if job is None and active in ("inactive", "failed"):
-                continue
-            record = {"kind": kind, "index": index,
-                      "unit": {"active_state": active, "sub_state": sub}}
-            if job and "error" not in job:
-                record.update(job)
-                assignment = read_assignment(os.path.join(slot, "assignment"), owner)
-                if assignment:
-                    record.update(assignment)
-                record["state"] = "allocated"
-            else:
-                record["state"] = "unknown"
-                record["reason"] = (job or {}).get(
-                    "error", "unit_state_unavailable" if active == "unknown" else "active_unit_without_job")
-            occupied.append(record)
-    return occupied
+    return [record for kind, count in slot_spans(slots, kinds, wait_slots) for index in range(1, count + 1)
+            if (record := slot_record(owner, lane, kind, index, states, run_root)) is not None]
 def parse_systemd_number(value):
     if not isinstance(value, str) or value in ("", "infinity", "[not set]"):
         return None
@@ -352,6 +350,28 @@ def parse_quota_cores(value):
 QUOTA_URL = "https://chatgpt.com/backend-api/wham/usage"
 QUOTA_TIMEOUT_SECONDS = 10
 MAX_QUOTA_BODY = 256 * 1024
+def quota_windows(item):
+    if item is None:
+        return []
+    if not isinstance(item, dict):
+        raise QuotaError("quota_malformed")
+    windows = []
+    for name in ("primary", "secondary"):
+        window = item.get(name + "_window")
+        if window is None:
+            continue
+        if not isinstance(window, dict):
+            raise QuotaError("quota_malformed")
+        used, seconds, reset = window.get("used_percent"), window.get("limit_window_seconds"), window.get("reset_at")
+        if (not isinstance(used, (int, float)) or isinstance(used, bool)
+                or not math.isfinite(used) or not 0 <= used <= 100
+                or not isinstance(seconds, int) or isinstance(seconds, bool) or seconds <= 0
+                or not isinstance(reset, int) or isinstance(reset, bool) or reset <= 0):
+            raise QuotaError("quota_malformed")
+        # Same ceiling conversion as Codex's window_minutes_from_seconds().
+        windows.append({"name": name, "duration_minutes": (seconds + 59) // 60,
+                        "used_percent": used, "resets_at": reset})
+    return windows
 def normalize_rate_limits(payload):
     if not isinstance(payload, dict):
         raise QuotaError("quota_malformed")
@@ -367,27 +387,7 @@ def normalize_rate_limits(payload):
     for key, item in buckets:
         if not isinstance(key, str) or not RUNNER_RE.fullmatch(key):
             raise QuotaError("quota_malformed")
-        if item is None:
-            continue
-        if not isinstance(item, dict):
-            raise QuotaError("quota_malformed")
-        windows = []
-        for name in ("primary", "secondary"):
-            window = item.get(name + "_window")
-            if window is None:
-                continue
-            if not isinstance(window, dict):
-                raise QuotaError("quota_malformed")
-            used, seconds, reset = (window.get("used_percent"),
-                                   window.get("limit_window_seconds"), window.get("reset_at"))
-            if (not isinstance(used, (int, float)) or isinstance(used, bool)
-                    or not math.isfinite(used) or not 0 <= used <= 100
-                    or not isinstance(seconds, int) or isinstance(seconds, bool) or seconds <= 0
-                    or not isinstance(reset, int) or isinstance(reset, bool) or reset <= 0):
-                raise QuotaError("quota_malformed")
-            # Same ceiling conversion as Codex's window_minutes_from_seconds().
-            windows.append({"name": name, "duration_minutes": (seconds + 59) // 60,
-                            "used_percent": used, "resets_at": reset})
+        windows = quota_windows(item)
         if windows:
             limits.append({"limit_id": key, "windows": windows})
     if not limits:
