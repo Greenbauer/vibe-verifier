@@ -158,6 +158,10 @@ def copy_project(repo, prefix, workspace):
     git(workspace, "init", "-q")
     git(workspace, "add", "-A")
     git(workspace, *identity, "commit", "-q", "--allow-empty", "-m", "the project as the pull request leaves it")
+    # git writes its objects read-only, and mutmut copies .git over its earlier copy on the second run.
+    for root, _, names in os.walk(os.path.join(workspace, ".git")):
+        for name in names:
+            os.chmod(os.path.join(root, name), 0o644)
 
 
 def read_json(path):
