@@ -489,7 +489,8 @@ A merge of the pull request's base branch is "sync with main" (or "sync with <ba
 base is not main or master), whether the message is git's ("Merge branch 'main' into x") or
 written by hand ("Merge main (#943 …) into x"). A merge of another branch is "picked up #N" when
 that branch is the head of open pull request #N in the same repository, "merged in <branch>"
-when it is not, and "merged another branch" when the message names no branch. Apart from git's
+when it is not, and "merged another branch" when the message names no branch. A merge of the
+pull request's own branch (a `git pull` joining two copies of it) is "update". Apart from git's
 own "Merge branch '<base>'" wording, a message is read as a merge only on a commit with more than
 one parent, so "Merge main navigation into the header" on an ordinary commit stays an update. When one push contains several
 commits, a sync of the base is

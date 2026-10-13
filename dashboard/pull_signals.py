@@ -195,7 +195,10 @@ def classify_push(commits: list[dict], base: str | None) -> dict | None:
 
 
 def link_merged_pulls(found: dict[int, dict]) -> dict[int, dict]:
-    """Name a merged-in branch by the open pull request whose head it is: "picked up #12"."""
+    """Name a merged-in branch by the open pull request whose head it is: "picked up #12".
+
+    A pull request's own branch merged into itself is a `git pull` joining two copies of the
+    same work, so it is an update."""
     heads = {}
     for number, signals in found.items():
         head = signals.pop("head_ref", None)
@@ -205,7 +208,9 @@ def link_merged_pulls(found: dict[int, dict]) -> dict[int, dict]:
         push = signals.get("push")
         branch = push.pop("merged_branch", None) if isinstance(push, dict) else None
         owner = heads.get(branch.lower()) if branch else None
-        if owner is not None and owner != number:
+        if owner == number:
+            push["kind"] = "update"
+        elif owner is not None:
             push["kind"] = "picked up #%d" % owner
     return found
 

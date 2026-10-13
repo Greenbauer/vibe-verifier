@@ -68,6 +68,8 @@ class PushKind(unittest.TestCase):
         self.assertEqual(classify_push([stacked], "main"),
                          {"pushed_at": at, "kind": "merged in feat/rates-table",
                           "merged_branch": "feat/rates-table"})
+        long_branch = pushed("Merge branch 'feat/a-branch-name-well-past-the-label-width' into x", at, parents=2)
+        self.assertEqual(classify_push([long_branch], "main")["kind"], "merged in feat/a-branch-name-well-past-t")
         github = pushed("Merge pull request #12 from octocat/feat/dates", at, parents=2)
         self.assertEqual(classify_push([github], "main")["merged_branch"], "feat/dates")
         self.assertEqual(classify_push([pushed("Merge commit 'abc123' into fix/x", at, parents=2)], "main"),
@@ -84,8 +86,12 @@ class PushKind(unittest.TestCase):
             900: {"head_ref": "fix/x", "push": {"pushed_at": at, "kind": "merged in gone/branch",
                                                  "merged_branch": "gone/branch"}},
             901: {"head_ref": "fix/y", "push": None},
+            902: {"head_ref": "Feat/Own", "push": {"pushed_at": at, "kind": "merged in feat/own",
+                                                    "merged_branch": "feat/own"}},
         }
         linked = link_merged_pulls(found)
+        # A `git pull` that merged the pull request's own remote branch is an update, matched without case.
+        self.assertEqual(linked[902]["push"], {"pushed_at": at, "kind": "update"})
         self.assertEqual(linked[13], {"push": {"pushed_at": at, "kind": "picked up #12"}})
         self.assertEqual(linked[900]["push"], {"pushed_at": at, "kind": "merged in gone/branch"})
         self.assertEqual(linked[12]["push"]["kind"], "sync with main")
