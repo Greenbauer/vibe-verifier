@@ -295,11 +295,17 @@ class RegressionChecks(unittest.TestCase):
         self.assertIn("auth was not re-walked", self.rewalk(self.AC + self.AUTH + self.PROJECTS).stdout)
 
     def test_a_skip_line_never_stands_in_for_the_check_line(self):
+        hint = "If no browser can walk any state of projects"
         result = self.rewalk(self.AC + self.AUTH + "regression-skip: projects -- 1, 2, 3\n")
         self.assertEqual(result.returncode, 1)
         self.assertIn("projects has no `regression-check: projects` line (docs/features/projects.md)", result.stdout)
         self.assertIn("projects: states not walked, as the explorer reports: 1, 2, 3", result.stdout)
-        # A feature no browser can walk is cleared by its file, never by the skip line: the finding says how.
+        self.assertNotIn(hint, result.stdout)  # a step was walked, so a browser can walk it
+        # With no step walked, a feature no browser can walk is cleared by its file, never by the skip line:
+        # the finding says how.
+        self.shot("projects").unlink()
+        result = self.rewalk(self.AC + self.AUTH + "regression-skip: projects -- 1, 2, 3\n")
+        self.assertEqual(result.returncode, 1)
         self.assertIn("If no browser can walk any state of projects, declare it on a line of the Verify section of "
                       "docs/features/projects.md: `re-walk: none -- <why>`", result.stdout)
 
