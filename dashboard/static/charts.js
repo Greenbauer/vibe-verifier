@@ -23,14 +23,16 @@
    * change never moves a sample into a neighbouring hour or day. The first sample counts even when it
    * is older than the oldest slot: it still proves the bot was observed from then on.
    */
-  function slotTotals(samples, now) {
+  const tokensOf = sample => Number(sample.input_tokens) + Number(sample.output_tokens);
+
+  function slotTotals(samples, now, amountOf) {
     const midnight = time => new Date(time).setHours(0, 0, 0, 0);
     const slotOf = time => Math.round((midnight(now) - midnight(time)) / DAY) * 24 + now.getHours() - new Date(time).getHours();
     const cells = new Array((PRIOR_DAYS + 1) * 24).fill(0);
     let first = Infinity, last = -Infinity;
     for (const sample of samples || []) {
       const time = Date.parse(sample.timestamp);
-      const amount = Number(sample.input_tokens) + Number(sample.output_tokens);
+      const amount = amountOf(sample);
       if (!Number.isFinite(time) || !Number.isFinite(amount) || time > now.getTime()) continue;
       first = Math.min(first, time);
       last = Math.max(last, time);
@@ -47,11 +49,11 @@
    * hours averages. An hour is observed from the hour of the bot's first retained sample through
    * the newest observation (the source's sample time, or a later sample). Inside that span an hour
    * with no sample is a measured zero; outside it the hour is null, never zero. A bot with no
-   * sample returns null.
+   * sample returns null. amountOf reads a sample's amount: its tokens unless given.
    */
-  function hourlyBurn(samples, nowMs, observedThroughMs) {
+  function hourlyBurn(samples, nowMs, observedThroughMs, amountOf = tokensOf) {
     const now = new Date(nowMs);
-    const { cells, slotOf, first, last } = slotTotals(samples, now);
+    const { cells, slotOf, first, last } = slotTotals(samples, now, amountOf);
     if (first === Infinity) return null;
     const through = Math.max(last, Number.isFinite(observedThroughMs) ? Math.min(nowMs, observedThroughMs) : nowMs);
     const oldest = Math.min(slotOf(first), cells.length - 1), newest = slotOf(through);
@@ -80,10 +82,11 @@
       baselineDays: days.length ? Math.min(...days) : null };
   }
 
-  // The y ceiling: the bot cards pass all their burns so they share one scale; All bots passes its own.
-  function ceiling(burns) {
+  // The y ceiling: the bot cards pass all their burns so they share one scale; All bots passes its own
+  // and its pace line. All zero still needs a scale, so it falls back to 1.
+  function ceiling(burns, pace) {
     const values = burns.flatMap(burn => [...burn.last24h, ...burn.avg]).filter(Number.isFinite);
-    return Math.max(1, ...values);
+    return Math.max(Number.isFinite(pace) ? pace : 0, ...values) || 1;
   }
 
   /**
@@ -117,9 +120,28 @@
   }
 
   // "Last 24 hours 12k tokens · usual day 9k". A usual day is stated only when every hour has one.
-  function totals(burn) {
-    const live = `Last 24 hours ${short(sum(burn.last24h))} tokens`;
-    return burn.avg.includes(null) ? live : `${live} · usual day ${short(sum(burn.avg))}`;
+  // With percent, the amounts are percent of the plan: "Last 24 hours 9% of plan · usual day 7%".
+  function totals(burn, percent) {
+    const live = percent ? `Last 24 hours ${percentText(sum(burn.last24h))} of plan` : `Last 24 hours ${short(sum(burn.last24h))} tokens`;
+    if (burn.avg.includes(null)) return live;
+    return `${live} · usual day ${percent ? percentText(sum(burn.avg)) : short(sum(burn.avg))}`;
+  }
+
+  // The words a card uses for its unit: tokens, or percent of the plan.
+  function unitWords(percent) {
+    return percent ? { amount: percentText, most: "of the plan", lead: "Share of the plan", per: "percent of the plan" }
+      : { amount: short, most: "tokens", lead: "Tokens", per: "tokens" };
+  }
+
+  // The totals line's hover: what a usual day averaged.
+  function method(lead, days) {
+    if (days === null) return `${lead} in the last 24 hours. A usual day appears once every hour has an observed prior day.`;
+    return `${lead} in the last 24 hours, and a usual day averaged over the ${days} prior day${days === 1 ? "" : "s"} observed so far${days < 6 ? " (not a full week yet)" : ""}.`;
+  }
+
+  // "0.4%" under ten, "12%" above: whole percents hide a slow hour.
+  function percentText(value) {
+    return `${value < 10 ? (Math.round(value * 10) / 10).toString() : Math.round(value)}%`;
   }
 
   function svg(tag, attrs, text) {
@@ -147,8 +169,9 @@
 
   /**
    * Draw one card's chart. x is the local clock hour; solid is the last 24 hours, split at the now
-   * marker so the stretch after it (yesterday's tail) is faded; dashed is a usual day.
-   * options: color, maximum, nowMs, label, usualTitle.
+   * marker so the stretch after it (yesterday's tail) is faded; dashed is a usual day; the flat
+   * wider-dash line is the plan's even pace, passed only for All bots.
+   * options: color, maximum, nowMs, label, usualTitle, pace, paceTitle.
    */
   function drawBurn(burn, options) {
     const now = new Date(options.nowMs), nowHour = now.getHours();
@@ -159,6 +182,11 @@
       role: "img", "aria-label": options.label });
     const vertical = (at, className) => svg("line", { x1: at, x2: at, y1: band.min, y2: band.max, class: className });
     LABELLED_HOURS.forEach(hour => chart.append(vertical(x(hour), "burn-hourline")));
+    if (Number.isFinite(options.pace)) {
+      const pace = svg("line", { x1: PAD_L, x2: W - PAD_R, y1: y(options.pace), y2: y(options.pace), class: "burn-pace" });
+      pace.append(svg("title", {}, options.paceTitle));
+      chart.append(pace);
+    }
     const nowX = x(Math.min(23, nowHour + now.getMinutes() / 60));
     const plot = run => run.map(point => ({ x: x(point.hour), y: y(point.value) }));
     const line = (points, className, title) => {
@@ -185,5 +213,5 @@
     return String(Math.round(value));
   }
 
-  return { hourLabel, hourlyBurn, sumBurns, ceiling, smoothPath, runs, totals, drawBurn, short };
+  return { hourLabel, hourlyBurn, sumBurns, ceiling, smoothPath, runs, totals, percentText, unitWords, method, drawBurn, short };
 });
