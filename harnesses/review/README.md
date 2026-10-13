@@ -61,7 +61,8 @@ delta only starts further back.
   execution log; "Require a completed review" decides from what they found. A completed review
   (the step succeeded and the final result object is a success that is not an error, took at least
   two turns and cost something) by either account gets its receipt. A run in which every configured
-  account proved a rate or usage limit passes with a `::warning::` that the review did not run, and
+  account proved a rate or usage limit passes with a `::warning::` that the review did not run and,
+  for each limited account, which limit it was and when it resets (see below), and
   posts `review-receipt: <sha> -- limited -- run <id>` (decided by the operator on 2026-10-03).
   Every other ending stays red with no receipt: an invalid or missing token (a 401 "Invalid bearer
   token", "Not logged in"), a crash, a timeout, the turn cap, a model error. The gate says why: no
@@ -86,6 +87,19 @@ delta only starts further back.
   anchors on it. The verify gate accepts a `limited` receipt only for the exact head and still
   requires zero unresolved threads when `--threads` is wired. Re-run the workflow once the limit
   resets to get the real review.
+- **The warning says which limit and when it resets, when the reviewer reported them.** A consumer's
+  reviews came back `limited` for over 13 hours on 2026-10-08 and no run could say when to retry:
+  the classify step kept only each event's status. Now the warning, the job summary and each
+  classify step's log line give, for each limited account, the limit and its reset time in UTC:
+  `First account: seven_day limit, resets 2026-10-06T09:00:00Z. Fallback account: the reviewer did
+  not report which limit or when it resets.` Both come from the `rate_limit_info` of the rejected
+  `rate_limit_event`: `rateLimitType` (`five_hour`, `seven_day`, ...) as it is written, and
+  `resetsAt`, which is epoch seconds (the Claude Agent SDK's type definitions, at the version the
+  pinned action installs, name both). An event that carries neither, or a limit proven only by the
+  final result, says the reviewer did not report them; nothing is guessed. The final error result's
+  text follows as `the reviewer said: ...`, quoted as it was written and cut to 200 characters: a
+  reset time inside that text is the reviewer's wording, shown for a person and never read. Nothing
+  else from the log is printed, and none of this decides pass, fail or `limited`.
 - **Unresolved threads block, when wired.** `--threads` in the manifest makes every unresolved
   review thread a finding, which is the operator's merge rule enforced by a machine on a plan with
   no branch protection. Resolve each thread (reply, then resolve), then re-run the workflow; with

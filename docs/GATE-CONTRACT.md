@@ -859,7 +859,8 @@ names this exact head and, when `--threads` is wired, no thread is unresolved. T
 deterministic text from a workflow step the model cannot reach, which is the exact-head receipt
 contract: a review that did not complete leaves no receipt and is red, and a push after the review
 is a change nobody reviewed. The one exception is a run whose execution log structurally proves
-the reviewer subscription hit a rate or usage limit: the job passes with a warning and posts a
+the reviewer subscription hit a rate or usage limit: the job passes with a warning (which limit,
+and when it resets in UTC, when the reviewer reported them) and posts a
 receipt whose mode is `limited`. The gate accepts it for its exact head like any other mode, still
 requires zero unresolved threads when `--threads` is wired, and the scope step never uses it as
 the delta anchor, so the next real review covers what it let through. An invalid or missing

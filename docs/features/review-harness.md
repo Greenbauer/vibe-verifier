@@ -20,6 +20,7 @@ Copy `harnesses/review/review.yml` to a consumer's workflows and `harnesses/revi
 - `tests/test_review_receipt.py::test_a_receipt_for_an_older_commit_fails_and_names_it`
 - `tests/test_review_receipt.py::test_unresolved_threads_fail_when_wired`
 - `tests/test_review_harness.py::test_a_full_review_sizes_the_cap_by_every_file_in_the_pull_request`
+- `tests/test_review_harness.py::test_the_warning_gives_each_limited_account_its_limit_and_reset`
 
 ## Gotchas
 
