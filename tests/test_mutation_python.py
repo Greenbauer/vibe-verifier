@@ -139,6 +139,30 @@ class RealMutmut(unittest.TestCase):
         result = self.run_gate(repo)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
+    def test_a_python_path_relative_to_the_repository_works_from_its_checkout(self):
+        # CI runs the gate as `--repo .` from the checkout, with the venv inside it: the relative path
+        # must still name the interpreter once mutmut runs in its copy of the project.
+        repo = self.project({"shop/price.py": PRICE_BEFORE, "tests/test_price.py": IMPORTING_TEST}, {"shop/price.py": PRICE_AFTER})
+        os.symlink(self.env, os.path.join(repo, ".venv-tests"))
+        result = subprocess.run([sys.executable, str(ROOT / "gates" / "changed_code_mutation.py"), "--repo", ".",
+                                 "--base-ref", "HEAD~1", "--python", ".venv-tests/bin/python"],
+                                cwd=repo, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("score 100%", result.stderr)
+
+    def test_a_test_that_reads_git_sees_a_checkout(self):
+        # This catalog's own suite lists its tracked files with `git ls-files`; mutmut's copy of a project
+        # was no repository, so that test failed and the gate could not run.
+        reads_git = IMPORTING_TEST + (
+            "\n\ndef test_the_source_is_tracked():\n    import pathlib, subprocess\n"
+            "    root = pathlib.Path(__file__).resolve().parent.parent\n"
+            "    out = subprocess.run(['git', '-C', str(root), 'ls-files'], capture_output=True, text=True, check=True).stdout\n"
+            "    assert 'shop/price.py' in out.split()\n")
+        repo = self.project({"shop/price.py": PRICE_BEFORE, "tests/test_price.py": reads_git}, {"shop/price.py": PRICE_AFTER})
+        result = self.run_gate(repo)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("score 100%", result.stderr)
+
     def test_failing_tests_cannot_run(self):
         repo = self.project({"shop/price.py": PRICE_BEFORE, "tests/test_price.py": "def test_broken():\n    assert False\n"},
                             {"shop/price.py": PRICE_AFTER})
