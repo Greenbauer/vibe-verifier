@@ -394,6 +394,43 @@ class RulesetRequiredHistory(unittest.TestCase):
         self.assertEqual(sum(f"repos/{REPO}/actions/runs?" in call[1] for call in api.calls), 2)
 
 
+    def test_a_failed_search_leaves_only_the_unaccounted_roles_unknown(self):
+        cfg = Config("octocat", (REPO,), {
+            "reviewer": BotDefinition("listed.yml", ("review",)),
+            "explorer": BotDefinition(WORKFLOW, ("explore",)),
+            "verifier": BotDefinition(WORKFLOW, ("verify",)),
+        }, None)
+        listed = f"repos/{REPO}/actions/workflows/listed.yml/runs"
+        search = f"repos/{REPO}/actions/runs?per_page=100"
+
+        class SearchFailsAPI(BotAPI):
+            def items(self, requested, key=None):
+                self.calls.append(("items", requested, key))
+                if requested == f"repos/{REPO}/actions/workflows?per_page=100":
+                    return [{"path": ".github/workflows/listed.yml"}]
+                if requested.startswith(listed):
+                    return []
+                raise AssertionError(requested)
+
+            def page_items(self, requested, key=None):
+                self.calls.append(("pages", requested, key))
+                if requested == search:
+                    raise ApiError("rate_limited")
+                if requested.startswith(listed):
+                    return iter([([], False)])
+                raise AssertionError(requested)
+
+        api = SearchFailsAPI()
+        collector = GitHubCollector(cfg, api, clock=lambda: NOW)
+        result = collector._bots(NOW)
+        self.assertEqual(result["errors"], [{"repository": REPO, "phase": "required-workflows", "code": "rate_limited"}])
+        self.assertEqual(result["roles"]["reviewer"]["coverage"], {"active": "complete", "history": "complete"})
+        self.assertEqual(result["roles"]["explorer"]["state"], "unknown")
+        self.assertEqual(result["roles"]["explorer"]["coverage"]["history"], "partial")
+        collector._bots(NOW)
+        self.assertEqual(sum(call[1] == search for call in api.calls), 2)
+
+
 class RequiredWorkflow(unittest.TestCase):
     def test_a_consumer_run_is_found_from_pulls_already_read_and_adds_no_history_calls(self):
         consumer = "octocat/app"

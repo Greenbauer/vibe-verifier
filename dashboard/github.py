@@ -406,7 +406,6 @@ class GitHubCollector(OwnerSet):
             return cached[1]
         rows = self.api.items(_endpoint("repos/%s/actions/workflows" % repository, per_page=100), "workflows")
         names = {row["path"].rsplit("/", 1)[-1] for row in rows if isinstance(row.get("path"), str)}
-        self._required.search(self.api, repository, {bot.workflow for bot in self.config.bots.values()}, names)
         self._workflows[repository] = (self.clock(), names)
         return names
 
@@ -431,6 +430,7 @@ class GitHubCollector(OwnerSet):
                     for value in all_rows.values():
                         value["active_complete"] = value["history_complete"] = False
                     continue
+                self._required.search_or_mark(self.api, repository, self.config.bots, workflow_names, errors, all_rows)
                 for role, definition in self.config.bots.items():
                     base = self._required.runs(repository, definition.workflow, workflow_names)
                     if base:

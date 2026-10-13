@@ -11,6 +11,8 @@ import re
 import threading
 from urllib.parse import quote
 
+from .gh_api import ApiError
+
 REQUIRED_WORKFLOW_URL = re.compile(r"/actions/required_workflows/(\d+)$")
 
 
@@ -48,6 +50,17 @@ class RequiredWorkflows:
         self.learn(repository, next(iter(pages), ([], False))[0])
         with self._lock:
             self._searched.add(repository)
+
+    def search_or_mark(self, api, repository: str, bots: dict, listed: set[str], errors: list, rows: dict) -> None:
+        """search(), where a failure leaves unknown only the roles whose workflow is still
+        unaccounted for in this repository; the search runs again on the next refresh."""
+        try:
+            self.search(api, repository, {bot.workflow for bot in bots.values()}, listed)
+        except ApiError as error:
+            errors.append({"repository": repository, "phase": "required-workflows", "code": error.code})
+            for role, bot in bots.items():
+                if not self.runs(repository, bot.workflow, listed):
+                    rows[role]["active_complete"] = rows[role]["history_complete"] = False
 
     def runs(self, repository: str, workflow: str, listed: set[str]) -> str | None:
         """Where the workflow's runs are listed, or None when the repository does not run it."""
