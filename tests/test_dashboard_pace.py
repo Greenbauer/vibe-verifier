@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from dashboard.agents import agent_view
-from dashboard.pace import plan_pace, plan_window_start
+from dashboard.pace import plan_burn, plan_pace, plan_window_start, weighted_tokens
 from dashboard.usage_artifacts import apply_plan_window
 
 NOW = datetime(2026, 10, 5, 21, 0, tzinfo=timezone.utc)
@@ -105,3 +105,64 @@ class WindowStart(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def plan_usage(samples, windows=None, **extra):
+    return {"available": True, "stale": False, **extra, "accounts": [
+        {"id": "collector:codex", "label": "Codex subscription", "provider": "OpenAI",
+         "quota_windows": [window()] if windows is None else windows},
+        {"id": "openai:runs", "label": "runs", "provider": "openai", "quota_windows": []},
+        {"id": "anthropic:runs", "label": "runs", "provider": "anthropic", "quota_windows": []}],
+        "samples": samples}
+
+
+def run(hours_ago, fresh=0, cached=0, output=0, account="openai:runs"):
+    return {"account": account, "bot": "agent-a", "timestamp": iso(NOW - timedelta(hours=hours_ago)),
+            "input_tokens": fresh + cached, "cached_input_tokens": cached, "output_tokens": output}
+
+
+class PlanLine(unittest.TestCase):
+    def test_the_line_is_the_rest_of_the_plan_over_the_hours_left(self):
+        line, _ = plan_burn(plan_usage([run(1, fresh=100)]), NOW)
+        self.assertAlmostEqual(line["percent_per_hour"], (100 - 40) / 96)
+        self.assertEqual((line["plan"], line["window"], line["used_percent"]), ("Codex subscription", "7d", 40.0))
+        # The line needs no tokens: with none the bots stay unscaled, and the line is the same.
+        empty, samples = plan_burn(plan_usage([]), NOW)
+        self.assertEqual(empty["percent_per_hour"], line["percent_per_hour"])
+        self.assertFalse(empty["sized"])
+        self.assertEqual(samples, [])
+
+    def test_each_billed_sample_is_its_weighted_share_of_the_used_percent(self):
+        # Weighted: 1,000 fresh + 0.1 x 10,000 cached = 2,000; 200 output x 5 = 1,000. Window total 3,000 = 40%.
+        line, samples = plan_burn(plan_usage([run(1, fresh=1000, cached=10_000), run(2, output=200)]), NOW)
+        self.assertTrue(line["sized"])
+        self.assertAlmostEqual(samples[0]["plan_percent"], 40 * 2000 / 3000)
+        self.assertAlmostEqual(samples[1]["plan_percent"], 40 * 1000 / 3000)
+        self.assertEqual(weighted_tokens({"input_tokens": 5, "output_tokens": 0}), 5)  # no cached count: all fresh
+
+    def test_a_cache_read_counts_a_tenth_of_a_fresh_token(self):
+        # The defect that removed the token line: raw counts, mostly cache reads, sized the plan.
+        base = [run(30, fresh=1000), run(1, fresh=1000)]
+        self.assertAlmostEqual(plan_burn(plan_usage(base), NOW)[1][1]["plan_percent"], 20)
+        reread = plan_burn(plan_usage(base + [run(20, cached=10_000)]), NOW)[1][1]["plan_percent"]
+        self.assertAlmostEqual(reread, 40 * 1000 / (2000 + 1000))  # 10,000 cache reads weigh 1,000
+
+    def test_only_the_plans_provider_and_window_bill_to_it(self):
+        samples = [run(1, fresh=1000), run(1, fresh=9000, account="anthropic:runs"), run(80, fresh=9000)]
+        _, tagged = plan_burn(plan_usage(samples), NOW)
+        self.assertAlmostEqual(tagged[0]["plan_percent"], 40)  # the window's only billed spend
+        self.assertNotIn("plan_percent", tagged[1])           # another provider's plan
+        self.assertAlmostEqual(tagged[2]["plan_percent"], 40 * 9)  # before the window: scaled, not counted
+
+    def test_unsized_and_missing_cases(self):
+        month = window(window_minutes=60 * 24 * 30)
+        self.assertFalse(plan_burn(plan_usage([run(1, fresh=10)], [month]), NOW)[0]["sized"])
+        self.assertFalse(plan_burn(plan_usage([run(1, fresh=10)], [window(used_percent=0.0)]), NOW)[0]["sized"])
+        self.assertIsNone(plan_burn(plan_usage([run(1, fresh=10)], [window(resets_at=iso(NOW))]), NOW)[0])
+        self.assertIsNone(plan_burn(plan_usage([run(1, fresh=10)], []), NOW)[0])
+        self.assertIsNone(plan_burn({"available": False}, NOW)[0])
+        self.assertTrue(plan_burn(plan_usage([run(1, fresh=10)], partial=True), NOW)[0]["partial"])
+
+    def test_the_page_gets_the_line_and_tagged_samples(self):
+        view = agent_view(SimpleNamespace(agents=()), {}, {"available": True, "usage": plan_usage([])}, NOW)["usage"]
+        self.assertAlmostEqual(view["plan_line"]["percent_per_hour"], 60 / 96)

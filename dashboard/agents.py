@@ -2,7 +2,7 @@
 from datetime import timedelta
 
 from .bot_runs import qae_instance
-from .pace import plan_pace
+from .pace import plan_burn, plan_pace
 from .util import parse_time
 
 
@@ -207,4 +207,6 @@ def agent_view(config, github, telemetry, now):
         rows.extend(added)
         samples.extend(taken)
     plotted = {**usage, "samples": samples}
-    return {"rows": rows, "usage": {**plotted, "pace_points": plan_pace(plotted, now)}}
+    line, samples = plan_burn(plotted, now)
+    return {"rows": rows, "usage": {**plotted, "samples": samples, "pace_points": plan_pace(plotted, now),
+                                    "plan_line": line}}

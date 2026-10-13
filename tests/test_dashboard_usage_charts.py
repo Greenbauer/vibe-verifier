@@ -160,14 +160,14 @@ console.log(JSON.stringify({paths,now}));
 
 
 class Cards(unittest.TestCase):
-    def test_unobserved_bots_say_so_and_no_card_draws_a_pace_in_tokens(self):
+    def test_unobserved_bots_say_so_and_no_plan_draws_no_pace_line(self):
         app = (ROOT / "dashboard/static/app.js").read_text()
         source = re.search(r"\n(  function usageCharts\([\s\S]*?)\n  function renderUsage\(", app).group(1)
         result = node(r"""
 const VVCharts={...require('./dashboard/static/charts.js')};
 const {BOT_META,paceHeader}=require('./dashboard/static/helpers.js');
 const drawn=[];
-VVCharts.drawBurn=(burn,options)=>(drawn.push({maximum:options.maximum,options:Object.keys(options).sort()}),{tag:'chart'});
+VVCharts.drawBurn=(burn,options)=>(drawn.push({maximum:options.maximum,pace:options.pace??null,last24h:burn.last24h}),{tag:'chart'});
 function el(tag,attrs={},...children){
   const node={tag,attrs,children:children.flat().filter(value=>value!==null&&value!==undefined)};
   node.append=(...items)=>node.children.push(...items); return node;
@@ -178,8 +178,8 @@ const at=hours=>new Date(Date.now()-hours*3600000).toISOString();
 const usage={sampled_at:new Date().toISOString(),accounts:[],pace_points:-11.6,
   samples:[{account:'a',bot:'ci-swe',timestamp:at(2),input_tokens:40,output_tokens:0},
            {account:'a',bot:'ci-qae',timestamp:at(3),input_tokens:900,output_tokens:0}]};
-const build=new Function('el','BOT_META','VVCharts','snapshot','paceHeader',SOURCE+'\nreturn usageCharts;');
-const charts=build(el,BOT_META,VVCharts,snapshot,paceHeader);
+const build=new Function('el','BOT_META','VVCharts','snapshot','paceHeader','formatTime',SOURCE+'\nreturn usageCharts;');
+const charts=build(el,BOT_META,VVCharts,snapshot,paceHeader,()=>'RESET');
 const section=charts(usage);
 const cards=section.children[2].children;
 const head=section=>section.children[2].children[3].children[0].children[0];
@@ -194,12 +194,11 @@ console.log(JSON.stringify({drawn,names:cards.map(card=>card.children[0].childre
         self.assertIn("all-bots", result["allClass"])
         bots, everyone = result["drawn"][:2], result["drawn"][2]
         self.assertEqual([row["maximum"] for row in bots], [900, 900])
-        # All bots scales to its own busiest hour: nothing in tokens stands for the plan, on any card.
+        # With no plan line, All bots stays in tokens, scaled to its own busiest hour, and no card has a pace.
         self.assertEqual(everyone["maximum"], 900)
-        self.assertEqual({tuple(row["options"]) for row in result["drawn"]},
-                         {("color", "label", "maximum", "nowMs", "usualTitle")})
+        self.assertTrue(all(row["pace"] is None for row in result["drawn"]))
         self.assertEqual(result["parts"], ["h2", "p", "div"])
-        self.assertEqual(result["caption"], "Tokens each bot used, hour by hour. Solid: last 24 hours. Dashed: a usual day.")
+        self.assertIn("All bots: percent of the plan an hour", result["caption"])
         self.assertEqual(result["header"], "All bots · 12% under pace")
         self.assertEqual(result["headerTitle"], "12 points behind an even burn: headroom.")
         self.assertEqual(result["ahead"], "All bots · 21% ahead of pace")
@@ -277,6 +276,48 @@ console.log(JSON.stringify({names:cards.map(card=>text(card.children[0].children
         self.assertIn("47 not on a numbered bot", result["all"])
         self.assertNotIn("9k", result["all"])
         self.assertIn("47 tokens are not on a numbered bot", result["title"])
+
+
+class PlanLine(unittest.TestCase):
+    def test_all_bots_is_percent_of_the_plan_against_its_even_pace(self):
+        app = (ROOT / "dashboard/static/app.js").read_text()
+        source = re.search(r"\n(  function usageCharts\([\s\S]*?)\n  function renderUsage\(", app).group(1)
+        result = node(r"""
+const VVCharts={...require('./dashboard/static/charts.js')};
+const {BOT_META,paceHeader}=require('./dashboard/static/helpers.js');
+const drawn=[];
+VVCharts.drawBurn=(burn,options)=>(drawn.push({maximum:options.maximum,pace:options.pace??null,total:burn.last24h.reduce((a,b)=>a+(b||0),0)}),{tag:'chart'});
+function el(tag,attrs={},...children){
+  const node={tag,attrs,children:children.flat().filter(value=>value!==null&&value!==undefined)};
+  node.append=(...items)=>node.children.push(...items); return node;
+}
+const text=node=>typeof node==='string'?node:(node.children||[]).map(text).join(' ');
+const snapshot={agents:{rows:[{id:'ci-swe',name:'SWE',role:'swe'}]}};
+const at=hours=>new Date(Date.now()-hours*3600000).toISOString();
+const plan={percent_per_hour:0.625,plan:'Codex subscription',window:'7 days',used_percent:40,resets_at:at(-96),sized:true,partial:false};
+const usage={sampled_at:new Date().toISOString(),accounts:[],pace_points:-2.9,plan_line:plan,
+  samples:[{account:'a',bot:'ci-swe',timestamp:at(2),input_tokens:4000,output_tokens:0,plan_percent:0.5},
+           {account:'b',bot:'ci-swe',timestamp:at(3),input_tokens:9000,output_tokens:0}]};
+const build=new Function('el','BOT_META','VVCharts','snapshot','paceHeader','formatTime',SOURCE+'\nreturn usageCharts;');
+const charts=build(el,BOT_META,VVCharts,snapshot,paceHeader,()=>'RESET');
+const section=charts(usage), unsized=charts({...usage,plan_line:{...plan,sized:false}});
+const all=section.children[2].children[1];
+console.log(JSON.stringify({drawn,note:text(section.children[3]),title:section.children[3].attrs.title,
+  peak:text(all.children[0].children[1]),totals:text(all.children[2]),unsizedNote:text(unsized.children[3])}));
+""".replace("SOURCE", json.dumps(source)))
+        bot, everyone = result["drawn"][0], result["drawn"][1]
+        # The bot card stays in tokens with no pace; All bots plots only plan-billed samples, in percent.
+        self.assertEqual([bot["total"], bot["pace"]], [13000, None])
+        self.assertEqual([everyone["total"], everyone["pace"]], [0.5, 0.625])
+        self.assertEqual(everyone["maximum"], 0.625)  # the line stays inside the chart
+        self.assertEqual(result["peak"], "peak 0.5%/h")
+        self.assertTrue(result["totals"].startswith("Last 24 hours 0.5% of plan"))
+        self.assertEqual(result["note"], "Flat line on All bots: 0.6% of Codex subscription an hour uses the rest "
+                                         "(7 days, 40% used) exactly when it resets RESET.")
+        self.assertIn("keep their share", result["title"])
+        self.assertIn("All bots stays in tokens", result["unsizedNote"])
+        unsized = result["drawn"][3]
+        self.assertEqual([unsized["total"], unsized["pace"]], [13000, 0.625])
 
 
 if __name__ == "__main__":

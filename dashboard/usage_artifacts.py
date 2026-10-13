@@ -94,7 +94,8 @@ def normalize(value, artifact, run, repository, now):
     label = alias or "%s #%s (account unmapped)" % (repository.split("/", 1)[1], run["id"])
     return {"account": {"id": account, "label": label, "provider": provider, "quota_windows": []},
             "sample": {"account": account, "bot": ROLE[role], "timestamp": iso_time(observed),
-                       "input_tokens": total_input, "output_tokens": numbers["output_tokens"], "partial": status == "partial"}}
+                       "input_tokens": total_input, "cached_input_tokens": numbers["cached_input_tokens"],
+                       "output_tokens": numbers["output_tokens"], "partial": status == "partial"}}
 
 
 def _gap_inside(result, window_start):
