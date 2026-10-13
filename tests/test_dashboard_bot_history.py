@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 from dashboard.config import BotDefinition, Config
 from dashboard.gh_api import ApiError
 from dashboard.github import HISTORY_RUN_LIMIT, GitHubCollector
+from dashboard.required_workflows import workflow_runs
 from dashboard.service import DashboardService
 
 
@@ -137,7 +138,7 @@ class BotStates(unittest.TestCase):
                 for number in range(1, 21)}
         jobs[jobs_endpoint(21)] = [job(21, "review", "completed", "success", 21)]
         outcome = GitHubCollector(config(), BotAPI(completed=runs, jobs=jobs), clock=lambda: NOW)._bot_workflow(
-            REPO, WORKFLOW, ["reviewer"], NOW)
+            REPO, WORKFLOW, ["reviewer"], NOW, workflow_runs(REPO, WORKFLOW))
         self.assertEqual([row["run_id"] for row in outcome["rows"]["reviewer"]["completed"]], [21])
         self.assertTrue(outcome["history_complete"])
 
@@ -376,7 +377,7 @@ class RulesetRequiredHistory(unittest.TestCase):
     def test_an_id_learned_from_pull_runs_needs_no_search(self):
         api = self.api([run(1, "completed")])
         collector = GitHubCollector(config(), api, clock=lambda: NOW)
-        collector._learn_required(REPO, [{"path": ".github/workflows/" + WORKFLOW,
+        collector._required.learn(REPO, [{"path": ".github/workflows/" + WORKFLOW,
                                           "workflow_url": "https://api.github.com/" + self.REQUIRED[:-5]}])
         result = collector._bots(NOW)
         self.assertEqual(len(result["roles"]["reviewer"]["recent_7d"]), 1)
@@ -388,7 +389,7 @@ class RulesetRequiredHistory(unittest.TestCase):
         result = collector._bots(NOW)
         self.assertEqual({error["code"] for error in result["errors"]}, {"unavailable"})
         self.assertFalse(DashboardService._source_error_codes({"bots": result}) & {"not_found"})
-        self.assertEqual(collector._required[REPO], {})
+        self.assertEqual(collector._required._ids[REPO], {})
         collector._bots(NOW)
         self.assertEqual(sum(f"repos/{REPO}/actions/runs?" in call[1] for call in api.calls), 2)
 
