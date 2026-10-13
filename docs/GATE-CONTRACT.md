@@ -394,6 +394,18 @@ in history is a separate clean-up and never a reason to admit a new one; rules f
 precedence (`--config`, then the repository's `.gitleaks.toml`, then the defaults); every report is
 redacted. A range with no commits passes without running the tool.
 
+`osv-scanner` (Google's, a release binary) checks the dependency files a pull request changed
+against the OSV database: Python requirements files (any `requirements*.txt` or
+`requirements/*.txt`, read as requirements whatever the name), `poetry.lock`, `uv.lock`,
+`Pipfile.lock`, `pdm.lock`, and npm, pnpm and yarn lockfiles. A ratchet per vulnerability, one per
+alias group: a finding is a vulnerability in the file at HEAD that it did not have at the merge base,
+so adding or bumping to a vulnerable version fails while an advisory published later against an
+untouched pin never blocks unrelated work (`--all` reports everything). It runs `--no-resolve`: only
+what the file states is read, an unpinned requirement at its lower bound, and no package index is
+asked to resolve anything, so the verdict does not move with what an index serves. It needs the
+network; offline, or with a file it cannot read, it is exit 2. A vulnerability judged not to apply
+is listed with its reason in an `osv-scanner.toml` beside the file, the scanner's own ignore file.
+
 `actionlint` and `zizmor` lint and audit the workflows under `.github/workflows/`. Both judge only
 the workflows the pull request added or changed since the base (`--all` judges every tracked one,
 for an audit or a first subscription), because a finding in a workflow nobody touched is never this
