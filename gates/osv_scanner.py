@@ -66,7 +66,8 @@ def scan(binary, root, files):
 
 def line_of(repo, path, package):
     """The first line of the file naming the package, for the annotation; None when it cannot be told."""
-    name = re.compile(r"(?<![\w.-])%s(?![\w-])" % re.sub(r"[-_.]", "[-_.]", re.escape(package)), re.IGNORECASE)
+    spelled = "[-_.]".join(re.escape(part) for part in re.split(r"[-_.]", package))  # a-b, a_b and a.b are one name
+    name = re.compile(r"(?<![\w.-])%s(?![\w-])" % spelled, re.IGNORECASE)
     with open(os.path.join(repo, path), encoding="utf-8", errors="replace") as handle:
         return next((number for number, text in enumerate(handle, 1) if name.search(text)), None)
 

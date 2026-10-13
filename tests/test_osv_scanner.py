@@ -1,9 +1,10 @@
 """The osv-scanner ratchet, on the real pinned osv-scanner against osv.dev. The vulnerable pins are old releases
 with long-published advisories (requests 2.19.0, urllib3 1.24.1, lodash 4.17.15), so the answers do not move."""
 import json
+import sys
 import unittest
 
-from helpers import commit, gate, git, make_repo
+from helpers import ROOT, commit, gate, git, make_repo
 
 VULNERABLE = "requests==2.19.0\n"
 SAFE = "PyYAML==6.0.3\n"
@@ -72,6 +73,20 @@ class OsvScanner(unittest.TestCase):
         result = self.run_gate(self.branch({"README.md": "x\n"}, {"package-lock.json": "{not json"}))
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("osv-scanner exited 127", result.stderr)
+
+
+class LineOf(unittest.TestCase):
+    """gates/osv_scanner.py line_of: where a finding is annotated."""
+
+    def test_a_name_with_a_dot_dash_or_underscore_finds_its_line_in_any_spelling(self):
+        sys.path.insert(0, str(ROOT / "gates"))
+        self.addCleanup(sys.path.remove, str(ROOT / "gates"))
+        from osv_scanner import line_of
+        repo = make_repo(self, {"lock.txt": "lodash==1\nlodash.get==4.4.2\nruamel_yaml==0.17\nmy-lodash.get-x==1\n"})
+        self.assertEqual(line_of(repo, "lock.txt", "lodash.get"), 2)  # a dot in a name found nothing
+        self.assertEqual(line_of(repo, "lock.txt", "ruamel.yaml"), 3)
+        self.assertEqual(line_of(repo, "lock.txt", "lodash"), 1)
+        self.assertIsNone(line_of(repo, "lock.txt", "absent"))
 
 
 if __name__ == "__main__":
