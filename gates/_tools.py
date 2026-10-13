@@ -93,6 +93,21 @@ TOOLS = {
         },
         "version_args": ["--version"],
     },
+    "osv-scanner": {
+        "version": "2.6.0",
+        "url": "https://github.com/google/osv-scanner/releases/download/v{version}/{asset}",
+        # from osv-scanner_SHA256SUMS on the release, read 2026-10-13. 2.6.0, not the 2.7.0 published the day
+        # before: a month in use before a scanner is pinned. Each asset is the binary itself, not an archive.
+        "assets": {
+            ("Linux", "x86_64"): ("osv-scanner_linux_amd64",
+                                  "ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108"),
+            ("Darwin", "arm64"): ("osv-scanner_darwin_arm64",
+                                  "98c460dcd37de25819babd757d04542045b6243113e209edcd4d89fedb0256b4"),
+            ("Darwin", "x86_64"): ("osv-scanner_darwin_amd64",
+                                   "60c5296637e977b28eeda5c7f13573e447659a632922737f94d11fa7e30ad6ca"),
+        },
+        "version_args": ["--version"],
+    },
 }
 
 
@@ -110,7 +125,10 @@ def _reports_version(binary, tool):
 
 
 def _member(archive, asset, name):
-    """The bytes of the file called `name` in a .zip or .tar.gz release asset, or None."""
+    """The bytes of the file called `name` in a .zip or .tar.gz release asset, or None. Any other asset is
+    the binary itself (osv-scanner publishes no archives)."""
+    if not asset.endswith((".zip", ".tar.gz")):
+        return archive.read()
     if asset.endswith(".zip"):
         with zipfile.ZipFile(archive) as bundle:
             member = next((m for m in bundle.infolist() if not m.is_dir() and os.path.basename(m.filename) == name), None)

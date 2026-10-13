@@ -15,5 +15,8 @@
       "typescript": "this package is the changed-code-mutation gate's pinned toolchain: running it is its only job, installed by the gate's npm ci",
       "vitest": "this package is the changed-code-mutation gate's pinned toolchain: running it is its only job, installed by the gate's npm ci"
     }
+  },
+  "overrides": {
+    "qs": "6.16.0"
   }
 }
