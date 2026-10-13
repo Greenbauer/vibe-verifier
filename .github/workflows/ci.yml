@@ -2,7 +2,7 @@ name: CI
 
 # Tests every gate and the runner, then runs this repository's own manifest through
 # the composite action, which is the only place that action executes before a
-# consumer exists. The lanes jobs run the runner-lane kit's own suites (lanes/README.md).
+# consumer exists, then mutation-tests changed dashboard code (.vibe-verifier-tests). The lanes jobs run the runner-lane kit's own suites (lanes/README.md).
 
 on:
   pull_request:
@@ -20,7 +20,7 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,6 +33,17 @@ jobs:
         # 1.7.12, the latest release, rejects as an invalid ref. Until actionlint learns it, the
         # workspace-relative form stays and zizmor's finding is ignored here with this reason.
         uses: ./actions/gates # zizmor: ignore[self-repository]
+      - name: Install pytest for the mutation gate
+        run: |
+          python3 -m venv .venv-tests
+          .venv-tests/bin/pip install --quiet --disable-pip-version-check --require-hashes --only-binary :all: -r tests/requirements-pytest.txt
+      - name: Mutation-test changed dashboard code
+        # Its own manifest, because only this job installs the project's test runner. The gate runs the
+        # whole suite under pytest once, then each mutant on the changed lines, only when a pull request
+        # changes a dashboard .py file; the 20-minute job timeout sits above the gate's 900 seconds.
+        uses: ./actions/gates # zizmor: ignore[self-repository]
+        with:
+          manifest: .vibe-verifier-tests
 
   # The QAE browser action against a real apt and the pinned Playwright, which its tests stub: it reads
   # the missing system packages from that Playwright's own report, so a pin bump that changes the

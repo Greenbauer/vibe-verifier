@@ -55,6 +55,7 @@ def interpreter(python, repo):
     found = shutil.which(python)
     if not found:
         raise CannotRun("--python %s is not an interpreter on PATH or in the repository" % python)
+    found = os.path.abspath(found)  # mutmut runs in a copy of the project, where a relative path means nothing
     probe = run_tool([found, "-c", "import sys, pytest; print('%d.%d' % sys.version_info[:2])"], None, 60, "python")
     if probe[0] != 0:
         raise CannotRun("no pytest is installed for %s: install the project's dependencies before this gate, which "
@@ -143,6 +144,8 @@ def write_config(workspace, files):
 
 
 def copy_project(repo, prefix, workspace):
+    """The project's tracked files, committed as a repository of their own: a test that reads git (lists
+    the tracked files, asks for HEAD) sees a checkout, and the .git directory goes into mutmut's copy too."""
     for path in git(repo, "ls-files", "-z", "--", prefix or ".").split("\0"):
         if not path or not path.startswith(prefix):
             continue
@@ -150,6 +153,15 @@ def copy_project(repo, prefix, workspace):
         if os.path.lexists(source) and not os.path.isdir(source):
             os.makedirs(os.path.dirname(target), exist_ok=True)
             shutil.copy2(source, target, follow_symlinks=False)
+    identity = ["-c", "user.name=vibe-verifier", "-c", "user.email=vibe-verifier@users.noreply.github.com",
+                "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"]
+    git(workspace, "init", "-q")
+    git(workspace, "add", "-A")
+    git(workspace, *identity, "commit", "-q", "--allow-empty", "-m", "the project as the pull request leaves it")
+    # git writes its objects read-only, and mutmut copies .git over its earlier copy on the second run.
+    for root, _, names in os.walk(os.path.join(workspace, ".git")):
+        for name in names:
+            os.chmod(os.path.join(root, name), 0o644)
 
 
 def read_json(path):

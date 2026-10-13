@@ -524,6 +524,10 @@ changed-code-mutation --project apps/web --break 70 --soak
   every pull request that changes source. It goes in a manifest file of its own, such as
   `.vibe-verifier-tests`, run by a second job that runs `npm ci` (or the project's equivalent) and
   then `actions/gates` with `manifest: .vibe-verifier-tests`, under a job timeout above `--timeout`.
+  This repository does it for Python in `ci.yml`: a venv with pinned pytest, then
+  `changed-code-mutation --source dashboard/**/*.py --python .venv-tests/bin/python`, limited to
+  `dashboard/` because its gate modules are tested by running them as scripts. Its `pytest.ini` collects
+  only `tests/test_dashboard_*.py`: under mutmut's coverage tracing the whole suite ran past 900 seconds.
   The runner judges that file from the base like any manifest in the repository. Not `entries:`: in
   a repository's own workflow a pull request can edit it.
 - **Exit 2 also when** the suite fails at `HEAD` (Stryker cannot measure a red suite), Stryker exits
@@ -537,8 +541,8 @@ changed-code-mutation --project apps/web --break 70 --soak
   project's own pytest in the project's own interpreter, `--python` (default `python3`; a relative
   path is the repository's, such as `--python .venv/bin/python`): its package is appended to the end
   of that interpreter's `sys.path`, so the project's own packages win. No pytest there, or Python
-  before 3.10, is exit 2. It runs on a copy of the project's tracked files under the gate's own
-  `[tool.mutmut]` table (any the project has is replaced): mutmut generates a mutant per change it
+  before 3.10, is exit 2. It runs on a copy of the project's tracked files, committed as a git repository of its own (a
+  test that reads git sees a checkout), under the gate's own `[tool.mutmut]` table (any the project has is replaced): mutmut generates a mutant per change it
   can make in every function of the changed files and runs the whole suite once to learn which tests
   reach which function; the gate places each mutant on the source line where it first differs from
   the function it copies and keeps only those on the changed lines; mutmut then runs just those,
