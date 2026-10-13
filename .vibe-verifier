@@ -3,6 +3,7 @@ branch-name-length --max 60
 gitleaks
 actionlint
 zizmor
+bandit
 cognitive-complexity
 max-file-lines
 no-duplicate-package-json-keys

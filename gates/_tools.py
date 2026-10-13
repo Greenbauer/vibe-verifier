@@ -146,7 +146,7 @@ def _download(name, tool, target):
         raise CannotRun("cannot write the tool cache %s: %s" % (os.path.dirname(target), error))
     for attempt in range(1, FETCH_ATTEMPTS + 1):
         try:
-            with urllib.request.urlopen(url, timeout=60) as response:
+            with urllib.request.urlopen(url, timeout=60) as response:  # nosec B310: each pin's url is a fixed https address
                 data = response.read()
             break
         except (OSError, ValueError, http.client.HTTPException) as error:  # HTTPException: a body cut short

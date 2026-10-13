@@ -135,6 +135,7 @@ Each gate is a command-line program that reads a working tree and its Git histor
 | `changed-code-mutation` | Changed lines the project's own tests do not notice being broken: [StrykerJS](https://stryker-mutator.io/) (JS, TS) or [mutmut](https://github.com/boxed/mutmut) (Python) mutates only the lines a pull request added or modified, and the gate fails below a mutation score |
 | `actionlint` | Errors in changed GitHub Actions workflows |
 | `zizmor` | Security risks in changed workflows, such as unpinned actions and excessive permissions |
+| `bandit` | New [Bandit](https://bandit.readthedocs.io/) security results in changed Python files, such as a shell command built from input or an unsafe YAML load |
 | `cognitive-complexity` | New files with functions over the complexity limit, or changed files with more of them or with one that got worse |
 | `max-file-lines` | New files over the line limit, or existing files over it that grew |
 | `repo-rules` | New findings of the repository's own [ast-grep](https://ast-grep.github.io/) rules and of catalog [rule packs](rules/README.md), each with a message saying what to write instead |

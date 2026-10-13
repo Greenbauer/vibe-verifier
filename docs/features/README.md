@@ -8,6 +8,7 @@ One file per feature of this catalog: its gates, its harnesses, its command-line
 | [Inventory and pin propagation](consumers.md) | `consumers`, `apply-down` |
 | [Secret scanning](secrets.md) | `gitleaks` |
 | [Workflow lint and audit](workflow-lint.md) | `actionlint`, `zizmor` |
+| [Python security analysis](python-security.md) | `bandit` |
 | [New source has a test](test-presence.md) | `new-source-has-test` |
 | [Changed-code mutation](mutation.md) | `changed-code-mutation` |
 | [Complexity and file-length ratchets](ratchets.md) | `cognitive-complexity`, `max-file-lines` |

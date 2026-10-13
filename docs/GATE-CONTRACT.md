@@ -438,7 +438,15 @@ The first is `tools/cognitive-complexity-python/` (complexipy, which measures Py
 `tools/changed-code-mutation-python/` (mutmut and everything it needs but pytest, which must be the
 project's own); its venv is made from the project's interpreter (`--python`), so every compiled wheel
 matches it, and the gate appends the venv's packages to that interpreter's path rather than running
-the venv.
+the venv. The third is `tools/bandit/` (Bandit, for the `bandit` gate).
+
+`bandit` judges the Python files a pull request changed, as a ratchet per Bandit check: a file is a
+finding when it has more results of one check (`B602`, a subprocess with `shell=True`, say) than at
+the merge base, or is new and has any, and every result of that check in it is listed, because
+Bandit does not say which is new. `--severity` and `--confidence` (low, medium or high; default
+medium) set what counts. Tests are not read, since Bandit flags every `assert`, and the repository's
+Bandit config files are not read either: a line judged safe carries `# nosec <check id>` with the
+reason, which Bandit honours and the review reads in the diff. A file Bandit cannot parse is exit 2.
 
 ### Ratchets
 
