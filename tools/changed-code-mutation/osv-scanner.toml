@@ -1,0 +1,12 @@
+# osv-scanner's ignore file for this toolchain's lockfile (the osv-scanner gate reads it).
+
+# vitest here is vitest-stub, a local package named vitest at 0.0.0-vibe-verifier-stub.1 that throws if it
+# is ever loaded (see package.json). It is not vitest, but its 0.0.0 version falls inside vitest's
+# advisory ranges.
+[[IgnoredVulns]]
+id = "GHSA-5xrq-8626-4rwp"
+reason = "vitest-stub, not vitest: the project's own Vitest runs, and the stub throws if loaded"
+
+[[IgnoredVulns]]
+id = "GHSA-9crc-q9x8-hgqq"
+reason = "vitest-stub, not vitest: the project's own Vitest runs, and the stub throws if loaded"
