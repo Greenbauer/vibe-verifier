@@ -5,9 +5,24 @@ import unittest
 from dashboard.gh_api import ApiError
 from dashboard.github import GitHubCollector
 from dashboard.required_checks import PUSH_RESTRICTED, required_contexts
+from test_dashboard_fresh import Clock, HeadAPI, listed, pull as head_pull
 from test_dashboard_github import (
     HISTORY, NOW, REPO, SHA, config, endpoints, joined_api, pinned_api, pull_row, required_workflow_rule,
 )
+
+
+class TwoRepositoryAPI(HeadAPI):
+    """Each repository's main branch requires its own status check."""
+
+    REQUIRED = {"octocat/one": "lint-and-test", "octocat/two": "test"}
+
+    def items(self, endpoint, key=None):
+        for name, context in self.REQUIRED.items():
+            if endpoint.startswith("repos/%s/rules/branches/main" % name):
+                self.take(endpoint)
+                return [{"type": "required_status_checks",
+                         "parameters": {"required_status_checks": [{"context": context}]}}]
+        return super().items(endpoint, key)
 
 
 class RequiredChecks(unittest.TestCase):
@@ -167,3 +182,22 @@ class RequiredChecks(unittest.TestCase):
         result = GitHubCollector(config(), api, clock=lambda: NOW)._repository(REPO, {"subscription": "subscribed"})
         self.assertFalse(result["pulls"][0]["evidence_available"])
         self.assertEqual(result["errors"], [{"pull": 3, "code": "unavailable"}])
+
+
+
+class RulesPerRepository(unittest.TestCase):
+    def test_a_pass_over_two_repositories_on_main_keeps_each_ones_required_checks(self):
+        # The changed-first pass shares one rules cache across repositories; a base-only key gave every
+        # repository on main the required checks of whichever repository was read first.
+        names = ("octocat/one", "octocat/two")
+        pulls = {name: [{**head_pull(name, index + 1), "base": {"ref": "main"}}] for index, name in enumerate(names)}
+        api = TwoRepositoryAPI(80, pulls)
+        client = GitHubCollector(listed(*names), api, clock=Clock(NOW))
+        client._kind = "User"
+        result = client.collect({name: {"subscription": "unknown"} for name in names})
+        self.assertTrue(client._heads_ok)
+        by_name = {row["repository"]: row["pulls"][0] for row in result["repositories"]}
+        self.assertEqual([row["name"] for row in by_name["octocat/one"]["expected"]], ["lint-and-test"])
+        self.assertEqual(by_name["octocat/two"]["expected"], [])
+        for name in names:
+            self.assertIn("repos/%s/rules/branches/main?per_page=100" % name, api.log)

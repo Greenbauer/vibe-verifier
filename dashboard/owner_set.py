@@ -38,10 +38,12 @@ class OwnerSet:
         return pull
 
     def _one_pull(self, repository: str, row: dict, inventory: dict, rules: dict, signals: dict) -> dict:
+        # Keyed by repository too: the changed-first pass shares one cache across repositories.
         base = (row.get("base") or {}).get("ref")
-        if isinstance(base, str) and base not in rules:
-            rules[base] = self._branch_rules(repository, base)
-        return self._pull(repository, row, inventory, rules.get(base, []), signals.get(row.get("number")))
+        key = (repository, base)
+        if isinstance(base, str) and key not in rules:
+            rules[key] = self._branch_rules(repository, base)
+        return self._pull(repository, row, inventory, rules.get(key, []), signals.get(row.get("number")))
 
     def _note_pull_error(self, repository: str, row: dict, inventory: dict, signals: dict, error: ApiError,
                          pulls: list, errors: list) -> bool:
