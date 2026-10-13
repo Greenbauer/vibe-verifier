@@ -35,7 +35,10 @@ skipped has no line and is refused. A re-walk is partial by design, so a state t
 walk is never a finding: it names them on a `regression-skip: <id> -- <states>` line, which the gate
 prints and does not judge. A FAIL is a finding, and says a step that was walked no longer matches
 the feature file: the pull request fixes the regression or, when it means the new behaviour, updates
-the file. A feature with a line and no walked step was not re-walked, which is a finding too.
+the file. A feature with a line and no walked step was not re-walked, which is a finding too. A
+feature no browser can walk (every state needs a secret, a cron or a system the explorer does not
+have) is not selected when its file, as the base has it, declares `re-walk: none -- <why>` in its
+Verify section; the gate prints it and asks for no line.
 
 A head whose map has no feature file is judged as the feature-map gate judges it (gates/_features.py).
 A branch that predates the map (its merge base with the base has no feature file, and the base has
@@ -230,7 +233,12 @@ def regression_finding(fid, path, carried, walked, repo, tracked, artifacts):
         return ("%s is a FAIL: %s. A step the explorer walked no longer matches %s: fix the regression or, if this pull "
                 "request means to change that behaviour, update %s in this pull request, since the re-walk reads the "
                 "pull request's own copy of it" % (fid, carried[0].strip(), path, path))
-    return line_finding(fid, path, carried, REGRESSION_TOKEN, repo, tracked, artifacts)
+    why = line_finding(fid, path, carried, REGRESSION_TOKEN, repo, tracked, artifacts)
+    if why and not carried and not walked:
+        why += (". If no browser can walk any state of %s, declare it on a line of the Verify section of %s: "
+                "`re-walk: none -- <why>`. It is read from the base, so it holds from the pull request after the one "
+                "that adds it" % (fid, path))
+    return why
 
 
 def regression_findings(args, verdict, tracked):

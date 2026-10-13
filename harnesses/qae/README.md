@@ -98,7 +98,10 @@ step selects nothing and nothing changes.
   screenshot (none is a re-walk that did not happen). It prints the skip lines and judges neither
   them nor how many states were walked. Its finding for a FAIL says how to clear it: fix the
   regression or, when the pull request means the new behaviour, update the feature file in that
-  pull request. `qae-artifacts` checks the feature step logs' screenshots like the criteria's; the
+  pull request. A feature no browser can walk (every state behind a secret or a cron) is cleared by
+  its own file, never by a skip line: `re-walk: none -- <why>` in its Verify section, read from the
+  base, takes it out of the selection
+  ([feature map](../../docs/feature-map.md#a-feature-no-browser-can-walk)). `qae-artifacts` checks the feature step logs' screenshots like the criteria's; the
   review comment lists each re-walked feature and the states left unwalked.
 - A Verify step that is a refusal by design (a wrong password answered 400) declares it on its own
   line, `expected-refusal: <status> <path-or-URL>`, when the `qae-artifacts` line carries the same

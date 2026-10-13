@@ -89,6 +89,37 @@ class Selection(unittest.TestCase):
                                "app/search/box.ts", "docs/features/billing.md", "app/billing/plan.ts")
         self.assertEqual(result.stdout, "features: 2\nre-walk: auth (1 changed file)\nre-walk: search (1 changed file)\n")
 
+    def test_a_feature_its_base_file_declares_no_browser_can_walk_is_set_aside_before_the_cap(self):
+        # A consumer's server-only feature (2026-10-12): every Verify state needed a cron secret, an operator
+        # secret or a Slack bot token, so the explorer walked none and every pull request touching it failed QAE.
+        unwalkable = feature("Shell", "app/shell/**", verify="re-walk: none -- every state needs the cron secret\n"
+                                                              "1. With no credential, GET /api/cron: 401.")
+        changes = {p: "2\n" for p in ("app/auth/login.ts", "app/projects/list.ts", "app/billing/plan.ts",
+                                      "app/shell/nav.ts", "app/shell/menu.ts")}
+        repo = self.branch(changes, base=dict(BASE, **{"docs/features/shell.md": unwalkable}))
+        out = os.path.join(repo, ".git", "qae-inputs", "features")
+        result = self.features(repo, *changes, out=out)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # Without the declaration shell, owning two changed files, would take the first place and push projects out.
+        self.assertEqual(result.stdout.splitlines(), [
+            "features: 3", "re-walk: auth (1 changed file)", "re-walk: billing (1 changed file)",
+            "re-walk: projects (1 changed file)",
+            "no browser can walk it, not re-walked: shell (2 changed files): every state needs the cron secret"])
+        self.assertEqual(sorted(os.listdir(out)), ["auth.md", "billing.md", "projects.md"])  # never handed to the explorer
+
+    def test_only_the_bases_copy_declares_a_feature_it_has_out_of_the_re_walk(self):
+        # A pull request cannot declare its own re-walk away, as it cannot narrow its globs; a feature it adds
+        # declares itself.
+        repo = self.branch({
+            "docs/features/shell.md": feature("Shell", "app/shell/**", verify="re-walk: none -- out of time"),
+            "app/shell/nav.ts": "2\n",
+            "docs/features/jobs.md": feature("Jobs", "app/jobs/**", verify="re-walk: none -- cron only"),
+            "app/jobs/run.ts": "1\n",
+        })
+        result = self.features(repo, "app/shell/nav.ts", "app/jobs/run.ts")
+        self.assertEqual(result.stdout, "features: 1\nre-walk: shell (1 changed file)\n"
+                                        "no browser can walk it, not re-walked: jobs (1 changed file): cron only\n")
+
     def test_out_holds_the_head_version_of_each_selected_file_and_nothing_else(self):
         head = feature("Sign-in", "app/auth/**", "app/styles.css", "app/router.ts", verify="1. Sign in as the test user.")
         repo = self.branch({"docs/features/auth.md": head, "app/auth/login.ts": "2\n"})
@@ -264,10 +295,33 @@ class RegressionChecks(unittest.TestCase):
         self.assertIn("auth was not re-walked", self.rewalk(self.AC + self.AUTH + self.PROJECTS).stdout)
 
     def test_a_skip_line_never_stands_in_for_the_check_line(self):
+        hint = "If no browser can walk any state of projects"
         result = self.rewalk(self.AC + self.AUTH + "regression-skip: projects -- 1, 2, 3\n")
         self.assertEqual(result.returncode, 1)
         self.assertIn("projects has no `regression-check: projects` line (docs/features/projects.md)", result.stdout)
         self.assertIn("projects: states not walked, as the explorer reports: 1, 2, 3", result.stdout)
+        self.assertNotIn(hint, result.stdout)  # a step was walked, so a browser can walk it
+        # With no step walked, a feature no browser can walk is cleared by its file, never by the skip line:
+        # the finding says how.
+        self.shot("projects").unlink()
+        result = self.rewalk(self.AC + self.AUTH + "regression-skip: projects -- 1, 2, 3\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("If no browser can walk any state of projects, declare it on a line of the Verify section of "
+                      "docs/features/projects.md: `re-walk: none -- <why>`", result.stdout)
+
+    def test_a_feature_its_file_declares_no_browser_can_walk_needs_no_line(self):
+        # The explorer's skip line is never trusted for this (above); the base's feature file is.
+        declared = feature("Projects", "app/projects/**", "app/styles.css", "app/router.ts",
+                           verify="re-walk: none -- every state needs the cron secret\n1. GET /api/cron: 401.")
+        self.repo = make_repo(self, dict(BASE, **{"docs/features/projects.md": declared}))
+        git(self.repo, "checkout", "-q", "-b", "feat")
+        commit(self.repo, {"app/auth/login.ts": "2\n", "app/projects/list.ts": "2\n"})
+        result = self.rewalk(self.AC + self.AUTH + "regression-skip: projects -- 1\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("acceptance-verdict: no browser can walk it, not re-walked: projects (1 changed file): "
+                      "every state needs the cron secret", result.stdout)
+        self.assertNotIn("projects: 0 steps", result.stdout)
+        self.assertIn("auth has no `regression-check: auth` line", self.rewalk(self.AC + self.PROJECTS).stdout)
 
     def test_only_the_gate_decides_which_features_were_required(self):
         # A line for a feature nobody selected changes nothing; a criteria failure still counts.

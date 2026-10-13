@@ -51,6 +51,9 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - `tests/test_features.py::test_a_selected_feature_without_its_line_is_refused`
 - `tests/test_features.py::test_states_left_unwalked_are_printed_and_never_a_finding`
 - `tests/test_features.py::test_a_feature_with_no_walked_step_is_refused_whatever_its_line_says`
+- `tests/test_features.py::test_a_feature_its_base_file_declares_no_browser_can_walk_is_set_aside_before_the_cap`
+- `tests/test_features.py::test_only_the_bases_copy_declares_a_feature_it_has_out_of_the_re_walk`
+- `tests/test_features.py::test_a_feature_its_file_declares_no_browser_can_walk_needs_no_line`
 - `tests/test_features.py::test_a_branch_that_predates_the_map_is_not_re_walked_and_not_failed`
 - `tests/test_features.py::test_a_pull_request_that_removes_the_map_cannot_be_re_walked`
 - `tests/test_qa_review.py::test_changes_needed_lists_each_criterion_as_the_explorer_judged_it`
@@ -97,7 +100,7 @@ Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workfl
 - A pull request body lists criteria only under its `Acceptance criteria` heading; the plain-list reading is for a ticket's criteria file. A Dependabot body has no such heading, so its criteria are the ones the consumer's workflow supplies.
 - A design reference's digest reaches the gate as an explore job output, never as a file the explorer could rewrite; a reference the workflow did not supply is refused, never invented.
 - The Claude lane's `--max-turns` is the qae-inputs step's `max-turns` output, sized to the run's walks; a consumer copy that still passes a fixed number keeps that number.
-- A feature re-walk covers at most `--max-states` states of each feature. A `regression-check` FAIL means a walked step broke; a state not reached goes on a `regression-skip` line, which no gate judges. A consumer copy with the older prompt still tells the explorer to walk every state.
+- A feature re-walk covers at most `--max-states` states of each feature. A `regression-check` FAIL means a walked step broke; a state not reached goes on a `regression-skip` line, which no gate judges. A consumer copy with the older prompt still tells the explorer to walk every state. A feature no browser can walk is taken out by `re-walk: none -- <why>` in its own file (read from the base), never by a skip line.
 - A pull request opened before the feature map landed on the base has no feature file to re-walk: `features` prints `features: 0` and why, and `acceptance-verdict` passes labelled `re-walk not run: the branch predates the feature map`. Any other head with no feature file, a removed map included, is exit 2 in both.
 - The evidence artifact is `qae-artifacts-<run_attempt>` (`-<n>` appended for an explorer past the first), and the verify job downloads every attempt's and takes each explorer's newest, so one failed explorer can be run again alone. It fails when the explore job's `attempt` output is newer than any evidence. A consumer copy that still names it `qae-artifacts` in both jobs hands a re-run's verify job whichever attempt's artifact GitHub returns.
 - `actions/qae-browser` reads the names of the missing system packages from the pinned Playwright's `install-deps --dry-run` report. A Playwright bump that changes that report fails the step (never reads as nothing missing), and the catalog's `qae-browser` CI job is where that shows first.

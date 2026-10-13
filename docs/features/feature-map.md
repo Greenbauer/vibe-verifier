@@ -28,6 +28,7 @@ Add `docs/features/` and a `feature-map --surface ...` line to `.vibe-verifier`;
 - `tests/test_feature_map.py::test_a_named_base_the_checkout_lacks_is_never_replaced_by_main`
 - `tests/test_feature_map.py::test_a_pull_request_that_introduces_the_map_is_judged_on_its_own_map`
 - `tests/test_feature_map.py::test_with_nothing_to_tell_them_apart_a_missing_map_cannot_run`
+- `tests/test_feature_map.py::test_a_feature_no_browser_can_walk_says_so_once_and_a_misspelt_declaration_is_a_finding`
 
 ## Gotchas
 
