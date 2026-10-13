@@ -22,4 +22,5 @@ One file per feature of this catalog: its gates, its harnesses, its command-line
 | [Revision-bound AI review](review-harness.md) | `review-receipt` |
 | [Pull request sync](pull-sync.md) | none: `actions/pull-sync` is an action a workflow runs |
 | [Preview address](preview.md) | none: `actions/preview` is an action a workflow runs |
+| [Browser seats](browser-seats.md) | none: `actions/browser-seats` is an action a workflow runs |
 | [Self-hosted runner lanes](runner-lanes.md) | none: `lanes/bin/*` are scripts a machine's operator and its timers run |
