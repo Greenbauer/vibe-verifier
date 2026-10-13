@@ -146,6 +146,10 @@ def write_config(workspace, files):
         "source_paths": roots,
         "only_mutate": sorted(re.sub(r"[\[*?]", lambda char: "[%s]" % char.group(0), path) for path in files),
         "also_copy": sorted(name for name in os.listdir(workspace) if name != "mutants"),
+        # Not mutmut's default "fork", which runs the suite in its own process and then takes every child
+        # that exits for a mutant's worker: a process a test started and never waited for crashed it
+        # (KeyError). The fork server runs the suite in a child and ignores children it did not start.
+        "process_isolation": "forkserver",
     }
     kept += ["", "[tool.mutmut]"] + ["%s = %s" % (key, json.dumps(value)) for key, value in table.items()]
     with open(path, "w", encoding="utf-8") as handle:
