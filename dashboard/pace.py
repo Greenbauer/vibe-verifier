@@ -40,41 +40,43 @@ def weighted_tokens(sample: dict) -> float:
     return sample["input_tokens"] - cached + CACHED_WEIGHT * cached + OUTPUT_WEIGHT * sample["output_tokens"]
 
 
+def _percent_per_token(samples: list, billed, start: datetime, used: float, now: datetime) -> float | None:
+    """Percent of the plan one weighted token is worth: the window's used percent over the weighted
+    tokens its billed samples spent since it began. None when that cannot be counted."""
+    # Samples are kept seven days, so a longer window's spend cannot be counted from its start.
+    if start < now - timedelta(days=7) or used <= 0:
+        return None
+    spent = sum(weighted_tokens(sample) for sample in samples
+                if billed(sample) and parse_time(sample["timestamp"]) >= start)
+    return used / spent if spent > 0 else None
+
+
 def plan_burn(usage: dict, now: datetime) -> tuple[dict | None, list]:
     """The paced plan's even pace, and each sample it bills given its share of the plan in percent.
 
     The line, `percent_per_hour`, is (100 - used%) over the hours left: exact, from the plan's own
     reading. A sample bills to the plan when its account has the plan's provider. Its `plan_percent`
-    is its weighted tokens times the window's used percent over the weighted tokens the plan's
-    samples spent since the window began. That reads the bots' tokens as standing for all the plan's
-    use, which holds while they keep their share of it; with no such tokens, the samples get none.
-    Returns (None, samples) when there is no paced window or it has reset.
+    is its weighted tokens times `_percent_per_token`. That reads the bots' tokens as standing for all
+    the plan's use, which holds while they keep their share of it; with no such tokens, the samples
+    get none. Returns (None, samples) when there is no paced window or it has reset.
     """
     samples = list(usage.get("samples", []))
     pair = _paced(usage) if usage.get("available") else None
-    if pair is None:
+    reset = parse_time(pair[1]["resets_at"]) if pair else None
+    if reset is None or reset <= now:
         return None, samples
     account, window = pair
-    reset, used = parse_time(window["resets_at"]), min(window["used_percent"], 100)
-    remaining = (reset - now).total_seconds()
-    if remaining <= 0:
-        return None, samples
+    used = min(window["used_percent"], 100)
     providers = {item["id"]: str(item.get("provider", "")).lower() for item in usage.get("accounts", [])}
-    plan_provider = providers[account["id"]]
-    start = reset - timedelta(minutes=window["window_minutes"])
-    billed = [sample for sample in samples if providers.get(sample["account"]) == plan_provider]
-    spent = sum(weighted_tokens(sample) for sample in billed if parse_time(sample["timestamp"]) >= start)
-    # Samples are kept seven days, so a longer window's spend cannot be counted from its start.
-    kept = start >= now - timedelta(days=7)
-    per_token = used / spent if kept and spent > 0 and used > 0 else None
-    line = {"percent_per_hour": (100 - used) / (remaining / 3600), "plan": account["label"],
+    billed = lambda sample: providers.get(sample["account"]) == providers[account["id"]]  # noqa: E731
+    per_token = _percent_per_token(samples, billed, reset - timedelta(minutes=window["window_minutes"]), used, now)
+    line = {"percent_per_hour": (100 - used) / ((reset - now).total_seconds() / 3600), "plan": account["label"],
             "window": window["name"], "used_percent": window["used_percent"], "resets_at": window["resets_at"],
             "sized": per_token is not None, "partial": bool(usage.get("partial"))}
     if per_token is None:
         return line, samples
-    tagged = [{**sample, "plan_percent": weighted_tokens(sample) * per_token}
-              if providers.get(sample["account"]) == plan_provider else sample for sample in samples]
-    return line, tagged
+    return line, [{**sample, "plan_percent": weighted_tokens(sample) * per_token} if billed(sample) else sample
+                  for sample in samples]
 
 
 def plan_window_start(usage: dict) -> datetime | None:

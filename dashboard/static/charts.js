@@ -127,6 +127,18 @@
     return `${live} · usual day ${percent ? percentText(sum(burn.avg)) : short(sum(burn.avg))}`;
   }
 
+  // The words a card uses for its unit: tokens, or percent of the plan.
+  function unitWords(percent) {
+    return percent ? { amount: percentText, most: "of the plan", lead: "Share of the plan", per: "percent of the plan" }
+      : { amount: short, most: "tokens", lead: "Tokens", per: "tokens" };
+  }
+
+  // The totals line's hover: what a usual day averaged.
+  function method(lead, days) {
+    if (days === null) return `${lead} in the last 24 hours. A usual day appears once every hour has an observed prior day.`;
+    return `${lead} in the last 24 hours, and a usual day averaged over the ${days} prior day${days === 1 ? "" : "s"} observed so far${days < 6 ? " (not a full week yet)" : ""}.`;
+  }
+
   // "0.4%" under ten, "12%" above: whole percents hide a slow hour.
   function percentText(value) {
     return `${value < 10 ? (Math.round(value * 10) / 10).toString() : Math.round(value)}%`;
@@ -201,5 +213,5 @@
     return String(Math.round(value));
   }
 
-  return { hourLabel, hourlyBurn, sumBurns, ceiling, smoothPath, runs, totals, percentText, drawBurn, short };
+  return { hourLabel, hourlyBurn, sumBurns, ceiling, smoothPath, runs, totals, percentText, unitWords, method, drawBurn, short };
 });
