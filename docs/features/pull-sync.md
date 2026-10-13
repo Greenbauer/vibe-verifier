@@ -17,6 +17,9 @@ From a workflow, `uses: Greenbauer/vibe-verifier/actions/pull-sync@<sha>` with a
 - `tests/test_pull_sync.py::test_acting_updates_a_ready_pull_request_at_the_head_it_judged`
 - `tests/test_pull_sync.py::test_work_in_flight_is_not_interrupted`
 - `tests/test_pull_sync.py::test_slots_go_to_ready_pull_requests_first_and_count_checks_already_running`
+- `tests/test_pull_sync.py::test_only_an_update_with_checks_running_holds_a_slot`
+- `tests/test_pull_sync.py::test_pull_requests_busy_with_their_own_pushes_never_keep_a_green_one_behind`
+- `tests/test_pull_sync.py::test_the_next_run_counts_the_update_this_one_made`
 - `tests/test_pull_sync.py::test_a_conflict_is_labelled_once_and_never_updated`
 - `tests/test_pull_sync.py::test_a_repository_that_cannot_be_read_has_no_plan`
 - `tests/test_pull_sync.py::test_the_run_reads_again_while_github_has_not_said_what_merges`
@@ -29,3 +32,4 @@ From a workflow, `uses: Greenbauer/vibe-verifier/actions/pull-sync@<sha>` with a
 - A conflict is never resolved here. `sync-conflict` is the hand-off.
 - A head's rollup state says FAILURE at its first failed check while the others still run. "Checks running" is read from the per-state counts, never from the rollup.
 - Right after a merge GitHub answers `mergeable: UNKNOWN` for every pull request until asked again.
+- Only an update holds a slot: a head that is a merge commit GitHub made (`committedViaWeb` and two parents). Counting heads people pushed starved every green pull request on a repository whose heads run checks for hours.
