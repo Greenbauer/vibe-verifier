@@ -206,7 +206,9 @@ jobs:
         # features it walks (harnesses/qae/README.md); the Claude lane passes it as --max-turns.
         # Its `share` output is the sentence that names this explorer's share of the criteria, for the
         # prompt: empty for one explorer. For one of several the criteria are shared out here, by code,
-        # the same way in every explore job, so the model never works its share out. The first
+        # the same way in every explore job, so the model never works its share out. Criteria that name
+        # each other by number stay with one explorer, and each of several is given a tag for the records
+        # it creates and keeps to (harnesses/qae/README.md, "Criteria that build on each other"). The first
         # explorer's load starts at the feature re-walk's walks, so it takes fewer criteria and reaches
         # the re-walk in its time: a selected feature with no walked step fails the gate.
         id: references

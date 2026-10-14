@@ -386,10 +386,12 @@ can give each runner a share of the criteria instead.
 [its ticket](#the-tickets-criteria), once per role it names in `[as: ...]` and per width on the
 manifest's qae-artifacts line. Feature re-walks are not counted: which features are re-walked is
 selected from a checkout, and this job has none. It plans one explorer for every six
-walks, rounded up, never more than `max-shards`, and never more than there are criteria, because a
-criterion is never split. The job's log shows the count (`shards: [1,2,3]`), the walks, and one
-warning when the walks are more than the planned explorers are sized for, so an oversized pull
-request is visible before any explorer starts. With the default `max-shards: 1` there is always one
+walks, rounded up, never more than `max-shards`, and never more than there are chains of criteria,
+because a criterion is never split and neither are [criteria that build on each
+other](#criteria-that-build-on-each-other). The job's log shows the count (`shards: [1,2,3]`), the
+walks, each chain (`chain: AC2, AC3, AC4 (6 walks, one explorer)`), and one warning when the
+explorer with the most walks has more than it is sized for, so an oversized pull request is visible
+before any explorer starts. With the default `max-shards: 1` there is always one
 explorer, and those log lines are all this job adds.
 
 **How to turn it on.** In the criteria job, raise `max-shards` on the `actions/criteria` step to the
@@ -404,14 +406,16 @@ as `entries:` instead, as it does to `actions/gates`. Without either, one width 
 
 - [`actions/qae-inputs`](../../actions/qae-inputs/action.yml) is given the explorer's number
   (`matrix.shard || 1`) and how many there are (`strategy.job-total`). It shares the criteria out,
-  the same way in every explore job: largest walks first, each criterion goes whole to the explorer
-  with the fewest walks so far, the lowest-numbered on a tie. Equal-sized criteria keep document
+  the same way in every explore job: largest walks first, each criterion, or chain of criteria that
+  build on each other, goes whole to the explorer with the fewest walks so far, the lowest-numbered
+  on a tie. Equal-sized criteria keep document
   order. This avoids placing a late multi-role criterion on an already busy explorer. Each final
   share keeps document order and original criterion numbers. It declares the sentence the prompt
   gives that explorer: "Your share of the criteria is AC1, AC4, TC2: you are explorer 2 of 3. Walk
-  only those, and write a verdict line for each of them and for no other criterion; ...". The model
-  never works its share out, and the explore job's log names the share. On the Claude lane the turn
-  cap is sized to it.
+  only those, and write a verdict line for each of them and for no other criterion; ...", then the
+  chains in its share ("AC2, AC3 name each other by number, so they may build on each other: walk
+  them in that order, ...") and [its tag](#criteria-that-build-on-each-other). The model never works its share out,
+  and the explore job's log names the share. On the Claude lane the turn cap is sized to it.
 - Only the first explorer re-walks the [features](#re-walking-the-features-a-pull-request-touches),
   and its load starts at the re-walk's walks, counted as the turn cap counts them. A selected
   feature with no walked step fails the gate, so the explorer that carries the re-walk takes fewer
@@ -441,6 +445,36 @@ as `entries:` instead, as it does to `actions/gates`. Without either, one width 
   `acceptance-verdict` refuses them. A copy of each verdict is still posted as a comment, one per
   explorer, for people to read.
 
+### Criteria that build on each other
+
+Explorers of one run share the preview and its data. A consumer's pull request listed seven
+criteria, each working on the record the one before it created ("On the record from item 4, take a
+snapshot"). Split across three explorers, the one given the fifth had created no record, opened the
+one another explorer had created from a list both could see, and took its snapshot while that
+explorer still had the fourth criterion's extra line on it. It failed a correct criterion on a total
+that included the line. Two rules keep an explorer off another's records:
+
+- **A chain stays with one explorer.** A criterion that names another of its list by number is
+  chained to it, and so is every criterion either names in turn: `item 2`, `items 2 and 3`,
+  `criterion 4` and `criteria 4, 5` count in the criterion's own list (the pull request's AC, or the
+  ticket's TC), and `AC3` or `TC1` names one of either list outright. A chain is shared out whole,
+  as one criterion is, and counts as one toward how many explorers there are, so the seven criteria
+  above are one explorer's. Its explorer is told to walk them in order, on the records they made. A
+  dependency that names no number ("the profile", "the customer from the preamble") is not seen:
+  write the number, or the tag below is all that keeps the explorers apart. A number that names no
+  dependency ("add items 2 at a time") chains criteria that did not need it, which costs
+  parallelism, never a verdict.
+- **Every explorer of several has a tag**, `qae-<run id>.<attempt>-e<n>` (`actions/qae-inputs`
+  reads the run and attempt; a re-run's explorer does not take an earlier attempt's records for its
+  own). Its prompt says: every record you create carries your tag (a name a criterion gives is that
+  name followed by the tag), and open, change or judge only records that carry it or that existed
+  before the run; never pick another explorer's record from a list; and where a criterion of yours
+  builds on a record a criterion outside your share creates, create your own first. One explorer
+  walks with no tag and its records are named exactly as the criteria say.
+
+The tag is a prompt rule: no gate checks a record's name. The chain is code, so criteria that name
+each other are never split, whatever the model does.
+
 **Names.** The first explorer's job is `qae-explore`, as it always was, and the others are
 `qae-explore (2)`, `qae-explore (3)`, ... The matrix's first value is blank for that: GitHub names a
 matrix job `<name> (<value>)` and leaves a blank value out, and shows a name that is an expression
@@ -452,9 +486,12 @@ that names `qae-explore` finds it on every pull request, split or not.
 - **Have the runners.** N explorers at once need N QAE runners, and on the Codex lane N logins
   ([below](#the-explorer-on-codex-the-openai-subscription-with-the-login-on-the-runner)). With fewer,
   the explorers queue: nothing fails, and the split saves less time.
-- **Keep criteria independent.** A site step that resolves a shared preview hands every explorer the
-  same site and its data, and the explorers run at the same time. A criterion must not depend on
-  what another criterion left behind (a record it created, a setting it changed).
+- **Name the criterion a criterion builds on.** A site step that resolves a shared preview hands
+  every explorer the same site and its data, and the explorers run at the same time. A criterion
+  that works on what another left behind (a record it created, a setting it changed) names that one
+  by number, so that one explorer walks both, in order ([below](#criteria-that-build-on-each-other)).
+  A setting one criterion changes for the whole site still reaches the others: keep such a change
+  in one chain with every criterion that reads it, or off the list.
 - **Make what the site step creates unique per explorer.** The step runs in every explore job. A
   login it creates gets the explorer's number in its name (`matrix.shard || 1` is available to the
   step), or two explorers sign each other out or collide on one account. A site it starts on a

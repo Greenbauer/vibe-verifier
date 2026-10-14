@@ -90,16 +90,18 @@ as `ticket: ...`, and refused by the gate), makes a check needed whatever the pu
 it cannot drop its ticket's requirements; an empty file links no ticket. With `--max-shards N` it then
 prints `shards: [1,2,...]`, the explorers the criteria are split across, for a harness to run in parallel:
 one walk is a criterion as one role it names at one width, an explorer is sized for six, and there are
-never more than N explorers nor than criteria (a criterion is never split). A `walks: <n>` line says how
-many it counted. Which criteria each explorer walks is `qae-inputs --shard`'s to say: it also knows the
+never more than N explorers nor than chains of criteria. A criterion is never split, and criteria that build
+on each other are a chain one explorer walks whole: a criterion that names another of its list by number
+("on the profile from item 2", "after AC3") is chained to it. A `walks: <n>` line says how many it counted,
+and a `chain: AC2, AC3, ...` line names each chain. Which criteria each explorer walks is `qae-inputs --shard`'s to say: it also knows the
 feature re-walk, which this command does not. The widths are the `--widths` of the qae-artifacts
 line of `--manifest FILE`, judged from the base like a run (no manifest counts one width). More walks
-than the explorers are sized for prints one `::warning::` with the numbers. Exit 2 when a file cannot be
+than the explorer with the most of them is sized for prints one `::warning::` with the numbers. Exit 2 when a file cannot be
 read.
 
 `qae-inputs [--manifest FILE] [--widths-file FILE] [--references DIR] [--evidence DIR] [--listing FILE]
 [--digests FILE] [--turns FILE [--criteria FILE] [--ticket FILE] [--features DIR] [--shard K --shards N]
-[--share FILE]]` prepares what the QAE
+[--share FILE] [--run ID]]` prepares what the QAE
 explorer and its gates read from the site step's supplies and the QAE manifest, before the explorer runs.
 Each design reference `<key>.png` the site step wrote to DIR (default qae-inputs/references) is copied
 to `<evidence>/references/<key>.png` (default qae-artifacts), listed with its size in FILE (default
@@ -114,13 +116,16 @@ qae-inputs/ticket.md; absent is none) once per role it names and per width, plus
 (`--features`, default qae-inputs/features), which is one walk per three states the manifest's
 acceptance-verdict line lets the explorer walk of it (`--max-states`, default 3). With `--shard K --shards N`
 the explorer is one of N that share the criteria (`criteria --max-shards` decided N). Largest walks first, each
-criterion goes whole to the explorer with the fewest walks so far, the lowest-numbered on a tie, and the first
+criterion, or chain of criteria that build on each other, goes whole to the explorer with the fewest walks so far, the lowest-numbered on a tie, and the first
 explorer starts with the walks of the feature re-walk, which only it does, so it takes fewer criteria and
 reaches the re-walk in its time. Every explorer counts the features the same way, to make the same
 assignment; equal-sized criteria and each final share keep document order and original criterion numbers.
 For one past the first `--features DIR` and its listing are then removed: it is not handed
 them. The cap is sized to the explorer's own share, and `--share FILE` gets the one sentence that names that
-share for its prompt (an empty line for one explorer). It prints `references: <n>`, one
+share for its prompt (an empty line for one explorer). For one of several it also names the chains in its share,
+to walk in order, and the explorer's tag, qae-<run>-e<K> (`--run ID`, the run id and attempt): every record the
+explorer creates carries it, and it opens or judges only records that carry it or that existed before the run,
+never one another explorer of the run created or is changing. It prints `references: <n>`, one
 `<key>: <width>x<height>` line each, `widths: <list>` (or `widths: none`) and, with `--turns`,
 `max turns: <n> (<walks> walks)` and, for one explorer of several, `share: <ids> (explorer K of N)`. Exit 2
 when a supplied file is not a PNG or its name is not a reference key, the manifest or the criteria file
@@ -1024,11 +1029,33 @@ STATES_PER_WALK = 3
 SHARD_WALKS = (TURNS_CEILING - TURNS_BASE) // TURNS_PER_WALK
 SHARE = ("Your share of the criteria is %s: you are explorer %d of %d. Walk only those, and write a verdict line for "
          "each of them and for no other criterion; the other criteria are walked by other explorers in parallel, "
-         "which may use the same site, so expect data you did not create.")
+         "on the same site and its data.")
 # The first explorer when the feature re-walk is its whole load.
 NO_SHARE = ("None of the criteria is yours: you are explorer %d of %d, and other explorers walk them in parallel, "
-            "which may use the same site, so expect data you did not create. Walk no criterion and write no "
-            "acceptance-check line. Re-walk the features as described below, and write only their lines in the verdict.")
+            "on the same site and its data. Walk no criterion and write no acceptance-check line. Re-walk the "
+            "features as described below, and write only their lines in the verdict.")
+# Explorers of one run share the preview and its data. A pull request's explorer once opened a record another
+# explorer of the same run had created, from a list both could see, while that one still had a later criterion's
+# change on it, and failed a correct criterion on what it saw. So each of several explorers is given a tag, the
+# run, its attempt and the explorer's number, to name what it creates by and to recognise its own records by.
+ISOLATION = ("Your tag is %s. Other explorers create records on this site at the same time and change them while "
+             "you look: never open, change or judge a record another explorer made. Every record you create (a "
+             "profile, a quote, an order, anything with a name or a title) carries your tag: where a criterion gives "
+             "the name, write that name followed by a space and %s, and it is still the name the criterion means. "
+             "Open, change, snapshot or judge only records that carry your tag, or records a criterion names that "
+             "existed before this run (a seeded customer, a fixture). Where a criterion would have you pick any "
+             "record from a list, pick one with your tag or one no explorer made; never one whose name ends in "
+             "another explorer's tag (qae-<run>-e<number>). When a criterion of yours builds on a record that a "
+             "criterion outside your share creates, create your own first, by that criterion's steps, with your tag.")
+# Criteria that build on each other, which one explorer walks in this order.
+CHAINED = ("%s name each other by number, so they may build on each other: walk them in that order, and where a later "
+           "one works on a record an earlier one made, use that record.")
+# A criterion that names another of its list by number builds on that one's state ("on the profile from item 2",
+# "after AC3", "the snapshot of criteria 4 and 5"): an item or criterion number counts in its own list (the pull
+# request's AC, the ticket's TC), and ACn or TCn names one outright. Such criteria are never split across
+# explorers: the one that walks the later criterion would find another explorer's record, mid-change.
+CRITERION_NAMED = re.compile(r"\b(?:(?i:items?|criteri(?:on|a))[ \t]+(?P<numbers>#?\d+(?:[ \t]*(?:,|and|or|&)[ \t]*#?\d+)*)"
+                             r"|(?P<prefix>AC|TC)(?P<number>\d+))\b")
 
 
 def criterion_walks(wording, widths):
@@ -1048,19 +1075,45 @@ def explorer_turns(items, widths, features, states):
     return walks, min(TURNS_CEILING, max(TURNS_FLOOR, TURNS_BASE + TURNS_PER_WALK * walks))
 
 
+def criterion_chains(items):
+    """The criteria `items` ((id, wording) pairs) in groups that one explorer walks whole, in document order: a
+    criterion that names another of `items` by number (CRITERION_NAMED) is in that one's group, and so is every
+    criterion either names in turn. A criterion that names none is a group of its own. Each group keeps
+    document order, and the groups are ordered by their first criterion."""
+    group = {item: index for index, (item, _) in enumerate(items)}
+    for item, wording in items:
+        own = item[:2]
+        for match in CRITERION_NAMED.finditer(wording):
+            named = ([match.group("prefix") + match.group("number")] if match.group("prefix")
+                     else [own + number for number in re.findall(r"\d+", match.group("numbers"))])
+            for other in named:
+                if other in group and group[other] != group[item]:
+                    joined, into = sorted((group[other], group[item]), reverse=True)
+                    group = {key: into if value == joined else value for key, value in group.items()}
+    chains = {}
+    for item in items:
+        chains.setdefault(group[item[0]], []).append(item)
+    return [chains[key] for key in sorted(chains)]
+
+
+def chain_walks(chain, widths):
+    return sum(criterion_walks(wording, widths) for _, wording in chain)
+
+
 def shard_shares(items, widths, shards, rewalk=0):
-    """Each of `shards` explorers' share of the criteria `items`, in shard order. Largest walks first, a criterion
-    goes whole to the explorer with the fewest walks so far, the lowest-numbered on a tie. The first starts
-    with `rewalk` walks, those of the feature re-walk only it does: a selected feature with no walked step is
-    a finding, so the explorer that carries the re-walk takes fewer criteria and reaches it in its time. Every
-    explore job makes this assignment for itself, from the same inputs, so they agree. Equal-sized criteria
-    and each final share keep document order, without changing criterion numbers."""
+    """Each of `shards` explorers' share of the criteria `items`, in shard order. A chain of criteria that build on
+    each other (criterion_chains) goes whole to one explorer, as a lone criterion does. Largest walks first, each
+    goes to the explorer with the fewest walks so far, the lowest-numbered on a tie. The first starts with `rewalk`
+    walks, those of the feature re-walk only it does: a selected feature with no walked step is a finding, so the
+    explorer that carries the re-walk takes fewer criteria and reaches it in its time. Every explore job makes this
+    assignment for itself, from the same inputs, so they agree. Equal-sized chains and each final share keep
+    document order, without changing criterion numbers."""
     shares, loads = [[] for _ in range(shards)], [rewalk] + [0] * (shards - 1)
     positions = {item[0]: index for index, item in enumerate(items)}
-    for item in sorted(items, key=lambda item: criterion_walks(item[1], widths), reverse=True):
+    for chain in sorted(criterion_chains(items), key=lambda chain: chain_walks(chain, widths), reverse=True):
         least = loads.index(min(loads))
-        shares[least].append(item)
-        loads[least] += criterion_walks(item[1], widths)
+        shares[least].extend(chain)
+        loads[least] += chain_walks(chain, widths)
     for share in shares:
         share.sort(key=lambda item: positions[item[0]])
     return shares
@@ -1068,29 +1121,45 @@ def shard_shares(items, widths, shards, rewalk=0):
 
 def shard_plan(items, widths, max_shards):
     """What `criteria --max-shards` prints after the criteria. `shards: [1,2,3]` numbers the explorers, for the
-    explore job's matrix: enough for SHARD_WALKS walks each, never more than `max_shards` nor than the criteria
-    (one is never split), and at least one. Then the walks it counted, and a warning when they exceed what those
-    explorers are sized for, so an oversized pull request shows up front. The count is of the criteria alone:
-    which features are re-walked is selected in the explore job, from a checkout this job does not have."""
+    explore job's matrix: enough for SHARD_WALKS walks each, never more than `max_shards` nor than the chains of
+    criteria (a criterion, or a chain of criteria that build on each other, is never split), and at least one.
+    Then the walks it counted, each chain, and a warning when the explorer with the most walks has more than it is
+    sized for, so an oversized pull request shows up front. The count is of the criteria alone: which features
+    are re-walked is selected in the explore job, from a checkout this job does not have."""
     walks = sum(criterion_walks(wording, widths) for _, wording in items)
-    shards = max(1, min(max_shards, len(items), -(-walks // SHARD_WALKS)))
+    chains = criterion_chains(items)
+    shards = max(1, min(max_shards, len(chains), -(-walks // SHARD_WALKS)))
     lines = ["shards: [%s]" % ",".join(str(number) for number in range(1, shards + 1)), "walks: %d" % walks]
-    if walks > shards * SHARD_WALKS:
+    lines += ["chain: %s (%d walks, one explorer)" % (", ".join(item for item, _ in chain), chain_walks(chain, widths))
+              for chain in chains if len(chain) > 1]
+    most = max([chain_walks(share, widths) for share in shard_shares(items, widths, shards)] or [0])
+    if most > SHARD_WALKS:
         lines.append("::warning title=vibe-verifier criteria::%d walks (each criterion once per role and width) for %d "
-                     "explorer%s sized for %d: expect criteria left unfinished. List fewer criteria on one pull request, "
-                     "or raise max-shards (harnesses/qae/README.md)."
-                     % (walks, shards, "" if shards == 1 else "s", shards * SHARD_WALKS))
+                     "explorer%s sized for %d, and one of them walks %d: expect criteria left unfinished. List fewer "
+                     "criteria on one pull request, chain fewer of them, or raise max-shards (harnesses/qae/README.md)."
+                     % (walks, shards, "" if shards == 1 else "s", shards * SHARD_WALKS, most))
     return lines
 
 
-def explorer_share(items, widths, shard, shards, rewalk):
-    """(the criteria explorer `shard` of `shards` walks, the sentence its prompt names them in). One explorer
-    walks them all and is told nothing. One of several is told its share by code, never left to work it out.
-    `rewalk` is the walks of the feature re-walk, the first explorer's alone."""
+def explorer_share(items, widths, shard, shards, rewalk, tag=None):
+    """(the criteria explorer `shard` of `shards` walks, the sentences its prompt names them in). One explorer
+    walks them all and is told nothing. One of several is told its share by code, never left to work it out, the
+    criteria of it that build on each other, and its tag (`tag`, or one made of `shard` alone), which keeps it
+    off the records the others create. `rewalk` is the walks of the feature re-walk, the first explorer's alone."""
     if shards == 1:
         return items, ""
     share = shard_shares(items, widths, shards, rewalk)[shard - 1]
-    return share, SHARE % (", ".join(item for item, _ in share), shard, shards) if share else NO_SHARE % (shard, shards)
+    tag = tag or "qae-e%d" % shard
+    sentences = [SHARE % (", ".join(item for item, _ in share), shard, shards) if share else NO_SHARE % (shard, shards)]
+    sentences += [CHAINED % ", ".join(item for item, _ in chain) for chain in criterion_chains(share) if len(chain) > 1]
+    sentences.append(ISOLATION % (tag, tag))
+    return share, " ".join(sentences)
+
+
+def explorer_tag(run, shard):
+    """The tag explorer `shard` names its records by: the run (`<run id>.<attempt>`, so a re-run's explorer does
+    not take an earlier attempt's records for its own) and its number. None without a run."""
+    return "qae-%s-e%d" % (run, shard) if run else None
 
 
 def qae_inputs_command(args):
@@ -1112,7 +1181,8 @@ def qae_inputs_command(args):
         features = len([name for name in names if name.endswith(".md")])
         options = selection_options(args) if args.manifest and features else None
         states = options.max_states if options else STATES_PER_WALK
-        items, share = explorer_share(items, widths, args.shard, args.shards, rewalk_walks(features, states))
+        items, share = explorer_share(items, widths, args.shard, args.shards, rewalk_walks(features, states),
+                                      explorer_tag(args.run, args.shard))
         if args.shard > 1:
             # Every explorer counted the features, to share the criteria out alike. Only the first re-walks them.
             features = 0
@@ -1446,6 +1516,8 @@ def main():
                         help="with --turns, how many explorers the criteria are split across (default: 1)")
     inputs.add_argument("--share", metavar="FILE", help="with --turns, write the sentence that names this explorer's "
                         "share of the criteria here, for its prompt (an empty line for one explorer)")
+    inputs.add_argument("--run", metavar="ID", default="", help="with --shards above 1, the run (`<run id>.<attempt>`) in "
+                        "the tag each explorer names its records by, qae-<run>-e<K> (default: none, qae-e<K>)")
     inputs.add_argument("--repo", default=".")
     inputs.add_argument("--base-ref", default=None)
     rewalk = commands.add_parser("features", help="the features a pull request's changed paths touch, by the selection "
