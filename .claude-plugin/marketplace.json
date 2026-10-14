@@ -1,0 +1,12 @@
+{
+  "name": "vibe-verifier",
+  "owner": { "name": "Greenbauer" },
+  "description": "Vibe Verifier's agent skills, from the catalog itself, so no repository keeps a copy",
+  "plugins": [
+    {
+      "name": "vibe-verifier-skills",
+      "source": ".",
+      "description": "write-acceptance-criteria, follow-repo-rules and encode-a-lesson: how to write criteria QAE can check, follow a repository's executable rules, and turn a repeated mistake into a rule"
+    }
+  ]
+}
