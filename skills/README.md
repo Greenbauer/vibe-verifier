@@ -16,25 +16,26 @@ the same as its folder) and `description`, then the instructions.
 
 ## Install
 
-Copy each skill's folder into the consumer repository's `.claude/skills/` and commit it:
+This repository is a Claude Code plugin marketplace (`.claude-plugin/marketplace.json`), and its one
+plugin, `vibe-verifier-skills`, is these skills. So every repository gets the same skills from this one
+copy, and no repository commits its own. Each person installs it once, for every repository they open:
 
 ```bash
-mkdir -p .claude/skills
-cp -R <catalog>/skills/follow-repo-rules <catalog>/skills/encode-a-lesson \
-  <catalog>/skills/write-acceptance-criteria .claude/skills/
+claude plugin marketplace add Greenbauer/vibe-verifier
+claude plugin install vibe-verifier-skills@vibe-verifier --scope user
 ```
 
-`<catalog>` is a clone of this repository, ideally at the commit the consumer pins.
+The skills are then `/vibe-verifier-skills:write-acceptance-criteria` and so on, and Claude uses each one
+when a task matches its description, as it does a project's own skills. Updates from a third-party
+marketplace are off by default: run `claude plugin marketplace update vibe-verifier`, or turn on
+`autoUpdate` for the marketplace. Without a GitHub SSH key, set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1`.
+Plugins load in the CLI, the IDE extensions and local desktop sessions, not in cloud sessions; a
+`claude-code-action` workflow passes `plugin_marketplaces` and `plugins` inputs instead
+([Claude Code: plugins](https://code.claude.com/docs/en/plugins/install), read 2026-10-14).
 
-- **Claude Code** loads a project's skills from `.claude/skills/<skill-name>/SKILL.md`; `name` is
-  optional there and defaults to the folder's name, and `description` is recommended. A skill folder
-  there may also be a symlink to a directory elsewhere on disk
-  ([Claude Code: skills](https://code.claude.com/docs/en/skills), read 2026-10-05).
-- **Cursor** loads a project's skills from `.agents/skills/` and `.cursor/skills/`, and for backward
-  compatibility also from `.claude/skills/`, so the one copy above serves both. It requires `name` and
-  `description`, and `name` must match the folder ([Cursor: skills](https://cursor.com/docs/skills),
-  read 2026-10-05). Its documentation says nothing about symlinks, so a symlinked skill in Cursor is
-  unverified: copy rather than link where Cursor is used.
+**Cursor** does not read Claude Code plugins. It loads a project's skills from `.agents/skills/`,
+`.cursor/skills/` and `.claude/skills/` ([Cursor: skills](https://cursor.com/docs/skills), read
+2026-10-05), so a repository whose agents run in Cursor would need a copy there; none is kept today.
 
-A copy does not update itself: copy again after bumping the catalog pin. `skills/` is not a release
-path (nothing in a workflow reads it), so a change here does not mark a consumer's pin stale.
+`skills/` is not a release path (nothing in a workflow reads it), so a change here does not mark a
+consumer's pin stale.
