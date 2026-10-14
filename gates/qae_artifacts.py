@@ -80,7 +80,9 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    resource: ... status of 401` console line for it. A path resolves against the site, and is
    appended to each further declared origin (whose host a pull request cannot know when every
    preview gets its own), a URL is taken as written, and either must match the request's URL exactly (query included, fragment
-   dropped). A 5xx, another status, another URL, and any other console error still fail, and a
+   dropped); `{id}` stands for one path segment a run mints: `.../itineraries/{id}` matches `.../itineraries/8697e680`,
+   never `.../itineraries/a/b` or another route. A 5xx, another status, another URL, and any other
+   console error still fail, and a
    declaration of any status but a handled refusal (400, 401, 403, 404, 409 or 422), or a path with
    no site to resolve it, is a finding.
    A feature re-walk walks a feature's Verify steps, and some are refusals by design (a wrong password
@@ -233,8 +235,17 @@ def exact(url):
     return urllib.parse.urldefrag(url)[0]
 
 
+def refusal_pattern(target):
+    """The exact URL a declaration names; each `{id}` is one path segment a run mints (no `/`, `?`, `#`)."""
+    return re.compile("[^/?#]+".join(re.escape(part) for part in exact(target).split("{id}")))
+
+
+def refusal_expected(expected, status, url):
+    return any(status == want and pattern.fullmatch(exact(url)) for want, pattern in expected)
+
+
 def expected_refusals(items, sites):
-    """The (status, URL) pairs the criteria `items` ((id, wording) pairs) declare expected, and findings
+    """The (status, URL pattern) pairs the criteria `items` ((id, wording) pairs) declare expected, and findings
     for any declaration that cannot be honoured as written."""
     expected, findings = set(), []
     for ac, wording in items:
@@ -244,10 +255,10 @@ def expected_refusals(items, sites):
                 findings.append(Finding("%s declares expected-refusal %s: only a handled refusal (%s) can be expected"
                                         % (ac, status, ", ".join(REFUSABLE))))
             elif urllib.parse.urlsplit(target).scheme in ("http", "https"):
-                expected.add((status, exact(target)))
+                expected.add((status, refusal_pattern(target)))
             elif target.startswith("/") and sites:
-                expected.add((status, exact(urllib.parse.urljoin(sites[0], target))))
-                expected.update((status, exact(origin.rstrip("/") + target)) for origin in sites[1:])
+                expected.add((status, refusal_pattern(urllib.parse.urljoin(sites[0], target))))
+                expected.update((status, refusal_pattern(origin.rstrip("/") + target)) for origin in sites[1:])
             else:
                 findings.append(Finding("%s declares expected-refusal at %s: write a path starting with / (resolved against "
                                         "the site under test, which needs --site or --site-file) or an http(s) URL" % (ac, target)))
@@ -267,7 +278,7 @@ def resource_error_is_excused(message, expected, sites):
     if not refused:
         return False
     url = refused.group("url")
-    return not judged(url, sites) or (refused.group("status"), exact(url)) in expected
+    return not judged(url, sites) or refusal_expected(expected, refused.group("status"), url)
 
 
 def console_errors(text):
@@ -388,8 +399,8 @@ def request_findings(root, sources, allowed, sites, expected):
         url, status = match.group("url"), match.group("status")
         if not site_failed(match) or not judged(url, sites) or any(pattern.search(url) for pattern in allowed):
             continue
-        if (status, exact(url)) in expected or (cancelled(match) and (same_request(match) in answered
-                                                                       or digest("%s %s" % same_request(match)) in recorded)):
+        if refusal_expected(expected, status, url) or (cancelled(match) and (same_request(match) in answered
+                                                                            or digest("%s %s" % same_request(match)) in recorded)):
             continue
         key = (match.group("method"), url, status)
         if key in seen:

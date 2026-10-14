@@ -440,6 +440,19 @@ class QaeArtifacts(unittest.TestCase):
         self.assertIn("api/quotes?id=1", result.stdout)
         self.assertNotIn("vercel.app/api/quotes:0", result.stdout)
 
+    def test_an_id_placeholder_matches_one_minted_path_segment_and_nothing_wider(self):
+        # A consumer's re-walk on 2026-10-14 reloaded a link it had just made private, whose id the run
+        # minted, so no file could name the URL the 404 came from.
+        declared = "Made private, the link is not found (expected-refusal: 404 /api/public/itineraries/{id})"
+        minted = self.refusal_run(declared, ("404", "/api/public/itineraries/8697e680-4c1d-4a8e-8000-000000000001"))
+        self.assertEqual(minted.returncode, 0, minted.stdout + minted.stderr)
+        wider = self.refusal_run(declared, ("404", "/api/public/itineraries/8697e680/shares"), ("404", "/api/public/journeys/8697e680"),
+                                 ("404", "/api/public/itineraries/"), ("404", "/api/public/itineraries/8697e680?full=1"))
+        self.assertEqual(wider.returncode, 1)
+        for path in ("itineraries/8697e680/shares", "journeys/8697e680", "itineraries/\n", "itineraries/8697e680?full=1"):
+            self.assertIn("request answered 404 outside the allowlist: [GET] https://site-git-fix-auth-gate.vercel.app/api/public/"
+                          + path, wider.stdout)
+
     def test_a_500_or_another_status_at_the_declared_url_fails(self):
         for status in ("500", "403"):
             result = self.refusal_run("Signed out, the quotes API refuses (expected-refusal: 401 /api/quotes)", (status, "/api/quotes"))
