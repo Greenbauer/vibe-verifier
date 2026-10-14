@@ -17,6 +17,7 @@ One file per feature of this catalog: its gates, its harnesses, its command-line
 | [Universal checks](universal-checks.md) | `universal-checks` |
 | [package.json hygiene](package-json.md) | `no-duplicate-package-json-keys`, `build-tools-in-devdependencies` |
 | [Branch name length](branch-name.md) | `branch-name-length` |
+| [Ticket requirement coverage](ticket-coverage.md) | `ticket-coverage` |
 | [Feature map drift](feature-map.md) | `feature-map` |
 | [Browser acceptance verification (QAE)](qae-harness.md) | `acceptance-verdict`, `qae-artifacts`, `criteria`, `features`, `qae-inputs`, `qa-review`, `tool` |
 | [Revision-bound AI review](review-harness.md) | `review-receipt` |

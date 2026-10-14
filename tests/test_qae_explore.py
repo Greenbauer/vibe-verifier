@@ -299,19 +299,19 @@ class FeatureRewalk(unittest.TestCase):
 
 
 class Applicability(unittest.TestCase):
-    """A pull request that needs no browser check builds nothing and is not judged, and both jobs
-    decide that with the same action, from the same two inputs."""
+    """A pull request that needs no browser check builds no application; both jobs decide that
+    with the same action after checking any subscribed ticket coverage."""
 
     def test_a_criteria_job_on_any_runner_decides_before_the_explore_job_takes_its_runner(self):
         # On the Codex lane the explore job's runner holds the one login, so a pull request with
         # nothing to walk must never queue for it: the criteria job is first, holds no model token,
-        # builds nothing and never checks out the pull request's code.
+        # builds nothing and reads a full-history checkout only as data for ticket coverage.
         text = TEMPLATE.read_text()
         criteria = text[text.index("jobs:\n  criteria:\n"):text.index("\n  explore:\n")]
         self.assertIn("    runs-on: ubuntu-latest   # CONSUMER: any runner. It holds no model login and builds nothing.\n", criteria)
         self.assertIn("      pull-requests: read\n", criteria)
         self.assertLess(criteria.index("- name: Write the criteria inputs"), criteria.index("- name: Read the criteria"))
-        for absent in ("secrets.CLAUDE", "actions/checkout@", "npm ", "write"):
+        for absent in ("secrets.CLAUDE", "npm ", "write"):
             self.assertNotIn(absent, criteria.replace("- name: Write the criteria inputs", ""), absent)
         explore = text[text.index("\n  explore:\n"):text.index("\n  verify:\n")]
         self.assertNotIn("steps.criteria", explore)

@@ -25,6 +25,10 @@ against a PR quietly weakening its own manifest, not a platform guarantee. Every
 $VIBE_VERIFIER_MANIFEST set to the manifest file the run read (the head's): `repo-rules --doc`
 lists the rules that manifest enables.
 
+With `--manifest`, `criteria` runs its subscribed `ticket-coverage` line before deciding whether
+a browser walk is needed. The checkout must have full Git history; coverage is never skipped
+by `- None:`, unrendered paths or a carried walk. Findings go to stderr to preserve its output protocol.
+
 `consumers` is the inventory and drift check for subscribed repositories. It reads
 each repository's manifest, its workflow stub, and every other workflow under
 .github/workflows/ that pins a catalog action (a harness copy such as qae-explore.yml)
@@ -946,6 +950,9 @@ def criteria_command(args):
         carry = json.loads(read_text(args.carry)) if args.carry else None
     except (OSError, ValueError) as error:
         return fail("could not read %s" % error)
+    coverage = criteria_ticket_coverage(args)
+    if coverage:
+        return coverage
     reason = not_required(text, changed, ticket_text, carry)
     if reason:
         print("none: %s" % reason)
@@ -965,6 +972,23 @@ def criteria_command(args):
                 print("%s %s: %s" % (item, label, ", ".join(values)))
     if args.max_shards is not None:
         print("\n".join(shard_plan(wanted, manifest_widths(args), args.max_shards)))
+    return 0
+
+
+def criteria_ticket_coverage(args):
+    """Run subscribed traceability before a browser skip; keep criteria's first-line protocol intact."""
+    if not args.manifest:
+        return 0
+    for name, options in judged_entries(args, notice=sys.stderr):
+        if name != "ticket-coverage":
+            continue
+        command = [sys.executable, os.path.join(GATES, "ticket_coverage.py"),
+                   "--repo", args.repo, "--format", "github"]
+        if args.base_ref:
+            command += ["--base-ref", args.base_ref]
+        result = subprocess.run(command + options, stdout=sys.stderr)
+        if result.returncode:
+            return result.returncode if result.returncode in (1, 2) else 2
     return 0
 
 
@@ -1389,8 +1413,8 @@ def main():
                         "counted as TC1, TC2, ... in addition to its own (empty: no ticket)")
     reader.add_argument("--max-shards", metavar="N", type=int, default=None, help="also print `shards: [1,...]`, how "
                         "many explorers the criteria are split across: enough for six walks each, at most N")
-    reader.add_argument("--manifest", metavar="FILE", help="with --max-shards, the QAE manifest: the --widths of its "
-                        "qae-artifacts line, judged from the base, count toward the walks")
+    reader.add_argument("--manifest", metavar="FILE", help="the QAE manifest: run subscribed ticket-coverage before "
+                        "any browser skip; with --max-shards, its qae-artifacts --widths count toward the walks")
     reader.add_argument("--carry", metavar="FILE", help="what actions/criteria/carry_facts.py read about the pull "
                         "request's last QAE walk: when its verdict still holds, prints `none:` naming it and `carried: <sha> <url>`")
     reader.add_argument("--repo", default=".")

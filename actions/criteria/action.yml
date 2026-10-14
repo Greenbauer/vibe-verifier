@@ -25,7 +25,9 @@ inputs:
   manifest:
     description: >-
       The QAE manifest, relative to the workspace, as the workflow fetched it: the --widths of its
-      qae-artifacts line count toward the walks the shards are sized to. Empty (the default) counts one width.
+      qae-artifacts line count toward the walks the shards are sized to. A subscribed ticket-coverage line
+      runs before any browser skip, requiring a full-history checkout. Empty (the default) counts one width
+      and runs no traceability check.
     default: ""
   entries:
     description: >-
