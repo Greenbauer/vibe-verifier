@@ -1,7 +1,7 @@
 (function () {
   "use strict";
-  const { BOT_META, element: el, link, safeUrl, duration, ageLabel, since, ageClass, secondsClass, ciTiming, formatTime, bytes, badge, botState, sourceStamp,
-    diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageWarning, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, behindMark,
+  const { BOT_META, element: el, link, safeUrl, duration, ageLabel, since, ageClass, secondsClass, ciTiming, formatTime, badge, botState, sourceStamp,
+    flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageWarning, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, behindMark,
     quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, paceHeader, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
@@ -394,52 +394,12 @@
     content.append(failurePanel());
   }
 
-  function metric(label, value, percent) {
-    const row = el("div", { class: "host-metric" }, el("span", {}, label), el("b", {}, value));
-    if (Number.isFinite(percent)) row.append(el("div", { class: "metric-meter", role: "meter", "aria-valuenow": percent,
-      "aria-valuemin": 0, "aria-valuemax": 100 }, el("span", { style: `width:${percent}%` })));
-    return row;
-  }
-
-  function renderCapacity() {
-    const capacity = snapshot.telemetry.available ? snapshot.telemetry.capacity : null;
-    content.replaceChildren(heading("Capacity", "Your runner capacity and the shared machine’s resources."));
-    if (!capacity || !capacity.available) { content.append(empty("Capacity telemetry unavailable", "No valid current-owner capacity snapshot was provided.")); return; }
-    if (capacity.stale) content.append(sourceBanner(`Capacity telemetry is stale. Last sample: ${formatTime(capacity.sampled_at)}.`, "warning"));
-    const host = capacity.host || {};
-    const memoryPercent = Number.isFinite(host.memory_used_bytes) && host.memory_total_bytes ? host.memory_used_bytes / host.memory_total_bytes * 100 : null;
-    const disk = diskUsage(host);
-    content.append(el("section", { class: "panel host-panel" }, el("div", { class: "panel-title" }, el("h2", {}, "SHARED HOST"),
-      el("span", { class: "muted" }, `Sampled ${formatTime(capacity.sampled_at)}`)), el("div", { class: "host-grid" },
-      metric("CPU sampled", Number.isFinite(host.cpu_percent) ? `${host.cpu_percent}%` : "Unavailable", host.cpu_percent),
-      metric("Memory", Number.isFinite(host.memory_used_bytes) ? `${bytes(host.memory_used_bytes)} / ${bytes(host.memory_total_bytes)}` : "Unavailable", memoryPercent),
-      metric("Workspace disk", disk ? `${bytes(disk.used)} / ${bytes(disk.total)}` : "Unavailable", disk?.percent))));
-    const lanes = el("section", { class: "panel" }, el("div", { class: "panel-title" }, el("h2", {}, `${snapshot.owner} runners (${capacity.lanes.length})`),
-      el("span", { class: "muted" }, "Registered and on-demand capacity")), el("div", { class: "lane-grid" }));
-    const grid = lanes.querySelector(".lane-grid");
-    const registrationText = { true: "Runner registered", false: "No runner registered" };
-    const idleText = { provisionable: "Provisionable when work arrives", busy: "Busy; job details not yet matched",
-      allocated: "Occupied; no job recorded for this slot" };
-    capacity.lanes.forEach(lane => {
-      const registration = registrationText[lane.registered];
-      const card = el("article", { class: `lane status-${lane.state}` }, el("div", { class: "lane-heading" }, el("b", { class: "mono" }, lane.id), badge(lane.state)),
-        registration ? el("p", { class: "muted" }, registration) : null);
-      if (lane.job) card.append(el("div", {}, el("p", {}, lane.job.name), el("p", { class: "muted" }, lane.job.repository), link("Open job", lane.job.url, snapshot.owner)));
-      else card.append(el("p", { class: "muted" }, idleText[lane.state] || "No current same-owner job"));
-      if (lane.labels.length) card.append(el("small", { class: "muted" }, lane.labels.join(" · ")));
-      grid.append(card);
-    });
-    const limits = capacity.limits;
-    if (limits) lanes.prepend(el("p", { class: "muted lane-limits" },
-      `${limits.slots} shared CI/QAE slots${limits.wait_slots ? ` · ${limits.wait_slots} wait slots` : ""} · QAE maximum ${limits.qae_concurrency} · CPU cap ${limits.cpu_quota_cores ?? "unknown"} cores · Memory cap ${bytes(limits.memory_max_bytes)}`));
-    content.append(lanes);
-  }
-
   function render() {
     if (!snapshot) return;
     renderChrome();
     const work = () => VVWork.render(content, snapshot, { heading, empty, sourceBanner });
-    ({ work, usage: renderUsage, capacity: renderCapacity }[state.view] || renderPulls)();
+    const capacity = () => VVCapacity.render(content, snapshot, { heading, empty, sourceBanner, rerender: render });
+    ({ work, usage: renderUsage, capacity }[state.view] || renderPulls)();
     rememberView();
     const title = { prs: "Pull requests", work: "Work", usage: "Bot usage", capacity: "Capacity" }[state.view];
     document.title = `${title} · Vibe Verifier`;

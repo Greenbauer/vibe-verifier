@@ -239,6 +239,8 @@ class Host(unittest.TestCase):
         self.assertEqual(len(json.loads(state.read_text())["samples"]), 1)
         published = json.loads(self.telemetry.read_text())
         self.assertEqual(published["samples"], [])
+        self.assertEqual(published["waits"], [])
+        self.assertEqual(published["history"], json.loads(state.read_text())["history"])
         self.assertEqual(published["hosts"], json.loads(state.read_text())["hosts"])
         info = self.telemetry.stat()
         self.assertEqual((stat.S_IMODE(info.st_mode), info.st_uid), (0o600, os.getuid()))

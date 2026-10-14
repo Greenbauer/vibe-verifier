@@ -245,57 +245,21 @@ console.log(JSON.stringify({
             self.assertEqual((row["tag"], row["attrs"]["href"], row["attrs"]["aria-label"]), ("div", None, None))
             self.assertIn("Fix the gate", text(row))
         self.assertFalse(result["detail"])
-    def test_a_held_slot_reads_as_occupied_and_a_job_name_stays_text(self):
-        result = self.node(r"""
-const app=require('fs').readFileSync('./dashboard/static/app.js','utf8');
-const match=app.match(/  function renderCapacity\(\) \{([\s\S]*?)\n  \}\n\n  function render\(\)/);
-if (!match) throw new Error('renderCapacity not found');
-const keep=items=>items.flat().filter(value=>value!=null);
-function el(tag, attrs={}, ...children) {
-  const node={tag, attrs, children:keep(children)};
-  node.append=(...items)=>node.children.push(...keep(items));
-  node.prepend=(...items)=>node.children.unshift(...keep(items));
-  node.querySelector=selector=>{
-    const cls=selector.slice(1);
-    const walk=item=>!item||typeof item==='string'?null:(item.attrs.class||'').split(' ').includes(cls)?item:(item.children||[]).reduce((found,child)=>found||walk(child),null);
-    return walk(node);
-  };
-  return node;
-}
-const badge=status=>el('span',{class:`badge status-${status}`},status);
-const link=(label,url)=>url?el('a',{href:url},label):null;
-const content={children:[],replaceChildren(...nodes){this.children=nodes.flat()},append(...nodes){this.children.push(...nodes.flat())}};
-const job=(name,url)=>({repository:'example/widgets',name,url});
-const snapshot={owner:'example',telemetry:{available:true,capacity:{available:true,stale:false,sampled_at:'2026-10-08T03:18:00Z',
-  host:{cpu_percent:10,memory_used_bytes:1,memory_total_bytes:2,workspace_disk_free_bytes:1,workspace_disk_total_bytes:2},
-  limits:{slots:8,wait_slots:8,qae_concurrency:2,cpu_quota_cores:4,memory_max_bytes:100},
-  lanes:[{id:'ci-1',state:'busy',registered:null,labels:['ci'],job:job('<img src=x>','https://github.com/example/widgets/actions/runs/9/job/8')},
-    {id:'wait-3',state:'busy',registered:null,labels:['wait'],job:job('Wait for preview',null)},
-    {id:'ci-2',state:'allocated',registered:null,labels:['ci']},{id:'on-demand-1',state:'provisionable',registered:false,labels:[]}]}}};
-const renderCapacity=new Function('content','snapshot','heading','empty','sourceBanner','el','formatTime','bytes','diskUsage','badge','link','metric',match[1]+'\nreturn content;');
-renderCapacity(content,snapshot,title=>el('h1',{},title),()=>el('p'),()=>null,el,value=>value,value=>String(value),()=>({used:1,total:2,percent:50}),badge,link,(label,value)=>el('div',{},label,String(value)));
-const text=node=>typeof node==='string'?node:(node.children||[]).map(text).join(' ');
-const tags=node=>!node||typeof node==='string'?[]:[node.tag,...(node.children||[]).flatMap(tags)];
-const lanes=content.children[content.children.length-1],cards=lanes.querySelector('.lane-grid').children;
-console.log(JSON.stringify({limits:text(lanes.children[0]),cards:cards.map(card=>({text:text(card),tags:tags(card)}))}));
-""")
-        self.assertIn("8 shared CI/QAE slots · 8 wait slots", result["limits"])
-        self.assertNotIn("Registration unknown", json.dumps(result))
-        busy, wait, held, free = result["cards"]
-        self.assertIn("<img src=x>", busy["text"])
-        self.assertNotIn("img", busy["tags"])
-        self.assertIn("Wait for preview", wait["text"])
-        self.assertIn("example/widgets", wait["text"])
-        self.assertIn("Occupied; no job recorded for this slot", held["text"])
-        self.assertNotIn("No current same-owner job", held["text"])
-        self.assertIn("No runner registered", free["text"])
-        self.assertNotIn("Registration unknown", free["text"])
+    def test_the_capacity_views_node_tests_pass(self):
+        # capacity.test.js renders capacity.js: runner rows, folded free runners, bars, range buttons, text-only values.
+        result = subprocess.run(["node", "--test", "--test-reporter=tap", str(ROOT / "dashboard/static/capacity.test.js")],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"(?m)^# pass [1-9]")
+        self.assertRegex(result.stdout, r"(?m)^# fail 0")
+        index = (ROOT / "dashboard/static/index.html").read_text()
+        self.assertIn('<script src="/assets/capacity.js"></script>', index)
     def test_ui_uses_text_nodes_and_the_approved_local_palette(self):
         app = (ROOT / "dashboard/static/app.js").read_text()
         helpers = (ROOT / "dashboard/static/helpers.js").read_text()
         css = (ROOT / "dashboard/static/styles.css").read_text()
         html = (ROOT / "dashboard/static/index.html").read_text()
-        self.assertNotIn("innerHTML", app + helpers)
+        self.assertNotIn("innerHTML", app + helpers + (ROOT / "dashboard/static/capacity.js").read_text())
         for color in ("#090909", "#111111", "#282828"):
             self.assertIn(color, css)
         for color in ("#809cff", "#50d6e8"):

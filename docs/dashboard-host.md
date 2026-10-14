@@ -115,9 +115,10 @@ service's sandbox cannot write the file.
 
 Every 30 seconds the telemetry timer runs `bin/vibe-dashboard-host telemetry`. It runs the
 [collector](dashboard-collector.md) in local mode, which samples this machine in-process (no SSH, no
-`sudo`) into root-only state that keeps seven days of samples. It then publishes that snapshot to the
-dashboard's `telemetry_file` without the `samples` history: the dashboard never reads those samples
-and refuses a telemetry file over 2 MiB, and a week of 30-second samples is about 3.8 MiB. Before the new file replaces the old one, the dashboard's own reader must accept it; otherwise the old file stays
+`sudo`) into root-only state that keeps seven days of samples and job waits. It then publishes that
+snapshot to the dashboard's `telemetry_file` without the `samples` and `waits` (the dashboard never
+reads them and refuses a telemetry file over 2 MiB, and a week of 30-second samples is about 3.8 MiB),
+keeping the derived [lane history](dashboard-collector.md#lane-history), about 15 KiB. Before the new file replaces the old one, the dashboard's own reader must accept it; otherwise the old file stays
 and the unit fails. The published file is the collector snapshot only: there is no runner-registration
 inventory and no agent-runtime record. Without a CI lane on the host, leave the telemetry timer off and
 `telemetry_file` out.
@@ -206,7 +207,7 @@ until the template is copied again as [Updates](#6-updates) describes. Check wit
 - `hosts.yml`: replaced every ten minutes, read only by `gh` inside the web service, expires an hour
   after minting whatever happens to the host.
 - `telemetry.json`: replaced every 30 seconds; the root-only state behind it keeps at most seven days
-  of samples, and the collector prunes older ones.
+  of samples and job waits, and the collector prunes older ones.
 - The bad-commit record: written on a failed health check, ignored once `main` moves past it, removed
   with the checkout.
 - Removal: `systemctl disable --now` the instance's units (and the follower once no dashboard is left),

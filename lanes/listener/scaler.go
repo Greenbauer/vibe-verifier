@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -35,6 +36,12 @@ type Lane struct {
 	apiMu sync.Mutex
 	apis  map[string]api
 
+	// recMu orders the writes of queue.json and jobs.json, so the last file written holds the
+	// latest state, and guards jobs, the history jobs.json is written from. It is taken before mu
+	// when both are held, never while mu is.
+	recMu sync.Mutex
+	jobs  []jobTiming
+
 	mu       sync.Mutex
 	sets     map[SetKey]*setEntry
 	slots    map[slotRef]*Slot
@@ -48,6 +55,8 @@ type setEntry struct {
 	api      api
 	known    bool
 	assigned int
+	// stats is the set's latest statistics for queue.json; nil until the first arrives.
+	stats *queueSet
 }
 
 func newLane(cfg *Config, runDir string, sys Systemd, host hostProbe, newAPI func(string) (api, error), logf func(string, ...any)) *Lane {
@@ -104,6 +113,7 @@ func (l *Lane) allUnits() ([]slotRef, []string) {
 // is tracked again (as idle: a busy runner refuses the removal an idle stop begins with), and one
 // whose unit is not running is a leftover whose runner and files are removed.
 func (l *Lane) rebuild() {
+	l.loadJobHistory()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	records := readJobFiles(l.runDir, l.cfg.kindNames())
@@ -139,6 +149,17 @@ func (l *Lane) rebuild() {
 		}
 	}
 	l.sweepAssignments()
+}
+
+// loadJobHistory takes up the jobs.json a previous listener left, so a restart keeps the history.
+func (l *Lane) loadJobHistory() {
+	jobs, err := readJobHistory(l.runDir)
+	l.recMu.Lock()
+	l.jobs = jobs
+	l.recMu.Unlock()
+	if err != nil {
+		l.logf("job history %s ignored: %v", filepath.Join(l.runDir, jobsFile), err)
+	}
 }
 
 // sweepAssignments removes a job record left in a slot the listener is not tracking and whose job
@@ -536,8 +557,31 @@ func (l *Lane) jobStarted(key SetKey, j *scaleset.JobStarted) {
 	}
 	ref := s.ref()
 	l.logf("job %q of %s/%s started on %s (runner %s)", j.JobDisplayName, j.OwnerName, j.RepositoryName, l.unit(ref), j.RunnerName)
+	timing := jobTiming{
+		Kind: ref.Kind, Instance: ref.N, RunnerName: s.RunnerName,
+		QueuedAt: stamp(j.QueueTime), ScaleSetAssignedAt: stamp(j.ScaleSetAssignTime),
+		RunnerAssignedAt: stamp(j.RunnerAssignTime), StartedAt: stamp(l.now()),
+	}
 	l.mu.Unlock()
 	l.recordAssignment(ref, j.OwnerName, j.RepositoryName, j.JobDisplayName, j.WorkflowRunID, j.JobID)
+	if a, ok := assignmentFields(j.OwnerName, j.RepositoryName, j.JobDisplayName, j.WorkflowRunID, j.JobID); ok {
+		timing.Repository, timing.Name, timing.RunID, timing.JobID = a.Repository, a.Name, a.RunID, a.JobID
+	}
+	l.recordJob(ref, timing)
+}
+
+// recordJob appends a started job to the history, dropping the oldest past maxJobHistory, and
+// rewrites jobs.json from it.
+func (l *Lane) recordJob(ref slotRef, timing jobTiming) {
+	l.recMu.Lock()
+	defer l.recMu.Unlock()
+	l.jobs = append(l.jobs, timing)
+	if n := len(l.jobs); n > maxJobHistory {
+		l.jobs = append([]jobTiming(nil), l.jobs[n-maxJobHistory:]...)
+	}
+	if err := writeLaneRecord(l.runDir, jobsFile, jobsRecord{Version: 1, Jobs: l.jobs}); err != nil {
+		l.logf("job history could not be written for %s: %v", l.unit(ref), err)
+	}
 }
 
 func (l *Lane) recordAssignment(ref slotRef, owner, repository, name string, runID int64, jobID string) {
@@ -563,17 +607,34 @@ func (l *Lane) jobCompleted(key SetKey, j *scaleset.JobCompleted) {
 	l.logf("job %q of %s/%s completed (%s) on %s; the unit exits by itself", j.JobDisplayName, j.OwnerName, j.RepositoryName, j.Result, l.unit(s.ref()))
 }
 
+// recordStatistics logs a set's statistics, keeps them for the plan and queue.json, and rewrites
+// queue.json.
 func (l *Lane) recordStatistics(key SetKey, st *scaleset.RunnerScaleSetStatistic) {
 	if st == nil {
 		return
 	}
+	l.recMu.Lock()
+	defer l.recMu.Unlock()
+	queue, ok := l.noteStatistics(key, st)
+	if !ok {
+		return
+	}
+	if err := writeLaneRecord(l.runDir, queueFile, queue); err != nil {
+		l.logf("queue record could not be written for %s: %v", key, err)
+	}
+}
+
+// noteStatistics records one set's statistics and returns queue.json's content, or ok false for a
+// set the lane does not track. Called with l.recMu held.
+func (l *Lane) noteStatistics(key SetKey, st *scaleset.RunnerScaleSetStatistic) (queueRecord, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := l.sets[key]
 	if e == nil {
-		return
+		return queueRecord{}, false
 	}
 	e.known, e.assigned = true, st.TotalAssignedJobs
+	e.stats = &queueSet{Kind: key.Kind, Assigned: st.TotalAssignedJobs, Running: st.TotalRunningJobs}
 	counts := map[Phase]int{}
 	for _, s := range l.slots {
 		if s.Set == key {
@@ -583,6 +644,26 @@ func (l *Lane) recordStatistics(key SetKey, st *scaleset.RunnerScaleSetStatistic
 	l.logf("set %s (id %d): assigned %d, running %d, registered %d, busy %d, idle %d; its slots: %d starting, %d idle, %d busy; %s",
 		key, e.id, st.TotalAssignedJobs, st.TotalRunningJobs, st.TotalRegisteredRunners, st.TotalBusyRunners,
 		st.TotalIdleRunners, counts[PhaseStarting], counts[PhaseIdle], counts[PhaseBusy], l.budgetUse(key.Kind))
+	return l.queueRecord(), true
+}
+
+// queueRecord is queue.json's content: each tracked set with statistics, by set key. Called with
+// l.mu held.
+func (l *Lane) queueRecord() queueRecord {
+	keys := make([]SetKey, 0, len(l.sets))
+	for key, e := range l.sets {
+		if e.stats != nil {
+			keys = append(keys, key)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
+	rec := queueRecord{Version: 1, UpdatedAt: stamp(l.now()), Sets: make([]queueSet, 0, len(keys))}
+	for _, key := range keys {
+		set := *l.sets[key].stats
+		set.MinRunners = l.cfg.minRunners(key)
+		rec.Sets = append(rec.Sets, set)
+	}
+	return rec
 }
 
 func (l *Lane) setAssigned(key SetKey, n int) {

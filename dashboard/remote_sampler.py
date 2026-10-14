@@ -26,14 +26,11 @@ TARGET_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]{0,38})(?:/([A-Za-z0-9._-]{1,1
 RUNNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 STATE_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 
-
 class SampleError(Exception):
     """An error code safe to return to the local collector."""
 
-
 class QuotaError(Exception):
     """A quota read failure safe to return without credentials or response text."""
-
 
 def read_limited(path, limit=MAX_FILE):
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -55,7 +52,6 @@ def read_limited(path, limit=MAX_FILE):
         os.close(fd)
     return b"".join(chunks)
 
-
 def listener_contract(path, owner, lane):
     try:
         config = json.loads(read_limited(path).decode("utf-8"))
@@ -75,7 +71,6 @@ def listener_contract(path, owner, lane):
         raise SampleError("listener_budget_invalid")
     return slots, qae, wait_slots_of(config)
 
-
 def wait_slots_of(config):
     """The wait kind's own pool. Absent on an older listener, which then samples ci and qae only."""
     kinds = config.get("kinds")
@@ -86,7 +81,6 @@ def wait_slots_of(config):
     if not isinstance(slots, int) or isinstance(slots, bool) or not 1 <= slots <= 64:
         raise SampleError("listener_budget_invalid")
     return slots
-
 
 def parse_cpu_line(text):
     first = text.splitlines()[0].split()
@@ -100,7 +94,6 @@ def parse_cpu_line(text):
     idle = values[3] + values[4]
     return sum(values), idle
 
-
 def cpu_busy_percent(before, after):
     total_before, idle_before = parse_cpu_line(before)
     total_after, idle_after = parse_cpu_line(after)
@@ -109,7 +102,6 @@ def cpu_busy_percent(before, after):
     if total_delta <= 0 or idle_delta < 0 or idle_delta > total_delta:
         raise SampleError("cpu_unavailable")
     return round(100.0 * (total_delta - idle_delta) / total_delta, 2)
-
 
 def parse_memory(text):
     values = {}
@@ -123,7 +115,6 @@ def parse_memory(text):
     if set(values) != {"MemTotal:", "MemAvailable:"}:
         raise SampleError("memory_unavailable")
     return values["MemTotal:"], values["MemAvailable:"]
-
 
 def _read_output(selector, deadline, limit):
     output = bytearray()
@@ -175,7 +166,6 @@ def run_bounded(command, timeout=5, limit=MAX_PROCESS_OUTPUT):
         raise OSError("command failed")
     return bytes(output)
 
-
 def parse_properties(data):
     result = {}
     for line in data.decode("utf-8", "strict").splitlines():
@@ -183,7 +173,6 @@ def parse_properties(data):
             key, value = line.split("=", 1)
             result[key] = value
     return result
-
 
 def systemd_properties(unit, names, runner=run_bounded):
     command = ["systemctl", "show", "--no-pager"]
@@ -304,6 +293,15 @@ def read_assignment(path, owner):
     if url:
         record["job_url"] = url
     return record
+def read_lane_record(path):
+    """The listener's queue.json or jobs.json, parsed (1 MiB, newest 100 jobs); the collector checks it."""
+    try:
+        value = json.loads(read_limited(path, MAX_FILE * 16))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if isinstance(value, dict) and isinstance(value.get("jobs"), list):
+        value = {"version": value.get("version"), "jobs": value["jobs"][-100:]}
+    return value if isinstance(value, dict) else None
 def slot_record(owner, lane, kind, index, states, run_root):
     """One slot's record, or None when its unit is down and no job file is there."""
     props = states.get("%s-%s@%d.service" % (lane, kind, index))
@@ -465,6 +463,8 @@ def collect(payload, run_root="/run", runner=run_bounded, sleeper=time.sleep,
                         "cpu_usage_nsec": parse_systemd_number((slice_props or {}).get("CPUUsageNSec")),
                         "cpu_quota_cores": parse_quota_cores((slice_props or {}).get("CPUQuotaPerSecUSec"))},
         "slots": {"limit": slots, "qae_concurrency": qae, "wait_limit": wait, "occupied": occupied},
+        "queue": read_lane_record(os.path.join(run_root, lane, "queue.json")),
+        "jobs": read_lane_record(os.path.join(run_root, lane, "jobs.json")),
     }
     quota = {"status": "not_requested"}
     if payload.get("collect_quota"):

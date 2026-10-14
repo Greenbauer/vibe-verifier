@@ -202,6 +202,25 @@ class RemoteSamplerTests(unittest.TestCase):
             self.assertEqual(seen, ["/srv/example-ci/work"])
             self.assertEqual(result["host"]["workspace"],
                              {"total_bytes": 409600, "free_bytes": 102400})
+            self.assertEqual((result["host"]["queue"], result["host"]["jobs"]), (None, None))
+
+    def test_the_listeners_queue_and_newest_hundred_jobs_are_read_and_anything_unsafe_is_absent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            queue = {"version": 1, "sets": [{"kind": "ci", "assigned": 2, "running": 1, "min_runners": 0}]}
+            (base / "queue.json").write_text(json.dumps(queue))
+            jobs = {"version": 1, "jobs": [{"runner_name": "r-%d" % index} for index in range(150)]}
+            (base / "jobs.json").write_text(json.dumps(jobs))
+            self.assertEqual(REMOTE.read_lane_record(base / "queue.json"), queue)
+            kept = REMOTE.read_lane_record(base / "jobs.json")
+            self.assertEqual((kept["version"], len(kept["jobs"]), kept["jobs"][0]), (1, 100, {"runner_name": "r-50"}))
+            (base / "link.json").symlink_to(base / "queue.json")
+            (base / "list.json").write_text("[1]")
+            (base / "bad.json").write_text("{")
+            (base / "big.json").write_text(" " * (REMOTE.MAX_FILE * 16 + 1))
+            for name in ("link.json", "list.json", "bad.json", "big.json", "missing.json"):
+                with self.subTest(name):
+                    self.assertIsNone(REMOTE.read_lane_record(base / name))
 
     def test_missing_and_malformed_quota_never_become_zero_usage(self):
         malformed = raw_quota()

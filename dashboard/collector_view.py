@@ -3,6 +3,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 from .collector import project_host, project_rate_limits
+from .lane_history import read_history
 from .util import parse_time, iso_time
 
 
@@ -35,6 +36,7 @@ def _occupied_lane(row):
     if row["state"] == "allocated":
         lane["runner_id"] = row["runner_id"]
         lane["allocated_at"] = row["allocated_at"]
+        lane["runner_name"] = row["runner_name"]
         if row.get("job_name") and row.get("job_repository"):
             # The host recorded this job at start. It is busy whether or not an open pull
             # request carries it. join_runner_jobs still replaces it when GitHub has a match.
@@ -96,8 +98,25 @@ def _usage_view(account, now):
             "completeness": "Subscription percentage is account-wide and may include other activity. Per-bot token history starts with captured runs."}
 
 
+ROOT_KEYS = {"version", "owner", "observed_at", "hosts", "accounts", "samples"}
+
+
+def _history(value, capacity):
+    """The lane's published history and each occupied runner's job start, when the collector wrote one."""
+    history = read_history(value["history"]) if value.get("history") is not None else None
+    if not capacity.get("available"):
+        return
+    capacity["history"] = history
+    for lane in capacity["lanes"]:
+        runner = lane.pop("runner_name", None)
+        started = history["started"].get(runner) if history else None
+        if started:
+            lane["started_at"] = started
+
+
 def collector_view(value, config, now):
-    if (set(value) != {"version", "owner", "observed_at", "hosts", "accounts", "samples"} or
+    # waits and history were added later; a snapshot from an older collector has neither.
+    if (not ROOT_KEYS <= set(value) <= ROOT_KEYS | {"waits", "history"} or
             value.get("version") != 1 or value.get("owner", "").lower() != config.owner.lower() or
             not isinstance(value.get("hosts"), list) or len(value["hosts"]) != 1 or
             not isinstance(value.get("accounts"), list) or len(value["accounts"]) != 1):
@@ -110,6 +129,7 @@ def collector_view(value, config, now):
     if raw_host.get("observed_at"):
         capacity, state = _host_view(raw_host, config, now)
         states.append(state)
+    _history(value, capacity)
     usage = {"available": False, "reason": "not_provided"}
     if account.get("observed_at"):
         usage = _usage_view(account, now)
@@ -123,11 +143,11 @@ def _active_jobs(github):
     for repository in github.get("repositories", []):
         if repository.get("unavailable"):
             continue
-        for job in (job for pull in repository.get("pulls", []) for run in pull.get("runs", [])
-                    for job in run.get("jobs", [])):
+        for pull, job in ((pull, job) for pull in repository.get("pulls", []) for run in pull.get("runs", [])
+                          for job in run.get("jobs", [])):
             if job.get("runner_id") and job.get("status") == "in_progress":
-                jobs[(repository["repository"], job["runner_id"])] = job
-                jobs[(None, job["runner_id"])] = {**job, "repository": repository["repository"]}
+                jobs[(repository["repository"], job["runner_id"])] = {**job, "pull": pull.get("number")}
+                jobs[(None, job["runner_id"])] = {**job, "repository": repository["repository"], "pull": pull.get("number")}
     return jobs
 
 
@@ -143,4 +163,4 @@ def join_runner_jobs(telemetry, github):
         if job and lane["state"] in ("allocated", "busy"):
             lane["state"] = "busy"
             lane["job"] = {"repository": assignment["repository"] if assignment else job["repository"],
-                           "name": job["name"], "url": job.get("html_url")}
+                           "name": job["name"], "url": job.get("html_url"), "pull": job["pull"]}

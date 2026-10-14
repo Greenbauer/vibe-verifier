@@ -212,10 +212,11 @@ def refresh_telemetry(config_path: str, user: str, collector_path: str, state: P
         raise HostError("the dashboard configuration names no telemetry_file")
     collected = collector.refresh(collector.load_config(collector_path), state)
     snapshot = json.loads(state.read_text(encoding="utf-8"))
-    # The state keeps seven days of raw samples (20,160 at a 30-second interval, about 3.8 MiB). The
-    # dashboard never reads them, and it refuses a telemetry file over 2 MiB, which the full history
-    # passes after about three and a half days, so only the current sections are published.
-    published = json.dumps({**snapshot, "samples": []}, separators=(",", ":"), sort_keys=True) + "\n"
+    # The state keeps seven days of raw samples (20,160 at a 30-second interval, about 3.8 MiB) and of
+    # job waits. The dashboard reads neither, and it refuses a telemetry file over 2 MiB, which the full
+    # samples pass after about three and a half days, so only the current sections and the derived
+    # history (about 15 KiB) are published.
+    published = json.dumps({**snapshot, "samples": [], "waits": []}, separators=(",", ":"), sort_keys=True) + "\n"
 
     def readable(draft: Path) -> bool:
         return read_telemetry(dataclasses.replace(config, telemetry_file=draft)).get("available") is True

@@ -27,13 +27,23 @@ import (
 // not hold the instance: the slot script never reads it, and removes only jit, idle-stop and job
 // before rmdir. The listener removes the assignment with those files, and again once the unit is
 // inactive and the job file is already gone, so the directory does not stay behind.
+//
+// Beside the slot directories it writes two lane-wide files for the dashboard sampler:
+//
+//	<run>/queue.json  0600  every tracked set's latest statistics, by kind, on each statistics message
+//	<run>/jobs.json   0600  the last maxJobHistory jobs a tracked slot started, with their wait times
 const (
 	jitFile        = "jit"
 	jobFile        = "job"
 	assignmentFile = "assignment"
 	idleStopFile   = "idle-stop"
+	queueFile      = "queue.json"
+	jobsFile       = "jobs.json"
 	maxJobName     = 240
 	maxAssignment  = 4096
+	maxJobHistory  = 500
+	maxJobsFile    = 1 << 20
+	stampLayout    = "2006-01-02T15:04:05Z"
 )
 
 var (
@@ -49,6 +59,52 @@ type jobAssignment struct {
 	Name       string `json:"name"`
 	RunID      int64  `json:"run_id,omitempty"`
 	JobID      string `json:"job_id,omitempty"`
+}
+
+// queueRecord is queue.json: per tracked set with statistics, sorted by set key, its kind and
+// GitHub's latest counts. It names no target, so a user lane's repositories stay off the page.
+type queueRecord struct {
+	Version   int        `json:"version"`
+	UpdatedAt string     `json:"updated_at"`
+	Sets      []queueSet `json:"sets"`
+}
+
+type queueSet struct {
+	Kind       string `json:"kind"`
+	Assigned   int    `json:"assigned"`
+	Running    int    `json:"running"`
+	MinRunners int    `json:"min_runners"`
+}
+
+// jobsRecord is jobs.json: the jobs tracked slots started, oldest first, at most maxJobHistory.
+type jobsRecord struct {
+	Version int         `json:"version"`
+	Jobs    []jobTiming `json:"jobs"`
+}
+
+// jobTiming is one started job: the assignment fields when they are usable (absent otherwise),
+// and when GitHub queued it, gave it to the set and to the runner, and when the listener heard it
+// started. A time GitHub did not send is absent.
+type jobTiming struct {
+	Kind               string `json:"kind"`
+	Instance           int    `json:"instance"`
+	RunnerName         string `json:"runner_name"`
+	Repository         string `json:"repository,omitempty"`
+	Name               string `json:"name,omitempty"`
+	RunID              int64  `json:"run_id,omitempty"`
+	JobID              string `json:"job_id,omitempty"`
+	QueuedAt           string `json:"queued_at,omitempty"`
+	ScaleSetAssignedAt string `json:"scale_set_assigned_at,omitempty"`
+	RunnerAssignedAt   string `json:"runner_assigned_at,omitempty"`
+	StartedAt          string `json:"started_at"`
+}
+
+// stamp is a time as the run-dir JSON files carry it: UTC, whole seconds, "" for the zero time.
+func stamp(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(stampLayout)
 }
 
 func slotDir(runDir, kind string, n int) string {
@@ -180,9 +236,9 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	return err
 }
 
-// assignmentRecord is the assignment file body, or ok false when the name or repository cannot be
-// shown. A refused record is not written; the page then uses its GitHub match.
-func assignmentRecord(owner, repository, name string, runID int64, jobID string) ([]byte, bool) {
+// assignmentFields is what a job record may show of a job, or ok false when the name or repository
+// cannot be shown. The assignment file and jobs.json both take it.
+func assignmentFields(owner, repository, name string, runID int64, jobID string) (*jobAssignment, bool) {
 	if !assignmentOwner.MatchString(owner) || !assignmentRepo.MatchString(repository) {
 		return nil, false
 	}
@@ -194,9 +250,19 @@ func assignmentRecord(owner, repository, name string, runID int64, jobID string)
 			return nil, false
 		}
 	}
-	rec := jobAssignment{Repository: owner + "/" + repository, Name: name}
+	rec := &jobAssignment{Repository: owner + "/" + repository, Name: name}
 	if runID > 0 && assignmentJobID.MatchString(jobID) {
 		rec.RunID, rec.JobID = runID, jobID
+	}
+	return rec, true
+}
+
+// assignmentRecord is the assignment file body, or ok false when the name or repository cannot be
+// shown. A refused record is not written; the page then uses its GitHub match.
+func assignmentRecord(owner, repository, name string, runID int64, jobID string) ([]byte, bool) {
+	rec, ok := assignmentFields(owner, repository, name, runID, jobID)
+	if !ok {
+		return nil, false
 	}
 	data, err := json.Marshal(rec)
 	if err != nil || len(data)+1 > maxAssignment {
@@ -207,6 +273,62 @@ func assignmentRecord(owner, repository, name string, runID int64, jobID string)
 
 func writeAssignment(runDir, kind string, n int, body []byte) error {
 	return writeFileAtomic(filepath.Join(slotDir(runDir, kind, n), assignmentFile), body, 0o600)
+}
+
+// writeLaneRecord writes one of the lane-wide JSON files (queue.json, jobs.json) into the run dir,
+// which it creates when no slot has yet.
+func writeLaneRecord(runDir, name string, v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		return err
+	}
+	return writeFileAtomic(filepath.Join(runDir, name), append(data, '\n'), 0o600)
+}
+
+// readJobHistory loads jobs.json as a previous listener left it, keeping its newest maxJobHistory
+// jobs. An absent file is an empty history; a symlink, a file over maxJobsFile, or one that is not
+// a version 1 record is ignored, with the reason.
+func readJobHistory(runDir string) ([]jobTiming, error) {
+	path := filepath.Join(runDir, jobsFile)
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("not a regular file")
+	}
+	if info.Size() > maxJobsFile {
+		return nil, fmt.Errorf("%d bytes, over %d", info.Size(), maxJobsFile)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxJobsFile+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxJobsFile {
+		return nil, fmt.Errorf("over %d bytes", maxJobsFile)
+	}
+	var rec jobsRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, err
+	}
+	if rec.Version != 1 {
+		return nil, fmt.Errorf("version %d, want 1", rec.Version)
+	}
+	if n := len(rec.Jobs); n > maxJobHistory {
+		rec.Jobs = rec.Jobs[n-maxJobHistory:]
+	}
+	return rec.Jobs, nil
 }
 
 // removeSlotFiles removes one instance's files, the job file last because its absence is what

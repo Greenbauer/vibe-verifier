@@ -31,8 +31,9 @@ It uses GitHub's [`actions/scaleset`](https://github.com/actions/scaleset) clien
   (`<name_prefix>-<kind>-<n>-<unix time>`, `work_folder`), writes the slot's `jit` and `job`
   files, then runs `systemctl start <name>-<kind>@<n>.service`. If the mint, the files or the
   start fail, the runner is removed and the files deleted, so neither outlives the attempt.
-- **Jobs.** JobStarted marks the slot busy and writes `assignment` (the job's repository and
-  display name, plus the run id and job id when both can link the job). JobCompleted marks it
+- **Jobs.** JobStarted marks the slot busy, writes `assignment` (the job's repository and
+  display name, plus the run id and job id when both can link the job) and appends the job's wait
+  times to `jobs.json`. JobCompleted marks it
   done. The slot unit exits by itself after its one job; the listener never stops a slot that took
   a job, and forgets it once the unit is inactive and its job file is gone. A slot whose unit ends
   without taking a job (a crash, or its `RuntimeMaxSec`) has its runner removed from GitHub.
@@ -146,6 +147,18 @@ files root-owned, each written to a temporary name and renamed into place):
 | `assignment` | 0600 | Written when the job starts, not when the slot starts. One JSON object: `repository` (`owner/repo`), `name` (the job display name), and `run_id` plus `job_id` when both can form a GitHub job link. Absent on a listener that predates it. |
 | `idle-stop` | 0600 | Empty; written before an idle stop or a warm recycle removes the runner. |
 
+Beside the slot directories, directly in `/run/<name>/`, it writes two lane-wide files for the
+dashboard sampler (root-owned, 0600, written to a temporary name and renamed into place). Times are
+UTC, whole seconds (`2026-10-14T18:00:00Z`); a time GitHub did not send is left out, never written
+as year 1.
+
+| File | Written | Content |
+|---|---|---|
+| `queue.json` | On every statistics message for a set the listener serves. | `{"version":1,"updated_at":…,"sets":[…]}`: one entry per served set that has had statistics, sorted by set key (`<target> <kind>`), each `kind`, `assigned` (GitHub's assigned jobs), `running` (its running jobs) and `min_runners` (the set's warm pool, 0 for every set but the org lane's `ci`). Nothing names the target, the set or its id. |
+| `jobs.json` | On every JobStarted for a slot the listener started. | `{"version":1,"jobs":[…]}`, oldest first, at most 500 (the oldest dropped): `kind`, `instance`, `runner_name`; `repository` and `name` when `assignment` would accept them, with `run_id` and `job_id` when both can link the job; `queued_at`, `scale_set_assigned_at`, `runner_assigned_at` as GitHub sent them; `started_at`, the listener's clock when it handled JobStarted. At start the listener takes up the file it finds, so a restart keeps the history; a symlink, a file over 1 MiB or one that does not parse as version 1 is ignored (logged) and replaced by the next job. |
+
+A write that fails is logged and never stops the listener.
+
 An instance is **free** when it has no `job` file, its unit is inactive (`systemctl is-active`
 says `inactive` or `failed`), and no start or idle stop of the listener's is in flight on it (so a
 stop can never land on the next slot's unit). The slot unit's side of the contract, which the lane
@@ -224,9 +237,10 @@ network access to the Go module proxy. The `lanes-listener` job in the catalog's
 `.github/workflows/ci.yml` runs `build.sh test`. With a local Go toolchain of 1.26.3 or newer (or
 `GOTOOLCHAIN=auto`), `go test ./...` and `go vet ./...` in this directory run the same checks.
 
-The tests cover the plan's rules (`plan_test.go`), the run dir (`state_test.go`), the App token and
+The tests cover the plan's rules (`plan_test.go`), the run dir and its `jobs.json` history
+(`state_test.go`), the App token and
 repository listing against a test server (`github_test.go`), set creation, update, deletion,
 session retries, the user scope's repository loop and `-delete-sets` against a fake client (`sets_test.go`), the lane's starts, failed starts, idle
-stops, warm recycles, adoption and a session driven through the real `listener` package
+stops, warm recycles, adoption, `queue.json` and `jobs.json`, and a session driven through the real `listener` package
 (`scaler_test.go`), and the `systemctl` adapter (`is-active`, and `show` for the units' start times) against a stand-in
 binary (`systemd_test.go`).
