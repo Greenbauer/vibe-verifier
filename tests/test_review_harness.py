@@ -3,7 +3,8 @@ only when there is something new to review, the receipt is the workflow's, never
 scope step run as the shell it is never lists a name that could escape the list nor anchors on a
 `limited` receipt, and its classify steps read each account's execution log structurally: a review
 either account completed passes, a rate or usage limit proven by every configured account passes
-with a warning and a `limited` receipt, and every other ending is red."""
+with a warning that says which limit and when it resets and a `limited` receipt, and every other
+ending is red."""
 import json
 import os
 import re
@@ -160,6 +161,14 @@ NOT_LOGGED_IN = result(result="Not logged in \u00b7 Please run /login")
 TURN_CAP = result(subtype="error_max_turns", num_turns=51, total_cost_usd=3.2)
 # A diff the reviewer read can contain the limit wording; a completed review is never a limit.
 QUOTES_THE_LIMIT = dict(REVIEWED, result="Flagged the handler that prints \"You've hit your limit\".")
+# What the SDK's event carries beside the status (its type definitions, and an event read from a real
+# run): the limit's name and its reset in epoch seconds, here 2026-10-06T09:00:00Z.
+WEEKLY = {"rateLimitType": "seven_day", "resetsAt": 1791277200}
+RESETS, UNSAID = "seven_day limit, resets 2026-10-06T09:00:00Z", "the reviewer did not report which limit or when it resets"
+
+
+def limit_event(status, **info):
+    return dict(LIMIT_EVENT, uuid="1f0e", rate_limit_info=dict({"status": status, "overageStatus": "rejected"}, **info))
 
 
 FIRST, FALLBACK = "Classify the first account's review", "Classify the fallback account's review"
@@ -194,17 +203,20 @@ class ReviewGate(unittest.TestCase):
                                 env=self.env(ATTEMPT=attempt, OUTCOME=outcome, GITHUB_OUTPUT=str(output),
                                              EXECUTION_FILE=str(log) if events is not None and published else ""))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.log = result.stdout
         return dict(line.split("=", 1) for line in output.read_text().splitlines())
 
     def run_gate(self, events, outcome="success", fallback=None):
         first = self.classify(FIRST, "first", events, outcome)
+        # A step output that was never written reads as empty in the workflow's `env:`.
         env = {"FIRST_COMPLETED": first["completed"], "FIRST_LIMITED": first["rate_limited"],
-               "HAS_FALLBACK_ACCOUNT": "false" if fallback is None else "true"}
+               "FIRST_LIMIT_DETAIL": first.get("limit_detail", ""), "HAS_FALLBACK_ACCOUNT": "false" if fallback is None else "true"}
         if fallback is not None:
             # The workflow skips the fallback account once the first one completed a review.
             ran = first["completed"] != "true"
             second = self.classify(FALLBACK, "fallback", *(fallback if ran else (None, "skipped")))
-            env.update(FALLBACK_COMPLETED=second["completed"], FALLBACK_LIMITED=second["rate_limited"])
+            env.update(FALLBACK_COMPLETED=second["completed"], FALLBACK_LIMITED=second["rate_limited"],
+                       FALLBACK_LIMIT_DETAIL=second.get("limit_detail", ""))
         gate = subprocess.run(["bash", "-c", step_script("Require a completed review", "Post the receipt")],
                               capture_output=True, text=True, env=self.env(**env))
         if gate.returncode:
@@ -294,6 +306,36 @@ class ReviewGate(unittest.TestCase):
         self.assertEqual((second["completed"], second["rate_limited"]), ("false", "false"))
         self.assertTrue(first["log"].endswith("review-first.json"))
         self.assertNotIn("log", second)
+
+    def test_a_limited_account_says_which_limit_and_when_it_resets_and_nothing_else_from_its_log(self):
+        for events, detail in (
+                # The limit is the one the rejected event names, not the one an earlier allowed event did.
+                ([limit_event("allowed", rateLimitType="five_hour", resetsAt=1791934800), limit_event("rejected", **WEEKLY)], RESETS),
+                ([LIMIT_EVENT], UNSAID),
+                ([limit_event("rejected", rateLimitType="five_hour")], "five_hour limit"),
+                # The other limited shape: the result's text is quoted, never read, even where it names a reset.
+                ([HIT_LIMIT], UNSAID + "; the reviewer said: " + HIT_LIMIT["result"]),
+                ([result(subtype="error_during_execution", errors=["API Error: 429 rate_limit_error"])],
+                 UNSAID + "; the reviewer said: API Error: 429 rate_limit_error"),
+                ([limit_event("rejected", **WEEKLY), result(result="limit\nreached " + "x" * 300)],
+                 RESETS + "; the reviewer said: limit reached " + "x" * 186 + "...")):
+            first = self.classify(FIRST, "first", events, "failure")
+            self.assertEqual((first.get("limit_detail"), self.log.splitlines()[-1]),
+                             (detail, "first account: step failure; completed=false; rate_limited=true; " + detail), events)
+
+    def test_the_warning_gives_each_limited_account_its_limit_and_reset(self):
+        for fallback, told in ((None, "First account: %s." % RESETS),
+                               (([LIMIT_EVENT], "failure"), "First account: %s. Fallback account: %s." % (RESETS, UNSAID))):
+            gate, _ = self.run_gate([limit_event("rejected", **WEEKLY)], "failure", fallback)
+            self.assertIn("every reviewer account is rate-limited. %s This head was NOT reviewed." % told, gate.stdout)
+            self.assertIn("every reviewer account is rate-limited. %s Passed with a warning" % told,
+                          (self.temp / "summary").read_text())
+
+    def test_a_completed_review_says_nothing_about_limits(self):
+        # A completed review's log carries an allowed event that names a limit and a reset, as a real run's does.
+        first = self.classify(FIRST, "first", [limit_event("allowed", **WEEKLY), REVIEWED], "success")
+        self.assertEqual((first.get("limit_detail"), self.log.splitlines()[-1]),
+                         ("", "first account: step success; completed=true; rate_limited=false"))
 
     def test_both_accounts_run_the_same_classifier(self):
         self.assertEqual(step_script(FIRST, "Review with the fallback account"),

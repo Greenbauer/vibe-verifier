@@ -91,7 +91,7 @@ The review job:
 - pins review instruction files such as `CLAUDE.md` and `.claude/**` to the base branch,
 - computes whether the model needs a full review, delta review, or no-change receipt refresh,
 - runs the reviewer with restricted read/comment capabilities, on a second account when the first does not complete a review,
-- posts a workflow-owned receipt for the exact head after the review completes, or a `limited` receipt with a warning when every configured reviewer account proves a rate or usage limit.
+- posts a workflow-owned receipt for the exact head after the review completes, or a `limited` receipt with a warning when every configured reviewer account proves a rate or usage limit; the warning names each account's limit and reset time when the reviewer reported them.
 
 The verify job converts repository state into declared files: event head SHA, the newest bot-authored receipt for that head (a review of an older head can finish last), and unresolved-thread count from the first 100 review threads. The `review-receipt` gate decides the verdict.
 

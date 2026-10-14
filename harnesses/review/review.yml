@@ -190,6 +190,10 @@ jobs:
         # `rate_limit_error`. The log is moved to this attempt's own name first: the action writes one
         # fixed path, and the next attempt must never be judged by this one's log. The fallback
         # account's classify step runs this same script (a test holds them equal).
+        # A limited account also says which limit and when it resets, for the warning and never for a
+        # decision: `rateLimitType` and `resetsAt` (epoch seconds, printed in UTC) of the rejected
+        # event's `rate_limit_info`, then the final error's own text, cut to 200 characters. Nothing
+        # else in the log is printed, and a log with neither field says the reviewer did not report them.
         id: first
         if: always() && env.REVIEW_MODE != 'nochange'
         env:
@@ -200,6 +204,7 @@ jobs:
           set -uo pipefail
           completed=false
           limited=false
+          detail=""
           file="${EXECUTION_FILE:-}"
           shared="${RUNNER_TEMP}/claude-execution-output.json"
           if { [ -z "$file" ] || [ ! -f "$file" ]; } && [ "${OUTCOME:-skipped}" != skipped ]; then
@@ -238,9 +243,25 @@ jobs:
             elif [ "${OUTCOME:-}" != success ]; then
               completed=false  # a completed log from a step that failed afterwards is not a review
             fi
+            if [ "$limited" = true ]; then
+              named=$(jq -r '
+                (if type == "array" then . else [.] end)
+                | [ .[] | select(type == "object" and .type == "rate_limit_event") | .rate_limit_info?
+                    | select(.status? == "rejected") ] | last
+                | [ (.rateLimitType? | strings | . + " limit"), (.resetsAt? | numbers | "resets " + todate) ] | join(", ")
+              ' "$file" 2>/dev/null)
+              said=$(jq -r '
+                (if type == "array" then . else [.] end)
+                | [ .[] | select(type == "object" and .type == "result") ] | last | select(.is_error? == true)
+                | [ (.result? | strings), (.errors? | arrays | .[] | strings) ] | join(" ")
+                | if length > 200 then .[0:200] + "..." else . end
+              ' "$file" 2>/dev/null)
+              detail="${named:-the reviewer did not report which limit or when it resets}${said:+; the reviewer said: ${said}}"
+              detail="${detail//[[:cntrl:]]/ }"  # one line: it is written to $GITHUB_OUTPUT and into a workflow command
+            fi
           fi
-          echo "${ATTEMPT} account: step ${OUTCOME:-skipped}; completed=${completed}; rate_limited=${limited}"
-          { echo "completed=$completed"; echo "rate_limited=$limited"; } >> "$GITHUB_OUTPUT"
+          echo "${ATTEMPT} account: step ${OUTCOME:-skipped}; completed=${completed}; rate_limited=${limited}${detail:+; ${detail}}"
+          { echo "completed=$completed"; echo "rate_limited=$limited"; echo "limit_detail=$detail"; } >> "$GITHUB_OUTPUT"
       - name: Review with the fallback account
         id: fallback_reviewer
         # The subscription limit is per account, so a second account (CLAUDE_CODE_OAUTH_TOKEN_FALLBACK,
@@ -268,6 +289,7 @@ jobs:
           set -uo pipefail
           completed=false
           limited=false
+          detail=""
           file="${EXECUTION_FILE:-}"
           shared="${RUNNER_TEMP}/claude-execution-output.json"
           if { [ -z "$file" ] || [ ! -f "$file" ]; } && [ "${OUTCOME:-skipped}" != skipped ]; then
@@ -306,12 +328,29 @@ jobs:
             elif [ "${OUTCOME:-}" != success ]; then
               completed=false  # a completed log from a step that failed afterwards is not a review
             fi
+            if [ "$limited" = true ]; then
+              named=$(jq -r '
+                (if type == "array" then . else [.] end)
+                | [ .[] | select(type == "object" and .type == "rate_limit_event") | .rate_limit_info?
+                    | select(.status? == "rejected") ] | last
+                | [ (.rateLimitType? | strings | . + " limit"), (.resetsAt? | numbers | "resets " + todate) ] | join(", ")
+              ' "$file" 2>/dev/null)
+              said=$(jq -r '
+                (if type == "array" then . else [.] end)
+                | [ .[] | select(type == "object" and .type == "result") ] | last | select(.is_error? == true)
+                | [ (.result? | strings), (.errors? | arrays | .[] | strings) ] | join(" ")
+                | if length > 200 then .[0:200] + "..." else . end
+              ' "$file" 2>/dev/null)
+              detail="${named:-the reviewer did not report which limit or when it resets}${said:+; the reviewer said: ${said}}"
+              detail="${detail//[[:cntrl:]]/ }"  # one line: it is written to $GITHUB_OUTPUT and into a workflow command
+            fi
           fi
-          echo "${ATTEMPT} account: step ${OUTCOME:-skipped}; completed=${completed}; rate_limited=${limited}"
-          { echo "completed=$completed"; echo "rate_limited=$limited"; } >> "$GITHUB_OUTPUT"
+          echo "${ATTEMPT} account: step ${OUTCOME:-skipped}; completed=${completed}; rate_limited=${limited}${detail:+; ${detail}}"
+          { echo "completed=$completed"; echo "rate_limited=$limited"; echo "limit_detail=$detail"; } >> "$GITHUB_OUTPUT"
       - name: Require a completed review
         # Passes when an account completed a review. The one pass without a review (operator,
-        # 2026-10-03): every configured account proved a rate or usage limit, which warns and makes the
+        # 2026-10-03): every configured account proved a rate or usage limit, which warns, with each
+        # account's limit and reset time as its classify step reported them, and makes the
         # receipt below say `limited`. Anything else (an invalid or missing token, a crash, the turn
         # cap, a model error, on the last account tried) fails the job, so no receipt is posted and the
         # verify job stays red.
@@ -319,8 +358,10 @@ jobs:
         env:
           FIRST_COMPLETED: ${{ steps.first.outputs.completed }}
           FIRST_LIMITED: ${{ steps.first.outputs.rate_limited }}
+          FIRST_LIMIT_DETAIL: ${{ steps.first.outputs.limit_detail }}
           FALLBACK_COMPLETED: ${{ steps.fallback.outputs.completed }}
           FALLBACK_LIMITED: ${{ steps.fallback.outputs.rate_limited }}
+          FALLBACK_LIMIT_DETAIL: ${{ steps.fallback.outputs.limit_detail }}
         run: |
           set -uo pipefail
           for account in FIRST FALLBACK; do
@@ -331,8 +372,10 @@ jobs:
             fi
           done
           if [ "${FIRST_LIMITED:-}" = true ] && { [ "${HAS_FALLBACK_ACCOUNT:-}" != true ] || [ "${FALLBACK_LIMITED:-}" = true ]; }; then
-            echo "::warning::The review did not run: every reviewer account is rate-limited. This head was NOT reviewed. Its receipt says limited and is never a review anchor, so the next real review covers it. Re-run the workflow once a limit resets."
-            echo "Not reviewed: every reviewer account is rate-limited. Passed with a warning; the receipt says limited." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            limits="First account: ${FIRST_LIMIT_DETAIL:-}."
+            [ "${FALLBACK_LIMITED:-}" != true ] || limits="${limits} Fallback account: ${FALLBACK_LIMIT_DETAIL:-}."
+            echo "::warning::The review did not run: every reviewer account is rate-limited. ${limits} This head was NOT reviewed. Its receipt says limited and is never a review anchor, so the next real review covers it. Re-run the workflow once a limit resets."
+            echo "Not reviewed: every reviewer account is rate-limited. ${limits} Passed with a warning; the receipt says limited." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
             echo "REVIEW_MODE=limited" >> "$GITHUB_ENV"
             exit 0
           fi
