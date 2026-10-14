@@ -5,7 +5,7 @@ outputs:
     description: The playwright-mcp entry point, for the explorer's --mcp-config.
     value: ${{ steps.install.outputs.mcp }}
   console-pages:
-    description: The harness's page record, for playwright-mcp's --init-page. It writes which page logged each console error and uncaught exception to console-pages.jsonl in the output directory, which the qae-artifacts gate reads.
+    description: The harness's page record, for playwright-mcp's --init-page. It writes which page logged each console error and uncaught exception, and every request a page got an answer below 400 for (static resources included), to console-pages.jsonl in the output directory, which the qae-artifacts gate reads.
     value: ${{ steps.install.outputs.console-pages }}
 runs:
   using: composite
