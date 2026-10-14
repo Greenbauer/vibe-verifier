@@ -262,9 +262,9 @@ kinds, the columns, and failure handling.
 - **Five cards**: runners in use now (`5 of 8`, the shared pool only, and how many the warm pool keeps
   up on purpose); jobs waiting for a runner right now (`Unknown` when the listener's queue was not
   read); and, for the chosen range, the busy share, the wait for a runner and the reserved-but-idle
-  time. The wait card's value is the median; its detail is the 95th percentile, the job count, and
-  the average split of the wait into GitHub sending the job to the lane and the lane's runner
-  starting and taking it.
+  time. The wait card counts from GitHub handing a job to the lane until a runner takes it. Its value
+  is the median; its detail is the 95th percentile, the job count and, when GitHub reports when it
+  queued jobs, how long GitHub took on average before handing them over.
 - **Runners over time**, with `1h`, `24h` and `7d` buttons (24h first; the choice lasts while the
   tab is open). Each bar is one clock-aligned period (2 minutes, 30 minutes or 3 hours) of the shared
   pool, on the pool's limit: green is the average number running a job, yellow the average reserved
@@ -275,8 +275,9 @@ kinds, the columns, and failure handling.
   (`Running`, or `Reserved, no job` with how long it has been up), the job (linked when the host or
   GitHub gave a link), the repository and, when the job is on an open pull request's current head,
   its number, the pool (`CI`, `QAE` or `Wait`) and the time. Running time counts from the job's start
-  when the listener recorded it, else from when the runner was allocated. Free slots are not runners
-  yet (the listener starts one under any free number when a job arrives), so they are one row: `3
+  (GitHub assigning it to the runner) when the listener recorded it, else from when the runner was
+  allocated. Free slots are not runners yet (the listener starts one under any free number when a
+  job arrives), so they are one row: `3
   more · Free`.
 - **The shared host** meters, unchanged.
 

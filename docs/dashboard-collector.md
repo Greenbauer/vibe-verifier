@@ -238,10 +238,13 @@ observations do not add samples.
 ## Lane history
 
 `dashboard/lane_history.py` turns the samples and the listener's two files into what the Capacity
-view draws. Each `waits` entry is one job, keyed by its runner name: `kind`, `started_at`,
-`wait_seconds` (GitHub queued it to a runner was assigned) and `routing_seconds` (queued to assigned
-to the lane's scale set; null when GitHub sent no such time or it is later than the runner
-assignment). A job is kept once, for seven days, at most 20,000. Because the listener keeps its newest
+view draws. Each `waits` entry is one job, keyed by its runner name: `kind`, `started_at` (when GitHub
+assigned it to a runner), `wait_seconds` (GitHub assigned it to the lane's scale set until it assigned
+it to a runner) and `routing_seconds` (queued until assigned to the scale set; null when GitHub sent
+no queued time, or one after the set time). On 2026-10-14 GitHub sent no queued time with a lane's
+job and its scale-set time was the job's GitHub `created_at` to the second, so the wait is counted from
+the set time. The start is the runner assignment, not the listener's `started_at`: the listener heard
+that 17-second job's start as it finished. A job is kept once, for seven days, at most 20,000. Because the listener keeps its newest
 500 jobs and the sampler passes on the newest 100, a lane that starts more than 100 jobs between two
 samples loses the oldest of them.
 
@@ -259,8 +262,8 @@ ranges[]        1h, 24h and 7d, in that order
                 has samples, running and reserved (averages) and waiting (the most seen, or null)
   busy_percent  running slot time over the limit times the sampled time
   reserved_hours  slot time a runner held with no recorded job
-  wait          jobs, p50_seconds, p95_seconds (nearest rank), routing_seconds and start_seconds
-                (means); null when no job started in the range
+  wait          jobs, p50_seconds, p95_seconds (nearest rank), routing_seconds (the mean over jobs
+                GitHub sent a queued time for, else null); null when no job started in the range
 ```
 
 A sample stands for the time until the next sample, at most 120 seconds, so a collector outage counts

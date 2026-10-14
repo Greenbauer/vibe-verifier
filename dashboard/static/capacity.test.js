@@ -51,7 +51,7 @@ function snapshot(history) {
 
 function history() {
   const day = range("24h", 48, 1800, { busy_percent: 41.2, reserved_hours: 3.5,
-    wait: { jobs: 120, p50_seconds: 18, p95_seconds: 130, routing_seconds: 3, start_seconds: 15 } });
+    wait: { jobs: 120, p50_seconds: 18, p95_seconds: 130, routing_seconds: 3 } });
   day.buckets[47] = { start: day.buckets[47].start, running: 2, reserved: 1, waiting: 3 };
   day.buckets[46] = { start: day.buckets[46].start, running: 1, reserved: 0, waiting: 0 };
   return { observed_at: at(0), limit: 4, waiting_now: 0, warm: 1, started: {},
@@ -72,7 +72,7 @@ test("the summary says what is in use, what waits, and the chosen range's share 
   assert.match(cards[0], /Runners in use now.*2 of 4.*1 kept warm on purpose/s);
   assert.match(cards[1], /Jobs waiting for a runner.*0/s);
   assert.match(cards[2], /Busy share.*41\.2%.*Last 24 hours/s);
-  assert.match(cards[3], /18s typical.*2m 10s for the slowest 5% of 120 jobs.*GitHub took 3s to send it, the runner 15s to start/s);
+  assert.match(cards[3], /18s typical.*2m 10s for the slowest 5% of 120 jobs\. Before that, GitHub took 3s on average/s);
   assert.match(cards[4], /Reserved but idle.*3h 30m/s);
 });
 

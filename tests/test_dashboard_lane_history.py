@@ -62,20 +62,27 @@ class Queue(unittest.TestCase):
 
 
 class Waits(unittest.TestCase):
-    def test_a_job_waits_from_queued_to_runner_and_routing_is_the_part_before_the_lane(self):
+    def test_a_job_waits_from_the_lane_to_a_runner_and_routing_is_githubs_part_before_it(self):
         row = LH.project_job(job("r-ci-1-1", ago(100), ago(90), ago(40), ago(39)))
-        self.assertEqual(row, {"runner": "r-ci-1-1", "kind": "ci", "started_at": ago(39),
-                               "wait_seconds": 60, "routing_seconds": 10})
+        self.assertEqual(row, {"runner": "r-ci-1-1", "kind": "ci", "started_at": ago(40),
+                               "wait_seconds": 50, "routing_seconds": 10})
+
+    def test_the_shape_github_sends_a_warm_runner_job_is_a_zero_wait_without_routing(self):
+        # Seen on a live lane, 2026-10-14: no queued time, the set and runner times equal to the job's
+        # GitHub created_at, and the listener hearing JobStarted 19 s later, as the job finished.
+        row = LH.project_job(job("r-ci-1-1", None, ago(19), ago(19), ago(0)))
+        self.assertEqual(row, {"runner": "r-ci-1-1", "kind": "ci", "started_at": ago(19),
+                               "wait_seconds": 0, "routing_seconds": None})
 
     def test_a_job_without_both_ends_of_its_wait_is_not_a_wait(self):
-        self.assertIsNone(LH.project_job(job("r-ci-1-1", None, ago(90), ago(40), ago(39))))
+        self.assertIsNone(LH.project_job(job("r-ci-1-1", ago(100), None, ago(40), ago(39))))
         self.assertIsNone(LH.project_job(job("r-ci-1-1", ago(100), ago(90), None, ago(39))))
-        self.assertIsNone(LH.project_job(job("r-ci-1-1", ago(10), ago(9), ago(40), ago(39))))
+        self.assertIsNone(LH.project_job(job("r-ci-1-1", ago(100), ago(10), ago(40), ago(39))))
         self.assertIsNone(LH.project_job(job("bad name", ago(100), ago(90), ago(40), ago(39))))
 
-    def test_routing_after_the_runner_was_assigned_is_dropped_and_the_wait_kept(self):
-        row = LH.project_job(job("r-ci-1-1", ago(100), ago(10), ago(40), ago(39)))
-        self.assertEqual((row["wait_seconds"], row["routing_seconds"]), (60, None))
+    def test_a_queued_time_after_the_set_time_drops_routing_and_keeps_the_wait(self):
+        row = LH.project_job(job("r-ci-1-1", ago(80), ago(90), ago(40), ago(39)))
+        self.assertEqual((row["wait_seconds"], row["routing_seconds"]), (50, None))
 
     def test_kept_and_new_waits_merge_one_per_runner_and_old_ones_go(self):
         kept = [{"runner": "old", "kind": "ci", "started_at": ago(8 * 86400), "wait_seconds": 5, "routing_seconds": 1},
@@ -85,7 +92,7 @@ class Waits(unittest.TestCase):
                                       job("r2", ago(300), ago(299), ago(290), ago(280))]}
         rows = LH.waits(kept, raw, NOW)
         self.assertEqual([row["runner"] for row in rows], ["r1", "r2"])
-        self.assertEqual(rows[0]["wait_seconds"], 40)
+        self.assertEqual(rows[0]["wait_seconds"], 30)
 
     def test_a_foreign_jobs_file_version_adds_nothing(self):
         raw = {"version": 2, "jobs": [job("r2", ago(300), ago(299), ago(290), ago(280))]}
@@ -96,7 +103,8 @@ class Waits(unittest.TestCase):
         rows.append({"wait_seconds": 100, "routing_seconds": None})
         summary = LH.wait_summary(rows)
         self.assertEqual((summary["jobs"], summary["p50_seconds"], summary["p95_seconds"]), (21, 11, 20))
-        self.assertEqual((summary["routing_seconds"], summary["start_seconds"]), (2, 8.5))
+        self.assertEqual(summary["routing_seconds"], 2)
+        self.assertNotIn("start_seconds", summary)
         self.assertIsNone(LH.wait_summary([]))
 
 
@@ -206,7 +214,7 @@ class EndToEnd(unittest.TestCase):
         capacity = parsed["capacity"]
         self.assertEqual(capacity["history"]["waiting_now"], 3)
         lanes = {lane["id"]: lane for lane in capacity["lanes"]}
-        self.assertEqual(lanes["ci-1"]["started_at"], ago(149))
+        self.assertEqual(lanes["ci-1"]["started_at"], ago(150))
         self.assertNotIn("started_at", lanes["ci-2"])
         self.assertTrue(all("runner_name" not in lane for lane in capacity["lanes"]))
 
