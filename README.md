@@ -227,7 +227,7 @@ After a merge, every other open pull request is behind the default branch. The o
 
 ## Preview address
 
-A pull request's preview has one address, and the job that sets the preview up is the one that knows it. The optional [preview action](actions/preview/README.md) records that address on the pull request's head as a `preview` commit status, and every check that tests the preview waits for that job and reads the address, instead of each reading the host's deployment records and guessing which build to test.
+A pull request's preview has one address, and the job that sets the preview up is the one that knows it. The optional [preview action](actions/preview/README.md) records that address on the pull request's head as a `preview` commit status, and every check that tests the preview waits for that job and reads the address, instead of each reading the host's deployment records and guessing which build to test. A preview with a branch database of its own records that database too, so no check has to find it again by name.
 
 ## Browser seats
 

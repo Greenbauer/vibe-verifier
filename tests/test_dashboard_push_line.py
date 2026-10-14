@@ -36,8 +36,8 @@ const progress=new Function('el','checkTotals','meterSegments','meterLabel','unr
   'ageLabel','secondsClass','ciTiming', progressSource+'return progress;')(el, helpers.checkTotals, helpers.meterSegments,
   helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass, helpers.ageLabel, helpers.secondsClass, helpers.ciTiming);
 const prRow=new Function('el','safeUrl','snapshot','combinedCategory','badge','progress','since','ageClass','runningWork',
-  rowSource+'return prRow;')(el, helpers.safeUrl, {owner:'octocat'}, helpers.combinedCategory,
-  status=>el('span',{class:'badge'}, status), progress, helpers.since, helpers.ageClass, helpers.runningWork);
+  'behindMark', rowSource+'return prRow;')(el, helpers.safeUrl, {owner:'octocat'}, helpers.combinedCategory,
+  status=>el('span',{class:'badge'}, status), progress, helpers.since, helpers.ageClass, helpers.runningWork, helpers.behindMark);
 const NOW=Date.parse('2026-10-06T00:00:00Z');
 Date.now=()=>NOW;
 const text=node=>{
@@ -74,7 +74,8 @@ function summarize(row) {
     workLines:work.children.filter(child=>child.tag==='small').map(text),
     lineTitles:work.children.filter(child=>child.attrs&&String(child.attrs.class||'').split(' ').includes('work-line')).map(child=>child.attrs.title),
     reason:text(byClass(work,'sr-only')[0]||''),
-    checks:text(byClass(row,'progress-copy')[0])
+    checks:text(byClass(row,'progress-copy')[0]),
+    behind:(byClass(row,'behind-mark')[0]||null)&&[text(byClass(row,'behind-mark')[0]), byClass(row,'behind-mark')[0].attrs.title]
   };
 }
 const base={repository:'octocat/example', number:7, title:'Fix the gate', author:'octocat',
@@ -128,6 +129,9 @@ const rows={
       {name:'preview', category:'pending', status:'expected'}]})),
   queued:summarize(prRow({...base, attention_reason:'Current-head work is still running',
     checks:[{name:'lint', category:'pending', status:'queued'}]})),
+  behindOne:summarize(prRow({...base, behind_by:1, default_branch:'main'})),
+  behindMany:summarize(prRow({...base, behind_by:12, default_branch:'trunk'})),
+  current:summarize(prRow({...base, behind_by:0, default_branch:'main'})),
   fallback:summarize(prRow({...base, attention_reason:'A current-head check was cancelled',
     checks:[{name:'unit', category:'cancelled', status:'completed'}]}))
 };
@@ -183,6 +187,11 @@ console.log(JSON.stringify(rows));
         self.assertEqual(result["queued"]["workLines"], ["1 check queued"])
         self.assertEqual(result["fallback"]["workLines"], ["A current-head check was cancelled"])
         self.assertEqual(result["fallback"]["reason"], "")
+        # The meta line names how far the default branch has moved past the head, only when it has.
+        self.assertEqual(result["behindOne"]["behind"], ["1 behind main", "main has 1 commit this branch does not"])
+        self.assertEqual(result["behindMany"]["behind"], ["12 behind trunk", "trunk has 12 commits this branch does not"])
+        self.assertIsNone(result["current"]["behind"])
+        self.assertIsNone(result["mixed"]["behind"])
         css = (ROOT / "dashboard/static/styles.css").read_text()
         app = (ROOT / "dashboard/static/app.js").read_text()
         self.assertIn(".progress-layout > .progress-caption { grid-column: 1;", css)

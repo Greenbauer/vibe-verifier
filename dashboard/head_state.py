@@ -4,6 +4,9 @@ The detail budget does not gate this read. GitHub priced the search below at 1 p
 page of 100 on 2026-10-08 (`rateLimit.cost`), against the 5,000 point hour. The detail query,
 a page of 50 with review threads and commits, cost 61 points on the same day.
 
+Each pull request also compares its head with the repository's default branch, which GitHub
+resolves as `HEAD`. Adding it left the page at 1 point on 2026-10-14.
+
 A beat asks again while nobody is refreshing, once the last head sample is 150 seconds old.
 One call on that period is 24 calls and 24 points an hour when the page costs 1. A second page,
 for more than 100 open pull requests, doubles that. Either way it is under one percent of the
@@ -15,6 +18,7 @@ from __future__ import annotations
 import copy
 from datetime import datetime
 
+from .behind import behind_default, stamp_behind
 from .gh_api import ApiError
 from .util import elapsed_seconds, github_url, iso_time, parse_time
 
@@ -42,10 +46,13 @@ query($search: String!, $count: Int!, $cursor: String) {
         createdAt
         author { login }
         headRefOid
+        baseRefName
+        isCrossRepository
+        headRef { compare(headRef: "HEAD") { aheadBy } }
         mergeStateStatus
         mergeable
         reviewDecision
-        repository { nameWithOwner }
+        repository { nameWithOwner defaultBranchRef { name } }
         statusCheckRollup { state }
       }
     }
@@ -126,7 +133,8 @@ def _one_head(node: dict) -> tuple | None:
         return None
     author = node.get("author")
     login = author.get("login") if isinstance(author, dict) else None
-    return key, {"sha": sha, "rollup": state, "merge_state": node.get("mergeStateStatus"),
+    behind_by, default_branch = behind_default(node)
+    return key, {"sha": sha, "behind_by": behind_by, "default_branch": default_branch, "rollup": state, "merge_state": node.get("mergeStateStatus"),
                  "mergeable": node.get("mergeable"), "review": node.get("reviewDecision"),
                  "repository": name, "title": node.get("title"), "author": login,
                  "draft": node.get("isDraft") is True, "url": node.get("url"),
@@ -378,7 +386,7 @@ def unseen_pull(repository: str, number: int, head: dict, now: datetime, subscri
     overall = rollup_category(head)
     if overall:
         pull["rollup_category"] = overall
-    return pull
+    return stamp_behind(pull, head)
 
 
 def _open_pulls(pulls, heads: dict, repository, now: datetime) -> tuple[list, set]:
@@ -389,7 +397,7 @@ def _open_pulls(pulls, heads: dict, repository, now: datetime) -> tuple[list, se
         key = head_key(repository, pull.get("number"))
         if key is None or key not in heads:
             continue
-        kept.append(reconcile_pull(pull, heads.get(key), now))
+        kept.append(stamp_behind(reconcile_pull(pull, heads.get(key), now), heads.get(key)))
         seen.add(key)
     return kept, seen
 
@@ -428,7 +436,8 @@ def apply_head_reading(github: dict, heads: dict, now: datetime, calls: int, poi
             row["pulls"] = kept
             seen.update(found)
         else:
-            row["pulls"] = [reconcile_pull(pull, heads.get(head_key(repo, pull.get("number"))), now)
+            row["pulls"] = [stamp_behind(reconcile_pull(pull, heads.get(head_key(repo, pull.get("number"))), now),
+                                         heads.get(head_key(repo, pull.get("number"))))
                             for pull in pulls if isinstance(pull, dict)]
     if complete:
         _add_unseen(github, rows, heads, seen, now)
