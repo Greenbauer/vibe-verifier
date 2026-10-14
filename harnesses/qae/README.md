@@ -104,7 +104,8 @@ step selects nothing and nothing changes.
   ([feature map](../../docs/feature-map.md#a-feature-no-browser-can-walk)). `qae-artifacts` checks the feature step logs' screenshots like the criteria's; the
   review comment lists each re-walked feature and the states left unwalked.
 - A Verify step that is a refusal by design (a wrong password answered 400) declares it on its own
-  line, `expected-refusal: <status> <path-or-URL>`, when the `qae-artifacts` line carries the same
+  line, `expected-refusal: <status> <path-or-URL>` (`{id}` for one path segment the walk mints,
+  such as a link it just made private), when the `qae-artifacts` line carries the same
   `--features` and `--changed-files` as the `acceptance-verdict` line; it then reads the declarations
   of the features it selects by the same rule
   ([feature map](../../docs/feature-map.md#expected-refusals-in-a-re-walk)).

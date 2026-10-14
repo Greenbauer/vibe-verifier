@@ -13,7 +13,8 @@ in any order; others (a `## Sub-features` list, say) are allowed and not read:
     ## Verify     `- `<path>::<exact test title>`` bullets (or `<path>:<line>` / `<path>:<start>-<end>`),
                   each resolving in the tree, and optionally numbered browser steps (`1. ...`); a
                   step's own line may declare the refusal it expects, `expected-refusal: <status>
-                  <path-or-URL>`, which gates/qae_artifacts.py reads for a re-walked feature; and a
+                  <path-or-URL>` (`{id}` for one path segment the walk mints), which
+                  gates/qae_artifacts.py reads for a re-walked feature; and a
                   feature no browser can walk (every state needs a secret, a cron or a system the
                   explorer does not have) says so on a line of its own, `re-walk: none -- <why>`
     ## Gotchas    traps a change or a verification run tends to hit (prose, not read here)

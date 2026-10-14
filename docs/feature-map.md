@@ -245,6 +245,10 @@ three while its verdict passed). Now the step declares it, once, in the feature 
   comments. Reach, Gotchas and test bullets declare nothing, and neither does anything the explorer
   writes. The rules are a criterion's: only 400, 401, 403, 404, 409 or 422, and the URL must match
   exactly, query included; any other status or URL still fails the run.
+- **An id the run mints.** `{id}` in the target stands for one path segment no file can know ahead
+  (a record the walk just created or made private): `expected-refusal: 404 /api/public/itineraries/{id}`
+  matches `/api/public/itineraries/8697e680-...`, never `/api/public/itineraries/a/b`, another route,
+  or the same route with a query the declaration does not name.
 - **A host the file cannot name.** A path resolves against the site and against every further origin
   the site file declares. So a refusal on an API host each preview gets its own (a per-branch Supabase
   project, `https://<ref>.supabase.co`) is written as a path, `/auth/v1/token?grant_type=password`,

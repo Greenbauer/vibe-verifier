@@ -848,7 +848,7 @@ requests and resource errors on those are judged as the site's are. The consumer
 declares only what is environmental. A pull request declares an expected refusal in a criterion's
 own line, `expected-refusal: <status> <path-or-URL>`, read from `--criteria`, where the status is a
 handled refusal (400, 401, 403, 404, 409 or 422): it excuses exactly that status at exactly that URL
-for that run, and nothing else. With `--widths N[,N...]` (opt-in) each criterion's step screenshots
+for that run, and nothing else; `{id}` in the target stands for one path segment the run mints. With `--widths N[,N...]` (opt-in) each criterion's step screenshots
 must include one of each width, read from the PNG header; the explore job tells the explorer the same
 widths, from the same manifest line as the base has it, in `qae-inputs/widths`. With `--ticket FILE`
 the ticket's criteria (`qae/TCn.md` logs) are held to the same rules, their `expected-refusal:`

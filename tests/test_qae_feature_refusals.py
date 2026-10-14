@@ -102,6 +102,19 @@ class FeatureStepRefusals(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
+    def test_a_step_declares_a_refusal_at_an_id_the_run_minted(self):
+        private = SIGN_IN.replace("## Gotchas", "3. Make the link private, then reload it: not found "
+                                  "(expected-refusal: 404 /api/public/itineraries/{id}).\n\n## Gotchas")
+        minted = ("GET", PREVIEW + "/api/public/itineraries/8697e680-4c1d", "404")
+        files = {"app/auth/login.ts": "2\n", "docs/features/sign-in.md": private}
+        result = self.walk(["app/auth/login.ts"], [minted], *self.features(), files=files)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        nested = ("GET", PREVIEW + "/api/public/itineraries/8697e680-4c1d/days", "404")
+        result = self.walk(["app/auth/login.ts"], [nested], *self.features(), files={"app/auth/login.ts": "3\n"})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("request answered 404 outside the allowlist: [GET] %s/api/public/itineraries/8697e680-4c1d/days" % PREVIEW,
+                      result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
