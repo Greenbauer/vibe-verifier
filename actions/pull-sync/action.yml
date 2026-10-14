@@ -24,7 +24,8 @@ inputs:
       The name of a commit status that fails exactly when a pull request has to be updated before it
       may merge (a check comparing it with the default branch, in place of "require branches to be up
       to date"). Its failure alone does not make a pull request red here, so one that only needs the
-      update gets it as soon as a ready one would. Empty: every failed check counts.
+      update gets it as soon as a ready one would. The token must then read commit statuses. Empty:
+      every failed check counts.
     default: ""
 runs:
   using: composite
