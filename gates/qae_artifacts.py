@@ -66,10 +66,11 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    cancelled: a page that drops a fetch when the user moves on, and one that gives up on an endpoint
    that never answers, write the same line. So it is not judged only when the record also holds that
    request (same method, same URL, fragment dropped) answered below 400 somewhere in the run: the
-   endpoint is shown to work, and the cancellation was the page moving on. Cancelled and never
-   answered is a finding, and every other failed request always is. This encodes the recorded
-   false-PASS lesson: a PASS obtained while the real endpoint failed is refused here whatever the
-   verdict says.
+   endpoint is shown to work, and the cancellation was the page moving on. An answer in the page
+   record counts too (gates/_page_record.py): it holds static requests, which the explorer's record
+   leaves out. Cancelled and never answered is a finding, and every other failed request always is.
+   This encodes the recorded false-PASS lesson: a PASS obtained while the real endpoint failed is
+   refused here whatever the verdict says.
 5. A refusal is the correct outcome of some criteria (an auth gate answering 401 signed out, a
    server answering 422 to the invalid input the explorer is told to try), so a criterion declares
    it: `- Signed out, the quotes API refuses (expected-refusal: 401 /api/quotes)`.
@@ -104,7 +105,6 @@ http(s) URLs: nothing was adjudicated.
 import argparse
 import glob
 import hashlib
-import json
 import os
 import re
 import urllib.parse
@@ -112,6 +112,7 @@ import urllib.parse
 from _acceptance import body_criteria, declares_none, named_references, png_size, ticket_items
 from _contract import CannotRun, Finding, run_gate
 from _features import add_selection_arguments, parse, selection
+from _page_record import digest, page_record
 
 GATE = "qae-artifacts"
 STEP_LINE = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):", re.IGNORECASE)
@@ -269,19 +270,6 @@ def resource_error_is_excused(message, expected, sites):
     return not judged(url, sites) or (refused.group("status"), exact(url)) in expected
 
 
-def logging_pages(root):
-    """{digest of a console error's line: the URLs of the pages that logged it}, from the record the
-    harness keeps (actions/qae-browser/console-pages.js). A run without the record names no page."""
-    pages, path = {}, os.path.join(root, "console-pages.jsonl")
-    for line in read(path).splitlines() if os.path.isfile(path) else ():
-        try:
-            entry = json.loads(line)
-            pages.setdefault(entry["sha256"], []).append(str(entry["page"]))
-        except (ValueError, KeyError, TypeError):
-            continue  # a line cut short names no page, so its error is judged
-    return pages
-
-
 def console_errors(text):
     """(line number, kind, message) per error a console log holds: a console error ("console error",
     its first line without the tag, `<text> @ <url>:<line>`), and an uncaught exception or rejection
@@ -320,7 +308,7 @@ def logged_off_site(message, pages, sites):
 
 
 def console_is_clean(root, allowed, expected, sites):
-    findings, seen, pages = [], set(), logging_pages(root)
+    findings, seen, pages = [], set(), page_record(root)[0]
     for log in sorted(glob.glob(os.path.join(root, "console-*.log"))):
         for number, kind, message in console_errors(read(log)):
             if any(pattern.search(message) for pattern in allowed) or message in seen:
@@ -391,15 +379,17 @@ def session_and_network(root, allowed, sites, expected):
 def request_findings(root, sources, allowed, sites, expected):
     """A finding per request to a judged origin that answered 400 or worse or failed, across every
     network record of the run. What excuses a cancelled one, beyond the allowlist, is that same
-    request answered below 400 anywhere in those records."""
+    request answered below 400 anywhere in those records, or among the page record's answers."""
     records = [(source, match) for source in sources for match in REQUEST.finditer(read(source))]
     answered = {same_request(match) for _, match in records if not site_failed(match)}
+    recorded = page_record(root)[1]
     findings, seen = [], set()
     for source, match in records:
         url, status = match.group("url"), match.group("status")
         if not site_failed(match) or not judged(url, sites) or any(pattern.search(url) for pattern in allowed):
             continue
-        if (status, exact(url)) in expected or (cancelled(match) and same_request(match) in answered):
+        if (status, exact(url)) in expected or (cancelled(match) and (same_request(match) in answered
+                                                                       or digest("%s %s" % same_request(match)) in recorded)):
             continue
         key = (match.group("method"), url, status)
         if key in seen:

@@ -1029,9 +1029,9 @@ and refuses on structural facts:
    that saved its result to a file is read from that file, which must be in the evidence), and
    no request to the site under test (`--site-file`, the URL the explore job declared and any further
    origin after it, or a fixed `--site`) answered 400 or worse or failed, outside `--allow-request` patterns. A request the page cancelled
-   itself, `net::ERR_ABORTED`, is not judged when the record also holds that request (same method and
-   URL) answered below 400 somewhere in the run, and is a finding when it does not
-   ([below](#a-request-the-page-cancelled));
+   itself, `net::ERR_ABORTED`, is not judged when the run also holds that request (same method and
+   URL) answered below 400 somewhere, in a network record or in the page record's answers, and is a
+   finding when it does not ([below](#a-request-the-page-cancelled));
 5. with `--widths`, each criterion's step screenshots include one of each declared width
    ([above](#viewports-themes-and-what-a-criterion-does-not-say)).
 
@@ -1107,8 +1107,11 @@ So the harness records the page. [`console-pages.js`](../../actions/qae-browser/
 is loaded into playwright-mcp with `--init-page`, and for each console error and each uncaught
 exception (the page's `console` and `pageerror` events) it appends one line to
 `console-pages.jsonl` in the artifact directory: the URL of the page the tab showed (query and
-fragment dropped) and the SHA-256 of the error's first line as the console log holds it. No text is
-copied, so the record is not a second place a credential can land.
+fragment dropped) and the SHA-256 of the error's first line as the console log holds it. It also
+appends one line per request a page got an answer below 400 for, `{"answered": <SHA-256 of "METHOD
+URL">}` (fragment dropped), once per request in the run: the answers a cancelled request is matched
+against ([below](#a-request-the-page-cancelled)). No text is copied, so the record is not a second
+place a credential can land.
 
 With a site declared, the gate does not judge a console error when all three hold:
 
@@ -1147,11 +1150,21 @@ line, and the record holds no timing, no initiator and no navigation (a request 
 document unloads is recorded with no failure at all, and a client-side route change makes no
 request). So the gate cannot tell moving on from giving up, and asks the record a question it can
 answer: was this request answered at all? When the same method and URL (query included, fragment
-dropped) answered below 400 anywhere in the run's network records, the endpoint is shown to work and
-the cancelled line is not judged. When it never was, the line is a finding: `request cancelled and
+dropped) answered below 400 anywhere in the run, the endpoint is shown to work and the cancelled line
+is not judged. When it never was, the line is a finding: `request cancelled and
 never answered in this run`. A cancelled `PUT` is not excused by a `GET` of the same URL, and no
 answer excuses any other failure (`net::ERR_CONNECTION_*`, `net::ERR_TIMED_OUT`, `net::ERR_FAILED`,
 a failure with no reason, a 5xx).
+
+"Anywhere in the run" is the run's network records and the harness's page record. The explorer's
+record alone cannot hold the answer to a static request: `browser_network_requests` leaves out every
+successful image, font, script and stylesheet unless it is called with `static: true` (it is not, by
+default), and still lists one that failed or was cancelled. A consumer QAE run of 2026-10-14
+was refused for exactly that: its navbar logo (`/_next/image?...&w=640`) answered on every page the
+explorer opened at 1280 pixels, and the one cancelled copy, on a later page, was the only line the
+record held for it. So the page record keeps every answer below 400 a page got, static ones included,
+written by the harness's `--init-page` hook whatever the explorer passes, and an answer there counts
+the same as one in a network record.
 
 A request the site always cancels and never completes by design (a query replaced on every
 keystroke, whose URL changes each time) is declared with `--allow-request`, like anything else

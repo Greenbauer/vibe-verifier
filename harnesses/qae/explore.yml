@@ -532,8 +532,9 @@ jobs:
         # fail the step (nothing is overwritten), and so does an explore job that reported an attempt
         # newer than any evidence, or none: that attempt left nothing to judge. An explorer that left
         # no evidence is named and its criteria then have no verdict, which the gate refuses. The page
-        # record, console-pages.jsonl, is one line per console error or uncaught exception, and the gate
-        # reads it under that one name: every explorer's lines are appended to it.
+        # record, console-pages.jsonl, is one line per console error or uncaught exception and one per
+        # request a page got an answer for, and the gate reads it under that one name: every explorer's
+        # lines are appended to it.
         # qae-inputs/verdict.md is the explorers' verdicts/<explorer>.md, in order: the files the
         # workflow copied in this run. No pull request comment is read, so nobody can paste a verdict,
         # and a run never takes another run's verdict (a carried walk runs no explorer and no gate).

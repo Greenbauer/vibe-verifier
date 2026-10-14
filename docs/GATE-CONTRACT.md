@@ -831,8 +831,9 @@ directory (`--artifacts`) and refuses on structural facts, never on the model's 
 an uncaught exception or unhandled rejection, which playwright-mcp writes with no level tag: the
 error's stack over several lines, which the allowlist is matched against whole), a missing session or network
 record, a request to the site under test that answered 400 or worse or failed (one the page
-cancelled itself, `net::ERR_ABORTED`, is not judged when the record also holds that request, same
-method and URL, answered below 400 somewhere in the run, and is a finding when it does not) outside
+cancelled itself, `net::ERR_ABORTED`, is not judged when the run also holds that request, same
+method and URL, answered below 400 somewhere, in a network record or among the answers in the
+harness's page record, static requests included, and is a finding when it does not) outside
 `--allow-request`. With a site declared, Chromium's `Failed to load resource` console line for
 another host is skipped like that host's request, and so is an error only pages outside the site
 logged (a hosted page a link opened), unless it is about a URL of the site (for an exception, a

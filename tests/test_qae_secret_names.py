@@ -245,7 +245,7 @@ class Live(unittest.TestCase):
         explorer.call("browser_close")
         explorer.close()
         records = [json.loads(line) for line in Path(self.root, "console-pages.jsonl").read_text().splitlines()]
-        self.assertEqual({record["page"] for record in records}, {self.site.url + "/login"})
+        self.assertEqual({record["page"] for record in records if "page" in record}, {self.site.url + "/login"})
 
     def test_the_tool_that_already_resolved_the_name_still_does(self):
         explorer = self.explorer()

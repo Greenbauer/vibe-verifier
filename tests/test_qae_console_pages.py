@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -24,6 +25,11 @@ HOOK = ROOT / "actions" / "qae-browser" / "console-pages.js"
 BLOCKED = "net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin"
 # A page whose script throws: playwright-mcp logs the error's stack, with no level tag.
 THROWS = "<script>throw new Error('boom')</script>"
+LOGO = b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'
+# A page that starts loading the logo and drops the image before it arrives, as a page re-rendering
+# its navbar does: Chromium cancels the request, `[FAILED] net::ERR_ABORTED`.
+DROPS_LOGO = ("<title>site</title><h1>Developers</h1><script>const logo = new Image(); logo.src = '/logo.svg';"
+              "document.body.append(logo); setTimeout(() => { logo.removeAttribute('src'); logo.remove(); }, 200)</script>")
 
 
 class Hook(unittest.TestCase):
@@ -41,8 +47,8 @@ class Hook(unittest.TestCase):
 
 
 class Server:
-    """One origin on a local port: `pages` maps a path to the HTML it serves, and /pageviews answers
-    an image no other origin may read."""
+    """One origin on a local port: `pages` maps a path to the HTML it serves, /pageviews answers an
+    image no other origin may read, and /logo.svg an image a second late, never from a cache."""
 
     def __init__(self, test, pages=None):
         pages = pages or {}
@@ -50,9 +56,12 @@ class Server:
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 path = self.path.split("?")[0]
-                body = pages.get(path, "").encode()
-                self.send_response(200 if path in pages or path in ("/pageviews", "/favicon.ico") else 404)
-                self.send_header("Content-Type", "image/png" if path == "/pageviews" else "text/html")
+                body = LOGO if path == "/logo.svg" else pages.get(path, "").encode()
+                if path == "/logo.svg":
+                    time.sleep(1)
+                self.send_response(200 if path in pages or path in ("/pageviews", "/favicon.ico", "/logo.svg") else 404)
+                self.send_header("Content-Type", {"/pageviews": "image/png", "/logo.svg": "image/svg+xml"}.get(path, "text/html"))
+                self.send_header("Cache-Control", "no-store")
                 if path == "/pageviews":
                     self.send_header("Cross-Origin-Resource-Policy", "same-origin")
                 self.send_header("Content-Length", str(len(body)))
@@ -125,6 +134,8 @@ class Live(unittest.TestCase):
             "/rejects": "<title>site</title><h1>Rejects</h1><script>Promise.reject(new Error('rejected boom'))</script>",
             "/rejects-value": "<title>site</title><h1>Rejects</h1><script>Promise.reject('rejected string')</script>",
             "/pay-throws": link % (self.hosted.url, "throws"),
+            "/dashboard": '<title>site</title><h1>Dashboard</h1><img src="/logo.svg">',
+            "/developers": DROPS_LOGO,
         })
 
     def explore(self, path, click=None):
@@ -152,7 +163,7 @@ class Live(unittest.TestCase):
         self.explore("/", click="#pay")
         self.assertIn("[ERROR] Failed to load resource: %s @ %s/pageviews?from=hosted:0" % (BLOCKED, self.analytics.url), self.console())
         records = [json.loads(line) for line in Path(self.root, "console-pages.jsonl").read_text().splitlines()]
-        self.assertEqual({record["page"] for record in records}, {self.hosted.url + "/checkout"})
+        self.assertEqual({record["page"] for record in records if "page" in record}, {self.hosted.url + "/checkout"})
         result = self.run_gate()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         os.remove(os.path.join(self.root, "console-pages.jsonl"))
@@ -196,6 +207,30 @@ class Live(unittest.TestCase):
         result = self.run_gate()
         self.assertEqual(result.returncode, 1)
         self.assertIn("uncaught exception outside the allowlist: Error: boom at %s/throws" % self.hosted.url, result.stdout)
+
+    def test_a_static_request_cancelled_after_it_answered_passes_and_only_because_of_the_record(self):
+        # The shape of a consumer QAE run of 2026-10-14: the logo answered on an earlier page,
+        # then a page cancelled it. Each network record is called as the explorer calls it, so the
+        # answer, a successful static request, is in neither of them and the cancellation is.
+        explorer = Explorer(self, self.root)
+        for path in ("/dashboard", "/developers"):
+            explorer.call("browser_navigate", url=self.site.url + path)
+            explorer.call("browser_wait_for", time=2)
+            explorer.call("browser_take_screenshot", filename="qae-artifacts/qae/AC1-step-1.png")
+            explorer.call("browser_network_requests", static=False, filename="qae-artifacts/qae/AC1-network%s.txt" % path.replace("/", "-"))
+        explorer.call("browser_close")
+        explorer.close()
+        Path(self.root, "qae", "AC1.md").write_text("- step 1: opened /developers -> saw the page\n")
+        logo = "[GET] %s/logo.svg" % self.site.url
+        self.assertIn(logo + " => [FAILED] net::ERR_ABORTED", Path(self.root, "qae", "AC1-network-developers.txt").read_text())
+        self.assertNotIn(logo, Path(self.root, "qae", "AC1-network-dashboard.txt").read_text())
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        record = Path(self.root, "console-pages.jsonl")
+        record.write_text("".join(line + "\n" for line in record.read_text().splitlines() if '"answered"' not in line))
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("request cancelled and never answered in this run, outside the allowlist: " + logo, result.stdout)
 
 
 if __name__ == "__main__":

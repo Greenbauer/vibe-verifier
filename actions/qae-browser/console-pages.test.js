@@ -14,19 +14,27 @@ const message = (type, text, url = "https://cdn.example/app.js", lineNumber = 12
 // An uncaught exception or rejection: an Error, or any other value a page threw.
 const thrown = value => ({ thrown: value });
 const isException = logged => "thrown" in logged;
+// A request the page made, with the answer it got (`status`), or none yet.
+const request = (method, url, status) => {
+  const made = { method: () => method, url: () => url, existingResponse: () => (status ? answer : null) };
+  const answer = { status: () => status, request: () => made };
+  return made;
+};
 const digest = line => crypto.createHash("sha256").update(line).digest("hex");
 
-// The hook, run on a tab showing `url` that already logged `earlier`: `log` is the tab logging one
-// more message, `navigate` moves it to another page, `record` reads back what the hook wrote.
-async function tab(url, earlier = []) {
+// The hook, run on a tab showing `url` that already logged `earlier` and made the requests `loaded`:
+// `log` is the tab logging one more message, `respond` it getting an answer to `request`, `navigate`
+// moves it to another page, `record` reads back what the hook wrote.
+async function tab(url, earlier = [], loaded = []) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vv-console-pages-"));
   const out = path.join(dir, "not-yet-made");
-  const listeners = { console: [], pageerror: [] };
+  const listeners = { console: [], pageerror: [], response: [] };
   const page = {
     url: () => url,
     on: (event, listener) => listeners[event].push(listener),
     consoleMessages: async () => earlier.filter(logged => !isException(logged)),
     pageErrors: async () => earlier.filter(isException).map(logged => logged.thrown),
+    requests: async () => loaded,
   };
   const argv = process.argv;
   process.argv = ["node", "cli.js", "--output-dir", out];
@@ -34,6 +42,7 @@ async function tab(url, earlier = []) {
     await hook.default({ page });
     return {
       log: logged => listeners[isException(logged) ? "pageerror" : "console"].forEach(listener => listener(isException(logged) ? logged.thrown : logged)),
+      respond: made => listeners.response.forEach(listener => listener(made.existingResponse())),
       record: () => fs.existsSync(path.join(out, "console-pages.jsonl"))
         ? fs.readFileSync(path.join(out, "console-pages.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line)) : [],
       navigate: next => { url = next; },
@@ -97,6 +106,32 @@ test("a rejection with a value that is not an Error is recorded by that value", 
 test("an exception the tab threw before the hook ran is recorded too", async () => {
   const opened = await tab("https://pay.example/", [thrown("early throw")]);
   assert.deepStrictEqual(opened.record(), [{ page: "https://pay.example/", sha256: digest("early throw") }]);
+});
+
+test("every answer below 400 is recorded by the digest of its method and URL, static or not, and once", async () => {
+  // The shape of a consumer QAE run of 2026-10-14: the logo answered on page after page.
+  const logo = "https://site.example/_next/image?url=%2Fbranding%2Flogo.svg&w=640&q=75";
+  const opened = await tab("https://site.example/");
+  opened.respond(request("GET", logo, 200));
+  opened.respond(request("GET", logo + "#top", 304));
+  opened.respond(request("POST", "https://site.example/developers", 303));
+  opened.respond(request("GET", "https://site.example/api/quote", 404));
+  opened.respond(request("GET", "https://site.example/api/down", 500));
+  const reopened = await tab("https://site.example/developers");
+  reopened.respond(request("GET", logo, 200));
+  assert.deepStrictEqual(reopened.record(), []);
+  assert.deepStrictEqual(opened.record(), [
+    { answered: digest("GET " + logo) },
+    { answered: digest("POST https://site.example/developers") },
+  ]);
+  assert.doesNotMatch(JSON.stringify(opened.record()), /site\.example/);
+});
+
+test("an answer the tab got before the hook ran is recorded, and a request with none is not", async () => {
+  const opened = await tab("https://shop.example/", [], [
+    request("GET", "https://shop.example/early.css", 200), request("GET", "https://shop.example/pending.js"),
+    request("GET", "https://shop.example/gone.png", 404), request("GET", "data:image/png;base64,AAAA", 200)]);
+  assert.deepStrictEqual(opened.record(), [{ answered: digest("GET https://shop.example/early.css") }]);
 });
 
 test("the output directory is the one playwright-mcp was given, in either spelling", () => {
