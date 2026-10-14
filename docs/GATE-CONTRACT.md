@@ -518,8 +518,11 @@ changed-code-mutation --project apps/web --break 70 --soak
   exit 2: under Vitest 5 the pinned Stryker 10.0.0 kills no mutant at all (measured 2026-10-05:
   a test that kills 8 of 8 under Vitest 2.1.9, 3.2.7 and 4.1.10 killed none under 5.0.3), so any
   verdict there would be false. Stryker's Vitest plugin falls back to a Vitest installed beside
-  it when the project's cannot be loaded; the toolchain installs a stub there that throws, so the
-  Vitest that runs is always the project's. Vitest's `related` filter is off, so the first run
+  it when the project's cannot be loaded, without saying why; the toolchain installs a stub there
+  that throws with the reason, so the Vitest that runs is always the project's. An installed
+  Vitest that does not load is exit 2: `npm ci` exits 0 when the download of an optional package
+  fails, and Vite's native binding is one, so the reason then reads `Cannot find native binding`
+  and the fix is to install again. Vitest's `related` filter is off, so the first run
   runs the whole suite: with it on, a test that never imports the changed file is not run at all,
   and when no test imports it Stryker writes no report.
 - **Verdict.** The score is killed / (killed + survived + not covered) over the changed lines.
