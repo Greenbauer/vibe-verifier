@@ -12,17 +12,25 @@ and passed, while every check that read GitHub's records failed with "no Preview
 
 So the job that sets the preview up, and already knows the one address it proved, records it:
 
-    record --repo <owner/name> --sha <commit> --url https://<host>
+    record --repo <owner/name> --sha <commit> --url https://<host> [--database <supabase project ref>]
 
 writes a commit status on the commit, context `preview`, state success, its link the address. A
 pull request's checks list then shows a `preview` row whose link is the preview under test, whether
 or not the host wrote anything. A later record on the same commit (a re-sync) is newer, and newest
 wins.
 
+A preview that reads a database of its own (a Supabase branch) has the same problem one level down:
+every check that needs that database used to find it again by name, and a project can hold two
+branches for one pull request (a workflow's `pr-<N>` and the one Supabase's GitHub integration makes
+for the git branch, and a lookup by name once took the one the preview never read). The job that pointed
+the preview at its database knows which one it is, so --database records it beside the address: a
+second status, context `preview-database`, its link `https://<ref>.supabase.co`.
+
     find --repo <owner/name> --sha <commit> --check <name> [--wait-minutes 40] [--running-minutes N]
 
 waits for the check named --check (the job that records) to pass on the commit, then prints the
-newest recorded address and nothing else. Two clocks: the whole wait is --wait-minutes, and inside
+newest recorded address, and on a second line the newest recorded database's project ref when one
+was recorded; nothing else. Two clocks: the whole wait is --wait-minutes, and inside
 it the check may spend at most --running-minutes actually running (default: the whole wait). Time
 the check spends queued for a runner, or not yet created, is not the check being slow, so only polls
 that see it `in_progress` count against the running budget. One poll every --poll-seconds (30): every
@@ -44,11 +52,16 @@ find `checks: read` and `statuses: read`.
 """
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
 
 CONTEXT = "preview"
+DATABASE_CONTEXT = "preview-database"
+# A Supabase project ref: 20 lower-case letters. Its API address is https://<ref>.supabase.co.
+DATABASE_REF = re.compile(r"^[a-z]{20}$")
+DATABASE_URL = re.compile(r"^https://([a-z]{20})\.supabase\.co$")
 FAILED_READS_ALLOWED = 6
 # The wait ended with the check's run neither passed nor ended: it is still owed.
 STILL_OWED = 3
@@ -95,28 +108,44 @@ def newest_run(lines):
     return "only skipped" if runs else "none"
 
 
-def newest_address(lines):
-    """The link of the newest `preview` status, one `created_at<TAB>target_url` line each, or ""."""
+def newest_link(lines, context):
+    """The link of the newest status of `context`, from one `context<TAB>created_at<TAB>target_url`
+    line each, or ""."""
     rows = [line.split("\t") for line in lines.splitlines() if line.strip()]
-    rows = [row for row in rows if len(row) == 2 and row[1]]
+    rows = [row[1:] for row in rows if len(row) == 3 and row[0] == context and row[2]]
     return max(rows)[1] if rows else ""
+
+
+def newest_database(lines):
+    """The project ref of the newest `preview-database` status, or "" when none was recorded."""
+    match = DATABASE_URL.match(newest_link(lines, DATABASE_CONTEXT))
+    return match.group(1) if match else ""
+
+
+def write_status(args, context, link, description):
+    payload = json.dumps({"state": "success", "context": context, "target_url": link, "description": description})
+    for attempt in range(1, 4):
+        result = subprocess.run(["gh", "api", "-X", "POST", "repos/%s/statuses/%s" % (args.repo, args.sha),
+                                 "--input", "-"], input=payload, capture_output=True, text=True)
+        if result.returncode == 0:
+            print("recorded the %s of %s: %s" % (context, args.sha, link))
+            return
+        sys.stderr.write("recording failed (attempt %d of 3): %s\n" % (attempt, result.stderr.strip()))
+        if attempt < 3:
+            time.sleep(args.interval)
+    fail("could not record the preview of %s as a `%s` status; the job needs `statuses: write`" % (args.sha, context))
 
 
 def record(args):
     if not args.url.startswith("https://"):
         fail("the preview address to record must start with https://, got %r" % args.url)
-    payload = json.dumps({"state": "success", "context": CONTEXT, "target_url": args.url.rstrip("/"),
-                          "description": "The preview of this commit under test"})
-    for attempt in range(1, 4):
-        result = subprocess.run(["gh", "api", "-X", "POST", "repos/%s/statuses/%s" % (args.repo, args.sha),
-                                 "--input", "-"], input=payload, capture_output=True, text=True)
-        if result.returncode == 0:
-            print("recorded the preview of %s: %s" % (args.sha, args.url.rstrip("/")))
-            return
-        sys.stderr.write("recording failed (attempt %d of 3): %s\n" % (attempt, result.stderr.strip()))
-        if attempt < 3:
-            time.sleep(args.interval)
-    fail("could not record the preview of %s as a `%s` status; the job needs `statuses: write`" % (args.sha, CONTEXT))
+    if args.database and not DATABASE_REF.match(args.database):
+        fail("the preview database to record must be a Supabase project ref (20 lower-case letters), got %r" % args.database)
+    # The database first: a reader that sees the address after a pass must also see the database.
+    if args.database:
+        write_status(args, DATABASE_CONTEXT, "https://%s.supabase.co" % args.database,
+                     "The database the preview of this commit reads")
+    write_status(args, CONTEXT, args.url.rstrip("/"), "The preview of this commit under test")
 
 
 def read_verdict(args, reader, answered):
@@ -177,17 +206,21 @@ def find(args):
         lines = None
         while lines is None:
             lines = reader.read(["repos/%s/commits/%s/statuses" % (args.repo, args.sha), "--paginate",
-                                 "--jq", '.[] | select(.context == "%s") | "\\(.created_at)\\t\\(.target_url // "")"' % CONTEXT])
+                                 "--jq", '.[] | select(.context == "%s" or .context == "%s") | "\\(.context)\\t\\(.created_at)\\t\\(.target_url // "")"'
+                                 % (CONTEXT, DATABASE_CONTEXT)])
             if lines is None:
                 time.sleep(args.interval)
     except Unreadable as error:
         fail("gh api %s failed %d times in a row (gh's own error is above each), so the preview of %s "
              "was not found. Re-run this job." % (error, FAILED_READS_ALLOWED, args.sha), code=2)
-    address = newest_address(lines)
+    address = newest_link(lines, CONTEXT)
     if not address:
         fail('"%s" passed on %s but recorded no `%s` status: its job needs the catalog\'s preview record '
              "step (actions/preview/README.md). Re-running this job will not help." % (args.check, args.sha, CONTEXT))
     print(address)
+    database = newest_database(lines)
+    if database:
+        print(database)
 
 
 def main():
@@ -200,6 +233,7 @@ def main():
         command.add_argument("--poll-seconds", type=int, default=30, help="seconds between polls; every budget is counted in polls")
         command.add_argument("--interval", type=float, help="seconds actually slept between polls (default: --poll-seconds)")
     commands.choices["record"].add_argument("--url", required=True)
+    commands.choices["record"].add_argument("--database", default="", help="the Supabase project ref the preview reads")
     commands.choices["find"].add_argument("--check", required=True)
     commands.choices["find"].add_argument("--wait-minutes", type=int, default=40)
     commands.choices["find"].add_argument("--running-minutes", type=int, default=0)
