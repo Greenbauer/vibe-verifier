@@ -48,6 +48,7 @@ class HeadAPI:
         self.log = []
         self.searches = []
         self.rollup = {}
+        self.behind = {}
 
     def begin(self):
         self.calls = 0
@@ -128,7 +129,9 @@ class HeadAPI:
             for row in rows:
                 nodes.append({"number": row["number"], "headRefOid": row["head"]["sha"],
                               "mergeStateStatus": "CLEAN", "mergeable": "MERGEABLE",
-                              "reviewDecision": "APPROVED", "repository": {"nameWithOwner": name},
+                              "reviewDecision": "APPROVED", "baseRefName": "main", "isCrossRepository": False,
+                              "headRef": {"compare": {"aheadBy": self.behind.get((name, row["number"]), 0)}},
+                              "repository": {"nameWithOwner": name, "defaultBranchRef": {"name": "main"}},
                               "statusCheckRollup": {"state": self.rollup.get((name, row["number"]), "SUCCESS")}})
         return {"data": {"rateLimit": {"cost": 1, "remaining": 4000, "resetAt": "2026-10-08T17:00:00Z"},
                          "search": {"issueCount": len(nodes),
@@ -418,8 +421,9 @@ function el(tag, attrs={}, ...children) {
   return {tag, attrs, children: children.flat().filter(value => value !== null && value !== undefined)};
 }
 const prRow = new Function('el', 'safeUrl', 'snapshot', 'combinedCategory', 'badge', 'progress', 'since', 'ageClass', 'runningWork',
-  source + 'return prRow;')(el, helpers.safeUrl, {owner: 'octocat'}, () => 'success',
-  status => el('span', {}, status), () => el('div'), helpers.since, helpers.ageClass, helpers.runningWork);
+  'behindMark', source + 'return prRow;')(el, helpers.safeUrl, {owner: 'octocat'}, () => 'success',
+  status => el('span', {}, status), () => el('div'), helpers.since, helpers.ageClass, helpers.runningWork,
+  helpers.behindMark);
 const base = {repository: 'octocat/example', number: 3, title: 'Ship the gate', author: 'octocat',
   head_sha: 'abcdef1234567890', html_url: 'https://github.com/octocat/example/pull/3',
   attention_reason: 'No current-head failure observed', created_at: '2026-10-01T00:00:00Z', merge_ready: true};

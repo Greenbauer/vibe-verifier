@@ -1,7 +1,7 @@
 (function () {
   "use strict";
   const { BOT_META, element: el, link, safeUrl, duration, ageLabel, since, ageClass, secondsClass, ciTiming, formatTime, bytes, badge, botState, sourceStamp,
-    diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark,
+    diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, behindMark,
     quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, paceHeader, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
@@ -227,6 +227,11 @@
     return [el("small", {}, reason)];
   }
 
+  function behindBadge(pull) {
+    const mark = behindMark(pull);
+    return mark ? el("span", { class: "behind-mark", title: mark.title, "aria-label": mark.title }, mark.shown) : null;
+  }
+
   function prRow(pull) {
     const category = combinedCategory(pull);
     const href = safeUrl(pull.html_url, snapshot.owner);
@@ -240,7 +245,8 @@
     },
     el("span", { class: "pr-identity" },
       el("b", { class: ready ? "merge-ready" : null, title: ready ? "Fully merge-ready" : null }, pull.title),
-      el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`)),
+      el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`,
+        behindBadge(pull))),
     el("span", { class: "pr-work", title: reason || null }, badge(category), ...workDetail(pull)),
     progress(pull, now),
     el("span", { class: "pr-age" },
