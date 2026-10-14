@@ -44,9 +44,12 @@
   }
 
   function announce(message) { announcement.textContent = message; }
-  function heading(title, subtitle, warning) {
-    const mark = warning && el("span", { class: "title-warning", role: "status" }, el("i", { class: "warning-dot", "aria-hidden": "true" }), warning);
-    return el("div", { class: "section-heading" }, el("div", {}, el("h1", {}, title, mark), el("p", { class: "muted" }, subtitle)));
+  // The line under the title is the subtitle, or a warning in its place; controls sit to the right and wrap below when narrow.
+  function heading(title, subtitle, warning, controls) {
+    const line = warning
+      ? el("p", { class: "title-warning", role: "status" }, el("i", { class: "warning-dot", "aria-hidden": "true" }), warning)
+      : subtitle ? el("p", { class: "muted" }, subtitle) : null;
+    return el("div", { class: "section-heading" }, el("div", { class: "section-title" }, el("h1", {}, title), line), controls);
   }
   function empty(title, detail) {
     return el("section", { class: "panel empty" }, el("h2", {}, title), el("p", { class: "muted" }, detail));
@@ -252,8 +255,8 @@
 
   function renderPulls() {
     const pulls = flattenPulls(snapshot);
-    content.replaceChildren(heading("Pull requests", "Open pull requests and current-head evidence from selected repositories.",
-      coverageWarning(snapshot.github.coverage, snapshot.github)), prFilters(pulls), el("div", { class: "list-heading" }, el("span", { id: "pr-count" }),
+    content.replaceChildren(heading("Pull requests", null, coverageWarning(snapshot.github.coverage, snapshot.github), prFilters(pulls)),
+      el("div", { class: "list-heading" }, el("span", { id: "pr-count" }),
         el("span", {}, "Current work"), el("span", {}, "Checks"), el("span", {}, "Age")),
       el("div", { id: "pr-rows", class: "pr-groups" }));
     renderPrRows();

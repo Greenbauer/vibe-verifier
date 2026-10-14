@@ -184,7 +184,8 @@ HTTPS origin with a hostname and optional valid port, with no trailing slash, cr
 query, fragment, wildcard, or control character. The file is immutable after startup. A repository
 with no open pull request has no group and is not in the filter. The Pull requests page says nothing
 about the repository set while it reads well: a problem shows as a yellow dot and a short message
-beside the title. If the owner-wide read for `all` fails and there is no earlier set, it says
+on the line under the title. The search and filters share the title's row and move to their own row
+when the window is too narrow. If the owner-wide read for `all` fails and there is no earlier set, it says
 `Repository list is unavailable.` and does not claim the owner has zero repositories.
 
 With `all`, an installation token reads `GET /installation/repositories`. A person's `gh` login is
