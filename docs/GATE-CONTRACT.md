@@ -398,9 +398,12 @@ redacted. A range with no commits passes without running the tool.
 against the OSV database: Python requirements files (any `requirements*.txt` or
 `requirements/*.txt`, read as requirements whatever the name), `poetry.lock`, `uv.lock`,
 `Pipfile.lock`, `pdm.lock`, and npm, pnpm and yarn lockfiles. A ratchet per vulnerability, one per
-alias group: a finding is a vulnerability in the file at HEAD that it did not have at the merge base,
-so adding or bumping to a vulnerable version fails while an advisory published later against an
-untouched pin never blocks unrelated work (`--all` reports everything). It runs `--no-resolve`: only
+alias group: a finding is a vulnerability of a package in the file at HEAD that the file did not have
+for that package at the merge base, at any version. Adding a vulnerable dependency fails, and so does
+a bump that brings an advisory the package did not have; a bump that fixes some advisories and keeps
+others passes, because it made nothing worse (keyed by version, a pull request that closed 24 alerts
+read as a finding in a consumer's history). An advisory published later against an untouched pin
+never blocks unrelated work (`--all` reports everything). A file with no package in it passes. It runs `--no-resolve`: only
 what the file states is read, an unpinned requirement at its lower bound, and no package index is
 asked to resolve anything, so the verdict does not move with what an index serves. It needs the
 network; offline, or with a file it cannot read, it is exit 2. A vulnerability judged not to apply
