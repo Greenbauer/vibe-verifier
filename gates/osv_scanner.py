@@ -3,7 +3,7 @@
 
 osv-scanner, pinned as a release binary (the digests in _tools.TOOLS), reads each changed dependency
 file at HEAD and at the merge base against the OSV database (osv.dev): Python requirements files and
-poetry.lock, uv.lock, Pipfile.lock, pdm.lock; npm, pnpm and yarn lockfiles. A ratchet per
+poetry.lock, uv.lock, Pipfile.lock, pdm.lock; npm, pnpm, yarn and Bun lockfiles. A ratchet per
 vulnerability: a finding is a vulnerability of a package in the file at HEAD that the file did not
 have for that package at the base, at any version (one per alias group, so a PYSEC id and its GHSA
 twin are one finding). Adding a vulnerable dependency fails, and so does a bump that brings an
@@ -33,7 +33,7 @@ from _tools import ensure
 GATE = "osv-scanner"
 REQUIREMENTS = ["**/requirements*.txt", "**/requirements/*.txt"]  # read as requirements files whatever the name
 DEFAULT_SOURCE = REQUIREMENTS + ["**/" + name for name in ("poetry.lock", "uv.lock", "Pipfile.lock", "pdm.lock",
-                                                           "package-lock.json", "pnpm-lock.yaml", "yarn.lock")]
+                                                           "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock")]
 ALWAYS_EXCLUDED = ["**/node_modules/**"]
 
 

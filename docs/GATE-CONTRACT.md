@@ -397,7 +397,7 @@ redacted. A range with no commits passes without running the tool.
 `osv-scanner` (Google's, a release binary) checks the dependency files a pull request changed
 against the OSV database: Python requirements files (any `requirements*.txt` or
 `requirements/*.txt`, read as requirements whatever the name), `poetry.lock`, `uv.lock`,
-`Pipfile.lock`, `pdm.lock`, and npm, pnpm and yarn lockfiles. A ratchet per vulnerability, one per
+`Pipfile.lock`, `pdm.lock`, and npm, pnpm, yarn and Bun lockfiles. A ratchet per vulnerability, one per
 alias group: a finding is a vulnerability of a package in the file at HEAD that the file did not have
 for that package at the merge base, at any version. Adding a vulnerable dependency fails, and so does
 a bump that brings an advisory the package did not have; a bump that fixes some advisories and keeps

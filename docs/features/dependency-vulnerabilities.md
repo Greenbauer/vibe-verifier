@@ -1,6 +1,6 @@
 # Dependency vulnerabilities
 
-`osv-scanner` checks the dependency files a pull request changes (Python requirements files and lockfiles, npm, pnpm and yarn lockfiles) against the OSV database, as a ratchet per vulnerability.
+`osv-scanner` checks the dependency files a pull request changes (Python requirements files and lockfiles, npm, pnpm, yarn and Bun lockfiles) against the OSV database, as a ratchet per vulnerability.
 
 ## Surfaces
 
