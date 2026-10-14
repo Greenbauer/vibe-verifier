@@ -1,5 +1,5 @@
 # Gates the QAE verify job runs. Copy to the consumer as .vibe-verifier-qae. One per line: <gate> [args]
-# The three input files are written by the verify job before the gate runs; the artifacts come from the explore job.
+# The input files are written by the verify job before the gate runs; the artifacts come from the explore job.
 # To re-walk the features each pull request touches (docs/feature-map.md), add to it:
 #   --features docs/features --changed-files qae-inputs/changed-files
 # The explorer then walks at most three states of each feature; --max-states N changes that.
@@ -17,3 +17,7 @@ acceptance-verdict --criteria qae-inputs/pr-body.md --verdict qae-inputs/verdict
 # To check every criterion at more than one viewport width, add for example --widths 1280,375: each criterion's step
 # screenshots must then include one of each width, and the explorer is told the same widths (qae-inputs/widths).
 qae-artifacts --artifacts qae-artifacts --criteria qae-inputs/pr-body.md --site-file qae-inputs/site-url --ticket qae-inputs/ticket.md
+
+# Trace every linked requirement to HEAD proof or an owner that accepted it at the merge base.
+# actions/criteria also runs this line before any browser skip; its job needs a full-history checkout.
+ticket-coverage --body qae-inputs/pr-body.md

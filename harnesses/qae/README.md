@@ -230,7 +230,10 @@ now reads the ticket by default, and the harness holds the pull request to its c
   through exactly as before. Match only sources a `Ticket:` line can link: a tracker key with no
   readable tracker, or a file bodies cite for other reasons, would fail every such pull request. The
   template leaves it empty, which asks for no line.
-- Write each item of a spec section as something a browser can check, as for the PR's own list. The
+- Write each Acceptance criteria item as something a browser can check, as for the PR's own list.
+  With `ticket-coverage`, requirements the browser cannot check stay in the section's own body with
+  IDs, cited in a direct `Not checked in a browser` subsection; they still need PR proof or an accepted
+  deferral, and are never silently removed from coverage. The
   explorer FAILs an item that asks for what no browser can show (that a test exists or passes, that an
   email reached an inbox, a log line, a value the site never displays), saying "not checkable in a
   browser", and the gate refuses anything but an anchored PASS: such an item fails the run until the
@@ -276,7 +279,33 @@ now reads the ticket by default, and the harness holds the pull request to its c
 - The manifest template's two gate lines carry `--ticket qae-inputs/ticket.md`, a file the template
   always writes (empty without a ticket). A consumer adopting it copies the step, the job output and
   the two lines that write the file. A ticket split across several pull requests is graded whole on
-  each, so write only the criteria the pull request owns, or link the sub-ticket.
+  each. With `ticket-coverage`, every requirement ID in the linked section also needs proof or a
+  deferral whose target already accepts ownership; the PR cannot narrow coverage by rewriting criteria.
+
+Criteria alone no longer define coverage. Subscribe to the deterministic requirement check with
+these lines (the QAE template's manifest already includes the second):
+
+```text
+# .vibe-verifier: plan-only checks, before a plan change merges
+ticket-coverage --plans 'docs/plans/*.md'
+# .vibe-verifier-qae: PR traceability using the workflow's body file
+ticket-coverage --body qae-inputs/pr-body.md
+```
+
+The criteria job now checks out with `fetch-depth: 0`. Both its `actions/criteria` read and the
+verify job's read pass their QAE manifest, so a subscribed `ticket-coverage` runs before any browser
+skip, including `- None:`, unrendered paths and a carried verdict. A wrapper passes the same line
+through `entries:`. A consumer updating an older copy needs that checkout and the verify criteria
+step's `manifest: .vibe-verifier-qae`, as well as the manifest line. The gate grades these tags without a model.
+
+Tag each requirement list item before the ticket section's first subheading with `[req: P1-4]` or
+`[req: P1-4, G2-3a]`. Cite each ID in an item of its own direct `Acceptance criteria` subsection or
+anywhere in its direct `Not checked in a browser...` subsection. A PR body list item claims it with
+`[req: P1-4] [proof: tests/trips.py]`, optionally `::literal text` inside the proof path tag, or
+`[req: P1-4] [deferred: docs/plans/plan.md#p2]`. The target section must already carry
+`[takes: P1-4]` at the merge base. An ID starts with a letter, then letters/digits, a hyphen, digits
+and an optional lowercase letter. Comma lists work for `[takes:]` too. See the full
+[coverage contract](../../docs/features/ticket-coverage.md), including qualified passes and limits.
 
 The ticket's text is untrusted input to the explorer, like the PR body: the same tool rules and write
 scope hold.

@@ -367,6 +367,19 @@ download: never a pull request comment, so nobody can paste one and a run never 
 run's. Who writes it is the harness's business (the plan's explorer); this gate only decides
 whether what was written is a verdict.
 
+## Ticket requirement coverage
+
+`ticket-coverage` reads matched plan files at HEAD (`--plans GLOB`, repeatable), and optionally the
+workflow's PR body (`--body FILE`). It traces requirements to their own criteria or not-checked
+entries, and linked ticket IDs to proof at HEAD or a deferred owner at the merge base. Its
+[grammar and both subscription lines](features/ticket-coverage.md) are also in the gate's `--help`.
+It shares Ticket links, fences, heading anchors and list parsing with `actions/ticket`; the gate
+uses local Git history and never calls GitHub. Unreadable links, files or anchors are exit 2.
+
+`actions/criteria` runs a QAE manifest's `ticket-coverage` line before any browser skip or carried
+walk. That job needs a full-history checkout. Criteria alone no longer define requirement coverage;
+proof anchors check existence and literal text, not whether a test ran or proves a requirement.
+
 ## Wired gates: pinned tools
 
 Some checks are not worth rewriting in the standard library, and a secret scanner is the first:

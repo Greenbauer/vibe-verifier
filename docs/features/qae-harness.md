@@ -30,6 +30,8 @@ The QAE harness: an explorer walks a pull request's acceptance criteria (and, op
 
 Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workflows and `harnesses/qae/manifest` to its `.vibe-verifier-qae`; a pull request lists its criteria under `## Acceptance criteria`, each optionally naming a design reference (`[ref: <key>]`, an image the consumer's site step supplies) or the roles to walk it as (`[as: <role>, ...]`).
 
+Criteria alone no longer define coverage. The manifest also subscribes to [ticket-coverage](ticket-coverage.md): `actions/criteria` traces every linked requirement ID before a browser skip or carried walk, using a full-history checkout. Requirements a browser cannot grade stay explicit in the plan's not-checked subsection and still need PR proof or an accepted deferred owner.
+
 ## Verify
 
 - `tests/test_acceptance.py::test_one_anchored_pass_per_criterion_passes`

@@ -41,6 +41,10 @@ jobs:
       shards: ${{ steps.criteria.outputs.shards }}
       carry: ${{ steps.criteria.outputs.carry }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # ticket-coverage reads requirements and deferred owners at the merge base
+          persist-credentials: false
       - name: Write the criteria inputs
         # The PR body and its changed paths. A rename lists both names: moving a page into docs/ still
         # takes it off the site. And the QAE manifest as the base has it, or as this pull request has it
@@ -518,6 +522,7 @@ jobs:
           changed-files: qae-inputs/changed-files
           ticket: qae-inputs/ticket.md
           carry: qae-inputs/carry.json   # the criteria job's facts, so both jobs decide a carry alike
+          manifest: .vibe-verifier-qae
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: steps.criteria.outputs.count != '0'
         # Every explorer's evidence, of every attempt of this run, each in a directory named for its
