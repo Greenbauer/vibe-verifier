@@ -3,7 +3,7 @@ import re
 
 TICKET_LINE = re.compile(r"^[ \t]*ticket:[ \t]*(?P<value>\S.*?)[ \t]*$", re.IGNORECASE)
 LINK = re.compile(r"^(?P<path>[A-Za-z0-9._][A-Za-z0-9._/-]*)#(?P<anchor>[^\s#]+)$")
-FENCE = re.compile(r"^[ \t]*(```|~~~)")
+FENCE = re.compile(r"^[ \t]*(?P<run>`{3,}|~{3,})(?P<rest>.*)$")
 HEADING = re.compile(r"^(?P<marks>#{1,6})[ \t]+(?P<text>.*?)[ \t]*#*[ \t]*$")
 CRITERIA = re.compile(r"^acceptance criteria$", re.IGNORECASE)  # gates/_acceptance.py CRITERIA_HEADING's words
 ITEM = re.compile(r"^(?P<indent>[ \t]*)(?:[-*+]|[0-9]+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?(?P<text>\S.*)$")
@@ -14,12 +14,19 @@ class Unreadable(Exception):
 
 
 def unfenced(lines):
-    """The lines outside fenced code blocks, as (index, line)."""
-    inside = False
+    """The lines outside fenced code blocks, as (index, line). As in GitHub's Markdown, a fence closes
+    only on a bare run of its own character at least as long as the one that opened it, so an example
+    holding a shorter fence (a ~~~ inside ~~~~) does not end the block early."""
+    opened = None
     for index, line in enumerate(lines):
-        if FENCE.match(line):
-            inside = not inside
-        elif not inside:
+        fence = FENCE.match(line)
+        if opened is None and fence:
+            opened = fence.group("run")
+        elif opened is not None:
+            if (fence and fence.group("run")[0] == opened[0] and len(fence.group("run")) >= len(opened)
+                    and not fence.group("rest").strip()):
+                opened = None
+        else:
             yield index, line
 
 

@@ -260,7 +260,14 @@ class TicketCoverage(unittest.TestCase):
         self.assert_code(self.plans(self.branch(dangling), "--keyed-column", "Owner"), 1, "P1-9 is defined nowhere")
         # Without the flag, or in a table without the column, rows are not judged.
         self.assert_code(self.plans(self.branch(untagged)), 0)
-        self.assert_code(self.plans(self.branch(untagged), "--keyed-column", "Family"), 0)
+        # A column no table has, or a table written without its outer pipes, keys nothing: cannot run.
+        self.assert_code(self.plans(self.branch(untagged), "--keyed-column", "Family"), 2, "no table")
+        pipeless = PLAN + "\n## Ledger\n\nID | Owner\n--- | ---\nC039 | P1\n"
+        self.assert_code(self.plans(self.branch(pipeless), "--keyed-column", "Owner", "--soak"), 2, "no table")
+
+    def test_a_shorter_fence_inside_an_example_does_not_hide_the_plan(self):
+        plan = "~~~~markdown\n~~~\n~~~~\n\n" + PLAN.replace(" [req: P1-2]", "", 1)
+        self.assert_code(self.plans(self.branch(plan)), 1, "requirement has no [req: ID]", "Load More button")
 
     def test_load_more_incident_is_caught_in_the_plan_and_the_pr(self):
         plan = PLAN.replace("- Itineraries paginate with a Load More button", "- Itineraries show details and have a Load More button")

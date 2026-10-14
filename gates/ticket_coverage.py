@@ -270,12 +270,24 @@ def body_findings(args, body):
     return findings
 
 
+def plan_documents(args):
+    """The matched plan files at HEAD, refusing a --keyed-column no table in them has."""
+    paths = [path for path in git(args.repo, "ls-tree", "-r", "--name-only", "-z", "HEAD").split("\0")
+             if path and any(fnmatch.fnmatchcase(path, glob) for glob in args.plans)]
+    documents = [(path, read_at(args.repo, "HEAD", path)) for path in paths]
+    for column in args.keyed_column or ():
+        # A column no table has would key nothing: a renamed header or a pipe-less table must not
+        # turn the ledger check off silently.
+        if not any(True for _, document in documents for _ in keyed_rows(document.splitlines(), [column])):
+            raise CannotRun("--keyed-column %r: no table in the matched plans has that column with a row "
+                            "(write the table with leading and trailing pipes)" % column)
+    return documents
+
+
 def check(args):
     findings = []
     if args.plans:
-        paths = [path for path in git(args.repo, "ls-tree", "-r", "--name-only", "-z", "HEAD").split("\0")
-                 if path and any(fnmatch.fnmatchcase(path, glob) for glob in args.plans)]
-        findings += plan_findings([(path, read_at(args.repo, "HEAD", path)) for path in paths], args.keyed_column or ())
+        findings += plan_findings(plan_documents(args), args.keyed_column or ())
     if args.body:
         try:
             with open(args.body, encoding="utf-8") as handle:
