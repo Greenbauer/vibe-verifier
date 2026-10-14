@@ -16,9 +16,11 @@ from helpers import ROOT, clean_env
 ENGINE = ROOT / "actions" / "pull-sync" / "pull_sync.py"
 ACTION = ROOT / "actions" / "pull-sync" / "action.yml"
 
-# Answers the two GraphQL reads from $FAKE/state.json, counts the reads of the pull requests in
-# $FAKE/reads, and appends every other call to $FAKE/writes. "unknown_reads": n answers the first n
-# of those reads with every pull request's `mergeable` UNKNOWN, as GitHub does right after a merge.
+# Answers the GraphQL reads and the REST read of the branch's rules from $FAKE/state.json, counts
+# the reads of the pull requests in $FAKE/reads, and appends every other call to $FAKE/writes.
+# "unknown_reads": n answers the first n of those reads with every pull request's `mergeable`
+# UNKNOWN, as GitHub does right after a merge. "classic": the protection rule's "require branches to
+# be up to date" (absent: no rule); "rules": the branch's ruleset rules; "unreadable": both refused.
 FAKE_GH = '''#!/usr/bin/env python3
 import json, os, sys
 root, argv = os.environ["FAKE"], sys.argv[1:]
@@ -31,7 +33,13 @@ if argv[:2] == ["api", "graphql"]:
         sys.stderr.write("HTTP 502: Bad Gateway\\n")
         sys.exit(1)
     query = next(a for a in argv if a.startswith("query="))
-    if "defaultBranchRef" in query:
+    if "branchProtectionRule" in query:
+        if state.get("unreadable"):
+            sys.stderr.write("Resource not accessible by integration\\n")
+            sys.exit(1)
+        rule = {"requiresStrictStatusChecks": state["classic"]} if "classic" in state else None
+        print(json.dumps({"data": {"repository": {"defaultBranchRef": {"branchProtectionRule": rule}}}}))
+    elif "defaultBranchRef" in query:
         print(json.dumps({"data": {"repository": {"defaultBranchRef": {"name": "main"}}}}))
     else:
         with open(os.path.join(root, "reads"), "a") as handle:
@@ -41,6 +49,13 @@ if argv[:2] == ["api", "graphql"]:
             pulls = [dict(pull, mergeable="UNKNOWN") for pull in pulls]
         print(json.dumps({"data": {"repository": {
             "pullRequests": {"pageInfo": {"hasNextPage": state.get("more", False)}, "nodes": pulls}}}}))
+    sys.exit(0)
+if "-X" not in argv and "/rules/branches/" in argv[1]:
+    state = state.get("repos", {}).get(argv[1].split("/")[1] + "/" + argv[1].split("/")[2], state)
+    if state.get("unreadable"):
+        sys.stderr.write("HTTP 403: Resource not accessible by integration\\n")
+        sys.exit(1)
+    print(json.dumps(state.get("rules", [])))
     sys.exit(0)
 method, endpoint = argv[argv.index("-X") + 1], next(a for a in argv[1:] if a.startswith("repos/"))
 fields = [argv[i + 1] for i, a in enumerate(argv) if a == "-f"]
@@ -162,6 +177,7 @@ class PullSync(unittest.TestCase):
             "#5 skip": "checks running",
         })
         self.assertIn("0 holding a slot", result.stdout.splitlines()[0], "pushed by people, so no slot")
+        self.assertIn("main merges heads that are behind", result.stdout.splitlines()[0])
         self.assertEqual([write[1] for write in self.writes()], ["repos/octo/demo/pulls/4/update-branch"])
 
     def test_a_head_too_new_for_its_checks_to_have_registered_holds_a_slot(self):
@@ -262,6 +278,46 @@ class PullSync(unittest.TestCase):
         self.assertIn("1 holding a slot, 0 free slot(s)", result.stdout.splitlines()[0])
         self.assertEqual(self.writes(), [])
 
+    def test_where_main_merges_only_up_to_date_heads_running_checks_on_a_behind_head_are_replaced(self):
+        # Checks running on a head that is behind can never be the ones main merges on. #1 is updated at
+        # once, with no free slot (it replaces running checks, it adds none); the others say why not.
+        result = self.run_engine([
+            pull(1, checks="PENDING", committed=ago(hours=1)),
+            pull(2, checks="PENDING", committed=ago(hours=1), draft=True),
+            pull(3, checks="FAILURE", unfinished=2, committed=ago(hours=1)),
+            pull(4, checks="PENDING", committed=ago(minutes=10)),
+            pull(5, behind=0, checks="PENDING", committed=ago(hours=1), update=True),   # holds the one slot
+            pull(6),                                                                   # ready: needs a slot
+        ], "--act", "--max-in-flight", "1", classic=True)
+        self.assertIn("1 holding a slot, 0 free slot(s) (acting; main merges only up-to-date heads)",
+                      result.stdout.splitlines()[0])
+        self.assertEqual(self.rows(result), {
+            "#1 sync": "checks running on a head 3 behind main, which merges only an up-to-date head",
+            "#2 skip": "checks running, and it is a draft",
+            "#3 skip": "checks running, and it is already red",
+            "#4 skip": "checks running, and its head was pushed in the last 30 minutes",
+            "#5 skip": "up to date",
+            "#6 wait": "ready, 3 behind main; no free slot",
+        })
+        self.assertEqual(self.writes(), [["PUT", "repos/octo/demo/pulls/1/update-branch",
+                                          ["expected_head_sha=" + "%040x" % 1]]])
+
+    def test_a_ruleset_that_requires_up_to_date_heads_counts_like_the_protection_rule(self):
+        strict = {"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": True}}
+        loose = {"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": False}}
+        for rules, row in (([{"type": "deletion"}, strict], "#1 sync"), ([loose], "#1 skip")):
+            with self.subTest(rules=rules):
+                result = self.run_engine([pull(1, checks="PENDING", committed=ago(hours=1))], rules=rules,
+                                         classic=False)
+                self.assertIn(row, self.rows(result))
+
+    def test_a_setting_the_token_cannot_read_never_interrupts_running_checks(self):
+        result = self.run_engine([pull(1, checks="PENDING", committed=ago(hours=1))], "--act", unreadable=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("main could not read whether it merges heads that are behind", result.stdout.splitlines()[0])
+        self.assertEqual(self.rows(result), {"#1 skip": "checks running"})
+        self.assertEqual(self.writes(), [])
+
     def test_no_free_slot_means_no_update(self):
         result = self.run_engine([pull(1, checks="PENDING", update=True), pull(2, checks="PENDING", update=True),
                                   pull(3)], "--act")
@@ -320,9 +376,9 @@ class PullSync(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("cannot read octo/gone", result.stderr)
         self.assertEqual(result.stdout.splitlines(), [
-            "octo/demo: 1 open, 0 holding a slot, 2 free slot(s) (acting)",
+            "octo/demo: 1 open, 0 holding a slot, 2 free slot(s) (acting; main merges heads that are behind)",
             "#1 sync: ready, 3 behind main",
-            "octo/held: 3 open, 2 holding a slot, 0 free slot(s) (acting)",
+            "octo/held: 3 open, 2 holding a slot, 0 free slot(s) (acting; main merges heads that are behind)",
             "#2 wait: ready, 3 behind main; no free slot",
             "#3 skip: checks running",
             "#4 skip: checks running",
@@ -356,7 +412,7 @@ class PullSync(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("dry run, nothing written", result.stdout)
                 self.assertEqual(self.writes(), [])
-        self.assertIn("(acting)", self.run_action(ACT="true").stdout)
+        self.assertIn("(acting;", self.run_action(ACT="true").stdout)
         self.assertEqual([write[1] for write in self.writes()], ["repos/octo/demo/pulls/1/update-branch"])
 
     def test_the_action_takes_a_list_of_repositories_and_never_expands_it_as_file_names(self):
