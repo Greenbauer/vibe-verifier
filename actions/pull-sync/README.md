@@ -11,7 +11,8 @@ in [`pull_sync.py`](pull_sync.py), which is the whole engine; this page is how t
 | Has the `no-auto-sync` label, comes from a fork, or targets another branch than the default | Nothing |
 | Up to date | Nothing |
 | Conflicts with the default branch | Gets the `sync-conflict` label. Never updated: its owner resolves it. The label comes off once it merges cleanly |
-| Any check on its head unfinished, or changed in the last 30 minutes | Nothing this run |
+| Checks running on a head that is behind, where the default branch merges only up-to-date heads; not a draft, nothing failed yet, pushed more than 30 minutes ago | Updated now, without waiting for a slot (see below) |
+| Any other with a check on its head unfinished, or changed in the last 30 minutes | Nothing this run |
 | Ready: not a draft, every check on its head passed | Updated, oldest first |
 | Anything else (red, draft, no checks) | Updated once its head commit is 24 hours old. An update is a head commit, so that is at most once a day unless the author pushes an older commit back |
 
@@ -23,6 +24,24 @@ the cap bounds the runner time this action adds, and a pull request whose author
 keeps a green one behind (on a consumer whose heads run checks for two hours, counting those starved
 every green pull request, 2026-10-13). A pull request with no free slot waits for a later run. An update is refused by GitHub when the head moved
 since the run read it, so it never lands on top of a push it did not see.
+
+Where the default branch requires branches to be up to date before they merge (a classic protection
+rule's "require branches to be up to date", or a ruleset's), checks that started on a head that is now
+behind can never be the ones it merges on. Waiting for them, as the run does elsewhere, spends their
+whole length (two hours on one consumer, 2026-10-14) before the checks that count can start. So there
+a pull request on its way to green is updated at once, and its checks start again on the new head:
+
+- It replaces checks instead of adding some, so it needs no free slot.
+- A workflow whose concurrency cancels a superseded run (`cancel-in-progress` on a pull request's new
+  push) frees the runner the stale run held. One that queues instead runs the stale head to the end
+  first, so give long workflows `cancel-in-progress` for pull request pushes.
+- Not a draft, and nothing failed on that head yet: a red head's remaining checks are still feedback
+  for its author.
+- Its head was pushed more than 30 minutes ago, measured from the push rather than from the pull
+  request's last change, because the running checks' own comments keep changing it.
+
+The run reads the setting each time and prints it in its first line. A token that can read neither
+the protection rule nor the rulesets counts as "off", so a running check is never interrupted there.
 
 GitHub works out whether a pull request merges cleanly only when asked, so right after a merge it
 answers "unknown" for every one. The run asks again, up to three more times ten seconds apart, and
@@ -86,6 +105,10 @@ jobs:
 - It is built for a repository with tens of open pull requests. It fails, instead of judging a partial
   list, on more than 100, and on a repository with hundreds GitHub can time out the read itself.
 - "Ready" means the head's checks passed. It does not read review threads or approvals.
+- Replacing running checks on a head that is behind restarts them at every merge. With merges more
+  often than a check suite takes, a pull request finishes its checks only in a gap between merges;
+  that is the cost of a branch rule that merges only up-to-date heads, and the alternative was
+  finishing checks that could not be merged on.
 - A new head makes every per-head verdict stale. The review harness answers an update that touches
   none of the pull request's files with a receipt refresh; the QAE harness carries the last passing walk when
   the update brought only files no browser can see, and explores again otherwise.
