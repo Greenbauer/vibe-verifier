@@ -12,7 +12,7 @@ from dashboard.gh_api import ApiError
 from dashboard.github import CHECKS_NOT_LOADED, GitHubCollector
 from dashboard.head_state import (
     BEAT_SECONDS, BEFORE_CHANGE, HEADS, HEAD_PERIOD_SECONDS, PREVIOUS_PUSH, apply_head_reading,
-    calls_per_hour, read_head_page, search_text, withhold_if_old,
+    behind_default, calls_per_hour, read_head_page, search_text, withhold_if_old,
 )
 from dashboard.service import DashboardService
 
@@ -48,6 +48,7 @@ class HeadAPI:
         self.log = []
         self.searches = []
         self.rollup = {}
+        self.behind = {}
 
     def begin(self):
         self.calls = 0
@@ -128,7 +129,9 @@ class HeadAPI:
             for row in rows:
                 nodes.append({"number": row["number"], "headRefOid": row["head"]["sha"],
                               "mergeStateStatus": "CLEAN", "mergeable": "MERGEABLE",
-                              "reviewDecision": "APPROVED", "repository": {"nameWithOwner": name},
+                              "reviewDecision": "APPROVED", "baseRefName": "main", "isCrossRepository": False,
+                              "headRef": {"compare": {"aheadBy": self.behind.get((name, row["number"]), 0)}},
+                              "repository": {"nameWithOwner": name, "defaultBranchRef": {"name": "main"}},
                               "statusCheckRollup": {"state": self.rollup.get((name, row["number"]), "SUCCESS")}})
         return {"data": {"rateLimit": {"cost": 1, "remaining": 4000, "resetAt": "2026-10-08T17:00:00Z"},
                          "search": {"issueCount": len(nodes),
@@ -275,6 +278,36 @@ class HeadReading(unittest.TestCase):
         self.assertIsNone(read_head_page({"errors": [{"message": "no"}]}))
 
 
+    def test_a_head_counts_default_branch_commits_it_lacks_only_against_that_base(self):
+        def node(ahead=3, base="main", fork=False, default="main"):
+            return {"baseRefName": base, "isCrossRepository": fork,
+                    "headRef": {"compare": {"aheadBy": ahead}},
+                    "repository": {"nameWithOwner": "octocat/one", "defaultBranchRef": {"name": default}}}
+        self.assertEqual(behind_default(node()), (3, "main"))
+        self.assertEqual(behind_default(node(ahead=0)), (0, "main"))
+        self.assertEqual(behind_default(node(default="trunk", base="trunk")), (3, "trunk"))
+        # A fork resolves HEAD in the fork; a pull request into another branch has another base.
+        self.assertEqual(behind_default(node(fork=True)), (None, "main"))
+        self.assertEqual(behind_default(node(base="release")), (None, "main"))
+        self.assertEqual(behind_default({**node(), "headRef": None}), (None, "main"))
+        self.assertEqual(behind_default({**node(), "repository": {"nameWithOwner": "octocat/one"}}), (None, None))
+        self.assertIn('compare(headRef: "HEAD") { aheadBy }', HEADS)
+        self.assertIn("defaultBranchRef { name }", HEADS)
+
+    def test_a_pass_and_a_beat_both_put_the_distance_from_main_on_the_row(self):
+        names = ("octocat/one",)
+        api = HeadAPI(80, {"octocat/one": [pull("octocat/one", 4)]})
+        api.behind[("octocat/one", 4)] = 5
+        client = GitHubCollector(listed(*names), api, clock=Clock(NOW))
+        client._kind = "User"
+        row = collect(client, api, {"octocat/one": {"subscription": "unknown"}})["octocat/one"][0]
+        self.assertEqual((row["behind_by"], row["default_branch"]), (5, "main"))
+        github = {"owner": "octocat", "repositories": [{"repository": "octocat/one", "pulls": [row]}]}
+        heads = read_head_page(api._heads())[0]
+        heads[("octocat/one", 4)]["behind_by"] = 0
+        updated = apply_head_reading(github, heads, NOW, 1, 1)
+        self.assertEqual(updated["repositories"][0]["pulls"][0]["behind_by"], 0)
+
 class PaintAndBeat(unittest.TestCase):
     def sample(self, at):
         return {"owner": "octocat", "sampled_at": at.isoformat(),
@@ -418,8 +451,9 @@ function el(tag, attrs={}, ...children) {
   return {tag, attrs, children: children.flat().filter(value => value !== null && value !== undefined)};
 }
 const prRow = new Function('el', 'safeUrl', 'snapshot', 'combinedCategory', 'badge', 'progress', 'since', 'ageClass', 'runningWork',
-  source + 'return prRow;')(el, helpers.safeUrl, {owner: 'octocat'}, () => 'success',
-  status => el('span', {}, status), () => el('div'), helpers.since, helpers.ageClass, helpers.runningWork);
+  'behindMark', source + 'return prRow;')(el, helpers.safeUrl, {owner: 'octocat'}, () => 'success',
+  status => el('span', {}, status), () => el('div'), helpers.since, helpers.ageClass, helpers.runningWork,
+  helpers.behindMark);
 const base = {repository: 'octocat/example', number: 3, title: 'Ship the gate', author: 'octocat',
   head_sha: 'abcdef1234567890', html_url: 'https://github.com/octocat/example/pull/3',
   attention_reason: 'No current-head failure observed', created_at: '2026-10-01T00:00:00Z', merge_ready: true};

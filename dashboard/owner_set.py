@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from .config import REPOSITORY, coverage_label
 from .gh_api import ApiError
 from .github import CHECKS_NOT_LOADED, _endpoint
-from .head_state import head_key, note_detail_time, remember_pull, rollup_category, stored_or_new
+from .head_state import head_key, note_detail_time, remember_pull, rollup_category, stamp_behind, stored_or_new
 from .pull_signals import face_fields, load_signals
 from .util import iso_time
 
@@ -392,6 +392,8 @@ class OwnerSet:
 
     def _pack_heads(self, built, inventory, inventories, by_repository) -> None:
         for repository, pulls in built.items():
+            for pull in pulls:
+                stamp_behind(pull, self._heads.get(head_key(repository, pull.get("number"))))
             known = inventories.get(repository) or self._cached_or_unknown(repository, inventory)
             by_repository[repository] = {"repository": repository, **known, "pulls": pulls,
                                          "errors": [{"pull": pull.get("number"), "code": pull.get("source_error")}

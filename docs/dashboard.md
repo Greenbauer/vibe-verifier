@@ -520,6 +520,13 @@ must still hold, and a required check that has not reported keeps the title whit
 "behind" before "blocked" on a branch that must be up to date, so a stale head stays white. Two
 requirements cannot be told apart from the token's own block there and are not counted: signed
 commits and a locked branch. GitHub's merge box still enforces them.
+When the repository's default branch has commits the head does not, the line under the title
+ends with a yellow "N behind main" pill (the default branch's own name when it is not main), and
+its tooltip says how many commits. It comes from the cheap head read, so it follows a merge to main
+within one beat, and a pull request the detail budget has not reached shows it too. It is hidden
+when the head is up to date, for a pull request from a fork, for one into a branch other than the
+default branch, and when GitHub returned no comparison. The title rule above is separate: a head
+behind the base stays white only where the base branch requires it to be up to date.
 When the pull request has unresolved review threads, the check line shows a message icon and
 that number. The number is a lower bound, with a plus, when more threads exist than the read
 returned. The icon is hidden when every thread is resolved, and when the comment read did not
@@ -596,7 +603,8 @@ and the approved palette.
 `tests/test_dashboard_pull_signals.py` reading it from GitHub, merge-ready titles, and the
 unresolved-comment count. `tests/test_dashboard_fresh.py` covers a head or
 rollup change leaving the title white and first in the detail queue, check-reading age, the
-cheap pass under an exhausted detail budget, the head beat's hourly calls, and the first
+cheap pass under an exhausted detail budget, the head beat's hourly calls, the distance
+from the default branch on the row, and the first
 paint after a long idle. `tests/test_dashboard_usage_charts.py` covers the usage
 charts' clock-hour mapping, observed and unobserved hours, usual-day averages, scales, and that no
 card draws a pace in tokens. `tests/test_dashboard_pace.py` covers which plan window is paced and

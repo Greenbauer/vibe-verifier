@@ -340,6 +340,18 @@
     };
   }
 
+  // Shown only when the default branch has commits this head does not. Up to date, a fork, a
+  // pull request into another branch, and a reading that never arrived stay hidden.
+  function behindMark(pull) {
+    const count = pull.behind_by;
+    if (!Number.isInteger(count) || count < 1) return null;
+    const branch = typeof pull.default_branch === "string" && pull.default_branch ? pull.default_branch : "main";
+    return {
+      shown: `${count} behind ${branch}`,
+      title: `${branch} has ${count} ${count === 1 ? "commit" : "commits"} this branch does not`
+    };
+  }
+
   // A quota window is named from its length, so a 5-hour limit and a 7-day limit read as such
   // whatever the source called them. A name is kept when the length was not reported.
   function quotaWindowLabel(window) {
@@ -452,7 +464,7 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, ageLabel, since, ageClass, secondsClass, ciTiming, formatTime, bytes,
-    badge, botState, sourceStamp, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, restoreViewState,
+    badge, botState, sourceStamp, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, behindMark, restoreViewState,
     parseRoute, routeHash, httpsUrl, workGroups, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, paceHeader,
     quotaDeltaLabel,
     quotaTone, quotaCountdown, quotaGroups };

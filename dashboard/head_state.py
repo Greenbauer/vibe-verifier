@@ -4,6 +4,9 @@ The detail budget does not gate this read. GitHub priced the search below at 1 p
 page of 100 on 2026-10-08 (`rateLimit.cost`), against the 5,000 point hour. The detail query,
 a page of 50 with review threads and commits, cost 61 points on the same day.
 
+Each pull request also compares its head with the repository's default branch, which GitHub
+resolves as `HEAD`. Adding it left the page at 1 point on 2026-10-14.
+
 A beat asks again while nobody is refreshing, once the last head sample is 150 seconds old.
 One call on that period is 24 calls and 24 points an hour when the page costs 1. A second page,
 for more than 100 open pull requests, doubles that. Either way it is under one percent of the
@@ -42,10 +45,13 @@ query($search: String!, $count: Int!, $cursor: String) {
         createdAt
         author { login }
         headRefOid
+        baseRefName
+        isCrossRepository
+        headRef { compare(headRef: "HEAD") { aheadBy } }
         mergeStateStatus
         mergeable
         reviewDecision
-        repository { nameWithOwner }
+        repository { nameWithOwner defaultBranchRef { name } }
         statusCheckRollup { state }
       }
     }
@@ -113,6 +119,31 @@ def _cursor(page: dict) -> str | None:
     return cursor
 
 
+def behind_default(node: dict) -> tuple[int | None, str | None]:
+    """Commits on the default branch this head does not have, and that branch's name.
+
+    `headRef.compare(headRef: "HEAD")` takes the head as its base, so its aheadBy is how far the
+    default branch has moved past it. None when that is not the base: a fork resolves HEAD in
+    the fork, and a pull request into another branch is measured against that branch, not this one."""
+    repo = node.get("repository") if isinstance(node.get("repository"), dict) else {}
+    default = repo.get("defaultBranchRef") if isinstance(repo.get("defaultBranchRef"), dict) else {}
+    name = default.get("name") if isinstance(default.get("name"), str) else None
+    head = node.get("headRef") if isinstance(node.get("headRef"), dict) else {}
+    compare = head.get("compare") if isinstance(head.get("compare"), dict) else {}
+    count = compare.get("aheadBy")
+    if (name is None or node.get("isCrossRepository") is not False or node.get("baseRefName") != name
+            or isinstance(count, bool) or not isinstance(count, int) or count < 0):
+        return None, name
+    return count, name
+
+
+def stamp_behind(pull: dict, head: dict | None) -> dict:
+    """Copy the head reading's distance from the default branch onto the row it describes."""
+    if isinstance(pull, dict) and isinstance(head, dict) and "behind_by" in head:
+        pull["behind_by"], pull["default_branch"] = head["behind_by"], head.get("default_branch")
+    return pull
+
+
 def _one_head(node: dict) -> tuple | None:
     number, sha = node.get("number"), node.get("headRefOid")
     repo = node.get("repository") if isinstance(node.get("repository"), dict) else {}
@@ -126,7 +157,8 @@ def _one_head(node: dict) -> tuple | None:
         return None
     author = node.get("author")
     login = author.get("login") if isinstance(author, dict) else None
-    return key, {"sha": sha, "rollup": state, "merge_state": node.get("mergeStateStatus"),
+    behind_by, default_branch = behind_default(node)
+    return key, {"sha": sha, "behind_by": behind_by, "default_branch": default_branch, "rollup": state, "merge_state": node.get("mergeStateStatus"),
                  "mergeable": node.get("mergeable"), "review": node.get("reviewDecision"),
                  "repository": name, "title": node.get("title"), "author": login,
                  "draft": node.get("isDraft") is True, "url": node.get("url"),
@@ -378,7 +410,7 @@ def unseen_pull(repository: str, number: int, head: dict, now: datetime, subscri
     overall = rollup_category(head)
     if overall:
         pull["rollup_category"] = overall
-    return pull
+    return stamp_behind(pull, head)
 
 
 def _open_pulls(pulls, heads: dict, repository, now: datetime) -> tuple[list, set]:
@@ -389,7 +421,7 @@ def _open_pulls(pulls, heads: dict, repository, now: datetime) -> tuple[list, se
         key = head_key(repository, pull.get("number"))
         if key is None or key not in heads:
             continue
-        kept.append(reconcile_pull(pull, heads.get(key), now))
+        kept.append(stamp_behind(reconcile_pull(pull, heads.get(key), now), heads.get(key)))
         seen.add(key)
     return kept, seen
 
@@ -428,7 +460,8 @@ def apply_head_reading(github: dict, heads: dict, now: datetime, calls: int, poi
             row["pulls"] = kept
             seen.update(found)
         else:
-            row["pulls"] = [reconcile_pull(pull, heads.get(head_key(repo, pull.get("number"))), now)
+            row["pulls"] = [stamp_behind(reconcile_pull(pull, heads.get(head_key(repo, pull.get("number"))), now),
+                                         heads.get(head_key(repo, pull.get("number"))))
                             for pull in pulls if isinstance(pull, dict)]
     if complete:
         _add_unseen(github, rows, heads, seen, now)
