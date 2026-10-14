@@ -461,7 +461,9 @@ that included the line. Two rules keep an explorer off another's records:
   as one criterion is, and counts as one toward how many explorers there are, so the seven criteria
   above are one explorer's. Its explorer is told to walk them in order, on the records they made. A
   dependency that names no number ("the profile", "the customer from the preamble") is not seen:
-  write the number, or the tag below is all that keeps the explorers apart. A number that names no
+  write the number, or the tag below is all that keeps the explorers apart. The form that does not
+  depend on how the prose is worded is `[after: AC2]` (or `[after: AC2, TC1]`) anywhere in the
+  criterion: it is read as these ids, and no gate takes it for an annotation. A number that names no
   dependency ("add items 2 at a time") chains criteria that did not need it, which costs
   parallelism, never a verdict.
 - **Every explorer of several has a tag**, `qae-<run id>.<attempt>-e<n>` (`actions/qae-inputs`
