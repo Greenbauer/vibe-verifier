@@ -43,8 +43,10 @@ other pull request.
 - **Expected errors are declared.** A criterion that expects the server to refuse something says so in
   its own text: `expected-refusal: 422 /api/profile`. Otherwise the refused request fails the check.
 - **Keep data local to the criterion.** Explorers may run in parallel on one preview. A criterion that
-  uses what another one created names it by number ("on the order from AC2"), so one explorer walks both
-  in order. Otherwise each criterion creates its own data.
+  uses what another one created says so with `[after: AC2]`, so one explorer walks both in order (a
+  plain `AC2` in the wording chains too, but the marker survives rewording). Otherwise each criterion
+  creates its own data. A chain stays with one explorer even past its size; the criteria job warns when
+  it does, so keep chains short.
 - **Stay on the site.** Never ask QAE to follow a link off the preview (GitHub, a private dashboard): it
   is signed out there. Have it read the link's label and address instead.
 - **Small lists.** About six walks per explorer (a walk is one criterion, as one role, at one width).
