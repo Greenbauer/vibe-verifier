@@ -27,8 +27,9 @@ inputs:
   shards:
     description: >-
       How many explorers the criteria job split the criteria across (`strategy.job-total` in the explore
-      job). Every explore job shares the criteria out the same way: largest walks first, each goes whole to
-      the explorer with the fewest walks so far, and the first starts with the walks of the feature re-walk
+      job). Every explore job shares the criteria out the same way: largest walks first, each criterion, or
+      chain of criteria that build on each other (one names another by number), goes whole to the explorer
+      with the fewest walks so far, and the first starts with the walks of the feature re-walk
       in qae-inputs/features, so the features step runs before this one in every explore job. Equal-sized
       criteria and each final share keep document order and original criterion numbers.
     default: "1"
@@ -52,9 +53,12 @@ outputs:
     value: ${{ steps.prepare.outputs.max-turns }}
   share:
     description: >-
-      The sentence that names this explorer's share of the criteria, for its prompt: "Your share of the
+      The sentences that name this explorer's share of the criteria, for its prompt: "Your share of the
       criteria is AC1, AC4, TC2: ...". Written by code from the criteria's own numbers, so the model never
-      works its share out. Empty for one explorer, which walks them all.
+      works its share out. They also name the criteria of the share that build on each other, to walk in
+      order, and the explorer's tag, qae-<run id>.<attempt>-e<n>: every record it creates carries the tag, and
+      it opens or judges only records with its tag or that existed before the run, never one another explorer
+      of the run created or is changing. Empty for one explorer, which walks them all.
     value: ${{ steps.prepare.outputs.share }}
 runs:
   using: composite
@@ -69,6 +73,7 @@ runs:
         VV_EVIDENCE: ${{ inputs.evidence }}
         VV_SHARD: ${{ inputs.shard }}
         VV_SHARDS: ${{ inputs.shards }}
+        VV_RUN: ${{ github.run_id }}.${{ github.run_attempt }}
       run: |
         set -euo pipefail
         manifest="$VV_MANIFEST"
@@ -81,7 +86,8 @@ runs:
         share="$RUNNER_TEMP/vv-explorer-share"
         python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" qae-inputs --manifest "$manifest" --references "$VV_REFERENCES" \
           --evidence "$VV_EVIDENCE" --listing "$VV_REFERENCES.md" --digests "$digests" --widths-file qae-inputs/widths \
-          --turns "$turns" --shard "$VV_SHARD" --shards "$VV_SHARDS" --share "$share"
+          --turns "$turns" --shard "$VV_SHARD" --shards "$VV_SHARDS" --share "$share" \
+          --run "${VV_RUN:-}"
         echo "references=$(cat "$digests")" >> "$GITHUB_OUTPUT"
         echo "max-turns=$(cat "$turns")" >> "$GITHUB_OUTPUT"
         echo "share=$(cat "$share")" >> "$GITHUB_OUTPUT"

@@ -22,11 +22,12 @@ QAE = "acceptance-verdict --criteria a --verdict b\nqae-artifacts --artifacts qa
 KEEP = ("- name: Keep the verdict with the evidence", "- name: Keep the evidence\n")
 MERGE = ("- name: Merge the evidence and read the verdict", "- name: Run the QA gates")
 SHARE = ("Your share of the criteria is %s: you are explorer %d of %d. Walk only those, and write a verdict line for each "
-         "of them and for no other criterion; the other criteria are walked by other explorers in parallel, which may "
-         "use the same site, so expect data you did not create.")
-NO_SHARE = ("None of the criteria is yours: you are explorer %d of %d, and other explorers walk them in parallel, which may "
-            "use the same site, so expect data you did not create. Walk no criterion and write no acceptance-check line. "
-            "Re-walk the features as described below, and write only their lines in the verdict.")
+         "of them and for no other criterion; the other criteria are walked by other explorers in parallel, on the same "
+         "site and its data.")
+NO_SHARE = ("None of the criteria is yours: you are explorer %d of %d, and other explorers walk them in parallel, on the same "
+            "site and its data. Walk no criterion and write no acceptance-check line. Re-walk the features as described "
+            "below, and write only their lines in the verdict.")
+RUN = "38600000000.1"
 SESSION, CONSOLE = "session-1760000000000", "console-2026-10-08T12-00-00-000Z.log"
 
 
@@ -98,7 +99,7 @@ class Plan(unittest.TestCase):
         args += ["--manifest", os.path.join(work, "manifest")] if manifest else []
         result = runner(*args)
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
-        return [line for line in result.stdout.splitlines() if line.startswith(("shard", "walks", "::warning"))]
+        return [line for line in result.stdout.splitlines() if line.startswith(("shard", "walks", "chain", "::warning"))]
 
     def test_a_small_pull_request_is_one_explorer_whatever_is_allowed(self):
         # Three criteria at two widths are six walks, what one explorer is sized for.
@@ -111,8 +112,8 @@ class Plan(unittest.TestCase):
         lines = self.plan(THIRTEEN, 4, manifest=QAE)
         self.assertEqual(lines, ["shards: [1,2,3,4]", "walks: 26",
                                  "::warning title=vibe-verifier criteria::26 walks (each criterion once per role and width) for 4 "
-                                 "explorers sized for 24: expect criteria left unfinished. List fewer criteria on one pull request, "
-                                 "or raise max-shards (harnesses/qae/README.md)."])
+                                 "explorers sized for 24, and one of them walks 8: expect criteria left unfinished. List fewer "
+                                 "criteria on one pull request, chain fewer of them, or raise max-shards (harnesses/qae/README.md)."])
         self.assertEqual(self.plan(THIRTEEN, 4, manifest=QAE), lines)
         self.assertEqual(self.plan(THIRTEEN, 8, manifest=QAE), ["shards: [1,2,3,4,5]", "walks: 26"])
 
@@ -125,9 +126,9 @@ class Plan(unittest.TestCase):
 
     def test_one_explorer_is_the_default_and_an_oversized_pull_request_says_so(self):
         self.assertEqual(self.plan(THIRTEEN, 1), [
-            "shards: [1]", "walks: 13", "::warning title=vibe-verifier criteria::13 walks (each criterion once per role and width) "
-            "for 1 explorer sized for 6: expect criteria left unfinished. List fewer criteria on one pull request, or raise "
-            "max-shards (harnesses/qae/README.md)."])
+            "shards: [1]", "walks: 13", "::warning title=vibe-verifier criteria::13 walks (each criterion once per role and width) for 1 "
+            "explorer sized for 6, and one of them walks 13: expect criteria left unfinished. List fewer criteria on one pull request, chain "
+            "fewer of them, or raise max-shards (harnesses/qae/README.md)."])
 
     def test_there_are_never_more_explorers_than_criteria(self):
         # One criterion as four roles at two widths is eight walks, and still one explorer's.
@@ -193,7 +194,7 @@ class Share(unittest.TestCase):
     """actions/qae-inputs shares the criteria out, the same way in every explore job, tells each explorer
     its share and sizes its turn cap to it."""
 
-    def run_action(self, files, shard, shards, manifest=QAE):
+    def run_action(self, files, shard, shards, manifest=QAE, run=RUN):
         repo = make_repo(self, {".vibe-verifier-qae": manifest})
         write(repo, files)
         output = os.path.join(repo, ".git", "github-output")
@@ -201,7 +202,7 @@ class Share(unittest.TestCase):
         result = run_step(action_script("qae-inputs"), repo, {
             "GITHUB_ACTION_PATH": str(ROOT / "actions" / "qae-inputs"), "GITHUB_OUTPUT": output,
             "RUNNER_TEMP": os.path.join(repo, ".git"), "VV_MANIFEST": ".vibe-verifier-qae", "VV_ENTRIES": "",
-            "VV_REFERENCES": "qae-inputs/references", "VV_EVIDENCE": "qae-artifacts", "VV_SHARD": str(shard), "VV_SHARDS": str(shards)})
+            "VV_REFERENCES": "qae-inputs/references", "VV_EVIDENCE": "qae-artifacts", "VV_SHARD": str(shard), "VV_SHARDS": str(shards), "VV_RUN": run})
         return result, outputs(output), repo
 
     def shares(self, files, shards, manifest=QAE):
@@ -211,7 +212,8 @@ class Share(unittest.TestCase):
             result, declared, _ = self.run_action(files, shard, shards, manifest)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             share = re.search(r"^share: (.*) \(explorer %d of %d\)$" % (shard, shards), result.stdout, re.MULTILINE).group(1)
-            self.assertEqual(declared["share"], SHARE % (share, shard, shards) if share != "no criterion" else NO_SHARE % (shard, shards))
+            self.assertTrue(declared["share"].startswith((SHARE % (share, shard, shards) if share != "no criterion" else NO_SHARE % (shard, shards)) + " "))
+            self.assertIn(" Your tag is qae-%s-e%d. " % (RUN, shard), declared["share"])
             found.append((share, int(declared["max-turns"])))
         return found
 
