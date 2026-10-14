@@ -124,7 +124,8 @@ const quiet={last24h:blank(),avg:blank()}, busy={last24h:blank(),avg:blank()};
 quiet.last24h[1]=10; busy.last24h[2]=400; busy.avg[5]=900;
 console.log(JSON.stringify({shared:c.ceiling([quiet,busy]),own:c.ceiling([quiet]),zero:c.ceiling([{last24h:[0],avg:[null]}])}));
 """)
-        self.assertEqual(result, {"shared": 900, "own": 10, "zero": 1})
+        # 7/6 of the highest value: the room the smoothed line needs to rise above its peak hour.
+        self.assertEqual(result, {"shared": 1050, "own": 10 * 7 / 6, "zero": 1})
 
     def test_smoothing_never_dips_below_the_zero_baseline(self):
         result = node(r"""
@@ -133,8 +134,33 @@ const points=[{x:0,y:110},{x:10,y:110},{x:20,y:8},{x:30,y:110},{x:40,y:110}];
 const ys=d=>d.replace(/[MC]/g,'').trim().split(/\s+/).map(Number).filter((_,i)=>i%2===1);
 console.log(JSON.stringify({clamped:ys(c.smoothPath(points,{min:8,max:110})),free:ys(c.smoothPath(points,{min:-1e9,max:1e9}))}));
 """)
-        self.assertTrue(all(8 <= y <= 110 for y in result["clamped"]))
+        self.assertTrue(all(y <= 110 for y in result["clamped"]))
         self.assertGreater(max(result["free"]), 110)  # Unclamped Catmull-Rom does overshoot here.
+
+    def test_the_scale_fits_the_whole_curve_so_a_peak_never_draws_flat(self):
+        # The 2026-10-14 report: a bot's busiest hour ran into the top of its card and drew flat.
+        # Through the real ceiling() and drawBurn(), every control point stays inside the plot, and
+        # the crest rises above the peak hour's own point instead of being cut off at it.
+        result = node(r"""
+const make=tag=>({tag,attrs:{},children:[],style:{},setAttribute(k,v){this.attrs[k]=v;},append(...c){this.children.push(...c);}});
+global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
+const c=require('./dashboard/static/charts.js');
+const ys=d=>d.replace(/[MC]/g,'').trim().split(/\s+/).map(Number).filter((_,i)=>i%2===1);
+const shapes=[[0,0,2,6,9,10,10],[0,3,10,10,3,0,0],[10,0,10,0,10,0,10],[1,4,9,10,8,10,2]];
+const out=shapes.map(values=>{
+  const burn={last24h:Array(24).fill(null),avg:Array(24).fill(null)};
+  values.forEach((value,hour)=>burn.last24h[hour]=value);
+  const svg=c.drawBurn(burn,{color:'#fff',maximum:c.ceiling([burn]),nowMs:new Date(2026,9,14,6,40).getTime(),label:'x'}).children[0];
+  return svg.children.filter(n=>n.tag==='path').flatMap(n=>ys(n.attrs.d));
+});
+console.log(JSON.stringify(out));
+""")
+        top, bottom = 8, 126 - 16  # PAD_T, and H - PAD_B: the zero baseline
+        for ys in result:
+            self.assertTrue(all(top <= y <= bottom for y in ys), ys)
+        # ys alternates point, control, control, point...; the crest rises past the highest point.
+        hours = [y for i, y in enumerate(result[0]) if i % 3 == 0]
+        self.assertLess(min(result[0]), min(hours))
 
     def test_an_unobserved_hour_breaks_the_line(self):
         result = node("const c=require('./dashboard/static/charts.js');"
@@ -193,9 +219,9 @@ console.log(JSON.stringify({drawn,names:cards.map(card=>card.children[0].childre
         self.assertIn("Not yet observed", result["qae2"])
         self.assertIn("all-bots", result["allClass"])
         bots, everyone = result["drawn"][:2], result["drawn"][2]
-        self.assertEqual([row["maximum"] for row in bots], [900, 900])
+        self.assertEqual([row["maximum"] for row in bots], [1050, 1050])
         # With no plan line, All bots stays in tokens, scaled to its own busiest hour, and no card has a pace.
-        self.assertEqual(everyone["maximum"], 900)
+        self.assertEqual(everyone["maximum"], 1050)
         self.assertTrue(all(row["pace"] is None for row in result["drawn"]))
         self.assertEqual(result["parts"], ["h2", "p", "div"])
         self.assertIn("All bots: percent of the plan an hour", result["caption"])
@@ -309,7 +335,7 @@ console.log(JSON.stringify({drawn,note:text(section.children[3]),title:section.c
         # The bot card stays in tokens with no pace; All bots plots only plan-billed samples, in percent.
         self.assertEqual([bot["total"], bot["pace"]], [13000, None])
         self.assertEqual([everyone["total"], everyone["pace"]], [0.5, 0.625])
-        self.assertEqual(everyone["maximum"], 0.625)  # the line stays inside the chart
+        self.assertEqual(everyone["maximum"], 0.625 * 7 / 6)  # the line stays inside the chart
         self.assertEqual(result["peak"], "peak 0.5%/h")
         self.assertTrue(result["totals"].startswith("Last 24 hours 0.5% of plan"))
         self.assertEqual(result["note"], "Flat line on All bots: 0.6% of Codex subscription an hour uses the rest "
