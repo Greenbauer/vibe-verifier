@@ -7,11 +7,20 @@ one, so this updates only the pull requests it is worth updating now, and never 
 runners can take:
 
   - never: a pull request with the `no-auto-sync` label, one from a fork, one into another branch
-    than the default, one that is not behind, one whose checks are running, or one that changed in
-    the last --quiet-minutes (someone, or something, is working on it).
+    than the default, one that is not behind, one whose checks are running (but see `replace`), or
+    one that changed in the last --quiet-minutes (someone, or something, is working on it).
   - conflict: a pull request that conflicts with the default branch is not updated. It gets the
     `sync-conflict` label, which is taken off again once it merges cleanly, so whoever owns the pull
     request can find it by the label. Nothing here resolves a conflict.
+  - replace: where the default branch merges only a head that is up to date with it (a protection
+    rule or ruleset that requires branches to be up to date), checks running on a head that is behind
+    can never be the ones it merges on, so waiting for them wastes the time they take. A pull request
+    that is not a draft, has no failed check yet, is behind, and has checks running is updated at
+    once, once its head was pushed more than --quiet-minutes ago (the checks' own comments keep the
+    pull request itself changing, so the push is what counts here). Its new head starts its checks
+    again, and workflows that cancel a superseded run free the runners the stale one held. It needs
+    no free slot: it replaces checks already running instead of adding some. Where the setting is
+    off, or this token cannot read it, a running check is never interrupted.
   - ready: not a draft, and every check on its head passed. Updated first, oldest first.
   - stale: any other pull request, once its head commit is older than --stale-hours. An update is
     itself a head commit, so a pull request that is not ready is updated at most that often.
@@ -55,6 +64,9 @@ UNFINISHED = {"IN_PROGRESS", "PENDING", "QUEUED", "WAITING", "EXPECTED"}
 SETTLE_READS = 3
 
 DEFAULT_BRANCH = "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){defaultBranchRef{name}}}"
+# The classic protection rule's "require branches to be up to date"; a ruleset's is read over REST.
+STRICT = ("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){"
+          "defaultBranchRef{branchProtectionRule{requiresStrictStatusChecks}}}}")
 # `headRef.compare(headRef: $base).aheadBy` is how many commits the base has that the head lacks.
 PULLS = """query($owner:String!,$name:String!,$base:String!){
   repository(owner:$owner,name:$name){
@@ -84,6 +96,7 @@ class Line(NamedTuple):
     head: str = ""
     label: str = ""   # "add" or "remove" the conflict label; empty leaves it alone
     ready: bool = False
+    replaces: bool = False   # replaces checks running on a head that cannot merge: needs no slot
 
 
 def gh(*args):
@@ -117,6 +130,29 @@ def read(repo):
     if pulls["pageInfo"]["hasNextPage"]:
         raise CannotRead("%s has more than 100 open pull requests" % repo)
     return default["name"], pulls["nodes"]
+
+
+def requires_up_to_date(repo, base):
+    """Whether the base merges only a head that is up to date with it, from a classic protection rule
+    or an active ruleset: True, False, or None when this token could read neither. None is treated as
+    False by the plan, which keeps every running check: the side that wastes time, not work."""
+    owner, _, name = repo.partition("/")
+    answers = []
+    try:
+        rule = graphql(STRICT, owner=owner, name=name)["repository"]["defaultBranchRef"]["branchProtectionRule"]
+        answers.append(bool(rule and rule["requiresStrictStatusChecks"]))
+    except (CannotRead, TypeError, KeyError):
+        pass
+    result = gh("repos/%s/rules/branches/%s?per_page=100" % (repo, base))
+    try:
+        rules = json.loads(result.stdout) if result.returncode == 0 else None
+        if isinstance(rules, list):
+            answers.append(any(rule.get("type") == "required_status_checks"
+                               and (rule.get("parameters") or {}).get("strict_required_status_checks_policy")
+                               for rule in rules))
+    except json.JSONDecodeError:
+        pass
+    return any(answers) if answers else None
 
 
 def read_settled(repo, settle_seconds):
@@ -192,8 +228,26 @@ def tier(pull, now, stale):
     return "not ready, and its head is newer than %d hours" % (stale.total_seconds() // 3600)
 
 
-def judge(pull, base, now, quiet, stale):
-    """This pull request's row before slots are given out: a candidate has the action `sync`."""
+def while_running(pull, base, now, quiet, strict, unlabel):
+    """The row of a pull request that is behind with checks running: left alone, unless the base
+    merges only up-to-date heads, where those checks can never count and are replaced."""
+    number = pull["number"]
+    if not strict:
+        return Line(number, "skip", "checks running", label=unlabel)
+    if pull["isDraft"] or checks(pull) in ("FAILURE", "ERROR"):
+        return Line(number, "skip", "checks running, and it is %s" % (
+            "a draft" if pull["isDraft"] else "already red"), label=unlabel)
+    if now - when(head_commit(pull)["committedDate"]) < quiet:
+        return Line(number, "skip", "checks running, and its head was pushed in the last %d minutes"
+                    % (quiet.total_seconds() // 60), label=unlabel)
+    return Line(number, "sync", "checks running on a head %d behind %s, which merges only an up-to-date "
+                "head" % (pull["headRef"]["compare"]["aheadBy"], base), pull["headRefOid"], unlabel,
+                replaces=True)
+
+
+def judge(pull, base, now, quiet, stale, strict=False):
+    """This pull request's row before slots are given out: a candidate has the action `sync`. `strict`
+    is whether the base merges only an up-to-date head."""
     number, head, labelled = pull["number"], pull["headRefOid"], CONFLICT_LABEL in labels(pull)
     reason = out_of_scope(pull, base)
     if reason:
@@ -207,7 +261,7 @@ def judge(pull, base, now, quiet, stale):
     if pull["mergeable"] != "MERGEABLE":
         return Line(number, "skip", "GitHub has not said whether it merges cleanly")
     if running(pull):
-        return Line(number, "skip", "checks running", label=unlabel)
+        return while_running(pull, base, now, quiet, strict, unlabel)
     if now - when(pull["updatedAt"]) < quiet:
         return Line(number, "skip", "changed in the last %d minutes" % (quiet.total_seconds() // 60), label=unlabel)
     kind = tier(pull, now, stale)
@@ -216,13 +270,15 @@ def judge(pull, base, now, quiet, stale):
     return Line(number, "sync", "%s, %d behind %s" % (kind, behind, base), head, unlabel, kind == "ready")
 
 
-def plan(pulls, base, now, max_in_flight, quiet, stale):
-    """Every pull request's row, how many hold a slot, and how many slots were free. Ready candidates
-    take slots first, then stale ones; within each, the order GitHub listed them in (oldest first)."""
+def plan(pulls, base, now, max_in_flight, quiet, stale, strict=False):
+    """Every pull request's row, how many hold a slot, and how many slots were free. A candidate that
+    replaces running checks needs no slot. Ready candidates take slots first, then stale ones; within
+    each, the order GitHub listed them in (oldest first)."""
     in_flight = sum(1 for pull in pulls if holds_slot(pull, now, quiet))
     free = max(0, max_in_flight - in_flight)
-    lines = [judge(pull, base, now, quiet, stale) for pull in pulls]
-    candidates = sorted((line for line in lines if line.action == "sync"), key=lambda line: not line.ready)
+    lines = [judge(pull, base, now, quiet, stale, strict) for pull in pulls]
+    candidates = sorted((line for line in lines if line.action == "sync" and not line.replaces),
+                        key=lambda line: not line.ready)
     waiting = {line.number for line in candidates[free:]}
     return [line._replace(action="wait", reason=line.reason + "; no free slot") if line.number in waiting else line
             for line in lines], in_flight, free
@@ -260,10 +316,15 @@ def sync(repo, args):
     except CannotRead as error:
         print("pull-sync: cannot read %s: %s" % (repo, error), file=sys.stderr)
         return 2
+    strict = requires_up_to_date(repo, base)
     lines, in_flight, free = plan(pulls, base, datetime.now(timezone.utc), args.max_in_flight,
-                                  timedelta(minutes=args.quiet_minutes), timedelta(hours=args.stale_hours))
+                                  timedelta(minutes=args.quiet_minutes), timedelta(hours=args.stale_hours),
+                                  bool(strict))
     mode = "acting" if args.act else "dry run, nothing written"
-    print("%s: %d open, %d holding a slot, %d free slot(s) (%s)" % (repo, len(pulls), in_flight, free, mode))
+    rule = {True: "merges only up-to-date heads", False: "merges heads that are behind",
+            None: "could not read whether it merges heads that are behind"}[strict]
+    print("%s: %d open, %d holding a slot, %d free slot(s) (%s; %s %s)"
+          % (repo, len(pulls), in_flight, free, mode, base, rule))
     failures = []
     for line in lines:
         print(describe(line))
