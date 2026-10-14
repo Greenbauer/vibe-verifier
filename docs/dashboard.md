@@ -24,9 +24,9 @@ A pull request row opens that pull request on GitHub in a new tab. The address i
 leaves the row as text, not a link.
 
 The search and repository filters, subscription/attention filters, and selected bot are kept in
-the current tab's session storage, scoped to the configured owner, and restored on refresh. They
-contain no API data or credentials, are read only by that dashboard origin, and disappear when the
-browser ends the tab session. If storage is unavailable or a saved value is invalid, the dashboard
+the browser's local storage, scoped to the configured owner, and restored on a refresh, in a new
+tab, and after the browser reopens. They contain no API data or credentials, are read only by that
+dashboard origin, and stay until the viewer changes them or clears the site's data. If storage is unavailable or a saved value is invalid, the dashboard
 remains usable with defaults. No server write is added. `tests/test_dashboard_view_state.py`
 covers the routes, history, and storage.
 
@@ -652,7 +652,8 @@ hours and runs on to the now marker; the stretch after the marker is yesterday's
 Hours follow the local calendar, so a daylight-saving change does not shift them. The dashed line is a usual
 day: each clock hour averaged over the prior six days that were observed, and its hover names the
 fewest days any hour averages. Bot cards share one y-scale so they compare at a glance; All bots
-adds the bots' observed hours and scales to itself. No card carries a pace line: tokens are what
+adds the bots' observed hours and scales to itself. Each scale tops out at 7/6 of the highest value
+it holds, so the smoothed line can round over a peak without running into the top of the card. No card carries a pace line: tokens are what
 the bots used, and the plan's pace is not in tokens. Each card's header gives the most tokens it used in one clock hour of the last 24 hours, and
 its totals line gives the last 24 hours and, once every hour has an observed prior day, a usual day. There is no period selector: the dashed line already carries the multi-day view,
 and a tab saved with the old selector restores without it.
