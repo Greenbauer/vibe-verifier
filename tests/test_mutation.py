@@ -49,6 +49,23 @@ def findings(result):
     return json.loads(result.stdout)["findings"]
 
 
+def install_fixture(deps):
+    """`npm ci` of the fixture into `deps`, and proof that the Vitest it installed loads.
+
+    npm exits 0 when the download of an optional package fails and installs the rest without a word.
+    Vite's native binding is one (a package per platform), and without it Vitest does not load: a CI
+    run on 2026-10-14 got that install and failed every test of the class. A second `npm ci` fetches
+    what the first left out; a Vitest that still does not load fails the class with the reason."""
+    for _ in range(2):
+        subprocess.run(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=deps, check=True,
+                       capture_output=True, text=True)
+        loads = subprocess.run(["node", "--input-type=module", "--eval", 'await import("vitest/node");'], cwd=deps,
+                               capture_output=True, text=True)
+        if loads.returncode == 0:
+            return
+    raise RuntimeError("npm ci exited 0 twice and the fixture's Vitest still does not load:\n" + loads.stderr)
+
+
 class RealStryker(unittest.TestCase):
     """The pinned toolchain (npm ci into the tool cache) running the fixture's own Vitest 4."""
 
@@ -57,8 +74,7 @@ class RealStryker(unittest.TestCase):
         cls.deps = tempfile.mkdtemp(prefix="vv-mutation-deps-")
         for name in ("package.json", "package-lock.json"):
             shutil.copy(FIXTURE / name, cls.deps)
-        subprocess.run(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=cls.deps, check=True,
-                       capture_output=True, text=True)
+        install_fixture(cls.deps)
 
     @classmethod
     def tearDownClass(cls):
@@ -95,6 +111,22 @@ class RealStryker(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertRegex(result.stderr, r"(\d+) of \1 mutant\(s\) on the changed lines killed: score 100%")
         self.assertIn("1 changed source file(s) outside --project web are not judged: lib/other.ts", result.stderr)
+
+    def test_a_project_vitest_that_does_not_load_cannot_run_and_says_why(self):
+        # What `npm ci` leaves when the download of Vite's native binding fails: a Vitest that throws on import.
+        repo = make_repo(self, dict(IGNORE, **{"package.json": (FIXTURE / "package.json").read_text(),
+                                               "src/price.ts": PRICE_BEFORE, "src/price.test.ts": IMPORTING_TEST}))
+        vitest = Path(repo, "node_modules", "vitest")
+        vitest.mkdir(parents=True)
+        (vitest / "package.json").write_text(json.dumps({"name": "vitest", "version": "4.1.11", "type": "module",
+                                                         "exports": {"./node": "./node.js", "./package.json": "./package.json"}}))
+        (vitest / "node.js").write_text('throw new Error("Cannot find native binding.");\n')
+        commit(repo, {"src/price.ts": PRICE_AFTER})
+        result = gate("changed-code-mutation", repo, "--base-ref", "HEAD~1")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("the project's own vitest could not be loaded from the directory Stryker ran in: "
+                      "Cannot find native binding.", result.stderr)
+        self.assertEqual([p for p in os.listdir(repo) if p.startswith(".vibe-verifier-mutation-")], [])
 
 
 FAKE_STRYKER = r"""
