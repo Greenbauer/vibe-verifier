@@ -18,7 +18,7 @@ def config():
 class FakeService:
     def snapshot(self):
         return {"version": 1, "owner": "octocat", "github": {"sampled_at": None, "repositories": [],
-                "bots": {"roles": {}}, "coverage": {"selected": 1, "readable": 0},
+                "bots": {"roles": {}}, "coverage": {"selected": 1},
                 "title": "<img src=x onerror=alert(1)>"}, "telemetry": {"available": False}}
 
 class FakeSocket:

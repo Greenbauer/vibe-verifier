@@ -40,7 +40,7 @@ def reading(at=NOW, repositories=(REPO, OTHER)):
                         "checks_sampled_at": at.isoformat()}]}
             for index, name in enumerate(repositories)]
     return {"owner": "octocat", "sampled_at": at.isoformat(), "repositories": rows,
-            "coverage": {"selected": 2, "readable": len(rows), "label": "Selected repositories", "inventory": {}},
+            "coverage": {"selected": 2, "inventory": {}},
             "bots": {"partial": False, "roles": {"reviewer": role}, "errors": []},
             "errors": [], "partial": False, "api": {"calls": 55, "max_calls": 200}}
 

@@ -119,6 +119,8 @@ main { min-width: 0; min-height: 0; overflow: auto; padding: 12px 22px; }
 }
 .section-heading { margin-bottom: 12px; }
 .section-heading p { margin-top: 6px; font-size: 12px; }
+.title-warning { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; vertical-align: middle; color: var(--yellow); font-size: 12px; font-weight: 400; }
+.warning-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--yellow); }
 .source-banner { margin: 0 0 12px; padding: 9px 12px; border: 1px solid var(--line); border-left: 3px solid var(--green); border-radius: 5px; background: var(--panel); font-size: 12px; }
 .source-banner.warning { border-left-color: var(--yellow); }
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0; }

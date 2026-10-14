@@ -430,8 +430,7 @@ class FakeCollector:
 def source_sample(at):
     return {"owner": "octocat", "sampled_at": at.isoformat(),
             "repositories": [{"repository": REPO, "subscription": "subscribed", "pulls": [{"number": 1}], "errors": []}],
-            "coverage": {"selected": 1, "readable": 1, "label": "Selected repositories",
-                         "inventory": {REPO: {"subscription": "subscribed"}}},
+            "coverage": {"selected": 1, "inventory": {REPO: {"subscription": "subscribed"}}},
             "bots": {"partial": False, "roles": {}}, "errors": [], "partial": False,
             "api": {"calls": 8, "max_calls": 200}}
 

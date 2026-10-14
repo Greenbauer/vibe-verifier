@@ -84,19 +84,22 @@
 
   // The y ceiling: the bot cards pass all their burns so they share one scale; All bots passes its own
   // and its pace line. All zero still needs a scale, so it falls back to 1.
+  // The smoothed line can rise above its highest hour: a control point sits at most a sixth of the
+  // largest value past its hour (see smoothPath), so 7/6 of the highest value fits the whole curve.
   function ceiling(burns, pace) {
     const values = burns.flatMap(burn => [...burn.last24h, ...burn.avg]).filter(Number.isFinite);
-    return Math.max(Number.isFinite(pace) ? pace : 0, ...values) || 1;
+    return Math.max(Number.isFinite(pace) ? pace : 0, ...values) * 7 / 6 || 1;
   }
 
   /**
    * Catmull-Rom points as cubic Beziers (tension 1/6), so hour to hour reads as a soft curve.
-   * A cubic Bezier stays inside the hull of its control points, so clamping both control Ys into
-   * the plot band keeps the curve from dipping below the zero baseline between a zero and a spike.
+   * A cubic Bezier stays inside the hull of its control points, so clamping the control Ys at the
+   * baseline keeps the curve from dipping below zero between a zero and a spike. The top is not
+   * clamped, which drew a peak as a flat ceiling; ceiling() leaves room for the rise instead.
    */
   function smoothPath(points, band) {
     const round = n => Math.round(n * 10) / 10;
-    const clamp = y => Math.max(band.min, Math.min(band.max, y));
+    const clamp = y => Math.min(band.max, y);
     if (!points.length) return "";
     let path = `M ${round(points[0].x)} ${round(points[0].y)}`;
     for (let index = 0; index < points.length - 1; index++) {

@@ -18,7 +18,7 @@
     pr_ready: "PR ready", await_answer: "Awaiting answer", blocked: "Blocked", merged: "Merged", closed: "Closed"
   };
 
-  // Filters and the selected bot, saved per tab. Where you are lives in the URL instead.
+  // Filters and the selected bot, saved in this browser for every tab. Where you are lives in the URL instead.
   function restoreViewState(raw) {
     const state = { query: "", repository: "all", subscribed: false, attention: false, failureBot: null };
     let saved;
@@ -229,15 +229,11 @@
     return [...new Set(pulls.map(pull => pull.repository))].sort();
   }
 
-  // selected null means the owner-wide list has not been read. A number, including zero, is a count.
-  function coverageBanner(coverage, github) {
-    const refreshing = Boolean(github && github.refreshing);
-    if (coverage.selected == null) {
-      return refreshing ? "Reading repositories." : "Repository list is unavailable.";
-    }
-    const errors = (github && github.errors) || [];
-    const text = `${coverage.label}: ${coverage.selected}. ${coverage.readable} read successfully in this sample.`;
-    return text + (errors.length ? " Some GitHub data is unavailable." : "");
+  // Nothing to say while the list is fine or still being read: the header stamp covers reading.
+  // selected null after a finished read means the owner-wide list is unknown, not empty.
+  function coverageWarning(coverage, github) {
+    if (coverage.selected == null) return github && github.refreshing ? null : "Repository list is unavailable.";
+    return ((github && github.errors) || []).length ? "Some GitHub data is unavailable." : null;
   }
 
   function flattenPulls(snapshot) {
@@ -464,7 +460,7 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, ageLabel, since, ageClass, secondsClass, ciTiming, formatTime, bytes,
-    badge, botState, sourceStamp, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, behindMark, restoreViewState,
+    badge, botState, sourceStamp, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageWarning, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, behindMark, restoreViewState,
     parseRoute, routeHash, httpsUrl, workGroups, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, paceHeader,
     quotaDeltaLabel,
     quotaTone, quotaCountdown, quotaGroups };

@@ -39,8 +39,7 @@ def source_sample(at: datetime) -> dict:
     return {"owner": "octocat", "sampled_at": at.isoformat(),
             "repositories": [{"repository": REPO, "subscription": "subscribed",
                               "pulls": [{"number": 1}], "errors": []}],
-            "coverage": {"selected": 1, "readable": 1, "label": "Selected repositories",
-                         "inventory": {REPO: {"subscription": "subscribed"}}},
+            "coverage": {"selected": 1, "inventory": {REPO: {"subscription": "subscribed"}}},
             "bots": {"partial": False, "roles": {"reviewer": role}, "errors": []},
             "errors": [], "partial": False, "api": {"calls": 8, "max_calls": 200}}
 
@@ -123,7 +122,6 @@ class CacheFreshness(unittest.TestCase):
         self.assertEqual(kept["repositories"][0]["pulls"], [{"number": 1}])
         self.assertTrue(kept["repositories"][0]["stale"])
         self.assertTrue(kept["stale"])
-        self.assertEqual(kept["coverage"]["readable"], 1)
         self.assertEqual(kept["coverage"]["inventory"], {REPO: {"subscription": "subscribed"}})
         self.assertEqual(len(kept["bots"]["roles"]["reviewer"]["recent_7d"]), 1)
         self.assertEqual(kept["bots"]["roles"]["reviewer"]["state"], "working")

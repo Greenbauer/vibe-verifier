@@ -240,7 +240,7 @@ class RefusesAndDeletes(StoreCase):
 
 class OldReading(unittest.TestCase):
     def reading(self):
-        return {"sampled_at": NOW.isoformat(), "coverage": {"selected": 2, "readable": 1},
+        return {"sampled_at": NOW.isoformat(), "coverage": {"selected": 2},
                 "repositories": [{"repository": REPO, "sampled_at": NOW.isoformat(), "stale": False,
                                   "pulls": [{"number": 1, "merge_ready": True}, {"number": 2, "merge_ready": False}]},
                                  {"repository": "octocat/gone", "pulls": [], "unavailable": True, "sampled_at": None}],

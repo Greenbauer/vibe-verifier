@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from dashboard.config import AgentDefinition, Config, ConfigError, coverage_label, load_config
+from dashboard.config import AgentDefinition, Config, ConfigError, load_config
 from dashboard.telemetry import HISTORY, TelemetryError, _agents, _lanes, _usage, read_telemetry
 
 
@@ -94,7 +94,6 @@ class ConfigIsolation(unittest.TestCase):
         loaded = load_config(self.write("all.json", value))
         self.assertTrue(loaded.all_repositories)
         self.assertEqual(loaded.repositories, ())
-        self.assertEqual(coverage_label(loaded), "All repositories of octocat")
         named = config_value()
         named["repositories"] = ["octocat/all"]
         named_loaded = load_config(self.write("named-all.json", named))
