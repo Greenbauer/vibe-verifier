@@ -461,7 +461,9 @@ that included the line. Two rules keep an explorer off another's records:
   as one criterion is, and counts as one toward how many explorers there are, so the seven criteria
   above are one explorer's. Its explorer is told to walk them in order, on the records they made. A
   dependency that names no number ("the profile", "the customer from the preamble") is not seen:
-  write the number, or the tag below is all that keeps the explorers apart. A number that names no
+  write the number, or the tag below is all that keeps the explorers apart. The form that does not
+  depend on how the prose is worded is `[after: AC2]` (or `[after: AC2, TC1]`) anywhere in the
+  criterion: it is read as these ids, and no gate takes it for an annotation. A number that names no
   dependency ("add items 2 at a time") chains criteria that did not need it, which costs
   parallelism, never a verdict.
 - **Every explorer of several has a tag**, `qae-<run id>.<attempt>-e<n>` (`actions/qae-inputs`
@@ -472,8 +474,12 @@ that included the line. Two rules keep an explorer off another's records:
   builds on a record a criterion outside your share creates, create your own first. One explorer
   walks with no tag and its records are named exactly as the criteria say.
 
-The tag is a prompt rule: no gate checks a record's name. The chain is code, so criteria that name
-each other are never split, whatever the model does.
+The tag is a prompt rule, and nothing enforces it today: no gate sees the site's records, so an
+explorer that ignores it is not caught, and when a dependency goes unchained the tag lowers the odds
+of a collision without ruling one out. A gate could enforce it later: the verify job would read the
+records the preview's database gained during the run and require each to carry one explorer's tag.
+That needs a per-consumer read of its database, which the catalog does not have. The chain is code,
+so criteria that name each other are never split, whatever the model does.
 
 **Names.** The first explorer's job is `qae-explore`, as it always was, and the others are
 `qae-explore (2)`, `qae-explore (3)`, ... The matrix's first value is blank for that: GitHub names a

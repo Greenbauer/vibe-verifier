@@ -53,6 +53,14 @@ class Plan(unittest.TestCase):
         self.assertEqual(self.plan(MIXED, 3, manifest=shards.QAE),
                          ["shards: [1,2]", "walks: 12", "chain: AC4, AC5, AC6 (6 walks, one explorer)"])
 
+    def test_the_after_marker_is_no_annotation_the_gates_refuse(self):
+        work = shards.workdir(self)
+        write(work, {"pr-body.md": shards.body("a", "b [after: AC1]")})
+        result = runner("criteria", os.path.join(work, "pr-body.md"), "--max-shards", "2", "--repo", work)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("malformed", result.stdout)
+        self.assertIn("chain: AC1, AC2 (2 walks, one explorer)", result.stdout)
+
     def test_how_a_criterion_names_another(self):
         cases = [
             # An item or criterion number counts in its own list, a list of them names each, and the case of the word
@@ -63,6 +71,8 @@ class Plan(unittest.TestCase):
             # A ticket's "item 1" is its TC1; ACn and TCn name a criterion of either list outright.
             (shards.body("a", "b"), "- t1\n- on the record from item 1\n- after AC2\n",
              ["chain: AC2, TC3 (2 walks, one explorer)", "chain: TC1, TC2 (2 walks, one explorer)"]),
+            # The explicit marker: `[after: ...]` is read as the ids it names.
+            (shards.body("a", "b", "c [after: AC1, AC2]", "d"), [], ["chain: AC1, AC2, AC3 (3 walks, one explorer)"]),
             # A number past the list, a word that only ends in TC or AC, and a bare number name nothing.
             (shards.body("a", "b", "item 9, AC12 and TC1", "at 14:05 UTC1 set the cost to 2"), [], []),
         ]
