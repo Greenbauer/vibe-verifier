@@ -599,12 +599,13 @@ read-only methods, Host/Origin/traversal, XSS-safe JSON, local assets and the ta
 math, the class on a row's age number, the push line under the meter, the current-work names,
 and the approved palette.
 `tests/test_dashboard_pull_age.py` covers pull-request age units and color.
+`tests/test_dashboard_behind.py` covers how far a head is behind the default branch and that both
+the full pass and the head beat put it on the row.
 `tests/test_dashboard_push_kind.py` covers the latest push's label and time, and
 `tests/test_dashboard_pull_signals.py` reading it from GitHub, merge-ready titles, and the
 unresolved-comment count. `tests/test_dashboard_fresh.py` covers a head or
 rollup change leaving the title white and first in the detail queue, check-reading age, the
-cheap pass under an exhausted detail budget, the head beat's hourly calls, the distance
-from the default branch on the row, and the first
+cheap pass under an exhausted detail budget, the head beat's hourly calls, and the first
 paint after a long idle. `tests/test_dashboard_usage_charts.py` covers the usage
 charts' clock-hour mapping, observed and unobserved hours, usual-day averages, scales, and that no
 card draws a pace in tokens. `tests/test_dashboard_pace.py` covers which plan window is paced and
