@@ -130,7 +130,7 @@ class CollectorIntegration(unittest.TestCase):
             {'repository': 'example/repo', 'unavailable': True}, {'repository': 'example/repo'},
             {'repository': 'example/repo', 'pulls': [{}, {'runs': [{}, {'jobs': [job]}]}]}]})
         self.assertEqual(lane['state'], 'busy')
-        self.assertEqual(lane['job'], {'repository': 'example/repo', 'name': 'Build', 'url': None})
+        self.assertEqual(lane['job'], {'repository': 'example/repo', 'name': 'Build', 'url': None, 'pull': None})
 
     def test_allocation_becomes_busy_only_for_same_owner_matching_active_runner(self):
         lane = {'state': 'allocated', 'runner_id': 42, 'job': {'repository': 'example/repo', 'name': 'Allocated', 'url': None}}
@@ -160,9 +160,9 @@ class CollectorIntegration(unittest.TestCase):
         self.assertEqual((lane['state'], lane['runner_id']), ('allocated', 42))
         self.assertNotIn('job', lane)
         job = {'runner_id': 42, 'status': 'in_progress', 'name': 'Build', 'html_url': 'https://github.com/example-ci/repo/actions/runs/1/job/2'}
-        join_runner_jobs(telemetry, {'repositories': [{'repository': 'example-ci/repo', 'pulls': [{'runs': [{'jobs': [job]}]}]}]})
+        join_runner_jobs(telemetry, {'repositories': [{'repository': 'example-ci/repo', 'pulls': [{'number': 7, 'runs': [{'jobs': [job]}]}]}]})
         self.assertEqual(lane['state'], 'busy')
-        self.assertEqual(lane['job'], {'repository': 'example-ci/repo', 'name': 'Build', 'url': job['html_url']})
+        self.assertEqual(lane['job'], {'repository': 'example-ci/repo', 'name': 'Build', 'url': job['html_url'], 'pull': 7})
 
     def test_a_host_job_shows_without_a_pull_request_and_a_missing_record_falls_back(self):
         def slot(kind, index, runner_id, job=None):

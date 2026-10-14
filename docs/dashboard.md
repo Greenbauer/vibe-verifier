@@ -252,6 +252,37 @@ no claim, status, amend, or answer control. More than 100 items in a source show
 says so. `tests/test_dashboard_work.py` covers the configuration, the key file, both transports, both
 kinds, the columns, and failure handling.
 
+## Capacity view
+
+`#/capacity` shows what each of the owner's runners is doing now and how busy the lane has been
+(`dashboard/static/capacity.js`). Top to bottom:
+
+- **The limits, in words**: `Up to 8 runners at once (QAE at most 4) · 8 more for jobs that only wait ·
+  10 CPU cores · 20.0 GB memory`.
+- **Five cards**: runners in use now (`5 of 8`, the shared pool only, and how many the warm pool keeps
+  up on purpose); jobs waiting for a runner right now (`Unknown` when the listener's queue was not
+  read); and, for the chosen range, the busy share, the wait for a runner and the reserved-but-idle
+  time. The wait card's value is the median; its detail is the 95th percentile, the job count, and
+  the average split of the wait into GitHub sending the job to the lane and the lane's runner
+  starting and taking it.
+- **Runners over time**, with `1h`, `24h` and `7d` buttons (24h first; the choice lasts while the
+  tab is open). Each bar is one clock-aligned period (2 minutes, 30 minutes or 3 hours) of the shared
+  pool, on the pool's limit: green is the average number running a job, yellow the average reserved
+  with no job, the dashed outline the rest (free). A red mark above a bar means jobs waited for a
+  runner during it. A hatched bar had no samples (the collector was down, or the samples predate this
+  history). The last bar is the period still filling. Hover a bar for its numbers.
+- **One row per runner** that holds a slot: its unit (`ci@3` is `<lane>-ci@3.service`), its state
+  (`Running`, or `Reserved, no job` with how long it has been up), the job (linked when the host or
+  GitHub gave a link), the repository and, when the job is on an open pull request's current head,
+  its number, the pool (`CI`, `QAE` or `Wait`) and the time. Running time counts from the job's start
+  when the listener recorded it, else from when the runner was allocated. Free slots are not runners
+  yet (the listener starts one under any free number when a job arrives), so they are one row: `3
+  more · Free`.
+- **The shared host** meters, unchanged.
+
+The history comes only from the [Linux collector](dashboard-collector.md#lane-history); another
+collector's file, or one from before this history existed, shows the cards and rows without it.
+
 ## Optional private HTTPS proxy
 
 Hosted access requires a trusted private upstream that authenticates every user and blocks public
@@ -350,10 +381,10 @@ Other collectors can use this version 1 shape:
 Lane `state` is one of `busy`, `allocated`, `ready`, `provisionable`, `offline`, or `unknown`. `registered` is a
 separate `true`, `false`, or `null` fact because an allocated on-demand lane can have no idle runner.
 A busy lane must include a same-owner job or a positive GitHub `runner_id` with confirmed
-registration. The Capacity page shows a slot that holds a runner as occupied. When the host recorded
+registration. The Capacity page shows an allocated slot as `Reserved, no job`. When the host recorded
 the job, that lane is `busy` and names the job and repository even if no open pull request carries
 it, and links the job when the record has a run id and a job id. A missing record falls back to the
-current-head pull-request match. `registered: null` is omitted: this source never knows registration,
+current-head pull-request match, and a job that match finds carries its pull request's `pull` number. `registered: null` is omitted: this source never knows registration,
 so the page does not call it unknown. An allocated lane that names a repository but has no host
 record shows that repository and a pending-match message without a job link. The host panel is always labeled `SHARED HOST`; its values
 are aggregate CPU sampled percent, memory bytes, and workspace-filesystem bytes. Every host meter
@@ -598,7 +629,10 @@ templates, and `test_dashboard_follow.py` the follower's check-run gate and roll
 read-only methods, Host/Origin/traversal, XSS-safe JSON, local assets and the tab icon route.
 `tests/test_dashboard_server_ui.py` covers DOM construction, filters, account usage
 math, the class on a row's age number, the push line under the meter, the current-work names,
-and the approved palette.
+and the approved palette, and runs `dashboard/static/capacity.test.js` (the Capacity view's cards,
+bars, range buttons and runner rows). `tests/test_dashboard_lane_history.py` covers the lane
+history: the queue and job-wait projections, the kept samples and waits, the bars and totals, the
+published history's reader, and the collector-to-page path.
 `tests/test_dashboard_pull_age.py` covers pull-request age units and color.
 `tests/test_dashboard_behind.py` covers how far a head is behind the default branch and that both
 the full pass and the head beat put it on the row.

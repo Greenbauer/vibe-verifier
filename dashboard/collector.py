@@ -18,10 +18,13 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
+from types import SimpleNamespace
+try:
+    from . import lane_history
+except ImportError:  # loaded by path (a script, a test): its sibling is loaded the same way
+    lane_history = SimpleNamespace(**runpy.run_path(str(Path(__file__).with_name("lane_history.py"))))
 SCHEMA_VERSION = 1
 QUOTA_INTERVAL_SECONDS = 300
-HISTORY_SECONDS = 7 * 24 * 60 * 60
-MAX_SAMPLES = 20160
 MAX_CONFIG = 64 * 1024
 MAX_SNAPSHOT = 8 * 1024 * 1024
 MAX_REMOTE_OUTPUT = 1024 * 1024
@@ -381,33 +384,6 @@ def _quota_due(last_attempt, now):
     attempted = _parse_time(last_attempt)
     current = _parse_time(now)
     return attempted is None or current is None or (current - attempted).total_seconds() >= QUOTA_INTERVAL_SECONDS
-def _samples(previous, host, success, now):
-    kept = []
-    current = _parse_time(now)
-    cutoff = current - dt.timedelta(seconds=HISTORY_SECONDS) if current else None
-    for sample in previous.get("samples", []) if isinstance(previous, dict) else []:
-        try:
-            observed = _parse_time(sample.get("observed_at"))
-            metrics = sample["host"]
-            clean = {"observed_at": sample["observed_at"], "host": {
-                "cpu_busy_percent": _number(metrics["cpu_busy_percent"], 0, 100),
-                "memory_available_bytes": _integer(metrics["memory_available_bytes"], 0),
-                "workspace_free_bytes": _integer(metrics["workspace_free_bytes"], 0),
-                "slots_occupied": _integer(metrics["slots_occupied"], 0),
-                "slots_remaining_on_demand": _integer(metrics["slots_remaining_on_demand"], 0)}}
-            if observed and (cutoff is None or observed >= cutoff):
-                kept.append(clean)
-        except (KeyError, TypeError, ValueError):
-            continue
-    if success:
-        kept.append({"observed_at": now, "host": {
-            "cpu_busy_percent": host["cpu"]["busy_percent"],
-            "memory_available_bytes": host["memory"]["available_bytes"],
-            "workspace_free_bytes": host["workspace"]["free_bytes"],
-            "slots_occupied": host["slots"]["occupied_count"],
-            "slots_remaining_on_demand": host["slots"]["remaining_on_demand"]}})
-    unique = {sample["observed_at"]: sample for sample in kept}
-    return [unique[key] for key in sorted(unique)][-MAX_SAMPLES:]
 def atomic_write(path, snapshot):
     destination = Path(path)
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -468,7 +444,7 @@ def refresh(config, output, fetch=None, now=None):
                "observed_at": now if quota_ok and due else account_observed, "last_attempt_at": account_attempt,
                "available": quota_ok, "stale": not quota_ok, "error": None if quota_ok else quota_error}
     snapshot = {"version": SCHEMA_VERSION, "owner": config.owner, "observed_at": now, "hosts": [host],
-                "accounts": [account], "samples": _samples(previous, host_body, host_ok, now)}
+                "accounts": [account], **lane_history.capture(previous, response, host_body, host_ok, now)}
     atomic_write(output, snapshot)
     return host_ok
 def parse_args(argv=None):

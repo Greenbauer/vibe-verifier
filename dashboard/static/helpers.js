@@ -12,8 +12,7 @@
   const STATUS_LABELS = {
     success: "Succeeded", failed: "Failed", skipped: "Skipped", cancelled: "Cancelled",
     pending: "Pending", running: "Running", waiting: "Waiting", unknown: "Unknown", working: "Working", idle: "Idle",
-    paused: "Paused", down: "Down", ready: "Ready", busy: "Busy", provisionable: "On demand",
-    offline: "Offline", allocated: "Occupied",
+    paused: "Paused", down: "Down", ready: "Ready", busy: "Busy", offline: "Offline",
     submitted: "Queued", backlog: "Backlog", in_progress: "In progress", in_review: "In review",
     pr_ready: "PR ready", await_answer: "Awaiting answer", blocked: "Blocked", merged: "Merged", closed: "Closed"
   };

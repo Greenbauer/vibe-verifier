@@ -121,6 +121,15 @@ repository owner must be the configured owner, compared without case, and the na
 is ignored: the slot stays allocated and the dashboard falls back to joining `runner_id` to a
 GitHub job. An older listener that does not write `assignment` is that fallback.
 
+The sampler also reads two files the lane's listener keeps directly in `/run/<lane>/`
+([run-dir contract](../lanes/listener/README.md#the-run-dir-contract)): `queue.json`, each scale
+set's assigned and running job counts and warm-pool size, and `jobs.json`, the newest started jobs
+with GitHub's queued, scale-set-assigned and runner-assigned times. Each is read through the same
+no-symlink, regular-file reader, at most 1 MiB, and only the newest 100 jobs are returned. A missing
+or unreadable file is returned as `null`, never as an empty queue. The collector keeps only the
+counts and times named in [Lane history](#lane-history); repository and job names in `jobs.json` are
+not kept.
+
 A slot is free only when its job is absent and its unit is `inactive` or `failed`. An active unit
 without a job, an unreadable job, or an unreadable unit state is `unknown` and consumes capacity.
 CI index 1 and QAE index 1 are separate instances, but both consume the one combined slot budget.
@@ -171,7 +180,11 @@ observed_at     UTC time this local refresh was attempted
 hosts           one host section
 accounts        one account-wide quota section
 samples         bounded numeric host history
+waits           bounded per-job wait history
+history         the lane history the dashboard reads
 ```
+
+A snapshot from before `waits` and `history` existed has neither, and the dashboard still reads it.
 
 The host section is:
 
@@ -215,9 +228,45 @@ The root `observed_at` still shows when the snapshot was rewritten.
 Before a source has ever succeeded, its unavailable data objects and `observed_at` are null.
 
 Each `samples` entry contains only its UTC observation time and numeric host values: CPU busy
-percent, available memory, workspace free bytes, occupied slots, and remaining on-demand slots.
-Entries older than seven days are pruned. The file also keeps at most 20,160 samples, so intervals
-shorter than 30 seconds retain less than seven days. Failed observations do not add samples.
+percent, available memory, workspace free bytes, occupied slots, remaining on-demand slots, running
+slots (`slots_running`: shared-pool slots whose job the host recorded) and jobs waiting for a runner
+(`jobs_waiting`, null when the listener's queue was not read). Samples written before the last two
+existed are kept without them. Entries older than seven days are pruned. The file also keeps at most
+20,160 samples, so intervals shorter than 30 seconds retain less than seven days. Failed
+observations do not add samples.
+
+## Lane history
+
+`dashboard/lane_history.py` turns the samples and the listener's two files into what the Capacity
+view draws. Each `waits` entry is one job, keyed by its runner name: `kind`, `started_at`,
+`wait_seconds` (GitHub queued it to a runner was assigned) and `routing_seconds` (queued to assigned
+to the lane's scale set; null when GitHub sent no such time or it is later than the runner
+assignment). A job is kept once, for seven days, at most 20,000. Because the listener keeps its newest
+500 jobs and the sampler passes on the newest 100, a lane that starts more than 100 jobs between two
+samples loses the oldest of them.
+
+`history` is rewritten on every refresh, success or not:
+
+```text
+observed_at     this refresh
+limit           the shared pool's slot limit
+waiting_now     jobs waiting for a runner now; null after a failed refresh or an unread queue
+warm            runners the warm pool keeps up; null when the queue was not read
+started         runner name to its job's start time, for the slots occupied now
+ranges[]        1h, 24h and 7d, in that order
+  name, bucket_seconds (120, 1800, 10800), covered_hours
+  buckets[]     30, 48 or 56 clock-aligned periods, the last one still filling: start, and when it
+                has samples, running and reserved (averages) and waiting (the most seen, or null)
+  busy_percent  running slot time over the limit times the sampled time
+  reserved_hours  slot time a runner held with no recorded job
+  wait          jobs, p50_seconds, p95_seconds (nearest rank), routing_seconds and start_seconds
+                (means); null when no job started in the range
+```
+
+A sample stands for the time until the next sample, at most 120 seconds, so a collector outage counts
+as unsampled time rather than as whatever the last sample saw. Samples from before `slots_running`
+was recorded leave their bars empty. Running means the host recorded the slot's job; a slot whose job
+is matched only through GitHub counts as reserved here.
 
 The output is an atomic replacement with mode `0600`. Remote output and prior snapshots are
 allowlist-projected before writing, so extra fields cannot carry raw configuration or secrets into
@@ -233,6 +282,9 @@ the local file.
   config and output path; an existing output owned by another exact owner is refused.
 - Delete: stop the process and remove its private config and local output directory. There is no
   remote install to remove.
+
+`samples` and `waits` are pruned to seven days on every refresh; `history` is replaced on every
+refresh. Deleting the output file deletes all three.
 
 This collector does not query GitHub, prove that an allocated job is running, expose another
 owner's occupancy, retain raw logs, or reconstruct past usage. Listener state is `down` when

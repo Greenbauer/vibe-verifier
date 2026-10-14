@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -726,5 +727,156 @@ func TestLaneWarmRecycleNeedsAnActiveUnitAndItsStartTime(t *testing.T) {
 	h.sys.mu.Unlock()
 	if _, stopped := h.sys.calls(); len(stopped) != 0 || len(asked) != 0 {
 		t.Errorf("stopped %v, asked the start time of %v", stopped, asked)
+	}
+}
+
+func TestQueueRecordListsEveryTrackedSetByKindInKeyOrder(t *testing.T) {
+	h := newHarness(t, userConfig())
+	path := filepath.Join(h.run, queueFile)
+	zeta, alphaCI, alphaQAE := SetKey{"example/zeta", kindCI}, SetKey{"example/alpha", kindCI}, SetKey{"example/alpha", kindQAE}
+	for _, key := range []SetKey{zeta, alphaCI, alphaQAE, {"example/quiet", kindCI}} {
+		h.lane.addSet(key, 1, h.api(t, key.Target))
+	}
+
+	// A set the lane does not track writes nothing, and nil statistics write nothing.
+	h.lane.recordStatistics(SetKey{"example/gone", kindCI}, &scaleset.RunnerScaleSetStatistic{TotalAssignedJobs: 9})
+	h.lane.recordStatistics(zeta, nil)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("queue.json written without statistics of a tracked set: %v", err)
+	}
+
+	h.lane.recordStatistics(zeta, &scaleset.RunnerScaleSetStatistic{TotalAssignedJobs: 1, TotalRunningJobs: 1})
+	h.lane.recordStatistics(alphaQAE, &scaleset.RunnerScaleSetStatistic{TotalAssignedJobs: 2})
+	h.advance(90 * time.Second)
+	h.lane.recordStatistics(alphaCI, &scaleset.RunnerScaleSetStatistic{TotalAssignedJobs: 3, TotalRunningJobs: 2, TotalIdleRunners: 4})
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The set with no statistics yet is left out; no target, id or other count is written.
+	want := `{"version":1,"updated_at":"2026-01-01T12:01:30Z","sets":[` +
+		`{"kind":"ci","assigned":3,"running":2,"min_runners":0},` +
+		`{"kind":"qae","assigned":2,"running":0,"min_runners":0},` +
+		`{"kind":"ci","assigned":1,"running":1,"min_runners":0}]}` + "\n"
+	if string(body) != want {
+		t.Fatalf("queue.json = %s\nwant         %s", body, want)
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode().Perm() != 0o600 || !info.Mode().IsRegular() {
+		t.Fatalf("queue.json mode %v, %v", info.Mode(), err)
+	}
+
+	// A dropped set leaves the next record.
+	h.lane.removeSet(zeta)
+	h.lane.recordStatistics(alphaCI, &scaleset.RunnerScaleSetStatistic{TotalAssignedJobs: 0})
+	if body, _ := os.ReadFile(path); strings.Count(string(body), `"kind"`) != 2 {
+		t.Fatalf("queue.json after the set was dropped = %s", body)
+	}
+}
+
+func TestQueueRecordCarriesTheWarmPool(t *testing.T) {
+	cfg := orgConfig()
+	cfg.Budget.MinRunners = 2
+	h := newHarness(t, cfg)
+	a := h.api(t, "example")
+	h.lane.addSet(SetKey{"example", kindCI}, 41, a)
+	h.lane.addSet(SetKey{"example", kindQAE}, 42, a)
+	h.lane.recordStatistics(SetKey{"example", kindQAE}, &scaleset.RunnerScaleSetStatistic{TotalAssignedJobs: 1})
+	h.lane.recordStatistics(SetKey{"example", kindCI}, &scaleset.RunnerScaleSetStatistic{TotalAssignedJobs: 5, TotalRunningJobs: 3})
+	body, err := os.ReadFile(filepath.Join(h.run, queueFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec queueRecord
+	if err := json.Unmarshal(body, &rec); err != nil {
+		t.Fatal(err)
+	}
+	want := []queueSet{{Kind: kindCI, Assigned: 5, Running: 3, MinRunners: 2}, {Kind: kindQAE, Assigned: 1}}
+	if !reflect.DeepEqual(rec.Sets, want) {
+		t.Fatalf("sets = %+v", rec.Sets)
+	}
+}
+
+func TestJobHistoryRecordsWaitTimesBoundedAndSurvivesARestart(t *testing.T) {
+	h, _ := startedLane(t, orgConfig(), 1)
+	s := h.lane.trackedSlots()[0]
+	key := SetKey{"example", kindCI}
+	path := filepath.Join(h.run, jobsFile)
+	queued := time.Date(2026, 1, 1, 11, 58, 0, 500_000_000, time.UTC)
+	h.lane.jobStarted(key, &scaleset.JobStarted{
+		RunnerName: s.RunnerName,
+		JobMessageBase: scaleset.JobMessageBase{
+			OwnerName: "example", RepositoryName: "widgets", JobDisplayName: "build", WorkflowRunID: 123, JobID: "456",
+			QueueTime: queued, ScaleSetAssignTime: queued.Add(30 * time.Second),
+		},
+	})
+	// A name the page cannot show still records the timing, without the job's fields.
+	h.lane.jobStarted(key, &scaleset.JobStarted{
+		RunnerName:     s.RunnerName,
+		JobMessageBase: scaleset.JobMessageBase{OwnerName: "example", RepositoryName: "widgets", JobDisplayName: "bad\nname", WorkflowRunID: 7, JobID: "8"},
+	})
+	// A runner the listener does not track is not recorded.
+	h.lane.jobStarted(key, &scaleset.JobStarted{RunnerName: "someone-else"})
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"version":1,"jobs":[` +
+		`{"kind":"ci","instance":1,"runner_name":"` + s.RunnerName + `","repository":"example/widgets","name":"build","run_id":123,"job_id":"456",` +
+		`"queued_at":"2026-01-01T11:58:00Z","scale_set_assigned_at":"2026-01-01T11:58:30Z","started_at":"2026-01-01T12:00:00Z"},` +
+		`{"kind":"ci","instance":1,"runner_name":"` + s.RunnerName + `","started_at":"2026-01-01T12:00:00Z"}]}` + "\n"
+	if string(body) != want {
+		t.Fatalf("jobs.json = %s\nwant        %s", body, want)
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("jobs.json mode %v, %v", info.Mode(), err)
+	}
+
+	// The history keeps the newest maxJobHistory jobs.
+	for i := 0; i < maxJobHistory; i++ {
+		h.lane.jobStarted(key, &scaleset.JobStarted{
+			RunnerName:     s.RunnerName,
+			JobMessageBase: scaleset.JobMessageBase{OwnerName: "example", RepositoryName: "widgets", JobDisplayName: fmt.Sprintf("job %d", i)},
+		})
+	}
+	var rec jobsRecord
+	body, _ = os.ReadFile(path)
+	if err := json.Unmarshal(body, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Jobs) != maxJobHistory || rec.Jobs[0].Repository != "example/widgets" || rec.Jobs[0].Name != "job 0" ||
+		rec.Jobs[maxJobHistory-1].Name != fmt.Sprintf("job %d", maxJobHistory-1) {
+		t.Fatalf("history of %d jobs, first %+v", len(rec.Jobs), rec.Jobs[0])
+	}
+
+	// A restart takes the history up and appends to it.
+	restarted := newLane(h.lane.cfg, h.run, h.sys, h.host, h.lane.newAPI, h.log.logf)
+	restarted.now = h.lane.now
+	restarted.rebuild()
+	restarted.jobStarted(key, &scaleset.JobStarted{
+		RunnerName:     s.RunnerName,
+		JobMessageBase: scaleset.JobMessageBase{OwnerName: "example", RepositoryName: "widgets", JobDisplayName: "after restart"},
+	})
+	body, _ = os.ReadFile(path)
+	if err := json.Unmarshal(body, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Jobs) != maxJobHistory || rec.Jobs[0].Name != "job 1" || rec.Jobs[maxJobHistory-1].Name != "after restart" {
+		t.Fatalf("history after a restart: %d jobs, first %+v, last %+v", len(rec.Jobs), rec.Jobs[0], rec.Jobs[len(rec.Jobs)-1])
+	}
+
+	// A malformed file is ignored at start and replaced by the next job.
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	again := newLane(h.lane.cfg, h.run, h.sys, h.host, h.lane.newAPI, h.log.logf)
+	again.now = h.lane.now
+	again.rebuild()
+	if !h.log.has("job history " + path + " ignored") {
+		t.Fatalf("no log line for the ignored history:\n%s", h.log.all())
+	}
+	again.jobStarted(key, &scaleset.JobStarted{RunnerName: s.RunnerName})
+	body, _ = os.ReadFile(path)
+	if err := json.Unmarshal(body, &rec); err != nil || len(rec.Jobs) != 1 {
+		t.Fatalf("history after a malformed file = %s (%v)", body, err)
 	}
 }

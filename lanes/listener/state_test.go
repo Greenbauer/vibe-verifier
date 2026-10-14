@@ -1,11 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSlotFilesRoundTrip(t *testing.T) {
@@ -145,5 +150,80 @@ func TestHostFilesReadTheRealFiles(t *testing.T) {
 	}
 	if _, err := (hostFiles{meminfo: filepath.Join(dir, "absent")}).MemAvailable(); err == nil {
 		t.Error("an absent meminfo read as a value")
+	}
+}
+
+func TestJobTimingOmitsZeroTimesAndUnusableFields(t *testing.T) {
+	rec := jobsRecord{Version: 1, Jobs: []jobTiming{{
+		Kind: kindCI, Instance: 3, RunnerName: "box-ci-ci-3-1760000000",
+		QueuedAt:  stamp(time.Date(2026, 10, 14, 18, 0, 0, 999_000_000, time.FixedZone("x", 3600))),
+		StartedAt: stamp(time.Date(2026, 10, 14, 17, 1, 0, 0, time.UTC)), RunnerAssignedAt: stamp(time.Time{}),
+	}}}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"version":1,"jobs":[{"kind":"ci","instance":3,"runner_name":"box-ci-ci-3-1760000000",` +
+		`"queued_at":"2026-10-14T17:00:00Z","started_at":"2026-10-14T17:01:00Z"}]}`
+	if string(data) != want {
+		t.Errorf("jobs.json = %s\nwant       %s", data, want)
+	}
+}
+
+func TestReadJobHistory(t *testing.T) {
+	entry := func(i int) jobTiming {
+		return jobTiming{Kind: kindCI, Instance: 1, RunnerName: fmt.Sprintf("box-ci-ci-1-%d", i), Repository: "example/widgets",
+			Name: "build", RunID: 123, JobID: "456", QueuedAt: "2026-10-14T17:59:00Z", StartedAt: "2026-10-14T18:00:00Z"}
+	}
+	write := func(t *testing.T, run string, data []byte) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(run, jobsFile), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run := t.TempDir()
+	if jobs, err := readJobHistory(run); jobs != nil || err != nil {
+		t.Fatalf("absent file: %v, %v", jobs, err)
+	}
+
+	// A valid file loads, newest maxJobHistory kept.
+	var many []jobTiming
+	for i := 0; i < maxJobHistory+5; i++ {
+		many = append(many, entry(i))
+	}
+	if err := writeLaneRecord(run, jobsFile, jobsRecord{Version: 1, Jobs: many}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := readJobHistory(run)
+	if err != nil || len(jobs) != maxJobHistory || !reflect.DeepEqual(jobs[0], entry(5)) || jobs[len(jobs)-1] != many[len(many)-1] {
+		t.Fatalf("valid file: %d jobs, %v", len(jobs), err)
+	}
+
+	for name, data := range map[string][]byte{
+		"malformed":     []byte(`{"version":1,"jobs":[`),
+		"trailing data": []byte(`{"version":1,"jobs":[]} x`),
+		"wrong version": []byte(`{"version":2,"jobs":[]}`),
+		"oversized":     append([]byte(`{"version":1,"jobs":[]}`), bytes.Repeat([]byte(" "), maxJobsFile)...),
+	} {
+		write(t, run, data)
+		if jobs, err := readJobHistory(run); jobs != nil || err == nil {
+			t.Errorf("%s: loaded %v, err %v", name, jobs, err)
+		}
+	}
+
+	// A symlink is never followed, even to a valid record.
+	target := filepath.Join(t.TempDir(), "elsewhere.json")
+	if err := os.WriteFile(target, []byte(`{"version":1,"jobs":[{"kind":"ci","instance":1,"runner_name":"x","started_at":"2026-10-14T18:00:00Z"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(run, jobsFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(run, jobsFile)); err != nil {
+		t.Fatal(err)
+	}
+	if jobs, err := readJobHistory(run); jobs != nil || err == nil {
+		t.Errorf("symlink: loaded %v, err %v", jobs, err)
 	}
 }
