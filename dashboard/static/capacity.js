@@ -51,14 +51,14 @@
       detail ? el("small", { class: "muted" }, detail) : null);
   }
 
-  // The typical wait as the value; the slowest 5% and where the time went (Depot's split: GitHub
-  // sending the job to the lane, then the lane starting a runner that takes it) as the detail.
+  // The typical wait, from GitHub handing a job to the lane until a runner takes it, as the value;
+  // the slowest 5% as the detail, and GitHub's own routing before that when it reported it.
   function waitText(wait, label) {
     if (!wait) return ["No jobs", label];
-    const split = wait.routing_seconds == null ? "" :
-      ` On average GitHub took ${duration(wait.routing_seconds)} to send it, the runner ${duration(wait.start_seconds)} to start.`;
+    const routing = wait.routing_seconds == null ? "" :
+      ` Before that, GitHub took ${duration(wait.routing_seconds)} on average to hand it to the lane.`;
     return [`${duration(wait.p50_seconds)} typical`,
-      `${label}: ${duration(wait.p95_seconds)} for the slowest 5% of ${wait.jobs} jobs.${split}`];
+      `${label}: ${duration(wait.p95_seconds)} for the slowest 5% of ${wait.jobs} jobs.${routing}`];
   }
 
   function summary(capacity, range) {

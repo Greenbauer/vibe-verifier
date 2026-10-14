@@ -5,9 +5,11 @@ inputs come from the lane's listener through the sampler, and both are optional:
 
 - queue: per scale set, the jobs GitHub has assigned to it and how many of those are running, and
   the set's warm-pool size. Assigned minus running is the number of jobs waiting for a runner.
-- jobs: the listener's newest started jobs with GitHub's own timestamps: queued, assigned to the
-  lane's scale set, assigned to a runner. The wait is queued to runner, split into routing (GitHub
-  sending it to the lane) and start (the lane starting a runner that takes it).
+- jobs: the listener's newest started jobs with GitHub's own timestamps: assigned to the lane's
+  scale set, assigned to a runner, and queued when GitHub sends it. The wait for a runner is set to
+  runner; on 2026-10-14 the set time was the job's GitHub created_at to the second and no queued time
+  came, so routing (queued to set) is kept only when GitHub sends one. A job counts from its runner
+  assignment: the listener hears JobStarted late (a 17-second job's arrived as it finished).
 
 Three things are kept in the collector's root-only state, each pruned to seven days: samples (one
 per refresh, now with running and waiting counts), waits (one per job), and the derived history the
@@ -90,14 +92,14 @@ def project_job(row):
     if not isinstance(runner, str) or not RUNNER_RE.fullmatch(runner):
         return None
     queued, routed = parse_time(row.get("queued_at")), parse_time(row.get("scale_set_assigned_at"))
-    assigned, started = parse_time(row.get("runner_assigned_at")), parse_time(row.get("started_at"))
-    wait = _seconds(queued, assigned)
-    if wait is None or wait > MAX_WAIT_SECONDS or started is None:
+    assigned = parse_time(row.get("runner_assigned_at"))
+    wait = _seconds(routed, assigned)
+    if wait is None or wait > MAX_WAIT_SECONDS:
         return None
     routing = _seconds(queued, routed)
-    if routing is not None and routing > wait:
+    if routing is not None and routing > MAX_WAIT_SECONDS:
         routing = None
-    return {"runner": runner, "kind": row["kind"], "started_at": format_time(started),
+    return {"runner": runner, "kind": row["kind"], "started_at": format_time(assigned),
             "wait_seconds": wait, "routing_seconds": routing}
 
 
@@ -176,16 +178,13 @@ def _percentile(sorted_values, fraction):
 
 
 def wait_summary(rows):
-    """Nearest-rank median and 95th percentile of the wait, and the mean of each part."""
+    """Nearest-rank median and 95th percentile of the wait, and the mean routing when GitHub sent it."""
     values = sorted(row["wait_seconds"] for row in rows)
     if not values:
         return None
-    split = [row for row in rows if row["routing_seconds"] is not None]
-    routing = sum(row["routing_seconds"] for row in split) / len(split) if split else None
-    start = sum(row["wait_seconds"] - row["routing_seconds"] for row in split) / len(split) if split else None
+    split = [row["routing_seconds"] for row in rows if row["routing_seconds"] is not None]
     return {"jobs": len(values), "p50_seconds": _percentile(values, .5), "p95_seconds": _percentile(values, .95),
-            "routing_seconds": None if routing is None else round(routing, 1),
-            "start_seconds": None if start is None else round(start, 1)}
+            "routing_seconds": round(sum(split) / len(split), 1) if split else None}
 
 
 def _usable(sample):
@@ -276,8 +275,7 @@ def _read_wait(value):
     return {"jobs": _count(value.get("jobs"), MAX_WAITS),
             "p50_seconds": _count(value.get("p50_seconds"), MAX_WAIT_SECONDS),
             "p95_seconds": _count(value.get("p95_seconds"), MAX_WAIT_SECONDS),
-            "routing_seconds": _optional(value.get("routing_seconds"), lambda item: _number(item, MAX_WAIT_SECONDS)),
-            "start_seconds": _optional(value.get("start_seconds"), lambda item: _number(item, MAX_WAIT_SECONDS))}
+            "routing_seconds": _optional(value.get("routing_seconds"), lambda item: _number(item, MAX_WAIT_SECONDS))}
 
 
 def _read_range(row, expected):
