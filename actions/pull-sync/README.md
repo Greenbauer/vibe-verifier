@@ -14,6 +14,7 @@ in [`pull_sync.py`](pull_sync.py), which is the whole engine; this page is how t
 | Checks running on a head that is behind, where the default branch merges only up-to-date heads; not a draft, nothing failed yet, pushed more than 30 minutes ago | Updated now, without waiting for a slot (see below) |
 | Any other with a check on its head unfinished, or changed in the last 30 minutes | Nothing this run |
 | Ready: not a draft, every check on its head passed | Updated, oldest first |
+| With `needs-update`: its only failed check is that status (below) | The same as ready, or as on its way to green while other checks run |
 | Anything else (red, draft, no checks) | Updated once its head commit is 24 hours old. An update is a head commit, so that is at most once a day unless the author pushes an older commit back |
 
 At most two updates may be in flight at once (`max-in-flight`). A pull request holds a slot when its
@@ -46,6 +47,19 @@ the protection rule nor the rulesets counts as "off", so a running check is neve
 GitHub works out whether a pull request merges cleanly only when asked, so right after a merge it
 answers "unknown" for every one. The run asks again, up to three more times ten seconds apart, and
 leaves whatever is still unknown to the next run.
+
+## A check in place of "up to date"
+
+A repository can drop "require branches to be up to date" and require instead a check that fails a
+pull request only when it is behind and the default branch's newer commits touch the same files, or
+files every change depends on (lockfiles, migrations, CI). That check's failure means exactly "this
+needs an update", which is this action's job. Without help, though, a failure is a failure here: the
+pull request reads as red, and a red one is updated only once its head is a day old.
+
+Name the check's commit status in `needs-update` (`needs-update: merge-safety`). A pull request whose
+only failed check is that status is then treated as ready (or, with checks still running, as not yet
+red), and is updated like any green one. A pull request with any other failure is still red. The
+status is read per head (`status.context(name:)`), so it must be a commit status, not a check run.
 
 ## Running it
 
