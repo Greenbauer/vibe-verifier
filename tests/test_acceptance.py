@@ -138,6 +138,22 @@ class AcceptanceVerdict(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("no acceptance criteria found", result.stdout)
 
+    def test_a_near_miss_heading_is_named_in_the_finding(self):
+        # a consumer PR, 2026-10-14: a note in the heading hid five criteria behind "none found".
+        body = "## Acceptance criteria (check at 1280 px)\n\n- An expired invite is rejected\n"
+        result = self.run_with(body, "")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("`## Acceptance criteria (check at 1280 px)` is not that heading", result.stdout)
+
+    def test_a_criterion_judged_against_main_is_a_finding(self):
+        # a consumer PR, 2026-10-14: QAE walks only the preview, so "as on main" could never pass.
+        body = BODY.replace("A fresh invite is accepted", "Invites list the same rows as on main")
+        verdict = ("acceptance-check: AC1 -- PASS -- e2e/signup.spec.ts::rejects an expired invite\n"
+                   "acceptance-check: AC2 -- PASS -- e2e/signup.spec.ts::accepts a fresh invite\n")
+        result = self.run_with(body, verdict)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("AC2 compares with main or production (`as on main`)", result.stdout)
+
     def test_a_declared_none_passes_and_a_bare_none_does_not(self):
         # Silence is indistinguishable from forgetting; a declaration is a claim a reviewer can
         # weigh against the diff, so it passes and a bare "None" does not.

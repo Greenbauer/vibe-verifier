@@ -28,6 +28,31 @@ class Criteria(unittest.TestCase):
         self.assertEqual(runner("criteria", self.doc(BODY % "- None")).stdout, "criteria: 1\n")
         self.assertEqual(runner("criteria", self.doc("## Why\n\nno section\n")).stdout, "criteria: 0\n")
 
+    def test_a_near_miss_heading_fails_before_any_browser_run(self):
+        # a consumer PR, 2026-10-14: `criteria: 0` let the run go on to fail with "none found".
+        result = runner("criteria", self.doc("## Acceptance criteria (check at 1280 px)\n\n- AC one\n"))
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+        self.assertIn("::error::no acceptance criteria found", result.stderr)
+        self.assertIn("`## Acceptance criteria (check at 1280 px)` is not that heading", result.stderr)
+
+    def test_a_criterion_judged_against_main_or_production_fails_before_any_browser_run(self):
+        # a consumer PR, 2026-10-14: the explorer walked these for half an hour, then failed them
+        # for want of a main baseline it is never given.
+        for wording, phrase in (("The Orders page opens with the same rows as on main.", "as on main"),
+                                ("The Invoices pages open as on main", "as on main"),
+                                ("Totals match the main branch [as: viewer]", "match the main branch"),
+                                ("Works the same as in production", "as in production")):
+            result = runner("criteria", self.doc(BODY % ("- A page loads\n- " + wording)))
+            self.assertEqual((result.returncode, result.stdout), (1, ""), wording)
+            self.assertIn("::error::AC2 compares with main or production (`%s`)" % phrase, result.stderr)
+
+    def test_main_or_production_as_words_on_a_page_is_not_a_comparison(self):
+        for wording in ("Clicking Home returns to the main page", "The main menu opens",
+                        "The production-ready badge shows", "Opens from the main navigation",
+                        "An alert shown before the refresh is the state copied from production"):
+            result = runner("criteria", self.doc(BODY % ("- " + wording)))
+            self.assertEqual((result.returncode, result.stdout), (0, "criteria: 1\n"), wording)
+
     def changed(self, *paths):
         return self.doc("".join(path + "\n" for path in paths))
 

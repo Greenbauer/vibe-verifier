@@ -79,8 +79,9 @@ import json
 import os
 import re
 
-from _acceptance import (ANCHOR_FORMS, anchors, annotations, body_criteria, check_lines, declares_none,
-                         named_references, png_size, resolves, said, ticket_items, verdict)
+from _acceptance import (ANCHOR_FORMS, NO_CRITERIA, anchors, annotations, baseline_problems, body_criteria,
+                         check_lines, declares_none, named_references, no_criteria_message, png_size, resolves, said,
+                         ticket_items, verdict)
 from _contract import CannotRun, Finding, qualify, run_gate, tracked_files
 from _features import add_selection_arguments, describe, selection
 
@@ -273,11 +274,15 @@ def check(args):
         print("%s: nothing to verify, declared: %s" % (GATE, reason))
         return []
     findings = [Finding(problem, args.ticket)] if problem else []
-    wanted = ([] if reason else body_criteria(criteria_text)) + ticket
+    body = [] if reason else body_criteria(criteria_text)
+    findings += [Finding(text, args.criteria) for text in baseline_problems(body)]
+    missed = no_criteria_message(criteria_text)
+    if not body and not reason and (missed != NO_CRITERIA or not (ticket or findings)):
+        findings.append(Finding(missed, args.criteria))
+    wanted = body + ticket
     verdict = read_input(args.verdict, "verdict")
     if not wanted:
-        return findings or [Finding("no acceptance criteria found (a `## Acceptance criteria` list, or `- None: <why>`)",
-                                    args.criteria)]
+        return findings
     tracked = set(tracked_files(args.repo))
     lines = check_lines(verdict, args.token)
     declared = declared_references(args.references)

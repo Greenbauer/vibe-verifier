@@ -127,6 +127,40 @@ def declares_none(text):
     return match.group("reason") if match else None
 
 
+# A heading that names the criteria and says more ("## Acceptance criteria (check at 1280 px)") is not
+# the section: a note there would change what is checked without the check reading it. Naming the near
+# miss turns a bare "no criteria found" into its one-line fix (a consumer PR, 2026-10-14).
+NEAR_MISS_HEADING = re.compile(r"^#{1,6}[ \t]+.*\bacceptance criteria\b", re.IGNORECASE)
+NO_CRITERIA = "no acceptance criteria found (a `## Acceptance criteria` list, or `- None: <why>`)"
+
+
+def no_criteria_message(text):
+    """The no-criteria finding, naming each heading that almost was the criteria heading."""
+    near = [line.strip() for line in text.splitlines()
+            if NEAR_MISS_HEADING.match(line) and not CRITERIA_HEADING.match(line)]
+    if not near:
+        return NO_CRITERIA
+    return (NO_CRITERIA + "; `%s` is not that heading: write it as exactly `## Acceptance criteria` and put any "
+            "note in the list items" % "`, `".join(near))
+
+
+# QAE opens only the pull request's preview, so a criterion judged against main or production can
+# never pass: nothing the explorer is given shows them (a consumer PR, 2026-10-14, failed AC2 and
+# AC3 for want of a main baseline after the whole browser run). `main` or `production` as a place: after
+# on/in/as/than/with/matches, and ending the phrase, so "the main page" or "production-ready" is not one,
+# nor is "from production", which describes where a preview's data came from (a consumer PR, 2026-10-14).
+BASELINE = re.compile(r"\b(?:on|in|as|than|with|match(?:es)?)[ \t]+(?:(?:on|in)[ \t]+)?(?:the[ \t]+)?"
+                      r"(?:main|production|prod)(?:[ \t]+(?:branch|site|app))?(?![ \t]*[\w-])", re.IGNORECASE)
+
+
+def baseline_problems(items):
+    """One message per criterion judged against main or production, which no QAE run can open."""
+    return ["%s compares with main or production (`%s`), which QAE never opens (it walks only this pull request's preview): "
+            "state what the preview shows instead, for example `The Orders page lists a row for each open order`"
+            % (item, match.group(0)) for item, match in ((item, BASELINE.search(wording)) for item, wording in items)
+            if match]
+
+
 TICKET_NONE = ("the ticket in %s lists no acceptance criteria: its criteria go under a `## Acceptance criteria` "
                "heading (or the file is a plain list), or it declares `- None: <why>`; an empty file links no ticket")
 
