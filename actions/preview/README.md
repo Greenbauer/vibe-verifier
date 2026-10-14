@@ -34,6 +34,25 @@ test. Record the immutable address of the build (Vercel's `<project>-<hash>.verc
 branch alias, which a later push moves. A re-sync of the same commit records again, and the newest
 record wins. A record GitHub refuses three times fails the step, so the job cannot pass without one.
 
+### The database the preview reads
+
+A preview pointed at a database of its own (a Supabase branch) passes that database's project ref
+too, from the step that pointed the preview at it:
+
+```yaml
+      - uses: Greenbauer/vibe-verifier/actions/preview@0000000000000000000000000000000000000000 # CONSUMER
+        with:
+          record: ${{ steps.branch.outputs.url }}
+          database: ${{ steps.branch.outputs.database }}   # CONSUMER: the branch's project ref
+```
+
+It writes a second status first, context `preview-database`, its link `https://<ref>.supabase.co`.
+Without it, every check that needs the database has to find it again by name, and a Supabase project
+can hold two branches for one pull request: a workflow's `pr-<N>` and the branch Supabase's GitHub
+integration makes for the git branch when the pull request changes migrations. A lookup by name
+once took the integration's branch, which the preview never read, and every call to it answered
+403. The job that pointed the preview at its database is the one that knows which it is.
+
 ## Finding
 
 ```yaml
@@ -49,7 +68,8 @@ record wins. A record GitHub refuses three times fails the step, so the job cann
 ```
 
 It waits up to `wait-minutes` (40) for the named check to pass on the head, then outputs the newest
-recorded address as `url`. `running-minutes` bounds only the time the check spends running: polls that
+recorded address as `url`, and the newest recorded database's project ref as `database` (empty when
+the job recorded none). `running-minutes` bounds only the time the check spends running: polls that
 see it queued for a runner, or not yet created, do not count, because a check waiting for a free
 runner is not a slow check. It polls every 30 seconds, since every job of a repository shares its
 token's hourly request budget. Of the check's runs on the commit, the newest one that was not skipped
@@ -99,8 +119,9 @@ From a clone: `GH_TOKEN=... python3 actions/preview/preview.py find --repo <owne
 ## Limits
 
 - The job that records is the authority. A pull request can edit that job, so it can record another
-  address; a check that reads it trusts the pull request's workflow exactly as far as it already
-  trusted the check it waits for.
+  address or database; a check that reads it trusts the pull request's workflow exactly as far as it
+  already trusted the check it waits for. A check that writes to the database should still refuse a
+  ref that is not one of its production project's preview branches.
 - A repository whose preview has no setup job of its own has nothing to record from. It reads the
   host's deployment records instead (harnesses/qae/README.md, "A reachable preview instead of a site
   on the runner"), and depends on the host writing them.

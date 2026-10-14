@@ -53,12 +53,13 @@ if endpoint.endswith("/check-runs"):
         print("\\t".join(run))
 elif endpoint.endswith("/statuses"):
     for status in state.get("statuses", []):
-        if status["context"] == "preview":
-            print("%s\\t%s" % (status["created_at"], status.get("target_url") or ""))
+        if status["context"] in ("preview", "preview-database"):
+            print("%s\\t%s\\t%s" % (status["context"], status["created_at"], status.get("target_url") or ""))
 '''
 
 PASSED = [["2026-10-12T15:00:00Z", "completed", "success"]]
 ADDRESS = {"context": "preview", "created_at": "2026-10-12T15:01:00Z", "target_url": "https://p.vercel.app"}
+DATABASE = "abcdefghijklmnopqrst"
 
 
 class Preview(unittest.TestCase):
@@ -96,6 +97,23 @@ class Preview(unittest.TestCase):
             "state": "success", "context": "preview", "target_url": "https://app-git-x.vercel.app",
             "description": "The preview of this commit under test"}]])
 
+    def test_record_writes_the_database_before_the_address(self):
+        # A reader that sees the address once the check passes must also see the database.
+        self.serve(runs=[[]])
+        result = self.run_engine("record", "--url", "https://p.vercel.app", "--database", DATABASE)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([(w[2]["context"], w[2]["target_url"]) for w in self.writes()],
+                         [("preview-database", "https://%s.supabase.co" % DATABASE), ("preview", "https://p.vercel.app")])
+
+    def test_record_refuses_a_database_that_is_not_a_project_ref_and_writes_nothing(self):
+        self.serve(runs=[[]])
+        for database in ("pr-503", "https://x.supabase.co", "ABCDEFGHIJKLMNOPQRST"):
+            with self.subTest(database):
+                result = self.run_engine("record", "--url", "https://p.vercel.app", "--database", database)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("Supabase project ref", result.stdout)
+                self.assertEqual(self.writes(), [])
+
     def test_record_refuses_an_address_that_is_not_https_and_writes_nothing(self):
         self.serve(runs=[[]])
         result = self.run_engine("record", "--url", "app.vercel.app")
@@ -118,6 +136,21 @@ class Preview(unittest.TestCase):
         result = self.find()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout, "https://resync.vercel.app\n")
+
+    def test_find_prints_the_newest_recorded_database_on_a_second_line(self):
+        older = "a" * 20
+        self.serve(runs=[PASSED], statuses=[
+            ADDRESS,
+            {"context": "preview-database", "created_at": "2026-10-12T15:00:30Z", "target_url": "https://%s.supabase.co" % older},
+            {"context": "preview-database", "created_at": "2026-10-12T16:00:00Z", "target_url": "https://%s.supabase.co" % DATABASE}])
+        result = self.find()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "https://p.vercel.app\n%s\n" % DATABASE)
+
+    def test_find_passes_over_a_database_link_that_is_not_a_supabase_api_address(self):
+        self.serve(runs=[PASSED], statuses=[
+            ADDRESS, {"context": "preview-database", "created_at": "2026-10-12T16:00:00Z", "target_url": "https://evil.example"}])
+        self.assertEqual(self.find().stdout, "https://p.vercel.app\n")
 
     def test_find_waits_while_the_check_runs(self):
         running = [["2026-10-12T15:00:00Z", "in_progress", ""]]
@@ -282,7 +315,15 @@ class Preview(unittest.TestCase):
         self.serve(runs=[PASSED], statuses=[{"context": "preview", "created_at": "2026-10-12T15:01:00Z", "target_url": "https://p.vercel.app"}])
         result, output = self.action_step(CHECK="sync-preview-branch")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(output, "url=https://p.vercel.app\n")
+        self.assertEqual(output, "url=https://p.vercel.app\ndatabase=\n")
+
+    def test_the_action_outputs_the_database_recorded_with_the_address(self):
+        self.serve(runs=[PASSED], statuses=[ADDRESS, {"context": "preview-database", "created_at": "2026-10-12T15:00:30Z",
+                                                      "target_url": "https://%s.supabase.co" % DATABASE}])
+        result, output = self.action_step(CHECK="sync-preview-branch")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(output, "url=https://p.vercel.app\ndatabase=%s\n" % DATABASE)
+        self.assertIn("reading database %s" % DATABASE, result.stdout)
 
     def test_the_action_shows_why_a_find_failed(self):
         self.serve(runs=[[["2026-10-12T15:00:00Z", "completed", "failure"]]])
@@ -297,7 +338,7 @@ class Preview(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('::notice::"sync-preview-branch" did not pass', result.stdout)
         self.assertNotIn("::error::", result.stdout)
-        self.assertEqual(output, "url=\n")
+        self.assertEqual(output, "url=\ndatabase=\n")
 
     def test_without_a_handover_a_check_still_running_fails(self):
         self.serve(runs=[[["2026-10-12T15:00:00Z", "in_progress", "null"]]])
@@ -321,6 +362,12 @@ class Preview(unittest.TestCase):
         result, _ = self.action_step(RECORD="https://p.vercel.app")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.writes()[0][2]["target_url"], "https://p.vercel.app")
+
+    def test_the_action_records_the_database_when_given_one(self):
+        self.serve(runs=[[]])
+        result, _ = self.action_step(RECORD="https://p.vercel.app", DATABASE=DATABASE)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([w[2]["context"] for w in self.writes()], ["preview-database", "preview"])
 
 
 if __name__ == "__main__":

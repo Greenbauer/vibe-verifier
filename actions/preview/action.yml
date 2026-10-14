@@ -1,8 +1,11 @@
 name: Vibe Verifier preview
-description: Record the address of a pull request's preview from the job that proved it, or wait for that job to pass and find the address. One answer for every check that tests the preview.
+description: Record the address of a pull request's preview, and the database it reads, from the job that proved it, or wait for that job to pass and find them. One answer for every check that tests the preview.
 inputs:
   record:
     description: The preview address to record (https://...), from the job that set the preview up and proved it serves. Empty (the default) finds the address instead.
+    default: ""
+  database:
+    description: To record, the Supabase project ref of the database the preview reads (its branch database), as the job that pointed the preview at it knows it. Empty (the default) records the address alone.
     default: ""
   check:
     description: To find, the name of the check whose job records the address. The step waits for it to pass on the commit.
@@ -29,6 +32,9 @@ outputs:
   url:
     description: The address found, with no trailing slash. Empty when recording, and when a `handover` wait ended with the check still queued or running.
     value: ${{ steps.preview.outputs.url }}
+  database:
+    description: The Supabase project ref the recording job recorded for the preview's database. Empty when none was recorded, when recording, and when a `handover` wait ended with the check still queued or running.
+    value: ${{ steps.preview.outputs.database }}
 runs:
   using: composite
   steps:
@@ -38,6 +44,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.token }}
         RECORD: ${{ inputs.record }}
+        DATABASE: ${{ inputs.database }}
         CHECK: ${{ inputs.check }}
         SHA: ${{ inputs.sha }}
         REPO: ${{ inputs.repository }}
@@ -48,22 +55,25 @@ runs:
         set -euo pipefail
         [ -n "$SHA" ] || { echo "::error::no commit to record or find a preview for: pass sha outside a pull request event"; exit 1; }
         if [ -n "$RECORD" ]; then
-          python3 "$GITHUB_ACTION_PATH/preview.py" record --repo "$REPO" --sha "$SHA" --url "$RECORD"
-          echo "url=" >> "$GITHUB_OUTPUT"
+          python3 "$GITHUB_ACTION_PATH/preview.py" record --repo "$REPO" --sha "$SHA" --url "$RECORD" --database "${DATABASE:-}"
+          printf 'url=\ndatabase=\n' >> "$GITHUB_OUTPUT"
         else
           [ -n "$CHECK" ] || { echo "::error::to find a preview, name the check that records it (check:)"; exit 1; }
-          # The finder prints the address alone on success and its ::error:: line on failure, both on
-          # stdout; a failure's line is printed again here so the workflow shows it.
+          # The finder prints the address (and on a second line the database, when one was recorded) on
+          # success and its ::error:: line on failure, both on stdout; a failure's line is printed again
+          # here so the workflow shows it.
           rc=0
-          url=$(python3 "$GITHUB_ACTION_PATH/preview.py" find --repo "$REPO" --sha "$SHA" --check "$CHECK" --wait-minutes "$WAIT_MINUTES" --running-minutes "${RUNNING_MINUTES:-0}") || rc=$?
+          found=$(python3 "$GITHUB_ACTION_PATH/preview.py" find --repo "$REPO" --sha "$SHA" --check "$CHECK" --wait-minutes "$WAIT_MINUTES" --running-minutes "${RUNNING_MINUTES:-0}") || rc=$?
           # 3 is the finder's "still queued or running at the end of the wait": the one failure a
           # later job's wait can turn into an address, so the one a handover passes on.
           if [ "$rc" -eq 3 ] && [ "$HANDOVER" = true ]; then
-            echo "::notice::${url#::error::}. Handing the wait over: this step found no address."
-            echo "url=" >> "$GITHUB_OUTPUT"
+            echo "::notice::${found#::error::}. Handing the wait over: this step found no address."
+            printf 'url=\ndatabase=\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          [ "$rc" -eq 0 ] || { printf '%s\n' "$url"; exit "$rc"; }
-          echo "preview of $SHA: $url"
-          echo "url=$url" >> "$GITHUB_OUTPUT"
+          [ "$rc" -eq 0 ] || { printf '%s\n' "$found"; exit "$rc"; }
+          url=$(printf '%s\n' "$found" | sed -n 1p)
+          database=$(printf '%s\n' "$found" | sed -n 2p)
+          echo "preview of $SHA: $url${database:+, reading database $database}"
+          printf 'url=%s\ndatabase=%s\n' "$url" "$database" >> "$GITHUB_OUTPUT"
         fi
