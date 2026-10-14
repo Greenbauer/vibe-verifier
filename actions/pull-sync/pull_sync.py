@@ -76,7 +76,9 @@ DEFAULT_BRANCH = "query($owner:String!,$name:String!){repository(owner:$owner,na
 STRICT = ("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){"
           "defaultBranchRef{branchProtectionRule{requiresStrictStatusChecks}}}}")
 # `headRef.compare(headRef: $base).aheadBy` is how many commits the base has that the head lacks.
-PULLS = """query($owner:String!,$name:String!,$base:String!,$context:String!){
+# With --needs-update the head's commit status of that name is read too (NEEDS_UPDATE below); a token
+# needs statuses read for it, so the field is asked for only then.
+PULLS = """query($owner:String!,$name:String!,$base:String!%(variables)s){
   repository(owner:$owner,name:$name){
     pullRequests(states:OPEN,first:100,orderBy:{field:CREATED_AT,direction:ASC}){
       pageInfo{hasNextPage}
@@ -85,8 +87,7 @@ PULLS = """query($owner:String!,$name:String!,$base:String!,$context:String!){
         labels(first:100){nodes{name}}
         headRef{compare(headRef:$base){aheadBy}}
         commits(last:1){nodes{commit{committedDate committedViaWeb parents{totalCount} statusCheckRollup{state contexts(first:1){
-          checkRunCountsByState{state count} statusContextCountsByState{state count}}}
-          status{context(name:$context){state}}}}}
+          checkRunCountsByState{state count} statusContextCountsByState{state count}}}%(status)s}}}
       }
     }
   }
@@ -128,14 +129,23 @@ def graphql(query, **variables):
     return answer["data"]
 
 
+NEEDS_UPDATE = {"variables": ",$context:String!", "status": "\n          status{context(name:$context){state}}"}
+WITHOUT = {"variables": "", "status": ""}
+
+
 def read(repo, context=""):
     """The default branch and every open pull request, each head with the state of the commit status
-    `context` (none when it is empty)."""
+    `context` when one is named. Without one the query does not ask for statuses at all: GitHub
+    answers "Resource not accessible by integration" to a token that cannot read them, even for an
+    empty name (2026-10-14)."""
     owner, _, name = repo.partition("/")
     default = graphql(DEFAULT_BRANCH, owner=owner, name=name)["repository"]["defaultBranchRef"]
     if not default:
         raise CannotRead("%s has no default branch" % repo)
-    data = graphql(PULLS, owner=owner, name=name, base=default["name"], context=context)
+    if context:
+        data = graphql(PULLS % NEEDS_UPDATE, owner=owner, name=name, base=default["name"], context=context)
+    else:
+        data = graphql(PULLS % WITHOUT, owner=owner, name=name, base=default["name"])
     pulls = data["repository"]["pullRequests"]
     if pulls["pageInfo"]["hasNextPage"]:
         raise CannotRead("%s has more than 100 open pull requests" % repo)

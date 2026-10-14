@@ -104,6 +104,9 @@ jobs:
   on the pull request's branch, and the conflict label is a write to the pull request. It must also
   read checks: the plan reads whether each head's checks are still running, and without it GitHub
   answers "Resource not accessible by integration" (seen on a consumer's first run, 2026-10-12).
+- With `needs-update`, it must also read commit statuses (`statuses: read`): the query then reads that
+  status on every head, and GitHub answers "Resource not accessible by integration" to a token that
+  cannot (a consumer's first run with the input, 2026-10-14). Without the input statuses are not read.
 - Measured on 2026-10-08: an update that brings in changed files under `.github/workflows/` goes
   through with contents and pull requests write; no workflows permission was needed.
 - It must not be the workflow's `GITHUB_TOKEN`. GitHub starts no workflow for an event that token

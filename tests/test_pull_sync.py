@@ -46,6 +46,8 @@ if argv[:2] == ["api", "graphql"]:
     else:
         with open(os.path.join(root, "reads"), "a") as handle:
             handle.write("read\\n")
+        with open(os.path.join(root, "queries"), "a") as handle:
+            handle.write(json.dumps([query, sorted(given)]) + "\\n")
         pulls = state["pulls"]
         if given.get("context", "") != state.get("status_name", "merge-safety"):
             for pull in pulls:
@@ -444,6 +446,15 @@ class PullSync(unittest.TestCase):
             "#1 sync": "checks running on a head 3 behind main, which merges only an up-to-date head",
             "#2 skip": "checks running, and it is already red",
         })
+
+    def test_statuses_are_read_only_when_a_needs_update_status_is_named(self):
+        # GitHub refuses the field to a token without statuses read, even for an empty name.
+        for args, asked in (((), False), (("--needs-update", "merge-safety"), True)):
+            with self.subTest(args=args):
+                Path(self.fake, "queries").unlink(missing_ok=True)
+                self.run_engine([pull(1)], *args)
+                [(query, given)] = [json.loads(line) for line in Path(self.fake, "queries").read_text().splitlines()]
+                self.assertEqual(("status{context(name:$context)" in query, "context" in given), (asked, asked))
 
     def test_the_action_passes_needs_update_to_the_engine(self):
         failed = [pull(1, checks="FAILURE", needs_update="FAILURE", committed=ago(hours=2))]
