@@ -10,15 +10,16 @@
   let loading = false, retry = 0;
   let refreshFailed = false;
 
+  // localStorage, not sessionStorage: a reload, a new tab or a reopened window all keep the filters.
   function restoreView(owner) {
-    try { Object.assign(state, VV.restoreViewState(sessionStorage.getItem(`vv-dashboard-view:${owner}`))); }
+    try { Object.assign(state, VV.restoreViewState(localStorage.getItem(`vv-dashboard-view:${owner}`))); }
     catch (_) { /* Storage can be disabled by the browser. */ }
   }
 
   function rememberView() {
     if (!snapshot) return;
     const { view, ...preferences } = state;
-    try { sessionStorage.setItem(`vv-dashboard-view:${snapshot.owner}`, JSON.stringify(preferences)); }
+    try { localStorage.setItem(`vv-dashboard-view:${snapshot.owner}`, JSON.stringify(preferences)); }
     catch (_) { /* Navigation still works when storage is unavailable. */ }
   }
 

@@ -48,7 +48,7 @@ const app=fs.readFileSync('./dashboard/static/app.js','utf8');
 const functions=app.slice(app.indexOf('  function restoreView('),app.indexOf('  function announce('));
 const state=VV.restoreViewState(null),snapshot={owner:'Greenbauer'};
 const entries=new Map(),storage={getItem:key=>entries.get(key)||null,setItem:(key,value)=>entries.set(key,value)};
-const build=new Function('VV','state','snapshot','sessionStorage',functions+'return {restoreView,rememberView};');
+const build=new Function('VV','state','snapshot','localStorage',functions+'return {restoreView,rememberView};');
 const api=build(VV,state,snapshot,storage);
 Object.assign(state,{view:'usage',query:'fix',failureBot:'qae-1'}); api.rememberView();
 state.query=''; api.restoreView('Greenbauer'); const restored={...state};

@@ -18,7 +18,7 @@
     pr_ready: "PR ready", await_answer: "Awaiting answer", blocked: "Blocked", merged: "Merged", closed: "Closed"
   };
 
-  // Filters and the selected bot, saved per tab. Where you are lives in the URL instead.
+  // Filters and the selected bot, saved in this browser for every tab. Where you are lives in the URL instead.
   function restoreViewState(raw) {
     const state = { query: "", repository: "all", subscribed: false, attention: false, failureBot: null };
     let saved;
