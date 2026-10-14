@@ -19,6 +19,13 @@ inputs:
   stale-hours:
     description: Update a pull request that is not ready once its head commit is this old.
     default: "24"
+  needs-update:
+    description: >-
+      The name of a commit status that fails exactly when a pull request has to be updated before it
+      may merge (a check comparing it with the default branch, in place of "require branches to be up
+      to date"). Its failure alone does not make a pull request red here, so one that only needs the
+      update gets it as soon as a ready one would. Empty: every failed check counts.
+    default: ""
 runs:
   using: composite
   steps:
@@ -31,9 +38,11 @@ runs:
         MAX_IN_FLIGHT: ${{ inputs.max-in-flight }}
         QUIET_MINUTES: ${{ inputs.quiet-minutes }}
         STALE_HOURS: ${{ inputs.stale-hours }}
+        NEEDS_UPDATE: ${{ inputs.needs-update }}
       run: |
         set -euo pipefail
         args=(--max-in-flight "$MAX_IN_FLIGHT" --quiet-minutes "$QUIET_MINUTES" --stale-hours "$STALE_HOURS")
+        [ -n "$NEEDS_UPDATE" ] && args+=(--needs-update "$NEEDS_UPDATE")
         set -f   # the list is split on spaces and new lines, never expanded as file names
         for repo in $REPOS; do args+=(--repo "$repo"); done
         [ "$ACT" = true ] && args+=(--act)

@@ -21,11 +21,13 @@ ACTION = ROOT / "actions" / "pull-sync" / "action.yml"
 # "unknown_reads": n answers the first n of those reads with every pull request's `mergeable`
 # UNKNOWN, as GitHub does right after a merge. "classic": the protection rule's "require branches to
 # be up to date" (absent: no rule); "rules": the branch's ruleset rules; "unreadable": both refused.
+# "status_name": the commit status each pull request's `status` stands for; the query is answered with
+# it only when it asks for that name (`-f context=`), as GitHub answers null for any other.
 FAKE_GH = '''#!/usr/bin/env python3
 import json, os, sys
 root, argv = os.environ["FAKE"], sys.argv[1:]
 state = json.load(open(os.path.join(root, "state.json")))
-given = dict(a.split("=", 1) for a in argv if a.startswith(("owner=", "name=")))
+given = dict(a.split("=", 1) for a in argv if a.startswith(("owner=", "name=", "context=")))
 if argv[:2] == ["api", "graphql"]:
     # A repository named under "repos" answers with its own state; any other, with the top level.
     state = state.get("repos", {}).get("%s/%s" % (given["owner"], given["name"]), state)
@@ -45,6 +47,9 @@ if argv[:2] == ["api", "graphql"]:
         with open(os.path.join(root, "reads"), "a") as handle:
             handle.write("read\\n")
         pulls = state["pulls"]
+        if given.get("context", "") != state.get("status_name", "merge-safety"):
+            for pull in pulls:
+                pull["commits"]["nodes"][0]["commit"]["status"] = None
         if len(open(os.path.join(root, "reads")).readlines()) <= state.get("unknown_reads", 0):
             pulls = [dict(pull, mergeable="UNKNOWN") for pull in pulls]
         print(json.dumps({"data": {"repository": {
@@ -72,23 +77,32 @@ def ago(**delta):
     return (datetime.now(timezone.utc) - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def rollup(state, unfinished):
-    """A head's checks: the rollup state, and how many check runs and commit statuses are in each state."""
-    runs = {"IN_PROGRESS": unfinished if state != "EXPECTED" else 0, "SUCCESS": 3, "FAILURE": int(state == "FAILURE")}
+def rollup(state, unfinished, failed_runs, needs_update=None):
+    """A head's checks: the rollup state, and how many check runs and commit statuses are in each state.
+    `needs_update` is the state of one more commit status, the one --needs-update names."""
+    runs = {"IN_PROGRESS": unfinished if state != "EXPECTED" else 0, "SUCCESS": 3, "FAILURE": failed_runs}
     statuses = {"EXPECTED": unfinished if state == "EXPECTED" else 0, "SUCCESS": 1}
+    if needs_update:
+        statuses[needs_update] = statuses.get(needs_update, 0) + 1
     return {"state": state, "contexts": {
         "checkRunCountsByState": [{"state": name, "count": count} for name, count in runs.items()],
         "statusContextCountsByState": [{"state": name, "count": count} for name, count in statuses.items()]}}
 
 
 def pull(number, behind=3, checks="SUCCESS", draft=False, mergeable="MERGEABLE", labels=(), base="main",
-         fork=False, updated=None, committed=None, head_ref=True, unfinished=None, update=False, parents=None):
+         fork=False, updated=None, committed=None, head_ref=True, unfinished=None, update=False, parents=None,
+         needs_update=None, failed_runs=None):
     """A pull request as the engine's query returns it: by default green, quiet for two days, 3 behind,
     its head a commit someone pushed. `unfinished` is how many of its checks have not finished: one when
     the rollup says so, else none. `update` makes the head what "update branch" makes: a merge commit
-    GitHub made. `parents` overrides the head's parent count (two for an update, else one)."""
+    GitHub made. `parents` overrides the head's parent count (two for an update, else one).
+    `needs_update` is the state of the commit status --needs-update names (merge-safety) on the head;
+    a FAILURE rollup has one failed check run besides it unless `failed_runs` says otherwise, and none
+    when that status is the failure."""
     if unfinished is None:
         unfinished = int(checks in ("PENDING", "EXPECTED"))
+    if failed_runs is None:
+        failed_runs = int(checks == "FAILURE" and needs_update != "FAILURE")
     return {
         "number": number, "isDraft": draft, "isCrossRepository": fork, "mergeable": mergeable,
         "updatedAt": updated or ago(days=2), "baseRefName": base, "headRefOid": "%040x" % number,
@@ -96,7 +110,9 @@ def pull(number, behind=3, checks="SUCCESS", draft=False, mergeable="MERGEABLE",
         "headRef": {"compare": {"aheadBy": behind}} if head_ref else None,
         "commits": {"nodes": [{"commit": {"committedDate": committed or ago(days=2), "committedViaWeb": update,
                                           "parents": {"totalCount": parents or (2 if update else 1)},
-                                          "statusCheckRollup": rollup(checks, unfinished) if checks else None}}]},
+                                          "statusCheckRollup": rollup(checks, unfinished, failed_runs, needs_update)
+                                          if checks else None,
+                                          "status": {"context": {"state": needs_update}} if needs_update else None}}]},
     }
 
 
@@ -393,16 +409,57 @@ class PullSync(unittest.TestCase):
         self.assertEqual([write[1] for write in self.writes()],
                          ["repos/octo/demo/pulls/1/update-branch", "repos/octo/other/pulls/1/update-branch"])
 
-    def run_action(self, **inputs):
+    def test_a_failed_needs_update_status_alone_does_not_make_a_pull_request_red(self):
+        # merge-safety fails exactly when a pull request needs an update. #1's only failure is that
+        # status: ready. #2 also failed a check run: red, so it waits until its head is a day old. #3
+        # failed the status with other checks still running: left alone like any running one here.
+        # #4 passed the status and failed a check run: red.
+        pulls = [pull(1, checks="FAILURE", needs_update="FAILURE", committed=ago(hours=2)),
+                 pull(2, checks="FAILURE", needs_update="FAILURE", failed_runs=1, committed=ago(hours=2)),
+                 pull(3, checks="FAILURE", needs_update="FAILURE", unfinished=2, committed=ago(hours=2)),
+                 pull(4, checks="FAILURE", needs_update="SUCCESS", committed=ago(hours=2))]
+        result = self.run_engine(pulls, "--act", "--max-in-flight", "9", "--needs-update", "merge-safety")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("a failed merge-safety asks for an update", result.stdout.splitlines()[0])
+        self.assertEqual(self.rows(result), {
+            "#1 sync": "ready, 3 behind main",
+            "#2 skip": "not ready, and its head is newer than 24 hours",
+            "#3 skip": "checks running",
+            "#4 skip": "not ready, and its head is newer than 24 hours",
+        })
+        self.assertEqual([write[1] for write in self.writes()], ["repos/octo/demo/pulls/1/update-branch"])
+
+    def test_without_the_option_a_failed_needs_update_status_is_a_failure_like_any_other(self):
+        for args in ((), ("--needs-update", "another-check")):
+            with self.subTest(args=args):
+                result = self.run_engine([pull(1, checks="FAILURE", needs_update="FAILURE", committed=ago(hours=2))], *args)
+                self.assertEqual(self.rows(result), {"#1 skip": "not ready, and its head is newer than 24 hours"})
+
+    def test_where_main_merges_only_up_to_date_heads_a_failed_needs_update_status_is_not_already_red(self):
+        result = self.run_engine([
+            pull(1, checks="FAILURE", needs_update="FAILURE", unfinished=2, committed=ago(hours=1)),
+            pull(2, checks="FAILURE", needs_update="FAILURE", failed_runs=1, unfinished=2, committed=ago(hours=1)),
+        ], "--needs-update", "merge-safety", classic=True)
+        self.assertEqual(self.rows(result), {
+            "#1 sync": "checks running on a head 3 behind main, which merges only an up-to-date head",
+            "#2 skip": "checks running, and it is already red",
+        })
+
+    def test_the_action_passes_needs_update_to_the_engine(self):
+        failed = [pull(1, checks="FAILURE", needs_update="FAILURE", committed=ago(hours=2))]
+        self.assertIn("#1 sync: ready", self.run_action(pulls=failed, NEEDS_UPDATE="merge-safety").stdout)
+        self.assertIn("#1 skip: not ready", self.run_action(pulls=failed, NEEDS_UPDATE="").stdout)
+
+    def run_action(self, pulls=None, **inputs):
         """The action's own step, read from the shipped action.yml and run under bash as a runner would."""
         match = re.search(r"\n      run: \|\n((?:        [^\n]*\n|\n)+)", ACTION.read_text())
         script = "".join(line[8:] for line in match.group(1).splitlines(True))
-        Path(self.fake, "state.json").write_text(json.dumps({"pulls": [pull(1)]}))
+        Path(self.fake, "state.json").write_text(json.dumps({"pulls": pulls or [pull(1)]}))
         env = clean_env(dict({"FAKE": self.fake, "GITHUB_ACTION_PATH": str(ACTION.parent),
                               "GITHUB_STEP_SUMMARY": str(Path(self.fake, "summary")),
                               "PATH": "%s%s%s" % (Path(self.fake, "bin"), os.pathsep, os.environ["PATH"]),
                               "REPOS": "octo/demo", "ACT": "false", "MAX_IN_FLIGHT": "2", "QUIET_MINUTES": "30",
-                              "STALE_HOURS": "24"}, **inputs))
+                              "STALE_HOURS": "24", "NEEDS_UPDATE": ""}, **inputs))
         return subprocess.run(["bash", "-c", script], cwd=self.fake, capture_output=True, text=True, env=env)
 
     def test_the_action_is_a_dry_run_unless_act_is_true(self):
