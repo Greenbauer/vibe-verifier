@@ -79,8 +79,9 @@ import json
 import os
 import re
 
-from _acceptance import (ANCHOR_FORMS, anchors, annotations, body_criteria, check_lines, declares_none,
-                         named_references, png_size, resolves, said, ticket_items, verdict)
+from _acceptance import (ANCHOR_FORMS, NO_CRITERIA, anchors, annotations, baseline_problems, body_criteria,
+                         check_lines, declares_none, named_references, no_criteria_message, png_size, resolves, said,
+                         ticket_items, verdict)
 from _contract import CannotRun, Finding, qualify, run_gate, tracked_files
 from _features import add_selection_arguments, describe, selection
 
@@ -265,6 +266,17 @@ def regression_findings(args, verdict, tracked):
     return findings
 
 
+def body_findings(text, body, reason, has_other, path):
+    """Findings for a PR body's own criteria no run can check: each one judged against main or
+    production, and a body with none (named as a near miss when a heading almost was the section;
+    plain "none found" only when nothing else, a ticket or its problem, is there to judge)."""
+    findings = [Finding(message, path) for message in baseline_problems(body)]
+    missed = no_criteria_message(text)
+    if not body and not reason and (missed != NO_CRITERIA or not has_other):
+        findings.append(Finding(missed, path))
+    return findings
+
+
 def check(args):
     criteria_text = read_input(args.criteria, "criteria")
     ticket, problem = ticket_items(read_input(args.ticket, "ticket") if args.ticket else "", args.ticket)
@@ -273,11 +285,12 @@ def check(args):
         print("%s: nothing to verify, declared: %s" % (GATE, reason))
         return []
     findings = [Finding(problem, args.ticket)] if problem else []
-    wanted = ([] if reason else body_criteria(criteria_text)) + ticket
+    body = [] if reason else body_criteria(criteria_text)
+    findings += body_findings(criteria_text, body, reason, bool(ticket or findings), args.criteria)
+    wanted = body + ticket
     verdict = read_input(args.verdict, "verdict")
     if not wanted:
-        return findings or [Finding("no acceptance criteria found (a `## Acceptance criteria` list, or `- None: <why>`)",
-                                    args.criteria)]
+        return findings
     tracked = set(tracked_files(args.repo))
     lines = check_lines(verdict, args.token)
     declared = declared_references(args.references)

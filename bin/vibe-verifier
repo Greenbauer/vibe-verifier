@@ -96,8 +96,11 @@ on each other are a chain one explorer walks whole: a criterion that names anoth
 and a `chain: AC2, AC3, ...` line names each chain. Which criteria each explorer walks is `qae-inputs --shard`'s to say: it also knows the
 feature re-walk, which this command does not. The widths are the `--widths` of the qae-artifacts
 line of `--manifest FILE`, judged from the base like a run (no manifest counts one width). More walks
-than the explorer with the most of them is sized for prints one `::warning::` with the numbers. Exit 2 when a file cannot be
-read.
+than the explorer with the most of them is sized for prints one `::warning::` with the numbers. Exit 1, printing nothing on
+stdout and one `::error::` line per problem on stderr, when the body holds criteria no run can check: a
+heading that names acceptance criteria but is not exactly `## Acceptance criteria` (with no criteria under
+the exact one), or a criterion judged against main or production, which QAE never opens. Run it on a PR
+body before pushing. Exit 2 when a file cannot be read.
 
 `qae-inputs [--manifest FILE] [--widths-file FILE] [--references DIR] [--evidence DIR] [--listing FILE]
 [--digests FILE] [--turns FILE [--criteria FILE] [--ticket FILE] [--features DIR] [--shard K --shards N]
@@ -174,8 +177,9 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATES = os.path.join(ROOT, "gates")
 sys.path.insert(0, GATES)
-from _acceptance import (REFERENCE_KEY, annotations, body_criteria as read_criteria, check_lines,  # noqa: E402
-                         carried, declares_none, not_required, png_size, said, ticket_items, verdict)
+from _acceptance import (REFERENCE_KEY, annotations, baseline_problems, body_criteria as read_criteria,  # noqa: E402
+                         carried, check_lines, declares_none, NO_CRITERIA, no_criteria_message, not_required, png_size, said,
+                         ticket_items, verdict)
 from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
 from _features import add_selection_arguments, describe, selection  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
@@ -966,7 +970,17 @@ def criteria_command(args):
             print("carried: %s %s" % (walk["head"], walk["url"]))
         return 0
     ticket, problem = ticket_items(ticket_text, args.ticket)
-    wanted = ([] if declares_none(text) else read_criteria(text)) + ticket
+    body = [] if declares_none(text) else read_criteria(text)
+    # What no run can check fails here, before a harness spends a browser run on it: a body whose
+    # heading missed, and a criterion judged against main or production.
+    unrunnable = baseline_problems(body)
+    if not body and not declares_none(text) and no_criteria_message(text) != NO_CRITERIA:
+        unrunnable.append(no_criteria_message(text))
+    if unrunnable:
+        for message in unrunnable:
+            print("::error::" + message, file=sys.stderr)
+        return 1
+    wanted = body + ticket
     print("criteria: %d" % len(wanted))
     if problem:
         print("ticket: %s" % problem)

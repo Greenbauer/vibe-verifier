@@ -171,7 +171,7 @@ A push after review makes the old receipt stale. The harness selects a full revi
 
 ### Browser acceptance verification
 
-The [QAE harness](harnesses/qae/README.md) turns pull-request acceptance criteria into browser evidence against a running application.
+The [QAE harness](harnesses/qae/README.md) turns pull-request acceptance criteria into browser evidence against a running application. Criteria it cannot check (a heading that is not exactly `## Acceptance criteria`, a comparison with main or production) fail before any browser starts; the [`write-acceptance-criteria`](skills/write-acceptance-criteria/SKILL.md) agent skill says how to write them, check them before pushing, and re-run after an edit.
 
 ```mermaid
 flowchart LR

@@ -28,7 +28,11 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
    the explore job starts at all, so on the Codex lane a pull request with nothing to walk never
    queues for, or holds, the one runner with the login. Its `shards` output is the explore job's
    matrix: one explorer, unless the consumer lets a large pull request be
-   [split across several](#splitting-a-large-pull-request-across-explorers).
+   [split across several](#splitting-a-large-pull-request-across-explorers). It fails the run
+   there, before any explorer starts, when the body holds criteria no run can check: a heading that
+   names acceptance criteria but is not exactly `## Acceptance criteria` (with nothing under the exact
+   one), or a criterion judged against main or production, which the explorer never opens. How to write
+   them: [`write-acceptance-criteria`](../../skills/write-acceptance-criteria/SKILL.md).
 2. **explore** runs only when the criteria job found a criterion. It checks out the PR with its
    base, picks the [features to re-walk](#re-walking-the-features-a-pull-request-touches) when that is
    on, builds and starts the PR's site on the runner (or resolves its preview), copies the design
