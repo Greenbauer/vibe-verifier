@@ -10,6 +10,21 @@ VULNERABLE = "requests==2.19.0\n"
 SAFE = "PyYAML==6.0.3\n"
 LOCK = json.dumps({"name": "x", "lockfileVersion": 3,
                    "packages": {"": {"name": "x"}, "node_modules/lodash": {"version": "4.17.15"}}})
+BUN_LOCK = """{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "x",
+      "dependencies": {
+        "lodash": "4.17.15",
+      },
+    },
+  },
+  "packages": {
+    "lodash": ["lodash@4.17.15", "", {}, "sha512-x"],
+  }
+}
+"""
 
 
 def findings(result):
@@ -61,6 +76,12 @@ class OsvScanner(unittest.TestCase):
         result = self.run_gate(repo)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual({f["path"] for f in findings(result)}, {"requirements/dev.txt", "web/package-lock.json"})
+        self.assertTrue(any(f["message"].startswith("lodash 4.17.15 (npm)") for f in findings(result)))
+
+    def test_a_bun_lockfile_is_read(self):
+        result = self.run_gate(self.branch({"README.md": "x\n"}, {"web/bun.lock": BUN_LOCK}))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual({f["path"] for f in findings(result)}, {"web/bun.lock"})
         self.assertTrue(any(f["message"].startswith("lodash 4.17.15 (npm)") for f in findings(result)))
 
     def test_a_vulnerability_the_repository_ignores_with_a_reason_is_not_a_finding(self):
