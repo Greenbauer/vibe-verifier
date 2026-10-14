@@ -266,6 +266,17 @@ def regression_findings(args, verdict, tracked):
     return findings
 
 
+def body_findings(text, body, reason, has_other, path):
+    """Findings for a PR body's own criteria no run can check: each one judged against main or
+    production, and a body with none (named as a near miss when a heading almost was the section;
+    plain "none found" only when nothing else, a ticket or its problem, is there to judge)."""
+    findings = [Finding(message, path) for message in baseline_problems(body)]
+    missed = no_criteria_message(text)
+    if not body and not reason and (missed != NO_CRITERIA or not has_other):
+        findings.append(Finding(missed, path))
+    return findings
+
+
 def check(args):
     criteria_text = read_input(args.criteria, "criteria")
     ticket, problem = ticket_items(read_input(args.ticket, "ticket") if args.ticket else "", args.ticket)
@@ -275,10 +286,7 @@ def check(args):
         return []
     findings = [Finding(problem, args.ticket)] if problem else []
     body = [] if reason else body_criteria(criteria_text)
-    findings += [Finding(text, args.criteria) for text in baseline_problems(body)]
-    missed = no_criteria_message(criteria_text)
-    if not body and not reason and (missed != NO_CRITERIA or not (ticket or findings)):
-        findings.append(Finding(missed, args.criteria))
+    findings += body_findings(criteria_text, body, reason, bool(ticket or findings), args.criteria)
     wanted = body + ticket
     verdict = read_input(args.verdict, "verdict")
     if not wanted:
