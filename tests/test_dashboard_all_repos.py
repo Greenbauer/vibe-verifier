@@ -441,25 +441,34 @@ console.log(JSON.stringify({
         self.assertEqual(parsed["partial"], "Some GitHub data is unavailable.")
 
 
-    def test_the_title_carries_a_yellow_dot_and_message_only_when_there_is_a_warning(self):
+    def test_the_warning_takes_the_subtitle_line_and_the_filters_share_the_title_row(self):
         source = r'''
 const app=require('fs').readFileSync('./dashboard/static/app.js','utf8');
 const el=(tag,attrs={},...c)=>({tag,attrs,children:c.flat().filter(v=>v!=null&&v!==false&&v!=='')});
 const heading=new Function('el',app.slice(app.indexOf('  function heading('),app.indexOf('  function empty('))+'\nreturn heading;')(el);
-const title=node=>node.children[0].children[0];
-console.log(JSON.stringify({quiet:title(heading('Pull requests','sub',null)).children,
- warned:title(heading('Pull requests','sub','Repository list is unavailable.')).children}));
+const controls={tag:'div',attrs:{class:'toolbar'},children:[]};
+console.log(JSON.stringify({quiet:heading('Pull requests',null,null,controls),
+ warned:heading('Pull requests',null,'Repository list is unavailable.',controls),
+ subtitled:heading('Bot usage','sub',null)}));
 '''
         root = Path(__file__).resolve().parent.parent
         result = subprocess.run(["node", "-e", source], cwd=root, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         parsed = json.loads(result.stdout)
-        self.assertEqual(parsed["quiet"], ["Pull requests"])
-        mark = parsed["warned"][1]
-        self.assertEqual(mark["attrs"], {"class": "title-warning", "role": "status"})
-        self.assertEqual(mark["children"][0]["attrs"], {"class": "warning-dot", "aria-hidden": "true"})
-        self.assertEqual(mark["children"][1], "Repository list is unavailable.")
-
+        quiet, warned, subtitled = parsed["quiet"], parsed["warned"], parsed["subtitled"]
+        # No warning and no subtitle: the title stands alone, the filters beside it.
+        self.assertEqual(quiet["children"][0]["children"], [{"tag": "h1", "attrs": {}, "children": ["Pull requests"]}])
+        self.assertEqual(quiet["children"][1]["attrs"], {"class": "toolbar"})
+        # A warning sits on the line under the title, with its yellow dot.
+        title, line = warned["children"][0]["children"]
+        self.assertEqual(title["children"], ["Pull requests"])
+        self.assertEqual(line["attrs"], {"class": "title-warning", "role": "status"})
+        self.assertEqual(line["children"][0]["attrs"], {"class": "warning-dot", "aria-hidden": "true"})
+        self.assertEqual(line["children"][1], "Repository list is unavailable.")
+        self.assertEqual(warned["children"][1]["attrs"], {"class": "toolbar"})
+        # Pages without controls keep their subtitle.
+        self.assertEqual(len(subtitled["children"]), 1)
+        self.assertEqual(subtitled["children"][0]["children"][1], {"tag": "p", "attrs": {"class": "muted"}, "children": ["sub"]})
 
 if __name__ == "__main__":
     unittest.main()
