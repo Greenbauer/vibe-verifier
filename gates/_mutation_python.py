@@ -169,6 +169,11 @@ def copy_project(repo, prefix, workspace):
     identity = ["-c", "user.name=vibe-verifier", "-c", "user.email=vibe-verifier@users.noreply.github.com",
                 "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"]
     git(workspace, "init", "-q")
+    # From git 2.55 (the CI runner's on 2026-10-14) a commit starts maintenance in the background, which
+    # packs every object into read-only files after the chmod below; mutmut's second copy of .git then
+    # fails with "Permission denied". The copy needs no maintenance, so it gets none, from any git.
+    git(workspace, "config", "maintenance.auto", "false")
+    git(workspace, "config", "gc.auto", "0")
     git(workspace, "add", "-A")
     git(workspace, *identity, "commit", "-q", "--allow-empty", "-m", "the project as the pull request leaves it")
     # git writes its objects read-only, and mutmut copies .git over its earlier copy on the second run.
