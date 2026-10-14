@@ -581,7 +581,8 @@ changed-code-mutation --project apps/web --break 70 --soak
   path is the repository's, such as `--python .venv/bin/python`): its package is appended to the end
   of that interpreter's `sys.path`, so the project's own packages win. No pytest there, or Python
   before 3.10, is exit 2. It runs on a copy of the project's tracked files, committed as a git repository of its own (a
-  test that reads git sees a checkout), under the gate's own `[tool.mutmut]` table (any the project has is replaced; it sets mutmut's
+  test that reads git sees a checkout; git's automatic maintenance is off there, because from git 2.55 a
+  commit repacks its objects read-only in the background and mutmut's second copy of `.git` then fails), under the gate's own `[tool.mutmut]` table (any the project has is replaced; it sets mutmut's
   fork-server isolation, because the default runs the suite in mutmut's own process and a child a
   test left behind then crashed it): mutmut generates a mutant per change it
   can make in every function of the changed files and runs the whole suite once to learn which tests

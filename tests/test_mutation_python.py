@@ -227,6 +227,22 @@ class Helpers(unittest.TestCase):
         self.assertIn('source_paths = ["app", "lib"]', text)
         self.assertIn('only_mutate = ["app/[[]id]/view.py", "lib/a.py"]', text)
 
+    def test_the_copy_is_a_repository_git_never_repacks_behind_the_gates_back(self):
+        # 2026-10-14: on git 2.55 the copy's commit packed its objects in the background, read-only, and
+        # mutmut's second copy over .git died with "Permission denied". The copy turns maintenance off.
+        repo = make_repo(self, {"shop/price.py": PRICE_BEFORE})
+        workspace = tempfile.mkdtemp(prefix="vv-copy-")
+        self.addCleanup(shutil.rmtree, workspace, True)
+        self.module.copy_project(repo, "", workspace)
+        config = lambda key: subprocess.run(["git", "-C", workspace, "config", "--get", key],
+                                            capture_output=True, text=True).stdout.strip()
+        self.assertEqual([config("maintenance.auto"), config("gc.auto")], ["false", "0"])
+        pack = os.path.join(workspace, ".git", "objects", "pack")
+        self.assertEqual([name for name in os.listdir(pack) if name.startswith("pack-")], [])
+        for root, _, names in os.walk(os.path.join(workspace, ".git")):
+            for name in names:
+                self.assertTrue(os.access(os.path.join(root, name), os.W_OK), os.path.join(root, name))
+
     def test_functions_names_what_mutmut_mutates_and_lists_what_it_skips(self):
         source = ("def a():\n    pass\n\n\nclass K:\n    def m(self):\n        pass\n\n    @property\n    def p(self):\n"
                   "        return 1\n\n    class N:\n        def deep(self):\n            pass\n\n    @staticmethod\n"
