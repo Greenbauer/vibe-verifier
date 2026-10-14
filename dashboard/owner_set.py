@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from .config import REPOSITORY, coverage_label
+from .config import REPOSITORY
 from .gh_api import ApiError
 from .github import CHECKS_NOT_LOADED, _endpoint
 from .behind import stamp_behind
@@ -457,8 +457,7 @@ class OwnerSet:
         return {"owner": self.config.owner, "sampled_at": iso_time(now), "repositories": repository_rows,
                 "repository_names": list(names), "heads_sampled_at": reading["sampled_at"],
                 "head_reading": reading,
-                "coverage": {"selected": len(names), "readable": len(repository_rows),
-                             "label": coverage_label(self.config), "inventory": inventories},
+                "coverage": {"selected": len(names), "inventory": inventories},
                 "bots": bots, "errors": errors, "partial": bool(errors) or bots["partial"],
                 "api": {**rate, "calls": self.api.calls, "lowest_remaining": self.api.lowest_remaining,
                         "max_calls": self.api.max_calls, "head_calls": reading["calls"],

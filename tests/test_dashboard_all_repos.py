@@ -219,7 +219,7 @@ class Discovery(unittest.TestCase):
         api, client = self.world(rows, pulls, kind="Organization")
         result = client.collect()
         self.assertEqual(result["repository_names"], ["octocat/busy", "octocat/quiet"])
-        self.assertEqual(result["coverage"]["label"], "All repositories of octocat")
+        self.assertEqual(result["coverage"]["selected"], 2)
         found = pulls_of(result)
         self.assertEqual(found["octocat/busy"][0]["number"], 4)
         self.assertEqual(found["octocat/quiet"], [])
@@ -273,7 +273,7 @@ class Discovery(unittest.TestCase):
     def test_a_configured_list_does_not_search_or_probe(self):
         api = BudgetAPI(50, {"octocat/example": [pull("octocat/example", 1)]}, [])
         result = collector(listed_config("octocat/example"), api).collect({"octocat/example": {"subscription": "unknown"}})
-        self.assertEqual(result["coverage"]["label"], "Selected repositories")
+        self.assertEqual(result["coverage"]["selected"], 1)
         self.assertFalse(any(endpoint.startswith("search/") or endpoint == "installation/repositories" for endpoint in api.log))
         self.assertTrue(result["repositories"][0]["pulls"][0]["evidence_available"])
 
@@ -359,8 +359,7 @@ class DiscoveryFailure(unittest.TestCase):
         return {"owner": "octocat", "sampled_at": NOW.isoformat(), "repository_names": list(names),
                 "repositories": [{"repository": name, "subscription": "unknown", "pulls": [],
                                   "errors": [], "sampled_at": NOW.isoformat()} for name in names],
-                "coverage": {"selected": len(names), "readable": len(names),
-                             "label": "All repositories of octocat", "inventory": {}},
+                "coverage": {"selected": len(names), "inventory": {}},
                 "bots": {"partial": False, "roles": {}, "errors": []},
                 "errors": [], "partial": False, "api": {"calls": 3, "max_calls": 200}}
 
@@ -380,7 +379,6 @@ class DiscoveryFailure(unittest.TestCase):
         failed = empty.snapshot()
         self.assertEqual(failed["github"]["repositories"], [])
         self.assertIsNone(failed["github"]["coverage"]["selected"])
-        self.assertIn("All repositories of octocat", failed["github"]["coverage"]["label"])
 
     def test_a_repository_missing_from_a_successful_discovery_is_dropped(self):
         collector = _Values([self.sample(("octocat/a", "octocat/b")), self.sample(("octocat/b",))])
@@ -410,8 +408,8 @@ class _Values:
         pass
 
 
-class Banner(unittest.TestCase):
-    def test_a_repository_with_no_open_pull_request_is_absent_and_all_mode_banner_says_so(self):
+class CoverageWarning(unittest.TestCase):
+    def test_a_repository_with_no_open_pull_request_is_absent_and_only_a_problem_warns(self):
         source = r'''
 const h=require('./dashboard/static/helpers.js');
 const pulls=[{repository:'octocat/busy',number:1,created_at:'2026-10-01T00:00:00Z',updated_at:'2026-10-02T00:00:00Z'}];
@@ -420,10 +418,11 @@ console.log(JSON.stringify({
  groups:h.groupPulls(pulls).map(g=>g.repository),
  filter:h.repositoriesWithPulls(pulls),
  quietGrouped:h.groupPulls(pulls).some(g=>g.repository===quiet),
- reading:h.coverageBanner({label:'All repositories of octocat',selected:null,readable:0},{refreshing:true,errors:[]}),
- unavailable:h.coverageBanner({label:'All repositories of octocat',selected:null,readable:0},{refreshing:false,errors:[{code:'unavailable'}]}),
- counted:h.coverageBanner({label:'All repositories of octocat',selected:2,readable:2},{errors:[],stale:false}),
- selected:h.coverageBanner({label:'Selected repositories',selected:1,readable:1},{errors:[],stale:false})
+ reading:h.coverageWarning({selected:null},{refreshing:true,errors:[]}),
+ unavailable:h.coverageWarning({selected:null},{refreshing:false,errors:[{code:'unavailable'}]}),
+ counted:h.coverageWarning({selected:2},{errors:[],stale:false}),
+ none:h.coverageWarning({selected:0},{errors:[]}),
+ partial:h.coverageWarning({selected:2},{errors:[{code:'rate_limited'}]})
 }));
 '''
         root = Path(__file__).resolve().parent.parent
@@ -434,10 +433,32 @@ console.log(JSON.stringify({
         self.assertEqual(parsed["filter"], ["octocat/busy"])
         self.assertNotIn("octocat/quiet", parsed["filter"])
         self.assertFalse(parsed["quietGrouped"])
-        self.assertEqual(parsed["reading"], "Reading repositories.")
+        # Fine or still reading says nothing; only a problem earns the dot beside the title.
+        self.assertIsNone(parsed["reading"])
         self.assertEqual(parsed["unavailable"], "Repository list is unavailable.")
-        self.assertEqual(parsed["counted"], "All repositories of octocat: 2. 2 read successfully in this sample.")
-        self.assertEqual(parsed["selected"], "Selected repositories: 1. 1 read successfully in this sample.")
+        self.assertIsNone(parsed["counted"])
+        self.assertIsNone(parsed["none"])
+        self.assertEqual(parsed["partial"], "Some GitHub data is unavailable.")
+
+
+    def test_the_title_carries_a_yellow_dot_and_message_only_when_there_is_a_warning(self):
+        source = r'''
+const app=require('fs').readFileSync('./dashboard/static/app.js','utf8');
+const el=(tag,attrs={},...c)=>({tag,attrs,children:c.flat().filter(v=>v!=null&&v!==false&&v!=='')});
+const heading=new Function('el',app.slice(app.indexOf('  function heading('),app.indexOf('  function empty('))+'\nreturn heading;')(el);
+const title=node=>node.children[0].children[0];
+console.log(JSON.stringify({quiet:title(heading('Pull requests','sub',null)).children,
+ warned:title(heading('Pull requests','sub','Repository list is unavailable.')).children}));
+'''
+        root = Path(__file__).resolve().parent.parent
+        result = subprocess.run(["node", "-e", source], cwd=root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        parsed = json.loads(result.stdout)
+        self.assertEqual(parsed["quiet"], ["Pull requests"])
+        mark = parsed["warned"][1]
+        self.assertEqual(mark["attrs"], {"class": "title-warning", "role": "status"})
+        self.assertEqual(mark["children"][0]["attrs"], {"class": "warning-dot", "aria-hidden": "true"})
+        self.assertEqual(mark["children"][1], "Repository list is unavailable.")
 
 
 if __name__ == "__main__":

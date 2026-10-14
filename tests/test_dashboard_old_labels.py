@@ -48,20 +48,19 @@ console.log(JSON.stringify([h.botState({state:'working',sampled_at:at}),h.botSta
         self.assertEqual(result, [{"status": "working", "label": "Working"}, {"status": "idle", "label": "Idle"},
                                   {"status": "paused", "label": "Paused"}, {"status": "unknown", "label": "Unknown"}])
 
-    def test_the_header_and_the_banner_carry_no_age_and_a_read_failure_still_shows(self):
+    def test_the_header_and_the_warning_carry_no_age_and_a_read_failure_still_shows(self):
         result = self.node(r"""
 const h=require('./dashboard/static/helpers.js'), at='2026-10-08T15:00:00Z';
-const time=h.formatTime(at), coverage={label:'Selected repositories',selected:2,readable:2};
+const time=h.formatTime(at), coverage={selected:2};
 console.log(JSON.stringify({time,
  stamps:[h.sourceStamp({sampled_at:at}),h.sourceStamp({sampled_at:at,stale:true,refreshing:true,restored:true}),
   h.sourceStamp({refreshing:true}),h.sourceStamp({})],
- banners:[h.coverageBanner(coverage,{}),h.coverageBanner(coverage,{stale:true,restored:true}),h.coverageBanner(coverage,{errors:[{code:'unavailable'}]})]}));
+ warnings:[h.coverageWarning(coverage,{}),h.coverageWarning(coverage,{stale:true,restored:true}),h.coverageWarning(coverage,{errors:[{code:'unavailable'}]})]}));
 """)
         time = result["time"]
         self.assertEqual(result["stamps"], ["GitHub sampled %s" % time, "GitHub sampled %s" % time,
                                             "Fetching GitHub data…", "GitHub unavailable"])
-        counted = "Selected repositories: 2. 2 read successfully in this sample."
-        self.assertEqual(result["banners"], [counted, counted, counted + " Some GitHub data is unavailable."])
+        self.assertEqual(result["warnings"], [None, None, "Some GitHub data is unavailable."])
 
     def test_the_bot_strip_draws_an_old_state_like_a_new_one_and_the_header_uses_the_stamp(self):
         result = self.node(r"""
@@ -70,7 +69,7 @@ const make=tag=>({tag,attrs:{},children:[],style:{setProperty(){}},append(...c){
 const el=(tag,attrs={},...c)=>Object.assign(make(tag),{attrs,children:c.flat().filter(v=>v!=null)});
 const at=new Date(Date.now()-250000).toISOString(), strip=el('div');
 const rows=[{id:'swe',name:'SWE',role:'swe',state:'idle',stale:true,sampled_at:at,recent_2h:[]},{id:'qae',name:'QAE',role:'qae',state:'working',recent_2h:[]}];
-new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel','botState',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function coverage/)[1])(
+new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel','botState',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function prFilters/)[1])(
  el,h.BOT_META,{agents:{rows}},{},(status,label)=>el('span',{class:'badge status-'+status},label),()=>{},v=>v,{querySelector:()=>strip},()=>'Last 2h',h.botState);
 const pills=strip.children.filter(n=>n.tag==='button');
 console.log(JSON.stringify({badges:pills.map(p=>p.children[1]).map(b=>[b.attrs.class,b.children[0]]),labels:pills.map(p=>p.attrs['aria-label']),

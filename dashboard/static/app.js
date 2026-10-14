@@ -1,7 +1,7 @@
 (function () {
   "use strict";
   const { BOT_META, element: el, link, safeUrl, duration, ageLabel, since, ageClass, secondsClass, ciTiming, formatTime, bytes, badge, botState, sourceStamp,
-    diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageBanner, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, behindMark,
+    diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageWarning, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, behindMark,
     quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, paceHeader, quotaDeltaLabel, quotaTone, quotaCountdown, quotaGroups } = VV;
   const content = document.querySelector("#content");
   const announcement = document.querySelector("#announcement");
@@ -44,8 +44,9 @@
   }
 
   function announce(message) { announcement.textContent = message; }
-  function heading(title, subtitle) {
-    return el("div", { class: "section-heading" }, el("div", {}, el("h1", {}, title), el("p", { class: "muted" }, subtitle)));
+  function heading(title, subtitle, warning) {
+    const mark = warning && el("span", { class: "title-warning", role: "status" }, el("i", { class: "warning-dot", "aria-hidden": "true" }), warning);
+    return el("div", { class: "section-heading" }, el("div", {}, el("h1", {}, title, mark), el("p", { class: "muted" }, subtitle)));
   }
   function empty(title, detail) {
     return el("section", { class: "panel empty" }, el("h2", {}, title), el("p", { class: "muted" }, detail));
@@ -95,13 +96,6 @@
         el("span", { class: recent[0]?.category === "failed" ? "failure-note" : "quiet-note" }, recentRunLabel(value, recent)));
       strip.append(button);
     }
-  }
-
-  function coverage() {
-    const value = snapshot.github.coverage;
-    const unavailable = value.selected == null && !snapshot.github.refreshing;
-    const warning = unavailable || Boolean((snapshot.github.errors || []).length);
-    return sourceBanner(coverageBanner(value, snapshot.github), warning ? "warning" : "");
   }
 
   function prFilters(pulls) {
@@ -258,8 +252,8 @@
 
   function renderPulls() {
     const pulls = flattenPulls(snapshot);
-    content.replaceChildren(heading("Pull requests", "Open pull requests and current-head evidence from selected repositories."),
-      coverage(), prFilters(pulls), el("div", { class: "list-heading" }, el("span", { id: "pr-count" }),
+    content.replaceChildren(heading("Pull requests", "Open pull requests and current-head evidence from selected repositories.",
+      coverageWarning(snapshot.github.coverage, snapshot.github)), prFilters(pulls), el("div", { class: "list-heading" }, el("span", { id: "pr-count" }),
         el("span", {}, "Current work"), el("span", {}, "Checks"), el("span", {}, "Age")),
       el("div", { id: "pr-rows", class: "pr-groups" }));
     renderPrRows();

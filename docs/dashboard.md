@@ -181,10 +181,10 @@ explorers runs the extra ones as `<job> (2)`, `<job> (3)`, ..., so list those to
 `telemetry_file` is optional and must be absolute. Deleting it makes telemetry unavailable without
 affecting GitHub data. `proxy_origin` is optional; omit it for local-only mode. It must be one exact
 HTTPS origin with a hostname and optional valid port, with no trailing slash, credentials, path,
-query, fragment, wildcard, or control character. The file is immutable after startup. A list is
-labeled `Selected repositories`. `all` is labeled `All repositories of <owner>`. A repository with
-no open pull request has no group and is not in the filter. While `all` is still being read the
-banner says `Reading repositories.`; if that read fails and there is no earlier set, it says
+query, fragment, wildcard, or control character. The file is immutable after startup. A repository
+with no open pull request has no group and is not in the filter. The Pull requests page says nothing
+about the repository set while it reads well: a problem shows as a yellow dot and a short message
+beside the title. If the owner-wide read for `all` fails and there is no earlier set, it says
 `Repository list is unavailable.` and does not claim the owner has zero repositories.
 
 With `all`, an installation token reads `GET /installation/repositories`. A person's `gh` login is
@@ -454,7 +454,7 @@ reported REST limit/remaining/reset values, and the lowest remaining count seen 
 (`lowest_remaining`; GitHub meters some endpoint families against a separate counter that the reported
 values omit). A spent counter pauses only its endpoint family until its reset. GraphQL is metered in points, so GitHub refuses a query that costs more than what is left while the counter still reads above zero; that pauses only the GraphQL reads, and the checks keep loading. Rate limits and source errors return partial or briefly
 stale data without advancing its successful sample timestamp. Authentication or access revocation
-clears derived repository data immediately, in memory and in the state directory. Any other failure (a rate limit, a timeout, a spent budget, a failure this version does not name) keeps the last pull requests and bot rows, and the banner over the list says some GitHub data is unavailable. A restart with a state directory serves the reading from before it; one over three minutes old is served only after the fetch has waited up to 8 seconds for GitHub. When the page's own request fails it keeps the last snapshot and says the refresh failed. A page opened while the service is down tries again every five seconds while it is visible, one request at a time.
+clears derived repository data immediately, in memory and in the state directory. Any other failure (a rate limit, a timeout, a spent budget, a failure this version does not name) keeps the last pull requests and bot rows, and the dot beside the Pull requests title says some GitHub data is unavailable. A restart with a state directory serves the reading from before it; one over three minutes old is served only after the fetch has waited up to 8 seconds for GitHub. When the page's own request fails it keeps the last snapshot and says the refresh failed. A page opened while the service is down tries again every five seconds while it is visible, one request at a time.
 
 Every fetch is answered from a current reading: the server reads GitHub in the background whether
 or not a page is open (see [collection](dashboard-data.md#cache-and-timestamp-contracts)), and a fetch whose
@@ -587,7 +587,7 @@ replace, the size and age limits, and every file that is refused and deleted.
 `test_dashboard_restart.py` covers what a restart serves and marks old, which failures keep the
 last reading and which delete it, a token refused to the head beat, and kept state this version
 cannot use; `test_dashboard_restart_usage.py` covers the same for token history.
-`test_dashboard_old_labels.py` covers the age on the header line and the bot strip, the banner
+`test_dashboard_old_labels.py` covers the age on the header line and the bot strip, the title warning
 after a restart, and the page's single retry while it has nothing to show.
 `test_dashboard_live_service.py` covers independently aging quota/history and revocation during
 an in-flight refresh. The collector and usage-artifact test files cover the native source contracts.

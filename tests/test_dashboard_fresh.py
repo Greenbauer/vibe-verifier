@@ -287,7 +287,7 @@ class PaintAndBeat(unittest.TestCase):
                                              "checks": [{"name": "test", "category": "success"}],
                                              "checks_sampled_at": at.isoformat(), "stale": False}],
                                   "errors": [], "sampled_at": at.isoformat()}],
-                "coverage": {"selected": 1, "readable": 1, "label": "Selected repositories", "inventory": {}},
+                "coverage": {"selected": 1, "inventory": {}},
                 "bots": {"partial": False, "roles": {}, "errors": []},
                 "errors": [], "partial": False, "api": {"calls": 3, "max_calls": 200}}
 

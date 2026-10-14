@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from .bot_runs import recent_bot_runs
-from .config import BOT_KEYS, Config, coverage_label
+from .config import BOT_KEYS, Config
 from .gh_api import PRIVATE_FAILURES, ApiError
 from .github import GitHubCollector
 from .head_state import (
@@ -122,8 +122,7 @@ class DashboardService:
                             for repository in self.config.repositories]
             selected = len(self.config.repositories)
         return {"owner": self.config.owner, "sampled_at": None, "repositories": repositories,
-                "coverage": {"selected": selected, "readable": 0,
-                             "label": coverage_label(self.config), "inventory": {}},
+                "coverage": {"selected": selected, "inventory": {}},
                 "bots": {"partial": True, "roles": {}, "errors": [{"code": code}]},
                 "errors": [{"code": code}], "partial": True,
                 "api": {"calls": 0, "max_calls": self.collector.api.max_calls}}
@@ -158,7 +157,6 @@ class DashboardService:
                 current[repository] = self._unavailable_repository(repository, code, fresh)
         fresh["repositories"] = [current[name] for name in names]
         fresh.pop("repository_names", None)
-        fresh["coverage"]["readable"] = sum(not row.get("unavailable") for row in fresh["repositories"])
         return fresh
 
     def _repository_names(self, fresh: dict) -> list[str]:
@@ -348,8 +346,6 @@ class DashboardService:
             if row.get("sampled_at") and not self._within_grace(row.get("sampled_at"), now):
                 row["stale"] = True
                 github["partial"] = True
-        github.get("coverage", {})["readable"] = sum(
-            not row.get("unavailable") for row in github.get("repositories", []))
         for role in github.get("bots", {}).get("roles", {}).values():
             self._expire_role(github, role, now)
         github["stale"] = any(row.get("stale") for row in github.get("repositories", [])) or any(

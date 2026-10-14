@@ -147,13 +147,6 @@ class Config:
     work_sources: tuple[WorkSource, ...] = ()
 
 
-def coverage_label(config: Config) -> str:
-    """What the pull-request banner counts. A list is a selection; "all" is the whole owner."""
-    if config.all_repositories:
-        return "All repositories of %s" % config.owner
-    return "Selected repositories"
-
-
 def _owned_regular_file(path: Path, uid: int | None, *, may_be_missing: bool = False) -> None:
     try:
         info = path.stat(follow_symlinks=False)
