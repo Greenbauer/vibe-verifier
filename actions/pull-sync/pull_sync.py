@@ -228,6 +228,23 @@ def tier(pull, now, stale):
     return "not ready, and its head is newer than %d hours" % (stale.total_seconds() // 3600)
 
 
+def while_running(pull, base, now, quiet, strict, unlabel):
+    """The row of a pull request that is behind with checks running: left alone, unless the base
+    merges only up-to-date heads, where those checks can never count and are replaced."""
+    number = pull["number"]
+    if not strict:
+        return Line(number, "skip", "checks running", label=unlabel)
+    if pull["isDraft"] or checks(pull) in ("FAILURE", "ERROR"):
+        return Line(number, "skip", "checks running, and it is %s" % (
+            "a draft" if pull["isDraft"] else "already red"), label=unlabel)
+    if now - when(head_commit(pull)["committedDate"]) < quiet:
+        return Line(number, "skip", "checks running, and its head was pushed in the last %d minutes"
+                    % (quiet.total_seconds() // 60), label=unlabel)
+    return Line(number, "sync", "checks running on a head %d behind %s, which merges only an up-to-date "
+                "head" % (pull["headRef"]["compare"]["aheadBy"], base), pull["headRefOid"], unlabel,
+                replaces=True)
+
+
 def judge(pull, base, now, quiet, stale, strict=False):
     """This pull request's row before slots are given out: a candidate has the action `sync`. `strict`
     is whether the base merges only an up-to-date head."""
@@ -244,16 +261,7 @@ def judge(pull, base, now, quiet, stale, strict=False):
     if pull["mergeable"] != "MERGEABLE":
         return Line(number, "skip", "GitHub has not said whether it merges cleanly")
     if running(pull):
-        if not strict:
-            return Line(number, "skip", "checks running", label=unlabel)
-        if pull["isDraft"] or checks(pull) in ("FAILURE", "ERROR"):
-            return Line(number, "skip", "checks running, and it is %s" % (
-                "a draft" if pull["isDraft"] else "already red"), label=unlabel)
-        if now - when(head_commit(pull)["committedDate"]) < quiet:
-            return Line(number, "skip", "checks running, and its head was pushed in the last %d minutes"
-                        % (quiet.total_seconds() // 60), label=unlabel)
-        return Line(number, "sync", "checks running on a head %d behind %s, which merges only an up-to-date "
-                    "head" % (behind, base), head, unlabel, replaces=True)
+        return while_running(pull, base, now, quiet, strict, unlabel)
     if now - when(pull["updatedAt"]) < quiet:
         return Line(number, "skip", "changed in the last %d minutes" % (quiet.total_seconds() // 60), label=unlabel)
     kind = tier(pull, now, stale)
