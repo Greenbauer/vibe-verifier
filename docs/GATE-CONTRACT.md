@@ -440,7 +440,8 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   it starts. Bytecode is not written, so neither run reads the other's.
 - **The verdict is read from each runner's structured report**, never an exit code: Vitest's JSON
   reporter, Node's TAP reporter, pytest's reports and the exceptions it hands its plugins, unittest's
-  results. TAP is the built-in Node reporter that keeps what this needs: each test's outcome, a failure's
+  results (where a failed subtest fails its test: unittest reports it under the subtest's own id and
+  then nothing for the test). TAP is the built-in Node reporter that keeps what this needs: each test's outcome, a failure's
   `failureType` and its error's name and message (unwrapped from `ERR_TEST_FAILURE`), and the stderr of
   the file's own process; JUnit drops that stderr and types every failure `testCodeFailure`. A file
   whose process failed before any test of its own reported (a module, export or syntax error while it
@@ -663,7 +664,10 @@ changed-code-mutation --project apps/web --break 70 --soak
   `changed-code-mutation --source dashboard/**/*.py --python .venv-tests/bin/python`, limited to
   `dashboard/` because its gate modules are tested by running them as scripts. Its `pytest.ini` collects
   only `tests/test_dashboard_*.py`: under mutmut's coverage tracing the whole suite ran past 900 seconds.
-  The runner judges that file from the base like any manifest in the repository. Not `entries:`: in
+  The same file pilots `regression-test-fails-on-base` and `coverage-not-lost` with `--soak`, under the
+  `python3` and unittest the job's test step uses, after a step that writes the pull request's title and
+  body; `coverage-not-lost` runs only the dashboard tests, for the same reason (on the whole suite it took
+  982 seconds a pull request). The runner judges that file from the base like any manifest in the repository. Not `entries:`: in
   a repository's own workflow a pull request can edit it.
 - **Exit 2 also when** the suite fails at `HEAD` (Stryker cannot measure a red suite), Stryker exits
   non-zero, or Stryker matched fewer files than it was given, such as a path with brace syntax

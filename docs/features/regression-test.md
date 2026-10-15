@@ -42,6 +42,7 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
 - `tests/test_regression_test.py::test_a_pull_request_that_is_not_a_fix_passes_without_running_a_test`
 - `tests/test_regression_test.py::test_a_test_that_fails_at_head_is_a_red_suite_and_cannot_run`
 - `tests/test_regression_test.py::test_pytest_a_test_that_passes_there_or_fails_only_on_a_missing_module_fails`
+- `tests/test_regression_test.py::test_unittest_a_test_whose_failing_check_is_in_a_subtest_fails_on_the_code_before_the_fix`
 - `tests/test_regression_node.py::test_a_node_test_that_fails_on_the_code_before_the_fix_passes`
 - `tests/test_regression_node.py::test_a_node_test_that_passes_on_the_code_before_the_fix_does_not_reproduce_the_bug`
 - `tests/test_regression_node.py::test_a_node_test_that_fails_there_only_because_what_it_needs_is_missing_does_not_show_the_bug`

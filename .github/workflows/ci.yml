@@ -1,8 +1,10 @@
 name: CI
 
-# Tests every gate and the runner, then runs this repository's own manifest through
-# the composite action, which is the only place that action executes before a
-# consumer exists, then mutation-tests changed dashboard code (.vibe-verifier-tests). The lanes jobs run the runner-lane kit's own suites (lanes/README.md).
+# Tests every gate and the runner (on a pull request, also reporting any failed test that affected-test
+# selection would have left out), then runs this repository's own manifest through the composite action,
+# which is the only place that action executes before a consumer exists, then the gates that run this
+# repository's own tests (.vibe-verifier-tests): mutation-testing changed dashboard code, and the report-only
+# pilots of regression-test-fails-on-base and coverage-not-lost. The lanes jobs run the runner-lane kit's own suites (lanes/README.md).
 
 on:
   pull_request:
@@ -20,14 +22,60 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Above everything that can run here: the suite (about 9 minutes) and the limits of the gates that run it
+    # again (changed-code-mutation 900 seconds, regression-test-fails-on-base 600, coverage-not-lost 300), so a
+    # gate past its own limit says so (exit 2) before the job is killed.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: read # gh pr view, for the title and body regression-test-fails-on-base reads
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Gate and runner tests
-        run: python3 -m unittest discover -s tests -v
+        id: suite
+        # The whole suite, on every event. Its log is kept for the selection report below; pipefail, so the
+        # tee never hides a failure.
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s tests -v 2>&1 | tee "$RUNNER_TEMP/unittest.log"
+      # Affected-test selection in report mode (actions/affected-tests/README.md), on pull requests only: a push
+      # to main runs the full suite only. The selection is printed (selected N of M) and nothing runs from it, so
+      # no test is skipped; the report names each test the full run failed that the selection left out, and a
+      # miss never fails the job (the full run already did). These steps run after the suite, so a selection
+      # that cannot run (exit 2, which fails its step) never stops a test from running.
+      - name: Select the affected tests
+        if: ${{ github.event_name == 'pull_request' && !cancelled() }}
+        uses: ./actions/affected-tests # zizmor: ignore[self-repository]
+        with:
+          tests: tests/test*.py
+      - name: List the tests the full run failed
+        # unittest writes no report a tool reads, so the ids come from its verbose log: the line after each
+        # "=====" separator names one failure, as `FAIL: test_x (test_mod.Class.test_x)`, and a module that does
+        # not import is `unittest.loader._FailedTest.test_mod`; the report finds each id's file. A failed run
+        # with no failure read from its log is an error here, never a report that nothing was missed.
+        if: ${{ github.event_name == 'pull_request' && !cancelled() }}
+        env:
+          LOG: ${{ runner.temp }}/unittest.log
+          LIST: ${{ runner.temp }}/failed-tests.txt
+          SUITE: ${{ steps.suite.outcome }}
+        run: |
+          sed -n -E '/^=+$/{n;s/^(FAIL|ERROR|UNEXPECTED SUCCESS): [^ ]+ \(([^)]+)\).*/\2/p;}' "$LOG" \
+            | sed -E 's/^unittest\.loader\._FailedTest\.//' | sort -u > "$LIST"
+          echo "Full run: $SUITE. Failed tests read from its log: $(wc -l < "$LIST" | tr -d ' ')"
+          cat "$LIST"
+          if [ "$SUITE" = failure ] && [ ! -s "$LIST" ]; then
+            echo "::error title=affected-tests::the full run failed and no failed test could be read from its log"
+            exit 1
+          fi
+      - name: Selection misses
+        if: ${{ github.event_name == 'pull_request' && !cancelled() }}
+        uses: ./actions/affected-tests # zizmor: ignore[self-repository]
+        with:
+          tests: tests/test*.py
+          report: ${{ runner.temp }}/failed-tests.txt
       - name: Dogfood the composite action
         # zizmor wants GitHub's July-2026 self-repository form (`uses: $/actions/gates`), which actionlint
         # 1.7.12, the latest release, rejects as an invalid ref. Until actionlint learns it, the
@@ -37,10 +85,28 @@ jobs:
         run: |
           python3 -m venv .venv-tests
           .venv-tests/bin/pip install --quiet --disable-pip-version-check --require-hashes --only-binary :all: -r tests/requirements-pytest.txt
-      - name: Mutation-test changed dashboard code
-        # Its own manifest, because only this job installs the project's test runner. The gate runs the
-        # whole suite under pytest once, then each mutant on the changed lines, only when a pull request
-        # changes a dashboard .py file; the 20-minute job timeout sits above the gate's 900 seconds.
+      - name: Write the pull request's title and body
+        # For regression-test-fails-on-base and coverage-not-lost (.vibe-verifier-tests), as
+        # docs/features/regression-test.md writes them. A push has no pull request: its merge base is the head,
+        # so no gate there compares anything, and the pushed commit's own subject and body stand in.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p pr-inputs
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr view "$PR_NUMBER" --repo "$REPO" --json title --jq .title > pr-inputs/title.txt
+            gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > pr-inputs/body.md
+          else
+            git log -1 --format=%s > pr-inputs/title.txt
+            git log -1 --format=%b > pr-inputs/body.md
+          fi
+      - name: Gates that run this repository's tests
+        # Their own manifest, because only this job installs the project's test runner. changed-code-mutation
+        # runs the dashboard suite under pytest once, then each mutant on the changed lines, only when a pull
+        # request changes a dashboard .py file. regression-test-fails-on-base and coverage-not-lost are
+        # report-only pilots (--soak) under the python3 and unittest of the suite step above.
         uses: ./actions/gates # zizmor: ignore[self-repository]
         with:
           manifest: .vibe-verifier-tests
