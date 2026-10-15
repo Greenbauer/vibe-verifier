@@ -386,11 +386,16 @@ jobs:
           # non-ASCII byte ("qae-artifacts/a b.pdf"), and that path fails the scope it is in (a consumer's
           # explorer named a PDF after a record whose name ends in its tag, 2026-10-15). A rename's source
           # follows its entry as one more NUL-terminated path, read and listed with it.
+          in_scope() {
+            case "$1" in qae-artifacts/*|qae-inputs/*|.claude-pr/*) return 0 ;; esac
+            [[ "$1" =~ $restored ]] && git diff --quiet "$BASE" -- "$1" 2>/dev/null
+          }
           while IFS= read -r -d '' line; do
-            path=${line:3}
+            path=${line:3} source=""
             case "${line:0:1}" in R|C) IFS= read -r -d '' source; line+=" <- $source" ;; esac
-            case "$path" in qae-artifacts/*|qae-inputs/*|.claude-pr/*) continue ;; esac
-            if [[ "$path" =~ $restored ]] && git diff --quiet "$BASE" -- "$path" 2>/dev/null; then continue; fi
+            # A rename empties its source, so both ends are judged: moving a tracked file into
+            # qae-artifacts/ is a write to where it came from. A copy leaves its source as it was.
+            if in_scope "$path" && { [ "${line:0:1}" != R ] || in_scope "$source"; }; then continue; fi
             out+="$line"$'\n'
           done < <(git status --porcelain -z --untracked-files=all)
           if [ -n "$out" ]; then
