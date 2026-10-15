@@ -190,10 +190,19 @@ PROOF_TOKEN = "ticket-proof"
 HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
 
 
+FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
+
+
 def ticket_proofs(body):
     """Map casefolded ticket criterion ids to the `ticket-proof:` lines a pull request body carries for them.
-    An HTML comment renders to nothing, so a line inside one (a template's example) proves nothing."""
-    return check_lines(HTML_COMMENT.sub("", body), PROOF_TOKEN)
+    A line inside an HTML comment or a code fence (a template's example) proves nothing: neither is a claim."""
+    kept, inside = [], False
+    for line in HTML_COMMENT.sub("", body).splitlines():
+        if FENCE.match(line):
+            inside = not inside
+        elif not inside:
+            kept.append(line)
+    return check_lines("\n".join(kept), PROOF_TOKEN)
 
 
 def split_ticket(ticket, body):

@@ -255,8 +255,9 @@ now reads the ticket by default, and the harness holds the pull request to its c
   the line's anchor resolves in the tree at the head (`<path>::<title>` or `<path>:<line>`, never a path
   under the run's evidence, which the explorer writes), `qae-artifacts` asks no step log of it, and the
   QA review comment lists it as "not walked, the pull request proves it with a test", with the line, so
-  a reviewer sees which ticket criteria no browser checked. A proof line naming no ticket criterion is
-  a finding, a line inside an HTML comment proves nothing, and a ticket proven whole in a body that
+  a reviewer sees which ticket criteria no browser checked. One line per criterion: a second line for
+  it, or a line naming no ticket criterion, is a finding. A line inside an HTML comment or a code fence
+  proves nothing, and a ticket proven whole in a body that
   declares `- None:` needs no browser run. Like every anchor, it shows the cited test exists, never that
   it asserts the criterion; use it only for what a browser cannot check.
 - A plan kept in a plan store (a plan a requester submits outside the repository, amended later) is

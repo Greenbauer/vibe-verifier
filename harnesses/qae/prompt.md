@@ -10,8 +10,9 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
    numbered TC1, TC2, ...: they are criteria too, whatever the pull request's own list says.
    Below, ACn stands for TCn as well (step log qae/TCn.md, screenshots qae/TCn-step-k.png,
    verdict line acceptance-check: TCn). A ticket criterion TCn for which qae-inputs/pr-body.md
-   has a line starting "ticket-proof: TCn" is proven by a test the pull request names: do not
-   walk it, and write no line for it. If the pull request's only item reads "None: <reason>"
+   has a line starting "ticket-proof: TCn " with that exact number (TC12 is not TC1), outside
+   any HTML comment or code block, is proven by a test the pull request names: do not walk it,
+   and write no line for it. If the pull request's only item reads "None: <reason>"
    and the ticket lists no criteria to walk, there is nothing for a browser to check: write nothing,
    post nothing, and stop.
    SHARD_SHARE

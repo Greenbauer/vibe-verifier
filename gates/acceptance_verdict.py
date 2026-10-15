@@ -74,8 +74,9 @@ The ticket's criteria (opt-in, harnesses/qae/README.md):
     ticket-proof: TCn -- <why> (<anchor>)
                           a line of the PR body (--criteria) for a ticket criterion no browser can
                           check: TCn is then not walked and needs no check line; instead the line needs
-                          exactly one anchor that resolves in the tree at the head (never under
-                          --artifacts). A proof line naming no ticket criterion is a finding
+                          an anchor that resolves in the tree at the head (never under --artifacts). One
+                          line per criterion: a second, or one naming no ticket criterion, is a finding.
+                          A line inside an HTML comment or a code fence proves nothing
 
 A missing input file is exit 2: nothing was graded. A criteria file with no criteria in it is a
 finding, because a repository that subscribes to this gate has decided its PRs state them.
@@ -320,11 +321,11 @@ def check(args):
     criteria_text = read_input(args.criteria, "criteria")
     ticket, problem = ticket_items(read_input(args.ticket, "ticket") if args.ticket else "", args.ticket)
     reason = declares_none(criteria_text)
+    proofs = proof_findings(ticket, criteria_text, args.repo)
     if reason and not (ticket or problem):
         print("%s: nothing to verify, declared: %s" % (GATE, reason))
-        return []
-    findings = [Finding(problem, args.ticket)] if problem else []
-    findings += proof_findings(ticket, criteria_text, args.repo)
+        return proofs
+    findings = ([Finding(problem, args.ticket)] if problem else []) + proofs
     body = [] if reason else body_criteria(criteria_text)
     findings += body_findings(criteria_text, body, reason, bool(ticket or problem), args.criteria)
     wanted = body + split_ticket(ticket, criteria_text)[0]

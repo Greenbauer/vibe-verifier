@@ -209,6 +209,45 @@ class Gates(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("`ticket-proof: tc9` names no criterion of the ticket", result.stdout)
 
+    def test_a_proof_counts_once_and_only_where_a_reader_sees_it(self):
+        commit(self.repo, {"lib/money.test.ts": "it('formats euros as the shop shows them', () => {})\n"}, "test")
+        proof = "ticket-proof: TC1 -- (lib/money.test.ts::formats euros as the shop shows them)\n"
+        walked = "\n".join(line for line in VERDICT.splitlines() if not line.startswith("acceptance-check: TC1")) + "\n"
+        result = self.verdict_gate(BODY + "\n" + proof + proof, TICKET, walked)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("TC1 has 2 `ticket-proof:` lines; exactly one is allowed", result.stdout)
+        # Inside an HTML comment or a code fence (a template's example) the line is no claim: TC1 is walked again.
+        for hidden in ("<!--\n" + proof + "-->\n", "```\n" + proof + "```\n"):
+            result = self.verdict_gate(BODY + "\n" + hidden, TICKET, walked)
+            self.assertEqual(result.returncode, 1, hidden)
+            self.assertIn("TC1 has no `acceptance-check: TC1` line", result.stdout)
+        # A proof in a body that links no ticket names no criterion, even when the body declares None.
+        result = self.verdict_gate(NONE + "\n" + proof, "", "")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("`ticket-proof: tc1` names no criterion of the ticket", result.stdout)
+
+    def test_the_prompt_tells_the_explorer_to_leave_a_proven_criterion_unwalked(self):
+        prompt = " ".join((ROOT / "harnesses" / "qae" / "prompt.md").read_text().split())
+        self.assertIn('A ticket criterion TCn for which qae-inputs/pr-body.md has a line starting "ticket-proof: TCn " with '
+                      'that exact number (TC12 is not TC1), outside any HTML comment or code block, is proven by a test the '
+                      'pull request names: do not walk it, and write no line for it.', prompt)
+
+    def test_a_proven_criterion_is_left_out_of_the_explorers_turns(self):
+        import test_qae_shards as shards
+        def turns(body):
+            repo = make_repo(self, {".vibe-verifier-qae": shards.QAE})
+            write(repo, {"qae-inputs/pr-body.md": body, "qae-inputs/ticket.md": TICKET})
+            out = os.path.join(repo, ".git", "turns")
+            result = runner("qae-inputs", "--repo", repo, "--manifest", os.path.join(repo, ".vibe-verifier-qae"),
+                            "--criteria", os.path.join(repo, "qae-inputs", "pr-body.md"), "--ticket",
+                            os.path.join(repo, "qae-inputs", "ticket.md"), "--turns", out,
+                            "--references", os.path.join(repo, "qae-inputs", "references"), "--evidence",
+                            os.path.join(repo, "qae-artifacts"), "--widths-file", os.path.join(repo, "qae-inputs", "widths"))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return int(Path(out).read_text().strip())
+        both = "\nticket-proof: TC1 -- (a.ts::formats euros)\nticket-proof: TC2 -- (a.ts::matches the cart)\n"
+        self.assertLess(turns(BODY + both), turns(BODY))
+
     def test_a_ticket_proven_whole_with_a_declared_none_needs_no_verdict(self):
         commit(self.repo, {"lib/money.test.ts": "it('formats euros as the shop shows them', () => {})\n"}, "test")
         both = ("\nticket-proof: TC1 -- (lib/money.test.ts::formats euros as the shop shows them)\n"

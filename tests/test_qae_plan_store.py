@@ -87,6 +87,14 @@ class PlanStore(unittest.TestCase):
         read = runner("criteria", os.path.join(self.work, "pr-body.md"), "--ticket", os.path.join(self.work, "ticket.md"))
         self.assertEqual(read.stdout.splitlines()[0], "criteria: 8", read.stdout + read.stderr)
 
+    def test_a_body_marker_and_an_amendments_criteria_heading_are_read_too(self):
+        heading = {"body": "## Amendment 1\n\nWhy it changed.\n\n### Acceptance criteria\n\n- Totals round to the cent\n\n"
+                           "### Notes\n\n- not a criterion\n"}
+        self.plans[PLAN_ID] = {"planMarkdown": STORED_PLAN, "amendments": [heading]}
+        result, text = self.run_ticket(BODY + "\nImplements [plan:%s].\n" % PLAN_ID)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.criteria(text)[-2:], ["- A refund shows in euros", "- Totals round to the cent"])
+
     def test_a_marker_in_a_fence_or_a_comment_names_no_plan_and_no_store_reads_none(self):
         self.plans[PLAN_ID] = {"planMarkdown": STORED_PLAN, "amendments": []}
         for body in ("```\n[plan:%s]\n```\n" % PLAN_ID, "<!-- [plan:%s] -->\n" % PLAN_ID):
