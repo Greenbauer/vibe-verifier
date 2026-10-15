@@ -48,6 +48,7 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
 - `tests/test_regression_node.py::test_a_node_test_that_fails_at_head_is_a_red_suite_and_cannot_run`
 - `tests/test_regression_node.py::test_a_package_script_runs_its_files_from_its_package_with_its_own_options`
 - `tests/test_regression_node.py::test_a_node_test_the_repository_does_not_run_with_node_test_is_not_judged_unless_declared`
+- `tests/test_regression_node.py::test_a_file_whose_top_level_assertion_fails_on_the_code_before_the_fix_shows_the_bug`
 
 ## Gotchas
 
