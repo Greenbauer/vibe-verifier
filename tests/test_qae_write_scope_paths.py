@@ -45,7 +45,7 @@ class QuotedPaths(unittest.TestCase):
     def test_a_rename_inside_the_scope_is_in_scope(self):
         write(self.repo, {"qae-artifacts/a.png": "png"})
         git(self.repo, "add", "qae-artifacts/a.png")
-        git(self.repo, "commit", "-q", "-m", "evidence")
+        git(self.repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "evidence")
         git(self.repo, "mv", "qae-artifacts/a.png", "qae-artifacts/b c.png")
         result = self.run_step()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
