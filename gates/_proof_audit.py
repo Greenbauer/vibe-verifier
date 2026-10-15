@@ -187,8 +187,10 @@ def run_codex(args, prompt, work):
         return None, "the grader ran past --timeout (%d seconds)" % args.timeout, seconds
     if code != 0:
         with open(errors, encoding="utf-8", errors="replace") as handle:
-            tail = (handle.read().strip().splitlines() or ["no output"])[-1]
-        return None, "Codex ended with an error: %s" % (last_error or "exit %d (%s)" % (code, tail)), seconds
+            lines = [line.strip() for line in handle.read().splitlines() if line.strip()] or ["no output"]
+        # A crashed CLI's stderr ends with Node's version banner; the line that names the error is above it.
+        tail = next((line for line in reversed(lines) if re.search(r"error", line, re.I)), lines[-1])
+        return None, "Codex ended with an error: %s" % (last_error or "exit %d (%s)" % (code, tail[:300])), seconds
     if tree_state(args.repo) != before:
         return None, "the grader changed the working tree, which it may only read", seconds
     try:
