@@ -1,6 +1,6 @@
 # Browser seats
 
-Checks the seats a per-PR preview seeds (seat 0 the reference seat, seats 1 and up for the suite) and hands them to a browser suite that runs one worker per seat in its one job, so parallel workers never share an account or the data it owns.
+Checks the seats a per-PR preview seeds (seat 0 the reference seat; the suite, a geometry audit and each QAE explorer each on seats of their own) and hands them to a browser suite that runs one worker per seat in its one job, so parallel workers never share an account or the data it owns.
 
 ## Surfaces
 
@@ -23,6 +23,6 @@ From a workflow, `uses: Greenbauer/vibe-verifier/actions/browser-seats@<sha>` wi
 ## Gotchas
 
 - Measure first: seats pay only when most of the suite's time is in tests that sign in.
-- Seat 0 keeps the preview's original logins and ids; everything that is not the suite uses only seat 0.
+- Seat 0 keeps the preview's original logins and ids. Every check that runs at the same time as another (suite workers, a geometry audit, each QAE explorer) gets its own seat, so none waits for another to free a login.
 - A searched name (a username) must not contain another seat's, or a substring search finds the wrong seat.
 - The seats are only as separate as the seed makes them: anything global is still shared.

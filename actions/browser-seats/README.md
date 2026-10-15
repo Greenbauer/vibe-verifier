@@ -24,8 +24,23 @@ and skip seats.
 **Seats.** The preview seeds seats 0 to N-1. A seat is one login per role (for example a traveler
 and a partner), and everything those logins own at seed time is the seat's own copy, with its own
 ids. Seat 0 is the reference seat: it keeps the logins and ids the preview had before seats, and
-everything that is not the suite (a geometry audit, QAE, the long-lived main preview, people
-testing by hand) uses only seat 0. Seats 1 and up exist for the suite.
+serves the long-lived main preview and people testing by hand.
+
+**One seat per check that runs at the same time.** Every check that signs in to a pull request's
+preview while another one does (each suite worker, a geometry audit, each QAE explorer) gets seats
+no other running check uses. Two checks on one seat must run one after the other, and that wait is
+what seats remove: on the first consumer the QAE explorers shared seat 0 with the suite and a
+geometry audit, and waited a median 26 minutes for both to finish, about half of the 50 minutes from
+a push to its last check (11 pull request heads, 2026-10-14). So a check waits only for what it
+reads (the preview being deployed), never for another check to free a login. With a seat each
+(geometry audit on seat 0, the suite's four workers on seats 1 to 4, QAE explorer k on seat 4 + k),
+all three started within a minute of the deploy and the last check landed at 22 minutes; nine
+browsers on one preview caused no failures, and each extra seat added about 4 seconds to seeding.
+A preview no pull request reads from (a long-lived main preview with no audit or QAE) gives the
+suite every seat, seat 0 included.
+
+The suite's seats file then lists the suite's own seats only, in worker order: its first entry is
+the login the suite already reads, whichever seat number the preview gave it.
 
 **Ids.** A spec never hard-codes a seeded id. It reads its worker's copy from one helper, which
 applies the same rule the seed did. The first consumer replaces the fourth group of every seeded
@@ -38,7 +53,7 @@ must not contain another seat's. `preview-partner` and `preview-partner-s1` both
 `preview-partner`; `preview-partner` and `seat-1-partner` do not. Display names can stay the same
 on every seat, so a spec asserts the same text whichever seat runs it.
 
-**Hand-off.** The suite's job writes every seat's logins to a file, seat 0 first, as a JSON list of
+**Hand-off.** The suite's job writes its seats' logins to a file, the login it already reads first, as a JSON list of
 role -> `{"email", "password"}`, and runs this action on it:
 
 ```yaml
@@ -57,8 +72,8 @@ role -> `{"email", "password"}`, and runs this action on it:
 The action fails, before any browser starts, when the list is empty, over `max-seats` (8), a seat
 names other roles than seat 0, a login has no email or password, a login is off `email-domain`, or
 two seats share a login. It masks every password and the `extra-seats` value. Its outputs are
-`workers`, the number of seats, and `extra-seats`, seats 1 and up as compact JSON (`[]` for one
-seat). Pass seat 0 to the suite the way you already do.
+`workers`, the number of seats, and `extra-seats`, every entry after the first as compact JSON (`[]`
+for one seat). Pass the first entry to the suite the way you already do.
 
 **Workers.** The suite runs `1 + extra seats` workers in CI and keeps a spec file on one worker
 (Playwright's `fullyParallel: false`), and worker k signs in as seat k:
