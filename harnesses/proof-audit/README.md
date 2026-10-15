@@ -161,8 +161,9 @@ login, a usage limit, an unreadable ticket link). `--grades DIR` keeps the grade
 
 One model run grades at most `max-ids` requirements, and each shard is a job of its own, so a family of
 28 requirements is three runs at once. Measured on that pull request's head (2026-10-15, its
-workflow's model at high effort, from a laptop): 205, 344 and 421 seconds for shards of 9, 9 and 10
-requirements, 7 minutes 10 seconds in all, against the 55-minute job budget.
+workflow's model at high effort): on the consumer's runner lane, grade jobs of 273, 244 and 368 seconds
+for shards of 10, 9 and 9 requirements, about 7 minutes from the plan to the verdict; from a laptop,
+4 to 7 minutes for the three at once. The job budget is 55 minutes.
 
 ## The one-file replay
 
@@ -180,7 +181,11 @@ grader on both trees: `python3 -m unittest tests.test_proof_audit.Replay` from t
 
 - Whether an assertion exercises a case is the model's judgment. The gate proves the quotes are real,
   not that they mean what the model says; the grader is told to grade UNPROVEN when in doubt, and it
-  is strict (it asked for a visibility assertion where a test read only an error's text).
+  is strict (it asked for a visibility assertion where a test read only an error's text). Two grades of
+  one head can differ: six grades of the 28-requirement head found 9 to 12 UNPROVEN, the one-file and
+  persistence gaps every time. One of them took a server test of a JPEG upload intent, quoted by its
+  `assert.equal(` line, as proof that the upload form accepts a JPEG; the gate now refuses a quote that
+  only opens a call, and the prompt asks for a screen's behaviour to be proved on that screen.
 - The model is told to judge from the code alone and only to read. In CI it runs without a sandbox (see
   above), on a runner that holds no token for it; locally, under the read-only sandbox. Neither stops it
   reading a file outside the checkout, such as the runner's event payload, which holds the body; it is
