@@ -942,6 +942,9 @@ criterion that expects a refusal there still declares it (`expected-refusal: 400
   reset of `CLAUDE.md` and friends to the base branch is not a write, and a PR that changes one of
   them shows it as changed on the runner: the step compares those paths to the base instead of
   failing on sight. Found on the second consumer's first pull request.
+  The step reads `git status -z`: plain porcelain quotes a path with a space or a non-ASCII byte,
+  and an artifact named "<record> <explorer tag>.pdf" inside `qae-artifacts/` failed as a write
+  outside it (a consumer's split run, 2026-10-15).
 - **Nothing to explore costs no model session.** A PR that needs no check
   ([above](#which-pull-requests-need-a-check)), or lists no criteria at all, skips the build and the
   explorer: the first because there is nothing for a browser to check, the second because the verdict
