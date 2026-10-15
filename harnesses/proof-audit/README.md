@@ -56,6 +56,16 @@ QAE workflow so its required `qae-verify` check carries the verdict:
    pull request comment, edited in place, so the author can fix every gap in one pass. The step's exit
    code is the gate's.
 
+No Ticket line audits nothing, and that alone passes (a CI or docs pull request implements no plan
+section). Two such bodies fail instead, so dropping the line is never a way past the audit:
+
+- a body that claims `[req: ID]` items (a proof map kept under its own heading, say) without the
+  `Ticket:` line that links the section defining them;
+- with `require-ticket` set, a pull request that changes a file matching one of its globs (the
+  application's source, say) and neither links a section nor says why none applies on a line
+  `No ticket: <why>`. The reason is in the body for the reviewer to read; the gate checks only that it
+  is there.
+
 A grade job that hits a model usage limit fails with the CLI's own message as its annotation
 (`Codex ended with an error: You've hit your usage limit ... try again at ...`), and the gate then
 exits 2 with "a model usage limit: nothing was graded; run it again after the reset". So does a shard
@@ -135,6 +145,8 @@ In the verify job, add `proof-audit` to its `needs`, and after the QA gates:
           mode: verify
           body: qae-inputs/pr-body.md
           grades: proof-audit-grades
+          require-ticket: |     # CONSUMER: paths a pull request changes only with a Ticket line or `No ticket: <why>`
+            src/**
           token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
@@ -155,7 +167,9 @@ reads git history):
 reads. The shards are graded in parallel (`--jobs`, default 4) with the login in `$CODEX_HOME`
 (default `~/.codex`; `codex login --device-auth` seeds one), then the table is printed and the command
 exits as CI's step does: 0 every requirement proven or excluded, 1 any UNPROVEN, 2 could not run (no
-login, a usage limit, an unreadable ticket link). `--grades DIR` keeps the grade files.
+login, a usage limit, an unreadable ticket link). `--grades DIR` keeps the grade files. Pass the
+workflow's `require-ticket` globs as `--require-ticket GLOB` (once each) to check an unlinked body as CI
+does.
 
 ## Shards and time
 

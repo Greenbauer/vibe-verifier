@@ -47,6 +47,12 @@ inputs:
       grades everything UNPROVEN; measured on a consumer's lane, 2026-10-15. The model is told only to read, the job
       holds no token, and a run that changed the working tree is refused.
     default: danger-full-access
+  require-ticket:
+    description: >-
+      verify, globs (one per line) of the paths a pull request may change only when its body links a plan section
+      with a `Ticket:` line or says why none applies on a `No ticket: <why>` line, such as the application's source.
+      Empty requires neither. A body that claims `[req: ID]` items with no Ticket line fails either way.
+    default: ""
   token:
     description: verify, a token that may comment on the pull request; the table is posted, or edited in place, as one comment. Empty posts none (the step summary still has it).
     default: ""
@@ -105,6 +111,7 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         VV_BODY: ${{ inputs.body }}
         VV_GRADES: ${{ inputs.grades }}
+        VV_REQUIRE_TICKET: ${{ inputs.require-ticket }}
         VV_REPO: ${{ github.repository }}
         VV_PR: ${{ github.event.pull_request.number }}
         VV_HEAD: ${{ github.event.pull_request.head.sha }}
@@ -113,9 +120,16 @@ runs:
         set -uo pipefail
         table="$RUNNER_TEMP/proof-audit-table.md"
         rm -f "$table"
+        required=()
+        while IFS= read -r glob; do
+          glob="${glob#"${glob%%[![:space:]]*}"}"; glob="${glob%"${glob##*[![:space:]]}"}"
+          [ -n "$glob" ] && required+=(--require-ticket "$glob")
+        done <<< "$VV_REQUIRE_TICKET"
+        # GitHub runs `shell: bash` with -e: without `|| code=$?` a failing gate ends the step here, before its
+        # table reaches the step summary and the comment, which is when the author needs it.
+        code=0
         python3 "$GITHUB_ACTION_PATH/../../gates/proof_audit.py" --body "$VV_BODY" --grades "$VV_GRADES" \
-          --table "$table" --format github
-        code=$?
+          --table "$table" --format github ${required[@]+"${required[@]}"} || code=$?
         [ -s "$table" ] || printf '## Proof audit: could not run (the gate wrote no table; its log says why)\n' > "$table"
         cat "$table" >> "$GITHUB_STEP_SUMMARY"
         if [ -n "$GH_TOKEN" ] && [ -n "$VV_PR" ]; then
