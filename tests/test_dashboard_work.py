@@ -121,8 +121,12 @@ def calls_server():
         "cccc-3": {"brief": "c", "followups": [], "designRefs": [], "asks": []},
         "dddd-4": {"brief": "d", "followups": [], "designRefs": [], "asks": []},
     }
+    # The calls server's list_open_calls leaves merged and closed Calls out unless its status input asks for them.
+    done = [call_row("eeee-5", "merged", prNumber=419, updatedAt="2026-10-14T09:00:00Z"),
+            call_row("ffff-6", "closed", updatedAt="2026-10-01T09:00:00Z"),
+            call_row("9999-0", "merged", updatedAt="2026-08-01T09:00:00Z")]
     return FakeServer({
-        "list_open_calls": lambda arguments: calls,
+        "list_open_calls": lambda arguments: done if arguments.get("status") == ["closed", "merged"] else calls,
         "get_call": lambda arguments: {**next(row for row in calls if row["id"] == arguments["callId"]),
                                        **details[arguments["callId"]]},
     })
@@ -256,7 +260,8 @@ class Queues(unittest.TestCase):
     def test_calls_show_follow_ups_and_an_ask_without_a_ruling_waits_on_the_requester(self):
         source = WorkSource("calls", "Calls", "calls", "https://q.example.test/api/mcp", Path("/x"))
         server = calls_server()
-        items, _ = collect_calls(McpClient("https://q.example.test", "t", server), source)
+        items, truncated = collect_calls(McpClient("https://q.example.test", "t", server), source, NOW)
+        self.assertFalse(truncated)
         self.assertEqual({call[1] for call in server.calls if call[1]}, {"list_open_calls", "get_call"})
         by_id = {item["id"]: item for item in items}
         blocked = by_id["aaaa-1"]
@@ -274,6 +279,34 @@ class Queues(unittest.TestCase):
         self.assertEqual(by_id["dddd-4"]["waiting"]["reason"], "Blocked: Waiting on a key.")
         self.assertIsNone(by_id["dddd-4"]["status_text"])
         self.assertIsNone(by_id["cccc-3"]["pr_url"])
+
+    def test_calls_merged_or_closed_in_the_window_are_done_without_their_detail(self):
+        source = WorkSource("calls", "Calls", "calls", "https://q.example.test/api/mcp", Path("/x"), "octocat/example")
+        server = calls_server()
+        items, _ = collect_calls(McpClient("https://q.example.test", "t", server), source, NOW)
+        lists = [call[2] for call in server.calls if call[1] == "list_open_calls"]
+        self.assertEqual(lists, [{"limit": 100}, {"status": ["closed", "merged"], "limit": 100}])
+        by_id = {item["id"]: item for item in items}
+        # Done in the last 30 days is listed; done before that is not.
+        self.assertEqual({key for key, item in by_id.items() if item["phase"] == "done"}, {"eeee-5", "ffff-6"})
+        self.assertNotIn("9999-0", by_id)
+        merged = by_id["eeee-5"]
+        self.assertEqual((merged["status"], merged["detail"], merged["waiting"], merged["requester"]),
+                         ("merged", False, None, "Boss"))
+        self.assertEqual(merged["pr_url"], "https://github.com/octocat/example/pull/419")
+        self.assertNotIn({"callId": "eeee-5"}, [call[2] for call in server.calls if call[1] == "get_call"])
+
+    def test_a_call_in_both_reads_is_listed_once_and_a_full_done_page_reads_as_truncated(self):
+        source = WorkSource("calls", "Calls", "calls", "https://q.example.test/api/mcp", Path("/x"))
+        moved = call_row("aaaa-1", "in_progress")
+        done = [call_row("aaaa-1", "merged", updatedAt="2026-10-12T14:00:00Z")]
+        done += [call_row("d%03d-0" % n, "closed", updatedAt="2026-10-10T09:00:00Z") for n in range(99)]
+        server = FakeServer({"list_open_calls": lambda arguments: done if "status" in arguments else [moved],
+                             "get_call": lambda arguments: {"brief": "b"}})
+        items, truncated = collect_calls(McpClient("https://q.example.test", "t", server), source, NOW)
+        self.assertTrue(truncated)
+        self.assertEqual([item["status"] for item in items if item["id"] == "aaaa-1"], ["merged"])
+        self.assertEqual(len(items), 100)
 
 
 class Feed(unittest.TestCase):

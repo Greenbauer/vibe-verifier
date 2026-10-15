@@ -6,8 +6,9 @@ Each configured source is reached over HTTPS with a bearer read from a local fil
   ``planId``, ``planLabel``, ``status``, ``claimedBy``, ``blockedReason``, ...) and
   ``GET <endpoint>/plans/<planId>`` the row plus ``planMarkdown`` and every amendment.
 - ``calls``: an MCP server. ``list_open_calls`` (rows with ``id``, ``label``, ``status``,
-  ``submitter``, ``claim``, ...) and ``get_call`` (the row plus ``brief``, ``followups``,
-  ``designRefs`` and ``asks``).
+  ``submitter``, ``claim``, ...), read twice: once for the open statuses (its default) and once for
+  ``merged`` and ``closed``, of which only those updated in the last DONE_WINDOW are kept. Then
+  ``get_call`` (the row plus ``brief``, ``followups``, ``designRefs`` and ``asks``) for each open one.
 
 Only those reads are ever made. A source that fails keeps its last items, marked stale with
 the failure's code; a source never read shows the code and no items, not an empty queue.
@@ -39,6 +40,7 @@ MAX_UPDATE = 10_000
 MAX_UPDATES = 100
 MAX_TOKEN_BYTES = 4096
 DONE = {"merged", "closed"}
+DONE_WINDOW = timedelta(days=30)
 QUEUED = {"submitted", "backlog"}
 PROTOCOL_VERSION = "2025-06-18"
 
@@ -313,7 +315,7 @@ def _call(client: McpClient, source: WorkSource, row: dict) -> dict | None:
     item = _base(row, "id", "label")
     if item is None:
         return None
-    detail = client.call("get_call", {"callId": item["id"]})
+    detail = None if item["status"] in DONE else client.call("get_call", {"callId": item["id"]})
     if isinstance(detail, dict):
         row = {**row, **detail}
         item.update(status=str(row.get("status") or item["status"])[:40], detail=True,
@@ -329,12 +331,19 @@ def _call(client: McpClient, source: WorkSource, row: dict) -> dict | None:
     return _finish(item, source, "calls")
 
 
-def collect_calls(client: McpClient, source: WorkSource) -> tuple[list[dict], bool]:
+def collect_calls(client: McpClient, source: WorkSource, now: datetime | None = None) -> tuple[list[dict], bool]:
+    # list_open_calls leaves out merged and closed Calls unless asked, and lists oldest first with no
+    # paging, so done ones are a second read, cut to the recent ones; a full page reads as truncated.
     rows = client.call("list_open_calls", {"limit": MAX_ITEMS})
-    if not isinstance(rows, list):
+    done = client.call("list_open_calls", {"status": sorted(DONE), "limit": MAX_ITEMS})
+    if not isinstance(rows, list) or not isinstance(done, list):
         raise WorkError("invalid_response", "list_open_calls returned no list")
-    items = [_call(client, source, row) for row in _rows(rows)]
-    return [item for item in items if item], len(rows) >= MAX_ITEMS
+    since = (now or datetime.now(timezone.utc)) - DONE_WINDOW
+    recent = [row for row in _rows(done) if (parse_time(row.get("updatedAt")) or since) >= since]
+    # A Call that moved between the two reads is listed once, as the later read saw it.
+    by_id = {_item_id(row.get("id")) or index: row for index, row in enumerate(_rows(rows) + recent)}
+    items = [_call(client, source, row) for row in by_id.values()]
+    return [item for item in items if item], len(rows) >= MAX_ITEMS or len(done) >= MAX_ITEMS
 
 
 COLLECTORS = {"plans": (RestClient, collect_plans), "calls": (McpClient, collect_calls)}
