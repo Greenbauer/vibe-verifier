@@ -4,7 +4,9 @@ name: CI
 # selection would have left out), then runs this repository's own manifest through the composite action,
 # which is the only place that action executes before a consumer exists, then the gates that run this
 # repository's own tests (.vibe-verifier-tests): mutation-testing changed dashboard code, and the report-only
-# pilots of regression-test-fails-on-base and coverage-not-lost. The lanes jobs run the runner-lane kit's own suites (lanes/README.md).
+# pilot of regression-test-fails-on-base. The coverage-not-lost job, beside it, pilots that gate report-only on
+# the whole suite (.vibe-verifier-coverage), measuring the gate scripts the tests run as child processes too.
+# The lanes jobs run the runner-lane kit's own suites (lanes/README.md).
 
 on:
   pull_request:
@@ -23,8 +25,8 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     # Above everything that can run here: the suite (about 9 minutes) and the limits of the gates that run it
-    # again (changed-code-mutation 900 seconds, regression-test-fails-on-base 600, coverage-not-lost 300), so a
-    # gate past its own limit says so (exit 2) before the job is killed.
+    # again (changed-code-mutation 900 seconds, regression-test-fails-on-base 600), so a gate past its own limit
+    # says so (exit 2) before the job is killed.
     timeout-minutes: 45
     permissions:
       contents: read
@@ -86,9 +88,9 @@ jobs:
           python3 -m venv .venv-tests
           .venv-tests/bin/pip install --quiet --disable-pip-version-check --require-hashes --only-binary :all: -r tests/requirements-pytest.txt
       - name: Write the pull request's title and body
-        # For regression-test-fails-on-base and coverage-not-lost (.vibe-verifier-tests), as
-        # docs/features/regression-test.md writes them. A push has no pull request: its merge base is the head,
-        # so no gate there compares anything, and the pushed commit's own subject and body stand in.
+        # For regression-test-fails-on-base (.vibe-verifier-tests), as docs/features/regression-test.md writes
+        # them. A push has no pull request: its merge base is the head, so no gate there compares anything, and
+        # the pushed commit's own subject and body stand in.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -105,11 +107,46 @@ jobs:
       - name: Gates that run this repository's tests
         # Their own manifest, because only this job installs the project's test runner. changed-code-mutation
         # runs the dashboard suite under pytest once, then each mutant on the changed lines, only when a pull
-        # request changes a dashboard .py file. regression-test-fails-on-base and coverage-not-lost are
-        # report-only pilots (--soak) under the python3 and unittest of the suite step above.
+        # request changes a dashboard .py file. regression-test-fails-on-base is a report-only pilot (--soak)
+        # under the python3 and unittest of the suite step above.
         uses: ./actions/gates # zizmor: ignore[self-repository]
         with:
           manifest: .vibe-verifier-tests
+
+  # coverage-not-lost, report-only, on the whole suite at the merge base and at the head, in parallel with the
+  # test job. coverage.py measures every Python process a test starts, so the gate scripts and bin/vibe-verifier
+  # the tests run are measured too; the gate's log says how many lines ran in each top directory, and how long
+  # each run took. A push to main has no merge base to compare (it is the head), so there it passes at once.
+  coverage-not-lost:
+    name: coverage-not-lost
+    runs-on: ubuntu-latest
+    # Above the gate's --timeout (.vibe-verifier-coverage), so a run past it says so (exit 2) before the job is killed.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: read # gh pr view, for the body coverage-not-lost reads
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Write the pull request's body
+        # For a `coverage-lost: <reason>` line, as the test job writes it; on a push, the commit's own body.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p pr-inputs
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > pr-inputs/body.md
+          else
+            git log -1 --format=%b > pr-inputs/body.md
+          fi
+      - name: coverage-not-lost on the whole suite
+        uses: ./actions/gates # zizmor: ignore[self-repository]
+        with:
+          manifest: .vibe-verifier-coverage
 
   # The QAE browser action against a real apt and the pinned Playwright, which its tests stub: it reads
   # the missing system packages from that Playwright's own report, so a pin bump that changes the

@@ -12,7 +12,7 @@
 
 ## Reach
 
-List `coverage-not-lost --soak` (with `--runner`, `--project`, `--args` and `--body` as the project needs) in a manifest of its own, run by a job that installs the project's dependencies first; remove `--soak` on the base manifest once its record is clean.
+List `coverage-not-lost --soak` (with `--runner`, `--project`, `--args` and `--body` as the project needs) in a manifest of its own, run by a job that installs the project's dependencies first; remove `--soak` on the base manifest once its record is clean. This repository pilots it on its own whole suite that way: the `coverage-not-lost` job of `.github/workflows/ci.yml`, beside the `test` job, runs `.vibe-verifier-coverage`.
 
 ## Verify
 
@@ -25,6 +25,10 @@ List `coverage-not-lost --soak` (with `--runner`, `--project`, `--args` and `--b
 - `tests/test_coverage_not_lost.py::test_a_vitest_with_no_provider_of_its_version_cannot_run`
 - `tests/test_coverage_not_lost.py::test_pytest_names_the_test_that_ran_a_lost_line`
 - `tests/test_coverage_not_lost.py::test_unittest_flags_a_deleted_test_and_a_red_head_cannot_run`
+- `tests/test_coverage_not_lost.py::test_a_line_only_a_child_process_ran_is_measured`
+- `tests/test_coverage_not_lost.py::test_without_subprocess_measurement_a_line_only_a_child_ran_is_missed`
+- `tests/test_coverage_not_lost.py::test_the_interpreters_own_sitecustomize_still_runs`
+- `tests/test_ci_workflow.py::test_the_coverage_job_runs_the_whole_suite_beside_the_test_job_within_its_timeout`
 
 ## Gotchas
 
@@ -33,4 +37,6 @@ List `coverage-not-lost --soak` (with `--runner`, `--project`, `--args` and `--b
 - Vitest needs `@vitest/coverage-v8` of exactly its own version: the project's own, or the catalog's pin for Vitest 2.1.9, 3.2.7, 4.0.18, 4.1.11 and 5.0.3. Anything else is exit 2, because a provider of another version measured the wrong lines without an error.
 - A Python suite that imports the package from the working copy instead of the checkout being measured (an editable install the runner's own path does not come before) is exit 2: the gate cannot tell which side's code ran.
 - Both sides run with the dependencies installed for the head, so a pull request that removes a package the merge base's tests import is exit 2.
+- Python measures every Python process a test starts, such as a script it runs with `subprocess.run([sys.executable, "app.py"])`, through coverage.py's own `[run] patch = subprocess`: each process writes a data file of its own, combined after the run. A child starts coverage.py from a `sitecustomize` the gate puts first on the suite's `PYTHONPATH` (the interpreter's own `sitecustomize`, which Homebrew's and Ubuntu's Python have, still runs after it). Not measured: a child given an environment of its own instead of a copy of the test's, one started with `python -I` or `-E`, or one of a Python the pinned coverage.py cannot load in. A line only a child ran names no test function.
+- Vitest does not measure a node script a test spawns: on 2026-10-15, under Vitest 4.1.11 and its `@vitest/coverage-v8`, a script a test ran with `execFileSync("node", ["src/app.js"])` counted 0 on every statement while a module the test imported counted 1. The providers pinned for Vitest 2.1.9 to 4.1.11 have no subprocess support; Vitest 5.0.0 added `coverage.autoAttachSubprocess` (v8 only, off by default, through `NODE_V8_COVERAGE`), which the gate does not turn on.
 - A line that stops running because the code before it changed (a branch the tests no longer reach) is a finding too. Say why in the pull request body, `coverage-lost: <reason>`.

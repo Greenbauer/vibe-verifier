@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, commit, gate, git, install_fixture, make_repo
+from helpers import ROOT, clean_env, commit, gate, git, install_fixture, make_repo
 
 FIXTURE = ROOT / "tests" / "fixtures" / "coverage-not-lost"
 PYTEST = ROOT / "tests" / "requirements-pytest.txt"
@@ -243,6 +243,16 @@ PY_PLAIN = ("import unittest\n\nfrom shop.price import discount\n\n\nclass Plain
             "    def test_plain(self):\n        self.assertEqual(discount(50, False), 50)\n")
 PY_MEMBER_CASE = ("import unittest\n\nfrom shop.price import discount\n\n\nclass Member(unittest.TestCase):\n"
                   "    def test_member(self):\n        self.assertEqual(discount(200, True), 180)\n")
+# A command line no test imports: the only test of it runs it as a child process. testimony() is named so that
+# coverage.py's test_function context would take it for a test, were it recorded in the child.
+PY_APP = ('def greeting(name):\n    return "hello " + name\n\n\n'
+          'def testimony(name):\n    return greeting(name) + ", said the witness"\n\n\nprint(testimony("world"))\n')
+PY_APP_TEST = ("import subprocess\nimport sys\nimport unittest\n\n\nclass App(unittest.TestCase):\n"
+               "    def test_prints(self):\n"
+               '        out = subprocess.run([sys.executable, "app.py"], capture_output=True, text=True, check=True).stdout\n'
+               '        self.assertEqual(out, "hello world, said the witness\\n")\n')
+PY_SITE_TEST = ('import sys\nimport unittest\n\n\nclass Site(unittest.TestCase):\n    def test_site(self):\n'
+                '        self.assertTrue(getattr(sys, "vv_project_sitecustomize", False))\n')
 
 
 class RealCoveragePy(unittest.TestCase):
@@ -297,6 +307,52 @@ class RealCoveragePy(unittest.TestCase):
         self.assertEqual(red.returncode, 2, red.stdout + red.stderr)
         self.assertIn("the suite of . fails at the head (unittest exited 1; its failures are above)", red.stderr)
         self.assertIn("AssertionError: 50 != 51", red.stderr)
+
+    def test_a_line_only_a_child_process_ran_is_measured(self):
+        repo = self.project({"app.py": PY_APP, "tests/test_app.py": PY_APP_TEST, "tests/test_plain.py": PY_PLAIN},
+                            {"tests/test_app.py": None})
+        result = self.run_gate(repo, "--runner", "unittest", "--args", "discover -s tests")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual([(f["path"], f["line"]) for f in findings(result)], [("app.py", 1), ("app.py", 5), ("app.py", 9)])
+        self.assertIn("Lines 5-6 (`def testimony(name):`) ran under the project's tests at the merge base and does not at "
+                      "the head", findings(result)[1]["message"])
+        # The child names no test function: none is on its stack, and testimony() is not one.
+        self.assertNotIn("Run at the merge base by", "".join(f["message"] for f in findings(result)))
+        # Each run says what it measured, by top directory, and how long it took: app.py's 5 lines only at the merge base.
+        self.assertRegex(result.stderr, r"the run at the merge base [0-9a-f]{12}: 8 line\(s\) ran \(5 at the root, 3 in shop/\), "
+                                        r"in \d+ seconds")
+        self.assertRegex(result.stderr, r"the run at the head: 3 line\(s\) ran \(3 in shop/\), in \d+ seconds")
+
+    def test_without_subprocess_measurement_a_line_only_a_child_ran_is_missed(self):
+        # The test above, with coverage.py's subprocess support switched off in a copy of the gate: it passes.
+        copy = tempfile.mkdtemp(prefix="vv-coverage-copy-")
+        self.addCleanup(shutil.rmtree, copy, True)
+        shutil.copytree(ROOT / "gates", os.path.join(copy, "gates"))
+        shutil.copytree(ROOT / "tools" / "coverage-not-lost-python", os.path.join(copy, "tools", "coverage-not-lost-python"))
+        runs = Path(copy, "gates", "_coverage_runs.py")
+        source = runs.read_text()
+        self.assertEqual(source.count("patch = subprocess\\n"), 1)
+        runs.write_text(source.replace("patch = subprocess\\n", ""))
+        repo = self.project({"app.py": PY_APP, "tests/test_app.py": PY_APP_TEST, "tests/test_plain.py": PY_PLAIN},
+                            {"tests/test_app.py": None})
+        result = subprocess.run([sys.executable, os.path.join(copy, "gates", "coverage_not_lost.py"), "--repo", repo,
+                                 "--base-ref", "HEAD~1", "--python", self.python, "--format", "json", "--runner", "unittest",
+                                 "--args", "discover -s tests"], capture_output=True, text=True, env=clean_env())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(findings(result), [])
+        self.assertIn("every one the pull request left unchanged still runs at the head", result.stderr)
+
+    def test_the_interpreters_own_sitecustomize_still_runs(self):
+        # The gate's sitecustomize comes first on the suite's PYTHONPATH; the project's, after it, runs too.
+        site = tempfile.mkdtemp(prefix="vv-coverage-site-")
+        self.addCleanup(shutil.rmtree, site, True)
+        # It marks the process, not the environment: the gate's own process imports it too, and a child inherits that.
+        Path(site, "sitecustomize.py").write_text("import sys\nsys.vv_project_sitecustomize = True\n")
+        repo = self.project({"tests/test_member.py": PY_MEMBER_CASE, "tests/test_site.py": PY_SITE_TEST},
+                            {"shop/price.py": PY_PRICE + "\n"})
+        result = gate("coverage-not-lost", repo, "--base-ref", "HEAD~1", "--python", self.python, "--format", "json",
+                      "--runner", "unittest", "--args", "discover -s tests", env={"PYTHONPATH": site})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_no_test_at_either_side_cannot_run(self):
         repo = self.project({"tests/helpers.py": "X = 1\n"}, {"shop/price.py": PY_PRICE + "\n"})

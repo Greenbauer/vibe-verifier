@@ -11,7 +11,9 @@ for Python, which tests ran each line.
   project's own coverage settings (its provider, reporters, thresholds) never decide the run.
 - pytest, unittest: coverage.py, pinned in tools/coverage-not-lost-python, appended to the end of the project's
   interpreter's path, under the gate's own settings file (the project's .coveragerc and the like are not read),
-  with each test function recorded as the context of the lines it ran.
+  with each test function recorded as the context of the lines it ran. Every Python process the suite starts
+  is measured too, by coverage.py's own subprocess support (`[run] patch = subprocess`): each process writes a
+  data file of its own, and the run's files are combined before the report is read.
 """
 import json
 import os
@@ -51,6 +53,49 @@ export default {
 """
 BOOT = "import sys; sys.path.append(%r); sys.argv = ['coverage'] + sys.argv[1:]; from coverage.cmdline import main; sys.exit(main())"
 ENV = dict(os.environ, NO_COLOR="1", FORCE_COLOR="0")
+# Where coverage.py's data goes is the gate's settings file alone: one the suite's environment names (an outer
+# coverage.py measuring the process that runs this gate, say) would send some processes' data elsewhere.
+COVERAGE_ENV = ("COVERAGE_FILE", "COVERAGE_PROCESS_CONFIG", "COVERAGE_PROCESS_START")
+# `patch = subprocess` hands its settings to each child in COVERAGE_PROCESS_CONFIG, and coverage.py starts in
+# a child from the .pth file it installs in its own site-packages, which is not the project's interpreter's.
+# So this file, first on the suite's PYTHONPATH, is the sitecustomize every Python process imports at start:
+# it appends coverage.py's package the way BOOT does and starts coverage.py the way that .pth file does, then
+# runs the sitecustomize it hides (Homebrew's Python and Ubuntu's ship one), if there is one. A
+# child records no test function: no test is on its stack, so a function of its own named test* would be.
+SITECUSTOMIZE = '''import os
+import sys
+
+
+def _measure():
+    settings = os.environ.get("COVERAGE_PROCESS_CONFIG")
+    if not settings:
+        return
+    sys.path.append(%r)
+    import coverage
+    from coverage.config import CoverageConfig
+    config = CoverageConfig.deserialize(settings)
+    config.dynamic_context = None
+    os.environ["COVERAGE_PROCESS_CONFIG"] = config.serialize()
+    coverage.process_startup()
+
+
+def _hidden():
+    import importlib.machinery
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    entries = [os.path.abspath(entry or os.curdir) for entry in sys.path]
+    after = sys.path[entries.index(here) + 1:] if here in entries else []
+    spec = importlib.machinery.PathFinder.find_spec("sitecustomize", after)
+    if spec is not None and spec.loader is not None:
+        spec.loader.exec_module(importlib.util.module_from_spec(spec))
+
+
+try:
+    _measure()
+except Exception:  # an interpreter this coverage.py cannot load in (a Python before 3.10) runs unmeasured
+    pass
+_hidden()
+'''
 
 
 class Coverage:
@@ -216,13 +261,19 @@ class Python:
 
     def __init__(self, args, repo, scratch):
         self.module, self.args, self.repo, self.scratch = args.runner, shlex.split(args.args), repo, scratch
-        self.python, self.site = interpreter(args.python, repo, args.runner), None
+        self.python, self.site, self.env = interpreter(args.python, repo, args.runner), None, None
 
     def boot(self):
+        """The command that runs coverage.py; first, the environment its runs share (self.env)."""
         if self.site is None:
             tool = ensure_python_tool(PYTHON_TOOL, self.python)
             self.site = run_tool([tool, "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
                                  None, 60, "python")[1].strip().splitlines()[-1]
+            hook = tempfile.mkdtemp(prefix="site-", dir=self.scratch)
+            with open(os.path.join(hook, "sitecustomize.py"), "w", encoding="utf-8") as handle:
+                handle.write(SITECUSTOMIZE % self.site)
+            self.env = {key: value for key, value in ENV.items() if key not in COVERAGE_ENV}
+            self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [hook, ENV.get("PYTHONPATH")]))
         return [self.python, "-c", BOOT % self.site]
 
     def run(self, tree, project, deadline, budget, files=()):
@@ -230,18 +281,23 @@ class Python:
         out = tempfile.mkdtemp(prefix="run-", dir=self.scratch)
         settings, report = os.path.join(out, "coveragerc"), os.path.join(out, "coverage.json")
         with open(settings, "w", encoding="utf-8") as handle:
-            handle.write("[run]\ndata_file = %s\ndynamic_context = test_function\n" % os.path.join(out, "data"))
+            # parallel: a data file per process (patch = subprocess sets it too), combined below.
+            handle.write("[run]\ndata_file = %s\ndynamic_context = test_function\nparallel = true\npatch = subprocess\n"
+                         % os.path.join(out, "data"))
         code, output = run_tool(boot + ["run", "--rcfile=" + settings, "-m", self.module] + self.args, cwd,
-                                time_left(deadline), self.module, env=ENV, budget=budget, advice=ADVICE)
+                                time_left(deadline), self.module, env=self.env, budget=budget, advice=ADVICE)
         if code == 5 or re.search(r"^Ran 0 tests", output, re.MULTILINE):  # pytest's and unittest's "no test ran"
             return Coverage({}, False)
         if code != 0:
             raise Red("%s exited %d" % (self.module, code), output[-3000:])
-        code, output = run_tool(boot + ["json", "--rcfile=" + settings, "--show-contexts", "-o", report], cwd,
-                                time_left(deadline), "coverage.py", env=ENV, budget=budget, advice=ADVICE)
+        for step in (["combine", "--quiet"], ["json", "--show-contexts", "-o", report]):  # one data file per process
+            code, output = run_tool(boot + step + ["--rcfile=" + settings], cwd, time_left(deadline), "coverage.py",
+                                    env=self.env, budget=budget, advice=ADVICE)
+            if code != 0:
+                raise CannotRun("coverage.py %s exited %d: %s" % (step[0], code, output.strip()[-500:]))
         data = read_json(report)
-        if code != 0 or data is None:
-            raise CannotRun("coverage.py wrote no report (exit %d): %s" % (code, output.strip()[-500:]))
+        if data is None:
+            raise CannotRun("coverage.py wrote no report: %s" % output.strip()[-500:])
         return self.parse(data, cwd, tree)
 
     def parse(self, data, cwd, tree):
