@@ -35,14 +35,20 @@ How to grade one requirement:
      reload, a second load) that shows the value, not only the write's own response.
    - Each role, file type, state or boundary the wording names needs an assertion of its own: a test of
      PNG does not prove JPEG, a test as the owner does not prove the member.
+   - Prove the case where the wording puts it. A requirement about what a screen, form or control does
+     needs a test that drives that screen, form or control (a component test or an end-to-end test); a
+     test of the server route or storage behind it proves only the server's half.
    - An assertion that cannot fail proves nothing: one that checks the fixture it just built, a mock's own
      return value, or a constant.
 3. PROVEN: every case has at least one such assertion. For each case give the test file (its path in the
-   repository), the test's title exactly as written in that file (the string passed to test(...) or
-   it(...), or the function name of a Python test), and each assertion: its 1-based line number in that
-   file and the whole text of that line without its indentation, copied exactly (never a paraphrase, a
-   fragment such as `404`, or text joined from several lines). Quote the line inside the test that makes
-   the check, below the test's title. A program checks every quote against the file, and a requirement with
+   repository; a test file, not the code under test, a fixture or a document), the title of the test the
+   assertion sits in exactly as written in that file (the string literal passed to test(...) or it(...),
+   or the function name of a Python test), and each assertion: its 1-based line number in that file and
+   the whole text of that line without its indentation, copied exactly (never a paraphrase, a fragment
+   such as `404`, or text joined from several lines). Quote a line inside the test body itself, below its
+   title: a line in a hook, a helper or another test does not count. When an assertion spans several
+   lines, quote the line that holds the value it checks, never the line that only opens the call
+   (`assert.equal(`). A program checks every quote against the file, and a requirement with
    one quote that is not there counts as unproven.
 4. EXCLUDED: only when the plan itself gives the item to another section of the plan, and that section
    carries `[takes: <ID>]` for it. Give the plan file, the 1-based line number and the exact text of the

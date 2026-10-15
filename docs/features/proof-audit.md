@@ -31,6 +31,7 @@ In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one s
 - `tests/test_proof_audit.py::test_ci_plans_then_grades_each_shard_into_its_own_file`
 - `tests/test_proof_audit.py::test_a_usage_limit_is_recorded_and_the_gate_cannot_run`
 - `tests/test_proof_audit.py::test_ci_runs_without_codex_sandbox_which_cannot_start_in_its_containers`
+- `tests/test_proof_audit.py::test_grades_written_inside_the_repository_are_not_the_grader_changing_it`
 - `tests/test_proof_audit.py::test_the_prompt_and_schema_have_one_copy`
 - `tests/test_proof_audit.py::test_the_recorded_grade_of_the_gif_case_is_unproven`
 - `tests/test_proof_audit.py::test_the_recorded_grade_of_the_proven_tree_passes_and_does_not_pass_on_the_other_tree`

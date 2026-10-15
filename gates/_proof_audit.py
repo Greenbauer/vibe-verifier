@@ -135,8 +135,12 @@ def collector():
     return module
 
 
-def tree_state(repo):
-    return subprocess.run(["git", "-C", repo, "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+def tree_state(repo, grades):
+    """git status of the checkout, leaving out the grades directory when it is inside it: another shard of
+    the same run writes its grades there while this one runs."""
+    inside = os.path.relpath(os.path.abspath(grades), os.path.abspath(repo)) if grades else ".."
+    skip = [] if inside == ".." or inside.startswith(".." + os.sep) else [":(exclude)%s" % inside.replace(os.sep, "/")]
+    return subprocess.run(["git", "-C", repo, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."] + skip,
                           capture_output=True).stdout
 
 
@@ -161,7 +165,7 @@ def run_codex(args, prompt, work):
     errors = os.path.join(work, "stderr.log")
     home = args.codex_home or os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
     env = dict(os.environ, CODEX_HOME=check_login(home))
-    before, started = tree_state(args.repo), time.monotonic()
+    before, started = tree_state(args.repo, args.grades), time.monotonic()
     with open(errors, "wb") as stderr:
         child = subprocess.Popen(codex_command(args, prompt, last), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                  stderr=stderr, env=env, start_new_session=True)
@@ -191,7 +195,7 @@ def run_codex(args, prompt, work):
         # A crashed CLI's stderr ends with Node's version banner; the line that names the error is above it.
         tail = next((line for line in reversed(lines) if re.search(r"error", line, re.I)), lines[-1])
         return None, "Codex ended with an error: %s" % (last_error or "exit %d (%s)" % (code, tail[:300])), seconds
-    if tree_state(args.repo) != before:
+    if tree_state(args.repo, args.grades) != before:
         return None, "the grader changed the working tree, which it may only read", seconds
     try:
         with open(last, encoding="utf-8") as handle:

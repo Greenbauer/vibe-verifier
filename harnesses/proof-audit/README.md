@@ -22,10 +22,10 @@ sections the body links, and the repository's tree, and grades every ID, cold:
 The model never sees the pull request's body or its `[proof:]` map: it finds the proving tests itself.
 Its prompt ([`prompt.md`](prompt.md)) and output schema ([`schema.json`](schema.json)) are the only
 copies; CI and a laptop run the same ones. Then the [`proof-audit`](../../gates/proof_audit.py) gate,
-deterministic, holds the grades to the repository: every quoted assertion must be at its file and line
-(verbatim, at least six characters), every test title must be in that file at or above the assertion,
-and an exclusion's plan line must be at its line at the merge base with its owner carrying
-`[takes: ID]` there. A quote that is not there makes the requirement UNPROVEN: a fabricated quote is
+deterministic, holds the grades to the repository: every quoted assertion must be the whole text of its
+line (at least six characters) in a test file at HEAD, named with the title of the test that line sits in
+(the nearest test declaration above it), and an exclusion's plan line must be at its line at the merge
+base with its owner, a section the body does not link, carrying `[takes: ID]` there. A quote that is not there makes the requirement UNPROVEN: a fabricated quote is
 not proof. The gate fails on any UNPROVEN. Model output is JSON held to the schema, never prose the gate
 greps.
 
@@ -189,3 +189,9 @@ grader on both trees: `python3 -m unittest tests.test_proof_audit.Replay` from t
 - A grade covers the tree the job checked out (the pull request merged with its base, in CI). A push
   is graded again.
 - `ticket-coverage` still requires the body's `[proof:]` claims; the audit does not read them.
+- An assertion counts for the test it sits in, found as the nearest test declaration above it (a
+  `test(...)`/`it(...)` call and its `.only`, `.skip`, `.each(...)` forms, or a Python `def test_*`); a test
+  whose title is not a string literal is matched on the declaration's text. A line in a hook or a helper
+  does not count, which is what the prompt asks for too.
+- The grade artifacts are named by shard. A re-run whose plan has fewer shards than the first attempt's
+  finds the extra shard's grades, and the gate cannot run (never passes) until the next push.

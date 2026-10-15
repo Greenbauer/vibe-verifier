@@ -15,6 +15,7 @@ from helpers import ROOT, clean_env, commit, gate, git, make_repo, runner, write
 
 sys.path.insert(0, str(ROOT / "gates"))
 import _proof_audit  # noqa: E402
+import proof_audit  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "proof-audit" / "c8"
 PLAN = ("# Plan\n\n## C. Covers\n\n"
@@ -122,9 +123,16 @@ class ProofAudit(unittest.TestCase):
         self.assert_code(result, 1, "too short to check")
 
     def test_a_missing_test_title_or_file_is_unproven(self):
-        for change, words in (({"test": "a second GIF dropped with the first is not cropped"}, "has no test titled"),
-                              ({"line": 7, "assertion": 'assert.equal(reread.title, "Lake");'}, "comes before its test"),
-                              ({"file": "tests/missing.test.ts"}, "is not a file in the repository")):
+        other = "a created journey reads back after a reload"
+        for change, words in (({"test": "a second GIF dropped with the first is not cropped"}, "not 'a second GIF"),
+                              ({"test": other}, "is in the test 'a second PNG dropped with the first is not cropped', not"),
+                              ({"line": 7, "assertion": 'assert.equal(reread.title, "Lake");'}, "is in the test '%s'" % other),
+                              ({"assertion": 'cropped(), "first.png"'}, "as its whole line"),
+                              ({"line": 4, "assertion": 'test("a created journey reads back after a reload", async () => {',
+                                "test": other}, "no test is declared above"),
+                              ({"file": "./tests/missing.test.ts"}, "tests/missing.test.ts is not a file in the repository"),
+                              ({"file": "docs/plan.md", "line": 6, "assertion": "- Cover upload keeps only the first dropped "
+                                "file. [req: C-8]"}, "docs/plan.md is not a test file")):
             with self.subTest(change=change):
                 case = {"case": CASE_8["case"], "proof": [dict(CASE_8["proof"][0], **change)]}
                 grades = valid()
@@ -158,6 +166,7 @@ class ProofAudit(unittest.TestCase):
 
     def test_an_exclusion_needs_an_owner_that_takes_the_item_at_the_merge_base(self):
         cases = ((dict(EXCLUSION, owner="docs/plan.md#c-covers"), "is a section this pull request links"),
+                 (dict(EXCLUSION, owner="./docs/plan.md#c-covers"), "is a section this pull request links"),
                  (dict(EXCLUSION, line=6), "a fabricated quote"),
                  (dict(EXCLUSION, owner="docs/plan.md#nowhere"), "the owner cannot be read"),
                  (dict(EXCLUSION, owner="P3"), "is not a path#anchor link"))
@@ -291,6 +300,12 @@ class Grader(unittest.TestCase):
                        "--base-ref", "main")
         self.assertEqual(audited.returncode, 0, audited.stdout + audited.stderr)
 
+    def test_grades_written_inside_the_repository_are_not_the_grader_changing_it(self):
+        result = self.run_grader("--body", str(self.work / "body.md"), "--grades", os.path.join(self.repo, "grades"),
+                                 "--max-ids", "1", "--jobs", "3")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(self.calls()), 3)
+
     def test_a_usage_limit_is_recorded_and_the_gate_cannot_run(self):
         result = self.run_grader("--body", str(self.work / "body.md"), "--grades", str(self.work / "out"), "--format", "github",
                                  behaviour="limit")
@@ -349,6 +364,21 @@ class Plan(unittest.TestCase):
         self.assertIn("- C-1 (docs/plan.md:3): SECTIONS and REQUIREMENTS stay [req: C-1]", prompt)
         self.assertIn('- docs/plan.md#c (heading "C")', prompt)
         self.assertNotIn("\nREQUIREMENTS\n", prompt)
+
+
+class Declarations(unittest.TestCase):
+    def test_an_assertion_belongs_to_the_test_it_sits_in_not_a_call_inside_it(self):
+        lines = ['test("first", () => {});', "for (const width of [1, 2]) {", "  test(", "    `wraps at ${width}px`,",
+                 "    async () => {", "      test.setTimeout(9);", '      await test.step("open", async () => {});',
+                 "      expect(a).toBe(1);", "  });", "}", "def test_python_case(self):", "    self.assertTrue(x)"]
+        self.assertEqual(proof_audit.declared_title(proof_audit.enclosing_test(lines, 8)), "wraps at ${width}px")
+        self.assertEqual(proof_audit.declared_title(proof_audit.enclosing_test(lines, 12)), "test_python_case")
+        self.assertIsNone(proof_audit.enclosing_test(lines, 1))
+
+    def test_a_line_that_only_opens_a_call_is_not_an_assertion(self):
+        for opener in ("assert.equal(", "await expect(", "assert.deepEqual("):
+            self.assertIn("only opens a call", proof_audit.quote_problem([opener], "a.test.ts", 1, opener, whole=True) or "")
+        self.assertIsNone(proof_audit.quote_problem(["expect(a).toEqual({"], "a.test.ts", 1, "expect(a).toEqual({", whole=True))
 
 
 class Replay(unittest.TestCase):

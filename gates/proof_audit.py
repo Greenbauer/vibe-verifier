@@ -10,11 +10,12 @@ links, read at the merge base as ticket-coverage reads them. --grades is a direc
 `<K>.json` files (`bin/vibe-verifier proof-audit`): between them they must grade exactly those IDs, or the
 gate cannot run. Per ID, the model's grade is checked, never trusted:
 
-- PROVEN needs at least one case, each with at least one assertion. Every assertion names a file that
-  exists at HEAD, a test title that occurs in that file at or above the assertion, and a line number whose
-  line holds the quoted text verbatim (at least 6 characters). One quote that is not there makes the
-  requirement UNPROVEN: a fabricated quote is not proof.
-- EXCLUDED needs a plan line, quoted verbatim at its line number at the merge base, and an owner section
+- PROVEN needs at least one case, each with at least one assertion. Every assertion names a test file at
+  HEAD (*.test.*, *.spec.*, __tests__/, node:test, or a Python test), a line whose whole text is the quote
+  (at least 6 characters), and the title of the test that line sits in: the nearest test declaration above
+  it (a JS test call's string literal, or a Python test function's name). One quote that is not there
+  makes the requirement UNPROVEN: a fabricated quote is not proof.
+- EXCLUDED needs a plan line, quoted verbatim (in part, 12 characters or more) at its line number at the merge base, and an owner section
   (`path#anchor`) that carries `[takes: ID]` at the merge base and is not one this body links.
 - UNPROVEN, a missing grade or a doubled one is a finding.
 
@@ -24,16 +25,31 @@ Ticket line, or linked sections with no IDs, is a qualified pass. --table FILE g
 """
 import json
 import os
+import posixpath
 import re
 import subprocess
 
-from _contract import CannotRun, Finding, git, qualify, run_gate
+from _affected_graph import JS_EXTENSIONS
+from _affected_tests import JS_TESTS, NODE_TEST
+from _contract import PY_TESTS, CannotRun, Finding, git, matches, qualify, run_gate
 from _proof_audit import SCHEMA, merge_base, requirements
 from _ticket import LINK, links
 import ticket_coverage
 
 GATE = "proof-audit"
-MIN_QUOTE = 6
+MIN_QUOTE = 6  # an assertion is quoted as its whole line; `});` is not one
+# A line that only opens a call, `assert.equal(` or `await expect(`: the first line of a wrapped assertion,
+# which names no value it checks.
+OPENER = re.compile(r"^(?:await\s+)?[\w$.!?]+[(\[{]$")
+MIN_PART = 12  # a plan line, and a test title that is not a literal, may be quoted in part
+# A test declaration: a JS test call (test(...), it(...), test.only(...), test.each(...)(...)), or a Python test
+# function. Its title is the call's first string literal, or the function's name. Only the modifiers that still
+# register a test count: test.setTimeout(...), test.slow(), test.step(...), test.describe(...) and the hooks are
+# calls inside or around tests, and taking one for the declaration would tie an assertion to no test.
+DECLARATION = re.compile(r"^\s*(?:(?:it|test|specify)(?:\.(?:only|skip|concurrent|serial|sequential|fixme|fail|failing|todo"
+                         r"|each\([^)]*\)))*\s*\(|(?:async\s+)?def\s+test\w*\s*\()")
+PYTHON_TEST = re.compile(r"^\s*(?:async\s+)?def\s+(test\w*)\s*\(")
+TITLE = re.compile(r"""\(\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1""")
 # A model usage limit as the Codex CLI words it ("You've hit your usage limit ... try again at 3:05 PM."):
 # the same pattern bin/vibe-verifier's USAGE_LIMIT reads from an explorer's failure annotation.
 USAGE_LIMIT = re.compile(r"You(?:'|’)ve (?:hit|reached) your (?:[\w-]+ ){0,3}limit\b", re.I)
@@ -149,30 +165,66 @@ class Repository:
         return self.cache[key]
 
 
-def quote_problem(lines, path, number, quote):
+def quote_problem(lines, path, number, quote, whole):
+    """Why `quote` is not at line `number` of the file (`whole`: the line's whole text, else a part of it of
+    at least MIN_PART characters), or None."""
     text = quote.strip()
     if lines is None:
         return "%s is not a file in the repository" % path
-    if len(text) < MIN_QUOTE:
+    if len(text) < (MIN_QUOTE if whole else MIN_PART):
         return "the quote %r at %s:%s is too short to check" % (quote, path, number)
     if not 1 <= number <= len(lines):
         return "%s has no line %d" % (path, number)
-    if text not in lines[number - 1]:
-        return "%s:%d does not hold %r (a fabricated quote)" % (path, number, text)
+    if (lines[number - 1].strip() != text) if whole else (text not in lines[number - 1]):
+        return "%s:%d does not hold %r%s (a fabricated quote)" % (path, number, text, " as its whole line" if whole else "")
+    if whole and OPENER.match(text):
+        return "%s:%d only opens a call (%r): quote the line that holds the value it checks" % (path, number, text)
     return None
 
 
+def is_test_file(path, lines):
+    """A test as the affected-tests selection knows one: *.test.*, *.spec.*, __tests__/, a JS or TS file that
+    imports node:test, or a Python test file."""
+    if path.endswith(JS_EXTENSIONS):
+        return matches(path, JS_TESTS) or any(NODE_TEST.search(line) for line in lines)
+    return matches(path, PY_TESTS)
+
+
+def enclosing_test(lines, number):
+    """The nearest test declaration above line `number`, with the two lines after it (a long title is
+    wrapped onto the next line), or None. An assertion belongs to the test it sits in."""
+    for index in range(number - 2, -1, -1):
+        if DECLARATION.match(lines[index]):
+            return "\n".join(lines[index:index + 3])
+    return None
+
+
+def declared_title(declaration):
+    """The title a declaration gives its test: a Python test function's name, or the string literal a JS
+    test call opens with; None when the title is not a literal (a variable)."""
+    python = PYTHON_TEST.search(declaration)
+    if python:
+        return python.group(1)
+    literal = TITLE.search(declaration)
+    return literal.group(2) if literal else None
+
+
 def proof_problem(files, proof):
-    lines = files.lines("HEAD", proof["file"])
-    problem = quote_problem(lines, proof["file"], proof["line"], proof["assertion"])
+    path = posixpath.normpath(proof["file"].strip())
+    lines = files.lines("HEAD", path)
+    problem = quote_problem(lines, path, proof["line"], proof["assertion"], whole=True)
     if problem:
         return problem
-    title = proof["test"].strip()
-    above = [index for index, line in enumerate(lines[:proof["line"]], 1) if title and title in line]
-    if not title or not any(title in line for line in lines):
-        return "%s has no test titled %r" % (proof["file"], proof["test"])
-    if not above:
-        return "%s:%d comes before its test %r" % (proof["file"], proof["line"], title)
+    if not is_test_file(path, lines):
+        return "%s is not a test file" % path
+    declaration = enclosing_test(lines, proof["line"])
+    if declaration is None:
+        return "no test is declared above %s:%d" % (path, proof["line"])
+    title, declared = proof["test"].strip(), declared_title(declaration)
+    if declared is not None and title != declared:
+        return "%s:%d is in the test %r, not %r" % (path, proof["line"], declared, title)
+    if declared is None and (len(title) < MIN_PART or title not in declaration):
+        return "the test around %s:%d is not titled %r" % (path, proof["line"], title)
     return None
 
 
@@ -193,16 +245,18 @@ def excluded_problem(files, grade, linked):
     exclusion = grade["exclusion"]
     if not exclusion:
         return "graded EXCLUDED with no exclusion"
-    problem = quote_problem(files.lines(files.base, exclusion["plan"]), exclusion["plan"], exclusion["line"], exclusion["quote"])
+    plan = posixpath.normpath(exclusion["plan"].strip())
+    problem = quote_problem(files.lines(files.base, plan), plan, exclusion["line"], exclusion["quote"], whole=False)
     if problem:
         return problem + " at the merge base"
     link = LINK.fullmatch(exclusion["owner"].strip())
     if not link or not ticket_coverage.repo_path(link.group("path")):
         return "the owner %r is not a path#anchor link" % exclusion["owner"]
-    if (link.group("path"), link.group("anchor")) in linked:
+    owner = (posixpath.normpath(link.group("path")), link.group("anchor"))
+    if owner in {(posixpath.normpath(path), anchor) for path, anchor in linked}:
         return "the owner %s is a section this pull request links, so the item is its own" % exclusion["owner"]
     try:
-        lines, start, level = ticket_coverage.linked_section(files.repo, files.base, *link.groups())
+        lines, start, level = ticket_coverage.linked_section(files.repo, files.base, *owner)
     except CannotRun as error:
         return "the owner cannot be read: %s" % error
     taken = [rid for _, line in ticket_coverage.section_text(lines, start, level) for rid in ticket_coverage.ids(line, "takes")]
