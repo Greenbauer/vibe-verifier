@@ -46,6 +46,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -79,11 +80,13 @@ def plan_ids(*texts):
 
 
 def fetch_plan(endpoint, plan_id, token):
-    """The plan store's JSON for one plan."""
+    """The plan store's JSON for one plan, over http(s) only."""
+    if urllib.parse.urlsplit(endpoint).scheme not in ("https", "http"):
+        raise Unreadable("the plan store endpoint is not an http(s) URL: %s" % endpoint)
     request = urllib.request.Request("%s/plans/%s" % (endpoint.rstrip("/"), plan_id),
                                      headers={"Authorization": "Bearer " + token, "Accept": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310: the scheme is checked http(s) above
             plan = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         raise Unreadable("the plan store answered %d" % error.code)

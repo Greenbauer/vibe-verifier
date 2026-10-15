@@ -115,3 +115,7 @@ class PlanStore(unittest.TestCase):
             self.assertEqual(result.returncode, 2, says)
             self.assertIn(says, result.stderr)
             self.assertIsNone(text, says)
+        # Only an http(s) store is read: a file:// endpoint is refused before any read.
+        result, text = self.run_ticket("[plan:%s]\n" % PLAN_ID, endpoint="file:///etc/passwd")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("not an http(s) URL", result.stderr)
