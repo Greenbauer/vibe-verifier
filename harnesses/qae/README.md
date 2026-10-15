@@ -437,6 +437,17 @@ as `entries:` instead, as it does to `actions/gates`. Without either, one width 
   [page record](#an-error-a-page-outside-the-site-logged) `console-pages.jsonl`, which keep their
   places. The session log names the files it saved by their paths, so the step renames those paths
   in it too, and a network record the explorer saved is still found by `qae-artifacts`.
+- The same step holds the explorer to its share, which `actions/qae-inputs` declares as its
+  `share-ids` output (`["AC1","AC3"]`, a step output the explorer cannot change). A criterion's own
+  files keep their places only for a criterion of the share: the files of any other move under
+  `shard-<n>/qae/`, where the gates still read its network record, and its `acceptance-check` line is
+  left out of `verdicts/<n>.md`, with a warning that names it. The verdict counted for a criterion is
+  the one of the explorer whose share it is. `verdict.md` itself goes under `shard-<n>/` whole, as
+  the explorer wrote it. A consumer's explorer given AC1 and AC3 also walked TC1 and TC3, the shares
+  of two others, and the merge refused the run although each criterion had its own explorer's verdict
+  (2026-10-15). A copy of the step whose `actions/qae-inputs` pin declares no share fails here,
+  before anything of the explorer's is kept. A consumer copy made before this keeps every
+  criterion's files in place whatever its pins, so moving the pins is not enough: copy the step too.
 - Each explorer uploads its evidence under its own name: `qae-artifacts-<run_attempt>` for the
   first, `qae-artifacts-<run_attempt>-<n>` for the others. The usage artifact is named the same way.
 - The verify job merges them. It takes each planned explorer's evidence from the newest attempt
@@ -963,6 +974,11 @@ criterion that expects a refusal there still declares it (`expected-refusal: 400
   The step reads `git status -z`: plain porcelain quotes a path with a space or a non-ASCII byte,
   and an artifact named "<record> <explorer tag>.pdf" inside `qae-artifacts/` failed as a write
   outside it (a consumer's split run, 2026-10-15).
+- **An explorer's share is held by the workflow, not the prompt.** "Walk only those" is a
+  suggestion; the step that keeps the evidence sets aside whatever one of several explorers left for
+  a criterion outside its share ([above](#splitting-a-large-pull-request-across-explorers)). A
+  consumer's explorer walked two criteria of other explorers' shares and the merge refused a run
+  whose every criterion had a verdict from its own explorer (2026-10-15).
 - **Nothing to explore costs no model session.** A PR that needs no check
   ([above](#which-pull-requests-need-a-check)), or lists no criteria at all, skips the build and the
   explorer: the first because there is nothing for a browser to check, the second because the verdict

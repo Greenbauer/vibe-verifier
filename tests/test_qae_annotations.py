@@ -108,7 +108,7 @@ class QaeInputs(unittest.TestCase):
         result, output = self.run_action(work)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("references: 1\nhome-desktop: 1440x900\n", result.stdout)
-        self.assertEqual(output, "references=%s\nmax-turns=130\nshare=\n" % json.dumps(DIGESTS))
+        self.assertEqual(output, "references=%s\nmax-turns=130\nshare=\nshare-ids=[\"AC1\", \"AC2\"]\n" % json.dumps(DIGESTS))
         self.assertEqual(Path(work, "qae-artifacts", "references", "home-desktop.png").read_bytes(), HOME)
         self.assertIn("- home-desktop: qae-inputs/references/home-desktop.png, 1440 pixels wide (1440 x 900)",
                       Path(work, "qae-inputs", "references.md").read_text())
@@ -117,7 +117,7 @@ class QaeInputs(unittest.TestCase):
         work = workdir(self)
         result, output = self.run_action(work)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(output, "references={}\nmax-turns=130\nshare=\n")
+        self.assertEqual(output, "references={}\nmax-turns=130\nshare=\nshare-ids=[\"AC1\", \"AC2\"]\n")
         self.assertFalse(os.path.exists(os.path.join(work, "qae-artifacts")))
         self.assertFalse(os.path.exists(os.path.join(work, "qae-inputs", "references.md")))
 

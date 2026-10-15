@@ -412,15 +412,29 @@ jobs:
         # session log names files by their paths, so those paths are renamed in it as well. The page
         # record (console-pages.jsonl) keeps its name: the verify job appends each explorer's to one
         # file. The one explorer of an unsplit run keeps every name it wrote.
+        # One of several is held to its share here, by the workflow: the prompt's "walk only those" is
+        # a suggestion. An explorer that also walked a criterion of another's share left that criterion's
+        # files where the other's go, and the merge refused the run although every criterion had its own
+        # explorer's verdict (a consumer's split run, 2026-10-15). A criterion outside the share (the
+        # references step's share-ids output, which the explorer cannot change) has its files moved under
+        # shard-<n>/qae/ like any other file, where the gates still read its network record, and its
+        # acceptance-check line is left out of verdicts/<n>.md, so the verdict counted is the one of the
+        # explorer whose share it is. verdict.md itself goes under shard-<n>/ whole, as the explorer wrote it.
         if: always()
         env:
           SHARD: ${{ matrix.shard || 1 }}
           SHARDS: ${{ strategy.job-total }}
+          SHARE_IDS: ${{ steps.references.outputs.share-ids }}
         run: |
           python3 - <<'PY'
-          import glob, os, re, shutil
+          import glob, json, os, re, shutil, sys
           root, shard, moved = "qae-artifacts", os.environ["SHARD"], {}
-          own = "shard-" + shard
+          own, split = "shard-" + shard, os.environ["SHARDS"] != "1"
+          # A criterion's own file (qae/AC2.md, qae/TC1-step-3.png), and a verdict line for a criterion as
+          # the acceptance-verdict gate reads one (gates/_acceptance.py, marker_re).
+          criterion = re.compile(r"(?:AC|TC)[0-9]+")
+          check = re.compile(r"^[ \t]*(?:[-*+][ \t]+(?:\[[xX]\][ \t]+)?)?acceptance-check:[ \t]*((?:AC|TC)[0-9]+)(?:[ \t]|$)",
+                             re.IGNORECASE)
 
           def rename(old, new):
               os.makedirs(os.path.dirname(os.path.join(root, new)), exist_ok=True)
@@ -433,11 +447,31 @@ jobs:
 
           # verdicts/ holds what this step copies and nothing the explorer put there.
           shutil.rmtree(os.path.join(root, "verdicts"), ignore_errors=True)
+          share, outside = None, set()
+          if split:
+              try:
+                  share = json.loads(os.environ.get("SHARE_IDS", ""))
+              except ValueError:
+                  pass
+              if not isinstance(share, list):
+                  print("::error::explorer %s of %s has no declared share (the references step's share-ids output): move "
+                        "actions/qae-inputs to a catalog commit that declares it" % (shard, os.environ["SHARDS"]))
+                  sys.exit(1)
           verdict = os.path.join(root, "verdict.md")
           if os.path.isfile(verdict) and os.path.getsize(verdict):
               os.makedirs(os.path.join(root, "verdicts"))
-              shutil.copyfile(verdict, os.path.join(root, "verdicts", shard + ".md"))
-          if os.environ["SHARDS"] != "1":
+              with open(verdict, encoding="utf-8", errors="surrogateescape", newline="") as handle:
+                  lines = handle.read().splitlines(True)
+              kept = []
+              for line in lines:
+                  found = check.match(line)
+                  if share is not None and found and found.group(1).upper() not in share:
+                      outside.add(found.group(1).upper())
+                  else:
+                      kept.append(line)
+              with open(os.path.join(root, "verdicts", shard + ".md"), "w", encoding="utf-8", errors="surrogateescape", newline="") as handle:
+                  handle.write("".join(kept))
+          if split:
               for name in entries():
                   globbed = re.match(r"(session|console|network)-", name)
                   if name in ("qae", "references", "verdicts", "console-pages.jsonl", own):
@@ -447,8 +481,16 @@ jobs:
                   else:
                       rename(name, own + "/" + name)
               for name in entries("qae"):
-                  if name != "features" and not re.match(r"(AC|TC)[0-9]", name):
-                      rename("qae/" + name, own + "/qae/" + name)
+                  own_file = criterion.match(name)
+                  if name == "features" or (own_file and own_file.group(0) in share):
+                      continue
+                  if own_file:
+                      outside.add(own_file.group(0))
+                  rename("qae/" + name, own + "/qae/" + name)
+          if outside:
+              print("::warning::explorer %s walked %s outside its share (%s): its evidence for them is kept under %s/qae/ and its "
+                    "verdict lines for them are not counted; the explorer whose share each is judges it"
+                    % (shard, ", ".join(sorted(outside, key=lambda item: (item[:2], int(item[2:])))), ", ".join(share) or "no criterion", own))
           for log in glob.glob(os.path.join(root, "session-*", "session.md")):
               with open(log, encoding="utf-8", errors="surrogateescape") as handle:
                   text = was = handle.read()

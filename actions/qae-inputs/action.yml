@@ -63,6 +63,14 @@ outputs:
       names, which the browser's page record (actions/qae-browser/console-pages.js) reads from the workspace:
       it hides other explorers' tagged records, refuses requests on them and the deletion of those fixtures.
     value: ${{ steps.prepare.outputs.share }}
+  share-ids:
+    description: >-
+      The ids of the criteria this explorer walks, as a JSON list (["AC1","AC4","TC2"]): every criterion for one
+      explorer, its share for one of several ([] for one that only re-walks the features). The explore job's step
+      after the explorer reads it to hold the explorer to its share: the evidence and verdict lines it left for any
+      other criterion are set aside, so they never reach the merge in the place of the explorer whose share it is.
+      A step output, because the explorer can write under qae-inputs/.
+    value: ${{ steps.prepare.outputs.share-ids }}
 runs:
   using: composite
   steps:
@@ -87,10 +95,12 @@ runs:
         digests="$RUNNER_TEMP/vv-reference-digests.json"
         turns="$RUNNER_TEMP/vv-explorer-turns"
         share="$RUNNER_TEMP/vv-explorer-share"
+        ids="$RUNNER_TEMP/vv-explorer-share-ids"
         python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" qae-inputs --manifest "$manifest" --references "$VV_REFERENCES" \
           --evidence "$VV_EVIDENCE" --listing "$VV_REFERENCES.md" --digests "$digests" --widths-file qae-inputs/widths \
-          --turns "$turns" --shard "$VV_SHARD" --shards "$VV_SHARDS" --share "$share" \
+          --turns "$turns" --shard "$VV_SHARD" --shards "$VV_SHARDS" --share "$share" --share-ids "$ids" \
           --run "${VV_RUN:-}" --isolation qae-inputs/isolation.json
         echo "references=$(cat "$digests")" >> "$GITHUB_OUTPUT"
         echo "max-turns=$(cat "$turns")" >> "$GITHUB_OUTPUT"
         echo "share=$(cat "$share")" >> "$GITHUB_OUTPUT"
+        echo "share-ids=$(cat "$ids")" >> "$GITHUB_OUTPUT"
