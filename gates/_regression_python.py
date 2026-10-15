@@ -92,8 +92,10 @@ class Result(unittest.TestResult):
         self.outcomes.append([test.id(), "skipped", ""])
 
     def addSubTest(self, test, subtest, err):
-        if err is not None:
-            self.outcomes.append([subtest.id(), "failed", described(err[1])])
+        # A failed subtest fails its test, and unittest then reports nothing else for that test (no
+        # addSuccess, no addFailure): it is recorded under the test's own id, with its first failure.
+        if err is not None and all(row[0] != test.id() for row in self.outcomes):
+            self.outcomes.append([test.id(), "failed", described(err[1])])
 
 
 def with_unittest(paths):

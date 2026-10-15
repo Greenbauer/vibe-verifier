@@ -346,6 +346,24 @@ class Python(unittest.TestCase):
         self.assertEqual(Path(repo, "shop/price.py").read_text(), PY_FIX)
         tree_is_head(self, repo)
 
+    def test_unittest_a_test_whose_failing_check_is_in_a_subtest_fails_on_the_code_before_the_fix(self):
+        # unittest reports a failed subtest under the subtest's own id and then nothing for its test (no
+        # addSuccess, no addFailure), so the test that passed at HEAD must still read as failed there.
+        cases = PY_UNITTEST.replace("        self.assertEqual(discount(200, True), 180)\n",
+                                    "        for total, paid in ((50, 50), (200, 180)):\n"
+                                    "            with self.subTest(total=total):\n"
+                                    "                self.assertEqual(discount(total, True), paid)\n")
+        for python, said in ((self.bare, "tests/test_price.py: test_price.Discount.test_members_get_ten_percent_off_over_100 fails "
+                                         "on the code before the fix: AssertionError: 200 != 180"),
+                             (self.pytest, "tests/test_price.py::Discount::test_members_get_ten_percent_off_over_100 fails on "
+                                           "the code before the fix: AssertionError: 200 != 180")):
+            with self.subTest(python=os.path.basename(os.path.dirname(os.path.dirname(python)))):
+                repo = self.repo()
+                result = fix(repo, {"shop/price.py": PY_FIX, "tests/test_price.py": cases}, "fix: members", "", "--python", python)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(said, result.stderr)
+                tree_is_head(self, repo)
+
     def test_unittest_a_test_run_by_path_that_fails_only_on_a_missing_module_does_not_show_the_bug(self):
         repo = self.repo()
         script = "import unittest\n\nfrom shop.mask import mask\n\n\nclass Mask(unittest.TestCase):\n    def test_masks(self):\n" \

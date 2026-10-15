@@ -22,7 +22,10 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Above everything that can run here: the suite (about 9 minutes) and the limits of the gates that run it
+    # again (changed-code-mutation 900 seconds, regression-test-fails-on-base 600, coverage-not-lost 300), so a
+    # gate past its own limit says so (exit 2) before the job is killed.
+    timeout-minutes: 45
     permissions:
       contents: read
       pull-requests: read # gh pr view, for the title and body regression-test-fails-on-base reads

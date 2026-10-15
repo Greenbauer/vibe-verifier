@@ -6,4 +6,6 @@ changed-code-mutation --source dashboard/**/*.py --python .venv-tests/bin/python
 # Report-only pilots (--soak): they print findings as warnings and never fail the job, but a run that cannot be
 # judged (exit 2) still does. Both run the suite the way the job's own test step does: python3 and unittest.
 regression-test-fails-on-base --soak --title pr-inputs/title.txt --body pr-inputs/body.md
-coverage-not-lost --soak --runner unittest --args 'discover -s tests' --body pr-inputs/body.md --timeout 4800
+# coverage-not-lost on the dashboard tests only, for mutation's reason: coverage.py sees only the code a test runs in
+# its own process. On the whole suite it took 982 seconds a pull request here (16 minutes, PR #214's first run).
+coverage-not-lost --soak --runner unittest --args "discover -s tests -p 'test_dashboard_*.py'" --body pr-inputs/body.md --timeout 300

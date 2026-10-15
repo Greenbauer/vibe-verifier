@@ -1,5 +1,6 @@
 """This repository's own ci.yml: the step that lists the tests the full unittest run failed, for the
-affected-test selection report, run under bash the way CI runs it, on a real unittest log."""
+affected-test selection report, run under bash the way CI runs it, on a real unittest log; and this suite
+run inside a gate (.vibe-verifier-tests), as coverage-not-lost and regression-test-fails-on-base run it."""
 import os
 import re
 import shutil
@@ -7,8 +8,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
-from helpers import ROOT, clean_env, commit, git, make_repo, runner
+from helpers import ROOT, clean_env, commit, gate, git, make_repo, runner
 
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 STEP = "List the tests the full run failed"
@@ -117,6 +120,24 @@ class FailedTestsStep(unittest.TestCase):
             "affected-tests: miss: tests/test_beta.py failed in the full run and was not selected",
             "affected-tests: miss: tests/test_gamma.py failed in the full run and was not selected",
         ])
+
+
+class SuiteInsideAGate(unittest.TestCase):
+    def test_a_gate_a_test_runs_never_writes_the_note_of_the_gate_running_the_suite(self):
+        # The runner hands each gate VIBE_VERIFIER_QUALIFIER, a file for its `PASS (<note>)`. A gate a test of this
+        # suite runs inherited it, so coverage-not-lost's row read "PASS (soak) (no regression test, as the pull
+        # request body declares)", the note of a gate one of its tests ran.
+        work = tempfile.mkdtemp(prefix="vv-ci-note-")
+        self.addCleanup(shutil.rmtree, work, True)
+        outer, title, body = (os.path.join(work, name) for name in ("note", "title.txt", "body.md"))
+        Path(outer).write_text("")
+        Path(title).write_text("fix: a thing\n")
+        Path(body).write_text("regression-test: none -- a reason\n")
+        with mock.patch.dict(os.environ, {"VIBE_VERIFIER_QUALIFIER": outer}):
+            result = gate("regression-test-fails-on-base", work, "--title", title, "--body", body)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("no regression test, as the pull request body declares: a reason", result.stdout)
+        self.assertEqual(Path(outer).read_text(), "")
 
 
 if __name__ == "__main__":

@@ -12,11 +12,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CI_VARIABLES = ("GITHUB_BASE_REF", "GITHUB_HEAD_REF", "GITHUB_REF_NAME", "GITHUB_REF_TYPE",
-                "VIBE_VERIFIER_BASE_REF", "GITHUB_STEP_SUMMARY", "VIBE_VERIFIER_MANIFEST")
+                "VIBE_VERIFIER_BASE_REF", "GITHUB_STEP_SUMMARY", "VIBE_VERIFIER_MANIFEST", "VIBE_VERIFIER_QUALIFIER")
 
 
 def clean_env(extra=None):
-    """CI sets these for the repository under test; a temp repo must not inherit them."""
+    """CI sets these for the repository under test, and the runner sets the last two for the gate that runs
+    this suite (coverage-not-lost, regression-test-fails-on-base); a temp repo, or a gate a test runs, must
+    not inherit them."""
     env = {key: value for key, value in os.environ.items() if key not in CI_VARIABLES}
     env.update(extra or {})
     return env
