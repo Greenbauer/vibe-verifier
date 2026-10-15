@@ -125,9 +125,11 @@ runs:
           glob="${glob#"${glob%%[![:space:]]*}"}"; glob="${glob%"${glob##*[![:space:]]}"}"
           [ -n "$glob" ] && required+=(--require-ticket "$glob")
         done <<< "$VV_REQUIRE_TICKET"
+        # GitHub runs `shell: bash` with -e: without `|| code=$?` a failing gate ends the step here, before its
+        # table reaches the step summary and the comment, which is when the author needs it.
+        code=0
         python3 "$GITHUB_ACTION_PATH/../../gates/proof_audit.py" --body "$VV_BODY" --grades "$VV_GRADES" \
-          --table "$table" --format github ${required[@]+"${required[@]}"}
-        code=$?
+          --table "$table" --format github ${required[@]+"${required[@]}"} || code=$?
         [ -s "$table" ] || printf '## Proof audit: could not run (the gate wrote no table; its log says why)\n' > "$table"
         cat "$table" >> "$GITHUB_STEP_SUMMARY"
         if [ -n "$GH_TOKEN" ] && [ -n "$VV_PR" ]; then

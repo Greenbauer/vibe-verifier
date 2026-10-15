@@ -26,11 +26,12 @@ In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one s
 - `tests/test_proof_audit.py::test_an_exclusion_needs_an_owner_that_takes_the_item_at_the_merge_base`
 - `tests/test_proof_audit.py::test_a_usage_limit_or_failed_run_could_not_run_even_in_soak`
 - `tests/test_proof_audit.py::test_grades_that_do_not_match_the_body_or_the_schema_could_not_run`
-- `tests/test_proof_audit.py::test_requirement_ids_claimed_without_a_ticket_line_fail`
-- `tests/test_proof_audit.py::test_a_required_path_changed_with_no_ticket_needs_a_stated_reason`
+- `tests/test_proof_audit_unlinked.py::test_requirement_ids_claimed_without_a_ticket_line_fail`
+- `tests/test_proof_audit_unlinked.py::test_a_required_path_changed_with_no_ticket_needs_a_stated_reason`
+- `tests/test_proof_audit_unlinked.py::test_the_action_passes_each_glob_and_keeps_the_table_when_the_gate_fails`
 - `tests/test_proof_audit.py::test_the_local_run_gives_the_model_the_requirements_and_never_the_body`
 - `tests/test_proof_audit.py::test_the_local_run_exits_as_the_gate_does`
-- `tests/test_proof_audit.py::test_the_local_run_passes_require_ticket_to_the_gate`
+- `tests/test_proof_audit_unlinked.py::test_the_local_run_passes_require_ticket_to_the_gate`
 - `tests/test_proof_audit.py::test_ci_plans_then_grades_each_shard_into_its_own_file`
 - `tests/test_proof_audit.py::test_a_usage_limit_is_recorded_and_the_gate_cannot_run`
 - `tests/test_proof_audit.py::test_ci_runs_without_codex_sandbox_which_cannot_start_in_its_containers`

@@ -32,6 +32,7 @@ import posixpath
 import re
 import subprocess
 
+from _acceptance import HTML_COMMENT
 from _affected_graph import JS_EXTENSIONS
 from _affected_tests import JS_TESTS, NODE_TEST
 from _contract import PY_TESTS, CannotRun, Finding, git, matches, qualify, run_gate
@@ -57,7 +58,7 @@ TITLE = re.compile(r"""\(\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1""")
 # the same pattern bin/vibe-verifier's USAGE_LIMIT reads from an explorer's failure annotation.
 USAGE_LIMIT = re.compile(r"You(?:'|’)ve (?:hit|reached) your (?:[\w-]+ ){0,3}limit\b", re.I)
 # A body's declared reason for linking no plan section, as `- None: <why>` declares no criteria.
-NO_TICKET = re.compile(r"^\s*No ticket:\s*\S", re.I)
+NO_TICKET = re.compile(r"^\s*No ticket:\s*\w", re.I)  # a word, so a template's `No ticket: <why>` is no reason
 
 
 KINDS = {"object": dict, "array": list, "string": str, "null": type(None)}
@@ -316,7 +317,7 @@ def unlinked(args, body):
     pull request changes a matching file and gives no `No ticket: <why>` line."""
     if links(body):
         return []
-    lines = [line for _, line in unfenced(body.splitlines())]
+    lines = [line for _, line in unfenced(HTML_COMMENT.sub("", body).splitlines())]  # a template's example claims nothing
     claimed = list(dict.fromkeys(rid for line in lines for rid in ticket_coverage.ids(line)))
     if claimed:
         return [Finding("the body claims %d requirement ID(s) (%s) but no `Ticket: <plan>#<anchor>` line links the "
