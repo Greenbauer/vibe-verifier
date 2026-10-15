@@ -8,7 +8,8 @@ fail the job.
 Measured on a 277-pull-request history of a private TypeScript monorepo: for every pull request that
 changed a test, its code changes were reverted and the head's tests run on that, and each test that
 failed is a deliberate break. The selection listed all 132 of them. On the last 15 pull requests of
-three subscribers it listed a median of 16%, 22% and 39% of the unit test files.
+three private repositories (that monorepo and two others) it listed a median of 16%, 22% and 39% of
+their unit test files, and every test on 1 pull request in 15 in each.
 
 ## The rule
 
