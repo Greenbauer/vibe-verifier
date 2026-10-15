@@ -345,7 +345,10 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
   its own anchored PASS, in addition to the pull request's; a `- None:` in the PR body does not drop
   them. An empty file links no ticket, a ticket that declares `- None: <why>` has none, and a non-empty
   one in which no criteria can be found is a finding. `bin/vibe-verifier criteria --ticket FILE` counts
-  them the same way.
+  them the same way. A PR body line `ticket-proof: TCn -- <why> (<anchor>)` proves a ticket criterion
+  no browser can check: that `TCn` needs no check line and is not walked; its line needs an anchor
+  resolving in the tree at the head (never under `--artifacts`). A second line for one criterion, or one
+  for no ticket criterion, is a finding; a line inside an HTML comment or a code fence proves nothing.
 - A missing input file is exit 2. A criteria file with no criteria is a finding: a repository that
   subscribes has decided its PRs state them.
 - A pull request with nothing to check says so, in the same section: one item reading
@@ -1071,7 +1074,7 @@ widths, from the same manifest line as the base has it, in `qae-inputs/widths`, 
 fails a criterion on what the gate does not judge. With `--ticket FILE`
 the ticket's criteria (`qae/TCn.md` logs) are held to the same rules, their `expected-refusal:`
 declarations count, and a pull request that declares `- None:` is still judged when its ticket lists
-criteria. With `--features DIR --changed-files FILE` (the acceptance-verdict line's selection options),
+criteria. A ticket criterion the body proves with a `ticket-proof:` line is not walked, so it has no log here. With `--features DIR --changed-files FILE` (the acceptance-verdict line's selection options),
 a numbered Verify step of a feature the re-walk selected declares an expected refusal the same way,
 on its own line in the pull request's copy of the file ([feature map](feature-map.md#expected-refusals-in-a-re-walk)).
 

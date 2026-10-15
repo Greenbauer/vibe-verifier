@@ -30,7 +30,7 @@ The QAE harness: an explorer walks a pull request's acceptance criteria (and, op
 
 Copy `harnesses/qae/explore.yml` (or `explore-codex.yml`) to a consumer's workflows and `harnesses/qae/manifest` to its `.vibe-verifier-qae`; a pull request lists its criteria under `## Acceptance criteria`, each optionally naming a design reference (`[ref: <key>]`, an image the consumer's site step supplies) or the roles to walk it as (`[as: <role>, ...]`).
 
-Criteria alone no longer define coverage. The manifest also subscribes to [ticket-coverage](ticket-coverage.md): `actions/criteria` traces every linked requirement ID before a browser skip or carried walk, using a full-history checkout. Requirements a browser cannot grade stay explicit in the plan's not-checked subsection and still need PR proof or an accepted deferred owner.
+Criteria alone no longer define coverage. The manifest also subscribes to [ticket-coverage](ticket-coverage.md): `actions/criteria` traces every linked requirement ID before a browser skip or carried walk, using a full-history checkout. Requirements a browser cannot grade stay explicit in the plan's not-checked subsection and still need PR proof or an accepted deferred owner. A ticket written outside the code (a plan a requester submits) can mix in criteria no browser can check; the pull request proves each with a `ticket-proof: TCn -- <why> (<anchor>)` line, and that criterion is not walked.
 
 ## Verify
 
@@ -74,6 +74,8 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_qae_ticket.py::test_a_declared_none_does_not_drop_the_tickets_criteria`
 - `tests/test_qae_ticket.py::test_the_ticket_reaches_the_explorer_and_the_gate`
 - `tests/test_qae_ticket.py::test_a_dependency_update_passes_on_its_supplied_criteria_alone`
+- `tests/test_qae_ticket.py::test_a_ticket_criterion_proven_by_a_test_needs_its_anchor_at_the_head_and_no_walk`
+- `tests/test_qa_review.py::test_a_ticket_criterion_the_pull_request_proves_with_a_test_is_listed_as_not_walked`
 - `tests/test_qae_explore.py::test_dependabot_and_the_repositorys_pull_sync_bot_are_the_bots_that_reach_the_explorer`
 - `tests/test_runner.py::test_the_qae_browser_toolchain_installs_from_its_lockfile`
 - `tests/test_qae_explore.py::test_a_re_run_never_reads_an_earlier_attempts_evidence`
