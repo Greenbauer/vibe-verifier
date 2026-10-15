@@ -6,6 +6,7 @@ record of its own, opened the one another explorer had created from a list both 
 while that explorer still had the fourth criterion's change on it: it failed a correct criterion on what it saw.
 So criteria that name each other stay with one explorer, and each of several explorers is given a tag it names
 its records by and keeps to."""
+import json
 import os
 import unittest
 from pathlib import Path
@@ -31,7 +32,11 @@ ISOLATION = ("Your tag is {tag}. Other explorers create records on this site at 
              "customer, a fixture). Where a criterion would have you pick any record from a list, pick one with your tag or "
              "one no explorer made; never one whose name ends in another explorer's tag (qae-<run>-e<number>). When a "
              "criterion of yours builds on a record that a criterion outside your share creates, create your own first, by "
-             "that criterion's steps, with your tag.")
+             "that criterion's steps, with your tag. The browser holds you to it: it hides every record that carries "
+             "another explorer's tag, answers 409 itself to any request on one, and to deleting a record a criterion outside "
+             "your share names, and the gate fails the run on each of those and on any record you open that another "
+             "explorer created. A 409 whose error starts \"Vibe Verifier QAE\" is the harness, never the site: never judge "
+             "a criterion on it.")
 # Three criteria that stand alone and a chain of three, named three ways.
 MIXED = shards.body("a", "b", "c", "Create a record named R", "On the record from item 4, edit it", "After AC5, delete it")
 
@@ -125,6 +130,23 @@ class Share(unittest.TestCase):
                         "--widths-file", os.path.join(repo, "qae-inputs", "widths"), "--shard", "2", "--shards", "2", "--share", share)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Your tag is qae-e2. ", Path(share).read_text())
+
+    def test_the_browser_is_handed_the_tag_and_the_fixtures_other_explorers_criteria_name(self):
+        fixture, other = "949A15AD-56e4-424f-8a7d-5885ebd385cc", "507f1f77bcf86cd799439011"
+        text = shards.body("Open survey %s and answer it" % fixture, "b", "c", "Create a record named R",
+                           "On the record from item 4, open /x/%s" % other, "After AC5, delete it")
+        found = {}
+        for shard in (1, 2):
+            result, declared, repo = self.run_action({"qae-inputs/pr-body.md": text}, shard, 2)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            found[shard] = json.loads(Path(repo, "qae-inputs", "isolation.json").read_text())
+        # Explorer 1 walks AC4-AC6 (the chain), explorer 2 AC1-AC3: each may not delete what the other's criteria name.
+        self.assertEqual(found, {1: {"tag": "qae-%s-e1" % shards.RUN, "protected": [fixture.lower()]},
+                                 2: {"tag": "qae-%s-e2" % shards.RUN, "protected": [other]}})
+        # One explorer has the site to itself: no file, and one an earlier step left is removed.
+        result, _, repo = self.run_action({"qae-inputs/pr-body.md": text, "qae-inputs/isolation.json": "{}"}, 1, 1)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(Path(repo, "qae-inputs", "isolation.json").exists())
 
     def test_the_action_names_the_run_and_its_attempt(self):
         action = (ROOT / "actions" / "qae-inputs" / "action.yml").read_text()

@@ -39,11 +39,10 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
 2. The console holds no error outside the allowlist: every `[ERROR]` line in `console-*.log`, and
    every uncaught exception or rejection, which playwright-mcp writes untagged as the error's stack
    (or the value thrown); an allowlist pattern is matched against its whole entry, stack included.
-   A `Failed to load resource` line for a host other than the declared site and its further
-   declared origins is not judged, the same way a third-party request is not. Any other console
-   error still is. A site whose API answers on another host declares that host too, or a 401 or 500
-   from it reaches neither this check nor the network one (a signed-out page was once caught only by
-   this line).
+   A `Failed to load resource` line for a host other than the declared site and its further declared origins is
+   not judged, the same way a third-party request is not. Any other console error still is. A site whose API
+   answers on another host declares that host too, or a 401 or 500 from it reaches neither this check nor the
+   network one (a signed-out page was once caught only by this line).
    An error a page outside the site logged is not judged either: a hosted page a link opened that
    fails to reach its own analytics is not the site's failure. A console line names the script or
    resource the error is about, never the page that logged it, so the page is read from the record
@@ -52,8 +51,8 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    Every page that logged the line must be an http(s) page outside the declared site and its further
    origins, and the line must not be about a URL of the site (for an exception, a script in its
    stack). An error with no record is judged, so a run without the record is judged as before, and
-   so is one a page of the site logged, whatever it is about: the site's page failing to load a third-party script may be the site's own doing
-   (its content security policy, a wrong URL).
+   so is one a page of the site logged, whatever it is about: the site's page failing to load a third-party
+   script may be the site's own doing (its content security policy, a wrong URL).
 3. The session log exists (`session-*/session.md`, written by `--save-session`) and shows the
    browser was driven: at least one `browser_navigate` call.
 4. The network record exists and is clean: at least one `browser_network_requests` result in the
@@ -81,10 +80,9 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    appended to each further declared origin (whose host a pull request cannot know when every
    preview gets its own), a URL is taken as written, and either must match the request's URL exactly (query included, fragment
    dropped); `{id}` stands for one path segment a run mints: `.../itineraries/{id}` matches `.../itineraries/8697e680`,
-   never `.../itineraries/a/b` or another route. A 5xx, another status, another URL, and any other
-   console error still fail, and a
-   declaration of any status but a handled refusal (400, 401, 403, 404, 409 or 422), or a path with
-   no site to resolve it, is a finding.
+   never `.../itineraries/a/b` or another route. A 5xx, another status, another URL, and any other console
+   error still fail, and a declaration of any status but a handled refusal (400, 401, 403, 404, 409 or 422),
+   or a path with no site to resolve it, is a finding.
    A feature re-walk walks a feature's Verify steps, and some are refusals by design (a wrong password
    answered 400, a signed-out API call answered 401), so with --features a numbered step declares its
    own: `2. Sign in with a wrong password: the form says so (expected-refusal: 400 /auth/v1/token?grant_type=password)`.
@@ -101,12 +99,13 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    The explore job writes the same widths to qae-inputs/widths for the explorer (actions/qae-inputs),
    from this line as the base has it. Feature re-walk logs are not held to it.
 
+7. Explorers of one run keep off each other's records: gates/_page_record.py, isolation_findings, says how.
+
 Exit 2 when the artifact directory is missing, or a --site-file is missing or holds anything but
 http(s) URLs: nothing was adjudicated.
 """
 import argparse
 import glob
-import hashlib
 import os
 import re
 import urllib.parse
@@ -114,7 +113,7 @@ import urllib.parse
 from _acceptance import body_criteria, declares_none, named_references, png_size, ticket_items
 from _contract import CannotRun, Finding, run_gate
 from _features import add_selection_arguments, parse, selection
-from _page_record import digest, page_record
+from _page_record import digest, harness_refusals, isolation_findings, page_record
 
 GATE = "qae-artifacts"
 STEP_LINE = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):", re.IGNORECASE)
@@ -312,7 +311,7 @@ def about(message):
 def logged_off_site(message, pages, sites):
     """True when every page that logged this console error is an http(s) page outside the origins
     this run judges, and the error is not about a URL on one of them either."""
-    logged_on = pages.get(hashlib.sha256(message.split("\n")[0].encode("utf-8")).hexdigest())
+    logged_on = pages.get(digest(message.split("\n")[0]))
     if not logged_on or any(judged(url, sites) for url in about(message)):
         return False
     return all(is_origin(page) and not judged(page, sites) for page in logged_on)
@@ -476,11 +475,12 @@ def check(args):
     request_allow = [re.compile(pattern) for pattern in (args.allow_request or [])]
     items = ([] if reason else body_criteria(HTML_COMMENT.sub("", body))) + ticket + feature_steps(args)
     expected, declared = expected_refusals(items, sites)
+    expected.add(harness_refusals(root))
     return (declared
             + steps_have_screenshots(root)
             + (widths_findings(root, args.widths) if args.widths else [])
             + console_is_clean(root, console_allow, expected, sites)
-            + session_and_network(root, request_allow, sites, expected))
+            + session_and_network(root, request_allow, sites, expected) + isolation_findings(root))
 
 
 def add_arguments(parser):
