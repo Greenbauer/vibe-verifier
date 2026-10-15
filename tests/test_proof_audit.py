@@ -215,6 +215,31 @@ class ProofAudit(unittest.TestCase):
         result, _ = self.audit(self.repo(), body="Ticket: docs/plan.md#nowhere\n", extra=("--soak",))
         self.assert_code(result, 2, "no heading has the anchor #nowhere")
 
+    def test_requirement_ids_claimed_without_a_ticket_line_fail(self):
+        # A body that keeps its proof map but drops the Ticket line would otherwise audit nothing and pass.
+        body = "Built the covers.\n\n## Requirements (family C)\n\n- [req: C-8] [proof: tests/covers.test.ts::x]\n- [req: C-15, C-30] same\n"
+        result, table = self.audit(self.repo(), body=body)
+        self.assert_code(result, 1, "claims 3 requirement ID(s) (C-8, C-15, C-30) but no `Ticket: <plan>#<anchor>` line")
+        self.assertIn("## Proof audit: nothing audited: the body claims 3", table)
+        result, _ = self.audit(self.repo(), body="Built it.\n\n```\n- [req: C-8] an example\n```\n")
+        self.assert_code(result, 0, "no ticket linked")
+
+    def test_a_required_path_changed_with_no_ticket_needs_a_stated_reason(self):
+        repo = self.repo()  # its branch changes src/covers.ts
+        result, table = self.audit(repo, body="Built it.\n", extra=("--require-ticket", "src/**", "--require-ticket", "app/**"))
+        self.assert_code(result, 1, "changes 1 file(s) under --require-ticket (src/covers.ts) and links no plan section")
+        self.assertIn("nothing audited", table)
+        result, _ = self.audit(repo, body="Built it.\n\nNo ticket: a crash fix no plan section covers.\n",
+                               extra=("--require-ticket", "src/**"))
+        self.assert_code(result, 0, "no ticket linked")
+        for extra in (("--require-ticket", "app/**"), ()):
+            with self.subTest(extra=extra):
+                result, _ = self.audit(repo, body="Built it.\n", extra=extra)
+                self.assert_code(result, 0, "no ticket linked")
+        action = (ROOT / "actions" / "proof-audit" / "action.yml").read_text()
+        self.assertIn('required+=(--require-ticket "$glob")', action)
+        self.assertIn('--format github ${required[@]+"${required[@]}"}', action)
+
 
 FAKE_CODEX = r'''#!/usr/bin/env python3
 import json, os, sys
@@ -355,6 +380,13 @@ class Grader(unittest.TestCase):
         action = (ROOT / "actions" / "proof-audit" / "action.yml").read_text()
         self.assertIn('--sandbox "$VV_SANDBOX"', action)
         self.assertIn("    default: danger-full-access\n", action)
+
+    def test_the_local_run_passes_require_ticket_to_the_gate(self):
+        write(self.work, {"plain.md": "Built the covers.\n"})
+        result = self.run_grader("--body", str(self.work / "plain.md"), "--require-ticket", "src/**")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("changes 1 file(s) under --require-ticket (src/covers.ts)", result.stdout)
+        self.assertFalse((self.work / "calls.jsonl").exists())
 
     def test_a_runner_without_a_chatgpt_login_cannot_grade(self):
         write(self.work, {"home/auth.json": json.dumps({"auth_mode": "apikey"})})

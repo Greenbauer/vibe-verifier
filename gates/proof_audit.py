@@ -21,7 +21,10 @@ gate cannot run. Per ID, the model's grade is checked, never trusted:
 
 A shard the grader could not grade (the Codex CLI's own error: a usage limit, a timeout, output that is not
 JSON) is exit 2, never a pass, and so are grades that do not match harnesses/proof-audit/schema.json. No
-Ticket line, or linked sections with no IDs, is a qualified pass. --table FILE gets the per-ID table.
+Ticket line, or linked sections with no IDs, is a qualified pass, with two exceptions that are findings: a body
+that claims `[req: ID]` items without the Ticket line that would define them, and, with --require-ticket GLOB, a
+pull request that changes a matching file and neither links a section nor says why on a `No ticket: <why>`
+line. --table FILE gets the per-ID table.
 """
 import json
 import os
@@ -33,7 +36,7 @@ from _affected_graph import JS_EXTENSIONS
 from _affected_tests import JS_TESTS, NODE_TEST
 from _contract import PY_TESTS, CannotRun, Finding, git, matches, qualify, run_gate
 from _proof_audit import SCHEMA, merge_base, requirements
-from _ticket import LINK, links
+from _ticket import LINK, links, unfenced
 import ticket_coverage
 
 GATE = "proof-audit"
@@ -53,6 +56,8 @@ TITLE = re.compile(r"""\(\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1""")
 # A model usage limit as the Codex CLI words it ("You've hit your usage limit ... try again at 3:05 PM."):
 # the same pattern bin/vibe-verifier's USAGE_LIMIT reads from an explorer's failure annotation.
 USAGE_LIMIT = re.compile(r"You(?:'|’)ve (?:hit|reached) your (?:[\w-]+ ){0,3}limit\b", re.I)
+# A body's declared reason for linking no plan section, as `- None: <why>` declares no criteria.
+NO_TICKET = re.compile(r"^\s*No ticket:\s*\S", re.I)
 
 
 KINDS = {"object": dict, "array": list, "string": str, "null": type(None)}
@@ -305,6 +310,30 @@ def write_table(path, text):
             handle.write(text)
 
 
+def unlinked(args, body):
+    """The finding for a body that links no Ticket section yet must: one that claims `[req: ID]` items anyway
+    (the section that defines them is unlinked, so none would be audited), or, with --require-ticket, one whose
+    pull request changes a matching file and gives no `No ticket: <why>` line."""
+    if links(body):
+        return []
+    lines = [line for _, line in unfenced(body.splitlines())]
+    claimed = list(dict.fromkeys(rid for line in lines for rid in ticket_coverage.ids(line)))
+    if claimed:
+        return [Finding("the body claims %d requirement ID(s) (%s) but no `Ticket: <plan>#<anchor>` line links the "
+                        "section that defines them, so none of them is audited: add that line"
+                        % (len(claimed), ", ".join(claimed[:8]) + (", ..." if len(claimed) > 8 else "")))]
+    if not args.require_ticket or any(NO_TICKET.match(line) for line in lines):
+        return []
+    base = merge_base(args.repo, args.base_ref)
+    changed = [path for path in git(args.repo, "diff", "--name-only", "--no-renames", "-z", base, "HEAD").split("\0")
+               if path and matches(path, args.require_ticket)]
+    if not changed:
+        return []
+    return [Finding("the pull request changes %d file(s) under --require-ticket (%s) and links no plan section: add "
+                    "`Ticket: <plan>#<anchor>` for the section it implements, or a line `No ticket: <why>` saying why "
+                    "none applies" % (len(changed), ", ".join(changed[:5]) + (", ..." if len(changed) > 5 else "")))]
+
+
 def check(args):
     try:
         with open(args.body, encoding="utf-8") as handle:
@@ -312,6 +341,10 @@ def check(args):
     except OSError as error:
         raise CannotRun("--body cannot be read: %s" % error)
     items, notes = requirements(args.repo, args.base_ref, body)
+    unaudited = [] if items else unlinked(args, body)
+    if unaudited:
+        write_table(args.table, table([], "nothing audited: %s" % unaudited[0].message))
+        return unaudited
     if not items:
         qualify("; ".join(notes))
         write_table(args.table, table([], "nothing to audit (%s)" % "; ".join(notes)))
@@ -339,6 +372,9 @@ def add_arguments(parser):
     parser.add_argument("--body", required=True, metavar="FILE", help="the pull request's body: its Ticket lines name the requirements")
     parser.add_argument("--grades", required=True, metavar="DIR", help="the grader's <K>.json files (bin/vibe-verifier proof-audit)")
     parser.add_argument("--table", metavar="FILE", help="write the per-ID table, in Markdown, here")
+    parser.add_argument("--require-ticket", action="append", default=[], metavar="GLOB",
+                        help="a pull request that changes a file matching GLOB (repeatable) must link a Ticket section or "
+                        "say why none applies on a `No ticket: <why>` line")
 
 
 if __name__ == "__main__":

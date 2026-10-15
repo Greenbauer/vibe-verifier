@@ -268,6 +268,8 @@ def audit(args):
                "--table", table, "--format", args.format]
     if args.base_ref:
         command += ["--base-ref", args.base_ref]
+    for glob in args.require_ticket:
+        command += ["--require-ticket", glob]
     code = subprocess.run(command).returncode
     if os.path.isfile(table):
         with open(table, encoding="utf-8") as handle:
@@ -326,4 +328,7 @@ def add_arguments(parser):
                         "sandbox (bubblewrap) cannot start and every read fails, so CI passes danger-full-access, as the QAE "
                         "explorer does; a run that changed the working tree is refused either way")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="seconds one shard may take (default %d)" % DEFAULT_TIMEOUT)
+    parser.add_argument("--require-ticket", action="append", default=[], metavar="GLOB",
+                        help="passed to the gate: a pull request that changes a file matching GLOB (repeatable) must link "
+                        "a Ticket section or say why none applies on a `No ticket: <why>` line")
     parser.add_argument("--format", choices=["text", "github"], default="text")
