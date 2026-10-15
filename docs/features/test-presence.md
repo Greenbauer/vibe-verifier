@@ -21,5 +21,6 @@ Add `new-source-has-test` to `.vibe-verifier`; `--source` and `--exclude` narrow
 ## Gotchas
 
 - It proves a test exists, not that it tests anything; `changed-code-mutation` measures that.
+- `regression-test-fails-on-base` is meant to replace it for test presence: on a fix it asks that a new or changed test fails on the code before the fix. Unlike this gate, it asks nothing of a pull request that is not a fix.
 - A Python file is a test only by name: `test_*.py`, `*_test.py`, `test-*.py`, `*-test.py` or `*.test.py`. The list lives in `gates/_contract.py`, and `cognitive-complexity` and `changed-code-mutation` read the same one.
   A helper the tests import is source, and needs a test that imports it.
