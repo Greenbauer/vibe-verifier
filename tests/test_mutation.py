@@ -12,7 +12,7 @@ import time
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, commit, gate, git, make_repo
+from helpers import ROOT, commit, gate, git, install_fixture, make_repo
 
 FIXTURE = ROOT / "tests" / "fixtures" / "changed-code-mutation"
 TOOL = ROOT / "tools" / "changed-code-mutation"
@@ -47,23 +47,6 @@ it("charges members full price at exactly 100", () => { expect(discount(100, tru
 
 def findings(result):
     return json.loads(result.stdout)["findings"]
-
-
-def install_fixture(deps):
-    """`npm ci` of the fixture into `deps`, and proof that the Vitest it installed loads.
-
-    npm exits 0 when the download of an optional package fails and installs the rest without a word.
-    Vite's native binding is one (a package per platform), and without it Vitest does not load: a CI
-    run on 2026-10-14 got that install and failed every test of the class. A second `npm ci` fetches
-    what the first left out; a Vitest that still does not load fails the class with the reason."""
-    for _ in range(2):
-        subprocess.run(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=deps, check=True,
-                       capture_output=True, text=True)
-        loads = subprocess.run(["node", "--input-type=module", "--eval", 'await import("vitest/node");'], cwd=deps,
-                               capture_output=True, text=True)
-        if loads.returncode == 0:
-            return
-    raise RuntimeError("npm ci exited 0 twice and the fixture's Vitest still does not load:\n" + loads.stderr)
 
 
 class RealStryker(unittest.TestCase):

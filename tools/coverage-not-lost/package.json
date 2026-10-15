@@ -1,0 +1,12 @@
+{
+  "name": "vibe-verifier-coverage-not-lost",
+  "private": true,
+  "description": "The pinned toolchain for the coverage-not-lost gate on Vitest: @vitest/coverage-v8 at each Vitest version it measures with when the project has no provider of its own, each under the alias coverage-v8-<version>. A provider runs only under a Vitest of exactly its version, and the Vitest that runs is always the project's own.",
+  "dependencies": {
+    "coverage-v8-2.1.9": "npm:@vitest/coverage-v8@2.1.9",
+    "coverage-v8-3.2.7": "npm:@vitest/coverage-v8@3.2.7",
+    "coverage-v8-4.0.18": "npm:@vitest/coverage-v8@4.0.18",
+    "coverage-v8-4.1.11": "npm:@vitest/coverage-v8@4.1.11",
+    "coverage-v8-5.0.3": "npm:@vitest/coverage-v8@5.0.3"
+  }
+}
