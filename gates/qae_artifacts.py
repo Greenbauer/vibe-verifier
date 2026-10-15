@@ -26,7 +26,8 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
     --ticket FILE            the criteria of the ticket the pull request implements (TC1, TC2, ...):
                              their step logs `qae/TCn.md` are held to the rules a criterion's are,
                              their `expected-refusal:` declarations count, and a pull request that
-                             declares `- None:` still needs a run when its ticket lists criteria
+                             declares `- None:` still needs a run when its ticket lists criteria. One
+                             the body proves with a `ticket-proof:` line is not walked, so not judged here
     --features DIR           the feature map, with --changed-files and the selection options of the
     --changed-files FILE     acceptance-verdict line (docs/feature-map.md): a numbered Verify step of
                              a feature the re-walk selected may declare `expected-refusal:` too (see 5)
@@ -110,7 +111,7 @@ import os
 import re
 import urllib.parse
 
-from _acceptance import body_criteria, declares_none, named_references, png_size, ticket_items
+from _acceptance import body_criteria, declares_none, named_references, png_size, split_ticket, ticket_items
 from _contract import CannotRun, Finding, run_gate
 from _features import add_selection_arguments, parse, selection
 from _page_record import digest, harness_refusals, isolation_findings, page_record
@@ -463,7 +464,8 @@ def check(args):
     if not root or not os.path.isdir(root):
         raise CannotRun("artifact directory not found: %s" % (root or "(none given)"))
     body = read_declared(args.criteria, "criteria")
-    ticket = ticket_items(HTML_COMMENT.sub("", read_declared(args.ticket, "ticket")))[0]
+    # A ticket criterion the body proves with a test (`ticket-proof:`) is not walked, so it has no step log.
+    ticket = split_ticket(ticket_items(HTML_COMMENT.sub("", read_declared(args.ticket, "ticket")))[0], body)[0]
     reason = declares_none(body)
     if reason and not ticket:
         print("%s: nothing was required, declared: %s" % (GATE, reason))

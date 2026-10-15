@@ -71,6 +71,12 @@ The ticket's criteria (opt-in, harnesses/qae/README.md):
                           or leaves one out cannot drop them. An empty file links no ticket; a non-empty
                           one in which no criteria can be found is a finding
 
+    ticket-proof: TCn -- <why> (<anchor>)
+                          a line of the PR body (--criteria) for a ticket criterion no browser can
+                          check: TCn is then not walked and needs no check line; instead the line needs
+                          exactly one anchor that resolves in the tree at the head (never under
+                          --artifacts). A proof line naming no ticket criterion is a finding
+
 A missing input file is exit 2: nothing was graded. A criteria file with no criteria in it is a
 finding, because a repository that subscribes to this gate has decided its PRs state them.
 """
@@ -79,9 +85,9 @@ import json
 import os
 import re
 
-from _acceptance import (ANCHOR_FORMS, NO_CRITERIA, anchors, annotations, baseline_problems, body_criteria,
-                         check_lines, declares_none, named_references, no_criteria_message, png_size, resolves, said,
-                         ticket_items, verdict)
+from _acceptance import (ANCHOR_FORMS, NO_CRITERIA, PROOF_TOKEN, anchors, anchors_in, annotations, baseline_problems,
+                         body_criteria, check_lines, declares_none, named_references, no_criteria_message, png_size,
+                         resolves, said, split_ticket, ticket_items, ticket_proofs, verdict)
 from _contract import CannotRun, Finding, qualify, run_gate, tracked_files
 from _features import add_selection_arguments, describe, selection
 
@@ -115,6 +121,39 @@ def line_finding(item, wording, carried, token, repo, tracked, artifacts):
     if all(reasons):
         return "%s: no anchor resolves at the head: %s" % (item, "; ".join(reasons))
     return None
+
+
+def proof_finding(item, carried, repo, tracked):
+    """Why the `ticket-proof:` lines a body carries for ticket criterion `item` are not exactly one whose anchor
+    resolves in the tree at the head, or None. Never under the artifacts: the explorer writes those."""
+    if len(carried) != 1:
+        return "%s has %d `%s:` lines; exactly one is allowed" % (item, len(carried), PROOF_TOKEN)
+    found = anchors_in(said(carried[0], PROOF_TOKEN))
+    if not found:
+        return "%s: its `%s:` line names no test; cite %s" % (item, PROOF_TOKEN, ANCHOR_FORMS)
+    reasons = [resolves(anchor, repo, tracked) for anchor in found]
+    if all(reasons):
+        return "%s: no anchor of its `%s:` line resolves at the head: %s" % (item, PROOF_TOKEN, "; ".join(reasons))
+    return None
+
+
+def proof_findings(ticket, criteria_text, repo):
+    """Findings for the ticket criteria the body proves with a test instead of a walk: each proof must resolve,
+    and a proof line for no ticket criterion is a typo that would otherwise prove nothing silently."""
+    proofs = ticket_proofs(criteria_text)
+    known = {item.casefold() for item, _ in ticket}
+    findings = [Finding("`%s: %s` names no criterion of the ticket" % (PROOF_TOKEN, item))
+                for item in sorted(proofs) if item not in known]
+    proven = split_ticket(ticket, criteria_text)[1]
+    tracked = set(tracked_files(repo)) if proven else set()
+    for item, _ in proven:
+        why = proof_finding(item, proofs[item.casefold()], repo, tracked)
+        if why:
+            findings.append(Finding(why))
+        else:
+            print("%s: %s is proven by a test the pull request names, not walked: %s"
+                  % (GATE, item, said(proofs[item.casefold()][0], PROOF_TOKEN)))
+    return findings
 
 
 def declared_references(path):
@@ -285,12 +324,13 @@ def check(args):
         print("%s: nothing to verify, declared: %s" % (GATE, reason))
         return []
     findings = [Finding(problem, args.ticket)] if problem else []
+    findings += proof_findings(ticket, criteria_text, args.repo)
     body = [] if reason else body_criteria(criteria_text)
-    findings += body_findings(criteria_text, body, reason, bool(ticket or findings), args.criteria)
-    wanted = body + ticket
-    verdict = read_input(args.verdict, "verdict")
+    findings += body_findings(criteria_text, body, reason, bool(ticket or problem), args.criteria)
+    wanted = body + split_ticket(ticket, criteria_text)[0]
     if not wanted:
         return findings
+    verdict = read_input(args.verdict, "verdict")
     tracked = set(tracked_files(args.repo))
     lines = check_lines(verdict, args.token)
     declared = declared_references(args.references)

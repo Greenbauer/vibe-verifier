@@ -182,6 +182,28 @@ def ticket_items(text, path="qae-inputs/ticket.md"):
     return [("TC%d" % (n + 1), wording) for n, (_, wording) in enumerate(items)], None
 
 
+# `ticket-proof: TC4 -- <why> [proof: path::test title]` in a pull request body says that ticket criterion is
+# one no browser can check (a test exists, a record lands in another system, an email is sent) and names the
+# test that proves it. The explorer does not walk it; acceptance-verdict requires the line's anchor to resolve
+# in the tree at the head instead (never under the run's artifacts, which the explorer writes).
+PROOF_TOKEN = "ticket-proof"
+HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
+
+
+def ticket_proofs(body):
+    """Map casefolded ticket criterion ids to the `ticket-proof:` lines a pull request body carries for them.
+    An HTML comment renders to nothing, so a line inside one (a template's example) proves nothing."""
+    return check_lines(HTML_COMMENT.sub("", body), PROOF_TOKEN)
+
+
+def split_ticket(ticket, body):
+    """(the ticket criteria a browser walks, those the body proves with a `ticket-proof:` line), each a list of
+    (id, wording) pairs. Numbering is the ticket's own: a proven criterion leaves no gap in another's id."""
+    proven = ticket_proofs(body)
+    return ([item for item in ticket if item[0].casefold() not in proven],
+            [item for item in ticket if item[0].casefold() in proven])
+
+
 # `[ref: home-desktop]` and `[as: admin, read-only]` inside a criterion's text, each a comma list. A
 # reference key is the file stem of qae-inputs/references/<key>.png. A role is what a step line names
 # after "as" and before a colon, so it holds no colon, comma or bracket. A bracket that starts like an
@@ -291,7 +313,8 @@ def not_required(text, changed, ticket="", carry=None):
     its ticket's criteria file, when the workflow supplies one. It needs none when it declares
     `- None: <why>`, or when it lists no criteria and every changed path is one no browser can see. A
     ticket that lists criteria, or that is not empty and lists none a reader can find, overrides both:
-    the pull request cannot declare its ticket's requirements away. Criteria win over paths: a pull
+    the pull request cannot declare its ticket's requirements away. A ticket criterion the body proves with
+    a `ticket-proof:` line (split_ticket) needs no walk: acceptance-verdict judges its proof instead. Criteria win over paths: a pull
     request that lists one is explored whatever it touches.
     An empty path list proves nothing, so it never exempts. A body lists criteria only under an
     `Acceptance criteria` heading (body_criteria): read as a plain list, a short body with no headings
@@ -299,7 +322,8 @@ def not_required(text, changed, ticket="", carry=None):
     A pull request that lists criteria needs no new walk when an earlier walk of them still holds
     (`carried`, from `carry`): its reason names that walk.
     """
-    if any(ticket_items(ticket)):
+    items, problem = ticket_items(ticket)
+    if problem or split_ticket(items, text)[0]:
         return None
     declared = declares_none(text)
     if declared:
@@ -368,7 +392,11 @@ def _title(text, start):
 
 def anchors(line):
     """Every anchor in one check line's evidence, in written order, deduplicated."""
-    text = evidence_text(line)
+    return anchors_in(evidence_text(line))
+
+
+def anchors_in(text):
+    """Every anchor in `text`, in written order, deduplicated."""
     found, seen, position = [], set(), 0
     while True:
         match = ANCHOR_HEAD_RE.search(text, position)

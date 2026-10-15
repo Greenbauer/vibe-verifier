@@ -241,8 +241,26 @@ now reads the ticket by default, and the harness holds the pull request to its c
   explorer FAILs an item that asks for what no browser can show (that a test exists or passes, that an
   email reached an inbox, a log line, a value the site never displays), saying "not checkable in a
   browser", and the gate refuses anything but an anchored PASS: such an item fails the run until the
-  spec says what a user would see instead, or the pull request links a section without it.
-- A spec kept elsewhere needs its own step in place of the default (a declared custom), writing the ticket's criteria with
+  spec says what a user would see instead, the pull request links a section without it, or the pull
+  request proves it with a test (next item).
+- A ticket written by someone outside the code (a plan a requester submits to a plan store) mixes
+  what a browser can check with what it cannot: a test that must exist, a record written to another
+  system, an email. The pull request body proves such a ticket criterion with one line per criterion:
+
+  ```
+  ticket-proof: TC4 -- the Estimate is written to NetSuite, which no QAE seat can open (lib/estimate.test.ts::writes the Origin inland line)
+  ```
+
+  The explorer does not walk TC4 and writes no line for it. `acceptance-verdict` requires instead that
+  the line's anchor resolves in the tree at the head (`<path>::<title>` or `<path>:<line>`, never a path
+  under the run's evidence, which the explorer writes), `qae-artifacts` asks no step log of it, and the
+  QA review comment lists it as "not walked, the pull request proves it with a test", with the line, so
+  a reviewer sees which ticket criteria no browser checked. A proof line naming no ticket criterion is
+  a finding, a line inside an HTML comment proves nothing, and a ticket proven whole in a body that
+  declares `- None:` needs no browser run. Like every anchor, it shows the cited test exists, never that
+  it asserts the criterion; use it only for what a browser cannot check.
+- A spec kept elsewhere needs its own step in place of the default (a declared custom), or one beside it
+  that appends to the same file, writing the ticket's criteria with
   the PR body's grammar: a `## Acceptance criteria` list (a ticket body that has that section can be
   written as it is), or a plain list with no headings. For tickets that are GitHub issues linked as
   `Closes #123` (the job then needs `issues: read`):
