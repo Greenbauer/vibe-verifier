@@ -380,6 +380,69 @@ uses local Git history and never calls GitHub. Unreadable links, files or anchor
 walk. That job needs a full-history checkout. Criteria alone no longer define requirement coverage;
 proof anchors check existence and literal text, not whether a test ran or proves a requirement.
 
+## Regression test fails on base
+
+`regression-test-fails-on-base` asks of a fix that one of its new or changed tests fails on the code
+before the fix and passes at the head: the test shows the bug, and the fix makes it go away. It is
+meant to replace `new-source-has-test` for test presence, which a test that cannot fail satisfies; that
+gate stays in the catalog until its consumers move. The two differ in reach: `new-source-has-test`
+asks for a test for every new source file in any pull request, this gate only of fixes.
+
+```
+regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.md
+regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.md --python .venv/bin/python --tests 'e2e/**'
+```
+
+- **Declared inputs.** The title and body are files the workflow writes before the gate runs, with
+  `gh pr view <n> --json title --jq .title` and `--json body --jq .body`, as the QAE harness writes the
+  body for `ticket-coverage` and `acceptance-verdict` ([the step](features/regression-test.md#reach)).
+  A missing file is exit 2.
+- **Which pull requests.** A fix is a title whose conventional-commit type is `fix` (`fix:`,
+  `fix(scope):`, `fix!:`, any case); any other title passes without running a test. So does a fix whose
+  every change is to test code, documentation (`.md`, `.mdx`, `.rst`, `.adoc`) or only the comments and
+  whitespace of a JS, TS or Python file (JS and TS comments as `universal-checks` blanks them, Python's
+  from `tokenize`). A fix that cannot carry a test declares it on a body line, outside a code fence,
+  `regression-test: none -- <reason>`: it passes, qualified, with the reason as an advisory finding. A
+  bare `regression-test: none` declares nothing.
+- **Test code** is a file named as a test (`*.test.*`, `*.spec.*`, `__tests__/`, and the Python names in
+  `gates/_contract.py`), `conftest.py`, anything under a `test`, `tests`, `__tests__`, `__mocks__`,
+  `__snapshots__` or `__fixtures__` directory, and `--tests GLOB`. A changed test is a test-named file or a
+  `--tests` path the fix added or modified beyond its comments; a fix with none fails.
+- **Two runs of the changed tests, under the project's own runners.** JS and TS tests run under Vitest
+  (read through its JSON reporter; tested on 4.x), from the nearest directory holding a Vitest or Vite config,
+  else a `package.json`, else the root, so each package of a monorepo runs with its own config. Python
+  tests run under `--python` (default `python3`): its pytest when installed there, and unittest, loading
+  the file as `python -m unittest discover -s <its directory>` would, when not or when the name has a
+  hyphen or a dot (a test run by path, which pytest cannot import). A JS file is a Vitest test when it
+  imports `vitest` or calls `describe`, `it` or `test`; one that imports `@playwright/test` or
+  `node:test`, a test in another language, a script judged only by its exit code, and every `--tests`
+  path are reported as not judged. The first run is at HEAD, where every test of the judged files must
+  pass: a failing one is the pull request's red suite and exit 2, and a file that does not load there is
+  not judged. The second is on the code before the fix: the working tree with every non-test path the
+  fix changed (its documentation included) restored to the merge base, and its test code left at HEAD.
+  The gate swaps those files in place, so the project's installed dependencies and workspace links serve
+  both runs, and puts them back when it finishes, fails or receives a SIGTERM or SIGINT (a SIGKILL leaves
+  them swapped: `git restore .` undoes it); it refuses (exit 2) when any of them differs from HEAD before
+  it starts. Bytecode is not written, so neither run reads the other's.
+- **The verdict is read from each runner's structured report**, never an exit code: Vitest's JSON
+  reporter, pytest's reports and the exceptions it hands its plugins, unittest's results. It passes when
+  a test that passed at HEAD fails on the code before the fix, on an assertion or on an error that code
+  raised. It fails when every such test passes there (the test does not reproduce the bug), and when the
+  only failures there say that a module, export, file or script the test needs does not exist yet. On a
+  277-PR history of a private TypeScript monorepo, 14% of changed test files failed before the fix only
+  that way, inside a quarter of the fixes that also had a real failure; the gate names the missing thing
+  (`fails on the code before the fix only because ./mask is missing`). That case is a finding, not exit
+  2: the gate ran and has a verdict on the test, the author can act on it (test the bug through code that
+  exists before the fix, or declare the reason line, as for a fix that is itself a new migration), and
+  exit 2, which `--soak` never masks, would turn a soak red on every such pull request.
+- **Exit 2 also when** no changed test is one it can run (only Playwright, node:test, shell or SQL
+  tests, say: the reason line is the way out), the project's Vitest is not installed, a runner writes no
+  report, or the runs pass `--timeout`.
+- **What it does not see.** It cannot tell an error the old code raised from one the test's own double
+  raised (a mock lacking a method the old code calls counts as a failure), and a flaky test that fails
+  before the fix passes the gate. The tests and the code they run are the pull request's own, as in the
+  project's CI, so it belongs in a job that holds no secrets.
+
 ## Wired gates: pinned tools
 
 Some checks are not worth rewriting in the standard library, and a secret scanner is the first:

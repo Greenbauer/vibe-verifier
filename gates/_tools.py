@@ -268,11 +268,12 @@ def _stop(process):
     process.wait()  # not communicate(): a signal may have interrupted it mid-read, and nothing can write now
 
 
-def run_tool(command, cwd, timeout, name, env=None, budget=None):
+def run_tool(command, cwd, timeout, name, env=None, budget=None,
+             advice="Raise --timeout or --max-files on the base manifest, or split the pull request"):
     """(exit code, combined output) of a tool run in a session of its own, so its whole process group can be
     killed. That also keeps a SIGTERM or SIGINT sent to the gate's group (a Ctrl-C) from reaching it: both are
     caught here and kill it. Past `timeout` seconds the group is killed and the gate cannot run; `budget` is
-    the --timeout the message names when `timeout` is what is left of it."""
+    the --timeout the message names when `timeout` is what is left of it, and `advice` what to do about it."""
     def interrupted(signum, _frame):
         raise CannotRun("stopped by %s before %s finished; no verdict" % (signal.Signals(signum).name, name))
 
@@ -285,8 +286,7 @@ def run_tool(command, cwd, timeout, name, env=None, budget=None):
         output, _ = process.communicate(timeout=max(timeout, 1))
     except subprocess.TimeoutExpired:
         _stop(process)
-        raise CannotRun("%s did not finish within --timeout %ds; no verdict on any file. Raise --timeout or "
-                        "--max-files on the base manifest, or split the pull request" % (name, budget or timeout))
+        raise CannotRun("%s did not finish within --timeout %ds; no verdict on any file. %s" % (name, budget or timeout, advice))
     except BaseException:
         if process:
             _stop(process)
