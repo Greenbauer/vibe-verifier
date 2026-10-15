@@ -221,9 +221,11 @@ these reads:
 | `kind` | `endpoint` is | Lists with | Reads each open item with | What an item carries |
 |---|---|---|---|---|
 | `plans` | a read API's base URL | `GET <endpoint>/plans?limit=100`, answering `{"plans": [...]}` | `GET <endpoint>/plans/<planId>` | the plan body (`planMarkdown`), every amendment oldest first (`amendments`), status, claimant, PR, preview, blocked reason |
-| `calls` | an MCP server (streamable HTTP) | the `list_open_calls` tool, `{limit: 100}` | the `get_call` tool, `{callId}` | the brief, every follow-up with its design references, every ask with its ruling, status, submitter, claim, PR, preview |
+| `calls` | an MCP server (streamable HTTP) | the `list_open_calls` tool twice: `{limit: 100}` for the open Calls, and `{status: ["closed", "merged"], limit: 100}` for the done ones, which that tool leaves out unless asked | the `get_call` tool, `{callId}` | the brief, every follow-up with its design references, every ask with its ruling, status, submitter, claim, PR, preview |
 
-A merged or closed item is listed without reading its detail, and an item that is gone by the time
+A done Call is kept only when it was updated in the last 30 days; the tool lists oldest first with
+no paging, so a full page of done Calls reads as truncated (newer ones may be missing). A merged or
+closed item is listed without reading its detail, and an item that is gone by the time
 it is read (404) stays listed without one. `repository` (OWNER/NAME of the configured owner) turns a
 PR number into a GitHub link; `app_origin` (an HTTPS origin) links the item to
 `<app_origin>/plans/<id>` or `<app_origin>/calls/<id>`. A design reference shows its label only: the
@@ -236,7 +238,7 @@ The board has four columns, each oldest first. A column is one card with its ite
 - **Waiting on you**: an ask with no ruling, a `blocked` item (with its reason, or "no reason
   recorded"), an `await_answer` item, or a `pr_ready` item (its PR waits on review and merge). An
   item here is in no other column. On a phone the columns stack and this one comes first.
-- **Done**: `merged` or `closed`, behind a Show toggle.
+- **Done**: `merged` or `closed` (for Calls, those updated in the last 30 days), behind a Show toggle.
 
 Every row shows when the item was created and last updated; the update age is yellow after three
 days and red after two weeks, and the summary line counts open items not updated in over two weeks,
