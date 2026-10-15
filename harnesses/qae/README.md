@@ -446,7 +446,8 @@ as `entries:` instead, as it does to `actions/gates`. Without either, one width 
   the explorer wrote it. A consumer's explorer given AC1 and AC3 also walked TC1 and TC3, the shares
   of two others, and the merge refused the run although each criterion had its own explorer's verdict
   (2026-10-15). A copy of the step whose `actions/qae-inputs` pin declares no share fails here,
-  before anything of the explorer's is kept.
+  before anything of the explorer's is kept. A consumer copy made before this keeps every
+  criterion's files in place whatever its pins, so moving the pins is not enough: copy the step too.
 - Each explorer uploads its evidence under its own name: `qae-artifacts-<run_attempt>` for the
   first, `qae-artifacts-<run_attempt>-<n>` for the others. The usage artifact is named the same way.
 - The verify job merges them. It takes each planned explorer's evidence from the newest attempt
