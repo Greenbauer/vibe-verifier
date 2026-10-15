@@ -14,6 +14,7 @@ One file per feature of this catalog: its gates, its harnesses, its command-line
 | [Regression test fails on base](regression-test.md) | `regression-test-fails-on-base` |
 | [Changed-code mutation](mutation.md) | `changed-code-mutation` |
 | [Coverage not lost](coverage-not-lost.md) | `coverage-not-lost` |
+| [Affected-test selection](affected-tests.md) | `affected-tests` (not a gate: it lists the tests a pull request's test job runs) |
 | [Complexity and file-length ratchets](ratchets.md) | `cognitive-complexity`, `max-file-lines` |
 | [Repository rules and the generated rules block](repo-rules.md) | `repo-rules`, `rules-doc` |
 | [Universal checks](universal-checks.md) | `universal-checks` |

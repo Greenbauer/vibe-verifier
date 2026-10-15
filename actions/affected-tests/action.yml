@@ -1,0 +1,88 @@
+name: Vibe Verifier affected tests
+description: >-
+  List the test files a pull request's changes can affect (the import graph, plus every test that reads files,
+  starts a process or uses a database), or decide that every test runs, for the job's own test runner. With
+  `report`, name each test a full run failed that the selection left out. Needs a full-history checkout.
+inputs:
+  base-ref:
+    description: >-
+      The branch the pull request merges into. Empty, as on any event but a pull request (a push to main, a
+      merge queue), means every test runs.
+    default: ${{ github.base_ref }}
+  tests:
+    description: >-
+      What a test file is, one glob per line, relative to the workspace. Empty (the default): JS and TS
+      *.test.*, *.spec.* and __tests__/** files, files that import node:test, and Python test files.
+    default: ""
+  exclude:
+    description: Test files never to list, one glob per line, such as a browser suite another job runs.
+    default: ""
+  always:
+    description: Test files to list whatever changed, one glob per line.
+    default: ""
+  all-on:
+    description: >-
+      Paths whose change means every test runs, one glob per line, such as the repository's own test runner
+      script. Lockfiles, tsconfigs, test runner configs and package.json dependency fields always do.
+    default: ""
+  report:
+    description: >-
+      The full run's results, one file per line, relative to the workspace: JUnit XML (Vitest's, pytest's) or a
+      list of failed test files (the `reporter` output writes one for node:test). Given, the step prints each test
+      that failed there and was not selected, as a warning, instead of selecting.
+    default: ""
+outputs:
+  all:
+    description: "`true` when every test must run (the list is then empty), else `false`."
+    value: ${{ steps.select.outputs.all }}
+  list:
+    description: A file holding the selected test files, one path per line relative to the workspace; empty when none or all.
+    value: ${{ steps.select.outputs.list }}
+  count:
+    description: How many test files the list holds; empty when every test must run.
+    value: ${{ steps.select.outputs.count }}
+  reporter:
+    description: The node:test reporter module that writes a failed-file list for `report`.
+    value: ${{ steps.select.outputs.reporter }}
+runs:
+  using: composite
+  steps:
+    - name: Select the affected tests
+      id: select
+      shell: bash
+      env:
+        VV_BASE_REF: ${{ inputs.base-ref }}
+        VV_TESTS: ${{ inputs.tests }}
+        VV_EXCLUDE: ${{ inputs.exclude }}
+        VV_ALWAYS: ${{ inputs.always }}
+        VV_ALL_ON: ${{ inputs.all-on }}
+        VV_REPORT: ${{ inputs.report }}
+      run: |
+        set -euo pipefail
+        args=(affected-tests --format github)
+        if [ -n "$VV_BASE_REF" ]; then args+=(--base-ref "$VV_BASE_REF"); fi
+        add() {
+          local line
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then args+=("$1" "$line"); fi
+          done <<< "$2"
+        }
+        add --tests "$VV_TESTS"
+        add --exclude "$VV_EXCLUDE"
+        add --always "$VV_ALWAYS"
+        add --all-on "$VV_ALL_ON"
+        echo "reporter=$GITHUB_ACTION_PATH/failed-files.mjs" >> "$GITHUB_OUTPUT"
+        if [ -n "$VV_REPORT" ]; then
+          add --report "$VV_REPORT"
+          python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}"
+          exit 0
+        fi
+        list="$RUNNER_TEMP/vibe-verifier-affected-tests.txt"
+        python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}" > "$list"
+        if [ "$(head -n 1 "$list")" = "ALL" ]; then
+          : > "$list"
+          { echo "all=true"; echo "count="; } >> "$GITHUB_OUTPUT"
+        else
+          { echo "all=false"; echo "count=$(grep -c . "$list" || true)"; } >> "$GITHUB_OUTPUT"
+        fi
+        echo "list=$list" >> "$GITHUB_OUTPUT"
