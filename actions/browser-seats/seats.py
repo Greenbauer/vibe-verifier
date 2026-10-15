@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Check a preview's seats and hand them to a parallel browser suite (README.md, "The contract").
 
-Reads a JSON list of seats, seat 0 first. A seat is an object of role -> {"email", "password"}, and
-every seat names the same roles. Writes two step outputs: `workers`, the number of seats (one
-browser-suite worker per seat), and `extra-seats`, seats 1 and up as compact JSON, the value a suite
-reads to give worker k seat k. Every password, and the extra-seats value when it holds any, is
-masked before anything else is written. A malformed list fails: a suite handed a broken seat would
+Reads a JSON list of the suite's own seats, the login it already reads first. A seat is an object
+of role -> {"email", "password"}, and every seat names the same roles. Writes two step outputs:
+`workers`, the number of seats (one browser-suite worker per seat), and `extra-seats`, every seat
+after the first as compact JSON, the value a suite reads to give worker k its k-th seat. Every
+password, and the extra-seats value when it holds any, is masked before anything else is written. A malformed list fails: a suite handed a broken seat would
 put two workers on one account, which is the collision seats exist to prevent.
 
     python3 seats.py --file seats.json [--email-domain example.test] [--max-seats 8]
@@ -39,7 +39,7 @@ def check_login(number: int, role: str, login: object, email_domain: str) -> str
 def check(seats: object, email_domain: str = "", max_seats: int = 8) -> list[dict]:
     """The seats, unchanged, once every rule in the README's contract holds."""
     if not isinstance(seats, list) or not seats:
-        raise SeatError("the seats must be a non-empty JSON list, seat 0 first")
+        raise SeatError("the seats must be a non-empty JSON list, the suite's first seat first")
     if len(seats) > max_seats:
         raise SeatError(f"{len(seats)} seats, over the {max_seats} allowed (max-seats)")
     if not all(isinstance(seat, dict) and seat for seat in seats):
@@ -68,7 +68,7 @@ def outputs(seats: list[dict]) -> tuple[list[str], dict[str, str]]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--file", required=True, help="the JSON list of seats, seat 0 first")
+    parser.add_argument("--file", required=True, help="the JSON list of the suite's seats")
     parser.add_argument("--email-domain", default="", help="every login must be on this domain")
     parser.add_argument("--max-seats", type=int, default=8)
     args = parser.parse_args(argv)
