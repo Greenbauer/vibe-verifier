@@ -104,7 +104,7 @@ body before pushing. Exit 2 when a file cannot be read.
 
 `qae-inputs [--manifest FILE] [--widths-file FILE] [--references DIR] [--evidence DIR] [--listing FILE]
 [--digests FILE] [--turns FILE [--criteria FILE] [--ticket FILE] [--features DIR] [--shard K --shards N]
-[--share FILE] [--run ID] [--isolation FILE]]` prepares what the QAE
+[--share FILE] [--share-ids FILE] [--run ID] [--isolation FILE]]` prepares what the QAE
 explorer and its gates read from the site step's supplies and the QAE manifest, before the explorer runs.
 Each design reference `<key>.png` the site step wrote to DIR (default qae-inputs/references) is copied
 to `<evidence>/references/<key>.png` (default qae-artifacts), listed with its size in FILE (default
@@ -125,7 +125,8 @@ reaches the re-walk in its time. Every explorer counts the features the same way
 assignment; equal-sized criteria and each final share keep document order and original criterion numbers.
 For one past the first `--features DIR` and its listing are then removed: it is not handed
 them. The cap is sized to the explorer's own share, and `--share FILE` gets the one sentence that names that
-share for its prompt (an empty line for one explorer). For one of several it also names the chains in its share,
+share for its prompt (an empty line for one explorer), and `--share-ids FILE` the ids of the criteria it walks, as a JSON
+list, for the step that keeps its evidence (every criterion for one explorer). For one of several the sentence also names the chains in its share,
 to walk in order, and the explorer's tag, qae-<run>-e<K> (`--run ID`, the run id and attempt): every record the
 explorer creates carries it, and it opens or judges only records that carry it or that existed before the run,
 never one another explorer of the run created or is changing. `--isolation FILE` gets what the browser holds it
@@ -1242,6 +1243,9 @@ def qae_inputs_command(args):
         if args.share:
             with open(args.share, "w", encoding="utf-8") as handle:
                 handle.write(share + "\n")
+        if args.share_ids:
+            with open(args.share_ids, "w", encoding="utf-8") as handle:
+                json.dump([item for item, _ in items], handle)
     if widths:
         os.makedirs(os.path.dirname(args.widths_file) or ".", exist_ok=True)
         with open(args.widths_file, "w", encoding="utf-8") as handle:
@@ -1559,6 +1563,8 @@ def main():
                         help="with --turns, how many explorers the criteria are split across (default: 1)")
     inputs.add_argument("--share", metavar="FILE", help="with --turns, write the sentence that names this explorer's "
                         "share of the criteria here, for its prompt (an empty line for one explorer)")
+    inputs.add_argument("--share-ids", metavar="FILE", help="with --turns, write the ids of the criteria this explorer "
+                        "walks here, as a JSON list (every criterion for one explorer), for the step that keeps its evidence")
     inputs.add_argument("--run", metavar="ID", default="", help="with --shards above 1, the run (`<run id>.<attempt>`) in "
                         "the tag each explorer names its records by, qae-<run>-e<K> (default: none, qae-e<K>)")
     inputs.add_argument("--isolation", metavar="FILE", help="with --turns, write what the browser holds one explorer of "

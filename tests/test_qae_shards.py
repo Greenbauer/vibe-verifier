@@ -4,6 +4,7 @@ actions/criteria declares it as the explore job's matrix, actions/qae-inputs nam
 for its prompt, and the template's own steps keep each explorer's verdict and evidence apart and merge
 them for the gates. Driven through the command line, the shipped actions and the template's steps, run
 as the shell they are."""
+import json
 import os
 import re
 import shutil
@@ -52,9 +53,11 @@ def outputs(path):
     return dict(line.split("=", 1) for line in Path(path).read_text().splitlines() if "=" in line)
 
 
-def keep_evidence(work, shard=1, shards=1, template=TEMPLATES[0]):
-    """The explore job's step after the explorer, run in a workspace that holds qae-artifacts/."""
-    return run_step(step_script(template.read_text(), *KEEP), work, {"SHARD": str(shard), "SHARDS": str(shards)})
+def keep_evidence(work, shard=1, shards=1, template=TEMPLATES[0], share=None):
+    """The explore job's step after the explorer, run in a workspace that holds qae-artifacts/. `share` is the
+    criteria actions/qae-inputs declared as this explorer's (its `share-ids` output); None declares nothing."""
+    declared = "" if share is None else json.dumps(share)
+    return run_step(step_script(template.read_text(), *KEEP), work, {"SHARD": str(shard), "SHARDS": str(shards), "SHARE_IDS": declared})
 
 
 def hand_over(explore, verify, attempt=1, shard=1):
@@ -214,6 +217,8 @@ class Share(unittest.TestCase):
             share = re.search(r"^share: (.*) \(explorer %d of %d\)$" % (shard, shards), result.stdout, re.MULTILINE).group(1)
             self.assertTrue(declared["share"].startswith((SHARE % (share, shard, shards) if share != "no criterion" else NO_SHARE % (shard, shards)) + " "))
             self.assertIn(" Your tag is qae-%s-e%d. " % (RUN, shard), declared["share"])
+            # The same share as data, for the step that keeps the explorer's evidence: never read back from prose.
+            self.assertEqual(json.loads(declared["share-ids"]), share.split(", ") if share != "no criterion" else [])
             found.append((share, int(declared["max-turns"])))
         return found
 
@@ -234,7 +239,7 @@ class Share(unittest.TestCase):
     def test_one_explorer_walks_every_criterion_and_is_told_nothing(self):
         result, declared, _ = self.run_action({"qae-inputs/pr-body.md": body("a", "b")}, 1, 1)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual((declared["share"], declared["max-turns"]), ("", "160"))
+        self.assertEqual((declared["share"], declared["max-turns"], declared["share-ids"]), ("", "160", '["AC1", "AC2"]'))
         self.assertNotIn("share:", result.stdout)
 
     def test_the_first_explorer_starts_with_the_feature_re_walk_and_takes_fewer_criteria(self):
@@ -313,6 +318,13 @@ class Templates(unittest.TestCase):
             self.assertIn("post nothing, and stop.\n     %s\n  2. For each criterion" % share, written)
             self.assertNotIn("SHARD_SHARE", written)
 
+    def test_the_step_after_the_explorer_is_handed_its_share_by_the_references_step(self):
+        # A step output, which the explorer cannot change: qae-inputs/ is excused by the write scope.
+        for template in TEMPLATES:
+            _, explore, _ = self.parts(template)
+            keep = explore[explore.index(KEEP[0]):explore.index(KEEP[1])]
+            self.assertIn("          SHARE_IDS: ${{ steps.references.outputs.share-ids }}\n", keep)
+
     def test_each_explorer_uploads_under_its_own_names_and_the_first_keeps_todays(self):
         past_the_first = "${{ matrix.shard && format('-{0}', matrix.shard) || '' }}\n"
         claude, codex = (self.parts(template)[1] for template in TEMPLATES)
@@ -369,10 +381,10 @@ class Evidence(unittest.TestCase):
         self.verify = workdir(self)
         write(self.verify, {"qae-inputs/pr-body.md": body("The home page loads", "The cart shows its total")})
 
-    def explore(self, criterion, shard, shards=2, attempt=1, **left):
+    def explore(self, criterion, shard, shards=2, attempt=1, template=TEMPLATES[0], **left):
         work = workdir(self)
         explorer_leaves(work, criterion, **left)
-        kept = keep_evidence(work, shard, shards)
+        kept = keep_evidence(work, shard, shards, template, share=[criterion])
         self.assertEqual(kept.returncode, 0, kept.stdout + kept.stderr)
         hand_over(work, self.verify, attempt, shard)
         return work
@@ -433,7 +445,7 @@ class Evidence(unittest.TestCase):
             explorer_leaves(work, criterion)
             write(work, {"qae-artifacts/" + CONSOLE: "[   -4ms] [ERROR] %s\n" % error,
                          "qae-artifacts/console-pages.jsonl": page_record(("https://pay.example/checkout", error))})
-            self.assertEqual(keep_evidence(work, shard, 2).returncode, 0)
+            self.assertEqual(keep_evidence(work, shard, 2, share=[criterion]).returncode, 0)
             hand_over(work, self.verify, 1, shard)
         self.assertEqual(merge_evidence(self.verify, '["",2]').returncode, 0)
         self.assertEqual(len(Path(self.verify, "qae-artifacts", "console-pages.jsonl").read_text().splitlines()), 2)
@@ -451,22 +463,100 @@ class Evidence(unittest.TestCase):
         self.assertIn("AC2 has no `acceptance-check: AC2` line", verdict.stdout)
 
     def test_a_path_two_explorers_both_left_is_refused_never_overwritten(self):
-        # The second explorer walked a criterion of the first's share: two step logs, two verdict lines.
+        # Both explorers were declared AC1: a re-run of the second after the criteria changed shares them out
+        # anew, and the first's evidence is from the attempt before. Two step logs of one criterion, never one
+        # chosen over the other.
         self.explore("AC1", 1)
         work = workdir(self)
         explorer_leaves(work, "AC2")
         write(work, {"qae-artifacts/qae/AC1.md": "- step 1: opened /cart -> nothing\n"})
-        self.assertEqual(keep_evidence(work, 2, 2).returncode, 0)
+        self.assertEqual(keep_evidence(work, 2, 2, share=["AC1", "AC2"]).returncode, 0)
         hand_over(work, self.verify, 1, 2)
         merged = merge_evidence(self.verify, '["",2]')
         self.assertEqual(merged.returncode, 1)
         self.assertIn("::error::the evidence cannot be merged: explorers 1 and 2 both left qae/AC1.md", merged.stdout)
 
+    def test_a_criterion_walked_outside_the_explorers_share_is_set_aside_and_its_owner_judges_it(self):
+        # A consumer's split run (2026-10-15): explorer 2 was given AC1 and AC3, and walked TC1 and TC3 as well,
+        # the shares of explorers 4 and 1. Both it and explorer 1 left qae/TC3-step-2.png, and the merge refused
+        # the run although every criterion had a verdict from the explorer it was given to. The prompt's "walk
+        # only those" is not what holds the share: the step after the explorer is.
+        for template in TEMPLATES:
+            self.setUp()
+            self.explore("AC1", 1, template=template)
+            work = workdir(self)
+            explorer_leaves(work, "AC2")
+            step = "step 1: opened /cart -> nothing"
+            session = session_saving_to("qae-artifacts/qae/AC1-network.txt") + "- New console entries: qae-artifacts/%s#L1\n" % CONSOLE
+            write(work, {"qae-artifacts/qae/AC1.md": "- %s\n" % step, "qae-artifacts/qae/AC1-step-1.png": "another png",
+                         "qae-artifacts/qae/AC1-network.txt": "1. [GET] http://localhost:3000/cart => [200] OK\n",
+                         "qae-artifacts/%s/session.md" % SESSION: session,
+                         "qae-artifacts/verdict.md": "acceptance-check: AC2 -- PASS -- held (qae/AC2.md::step 1: opened / -> the heading)\n"
+                                                     "- acceptance-check: ac1 -- FAIL -- not its own (qae/AC1.md::%s)\n" % step})
+            kept = keep_evidence(work, 2, 2, template, share=["AC2"])
+            self.assertEqual(kept.returncode, 0, kept.stdout + kept.stderr)
+            self.assertIn("::warning::explorer 2 walked AC1 outside its share (AC2): its evidence for them is kept under shard-2/qae/ "
+                          "and its verdict lines for them are not counted", kept.stdout)
+            evidence = os.path.join(work, "qae-artifacts")
+            self.assertEqual(Path(evidence, "verdicts", "2.md").read_text(),
+                             "acceptance-check: AC2 -- PASS -- held (qae/AC2.md::step 1: opened / -> the heading)\n")
+            # What the explorer wrote stays whole beside its evidence; only the copy the verify job reads is held to the share.
+            self.assertIn("ac1 -- FAIL", Path(evidence, "shard-2", "verdict.md").read_text())
+            self.assertIn('"filename": "qae-artifacts/shard-2/qae/AC1-network.txt"',
+                          Path(evidence, "session-2-1760000000000", "session.md").read_text())
+            hand_over(work, self.verify, 1, 2)
+            merged = merge_evidence(self.verify, '["",2]', template=template)
+            self.assertEqual(merged.returncode, 0, merged.stdout + merged.stderr)
+            self.assertEqual(self.verdicts(), [("AC1", "PASS"), ("AC2", "PASS")])
+            merged_tree = tree(os.path.join(self.verify, "qae-artifacts"))
+            for path in ("shard-2/qae/AC1.md", "shard-2/qae/AC1-step-1.png", "shard-2/qae/AC1-network.txt"):
+                self.assertIn(path, merged_tree)
+            self.assertEqual(Path(self.verify, "qae-artifacts", "qae", "AC1.md").read_text(), "- step 1: opened / -> the heading\n")
+            for result in self.gates():
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_evidence_set_aside_is_still_judged(self):
+        # Setting a walk aside takes its verdict line out of the count, never its requests out of the network gate.
+        self.explore("AC1", 1)
+        work = workdir(self)
+        explorer_leaves(work, "AC2")
+        write(work, {"qae-artifacts/qae/AC1-network.txt": "1. [POST] http://localhost:3000/api/cart => [500] Internal Server Error\n",
+                     "qae-artifacts/%s/session.md" % SESSION: session_saving_to("qae-artifacts/qae/AC1-network.txt")})
+        self.assertEqual(keep_evidence(work, 2, 2, share=["AC2"]).returncode, 0)
+        hand_over(work, self.verify, 1, 2)
+        self.assertEqual(merge_evidence(self.verify, '["",2]').returncode, 0)
+        _, artifacts = self.gates()
+        self.assertEqual(artifacts.returncode, 1, artifacts.stdout + artifacts.stderr)
+        self.assertIn("shard-2/qae/AC1-network.txt: request answered 500 outside the allowlist: [POST] http://localhost:3000/api/cart",
+                      artifacts.stdout)
+
+    def test_an_explorer_with_no_criterion_keeps_no_criterions_evidence_or_line(self):
+        # One of several whose whole load is the feature re-walk is told to walk no criterion.
+        work = workdir(self)
+        explorer_leaves(work, "AC2")
+        kept = keep_evidence(work, 2, 2, share=[])
+        self.assertEqual(kept.returncode, 0, kept.stdout + kept.stderr)
+        self.assertIn("::warning::explorer 2 walked AC2 outside its share (no criterion)", kept.stdout)
+        evidence = os.path.join(work, "qae-artifacts")
+        self.assertEqual(Path(evidence, "verdicts", "2.md").read_text(), "")
+        self.assertEqual([name for name in tree(evidence) if name.startswith("qae/")], [])
+
+    def test_a_split_explorer_whose_share_was_not_declared_keeps_nothing(self):
+        # A workflow that copied this step without moving actions/qae-inputs to a commit that declares the share.
+        for template in TEMPLATES:
+            work = workdir(self)
+            explorer_leaves(work, "AC1")
+            write(work, {"qae-artifacts/verdicts/2.md": "acceptance-check: AC1 -- PASS -- pasted (qae/AC1.md::step 1: opened /)\n"})
+            kept = keep_evidence(work, 2, 2, template)
+            self.assertEqual(kept.returncode, 1)
+            self.assertIn("::error::explorer 2 of 2 has no declared share", kept.stdout)
+            self.assertFalse(os.path.isdir(os.path.join(work, "qae-artifacts", "verdicts")))
+
     def test_only_the_workflow_puts_a_verdict_in_an_explorers_name(self):
         work = workdir(self)
         explorer_leaves(work, "AC1")
         write(work, {"qae-artifacts/verdicts/2.md": "acceptance-check: AC2 -- PASS -- pasted (qae/AC1.md::step 1: opened /)\n"})
-        self.assertEqual(keep_evidence(work, 1, 2).returncode, 0)
+        self.assertEqual(keep_evidence(work, 1, 2, share=["AC1"]).returncode, 0)
         self.assertEqual(os.listdir(os.path.join(work, "qae-artifacts", "verdicts")), ["1.md"])
 
     def test_each_explorer_is_judged_on_the_newest_attempt_it_ran_in(self):
