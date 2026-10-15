@@ -92,7 +92,7 @@ class QaeInputs(unittest.TestCase):
         self.assertEqual(self.widths(repo), "1280\n375\n")
         self.assertIn("widths: 1280, 375", result.stdout)
         # Two criteria at two widths are four walks: the turn cap grows with them (bin/vibe-verifier TURNS_BASE).
-        self.assertEqual(output, "references={}\nmax-turns=160\nshare=\n")
+        self.assertEqual(output, "references={}\nmax-turns=160\nshare=\nshare-ids=[\"AC1\", \"AC2\"]\n")
 
     def test_no_widths_option_writes_no_file(self):
         repo = make_repo(self, {".vibe-verifier-qae": QAE.replace(" --widths 1280,375", "")})
