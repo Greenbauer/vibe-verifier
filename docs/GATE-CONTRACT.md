@@ -667,10 +667,10 @@ changed-code-mutation --project apps/web --break 70 --soak
   `changed-code-mutation --source dashboard/**/*.py --python .venv-tests/bin/python`, limited to
   `dashboard/` because its gate modules are tested by running them as scripts. Its `pytest.ini` collects
   only `tests/test_dashboard_*.py`: under mutmut's coverage tracing the whole suite ran past 900 seconds.
-  The same file pilots `regression-test-fails-on-base` and `coverage-not-lost` with `--soak`, under the
-  `python3` and unittest the job's test step uses, after a step that writes the pull request's title and
-  body; `coverage-not-lost` runs only the dashboard tests, for the same reason (on the whole suite it took
-  982 seconds a pull request). The runner judges that file from the base like any manifest in the repository. Not `entries:`: in
+  The same file pilots `regression-test-fails-on-base` with `--soak`, under the `python3` and unittest
+  the job's test step uses, after a step that writes the pull request's title and body;
+  `coverage-not-lost` has a job and a manifest of its own beside it, on the whole suite (see
+  [Coverage not lost](#coverage-not-lost)). The runner judges that file from the base like any manifest in the repository. Not `entries:`: in
   a repository's own workflow a pull request can edit it.
 - **Exit 2 also when** the suite fails at `HEAD` (Stryker cannot measure a red suite), Stryker exits
   non-zero, or Stryker matched fewer files than it was given, such as a path with brace syntax
@@ -758,7 +758,12 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   the project's thresholds (a project below its own threshold would otherwise fail every run, for a reason
   that is not a failing test); the project's `include` and `exclude` still decide which files are
   measured. Browser-mode tests are not measured; a configuration with a browser project leaves it out
-  with `--args`, such as `--args '--project unit'`.
+  with `--args`, such as `--args '--project unit'`. Nor is a node script a test spawns: on 2026-10-15,
+  under Vitest 4.1.11 and its `@vitest/coverage-v8`, a script a test ran with
+  `execFileSync("node", ["src/app.js"])` counted 0 on every statement while a module the test imported
+  counted 1. The providers pinned for Vitest 2.1.9 to 4.1.11 have no subprocess support; Vitest 5.0.0
+  added `coverage.autoAttachSubprocess` (v8 only, off by default, through `NODE_V8_COVERAGE`), which the
+  gate does not turn on.
 - **Python.** `--runner pytest` or `--runner unittest` runs `-m pytest` or `-m unittest`, plus `--args`, in
   each `--project` under coverage.py 7.16.2, pinned in `tools/coverage-not-lost-python/`, in the
   project's own interpreter (`--python`, default `python3`; a relative path is the repository's), which
@@ -768,7 +773,19 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   sections. Each test function is recorded as the context of the lines it runs. A suite that imports a
   source file from the working copy instead of the checkout it runs in (an editable install whose
   path comes before the checkout's) is exit 2, since the gate could not tell which side's code ran.
-  Code a test runs in another process is not measured.
+  Every Python process the suite starts is measured too, such as a script a test runs with
+  `subprocess.run([sys.executable, "app.py"])`, by coverage.py's own subprocess support: the settings
+  file sets `[run] patch = subprocess`, which hands those settings to each child in
+  `COVERAGE_PROCESS_CONFIG`, and `parallel`, so each process writes a data file of its own, which
+  `coverage combine` merges before the report is read. A child starts coverage.py with
+  `coverage.process_startup()` from a `sitecustomize.py` the gate puts first on the suite's
+  `PYTHONPATH`, because the `.pth` file coverage.py installs to do that is in the pinned venv, not in
+  the project's interpreter; it then runs the `sitecustomize` it hides (Homebrew's Python and
+  Ubuntu's ship one). A child records no test function, since none is on its stack, so a line only a
+  child ran names none. `COVERAGE_FILE`, `COVERAGE_PROCESS_CONFIG` and `COVERAGE_PROCESS_START` are
+  dropped from the suite's environment, so every process's data goes where the gate's settings say.
+  Not measured: a child given an environment of its own instead of a copy of the test's, one started
+  with `python -I` or `-E`, and one of a Python the pinned coverage.py cannot load in.
 - **What ran it.** A Python finding names the test functions that ran the line at the merge base. A
   Vitest finding says whether the test files the pull request deleted, changed or moved ran it there,
   from one more run at the merge base of just those files, and lists them; a pull request that touched
@@ -801,7 +818,10 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   file first, under a job timeout above `--timeout`, in a job that holds no secrets: the gate runs the
   pull request's own tests. Start with `--soak`, which prints every finding as a warning; once its record
   is clean (each finding a real weakening, or a pull request that says why), remove `--soak` on the base
-  manifest so the gate blocks.
+  manifest so the gate blocks. This repository pilots it on its own whole suite in the `coverage-not-lost`
+  job of `ci.yml`, beside the `test` job: it writes the body, then runs `.vibe-verifier-coverage`
+  (`--soak --runner unittest --args 'discover -s tests'`), so the gate scripts and `bin/vibe-verifier`
+  the tests run as child processes are measured too.
 - **What it does not catch.** Browser and end-to-end tests: only the unit suite the runner starts is
   measured, so a loss only a Playwright test would show passes (the [QAE harness](../harnesses/qae/README.md)
   re-walks features in a browser). A line that still runs but that no test asserts on any more: a test

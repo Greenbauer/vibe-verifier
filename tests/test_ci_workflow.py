@@ -1,8 +1,10 @@
 """This repository's own ci.yml: the step that lists the tests the full unittest run failed, for the
-affected-test selection report, run under bash the way CI runs it, on a real unittest log; and this suite
-run inside a gate (.vibe-verifier-tests), as coverage-not-lost and regression-test-fails-on-base run it."""
+affected-test selection report, run under bash the way CI runs it, on a real unittest log; this suite run
+inside a gate, as regression-test-fails-on-base (.vibe-verifier-tests) and coverage-not-lost
+(.vibe-verifier-coverage) run it; and the coverage-not-lost job's shape."""
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -15,6 +17,7 @@ from helpers import ROOT, clean_env, commit, gate, git, make_repo, runner
 
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 STEP = "List the tests the full run failed"
+COVERAGE = ROOT / ".vibe-verifier-coverage"
 
 # One suite with every way unittest reports a failure: an assertion, an error, a failed subtest (its
 # parameters follow the id), a failed setUpClass (named by its class), and a module that does not import.
@@ -138,6 +141,41 @@ class SuiteInsideAGate(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("no regression test, as the pull request body declares: a reason", result.stdout)
         self.assertEqual(Path(outer).read_text(), "")
+
+
+def job(name):
+    """The lines of one job of ci.yml, its own `  name:` line included."""
+    match = re.search(r"\n  %s:\n((?:    [^\n]*\n|\n)+)" % re.escape(name), CI.read_text())
+    return match.group(1)
+
+
+def gate_args(manifest, name):
+    """The arguments of a gate's line in a manifest, or None when it lists none."""
+    for line in Path(manifest).read_text().splitlines():
+        words = shlex.split(line, comments=True)
+        if words and words[0] == name:
+            return words[1:]
+    return None
+
+
+class CoverageJob(unittest.TestCase):
+    def test_the_coverage_job_runs_the_whole_suite_beside_the_test_job_within_its_timeout(self):
+        coverage = job("coverage-not-lost")
+        # On every event and beside the test job: a job-level `if:` that skips reads as green, and `needs:` would
+        # wait for the test job.
+        self.assertIsNone(re.search(r"^    (if|needs):", coverage, re.MULTILINE), coverage)
+        self.assertIn("manifest: .vibe-verifier-coverage", coverage)
+        self.assertIn("> pr-inputs/body.md", coverage)
+        args = gate_args(COVERAGE, "coverage-not-lost")
+        self.assertEqual(args[:4], ["--soak", "--runner", "unittest", "--args"])
+        self.assertEqual(args[4], "discover -s tests")  # the whole suite: no -p
+        self.assertEqual(args[args.index("--body") + 1], "pr-inputs/body.md")
+        timeout = int(args[args.index("--timeout") + 1])
+        minutes = int(re.search(r"^    timeout-minutes: (\d+)$", coverage, re.MULTILINE).group(1))
+        # The gate's limit covers its runs; the job's adds the checkout and the worktrees, so the gate says it
+        # ran out (exit 2) before the job is killed.
+        self.assertGreaterEqual(minutes * 60, timeout + 300)
+        self.assertIsNone(gate_args(ROOT / ".vibe-verifier-tests", "coverage-not-lost"))
 
 
 if __name__ == "__main__":
