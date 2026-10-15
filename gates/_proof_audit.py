@@ -8,7 +8,8 @@ their wording and where the plan defines them, and the repository's tree; never 
 body's `[proof:]` map: it finds the proving tests itself. Its prompt and output schema are
 harnesses/proof-audit/prompt.md and schema.json, the one copy CI and a laptop both run. It runs on the
 Codex CLI from tools/codex's lockfile, under a ChatGPT-managed login (CODEX_HOME, default ~/.codex), with
-a read-only sandbox and the user's config ignored, so a laptop grades with the settings CI uses.
+the user's config ignored, so a laptop grades with the settings CI uses, and a read-only sandbox (--sandbox;
+CI's Linux runners cannot start Codex's sandbox and pass danger-full-access, as the QAE explorer does).
 
     proof-audit --body FILE                       plan, grade every shard, run the gate: CI's exit code
     proof-audit --body FILE --plan OUT            write the plan (the requirements, split into shards)
@@ -145,7 +146,7 @@ def codex_command(args, prompt, last):
         from _tools import ensure_node_tool
         codex = os.path.join(ensure_node_tool("codex"), "node_modules", ".bin", "codex")
     command = [codex, "exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
-               "--sandbox", "read-only", "-c", 'approval_policy="never"', "-c", 'cli_auth_credentials_store="file"',
+               "--sandbox", args.sandbox, "-c", 'approval_policy="never"', "-c", 'cli_auth_credentials_store="file"',
                "--cd", os.path.abspath(args.repo), "--output-schema", SCHEMA, "-o", last]
     if args.model:
         command += ["--model", args.model]
@@ -312,5 +313,9 @@ def add_arguments(parser):
     parser.add_argument("--reasoning-effort", default="", help="one of %s (default: the model's)" % ", ".join(EFFORTS))
     parser.add_argument("--codex-home", default="", help="the Codex home holding the login (default: $CODEX_HOME, then ~/.codex)")
     parser.add_argument("--codex", default="", help="the Codex CLI to run (default: the one tools/codex pins)")
+    parser.add_argument("--sandbox", choices=["read-only", "danger-full-access"], default="read-only",
+                        help="Codex's sandbox (default read-only). On a Linux runner in an unprivileged container Codex's "
+                        "sandbox (bubblewrap) cannot start and every read fails, so CI passes danger-full-access, as the QAE "
+                        "explorer does; a run that changed the working tree is refused either way")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="seconds one shard may take (default %d)" % DEFAULT_TIMEOUT)
     parser.add_argument("--format", choices=["text", "github"], default="text")

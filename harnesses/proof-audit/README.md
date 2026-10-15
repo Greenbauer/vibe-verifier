@@ -44,9 +44,13 @@ QAE workflow so its required `qae-verify` check carries the verdict:
    ChatGPT-managed Codex login (`$HOME/.codex-qae`, checked as `actions/qae-codex` checks it): runs
    `bin/vibe-verifier proof-audit --requirements <plan> --shard K`, which writes `<K>.json` (the IDs it
    was given, the model's output, and the Codex CLI's own error when the run failed). Codex runs from
-   the catalog's lockfile with a read-only sandbox, the runner's config ignored, the output schema
-   enforced, and stdin closed; a run that changed the working tree is refused. The job uploads the file
-   as an artifact, always.
+   the catalog's lockfile with the runner's config ignored, the output schema enforced, and stdin
+   closed; a run that changed the working tree is refused. The job uploads the file as an artifact,
+   always. Its sandbox is `danger-full-access`, as the QAE explorer's: on a Linux runner in an
+   unprivileged container Codex's read-only sandbox (bubblewrap) cannot start
+   (`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`), every read the model tries fails,
+   and it grades everything UNPROVEN. That was the first run on a consumer's lane (2026-10-15).
+   `sandbox: read-only` is there for a runner that can start it.
 3. **verify** (`mode: verify`), in the verify job, never skipped by a `- None:` or a carried walk:
    downloads the grades, runs the gate, appends the per-ID table to the step summary and posts it as one
    pull request comment, edited in place, so the author can fix every gap in one pass. The step's exit
@@ -177,9 +181,11 @@ grader on both trees: `python3 -m unittest tests.test_proof_audit.Replay` from t
 - Whether an assertion exercises a case is the model's judgment. The gate proves the quotes are real,
   not that they mean what the model says; the grader is told to grade UNPROVEN when in doubt, and it
   is strict (it asked for a visibility assertion where a test read only an error's text).
-- The model reads the repository with a read-only sandbox and is told to judge from the code alone.
-  Nothing stops it reading a file outside the checkout, such as the runner's event payload, which holds
-  the body; it is told not to look.
+- The model is told to judge from the code alone and only to read. In CI it runs without a sandbox (see
+  above), on a runner that holds no token for it; locally, under the read-only sandbox. Neither stops it
+  reading a file outside the checkout, such as the runner's event payload, which holds the body; it is
+  told not to look. A run that changed the working tree is refused, but a write outside the checkout is
+  not seen.
 - A grade covers the tree the job checked out (the pull request merged with its base, in CI). A push
   is graded again.
 - `ticket-coverage` still requires the body's `[proof:]` claims; the audit does not read them.

@@ -39,6 +39,14 @@ inputs:
   timeout:
     description: grade, the seconds one shard may take before it is stopped and recorded as not graded.
     default: "3000"
+  sandbox:
+    description: >-
+      grade, Codex's sandbox: danger-full-access (the default, as actions/qae-codex runs) or read-only. On a Linux
+      runner in an unprivileged container Codex's read-only sandbox (bubblewrap) cannot set up its network namespace
+      ("bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted") and every read the model tries fails, so it
+      grades everything UNPROVEN; measured on a consumer's lane, 2026-10-15. The model is told only to read, the job
+      holds no token, and a run that changed the working tree is refused.
+    default: danger-full-access
   token:
     description: verify, a token that may comment on the pull request; the table is posted, or edited in place, as one comment. Empty posts none (the step summary still has it).
     default: ""
@@ -82,13 +90,14 @@ runs:
         VV_EFFORT: ${{ inputs.reasoning-effort }}
         VV_CODEX_HOME: ${{ inputs.codex-home }}
         VV_TIMEOUT: ${{ inputs.timeout }}
+        VV_SANDBOX: ${{ inputs.sandbox }}
       run: |
         set -euo pipefail
         plan="$RUNNER_TEMP/proof-audit-plan.json"
         printf '%s' "$VV_PLAN" > "$plan"
         python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" proof-audit --requirements "$plan" --shard "$VV_SHARD" \
           --grades "$VV_GRADES" --codex-home "${VV_CODEX_HOME:-$HOME/.codex-qae}" --model "$VV_MODEL" \
-          --reasoning-effort "$VV_EFFORT" --timeout "$VV_TIMEOUT" --format github
+          --reasoning-effort "$VV_EFFORT" --timeout "$VV_TIMEOUT" --sandbox "$VV_SANDBOX" --format github
     - name: Hold the grades to the repository
       if: inputs.mode == 'verify'
       shell: bash

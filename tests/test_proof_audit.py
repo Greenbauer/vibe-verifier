@@ -309,6 +309,15 @@ class Grader(unittest.TestCase):
                 self.assertIn(words, result.stdout)
                 (Path(self.repo) / "scratch.txt").unlink(missing_ok=True)
 
+    def test_ci_runs_without_codex_sandbox_which_cannot_start_in_its_containers(self):
+        result = self.run_grader("--body", str(self.work / "body.md"), "--grades", str(self.work / "out"),
+                                 "--sandbox", "danger-full-access")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(["--sandbox", "danger-full-access"], [call[i:i + 2] for call in self.calls() for i in range(len(call))])
+        action = (ROOT / "actions" / "proof-audit" / "action.yml").read_text()
+        self.assertIn('--sandbox "$VV_SANDBOX"', action)
+        self.assertIn("    default: danger-full-access\n", action)
+
     def test_a_runner_without_a_chatgpt_login_cannot_grade(self):
         write(self.work, {"home/auth.json": json.dumps({"auth_mode": "apikey"})})
         result = self.run_grader("--body", str(self.work / "body.md"), "--grades", str(self.work / "out"))
