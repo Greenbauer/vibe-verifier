@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "proof-audit grades",
+  "description": "One grade per requirement ID the proof auditor was given. gates/proof_audit.py checks every quote against the repository; this file is also the output schema the Codex run is held to (strict: every key required, no others).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requirements"],
+  "properties": {
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "cases", "exclusion", "missing"],
+        "properties": {
+          "id": {"type": "string", "description": "The requirement ID exactly as given."},
+          "status": {"type": "string", "enum": ["PROVEN", "EXCLUDED", "UNPROVEN"]},
+          "cases": {
+            "type": "array",
+            "description": "Every case the requirement's wording names, each with the assertions that prove it (none for a case left unproven).",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["case", "proof"],
+              "properties": {
+                "case": {"type": "string"},
+                "proof": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["file", "test", "line", "assertion"],
+                    "properties": {
+                      "file": {"type": "string", "description": "The test file's path in the repository."},
+                      "test": {"type": "string", "description": "The test's title exactly as written in the file."},
+                      "line": {"type": "integer", "description": "The 1-based line number of the assertion in the file."},
+                      "assertion": {"type": "string", "description": "That line's whole text without its indentation, copied exactly."}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "exclusion": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["plan", "line", "quote", "owner"],
+            "properties": {
+              "plan": {"type": "string", "description": "The plan file's path in the repository."},
+              "line": {"type": "integer", "description": "The 1-based line number of the plan line that names the other owner."},
+              "quote": {"type": "string", "description": "That line's whole text without its indentation, copied exactly."},
+              "owner": {"type": "string", "description": "The owner section as <plan path>#<heading anchor>."}
+            }
+          },
+          "missing": {"type": "string", "description": "For UNPROVEN, each case with no proving assertion and the test that would prove it; empty otherwise."}
+        }
+      }
+    }
+  }
+}

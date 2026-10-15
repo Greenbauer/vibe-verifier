@@ -164,6 +164,13 @@ failed explorer hit a model usage limit, read from the explore jobs' failure ann
 each criterion's verdict from the explorer (and each re-walked feature's), and a link to the run. The state comes from what the
 workflow's jobs and gates concluded, never from the explorer's prose.
 
+`proof-audit --body FILE [--model M] [--reasoning-effort E] [--max-ids N] [--grades DIR]` grades, with a model
+on the Codex CLI (tools/codex) under a ChatGPT-managed login ($CODEX_HOME, default ~/.codex), whether the
+repository's tests prove each requirement the sections the body's `Ticket:` lines link define, never showing
+the model the body, then runs the proof-audit gate on the grades and exits with its code: the same prompt,
+schema and gate the QAE verify job runs, so a session can see the verdict before it pushes. `--plan OUT` and
+`--requirements PLAN --shard K` are CI's two halves of it (harnesses/proof-audit/README.md).
+
 `affected-tests [--base-ref REF] [--tests GLOB] [--exclude GLOB] [--always GLOB] [--all-on GLOB] [--report RESULTS]` prints the
 test files a pull request's changes can affect, one per line, or `ALL`, with a summary on stderr, for the
 repository's own test job to run (gates/_affected_tests.py has the rule). It is not a gate: exit 0 with a
@@ -196,6 +203,7 @@ from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
 from _features import add_selection_arguments, describe, selection  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
 import _affected_tests  # noqa: E402
+import _proof_audit  # noqa: E402
 import qae_artifacts  # noqa: E402
 import repo_rules  # noqa: E402
 LABEL = {0: "PASS", 1: "FAIL", 2: "COULD NOT RUN"}
@@ -1609,6 +1617,9 @@ def main():
     affected.add_argument("--report", action="append", metavar="RESULTS", help="the full run's results, a JUnit XML "
                           "report or a list of failed test files (repeatable): print the failures the selection missed")
     affected.add_argument("--format", choices=["text", "github"], default="text")
+    audit = commands.add_parser("proof-audit", help="grade, with a model on the Codex CLI, whether the tests prove each "
+                                "requirement a pull request's Ticket sections define, then run the proof-audit gate on it")
+    _proof_audit.add_arguments(audit)
     review = commands.add_parser("qa-review", help="post or edit the QAE's one review comment on a pull request (via gh)")
     review.add_argument("--repo", required=True, metavar="OWNER/NAME")
     review.add_argument("--pr", required=True, metavar="N")
@@ -1647,6 +1658,8 @@ def main():
         return rules_doc_command(args)
     if args.command == "affected-tests":
         return _affected_tests.command(args)
+    if args.command == "proof-audit":
+        return _proof_audit.command(args)
     return run(args)
 
 
