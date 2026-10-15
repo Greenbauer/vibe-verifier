@@ -544,7 +544,9 @@ because the login lives on the runner (see the harness README). The fourth is
 `tools/changed-code-mutation/` (StrykerJS and its Vitest runner plugin, with a stub in Vitest's
 place; see [Changed-code mutation](#changed-code-mutation)). A local package a lockfile links
 (`file:`), such as that stub, is copied into the cache with the lockfile and takes a new cache
-directory only when its version in the lockfile changes.
+directory only when its version in the lockfile changes. The fifth is `tools/coverage-not-lost/`
+(`@vitest/coverage-v8` at five Vitest versions, each under the alias `coverage-v8-<version>`; see
+[Coverage not lost](#coverage-not-lost)).
 
 ### Python toolchains
 
@@ -558,7 +560,9 @@ The first is `tools/cognitive-complexity-python/` (complexipy, which measures Py
 `tools/changed-code-mutation-python/` (mutmut and everything it needs but pytest, which must be the
 project's own); its venv is made from the project's interpreter (`--python`), so every compiled wheel
 matches it, and the gate appends the venv's packages to that interpreter's path rather than running
-the venv. The third is `tools/bandit/` (Bandit, for the `bandit` gate).
+the venv. The third is `tools/bandit/` (Bandit, for the `bandit` gate). The fourth is
+`tools/coverage-not-lost-python/` (coverage.py, which `coverage-not-lost` appends to the project's own
+interpreter's path the same way).
 
 `bandit` judges the Python files a pull request changed, as a ratchet per Bandit check: a file is a
 finding when it has more results of one check (`B602`, a subprocess with `shell=True`, say) than at
@@ -696,6 +700,108 @@ changed-code-mutation --project apps/web --break 70 --soak
   project's CI already does, so it belongs in a job that holds no secrets, and a test written to
   detect the mutation run could kill every mutant: that is in the diff, where the review harness
   reads it, not something this gate can see.
+
+### Coverage not lost
+
+`changed-code-mutation` judges the lines a pull request changed, so it never sees a pull request that
+deletes or weakens the only test of code it left alone: the suite gets weaker and no changed line shows
+it. `coverage-not-lost` runs the project's whole unit suite with line coverage at the merge base and at
+the head and compares the two.
+
+```
+coverage-not-lost --soak                                       # Vitest at the repository root
+coverage-not-lost --project packages/web --project packages/db --body vv-inputs/pr-body.md --soak
+coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bin/python --soak
+```
+
+- **The rule.** A finding is a source line the pull request did not change that the suite ran at the
+  merge base and does not run at the head. Each line of the merge base is mapped to the head through
+  the diff (`git diff -U0 -M`), so a line that only moved, in its file or with its file, is compared
+  where it now is; a line the pull request changed or deleted, and every line of a file it deleted,
+  never counts, and neither does a line that is not a statement at the head. A file the head's run did
+  not measure at all ran none of its lines. Test code never counts, as `regression-test-fails-on-base`
+  reads it (test and spec files, the Python test names, `conftest.py`, and anything under a `test`,
+  `tests`, `__tests__`, `__mocks__`, `__snapshots__` or `__fixtures__` directory), and neither do
+  `*.d.ts`, `*.config.*`, `*.stories.*` and `node_modules`. Each finding is reported at its line at the
+  head, consecutive lines as one.
+- **Two runs agree.** Coverage can change from run to run (a test whose path depends on timing or on
+  order), and on a 277-pull-request history of a private TypeScript monorepo single runs flagged
+  different lines of the same pull request. So the gate runs each side once, and only when that pair
+  finds a line runs each side again, in the same order (merge base, head, merge base, head); a line
+  counts only when both pairs find it, and the lines only one pair found are printed as not reported.
+- **Two checkouts.** Each side runs in a git worktree of its own (hooks off), removed afterwards, into
+  which the working copy's ignored files are linked and each `node_modules` directory is mirrored entry
+  by entry: an entry that is a link is copied as the same link, so a workspace package linked by a
+  relative path resolves to that side's code, and every other entry links to the working copy's
+  (Vite's and Vitest's caches excepted: each checkout writes its own). Both sides run with the
+  dependencies the job installed for the head, and in the worktree tests that read git see a checkout.
+  So a pull request that removes a dependency the merge base's tests import cannot run (exit 2, and the
+  message says why): in the replay below, 2 of 23 pull requests did, each removing a package; 7 of the
+  history's 277 changed the lockfile at all.
+- **Vitest.** `--runner vitest` (the default) runs the project's own Vitest, `vitest run
+  --passWithNoTests` in each `--project` plus `--args`, with `@vitest/coverage-v8` of exactly its
+  version: the project's own when it has one, else the catalog's pin of that version, for Vitest 2.1.9,
+  3.2.7, 4.0.18, 4.1.11 and 5.0.3. Any other version is exit 2 that names the provider to add to the
+  project's devDependencies. The rule is exact because a provider of another version is not safe, even
+  one from the same major: measured on 2026-10-15, `@vitest/coverage-v8` 3.2.7 under Vitest 3.0.0
+  reported the `return` of a function no test calls as run, and a line that ran as missed, without an
+  error, while 4.0.18 under Vitest 4.0.0 and 2.1.9 under 2.1.0 did not load. The gate's command line sets
+  the provider, the reporter and where the report goes, so the project's coverage settings do not choose
+  them, and the provider is loaded through a wrapper, registered as Vitest's custom provider, that drops
+  the project's thresholds (a project below its own threshold would otherwise fail every run, for a reason
+  that is not a failing test); the project's `include` and `exclude` still decide which files are
+  measured. Browser-mode tests are not measured; a configuration with a browser project leaves it out
+  with `--args`, such as `--args '--project unit'`.
+- **Python.** `--runner pytest` or `--runner unittest` runs `-m pytest` or `-m unittest`, plus `--args`, in
+  each `--project` under coverage.py 7.16.2, pinned in `tools/coverage-not-lost-python/`, in the
+  project's own interpreter (`--python`, default `python3`; a relative path is the repository's), which
+  must import pytest (or unittest) and be Python 3.10 or later. coverage.py's package is appended to the
+  end of that interpreter's path, as the mutation gate does with mutmut, and it reads the gate's own
+  settings file, never the project's `.coveragerc`, `setup.cfg`, `tox.ini` or `pyproject.toml`
+  sections. Each test function is recorded as the context of the lines it runs. A suite that imports a
+  source file from the working copy instead of the checkout it runs in (an editable install whose
+  path comes before the checkout's) is exit 2, since the gate could not tell which side's code ran.
+  Code a test runs in another process is not measured.
+- **What ran it.** A Python finding names the test functions that ran the line at the merge base. A
+  Vitest finding says whether the test files the pull request deleted, changed or moved ran it there,
+  from one more run at the merge base of just those files, and lists them; a pull request that touched
+  no test file says the code that reached the line changed. More such files than `--max-files`
+  (default 20) are not run again, and the findings stand without the sentence. `--max-files` bounds that
+  run only: the size of a pull request never refuses a verdict, because in the history above the three
+  pull requests that lost coverage changed 14, 61 and 105 files.
+- **An intended loss.** `--body FILE` is the pull request body, a file the workflow writes before the
+  gate, as `ticket-coverage` reads it (in GitHub Actions, from `github.event.pull_request.body`; add
+  `edited` to the workflow's `pull_request` types so a reason added later runs the job again). A line
+  `coverage-lost: <reason>` in it, or a list item that starts so, marks the loss as intended: every
+  finding is printed with the reason as advisory and the gate passes. The line is the pull request's
+  own, head-controlled and visible where the review reads it, like the other tools' escape hatches. A
+  `--body` that cannot be read is exit 2.
+- **Bounded.** `--timeout` seconds (default 900) for every run together; past it the run's whole process
+  group is killed and the gate cannot run. The cost is one run of the suite at each side, two more when
+  the first pair found a line, and for Vitest one partial run when there is a finding. Measured on
+  2026-10-15 by replaying 23 pull requests of the private monorepo above in a Linux arm64 container
+  (a web package of about 18,000 lines that its suite runs): 82 seconds median (51 to 171) when nothing
+  was lost, 169 to 255 seconds when the first pair found a line, on top of the job's own install.
+- **Replayed.** Of those 23, the three a hand check had found weakening a test were each flagged at the
+  lines the hand check named; of the 20 others, one was flagged (a deduplication branch the changed code
+  no longer reached), one had two lines found by the first pair and dismissed by the second, 2 could not
+  run (above) and 16 passed.
+- **Exit 2 also when** the suite fails at either side (its failing tests are printed), no test ran at
+  either side, a `--project` is outside the repository or not a directory, the project has no Vitest,
+  `node` is missing, the interpreter has no pytest, or Vitest wrote no coverage report.
+- **Subscribing.** As with `changed-code-mutation`, in a manifest of its own, such as
+  `.vibe-verifier-tests`, run by a job that installs the project's dependencies and writes the body
+  file first, under a job timeout above `--timeout`, in a job that holds no secrets: the gate runs the
+  pull request's own tests. Start with `--soak`, which prints every finding as a warning; once its record
+  is clean (each finding a real weakening, or a pull request that says why), remove `--soak` on the base
+  manifest so the gate blocks.
+- **What it does not catch.** Browser and end-to-end tests: only the unit suite the runner starts is
+  measured, so a loss only a Playwright test would show passes (the [QAE harness](../harnesses/qae/README.md)
+  re-walks features in a browser). A line that still runs but that no test asserts on any more: a test
+  that keeps calling the code and drops its `expect` passes (`changed-code-mutation` on the lines the
+  pull request changes, and the review, see that). And a line that stops running because code before it
+  changed, such as a branch the tests no longer reach, is a finding too: it is what happened, and the
+  pull request body says why.
 
 ### Repository rules
 

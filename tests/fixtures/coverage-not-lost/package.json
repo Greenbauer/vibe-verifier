@@ -1,0 +1,10 @@
+{
+  "name": "vibe-verifier-coverage-fixture",
+  "private": true,
+  "description": "The test runner of the coverage-not-lost gate's end-to-end tests: a project's own Vitest and its own coverage provider of the same version, installed with npm ci from this lockfile.",
+  "type": "module",
+  "devDependencies": {
+    "@vitest/coverage-v8": "4.1.11",
+    "vitest": "4.1.11"
+  }
+}
