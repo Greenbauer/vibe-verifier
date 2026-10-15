@@ -74,6 +74,7 @@ The full rules are in the [gate contract](docs/GATE-CONTRACT.md).
 | Browser-driven acceptance exploration | ✓ |
 | Screenshot and step-log evidence | ✓ |
 | Deterministic validation of AI-produced evidence | ✓ |
+| Model-graded requirement proof, every quote checked | ✓ |
 | Organization wrapper workflows | ✓ |
 | Ruleset-based cross-repository enforcement | ✓ |
 | Commit-SHA pin inventory and propagation | ✓ |
@@ -145,6 +146,7 @@ Each gate is a command-line program that reads a working tree and its Git histor
 | `repo-rules` | New findings of the repository's own [ast-grep](https://ast-grep.github.io/) rules and of catalog [rule packs](rules/README.md), each with a message saying what to write instead |
 | `universal-checks` | A place in the code that breaks one of the repository's standing rules, `ci/universal-checks.md`: every match of a rule's population (every call shape of an API, say) must conform to it, and a rule whose population matches nothing fails closed. The rules are read at the merge base, so a pull request cannot weaken its own ([format](docs/GATE-CONTRACT.md#universal-checks)) |
 | `ticket-coverage` | Plan requirements without IDs or criteria, and linked ticket IDs without HEAD proof or a deferral accepted at the merge base ([subscription and grammar](docs/features/ticket-coverage.md)) |
+| `proof-audit` | A requirement a linked ticket section defines that the tests do not prove as worded: a model grades each ID cold (it never sees the body or its proof map), and the gate fails any UNPROVEN and any quoted assertion or test title that is not in the repository ([harness](harnesses/proof-audit/README.md)) |
 | `feature-map` | A [feature map](docs/feature-map.md) out of step with the code: a surface (route, page, command) no feature owns, a listed surface the code no longer declares, a source glob matching nothing, or a test anchor that does not resolve |
 | `no-duplicate-package-json-keys` | Duplicate keys or invalid JSON in `package.json` |
 | `build-tools-in-devdependencies` | Known development packages listed as runtime dependencies |
@@ -171,6 +173,10 @@ The workflow:
 5. lets a deterministic gate verify that the receipt matches the current head and that required threads are resolved.
 
 A push after review makes the old receipt stale. The harness selects a full review, delta review, or no-change receipt refresh from the changed files. A provider failure, model error, or interrupted review issues no new receipt and fails the review job. When the first account does not complete a review, a second account (`CLAUDE_CODE_OAUTH_TOKEN_FALLBACK`, optional) runs it. The one exception is a proven rate or usage limit on every configured account: the job passes with a warning that names each account's limit and its reset time in UTC when the reviewer reported them, and posts a `limited` receipt, which counts for that exact head but is never used as the starting point for the next review.
+
+### Proof audit
+
+The [proof audit](harnesses/proof-audit/README.md) asks whether the tests prove each requirement a pull request's ticket defines, as worded. A model on the Codex CLI is given the requirement list and the repository's tree, never the body or its `[proof:]` map, and grades every ID PROVEN (each case the wording names, with the test and the assertion lines that prove it, quoted with their line numbers), EXCLUDED (the plan line that gives it to an owner that took it) or UNPROVEN (what is missing). The `proof-audit` gate checks every quote against the repository and fails on any UNPROVEN, a fabricated quote included; a usage limit or any other failed grading run is could-not-run. It runs in the QAE verify job, so its required check carries the verdict, and `bin/vibe-verifier proof-audit` runs the same prompt, schema and gate before a push.
 
 ### Browser acceptance verification
 
@@ -269,6 +275,7 @@ For multiple projects, see [subscribing in CI](docs/GATE-CONTRACT.md#subscribing
 - [Feature maps](docs/feature-map.md): one file per user-facing feature, kept true by the `feature-map` gate.
 - [Review harness](harnesses/review/README.md): revision-bound AI review and workflow receipts.
 - [QAE harness](harnesses/qae/README.md): browser exploration, artifacts, and deterministic acceptance verdicts.
+- [Proof audit](harnesses/proof-audit/README.md): model-graded requirement proof, held to the repository by a deterministic gate.
 - [Dashboard](docs/dashboard.md): local read-only verification observability, and the [Linux host runbook](docs/dashboard-host.md) that runs it under systemd.
 - [Runner lanes](lanes/README.md): the design and operator's manual of the self-hosted runner-lane kit, with an [example host file](lanes/examples/hosts/example.yml).
 - [Security policy](SECURITY.md): vulnerability reporting and supported versions.

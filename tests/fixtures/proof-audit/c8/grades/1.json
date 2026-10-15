@@ -1,0 +1,46 @@
+{
+  "shard": 1,
+  "ids": [
+    "C-8"
+  ],
+  "error": null,
+  "output": {
+    "requirements": [
+      {
+        "id": "C-8",
+        "status": "UNPROVEN",
+        "cases": [
+          {
+            "case": "Cover upload enters the drag-hover state on drag-over.",
+            "proof": [
+              {
+                "file": "web/test/cover-upload.test.ts",
+                "test": "the dropzone shows a drag-hover state and crops only the first dropped file",
+                "line": 10,
+                "assertion": "assert.equal(upload.dragging, true);"
+              }
+            ]
+          },
+          {
+            "case": "Cover upload clears the drag-hover state on drag-leave.",
+            "proof": [
+              {
+                "file": "web/test/cover-upload.test.ts",
+                "test": "the dropzone shows a drag-hover state and crops only the first dropped file",
+                "line": 12,
+                "assertion": "assert.equal(upload.dragging, false);"
+              }
+            ]
+          },
+          {
+            "case": "Cover upload enforces the one-file limit.",
+            "proof": []
+          }
+        ],
+        "exclusion": null,
+        "missing": "One-file enforcement is unproven: the second dropped file is a GIF that the type filter rejects anyway, and checking multiple=false does not exercise enforcement. Add a test dropping two otherwise accepted files, such as a PNG and a JPEG, and assert that only the first file is retained; gallery video limits remain outside this photo-limit requirement."
+      }
+    ]
+  },
+  "seconds": 29.1
+}

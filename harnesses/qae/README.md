@@ -302,6 +302,12 @@ skip, including `- None:`, unrendered paths and a carried verdict. A wrapper pas
 through `entries:`. A consumer updating an older copy needs that checkout and the verify criteria
 step's `manifest: .vibe-verifier-qae`, as well as the manifest line. The gate grades these tags without a model.
 
+`ticket-coverage` checks that each ID's `[proof:]` claim exists, never that the test proves the
+requirement. The [proof audit](../proof-audit/README.md) does: a model grades every ID from the code
+alone, and its gate, which checks every quote, runs in this verify job, so `qae-verify` fails on an
+unproven requirement. Its three steps go in this workflow (the criteria job plans, a job per shard
+grades on the Codex runner, the verify job checks).
+
 Tag each requirement list item before the ticket section's first subheading with `[req: P1-4]` or
 `[req: P1-4, G2-3a]`. Cite each ID in an item of its own direct `Acceptance criteria` subsection or
 anywhere in its direct `Not checked in a browser...` subsection. A PR body list item claims it with

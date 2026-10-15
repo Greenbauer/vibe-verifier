@@ -118,6 +118,8 @@ The explorer can be wrong. The architecture prevents an unsupported sentence suc
 
 See [`harnesses/qae/README.md`](../harnesses/qae/README.md).
 
+The same verify job runs the [proof audit](../harnesses/proof-audit/README.md), which asks the question `ticket-coverage` leaves open: do the tests prove each requirement a linked section defines, as worded? A planning step in the criteria job reads the requirement IDs at the merge base; grade jobs on the Codex runner give a model the requirement list and the checkout, never the body or its `[proof:]` map, and keep its JSON grades (PROVEN with quoted assertions, EXCLUDED to an owner that took the item, UNPROVEN); the `proof-audit` gate then checks every quote and title against the repository and every exclusion's `[takes:]` at the merge base, and fails on any UNPROVEN. A grade job that fails, a usage limit included, leaves its error in its grade file, and the gate cannot run. Whether an assertion exercises a case stays the model's judgment.
+
 ### 5. Repository and organization governance
 
 A direct consumer copies a small workflow stub and pins the Vibe Verifier action by full commit SHA.
@@ -195,6 +197,8 @@ A recurring pattern is that the workflow declares the values that determine what
 | Design reference images, and their digests | Consumer workflow (site step), declared by the workflow before the explorer runs |
 | Browser observations/screenshots | Model/browser harness |
 | Acceptance verdict validity | Deterministic gates |
+| Which requirements a pull request owes proof for | `Ticket:` links and the plan at the merge base, read by the proof audit's planning step before any model runs |
+| Requirement proof grades | Model (proof audit), every quote and exclusion checked by the `proof-audit` gate |
 | Aggregate CI status | Gate runner / GitHub job |
 
 This ownership split is the core security boundary of the system.

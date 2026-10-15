@@ -1,0 +1,59 @@
+{
+  "shard": 1,
+  "ids": [
+    "C-8"
+  ],
+  "error": null,
+  "output": {
+    "requirements": [
+      {
+        "id": "C-8",
+        "status": "PROVEN",
+        "cases": [
+          {
+            "case": "Cover upload enters the drag-hover state.",
+            "proof": [
+              {
+                "file": "web/test/cover-upload.test.ts",
+                "test": "the dropzone shows a drag-hover state and crops only the first dropped file",
+                "line": 10,
+                "assertion": "assert.equal(upload.dragging, true);"
+              }
+            ]
+          },
+          {
+            "case": "Cover upload clears the drag-hover state on drag leave.",
+            "proof": [
+              {
+                "file": "web/test/cover-upload.test.ts",
+                "test": "the dropzone shows a drag-hover state and crops only the first dropped file",
+                "line": 12,
+                "assertion": "assert.equal(upload.dragging, false);"
+              }
+            ]
+          },
+          {
+            "case": "Cover upload enforces one file, retaining only the first of two acceptable photos; gallery video limits are outside this photo requirement.",
+            "proof": [
+              {
+                "file": "web/test/cover-upload.test.ts",
+                "test": "the dropzone shows a drag-hover state and crops only the first dropped file",
+                "line": 13,
+                "assertion": "assert.equal(upload.multiple, false);"
+              },
+              {
+                "file": "web/test/cover-upload.test.ts",
+                "test": "the dropzone shows a drag-hover state and crops only the first dropped file",
+                "line": 16,
+                "assertion": "assert.deepEqual(upload.cropped, [\"first.png\"]);"
+              }
+            ]
+          }
+        ],
+        "exclusion": null,
+        "missing": ""
+      }
+    ]
+  },
+  "seconds": 33.2
+}

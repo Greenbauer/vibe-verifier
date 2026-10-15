@@ -54,7 +54,7 @@ The QAE template includes the body subscription. Its full-history criteria check
 
 ## Gotchas
 
-- Proof checks existence and literal text, never whether a test ran or demonstrates the requirement's meaning. Review and runtime verification still do that work.
+- Proof checks existence and literal text, never whether a test ran or demonstrates the requirement's meaning. The [proof audit](proof-audit.md) grades that, from the code alone, for every ID a linked section defines.
 - Tags trace explicitly named clauses. A compound bullet with an untagged clause still needs its author to assign that clause an ID; the gate cannot infer requirements from prose.
 - Tagged tickets enforce traceability only when the consumer subscribes. Untagged legacy sections remain qualified passes; plan checks are how a consumer requires IDs before implementation.
 - A not-checked entry closes plan-to-criteria coverage only. The linked PR still owes proof or an accepted deferred owner for that ID.
