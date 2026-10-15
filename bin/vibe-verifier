@@ -87,7 +87,9 @@ annotation a criterion carries (`AC2 references: home-desktop`, `AC3 roles: admi
 the criteria of the ticket the pull request implements (written by the consumer's workflow) count too,
 as TC1, TC2, ...: a ticket that lists criteria, or a non-empty one in which none can be found (printed
 as `ticket: ...`, and refused by the gate), makes a check needed whatever the pull request declares, so
-it cannot drop its ticket's requirements; an empty file links no ticket. With `--max-shards N` it then
+it cannot drop its ticket's requirements; an empty file links no ticket. A ticket criterion the body
+proves with a `ticket-proof: TCn -- ...` line is not walked: it is left out of the count and printed as
+`TCn proven by a test, not walked` (acceptance-verdict judges the proof). With `--max-shards N` it then
 prints `shards: [1,2,...]`, the explorers the criteria are split across, for a harness to run in parallel:
 one walk is a criterion as one role it names at one width, an explorer is sized for six, and there are
 never more than N explorers nor than chains of criteria. A criterion is never split, and criteria that build
@@ -198,7 +200,7 @@ GATES = os.path.join(ROOT, "gates")
 sys.path.insert(0, GATES)
 from _acceptance import (REFERENCE_KEY, annotations, baseline_problems, body_criteria as read_criteria,  # noqa: E402
                          carried, check_lines, declares_none, NO_CRITERIA, no_criteria_message, not_required, png_size, said,
-                         ticket_items, verdict)
+                         split_ticket, ticket_items, ticket_proofs, PROOF_TOKEN, verdict)
 from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
 from _features import add_selection_arguments, describe, selection  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
@@ -1001,10 +1003,13 @@ def criteria_command(args):
         for message in unrunnable:
             print("::error::" + message, file=sys.stderr)
         return 1
-    wanted = body + ticket
+    walked, proven = split_ticket(ticket, text)
+    wanted = body + walked
     print("criteria: %d" % len(wanted))
     if problem:
         print("ticket: %s" % problem)
+    for item, _ in proven:
+        print("%s proven by a test, not walked" % item)
     for item, wording in wanted:
         notes = annotations(wording)
         for label, values in (("references", notes.references), ("roles", notes.roles), ("malformed", notes.malformed)):
@@ -1228,7 +1233,8 @@ def qae_inputs_command(args):
             ticket_text = read_text(args.ticket) if os.path.isfile(args.ticket) else ""
         except OSError as error:
             return fail("could not read %s" % error)
-        items = ([] if declares_none(criteria_text) else read_criteria(criteria_text)) + ticket_items(ticket_text)[0]
+        items = (([] if declares_none(criteria_text) else read_criteria(criteria_text))
+                 + split_ticket(ticket_items(ticket_text)[0], criteria_text)[0])
         names = os.listdir(args.features) if os.path.isdir(args.features) else []
         features = len([name for name in names if name.endswith(".md")])
         options = selection_options(args) if args.manifest and features else None
@@ -1424,9 +1430,13 @@ def review_criteria(criteria_text, verdict_text, ticket_text=""):
         return rows or ["The pull request lists no acceptance criteria. Add a `## Acceptance criteria` list, or "
                         "`- None: <why>` when nothing on the site changes."]
     lines = check_lines(verdict_text, "acceptance-check")
+    proofs = ticket_proofs(criteria_text)
     for item, wording in wanted:
         source = " (from the ticket)" if item.startswith("TC") else ""
-        rows.append("- %s%s, %s: %s" % (item, source, explorer_said(lines.get(item.casefold(), [])), wording))
+        proof = proofs.get(item.casefold()) if item.startswith("TC") else None
+        said_by = ("not walked, the pull request proves it with a test: %s" % said(proof[0], PROOF_TOKEN) if proof
+                   else explorer_said(lines.get(item.casefold(), [])))
+        rows.append("- %s%s, %s: %s" % (item, source, said_by, wording))
     # A feature re-walk (docs/feature-map.md) adds one line per feature; which features were required is
     # the gate's to decide, so this lists what the explorer wrote and the gate's log names any missing.
     # A re-walk is partial by design, so the states the explorer says it left unwalked are listed too.
