@@ -227,6 +227,9 @@ if behaviour == "limit":
     print(json.dumps({"type": "error", "message": "You've hit your usage limit. Try again at 3:05 PM."}), flush=True)
     print(json.dumps({"type": "turn.failed", "error": {"message": "You've hit your usage limit. Try again at 3:05 PM."}}), flush=True)
     sys.exit(1)
+if behaviour == "crashed":
+    sys.stderr.write(os.environ["FAKE_STDERR"])
+    sys.exit(1)
 if behaviour == "write":
     open(os.path.join(args[args.index("--cd") + 1], "scratch.txt"), "w").write("x")
 prompt = args[-1]
@@ -252,11 +255,11 @@ class Grader(unittest.TestCase):
                           "codex": FAKE_CODEX, "grades.json": json.dumps({g["id"]: g for g in valid()})})
         os.chmod(self.work / "codex", 0o755)
 
-    def run_grader(self, *args, behaviour="", grades=None):
+    def run_grader(self, *args, behaviour="", grades=None, stderr=""):
         if grades is not None:
             write(self.work, {"grades.json": json.dumps({g["id"]: g for g in grades})})
         env = {"FAKE_LOG": str(self.work / "calls.jsonl"), "FAKE_GRADES": str(self.work / "grades.json"),
-               "FAKE_BEHAVIOUR": behaviour}
+               "FAKE_BEHAVIOUR": behaviour, "FAKE_STDERR": stderr}
         return runner("proof-audit", "--repo", self.repo, "--base-ref", "main", "--codex", str(self.work / "codex"),
                       "--codex-home", str(self.work / "home"), *args, env=env)
 
@@ -314,6 +317,26 @@ class Grader(unittest.TestCase):
         self.assertIn("a model usage limit", result.stdout)
         envelope_ = json.loads((self.work / "out" / "1.json").read_text())
         self.assertIsNone(envelope_["output"])
+
+    def test_a_crashed_cli_is_named_by_its_error_line_not_its_stack_or_node_banner(self):
+        # Node's own stderr, captured: an uncaught throw (codex.js's missing-binary error) and codex.js's
+        # child.on("error") handler printing a failed spawn. Neither run writes a JSONL error event.
+        thrown = ("[eval]:1\nthrow new Error(\"Missing optional dependency @openai/codex-linux-x64.\")\n^\n\n"
+                  "Error: Missing optional dependency @openai/codex-linux-x64.\n    at [eval]:1:7\n"
+                  "    at runScriptInThisContext (node:internal/vm:209:10)\n\nNode.js v22.23.1\n")
+        spawned = ("Error: spawn /opt/codex/codex ENOENT\n    at ChildProcess._handle.onexit (node:internal/child_process:285:19)\n"
+                   "    at onErrorNT (node:internal/child_process:483:16)\n"
+                   "    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {\n"
+                   "  errno: -2,\n  code: 'ENOENT',\n  syscall: 'spawn /opt/codex/codex',\n}\n")
+        for name, stderr, line in (("thrown", thrown, "Error: Missing optional dependency @openai/codex-linux-x64."),
+                                   ("spawned", spawned, "Error: spawn /opt/codex/codex ENOENT")):
+            with self.subTest(name):
+                result = self.run_grader("--body", str(self.work / "body.md"), "--grades", str(self.work / name),
+                                         behaviour="crashed", stderr=stderr)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                expected = "Codex ended with an error: exit 1 (%s)" % line
+                self.assertIn(expected, result.stdout)
+                self.assertEqual(json.loads((self.work / name / "1.json").read_text())["error"], expected)
 
     def test_a_grader_that_writes_or_answers_garbage_is_not_graded(self):
         for behaviour, words in (("write", "changed the working tree"), ("garbled", "final message is not JSON")):
