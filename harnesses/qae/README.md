@@ -259,6 +259,23 @@ now reads the ticket by default, and the harness holds the pull request to its c
   a finding, a line inside an HTML comment proves nothing, and a ticket proven whole in a body that
   declares `- None:` needs no browser run. Like every anchor, it shows the cited test exists, never that
   it asserts the criterion; use it only for what a browser cannot check.
+- A plan kept in a plan store (a plan a requester submits outside the repository, amended later) is
+  read by the same step when the consumer names the store:
+
+  ```yaml
+          plans-endpoint: https://plans.example.com/api/v1   # answers GET <endpoint>/plans/<id> with {planMarkdown, amendments: [{body}]}
+          plans-token: ${{ secrets.PLANS_TOKEN }}             # a read-only token of the store's
+          title: ${{ github.event.pull_request.title }}
+  ```
+
+  A `[plan:<id>]` marker in the pull request's title or body (outside code fences and HTML comments)
+  names the plan. Its criteria are the list items under each heading of the plan that starts
+  "Acceptance", then each amendment's, oldest first: the items under its own "Acceptance criteria"
+  heading or bold line, or, when it has none, the whole amendment as one criterion. They follow any
+  `Ticket:` section's criteria, and the step's job summary numbers them all, TC1, TC2, ..., so an
+  author knows which number a `ticket-proof:` line names. The store is read on every run, so an
+  amendment added while the pull request is open is graded on its next run. A plan with no Acceptance
+  section, a store that does not answer 200, or a marker with no token fails the step.
 - A spec kept elsewhere needs its own step in place of the default (a declared custom), or one beside it
   that appends to the same file, writing the ticket's criteria with
   the PR body's grammar: a `## Acceptance criteria` list (a ticket body that has that section can be
