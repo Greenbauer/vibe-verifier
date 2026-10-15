@@ -182,23 +182,23 @@ def select(args):
     reason = reason or named_reason(args.repo, base, diff, args.all_on or [], playwright)
     if reason:
         return Selection(tests, reason)
+    affected, always = reached(graph, tests, {path for _, path in diff}, playwright)
+    always |= {test for test in tests if matches(test, args.always or [])}
+    return Selection(tests, by_import=affected & set(tests), by_reads=always & set(tests), changed=len(diff))
+
+
+def reached(graph, tests, changed, playwright):
+    """(the files a change reaches, the files that reach a file that reads files) through imports."""
     configs = [path for path in graph.files if RUNNER_CONFIG.match(posixpath.basename(path)) and runs_config(path, playwright)]
     importers = graph.importers({path: graph.named_paths(path) for path in configs})
     always = reach(importers, {path for path in graph.files if reads(graph, path)})
     # A test runner's config, and each file it names (a setup file) or imports, runs before every test under its
     # directory: a change reaching it reaches those tests. What the config itself reads (a .env file) does not
     # make them read files.
-    for test in tests:
-        for config in configs:
-            if _under(test, posixpath.dirname(config)):
-                importers.setdefault(config, set()).add(test)
-    affected = reach(importers, {path for _, path in diff})
-    return Selection(tests, by_import=[test for test in tests if test in affected],
-                     by_reads=[test for test in tests if test in always or matches(test, args.always or [])], changed=len(diff))
-
-
-def _under(path, directory):
-    return not directory or path.startswith(directory + "/")
+    for config in configs:
+        directory = posixpath.dirname(config)
+        importers.setdefault(config, set()).update(test for test in tests if not directory or test.startswith(directory + "/"))
+    return reach(importers, changed), always
 
 
 # --report: what failed in the full run, by test file
@@ -211,14 +211,18 @@ def junit_failures(text, where):
     except ElementTree.ParseError as error:
         raise CannotRun("%s is not a JUnit XML report: %s" % (where, error))
     suites = list(root.iter("testsuite")) + ([] if root.tag == "testsuite" else [root])
-    failed, cases = [], 0
-    for suite in suites:
-        for case in suite.findall("testcase"):
-            cases += 1
-            if case.find("failure") is not None or case.find("error") is not None:
-                names = [case.get("file"), case.get("classname"), suite.get("name") if suite.tag == "testsuite" else None, case.get("name")]
-                failed.append([name for name in names if name])
-    return failed, cases
+    cases = [(case, suite) for suite in suites for case in suite.findall("testcase")]
+    return [_names(case, suite) for case, suite in cases if _failed(case)], len(cases)
+
+
+def _failed(case):
+    return case.find("failure") is not None or case.find("error") is not None
+
+
+def _names(case, suite):
+    """What a test case says its file is, most specific first: Vitest names it in classname and the suite, pytest a dotted classname."""
+    names = [case.get("file"), case.get("classname"), suite.get("name") if suite.tag == "testsuite" else None, case.get("name")]
+    return [name for name in names if name]
 
 
 def locate(repo, name, tests):
@@ -238,26 +242,30 @@ def locate(repo, name, tests):
     return set()
 
 
+def result_failures(path):
+    """[(the names one failed test gives for its file)] in one results file: JUnit XML, or failed files one per line."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+    except OSError as error:
+        raise CannotRun("cannot read the results %s: %s" % (path, error.strerror))
+    if not text.lstrip().startswith("<"):
+        return [[line.strip()] for line in text.splitlines() if line.strip()]
+    names, cases = junit_failures(text, path)
+    if not cases:
+        raise CannotRun("%s holds no test case: a full run that reported nothing is no evidence" % path)
+    return names
+
+
 def failed_tests(repo, results, tests):
     """(test files that failed in the full run, failures no test file could be found for)."""
     failed, unknown = set(), []
-    for path in results:
-        try:
-            with open(path, encoding="utf-8", errors="replace") as handle:
-                text = handle.read()
-        except OSError as error:
-            raise CannotRun("cannot read the results %s: %s" % (path, error.strerror))
-        if text.lstrip().startswith("<"):
-            names, cases = junit_failures(text, path)
-            if not cases:
-                raise CannotRun("%s holds no test case: a full run that reported nothing is no evidence" % path)
-        else:
-            names = [[line.strip()] for line in text.splitlines() if line.strip()]
-        for given in names:  # a case's names in order (file, classname, suite, name): the first that finds one decides
-            found = next((hit for hit in (locate(repo, name, tests) for name in given) if hit), set())
-            failed |= found
-            if not found:
-                unknown.append(given[0])
+    for given in (names for path in results for names in result_failures(path)):
+        # A case's names in order (file, classname, suite, name): the first that finds a test file decides.
+        found = next((hit for hit in (locate(repo, name, tests) for name in given) if hit), set())
+        failed |= found
+        if not found:
+            unknown.append(given[0])
     return failed, unknown
 
 

@@ -146,14 +146,11 @@ class Graph:
         """([(pattern, [target])], baseUrl) for one tsconfig, its `paths` taken from it or what it extends."""
         seen.add(path)
         config = read_jsonc(self.text(path))
-        options = config.get("compilerOptions") if isinstance(config, dict) else None
-        options = options if isinstance(options, dict) else {}
+        options = _compiler_options(config)
         here = posixpath.dirname(path)
-        base_url = posixpath.normpath(posixpath.join(here, options["baseUrl"])) if isinstance(options.get("baseUrl"), str) else None
+        base_url = _base_url(options, here)
         if isinstance(options.get("paths"), dict):
-            root = base_url if base_url is not None else here
-            return [(pattern, [posixpath.join(root, target) for target in targets if isinstance(target, str)])
-                    for pattern, targets in options["paths"].items() if isinstance(targets, list)], base_url
+            return _aliases(options["paths"], here if base_url is None else base_url), base_url
         for parent in _extends(config, here):
             if parent in self.known and parent not in seen:
                 aliases, parent_base = self._compiler_paths(parent, seen)
@@ -235,6 +232,22 @@ def _alias_targets(spec, pattern, targets):
         return []
     star = spec[len(prefix):len(spec) - len(suffix)]
     return [target.replace("*", star) for target in targets]
+
+
+def _compiler_options(config):
+    options = config.get("compilerOptions") if isinstance(config, dict) else None
+    return options if isinstance(options, dict) else {}
+
+
+def _base_url(options, here):
+    value = options.get("baseUrl")
+    return posixpath.normpath(posixpath.join(here, value)) if isinstance(value, str) else None
+
+
+def _aliases(paths, root):
+    """[(pattern, [target])] from a tsconfig `paths`, each target relative to `root` (its baseUrl or directory)."""
+    return [(pattern, [posixpath.join(root, target) for target in targets if isinstance(target, str)])
+            for pattern, targets in paths.items() if isinstance(targets, list)]
 
 
 def _extends(config, here):

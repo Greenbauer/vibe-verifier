@@ -29,6 +29,7 @@ From a workflow, `uses: Greenbauer/vibe-verifier/actions/affected-tests@<sha>` a
 - `tests/test_affected_tests.py::test_no_base_or_an_unreadable_base_selects_all`
 - `tests/test_affected_tests.py::test_a_failure_in_a_test_the_selection_left_out_is_a_miss`
 - `tests/test_affected_tests.py::test_the_node_test_reporter_writes_the_failed_files_the_report_reads`
+- `tests/test_affected_tests.py::test_the_node_test_reporter_writes_each_failed_file_once`
 - `tests/test_affected_tests.py::test_the_action_writes_the_list_and_says_whether_every_test_runs`
 
 ## Gotchas

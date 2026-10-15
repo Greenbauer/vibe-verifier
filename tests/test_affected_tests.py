@@ -309,7 +309,6 @@ class Report(unittest.TestCase):
         self.assertEqual(lines, ["affected-tests: report: the selection was ALL (yarn.lock changed (a lockfile)), "
                                  "so no failure could be missed"])
 
-    @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_the_node_test_reporter_writes_the_failed_files_the_report_reads(self):
         repo = make_repo(self, {
             "lib.mjs": "export const one = 1;\n", "other.mjs": "export const two = 2;\n",
@@ -325,6 +324,12 @@ class Report(unittest.TestCase):
         self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
         result, lines = affected(repo, "--report", failed)
         self.assertIn("affected-tests: miss: other.test.mjs failed in the full run and was not selected", lines, result.stderr)
+
+    def test_the_node_test_reporter_writes_each_failed_file_once(self):
+        run = subprocess.run(["node", "--test", "--test-reporter=tap", str(REPORTER.with_suffix(".test.mjs"))],
+                             capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertIn("# pass 2", run.stdout)
 
 
 def action_script():
