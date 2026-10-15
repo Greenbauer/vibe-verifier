@@ -159,11 +159,13 @@ class Rules(unittest.TestCase):
 
     def test_a_fix_whose_only_test_is_one_this_gate_cannot_run_cannot_be_judged(self):
         repo = self.repo()
-        result = fix(repo, {"src/price.ts": PRICE_FIX, "e2e/price.spec.ts": PLAYWRIGHT_SPEC, "db/price.test.sql": "select 1;\n"},
+        result = fix(repo, {"src/price.ts": PRICE_FIX, "e2e/price.spec.ts": PLAYWRIGHT_SPEC, "db/price.test.sql": "select 1;\n",
+                            "scripts/price.test.sh": "[ \"$(node -p 1)\" = 1 ] || exit 1\n"},
                      "fix(price): members get their discount", "", "--soak", *self.NO_RUNNER)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("e2e/price.spec.ts: a Playwright test, which needs a browser and a running site", result.stderr)
-        self.assertIn("db/price.test.sql: a .sql test; this gate runs Vitest, pytest and unittest", result.stderr)
+        self.assertIn("db/price.test.sql: a .sql test; this gate runs Vitest, node:test, pytest and unittest", result.stderr)
+        self.assertIn("scripts/price.test.sh: a .sh test; this gate runs Vitest, node:test, pytest and unittest", result.stderr)
 
     def test_a_fix_with_a_vitest_test_and_no_vitest_installed_cannot_run(self):
         repo = self.repo()

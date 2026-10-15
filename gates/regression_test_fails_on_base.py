@@ -14,19 +14,26 @@ test says why on a body line `regression-test: none -- <reason>`: it passes, and
 Otherwise the fix must add or change a test. The gate runs the test files it changed twice, under the
 project's own runner: at HEAD, where every one of their tests must pass (a red suite is exit 2), and
 on the code before the fix, the merge base with only the pull request's test code laid over it. It
-passes when a test that passes at HEAD fails there; it fails when they all pass there, which does not
+passes when a test that passes at HEAD fails there, or when the file's own top-level code fails an
+assertion there before its tests run (any other error that stops it there means it did not load); it
+fails when they all pass there, which does not
 reproduce the bug, and when the only failures there are a module, export, file or script the test
 needs not existing yet, which does not show the bug either. Each runner's structured report decides
-(Vitest's JSON reporter, pytest's reports, unittest's results), never an exit code.
+(Vitest's JSON reporter, node:test's TAP reporter, pytest's reports, unittest's results), never an
+exit code.
 
 Test code is a file named as a test (`*.test.*`, `*.spec.*`, `__tests__/`, and test_*.py, *_test.py,
 test-*.py, *-test.py, *.test.py), conftest.py, anything under a `test`, `tests`, `__tests__`,
-`__mocks__`, `__snapshots__` or `__fixtures__` directory, and --tests. Of it, JS and TS tests run under
-Vitest (from the nearest directory with a Vitest or Vite config, else with a package.json) and Python
-tests under --python, with pytest when it is installed there and unittest when not or when the file's
-name has a hyphen or a dot (a test run by path, which pytest cannot import). A Playwright or
-node:test file, a test in another language, and a --tests path are reported as not judged, and a fix
-whose only tests are such files cannot be judged (exit 2).
+`__mocks__`, `__snapshots__` or `__fixtures__` directory, --tests and --node-test, and a file the
+repository runs with `node --test`. Of it, a JS or TS file that a package.json script's
+`node ... --test ...` command selects runs that way, from that package with the command's options,
+and one --node-test declares runs as `node --test <file>` from the root (gates/_regression_node.py);
+other JS and TS tests run under Vitest (from the nearest directory with a Vitest or Vite config, else
+with a package.json). Python tests run under --python, with
+pytest when it is installed there and unittest when not or when the file's name has a hyphen or a dot
+(a test run by path, which pytest cannot import). A Playwright test, a node:test file the repository
+does not run with `node --test`, a shell or other test, and a --tests path are reported as not
+judged, and a fix whose only tests are such files cannot be judged (exit 2).
 
 The project's dependencies must be installed before the gate runs. It swaps the files the fix changed
 back to the merge base in the working tree for the second run and always puts them back, so those
@@ -36,6 +43,8 @@ files must not differ from HEAD when it starts.
     --body FILE        the pull request's body (required)
     --python PATH      the project's interpreter (default: python3 on PATH; a relative path is the repository's)
     --tests GLOB       more paths that are test code, never run (repeatable; an e2e directory, say)
+    --node-test GLOB   node:test files the repository runs as `node --test <file>` some way no package.json
+                       script says (a shell script, a workflow step): run that way (repeatable)
     --timeout SECONDS  wall-clock limit for both runs (default 600)
 """
 import io
@@ -49,6 +58,7 @@ from contextlib import contextmanager
 
 from _acceptance import DASH
 from _contract import PY_TESTS, CannotRun, Finding, git, matches, qualify, resolve_base, run_gate
+from _regression_node import plan as node_plan, run_node
 from _regression_runners import missing, run_python, run_vitest
 from _ticket import unfenced
 from universal_checks import lex
@@ -66,8 +76,10 @@ PLAYWRIGHT = re.compile(r"""['"]@playwright/test['"]""")
 NODE_TEST = re.compile(r"""['"]node:test['"]""")
 # A Vitest file imports vitest, or calls its globals (a config with `globals: true` needs no import).
 VITEST = re.compile(r"""['"]vitest['"]|^\s*(?:describe|it|test)(?:\.\w+)*\s*\(""", re.MULTILINE)
+ASSERTION = re.compile(r"AssertionError\b")
 HOW = ("make one fail there through code that exists before the fix, or say why the fix cannot carry one "
        "with a body line `regression-test: none -- <reason>`")
+RUNNERS = "this gate runs Vitest, node:test, pytest and unittest"
 
 
 def note(text):
@@ -118,31 +130,42 @@ def comments_only(repo, base, path):
     return code_of(path, before) == code_of(path, after)
 
 
-def kind(repo, path, declared):
-    """'vitest' or 'python' for a test this gate runs, else why it does not."""
-    if matches(path, declared):
+def node_test(args, path):
+    """How the repository runs a JS or TS file with `node --test` (gates/_regression_node.py), or None."""
+    return node_plan(args.repo, path, tuple(args.node_test or ())) if path.endswith(JS) else None
+
+
+def kind(args, path):
+    """'vitest', 'node' or 'python' for a test this gate runs, else why it does not."""
+    if matches(path, args.tests or []):
         return None, "declared test code (--tests), which this gate does not run"
     if path.endswith(".py") and matches(path, PY_TESTS):
         return "python", None
-    if path.endswith(JS):
-        with open(os.path.join(repo, path), encoding="utf-8", errors="replace") as handle:
-            text = handle.read()
-        if PLAYWRIGHT.search(text):
-            return None, "a Playwright test, which needs a browser and a running site"
-        if NODE_TEST.search(text):
-            return None, "a node:test test; this gate runs Vitest, pytest and unittest"
-        if VITEST.search(text):
-            return "vitest", None
-        return None, "a script with no test framework, judged by its exit code; this gate runs Vitest, pytest and unittest"
-    return None, "a %s test; this gate runs Vitest, pytest and unittest" % (os.path.splitext(path)[1] or "file")
+    if not path.endswith(JS):
+        return None, "a %s test; %s" % (os.path.splitext(path)[1] or "file", RUNNERS)
+    with open(os.path.join(args.repo, path), encoding="utf-8", errors="replace") as handle:
+        text = handle.read()
+    if PLAYWRIGHT.search(text):
+        return None, "a Playwright test, which needs a browser and a running site"
+    if node_test(args, path):
+        return "node", None
+    if NODE_TEST.search(text):
+        return None, "a node:test file that no package.json script runs with `node --test` and no --node-test declares"
+    if VITEST.search(text):
+        return "vitest", None
+    return None, "a script with no test framework, judged by its exit code; " + RUNNERS
 
 
-def run_tests(args, judged, deadline):
+def run_tests(args, judged, deadline, plans):
+    """{path: Run} of the judged files; `plans` is how the repository runs each node:test one, read at HEAD."""
     runs = {}
     vitest = [path for path, what in judged.items() if what == "vitest"]
     python = [path for path, what in judged.items() if what == "python"]
+    node = {path: plans[path] for path, what in judged.items() if what == "node"}
     if vitest:
         runs.update(run_vitest(args.repo, vitest, deadline, args.timeout))
+    if node:
+        runs.update(run_node(args.repo, node, deadline, args.timeout))
     if python:
         runs.update(run_python(args.repo, args.python, python, deadline, args.timeout))
     return runs
@@ -211,6 +234,8 @@ def before_the_fix(repo, names, run):
     if run is None:
         return [], "the project's Vitest does not collect it before the fix, so it shows nothing about the bug"
     if run.load_error:
+        if ASSERTION.match(run.load_error):  # the file's own top-level check failed there: an assertion, not a load error
+            return [("its top-level code", run.load_error)], None
         what = missing(run.load_error)
         return [], (only_missing(what, run.load_error, repo) if what else
                     "does not load on the code before the fix (%s), so none of its tests ran there" % run.load_error)
@@ -236,30 +261,31 @@ def verdict(repo, passed, base_runs):
     return [Finding("no new or changed test fails on the code before the fix, so none shows the bug it fixes: " + HOW)] + findings
 
 
-def compare(args, base, changed, tests, test_code):
+def compare(args, base, changed, tests, is_test_code):
     """Run the changed tests at HEAD and on the code before the fix, and judge them."""
     judged, not_judged = {}, []
     for path in tests:
-        what, why = kind(args.repo, path, args.tests or [])
+        what, why = kind(args, path)
         if what:
             judged[path] = what
         else:
             not_judged.append((path, why))
+    plans = {path: node_test(args, path) for path, what in judged.items() if what == "node"}
     dirty = git(args.repo, "--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=all", "--",
                 *[path for _, path in changed])
     if dirty:
         raise CannotRun("the working tree differs from HEAD at a path the pull request changed (%s): this gate swaps those "
                         "files and puts them back, so commit or stash first" % dirty.split("\0")[0][3:])
     deadline = time.monotonic() + args.timeout
-    passed = passed_at_head(run_tests(args, judged, deadline) if judged else {}, judged, not_judged)
+    passed = passed_at_head(run_tests(args, judged, deadline, plans) if judged else {}, judged, not_judged)
     for path, why in not_judged:
         note("%s: not judged: %s" % (path, why))
     if not passed:
         raise CannotRun("no changed test is one this gate can run (%s); a fix whose only test needs what this gate does not "
                         "have can say so with a body line `regression-test: none -- <reason>`"
                         % "; ".join("%s: %s" % item for item in not_judged))
-    with code_before_the_fix(args.repo, base, [(status, path) for status, path in changed if not matches(path, test_code)]):
-        base_runs = run_tests(args, {path: judged[path] for path in passed}, deadline)
+    with code_before_the_fix(args.repo, base, [(status, path) for status, path in changed if not is_test_code(path)]):
+        base_runs = run_tests(args, {path: judged[path] for path in passed}, deadline, plans)
     return verdict(args.repo, passed, base_runs)
 
 
@@ -276,18 +302,23 @@ def check(args):
         raise CannotRun("--timeout must be a positive number of seconds")
     base = git(args.repo, "merge-base", resolve_base(args.repo, args.base_ref), "HEAD").strip()
     changed = changes(args.repo, base)
-    test_code = TEST_CODE + (args.tests or [])
+    declared = (args.tests or []) + (args.node_test or [])
+
+    def is_test_code(path):
+        return matches(path, TEST_CODE + declared) or node_test(args, path) is not None
+
     real = [(status, path) for status, path in changed if status != "M" or not comments_only(args.repo, base, path)]
-    if all(matches(path, test_code + DOCS) for _, path in real):
+    if all(is_test_code(path) or matches(path, DOCS) for _, path in real):
         note("every change is to tests, documentation or comments: nothing to check")
         return []
-    tests = [path for status, path in real if status != "D" and matches(path, TEST_NAMES + (args.tests or []))]
+    tests = [path for status, path in real if status != "D" and (matches(path, TEST_NAMES + declared) or node_test(args, path))]
     if not tests:
         return [Finding("a fix pull request must add or change a test that fails on the code before the fix, and this one "
-                        "changes none (a file named as a test, `*.test.*`, `*.spec.*` or test_*.py, or a path the manifest "
-                        "declares with --tests; a change to comments only does not count): add one, or say why the fix "
-                        "cannot carry one with a body line `regression-test: none -- <reason>`")]
-    return compare(args, base, changed, tests, test_code)
+                        "changes none (a file named as a test, `*.test.*`, `*.spec.*` or test_*.py, a path the manifest "
+                        "declares with --tests or --node-test, or a file a package.json script runs with `node --test`; a "
+                        "change to comments only does not count): add one, or say why the fix cannot carry one with a body "
+                        "line `regression-test: none -- <reason>`")]
+    return compare(args, base, changed, tests, is_test_code)
 
 
 def add_arguments(parser):
@@ -295,6 +326,8 @@ def add_arguments(parser):
     parser.add_argument("--body", metavar="FILE", required=True, help="a file holding the pull request's body")
     parser.add_argument("--python", default="python3", help="the project's interpreter (default: python3)")
     parser.add_argument("--tests", action="append", metavar="GLOB", help="more paths that are test code, never run (repeatable)")
+    parser.add_argument("--node-test", action="append", metavar="GLOB",
+                        help="node:test files run as `node --test <file>` from the repository root (repeatable)")
     parser.add_argument("--timeout", type=int, default=600, help="seconds both test runs may take together (default 600)")
 
 
