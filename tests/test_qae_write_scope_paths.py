@@ -14,7 +14,8 @@ class QuotedPaths(unittest.TestCase):
     def test_an_artifact_whose_name_git_would_quote_is_in_scope(self):
         # A consumer's explorer saved "qae-artifacts/<record> qae-<run>-e2.pdf": plain porcelain quotes a
         # path with a space, so the scope check read it as outside qae-artifacts/ and failed the job.
-        write(self.repo, {"qae-artifacts/profile qae-38600000000.1-e2.pdf": "pdf", "qae-artifacts/caf\u00e9.png": ""})
+        write(self.repo, {"qae-artifacts/profile qae-38600000000.1-e2.pdf": "pdf", "qae-artifacts/caf\u00e9.png": "",
+                          'qae-artifacts/the "draft" quote.png': ""})
         result = self.run_step()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("write scope held", result.stdout)
