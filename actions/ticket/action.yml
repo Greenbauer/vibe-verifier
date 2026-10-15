@@ -1,5 +1,5 @@
 name: Vibe Verifier ticket
-description: Write the acceptance criteria of the plan section a pull request's body links with a `Ticket:` line, read at the base commit.
+description: Write the acceptance criteria of the plan section a pull request's body links with a `Ticket:` line, read at the base commit, and of a plan in a plan store it names.
 inputs:
   body:
     description: The PR body, relative to the workspace.
@@ -19,6 +19,17 @@ inputs:
   token:
     description: A token that can read the repository's contents at the base commit.
     required: true
+  title:
+    description: The pull request's title, read for a `[plan:<id>]` marker as the body is. Empty reads none.
+    default: ""
+  plans-endpoint:
+    description: >-
+      A plan store's API base: a `[plan:<id>]` marker in the title or body makes the plan `GET <endpoint>/plans/<id>`
+      answers, with its amendments, part of the ticket. Empty (the default) reads no plan store.
+    default: ""
+  plans-token:
+    description: The bearer token the plan store reads plans with, a secret of the consumer's. Needed with plans-endpoint.
+    default: ""
 runs:
   using: composite
   steps:
@@ -31,4 +42,9 @@ runs:
         VV_REPO: ${{ github.repository }}
         VV_BASE: ${{ github.event.pull_request.base.sha }}
         VV_NAMES: ${{ inputs.names }}
-      run: python3 "$GITHUB_ACTION_PATH/ticket.py" --body "$VV_BODY" --repo "$VV_REPO" --base "$VV_BASE" --out "$VV_OUT" --names "$VV_NAMES"
+        VV_TITLE: ${{ inputs.title }}
+        VV_PLANS_ENDPOINT: ${{ inputs.plans-endpoint }}
+        VV_PLANS_TOKEN: ${{ inputs.plans-token }}
+      run: >-
+        python3 "$GITHUB_ACTION_PATH/ticket.py" --body "$VV_BODY" --repo "$VV_REPO" --base "$VV_BASE" --out "$VV_OUT"
+        --names "$VV_NAMES" --title "$VV_TITLE" --plans-endpoint "$VV_PLANS_ENDPOINT"

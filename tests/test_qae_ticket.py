@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, clean_env, gate, make_repo, runner, write
+from helpers import ROOT, clean_env, commit, gate, make_repo, runner, write
 from test_qae_annotations import action_script
 from test_qae_artifacts import CLEAN_REQUESTS, session_with
 
@@ -83,6 +83,16 @@ class Criteria(unittest.TestCase):
         self.assertEqual(result.stdout.splitlines()[0], "criteria: 0")
         self.assertIn("ticket: the ticket in", result.stdout)
         self.assertIn("lists no acceptance criteria", result.stdout)
+
+    def test_a_ticket_criterion_the_body_proves_with_a_test_is_not_walked(self):
+        proof = "\nticket-proof: TC1 -- euros are a unit-tested format (lib/money.test.ts::formats euros)\n"
+        self.assertEqual(self.run_criteria(BODY + proof, TICKET, "app/cart.tsx").stdout,
+                         "criteria: 2\nTC1 proven by a test, not walked\nTC2 roles: shopper\n")
+        # Every ticket criterion proven and the body declaring None: nothing is left for a browser.
+        both = proof + "ticket-proof: TC2 -- (lib/checkout.test.ts::matches the cart total)\n"
+        self.assertEqual(self.run_criteria(NONE + both, TICKET, "app/shop.tsx").stdout, "none: a refactor with no visible change\n")
+        # A proof line inside an HTML comment (a template's example) proves nothing.
+        self.assertEqual(self.run_criteria(BODY + "<!--" + proof + "-->\n", TICKET).stdout.splitlines()[0], "criteria: 3")
 
     def test_the_action_counts_the_ticket_and_passes_its_text_on(self):
         work = workdir(self)
@@ -175,6 +185,77 @@ class Gates(unittest.TestCase):
                       'reached an inbox, a log line, a stored value the site never displays) is one you could not check: FAIL '
                       'it, saying "not checkable in a browser" and what it asks for, and never PASS it on the strength of a '
                       'nearby screen.', prompt)
+
+    def test_a_ticket_criterion_proven_by_a_test_needs_its_anchor_at_the_head_and_no_walk(self):
+        commit(self.repo, {"lib/money.test.ts": "it('formats euros as the shop shows them', () => {})\n"}, "test")
+        os.remove(os.path.join(self.artifacts, "qae", "TC1.md"))
+        os.remove(os.path.join(self.artifacts, "qae", "TC1-step-1.png"))
+        proof = "\nticket-proof: TC1 -- no browser needed (lib/money.test.ts::formats euros as the shop shows them)\n"
+        walked = "\n".join(line for line in VERDICT.splitlines() if not line.startswith("acceptance-check: TC1")) + "\n"
+        result = self.verdict_gate(BODY + proof, TICKET, walked)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("TC1 is proven by a test the pull request names, not walked", result.stdout)
+        self.assertEqual(self.artifacts_gate(BODY + proof).returncode, 0)
+        # The anchor must resolve in the tree: a title the file does not hold, or a path only the artifacts have, fails.
+        result = self.verdict_gate(BODY + proof.replace("as the shop shows them", "in every currency"), TICKET, walked)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("TC1: no anchor of its `ticket-proof:` line resolves at the head", result.stdout)
+        result = self.verdict_gate(BODY + "\nticket-proof: TC1 -- (qae/TC2.md::step 1: as shopper: checked out)\n", TICKET, walked)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("qae/TC2.md is not in the tree", result.stdout)
+        # Without the proof TC1 is walked again; a proof for a criterion the ticket does not have is a typo.
+        self.assertIn("TC1 has no `acceptance-check: TC1` line", self.verdict_gate(BODY, TICKET, walked).stdout)
+        result = self.verdict_gate(BODY + proof + "ticket-proof: TC9 -- (lib/money.test.ts::formats euros)\n", TICKET, walked)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("`ticket-proof: tc9` names no criterion of the ticket", result.stdout)
+
+    def test_a_proof_counts_once_and_only_where_a_reader_sees_it(self):
+        commit(self.repo, {"lib/money.test.ts": "it('formats euros as the shop shows them', () => {})\n"}, "test")
+        proof = "ticket-proof: TC1 -- (lib/money.test.ts::formats euros as the shop shows them)\n"
+        walked = "\n".join(line for line in VERDICT.splitlines() if not line.startswith("acceptance-check: TC1")) + "\n"
+        result = self.verdict_gate(BODY + "\n" + proof + proof, TICKET, walked)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("TC1 has 2 `ticket-proof:` lines; exactly one is allowed", result.stdout)
+        # Inside an HTML comment or a code fence (a template's example) the line is no claim: TC1 is walked again.
+        for hidden in ("<!--\n" + proof + "-->\n", "```\n" + proof + "```\n"):
+            result = self.verdict_gate(BODY + "\n" + hidden, TICKET, walked)
+            self.assertEqual(result.returncode, 1, hidden)
+            self.assertIn("TC1 has no `acceptance-check: TC1` line", result.stdout)
+        # A proof in a body that links no ticket names no criterion, even when the body declares None.
+        result = self.verdict_gate(NONE + "\n" + proof, "", "")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("`ticket-proof: tc1` names no criterion of the ticket", result.stdout)
+
+    def test_the_prompt_tells_the_explorer_to_leave_a_proven_criterion_unwalked(self):
+        prompt = " ".join((ROOT / "harnesses" / "qae" / "prompt.md").read_text().split())
+        self.assertIn('A ticket criterion TCn for which qae-inputs/pr-body.md has a line starting "ticket-proof: TCn " with '
+                      'that exact number (TC12 is not TC1), outside any HTML comment or code block, is proven by a test the '
+                      'pull request names: do not walk it, and write no line for it.', prompt)
+
+    def test_a_proven_criterion_is_left_out_of_the_explorers_turns(self):
+        import test_qae_shards as shards
+        def turns(body):
+            repo = make_repo(self, {".vibe-verifier-qae": shards.QAE})
+            write(repo, {"qae-inputs/pr-body.md": body, "qae-inputs/ticket.md": TICKET})
+            out = os.path.join(repo, ".git", "turns")
+            result = runner("qae-inputs", "--repo", repo, "--manifest", os.path.join(repo, ".vibe-verifier-qae"),
+                            "--criteria", os.path.join(repo, "qae-inputs", "pr-body.md"), "--ticket",
+                            os.path.join(repo, "qae-inputs", "ticket.md"), "--turns", out,
+                            "--references", os.path.join(repo, "qae-inputs", "references"), "--evidence",
+                            os.path.join(repo, "qae-artifacts"), "--widths-file", os.path.join(repo, "qae-inputs", "widths"))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return int(Path(out).read_text().strip())
+        both = "\nticket-proof: TC1 -- (a.ts::formats euros)\nticket-proof: TC2 -- (a.ts::matches the cart)\n"
+        self.assertLess(turns(BODY + both), turns(BODY))
+
+    def test_a_ticket_proven_whole_with_a_declared_none_needs_no_verdict(self):
+        commit(self.repo, {"lib/money.test.ts": "it('formats euros as the shop shows them', () => {})\n"}, "test")
+        both = ("\nticket-proof: TC1 -- (lib/money.test.ts::formats euros as the shop shows them)\n"
+                "ticket-proof: TC2 -- (lib/money.test.ts:1)\n")
+        write(self.work, {"pr-body.md": NONE + both, "ticket.md": TICKET})
+        result = gate("acceptance-verdict", self.repo, "--criteria", os.path.join(self.work, "pr-body.md"),
+                      "--verdict", os.path.join(self.work, "no-verdict.md"), "--ticket", os.path.join(self.work, "ticket.md"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_an_annotation_on_a_ticket_criterion_is_held_to_its_log(self):
         write(self.artifacts, {"qae/TC2.md": "- step 1: checked out -> the cart's total\n"})
@@ -377,3 +458,4 @@ class TicketLink(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

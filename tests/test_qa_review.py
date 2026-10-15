@@ -87,6 +87,16 @@ class QaReview(unittest.TestCase):
         self.assertIn("- TC1 (from the ticket), explorer says PASS", body)
         self.assertNotIn("None: a refactor", body)
 
+    def test_a_ticket_criterion_the_pull_request_proves_with_a_test_is_listed_as_not_walked(self):
+        ticket = self.file("ticket.md", "## Acceptance criteria\n\n- Prices show in euros\n- The estimate lands in the ledger\n")
+        self.criteria = self.file("pr-body.md", "## Acceptance criteria\n\n- None: a refactor\n\n"
+                                                "ticket-proof: TC2 -- no browser sees the ledger (lib/ledger.test.ts::writes the estimate line)\n")
+        self.verdict = self.file("verdict.md", "acceptance-check: TC1 -- PASS -- euros (qae/TC1.md::step 1: x)\n")
+        body = self.posted(ticket=ticket)
+        self.assertIn("- TC1 (from the ticket), explorer says PASS: Prices show in euros\n- TC2 (from the ticket), not walked, "
+                      "the pull request proves it with a test: no browser sees the ledger (lib/ledger.test.ts::writes the "
+                      "estimate line): The estimate lands in the ledger\n", body)
+
     def test_a_re_walked_feature_is_listed_as_the_explorer_judged_it(self):
         # docs/feature-map.md: the explorer adds one regression-check line per feature it re-walked.
         self.verdict = self.file("verdict.md", VERDICT + "regression-check: sign-in -- FAIL -- the dashboard never opened "
