@@ -163,6 +163,14 @@ already there: passed, changes needed, not required, or could not run (with its 
 failed explorer hit a model usage limit, read from the explore jobs' failure annotations), with the head it judged,
 each criterion's verdict from the explorer (and each re-walked feature's), and a link to the run. The state comes from what the
 workflow's jobs and gates concluded, never from the explorer's prose.
+
+`affected-tests [--base-ref REF] [--tests GLOB] [--exclude GLOB] [--always GLOB] [--all-on GLOB] [--report RESULTS]` prints the
+test files a pull request's changes can affect, one per line, or `ALL`, with a summary on stderr, for the
+repository's own test job to run (gates/_affected_tests.py has the rule). It is not a gate: exit 0 with a
+selection, 2 when it cannot run. Without a base (`--base-ref`, then $VIBE_VERIFIER_BASE_REF, then
+$GITHUB_BASE_REF, which only a pull request sets) or with one it cannot read, it prints `ALL`. With `--report`
+(a JUnit XML report or a list of failed test files, from the full suite the job also ran) it prints instead each
+test that failed there and was not selected.
 """
 import argparse
 import base64
@@ -187,6 +195,7 @@ from _acceptance import (REFERENCE_KEY, annotations, baseline_problems, body_cri
 from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
 from _features import add_selection_arguments, describe, selection  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
+import _affected_tests  # noqa: E402
 import qae_artifacts  # noqa: E402
 import repo_rules  # noqa: E402
 LABEL = {0: "PASS", 1: "FAIL", 2: "COULD NOT RUN"}
@@ -1585,6 +1594,21 @@ def main():
     doc.add_argument("--repo", default=".")
     doc.add_argument("--manifest", default=".vibe-verifier")
     doc.add_argument("--write", metavar="PATH", help="replace the block in this file, or append it when the file has none")
+    affected = commands.add_parser("affected-tests", help="the test files a pull request's changes can affect, one per "
+                                   "line, or ALL, for the repository's test job to run (not a gate)")
+    affected.add_argument("--repo", default=".")
+    affected.add_argument("--base-ref", default=None, help="the branch the pull request merges into (default: "
+                          "$VIBE_VERIFIER_BASE_REF, then $GITHUB_BASE_REF; none prints ALL)")
+    affected.add_argument("--tests", action="append", metavar="GLOB", help="what a test file is (repeatable; default: JS and "
+                          "TS *.test.*, *.spec.*, __tests__/** and node:test files, and Python test files)")
+    affected.add_argument("--exclude", action="append", metavar="GLOB", help="test files never to list, such as "
+                          "browser suites another job runs (repeatable)")
+    affected.add_argument("--always", action="append", metavar="GLOB", help="test files to list whatever changed (repeatable)")
+    affected.add_argument("--all-on", action="append", metavar="GLOB", help="paths whose change means every test runs, "
+                          "such as the repository's own test runner script (repeatable)")
+    affected.add_argument("--report", action="append", metavar="RESULTS", help="the full run's results, a JUnit XML "
+                          "report or a list of failed test files (repeatable): print the failures the selection missed")
+    affected.add_argument("--format", choices=["text", "github"], default="text")
     review = commands.add_parser("qa-review", help="post or edit the QAE's one review comment on a pull request (via gh)")
     review.add_argument("--repo", required=True, metavar="OWNER/NAME")
     review.add_argument("--pr", required=True, metavar="N")
@@ -1621,6 +1645,8 @@ def main():
         return tool_command(args)
     if args.command == "rules-doc":
         return rules_doc_command(args)
+    if args.command == "affected-tests":
+        return _affected_tests.command(args)
     return run(args)
 
 

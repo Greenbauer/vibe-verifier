@@ -174,6 +174,10 @@ See [`lanes/README.md`](../lanes/README.md).
 
 An update is a new head, so every per-head verdict is established again for it: the gates and the consumer's tests run, the review harness reviews the files the update touched (or refreshes its receipt when it touched none of the pull request's), and the QAE harness explores again, unless every file the update brought is one no browser can see, in which case the last passing walk is carried. The sync bounds that cost instead of hiding it: it updates a pull request only when no check on it is running and nothing changed in the last half hour (except where the default branch merges only up-to-date heads: there checks running on a head that is behind are replaced at once, since they can never be the ones it merges on), takes ready pull requests first and the others about once a day, and keeps a cap on how many of its own updates may be in flight in a repository (a head someone pushed does not count against it). It never resolves a conflict; the `sync-conflict` label hands that pull request to its owner.
 
+### 10. Affected-test selection (optional)
+
+[`actions/affected-tests`](../actions/affected-tests/README.md) lists the test files a pull request's changes can affect, from a static import graph of the head plus every test that reads files, starts a process or uses a database, and the consumer's own test job runs that list. It is not a verification layer and issues no verdict: the tests still pass or fail the job. It errs toward running more: anything it cannot see into (a lockfile, a tsconfig, a test runner's config, a dependency change, no readable base, a push to main) means every test runs, and its report mode names any test a full run failed that it would have left out, so a repository can measure it before trusting it.
+
 ## Evidence ownership
 
 A recurring pattern is that the workflow declares the values that determine what is being judged, while the model supplies observations about that subject.

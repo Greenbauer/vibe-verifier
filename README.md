@@ -81,6 +81,7 @@ The full rules are in the [gate contract](docs/GATE-CONTRACT.md).
 | Numeric model-usage and runner-capacity telemetry | Optional |
 | Disposable-container self-hosted runner lanes | Optional |
 | Open pull requests kept up to date after a merge | Optional |
+| Pull requests run only the tests their changes can affect | Optional |
 
 ## Get started
 
@@ -234,6 +235,10 @@ A pull request's preview has one address, and the job that sets the preview up i
 ## Browser seats
 
 A browser suite that signs in to a per-PR preview usually runs on one worker, because every test shares one seeded account. The optional [browser seats action](actions/browser-seats/README.md) is the contract for running it in parallel: the preview seeds N seats, each its own copy of the test accounts and their data (seat 0 stays the reference seat for everything that is not the suite), the action checks them and hands them to the suite, and worker k signs in as seat k inside the suite's one job. On its first consumer a 37-minute suite ran in 10.7.
+
+## Affected tests
+
+Most of a unit suite cannot be affected by what one pull request changed. The optional [affected tests action](actions/affected-tests/README.md) lists the test files that can be: every test whose imports reach a changed file (relative imports, tsconfig aliases, workspace packages, Python imports), plus every test that reads files, starts a process or uses a database, which the import graph cannot see into. It lists them all instead when a lockfile, a tsconfig, a test runner's config or a `package.json`'s dependencies changed, and on every push to main. The repository's own test job runs the list; nothing is judged. On a 277-pull-request history of a private TypeScript monorepo it listed every one of 132 tests a deliberate break failed. A repository starts in report mode, running the full suite too, and the action names any failure the selection would have missed.
 
 ## Self-hosted runner lanes
 
