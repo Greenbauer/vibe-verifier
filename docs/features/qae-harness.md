@@ -69,6 +69,8 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_qae_explore.py::test_the_run_a_fixed_80_cut_off_gets_twice_that`
 - `tests/test_qae_widths.py::test_a_criterion_missing_a_width_is_refused`
 - `tests/test_qae_widths.py::test_a_branch_dropping_the_widths_is_still_told_the_bases`
+- `tests/test_qae_widths.py::test_the_manifest_allowances_reach_the_explorer`
+- `tests/test_qae_widths.py::test_a_branch_adding_an_allowance_is_told_only_the_bases`
 - `tests/test_qae_ticket.py::test_a_declared_none_does_not_drop_the_tickets_criteria`
 - `tests/test_qae_ticket.py::test_the_ticket_reaches_the_explorer_and_the_gate`
 - `tests/test_qae_ticket.py::test_a_dependency_update_passes_on_its_supplied_criteria_alone`

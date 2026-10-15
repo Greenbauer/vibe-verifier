@@ -1,10 +1,13 @@
 name: Vibe Verifier QAE inputs
-description: Before the QAE explorer runs, copy the design references the site step supplied into the evidence, list them for the explorer, and declare their digests so the verify job's gate judges the images the workflow supplied; write the viewport widths the QAE manifest's qae-artifacts line requires, for the explorer; and declare the explorer's turn cap, sized to what it walks, and its share of the criteria when they are split across several explorers.
+description: Before the QAE explorer runs, copy the design references the site step supplied into the evidence, list them for the explorer, and declare their digests so the verify job's gate judges the images the workflow supplied; write the viewport widths the QAE manifest's qae-artifacts line requires, and the console messages and requests it declares environmental, for the explorer; and declare the explorer's turn cap, sized to what it walks, and its share of the criteria when they are split across several explorers.
 inputs:
   manifest:
     description: >-
       The QAE manifest, relative to the workspace. The --widths of its qae-artifacts line (judged from the
-      base) are written to qae-inputs/widths, one per line; without --widths no file is written.
+      base) are written to qae-inputs/widths, one per line; without --widths no file is written. Its
+      --allow-console and --allow-request patterns go to qae-inputs/environmental, one `console: <regex>` or
+      `request: <regex>` line each, so the explorer never fails a criterion on what the gate does not judge;
+      without either no file is written.
     default: .vibe-verifier-qae
   entries:
     description: >-
@@ -98,6 +101,7 @@ runs:
         ids="$RUNNER_TEMP/vv-explorer-share-ids"
         python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" qae-inputs --manifest "$manifest" --references "$VV_REFERENCES" \
           --evidence "$VV_EVIDENCE" --listing "$VV_REFERENCES.md" --digests "$digests" --widths-file qae-inputs/widths \
+          --environmental-file qae-inputs/environmental \
           --turns "$turns" --shard "$VV_SHARD" --shards "$VV_SHARDS" --share "$share" --share-ids "$ids" \
           --run "${VV_RUN:-}" --isolation qae-inputs/isolation.json
         echo "references=$(cat "$digests")" >> "$GITHUB_OUTPUT"

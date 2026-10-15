@@ -333,7 +333,9 @@ qae-artifacts line of `.vibe-verifier-qae`.
   declared width, read from each PNG's header (a browser screenshot is as wide as its viewport), and a
   step screenshot that is not a PNG. Feature re-walk logs are not held to it.
 - The widths live in the manifest and nowhere else, so the explorer and the gate cannot disagree. The
-  line is judged from the base: a pull request that adds or drops `--widths` changes the next one.
+  line is judged from the base: a pull request that adds or drops `--widths` changes the next one. The
+  same step writes the line's `--allow-console` and `--allow-request` patterns for the explorer the
+  same way ([below](#the-adjudicator-the-artifacts-decide-not-the-prose)).
 
 **Themes**: when `qae-inputs/site.md` says the site has more than one theme (light and dark), the
 explorer checks each end state in every theme. No gate checks it: which theme a screenshot shows is
@@ -1162,6 +1164,15 @@ declares what is environmental on the manifest line, and nothing else:
 ```
 qae-artifacts --artifacts qae-artifacts --site-file qae-inputs/site-url --allow-console '/_vercel/insights/script\.js' --allow-request '/_vercel/insights/script\.js'
 ```
+
+The explorer is told them too. The explore job's `Prepare the explorer's references and widths` step
+([`actions/qae-inputs`](../../actions/qae-inputs/action.yml)) reads the same line as the base has it
+and writes each pattern to `qae-inputs/environmental`, one `console: <regex>` or `request: <regex>`
+line each (no such flag, no file), and the prompt tells the explorer that a console message or a
+request one matches is not the site's failure and never a reason to FAIL a criterion. Until
+2026-10-15 only the gate knew them: on a consumer that declares the analytics script above, the
+explorer saw the criterion hold and still wrote FAIL for that script's undeclared 404, and
+`acceptance-verdict` refused a run `qae-artifacts` passed.
 
 Those flags are for the environment, and they hold for every pull request. A refusal that is the
 correct outcome of one pull request's criterion (an auth gate answering 401 to a signed-out

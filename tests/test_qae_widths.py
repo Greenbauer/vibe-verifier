@@ -115,6 +115,38 @@ class QaeInputs(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.widths(repo), "1440\n")
 
+    def environmental(self, repo):
+        path = Path(repo, "qae-inputs", "environmental")
+        return path.read_text() if path.exists() else None
+
+    def test_the_manifest_allowances_reach_the_explorer(self):
+        # A consumer's analytics script 404s on the runner; the gate allows it, so the explorer is told.
+        allowed = QAE.replace(" --widths", " --allow-console '/_vercel/insights/script\\.js' "
+                              "--allow-request '/_vercel/insights/script\\.js' --allow-request '^https://fonts\\.' --widths")
+        repo = make_repo(self, {".vibe-verifier-qae": allowed})
+        result, _ = self.run_action(repo)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.environmental(repo), "console: /_vercel/insights/script\\.js\n"
+                         "request: /_vercel/insights/script\\.js\nrequest: ^https://fonts\\.\n")
+        self.assertIn("environmental: 3", result.stdout)
+        self.assertEqual(self.widths(repo), "1280\n375\n")
+
+    def test_no_allowance_writes_no_file(self):
+        repo = make_repo(self, {".vibe-verifier-qae": QAE})
+        result, _ = self.run_action(repo)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIsNone(self.environmental(repo))
+        self.assertIn("environmental: 0", result.stdout)
+
+    def test_a_branch_adding_an_allowance_is_told_only_the_bases(self):
+        # The gate judges the line from the base, so a pull request cannot excuse its own 404 to the explorer.
+        repo = make_repo(self, {".vibe-verifier-qae": QAE})
+        git(repo, "checkout", "-q", "-b", "feat")
+        commit(repo, {".vibe-verifier-qae": QAE.replace(" --widths", " --allow-request '/api/broken' --widths")})
+        result, _ = self.run_action(repo)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIsNone(self.environmental(repo))
+
     def test_a_malformed_widths_option_fails_the_step(self):
         repo = make_repo(self, {".vibe-verifier-qae": QAE.replace("1280,375", "desktop")})
         result, output = self.run_action(repo)
@@ -132,7 +164,9 @@ class Template(unittest.TestCase):
                        "only\n   when that screen has a form or another input, try one invalid input in it",
                        "Never navigate to a URL that neither the criterion names nor the site links to",
                        "unless the criterion's own text declares it\n   (expected-refusal: <status> <path>), and writing that in "
-                       "a step line declares nothing"):
+                       "a step line declares nothing",
+                       "If qae-inputs/environmental exists, each of its lines is `console: <pattern>` or `request: <pattern>`",
+                       "are not the site's failure and never a reason\n   to FAIL a criterion"):
             self.assertIn(phrase, prompt)
 
     def test_the_explore_step_passes_no_manifest_input_so_the_default_is_the_qae_manifest(self):
