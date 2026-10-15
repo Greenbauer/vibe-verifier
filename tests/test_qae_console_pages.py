@@ -233,5 +233,114 @@ class Live(unittest.TestCase):
         self.assertIn("request cancelled and never answered in this run, outside the allowlist: " + logo, result.stdout)
 
 
+OWN, OTHER = "qae-5.1-e2", "qae-5.1-e4"
+MINE, THEIRS, FIXTURE = ("00000000-0000-4000-8000-00000000000%d" % n for n in (1, 2, 3))
+SURVEYS = [{"id": MINE, "title": "Mine " + OWN}, {"id": THEIRS, "title": "Theirs " + OTHER}, {"id": FIXTURE, "title": "Seeded"}]
+# Pages that ask the API and write what it answered, as an app's list and detail pages do.
+SHOWS = "<title>site</title><script>fetch(%s).then(async r => { document.body.innerHTML = '<p>' + r.status + ' ' + (await r.text()) + '</p><p>done</p>'; })</script>"
+
+
+class Api:
+    """The site of an explorer of several: pages that call a JSON API of surveys, one of them another explorer's."""
+
+    def __init__(self, test):
+        self.deleted = []
+        api = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def answer(self, status, body, kind="application/json"):
+                data = body.encode()
+                self.send_response(status)
+                self.send_header("Content-Type", kind)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                pages = {"/": SHOWS % "'/api/surveys'", "/theirs": SHOWS % ("'/api/surveys/%s'" % THEIRS),
+                         "/delete": SHOWS % ("'/api/surveys/%s', {method: 'DELETE'}" % FIXTURE)}
+                if self.path in pages:
+                    return self.answer(200, pages[self.path], "text/html")
+                if self.path == "/api/surveys":
+                    return self.answer(200, json.dumps(SURVEYS))
+                found = [survey for survey in SURVEYS if self.path == "/api/surveys/" + survey["id"]]
+                return self.answer(200 if found else 404, json.dumps(found[0] if found else {}))
+
+            def do_DELETE(self):
+                api.deleted.append(self.path)
+                self.answer(200, "{}")
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = "http://127.0.0.1:%d" % self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        test.addCleanup(self.server.server_close)
+        test.addCleanup(self.server.shutdown)
+
+
+@unittest.skipUnless(os.environ.get("QAE_MCP"), "needs the installed browser toolchain: QAE_MCP names playwright-mcp's entry point")
+class Isolation(unittest.TestCase):
+    """The real playwright-mcp and chromium, with the isolation file where actions/qae-inputs writes it: the
+    workspace's qae-inputs/isolation.json, read from the directory playwright-mcp runs in."""
+
+    def setUp(self):
+        self.repo = make_repo(self, {"README.md": "x"})
+        self.work = tempfile.mkdtemp(prefix="vv-qae-isolation-")
+        self.addCleanup(shutil.rmtree, self.work, True)
+        self.root = os.path.join(self.work, "qae-artifacts")
+        os.makedirs(os.path.join(self.root, "qae"))
+        os.makedirs(os.path.join(self.work, "qae-inputs"))
+        Path(self.work, "qae-inputs", "isolation.json").write_text(json.dumps({"tag": OWN, "protected": [FIXTURE]}))
+        self.api = Api(self)
+
+    def shown(self, path):
+        explorer = Explorer(self, self.root)
+        explorer.call("browser_navigate", url=self.api.url + path)
+        explorer.call("browser_wait_for", text="done")
+        explorer.call("browser_take_screenshot", filename="qae-artifacts/qae/AC1-step-1.png")
+        text = explorer.call("browser_evaluate", function="() => document.body.innerText")["result"]["content"][0]["text"]
+        explorer.call("browser_network_requests")
+        explorer.call("browser_close")
+        explorer.close()
+        Path(self.root, "qae", "AC1.md").write_text("- step 1: opened %s -> saw the answer\n" % path)
+        return text
+
+    def record(self):
+        return [json.loads(line) for line in Path(self.root, "console-pages.jsonl").read_text().splitlines()]
+
+    def run_gate(self):
+        return gate("qae-artifacts", self.repo, "--artifacts", self.root, "--site", self.api.url + "/")
+
+    def test_a_list_never_shows_another_explorers_record_and_the_run_passes(self):
+        text = self.shown("/")
+        self.assertIn("200 ", text)
+        self.assertIn(MINE, text)
+        self.assertIn(FIXTURE, text)
+        self.assertNotIn(THEIRS, text)
+        self.assertNotIn(OTHER, text)
+        self.assertIn({"isolation": OWN}, self.record())
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_another_explorers_record_is_refused_by_the_harness_and_the_gate_names_it(self):
+        text = self.shown("/theirs")
+        self.assertIn("409 ", text)
+        self.assertIn("Vibe Verifier QAE: the record is another QAE explorer's", text)
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("explorer %s's browser refused GET %s/api/surveys/%s: the record is another QAE explorer's"
+                      % (OWN, self.api.url, THEIRS), result.stdout)
+        self.assertNotIn("answered 409", result.stdout)
+        self.assertNotIn("console error", result.stdout)
+
+    def test_a_fixture_another_explorers_criterion_names_is_never_deleted(self):
+        text = self.shown("/delete")
+        self.assertIn("409 ", text)
+        self.assertEqual(self.api.deleted, [])
+        self.assertIn("explorer %s's browser refused DELETE %s/api/surveys/%s" % (OWN, self.api.url, FIXTURE), self.run_gate().stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

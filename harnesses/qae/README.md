@@ -478,12 +478,30 @@ that included the line. Two rules keep an explorer off another's records:
   builds on a record a criterion outside your share creates, create your own first. One explorer
   walks with no tag and its records are named exactly as the criteria say.
 
-The tag is a prompt rule, and nothing enforces it today: no gate sees the site's records, so an
-explorer that ignores it is not caught, and when a dependency goes unchained the tag lowers the odds
-of a collision without ruling one out. A gate could enforce it later: the verify job would read the
-records the preview's database gained during the run and require each to carry one explorer's tag.
-That needs a per-consumer read of its database, which the catalog does not have. The chain is code,
-so criteria that name each other are never split, whatever the model does.
+The browser holds each explorer of several to its tag. `actions/qae-inputs` writes
+`qae-inputs/isolation.json` in the workspace: the explorer's tag, and every record id (a UUID, 24 hex
+digits or a ULID) a criterion outside its share names, the fixtures another explorer's criteria use.
+The [page record](../../actions/qae-browser/console-pages.js), which playwright-mcp runs for every
+tab, reads it from the directory playwright-mcp runs in and routes each fetch and XHR:
+
+- A JSON answer reaches the page without any object whose own text carries another explorer's tag
+  (`qae-...-e<n>`, of any run): a list never shows another explorer's survey, quote or order to
+  open. A record that is itself another explorer's, and every later request on its id, is answered
+  409 by the harness and never sent; the error starts `Vibe Verifier QAE`.
+- A DELETE of a fixture a criterion outside the share names is answered 409 the same way. Reading
+  and changing a declared fixture are not stopped.
+- Each record a POST of the explorer's created (answered 201: the `Location` header, or the body's
+  `id`) and each record id a request's path named are written to the page record.
+
+The [qae-artifacts gate](../../gates/qae_artifacts.py) (its rule 7) fails the run on each request
+the harness refused, and on each record one explorer's request named that exactly one other explorer
+created: that catches an explorer that left its tag off a record, which the list cannot hide. A
+refused request's own 409 is not judged again as the site's. One explorer has no file, and nothing
+is routed. What the harness cannot see: a request a snippet sends through Playwright's own client
+(`page.request`), a record a page renders from HTML rather than JSON, and a record that existed
+before the run, which any explorer may open (keep a criterion that changes one in a chain with every
+criterion that reads it). The chain is code, so criteria that name each other are never split,
+whatever the model does.
 
 **Names.** The first explorer's job is `qae-explore`, as it always was, and the others are
 `qae-explore (2)`, `qae-explore (3)`, ... The matrix's first value is blank for that: GitHub names a

@@ -104,7 +104,7 @@ body before pushing. Exit 2 when a file cannot be read.
 
 `qae-inputs [--manifest FILE] [--widths-file FILE] [--references DIR] [--evidence DIR] [--listing FILE]
 [--digests FILE] [--turns FILE [--criteria FILE] [--ticket FILE] [--features DIR] [--shard K --shards N]
-[--share FILE] [--run ID]]` prepares what the QAE
+[--share FILE] [--run ID] [--isolation FILE]]` prepares what the QAE
 explorer and its gates read from the site step's supplies and the QAE manifest, before the explorer runs.
 Each design reference `<key>.png` the site step wrote to DIR (default qae-inputs/references) is copied
 to `<evidence>/references/<key>.png` (default qae-artifacts), listed with its size in FILE (default
@@ -128,7 +128,10 @@ them. The cap is sized to the explorer's own share, and `--share FILE` gets the 
 share for its prompt (an empty line for one explorer). For one of several it also names the chains in its share,
 to walk in order, and the explorer's tag, qae-<run>-e<K> (`--run ID`, the run id and attempt): every record the
 explorer creates carries it, and it opens or judges only records that carry it or that existed before the run,
-never one another explorer of the run created or is changing. It prints `references: <n>`, one
+never one another explorer of the run created or is changing. `--isolation FILE` gets what the browser holds it
+to (actions/qae-browser/console-pages.js), as JSON: `tag`, and `protected`, every record id (a UUID, 24 hex
+digits or a ULID) a criterion outside its share names, which it may not delete; for one explorer the file is
+removed. It prints `references: <n>`, one
 `<key>: <width>x<height>` line each, `widths: <list>` (or `widths: none`) and, with `--turns`,
 `max turns: <n> (<walks> walks)` and, for one explorer of several, `share: <ids> (explorer K of N)`. Exit 2
 when a supplied file is not a PNG or its name is not a reference key, the manifest or the criteria file
@@ -1060,7 +1063,15 @@ ISOLATION = ("Your tag is %s. Other explorers create records on this site at the
              "existed before this run (a seeded customer, a fixture). Where a criterion would have you pick any "
              "record from a list, pick one with your tag or one no explorer made; never one whose name ends in "
              "another explorer's tag (qae-<run>-e<number>). When a criterion of yours builds on a record that a "
-             "criterion outside your share creates, create your own first, by that criterion's steps, with your tag.")
+             "criterion outside your share creates, create your own first, by that criterion's steps, with your tag. "
+             "The browser holds you to it: it hides every record that carries another explorer's tag, answers 409 "
+             "itself to any request on one, and to deleting a record a criterion outside your share names, and the "
+             "gate fails the run on each of those and on any record you open that another explorer created. A 409 "
+             "whose error starts \"Vibe Verifier QAE\" is the harness, never the site: never judge a criterion on it.")
+# A record id as a criterion names it, the same shapes actions/qae-browser/console-pages.js reads in a path: a UUID,
+# 24 hex digits (a MongoDB ObjectId) or a ULID.
+RECORD_ID = re.compile(r"(?<![0-9A-Za-z-])(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+                       r"|[0-9a-fA-F]{24}|[0-9A-HJKMNP-TV-Z]{26})(?![0-9A-Za-z-])")
 # Criteria that build on each other, which one explorer walks in this order.
 CHAINED = ("%s name each other by number, so they may build on each other: walk them in that order, and where a later "
            "one works on a record an earlier one made, use that record.")
@@ -1170,6 +1181,15 @@ def explorer_share(items, widths, shard, shards, rewalk, tag=None):
     return share, " ".join(sentences)
 
 
+def explorer_isolation(items, share, tag):
+    """What the browser of one explorer of several holds it to (actions/qae-browser/console-pages.js): its tag, and
+    the records it may not delete, every id a criterion outside its `share` names (a fixture another explorer's
+    criterion uses), lower-cased as a UUID is matched."""
+    mine = {item for item, _ in share}
+    named = {match.group(0).lower() for item, wording in items if item not in mine for match in RECORD_ID.finditer(wording)}
+    return {"tag": tag, "protected": sorted(named)}
+
+
 def explorer_tag(run, shard):
     """The tag explorer `shard` names its records by: the run (`<run id>.<attempt>`, so a re-run's explorer does
     not take an earlier attempt's records for its own) and its number. None without a run."""
@@ -1195,8 +1215,17 @@ def qae_inputs_command(args):
         features = len([name for name in names if name.endswith(".md")])
         options = selection_options(args) if args.manifest and features else None
         states = options.max_states if options else STATES_PER_WALK
-        items, share = explorer_share(items, widths, args.shard, args.shards, rewalk_walks(features, states),
-                                      explorer_tag(args.run, args.shard))
+        tag = explorer_tag(args.run, args.shard) or "qae-e%d" % args.shard
+        everything = items
+        items, share = explorer_share(items, widths, args.shard, args.shards, rewalk_walks(features, states), tag)
+        if args.isolation:
+            # One explorer has the site to itself: no file, and the browser guards nothing.
+            if os.path.isfile(args.isolation):
+                os.remove(args.isolation)
+            if args.shards > 1:
+                os.makedirs(os.path.dirname(args.isolation) or ".", exist_ok=True)
+                with open(args.isolation, "w", encoding="utf-8") as handle:
+                    json.dump(explorer_isolation(everything, items, tag), handle)
         if args.shard > 1:
             # Every explorer counted the features, to share the criteria out alike. Only the first re-walks them.
             features = 0
@@ -1532,6 +1561,8 @@ def main():
                         "share of the criteria here, for its prompt (an empty line for one explorer)")
     inputs.add_argument("--run", metavar="ID", default="", help="with --shards above 1, the run (`<run id>.<attempt>`) in "
                         "the tag each explorer names its records by, qae-<run>-e<K> (default: none, qae-e<K>)")
+    inputs.add_argument("--isolation", metavar="FILE", help="with --turns, write what the browser holds one explorer of "
+                        "several to here, its tag and the record ids it may not delete (none, and the file removed, for one)")
     inputs.add_argument("--repo", default=".")
     inputs.add_argument("--base-ref", default=None)
     rewalk = commands.add_parser("features", help="the features a pull request's changed paths touch, by the selection "

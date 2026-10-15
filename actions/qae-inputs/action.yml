@@ -58,7 +58,10 @@ outputs:
       works its share out. They also name the criteria of the share that build on each other, to walk in
       order, and the explorer's tag, qae-<run id>.<attempt>-e<n>: every record it creates carries the tag, and
       it opens or judges only records with its tag or that existed before the run, never one another explorer
-      of the run created or is changing. Empty for one explorer, which walks them all.
+      of the run created or is changing. Empty for one explorer, which walks them all. For one of several the
+      step also writes qae-inputs/isolation.json, the tag and the record ids a criterion outside its share
+      names, which the browser's page record (actions/qae-browser/console-pages.js) reads from the workspace:
+      it hides other explorers' tagged records, refuses requests on them and the deletion of those fixtures.
     value: ${{ steps.prepare.outputs.share }}
 runs:
   using: composite
@@ -87,7 +90,7 @@ runs:
         python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" qae-inputs --manifest "$manifest" --references "$VV_REFERENCES" \
           --evidence "$VV_EVIDENCE" --listing "$VV_REFERENCES.md" --digests "$digests" --widths-file qae-inputs/widths \
           --turns "$turns" --shard "$VV_SHARD" --shards "$VV_SHARDS" --share "$share" \
-          --run "${VV_RUN:-}"
+          --run "${VV_RUN:-}" --isolation qae-inputs/isolation.json
         echo "references=$(cat "$digests")" >> "$GITHUB_OUTPUT"
         echo "max-turns=$(cat "$turns")" >> "$GITHUB_OUTPUT"
         echo "share=$(cat "$share")" >> "$GITHUB_OUTPUT"
