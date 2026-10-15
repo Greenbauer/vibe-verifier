@@ -50,6 +50,23 @@ def make_repo(test, files, initial_branch="main"):
     return repo
 
 
+def install_fixture(deps):
+    """`npm ci` of a fixture's package.json and lockfile, copied into `deps`, and proof that the Vitest it installed loads.
+
+    npm exits 0 when the download of an optional package fails and installs the rest without a word.
+    Vite's native binding is one (a package per platform), and without it Vitest does not load: a CI
+    run on 2026-10-14 got that install and failed every test of the class. A second `npm ci` fetches
+    what the first left out; a Vitest that still does not load fails the class with the reason."""
+    for _ in range(2):
+        subprocess.run(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=deps, check=True,
+                       capture_output=True, text=True)
+        loads = subprocess.run(["node", "--input-type=module", "--eval", 'await import("vitest/node");'], cwd=deps,
+                               capture_output=True, text=True)
+        if loads.returncode == 0:
+            return
+    raise RuntimeError("npm ci exited 0 twice and the fixture's Vitest still does not load:\n" + loads.stderr)
+
+
 def gate(name, repo, *args, env=None):
     script = ROOT / "gates" / (name.replace("-", "_") + ".py")
     return subprocess.run([sys.executable, str(script), "--repo", str(repo), *args],
