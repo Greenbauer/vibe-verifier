@@ -663,7 +663,9 @@ changed-code-mutation --project apps/web --break 70 --soak
   `changed-code-mutation --source dashboard/**/*.py --python .venv-tests/bin/python`, limited to
   `dashboard/` because its gate modules are tested by running them as scripts. Its `pytest.ini` collects
   only `tests/test_dashboard_*.py`: under mutmut's coverage tracing the whole suite ran past 900 seconds.
-  The runner judges that file from the base like any manifest in the repository. Not `entries:`: in
+  The same file pilots `regression-test-fails-on-base` and `coverage-not-lost` with `--soak`, under the
+  `python3` and unittest the job's test step uses, after a step that writes the pull request's title and
+  body. The runner judges that file from the base like any manifest in the repository. Not `entries:`: in
   a repository's own workflow a pull request can edit it.
 - **Exit 2 also when** the suite fails at `HEAD` (Stryker cannot measure a red suite), Stryker exits
   non-zero, or Stryker matched fewer files than it was given, such as a path with brace syntax

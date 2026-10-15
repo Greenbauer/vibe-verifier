@@ -111,7 +111,11 @@ the selection alone would have let through. Run the selected tests first if you 
 which file a test is in, so for node:test add the action's reporter beside your own:
 `node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter="$REPORTER"
 --test-reporter-destination=test-results/failed.txt ...`, with `REPORTER` set from
-`${{ steps.affected.outputs.reporter }}`, and pass `test-results/failed.txt`. Every miss is a
+`${{ steps.affected.outputs.reporter }}`, and pass `test-results/failed.txt`. unittest writes no report
+of its own: a list of its failed test ids (`test_cart.Cart.test_total`) works, since the report finds a
+dotted id's file. This repository's own [`ci.yml`](../../.github/workflows/ci.yml) reads them from the
+verbose log of `python3 -m unittest discover -s tests -v`, and fails that step when the run failed and
+no id could be read. Every miss is a
 `::warning` on the run; a failure whose report names no file the selection counts is one too. The
 step exits 0 on misses (the full run already failed the job) and 2 when the results cannot be read or
 hold no test case.

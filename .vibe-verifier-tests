@@ -1,4 +1,9 @@
-# Gates the CI test job runs after it installs pytest (tests/requirements-pytest.txt) into .venv-tests.
-# Only dashboard/: the gate modules are tested by running them as scripts, and mutmut sees only the
+# Gates the CI test job runs after it installs pytest (tests/requirements-pytest.txt) into .venv-tests and
+# writes the pull request's title and body into pr-inputs/ (.github/workflows/ci.yml).
+# Mutation, only dashboard/: the gate modules are tested by running them as scripts, and mutmut sees only the
 # code a test runs in its own process.
 changed-code-mutation --source dashboard/**/*.py --python .venv-tests/bin/python
+# Report-only pilots (--soak): they print findings as warnings and never fail the job, but a run that cannot be
+# judged (exit 2) still does. Both run the suite the way the job's own test step does: python3 and unittest.
+regression-test-fails-on-base --soak --title pr-inputs/title.txt --body pr-inputs/body.md
+coverage-not-lost --soak --runner unittest --args 'discover -s tests' --body pr-inputs/body.md --timeout 4800
