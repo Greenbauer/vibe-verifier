@@ -256,6 +256,18 @@ func planStarts(in PlanInput) ([]Start, []Refusal) {
 	return starts, refusals
 }
 
+// sortIdle orders idle slots oldest first (by Since, then instance). The newest min_runners of them
+// are the warm pool the listener keeps; planIdleStops stops from the front and queue.json's
+// warm_instances names the back, so the dashboard shows the runners actually kept.
+func sortIdle(idle []Slot) {
+	sort.Slice(idle, func(i, j int) bool {
+		if !idle[i].Since.Equal(idle[j].Since) {
+			return idle[i].Since.Before(idle[j].Since)
+		}
+		return idle[i].Instance < idle[j].Instance
+	})
+}
+
 // planIdleStops picks, per set with no assigned job, its idle slots beyond min_runners that are
 // older than idle_stop, oldest first. A busy slot is never picked.
 func planIdleStops(in PlanInput) []Slot {
@@ -270,12 +282,7 @@ func planIdleStops(in PlanInput) []Slot {
 				idle = append(idle, s)
 			}
 		}
-		sort.Slice(idle, func(i, j int) bool {
-			if !idle[i].Since.Equal(idle[j].Since) {
-				return idle[i].Since.Before(idle[j].Since)
-			}
-			return idle[i].Instance < idle[j].Instance
-		})
+		sortIdle(idle)
 		for _, s := range idle[:max(0, len(idle)-set.MinRunners)] {
 			if in.Now.Sub(s.Since) < in.IdleStop {
 				break // sorted oldest first: every later one is younger

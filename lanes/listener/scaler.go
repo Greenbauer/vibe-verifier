@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"sync"
 	"time"
@@ -15,6 +16,14 @@ import (
 
 // refusalQuiet is how often one set's refusal of one kind is repeated in the log while it lasts.
 const refusalQuiet = time.Minute
+
+// retiredKeep is how long a runner whose slot reconcile forgot still has its late job events
+// recorded, and maxRetired bounds how many such runners are kept. GitHub can deliver a short job's
+// JobStarted and JobCompleted after its unit has already exited and the slot is gone.
+const (
+	retiredKeep = 15 * time.Minute
+	maxRetired  = 256
+)
 
 // Lane is the listener's state and the only thing that starts or stops slots. Every set's
 // listener reports into it, and every reconcile plans the whole lane at once, because the budget
@@ -37,10 +46,13 @@ type Lane struct {
 	apis  map[string]api
 
 	// recMu orders the writes of queue.json and jobs.json, so the last file written holds the
-	// latest state, and guards jobs, the history jobs.json is written from. It is taken before mu
-	// when both are held, never while mu is.
+	// latest state, and guards jobs, the history jobs.json is written from, and queueWritten. It is
+	// taken before mu when both are held, never while mu is.
 	recMu sync.Mutex
 	jobs  []jobTiming
+	// queueWritten is queue.json's content as last written, nil until it first is; reconcile
+	// rewrites the file only when the content (updated_at aside) changed.
+	queueWritten *queueRecord
 
 	mu       sync.Mutex
 	sets     map[SetKey]*setEntry
@@ -48,6 +60,16 @@ type Lane struct {
 	foreign  map[slotRef]bool
 	quiet    map[string]time.Time
 	inflight sync.WaitGroup
+	// retired is every runner whose slot reconcile forgot within retiredKeep, by runner name, so a
+	// job event GitHub delivers late still reaches jobs.json.
+	retired map[string]retiredRunner
+}
+
+// retiredRunner is where a forgotten slot's runner ran, and when reconcile forgot it.
+type retiredRunner struct {
+	ref slotRef
+	set SetKey
+	at  time.Time
 }
 
 type setEntry struct {
@@ -64,6 +86,7 @@ func newLane(cfg *Config, runDir string, sys Systemd, host hostProbe, newAPI fun
 		cfg: cfg, runDir: runDir, sys: sys, host: host, logf: logf, now: time.Now, newAPI: newAPI,
 		opsCtx: context.Background(), apis: map[string]api{},
 		sets: map[SetKey]*setEntry{}, slots: map[slotRef]*Slot{}, foreign: map[slotRef]bool{}, quiet: map[string]time.Time{},
+		retired: map[string]retiredRunner{},
 	}
 }
 
@@ -213,10 +236,18 @@ func (l *Lane) removeRunnerLater(target string, runnerID int64) {
 	}()
 }
 
-// reconcile refreshes the lane from systemd and the run dir, plans, and begins the plan's starts
-// and idle stops. Everything it does itself is local (systemctl, the run dir, /proc/meminfo), so it
-// takes no context: a stop signal must not cut a state query short and read as a systemd failure.
+// reconcile refreshes the lane from systemd and the run dir, plans, begins the plan's starts and
+// idle stops, and then rewrites queue.json if its content changed, so the warm pool it names is at
+// most one reconcile behind the slots. Everything it does itself is local (systemctl, the run dir,
+// /proc/meminfo), so it takes no context: a stop signal must not cut a state query short and read
+// as a systemd failure.
 func (l *Lane) reconcile() {
+	l.replan()
+	l.refreshQueue()
+}
+
+// replan is reconcile's work under l.mu: refresh, plan, and begin the plan's starts and stops.
+func (l *Lane) replan() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	occupied, states, ok := l.refresh()
@@ -278,6 +309,70 @@ func (l *Lane) reconcile() {
 	}
 }
 
+// refreshQueue rewrites queue.json when its content, updated_at aside, differs from what was last
+// written. Statistics arrive only with GitHub's messages, but the warm pool changes with every start,
+// idle stop, recycle and taken job. Nothing is written before the first statistics. Takes l.recMu,
+// then l.mu (the lock order), so it must be called with neither held.
+func (l *Lane) refreshQueue() {
+	l.recMu.Lock()
+	defer l.recMu.Unlock()
+	l.mu.Lock()
+	rec := l.queueRecord()
+	l.mu.Unlock()
+	last := l.queueWritten
+	if last == nil && len(rec.Sets) == 0 {
+		return // no set has had statistics yet
+	}
+	if last != nil && last.Version == rec.Version && reflect.DeepEqual(last.Sets, rec.Sets) {
+		return
+	}
+	l.writeQueue(rec, "the lane")
+}
+
+// writeQueue writes queue.json and remembers what it wrote. Called with l.recMu held.
+func (l *Lane) writeQueue(rec queueRecord, what string) {
+	if err := writeLaneRecord(l.runDir, queueFile, rec); err != nil {
+		l.logf("queue record could not be written for %s: %v", what, err)
+		return
+	}
+	l.queueWritten = &rec
+}
+
+// retire remembers the runner of a slot reconcile is about to forget, for retiredKeep, so a late
+// JobStarted or JobCompleted for it still reaches jobs.json. Expired entries are dropped first, then
+// the oldest while maxRetired are kept. Called with l.mu held.
+func (l *Lane) retire(s *Slot) {
+	if s.RunnerName == "" {
+		return
+	}
+	now := l.now()
+	for name, r := range l.retired {
+		if now.Sub(r.at) > retiredKeep {
+			delete(l.retired, name)
+		}
+	}
+	for len(l.retired) >= maxRetired {
+		oldest := ""
+		for name, r := range l.retired {
+			if oldest == "" || r.at.Before(l.retired[oldest].at) {
+				oldest = name
+			}
+		}
+		delete(l.retired, oldest)
+	}
+	l.retired[s.RunnerName] = retiredRunner{ref: s.ref(), set: s.Set, at: now}
+}
+
+// retiredRunner is the runner's entry when reconcile forgot its slot within retiredKeep. Called
+// with l.mu held.
+func (l *Lane) retiredRunner(name string) (retiredRunner, bool) {
+	r, ok := l.retired[name]
+	if !ok || l.now().Sub(r.at) > retiredKeep {
+		return retiredRunner{}, false
+	}
+	return r, true
+}
+
 // refresh forgets slots whose units stopped, clears leftovers, and returns every occupied
 // instance with every unit's state. ok is false when unit states are unreadable: nothing is
 // planned then.
@@ -312,6 +407,7 @@ func (l *Lane) refresh() ([]Slot, map[string]string, bool) {
 				l.logf("%s finished (runner %s, %s); the instance is free", unit, s.RunnerName, s.Phase)
 				l.dropAssignment(ref)
 			}
+			l.retire(s)
 			delete(l.slots, ref)
 			continue
 		}
@@ -548,8 +644,13 @@ func (l *Lane) jobStarted(key SetKey, j *scaleset.JobStarted) {
 	l.mu.Lock()
 	s := l.slotByRunner(j.RunnerName)
 	if s == nil {
-		l.logf("job %q started on runner %s, which this listener does not track (%s)", j.JobDisplayName, j.RunnerName, key)
+		r, retired := l.retiredRunner(j.RunnerName)
 		l.mu.Unlock()
+		if !retired {
+			l.logf("job %q started on runner %s, which this listener does not track (%s)", j.JobDisplayName, j.RunnerName, key)
+			return
+		}
+		l.lateStart(r, j)
 		return
 	}
 	if s.Phase != PhaseDone {
@@ -557,25 +658,110 @@ func (l *Lane) jobStarted(key SetKey, j *scaleset.JobStarted) {
 	}
 	ref := s.ref()
 	l.logf("job %q of %s/%s started on %s (runner %s)", j.JobDisplayName, j.OwnerName, j.RepositoryName, l.unit(ref), j.RunnerName)
-	timing := jobTiming{
-		Kind: ref.Kind, Instance: ref.N, RunnerName: s.RunnerName,
-		QueuedAt: stamp(j.QueueTime), ScaleSetAssignedAt: stamp(j.ScaleSetAssignTime),
-		RunnerAssignedAt: stamp(j.RunnerAssignTime), StartedAt: stamp(l.now()),
-	}
+	timing := jobTiming{Kind: ref.Kind, Instance: ref.N, RunnerName: s.RunnerName, StartedAt: stamp(l.now())}
 	l.mu.Unlock()
 	l.recordAssignment(ref, j.OwnerName, j.RepositoryName, j.JobDisplayName, j.WorkflowRunID, j.JobID)
-	if a, ok := assignmentFields(j.OwnerName, j.RepositoryName, j.JobDisplayName, j.WorkflowRunID, j.JobID); ok {
-		timing.Repository, timing.Name, timing.RunID, timing.JobID = a.Repository, a.Name, a.RunID, a.JobID
-	}
+	timing.setJob(&j.JobMessageBase)
 	l.recordJob(ref, timing)
 }
 
-// recordJob appends a started job to the history, dropping the oldest past maxJobHistory, and
-// rewrites jobs.json from it.
+// lateStart records, in jobs.json only, a JobStarted heard after reconcile forgot the runner's slot:
+// no assignment file, slot or phase is touched. The job is over by then, so its start is GitHub's
+// runner-assigned time, the listener's clock only when GitHub sent none.
+func (l *Lane) lateStart(r retiredRunner, j *scaleset.JobStarted) {
+	l.logf("late start of job %q of %s/%s on %s (runner %s of %s, retired %s ago): recorded in the job history only",
+		j.JobDisplayName, j.OwnerName, j.RepositoryName, l.unit(r.ref), j.RunnerName, r.set, l.now().Sub(r.at).Round(time.Second))
+	timing := jobTiming{Kind: r.ref.Kind, Instance: r.ref.N, RunnerName: j.RunnerName}
+	timing.setJob(&j.JobMessageBase)
+	timing.StartedAt = timing.RunnerAssignedAt
+	if timing.StartedAt == "" {
+		timing.StartedAt = stamp(l.now())
+	}
+	l.recordJob(r.ref, timing)
+}
+
+// setJob takes the job's GitHub times and, when usable, its assignment fields from a job message.
+func (t *jobTiming) setJob(j *scaleset.JobMessageBase) {
+	t.QueuedAt, t.ScaleSetAssignedAt, t.RunnerAssignedAt = stamp(j.QueueTime), stamp(j.ScaleSetAssignTime), stamp(j.RunnerAssignTime)
+	if a, ok := assignmentFields(j.OwnerName, j.RepositoryName, j.JobDisplayName, j.WorkflowRunID, j.JobID); ok {
+		t.Repository, t.Name, t.RunID, t.JobID = a.Repository, a.Name, a.RunID, a.JobID
+	}
+}
+
+// recordJob adds a started job to the history and rewrites jobs.json. A JobStarted heard after the
+// runner's job already finished fills that entry in (fillFrom) instead of adding a second one: a JIT
+// runner runs one job, so a start for a finished runner is that job's late start. Keying this on the
+// saved finish time, not a flag in memory, keeps it right across a listener restart.
 func (l *Lane) recordJob(ref slotRef, timing jobTiming) {
 	l.recMu.Lock()
 	defer l.recMu.Unlock()
-	l.jobs = append(l.jobs, timing)
+	if e := l.lastJob(timing.RunnerName); e != nil && e.FinishedAt != "" {
+		e.fillFrom(timing)
+		l.moveLast(e)
+	} else {
+		l.jobs = append(l.jobs, timing)
+	}
+	l.writeJobs(ref)
+}
+
+// recordFinish sets when a job finished on the runner's newest history entry, or, when the listener
+// recorded no start for that runner, adds the entry from the completion, and rewrites jobs.json.
+func (l *Lane) recordFinish(ref slotRef, timing jobTiming) {
+	l.recMu.Lock()
+	defer l.recMu.Unlock()
+	if e := l.lastJob(timing.RunnerName); e != nil {
+		e.FinishedAt = timing.FinishedAt
+		l.moveLast(e)
+	} else {
+		l.jobs = append(l.jobs, timing)
+	}
+	l.writeJobs(ref)
+}
+
+// moveLast moves a history entry to the end, so jobs.json is in order of last change: the sampler
+// passes on only the newest 100 entries, and a long job's finish must not sit behind 100 later
+// starts. Called with l.recMu held; e points into l.jobs.
+func (l *Lane) moveLast(e *jobTiming) {
+	for i := range l.jobs {
+		if &l.jobs[i] == e {
+			moved := *e
+			l.jobs = append(append(l.jobs[:i:i], l.jobs[i+1:]...), moved)
+			return
+		}
+	}
+}
+
+// fillFrom takes what a late JobStarted knows into the entry a JobCompleted made, keeping the
+// entry's value wherever the start message has none. The start becomes GitHub's runner-assigned
+// time when there is one; the listener's clock is never used, being by then past the finish.
+func (t *jobTiming) fillFrom(start jobTiming) {
+	take := func(dst *string, v string) {
+		if v != "" {
+			*dst = v
+		}
+	}
+	if start.Name != "" {
+		t.Repository, t.Name, t.RunID, t.JobID = start.Repository, start.Name, start.RunID, start.JobID
+	}
+	take(&t.QueuedAt, start.QueuedAt)
+	take(&t.ScaleSetAssignedAt, start.ScaleSetAssignedAt)
+	take(&t.RunnerAssignedAt, start.RunnerAssignedAt)
+	take(&t.StartedAt, start.RunnerAssignedAt)
+}
+
+// lastJob is the newest history entry for a runner, or nil. Called with l.recMu held.
+func (l *Lane) lastJob(runner string) *jobTiming {
+	for i := len(l.jobs) - 1; i >= 0; i-- {
+		if l.jobs[i].RunnerName == runner {
+			return &l.jobs[i]
+		}
+	}
+	return nil
+}
+
+// writeJobs drops the oldest jobs past maxJobHistory and rewrites jobs.json. Called with l.recMu
+// held.
+func (l *Lane) writeJobs(ref slotRef) {
 	if n := len(l.jobs); n > maxJobHistory {
 		l.jobs = append([]jobTiming(nil), l.jobs[n-maxJobHistory:]...)
 	}
@@ -597,14 +783,35 @@ func (l *Lane) recordAssignment(ref slotRef, owner, repository, name string, run
 
 func (l *Lane) jobCompleted(key SetKey, j *scaleset.JobCompleted) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	s := l.slotByRunner(j.RunnerName)
-	if s == nil {
+	var ref slotRef
+	if s := l.slotByRunner(j.RunnerName); s != nil {
+		s.Phase = PhaseDone
+		ref = s.ref()
+		l.logf("job %q of %s/%s completed (%s) on %s; the unit exits by itself", j.JobDisplayName, j.OwnerName, j.RepositoryName, j.Result, l.unit(ref))
+	} else if r, retired := l.retiredRunner(j.RunnerName); retired {
+		// Reconcile already forgot the slot: only the job history is written.
+		ref = r.ref
+		l.logf("late completion of job %q of %s/%s (%s) on %s (runner %s of %s, retired %s ago): recorded in the job history only",
+			j.JobDisplayName, j.OwnerName, j.RepositoryName, j.Result, l.unit(ref), j.RunnerName, r.set, l.now().Sub(r.at).Round(time.Second))
+	} else {
 		l.logf("job %q completed (%s) on runner %s, which this listener does not track (%s)", j.JobDisplayName, j.Result, j.RunnerName, key)
+		l.mu.Unlock()
 		return
 	}
-	s.Phase = PhaseDone
-	l.logf("job %q of %s/%s completed (%s) on %s; the unit exits by itself", j.JobDisplayName, j.OwnerName, j.RepositoryName, j.Result, l.unit(s.ref()))
+	now := l.now()
+	timing := jobTiming{Kind: ref.Kind, Instance: ref.N, RunnerName: j.RunnerName, StartedAt: stamp(now), FinishedAt: stamp(now)}
+	l.mu.Unlock()
+	timing.setJob(&j.JobMessageBase)
+	if timing.RunnerAssignedAt != "" {
+		timing.StartedAt = timing.RunnerAssignedAt
+	}
+	if !j.FinishTime.IsZero() {
+		timing.FinishedAt = stamp(j.FinishTime)
+		if timing.RunnerAssignedAt == "" {
+			timing.StartedAt = timing.FinishedAt // never a start after the finish GitHub reported
+		}
+	}
+	l.recordFinish(ref, timing)
 }
 
 // recordStatistics logs a set's statistics, keeps them for the plan and queue.json, and rewrites
@@ -619,9 +826,7 @@ func (l *Lane) recordStatistics(key SetKey, st *scaleset.RunnerScaleSetStatistic
 	if !ok {
 		return
 	}
-	if err := writeLaneRecord(l.runDir, queueFile, queue); err != nil {
-		l.logf("queue record could not be written for %s: %v", key, err)
-	}
+	l.writeQueue(queue, key.String())
 }
 
 // noteStatistics records one set's statistics and returns queue.json's content, or ok false for a
@@ -661,9 +866,28 @@ func (l *Lane) queueRecord() queueRecord {
 	for _, key := range keys {
 		set := *l.sets[key].stats
 		set.MinRunners = l.cfg.minRunners(key)
+		set.WarmInstances = l.warmInstances(key, set.MinRunners)
 		rec.Sets = append(rec.Sets, set)
 	}
 	return rec
+}
+
+// warmInstances are the idle slots of a set its warm pool keeps: the newest minRunners in
+// planIdleStops' order (sortIdle). Called with l.mu held.
+func (l *Lane) warmInstances(key SetKey, minRunners int) []int {
+	var idle []Slot
+	for _, s := range l.slots {
+		if s.Set == key && s.Phase == PhaseIdle {
+			idle = append(idle, *s)
+		}
+	}
+	sortIdle(idle)
+	kept := []int{}
+	for _, s := range idle[max(0, len(idle)-minRunners):] {
+		kept = append(kept, s.Instance)
+	}
+	sort.Ints(kept)
+	return kept
 }
 
 func (l *Lane) setAssigned(key SetKey, n int) {
