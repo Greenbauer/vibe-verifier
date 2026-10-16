@@ -186,6 +186,17 @@ class Ranges(unittest.TestCase):
         self.assertEqual(day["covered_hours"], round((120 + 90) / 3600, 2))
         self.assertEqual((hour["warm_hours"], hour["idle_hours"]), (round(30 / 3600, 2), round(30 / 3600, 2)))
 
+    def test_a_bar_holding_only_the_newest_sample_shows_what_it_saw(self):
+        # The collector appends the sample it just took, whose interval has not begun. Alone in the
+        # newest bar (12:00:00 to now, the sample at 12:00:30) it must not read as 0 running, all free.
+        points = [sample(90, 4, 4), sample(60, 4, 4), sample(0, 4, 3)]
+        points[-1]["host"]["warm"] = 1
+        rows = [{"runner": "a", "kind": "ci", "started_at": ago(5), "finished_at": None, "wait_seconds": 0, "routing_seconds": None}]
+        hour = LH.history(points, rows, {"slots": {"limit": 4, "occupied": [{"runner_name": "a"}]}}, True, None, stamp(NOW))["ranges"][0]
+        self.assertEqual(hour["buckets"][-1], {"start": "2026-10-14T12:00:00Z", "running": 3, "warm": 1, "reserved": 0, "waiting": 0})
+        # Its one second of weight is not added to the totals, which cover sampled time only.
+        self.assertEqual(hour["busy_percent"], 100)
+
     def test_busy_share_never_reads_over_full(self):
         rows = [{"runner": "r%d" % n, "kind": "ci", "started_at": ago(3600), "finished_at": ago(0),
                  "wait_seconds": 0, "routing_seconds": None} for n in range(9)]

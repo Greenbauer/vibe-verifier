@@ -22,6 +22,7 @@
   // machine. Each kind numbers its own slots, so the kind is part of the name.
   const slotName = lane => `${KINDS[kindOf(lane)]?.short || kindOf(lane)} ${lane.id.match(/-(\d+)$/)?.[1] ?? lane.id}`;
   const unitName = lane => lane.id.replace(/-(\d+)$/, "@$1");
+  const slotOf = lane => Number(lane.id.match(/-(\d+)$/)?.[1] ?? 0);
   const isFree = lane => lane.state === "provisionable";
 
   function metric(label, value, percent) {
@@ -77,7 +78,7 @@
     const label = RANGE_LABELS[range?.name] || "";
     const [wait, waitDetail] = waitText(range?.wait, label);
     return el("div", { class: "capacity-cards" },
-      card("Runners in use now", `${inUse} of ${limit}`, history?.warm ? `${history.warm} kept warm on purpose` : null),
+      card("Runners in use now", `${inUse} of ${limit}`, history?.warm ? `Warm pool: ${history.warm} kept ready for the next job` : null),
       card("Jobs waiting for a runner", Number.isInteger(waiting) ? String(waiting) : "Unknown", "Right now"),
       card("Busy share", Number.isFinite(range?.busy_percent) ? `${range.busy_percent}%` : "No data",
         `${label}: share of the ${limit} runner slots running a job`),
@@ -151,10 +152,10 @@
 
   // The warm pool keeps a few build-and-test runners up with no job on purpose. The host does not say
   // which ones; the listener stops idle runners oldest first and keeps the newest up to the pool's
-  // size (lanes/listener/plan.go, planIdleStops), so those are the ones shown as kept warm.
+  // size, the higher slot on a tie (lanes/listener/plan.go, planIdleStops), so those show as kept warm.
   function states(lanes, warm) {
     const idle = lanes.filter(lane => kindOf(lane) === "ci" && lane.state === "allocated")
-      .sort((a, b) => String(b.allocated_at).localeCompare(String(a.allocated_at)));
+      .sort((a, b) => String(b.allocated_at).localeCompare(String(a.allocated_at)) || slotOf(b) - slotOf(a));
     const kept = new Set(idle.slice(0, warm || 0));
     return new Map(lanes.map(lane => [lane, kept.has(lane) ? "warm" : lane.state]));
   }

@@ -229,16 +229,21 @@ def _intervals(points, spans, limit, now):
     rows = []
     for point, seconds in zip(points, _spans(points, now)):
         host, begin = point["host"], parse_time(point["observed_at"])
-        jobs = _overlap(spans, begin, begin + dt.timedelta(seconds=seconds))
-        running = min(max(host["slots_running"] * seconds, jobs), (limit or host["slots_occupied"]) * seconds)
-        idle = max(0.0, host["slots_occupied"] * seconds - running)
-        warm = min(idle, (host.get("warm") or 0) * seconds)
-        rows.append((point, seconds, running, warm, idle - warm))
+        # The newest sample's interval has not begun (0 s): weigh it as one second of what it saw, with
+        # the jobs running at that moment, so a bar holding only it does not read as empty.
+        weight = seconds or 1
+        jobs = (_overlap(spans, begin, begin + dt.timedelta(seconds=seconds)) if seconds
+                else sum(1 for start, end in spans if start <= begin <= end))
+        running = min(max(host["slots_running"] * weight, jobs), (limit or host["slots_occupied"]) * weight)
+        idle = max(0.0, host["slots_occupied"] * weight - running)
+        warm = min(idle, (host.get("warm") or 0) * weight)
+        rows.append((point, seconds, running, warm, idle - warm, weight))
     return rows
 
 
 def _bucket(start, rows):
-    seconds = sum(row[1] for row in rows)
+    # A bar averages over its sampled seconds; one holding only the newest sample uses its weight.
+    seconds = sum(row[1] for row in rows) or sum(row[5] for row in rows)
     if not rows:
         return {"start": format_time(start)}
     waiting = [row[0]["host"]["jobs_waiting"] for row in rows if row[0]["host"].get("jobs_waiting") is not None]
@@ -264,7 +269,7 @@ def range_view(name, length, step, points, wait_rows, limit, now, occupied=()):
         slots.setdefault(int((parse_time(row[0]["observed_at"]) - start).total_seconds()) // step, []).append(row)
     buckets = [_bucket(start + dt.timedelta(seconds=index * step), slots.get(index, [])) for index in range(length // step)]
     covered = sum(row[1] for row in rows)
-    total = lambda index: sum(row[index] for row in rows)
+    total = lambda index: sum(row[index] for row in rows if row[1])  # the newest sample has no time yet
     return {"name": name, "bucket_seconds": step, "buckets": buckets,
             "covered_hours": round(covered / 3600, 2),
             "busy_percent": round(100 * total(2) / (covered * limit), 1) if covered and limit else None,

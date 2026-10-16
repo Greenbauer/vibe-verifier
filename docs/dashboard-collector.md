@@ -283,8 +283,12 @@ own slots.
 
 A sample stands for the time until the next sample, at most 120 seconds, so a collector outage counts
 as unsampled time rather than as whatever the last sample saw. Samples from before `slots_running`
-was recorded leave their bars empty. A slot whose job is matched only through GitHub, and no job span
-covers, counts as idle here.
+was recorded leave their bars empty; samples from before `warm` was recorded count the warm pool as
+idle, so for the first seven days the longer ranges overstate idle time. The newest sample's interval
+has not begun: a bar holding only it shows what that sample saw, and the totals leave it out. A slot
+whose job is matched only through GitHub, and no job span covers, counts as idle here. The reverse is
+a known limit: a runner that starts, runs a job and exits between two samples adds job time, which is
+taken from the other runners' idle time in that interval, so idle can read slightly low.
 
 The output is an atomic replacement with mode `0600`. Remote output and prior snapshots are
 allowlist-projected before writing, so extra fields cannot carry raw configuration or secrets into

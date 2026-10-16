@@ -70,7 +70,7 @@ function render(value, rerender = () => {}) {
 
 test("the summary says what is in use, what waits, and the chosen range's share and waits", () => {
   const cards = render(snapshot(history())).find("capacity-card").map(card => card.text);
-  assert.match(cards[0], /Runners in use now.*3 of 4.*1 kept warm on purpose/s);
+  assert.match(cards[0], /Runners in use now.*3 of 4.*Warm pool: 1 kept ready for the next job/s);
   assert.match(cards[1], /Jobs waiting for a runner.*0/s);
   assert.match(cards[2], /Busy share.*41\.2%.*Last 24 hours: share of the 4 runner slots running a job/s);
   assert.match(cards[3], /18s typical.*2m 10s for the slowest 5% of 120 jobs\. Before that, GitHub took 3s on average/s);
@@ -130,6 +130,14 @@ test("runners are grouped by kind in plain words, named by kind and slot, with f
   const slot = content.find("runner-row")[1].children[0];
   assert.strictEqual(slot.attrs.title, "Service ci@1 on the runner machine");
   assert.deepStrictEqual(content.find("runner-head")[0].children.map(cell => cell.text.trim()), ["Runner", "State", "Job", "Repository", "Time"]);
+});
+
+test("on a same-second tie the warm runner is the higher slot, as the listener keeps it", () => {
+  const value = snapshot(history());
+  value.telemetry.capacity.lanes.find(lane => lane.id === "ci-4").allocated_at = value.telemetry.capacity.lanes.find(lane => lane.id === "ci-3").allocated_at;
+  const rows = render(value).find("runner-row").slice(1).map(row => row.text.replace(/\s+/g, " ").trim());
+  assert.match(rows[1], /^Build 3 Idle, no job/);
+  assert.match(rows[2], /^Build 4 Kept warm/);
 });
 
 test("markup in a job name stays text", () => {
