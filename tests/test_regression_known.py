@@ -128,7 +128,7 @@ class KnownOnMain(RegressionWalk):
                                                                     "step 1: signed in as the test user -> an error page\n"})
         Path(self.work, "qae-artifacts", "qae", "features", "base", "auth-step-1.png").write_bytes(png(1280))
         self.assertEqual(self.rewalk(failing).returncode, 1)
-        # An empty screenshot, and a cited step with no text (the anchor parser keeps no such title).
+        # An empty screenshot, and a cited step with no text.
         self.walk_on_main()
         Path(self.work, "qae-artifacts", "qae", "features", "base", "auth-step-1.png").write_bytes(b"")
         self.assertEqual(self.rewalk(failing).returncode, 1)
@@ -162,4 +162,45 @@ class KnownOnMain(RegressionWalk):
         result = self.rewalk(self.AC + self.FAILED + self.KNOWN + self.PROJECTS)
         self.assertEqual(result.returncode, 1)
         self.assertIn("auth is a FAIL", result.stdout)
+
+    def test_a_cited_step_with_no_text_after_it_never_counts(self):
+        # `step 10: .` keeps the title `step 10:`, which every `- step 10:` line holds, whatever main showed.
+        write(self.work, {"qae-artifacts/qae/features/base/auth.md": "- step 10: signed in as the test user -> the dashboard\n"})
+        Path(self.work, "qae-artifacts", "qae", "features", "base", "auth-step-10.png").write_bytes(png(1280))
+        bare = "regression-known: auth -- same (qae/features/base/auth.md::step 10: .)\n"
+        self.assertEqual(self.rewalk(self.AC + self.FAILED + bare + self.PROJECTS).returncode, 1)
+
+    def test_the_anchor_must_name_this_features_base_log_even_when_its_own_log_has_the_step(self):
+        self.walk_on_main()
+        for path in ("base/projects.md", "base/nowhere.md"):
+            result = self.rewalk(self.AC + self.FAILED + self.KNOWN.replace("base/auth.md", path) + self.PROJECTS)
+            self.assertEqual(result.returncode, 1, path)
+
+    def test_only_a_fail_is_downgraded_not_another_word(self):
+        self.walk_on_main()
+        broken = self.FAILED.replace("FAIL -- an error page", "BROKEN -- an error page")
+        self.assertEqual(self.rewalk(self.AC + broken + self.KNOWN + self.PROJECTS).returncode, 1)
+
+    def test_case_never_decides(self):
+        # A step line written in capitals, and a line citing two anchors of which the base walk's is the second.
+        self.walk_on_main(line="- Step 1: Signed in as the test user -> An error page")
+        self.assertEqual(self.rewalk(self.AC + self.FAILED + self.KNOWN + self.PROJECTS).returncode, 0)
+        self.walk_on_main()
+        two = self.KNOWN.replace("(qae/features/base/auth.md",
+                                 "(qae/features/auth.md::step 1: signed in as the test user -> the dashboard; qae/features/base/auth.md")
+        self.assertEqual(self.rewalk(self.AC + self.FAILED + two + self.PROJECTS).returncode, 0)
+
+    def test_a_feature_id_with_capitals_matches_its_lines_in_any_case(self):
+        commit(self.repo, {"docs/features/Reports.md": "# Reports\n\n## Surfaces\n\n- source: `app/reports/**`\n\n## Reach\n\n"
+                                                        "Open it.\n\n## Verify\n\n- `test/app.test.ts::the app starts and answers`\n",
+                           "app/reports/list.ts": "1\n"})
+        write(self.work, {"changed-files": "app/reports/list.ts\n",
+                          "qae-artifacts/qae/features/Reports.md": "- step 1: opened reports -> a blank page\n"})
+        Path(self.work, "qae-artifacts", "qae", "features", "Reports-step-1.png").write_bytes(png(1280))
+        self.walk_on_main(fid="Reports", line="- step 1: opened reports -> the same blank page")
+        lines = ("regression-check: reports -- FAIL -- blank (qae/features/Reports.md::step 1: opened reports -> a blank page)\n"
+                 "regression-known: reports -- same (qae/features/base/Reports.md::step 1: opened reports -> the same blank page)\n")
+        result = self.rewalk(self.AC + lines)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("advisory: Reports fails the same way on the base branch", result.stdout)
 
