@@ -47,8 +47,8 @@ How to grade one requirement:
    the whole text of that line without its indentation, copied exactly (never a paraphrase, a fragment
    such as `404`, or text joined from several lines). Quote a line inside the test body itself, below its
    title: a line in a hook, a helper or another test does not count. When an assertion spans several
-   lines, quote the line that holds the value it checks, never the line that only opens the call
-   (`assert.equal(`). A program checks every quote against the file, and a requirement with
+   lines, quote the line that holds the value it checks, however short (`0,`, `[]`), never the line that
+   only opens the call (`assert.equal(`) or only closes it (`});`). A program checks every quote against the file, and a requirement with
    one quote that is not there counts as unproven.
 4. EXCLUDED: only when the plan itself gives the item to another section of the plan, and that section
    carries `[takes: <ID>]` for it. Give the plan file, the 1-based line number and the exact text of the
