@@ -78,3 +78,16 @@ class KnownOnMain(RegressionWalk):
         result = self.rewalk(self.AC + self.FAILED + self.PROJECTS)
         self.assertEqual(result.returncode, 1)
         self.assertIn("auth is a FAIL", result.stdout)
+
+    def test_the_known_line_must_cite_a_step_line_of_this_features_base_walk(self):
+        # Another feature's base-branch walk does not count, nor the cited text anywhere but on its step line.
+        self.walk_on_main(fid="projects")
+        result = self.rewalk(self.AC + self.FAILED + self.KNOWN.replace("base/auth.md", "base/projects.md") + self.PROJECTS)
+        self.assertIn("auth is a FAIL", result.stdout)
+        write(self.work, {"qae-artifacts/qae/features/base/auth.md": "- step 1: reloaded -> fine\n"
+                                                                    "note: step 1: signed in as the test user -> an error page\n"})
+        Path(self.work, "qae-artifacts", "qae", "features", "base", "auth-step-1.png").write_bytes(png(1280))
+        result = self.rewalk(self.AC + self.FAILED + self.KNOWN + self.PROJECTS)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("auth is a FAIL", result.stdout)
+
