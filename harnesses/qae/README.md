@@ -92,10 +92,10 @@ step selects nothing and nothing changes.
   screenshot per step and adds two lines to its verdict:
   `regression-check: <id> -- PASS|FAIL -- <sentence> (qae/features/<id>.md::<step>)` and, when it
   left states unwalked, `regression-skip: <id> -- <those states>`.
-- When the site step also writes `qae-inputs/main-site.md`, a second site built from the base branch
+- When the site step also writes `qae-inputs/base-site.md`, a second site built from the base branch
   (its URL, sign-in and starting state, like `site.md`), the explorer walks each state that failed
-  once more there, logs it to `qae/features/<id>-main.md` with its screenshots, and, when it fails the
-  same way, adds `regression-known: <id> -- <what that site shows> (qae/features/<id>-main.md::<step>)`.
+  once more there, logs it to `qae/features/base/<id>.md` with its screenshots, and, when it fails the
+  same way, adds `regression-known: <id> -- <what that site shows> (qae/features/base/<id>.md::<step>)`.
   `acceptance-verdict` prints such a FAIL as a warning instead of a finding (the pull request did not
   cause it), and only with that walk on record ([feature map](../../docs/feature-map.md)).
 - A FAIL means a step that was walked showed the feature no longer works as its file describes. A
@@ -106,7 +106,8 @@ step selects nothing and nothing changes.
 - `acceptance-verdict` selects the features again itself and refuses a run unless each has exactly one
   `regression-check` line, a PASS whose anchor resolves, and at least one step in its log with its
   screenshot (none is a re-walk that did not happen). It prints the skip lines and judges neither
-  them nor how many states were walked. Its finding for a FAIL says how to clear it: fix the
+  them nor how many states were walked. A FAIL the base branch has too is a warning (above). Its
+  finding for any other FAIL says how to clear it: fix the
   regression or, when the pull request means the new behaviour, update the feature file in that
   pull request. A feature no browser can walk (every state behind a secret or a cron) is cleared by
   its own file, never by a skip line: `re-walk: none -- <why>` in its Verify section, read from the

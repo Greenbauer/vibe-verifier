@@ -36,9 +36,9 @@ walk is never a finding: it names them on a `regression-skip: <id> -- <states>` 
 prints and does not judge. A FAIL is a finding, and says a step that was walked no longer matches
 the feature file: the pull request fixes the regression or, when it means the new behaviour, updates
 the file. One exception: when the workflow gave the explorer a second site built from the base branch
-(qae-inputs/main-site.md) and the failed state fails the same way there, the explorer adds one
+(qae-inputs/base-site.md) and the failed state fails the same way there, the explorer adds one
 `regression-known: <id> -- <what that site shows>` line anchored in that walk's own step log,
-`qae/features/<id>-main.md` (a step with its screenshot `qae/features/<id>-main-step-k.png`). The
+`qae/features/base/<id>.md` (a step with its screenshot `qae/features/base/<id>-step-k.png`). The
 pull request did not cause it, so the FAIL is printed as a warning, never a finding. A feature with
 a line and no walked step was not re-walked, which is a finding too. A
 feature no browser can walk (every state needs a secret, a cron or a system the explorer does not
@@ -290,15 +290,20 @@ def regression_finding(fid, path, carried, walked, repo, tracked, artifacts):
 
 
 def known_on_main(fid, known, repo, tracked, artifacts):
-    """Feature `fid`'s one `regression-known` line when it stands, else None: the same state walked on the base
-    branch's site, with a step and its screenshot in qae/features/<id>-main.md and an anchor that resolves there."""
-    if len(known) != 1 or not walked_steps(artifacts, fid + "-main"):
+    """Feature `fid`'s one `regression-known` line when it stands, else None: an anchor that resolves to a step
+    line of qae/features/base/<id>.md, the same state walked on the base branch's site, whose screenshot
+    qae/features/base/<id>-step-k.png is a non-empty file. Base walks have a directory of their own, so no
+    feature id can name another's."""
+    if len(known) != 1:
         return None
-    log = "qae/features/%s-main.md" % fid
-    found = [anchor for anchor in anchors_in(said(known[0], KNOWN_TOKEN)) if anchor.path == log]
-    if not found or all(resolves(anchor, repo, tracked, artifacts) for anchor in found):
-        return None
-    return known[0]
+    log = "qae/features/base/%s.md" % fid
+    for anchor in anchors_in(said(known[0], KNOWN_TOKEN)):
+        step = re.match(r"[ \t]*step[ \t]+([0-9]+):", anchor.title, re.IGNORECASE)
+        shot = step and os.path.join(artifacts, "qae", "features", "base", "%s-step-%s.png" % (fid, step.group(1)))
+        if (anchor.path == log and shot and resolves(anchor, repo, tracked, artifacts) is None
+                and os.path.isfile(shot) and os.path.getsize(shot) > 0):
+            return known[0]
+    return None
 
 
 def regression_findings(args, verdict, tracked):
