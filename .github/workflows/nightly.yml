@@ -1,8 +1,8 @@
 name: Nightly
 
 # coverage-not-lost on this repository's whole suite, report-only, once a night on main (.vibe-verifier-nightly). It
-# compares the main commit the last successful scheduled nightly ran on with today's, so a line lost in between is
-# reported, as a warning on that night's run, with the commits, and so the pull requests, merged since. Pull requests
+# compares the main commit the last successful scheduled nightly ran on with today's: a line lost in between is a
+# warning on that night's run, and its log names the commits, and so the pull requests, merged since. Pull requests
 # run the gate on the dashboard tests only (.vibe-verifier-tests, in ci.yml): on the whole suite it takes about an
 # hour. workflow_dispatch runs it on demand, from the commit `base` names when it is given; a dispatched run never
 # moves where the next night starts.
@@ -47,7 +47,8 @@ jobs:
       - name: The commit to compare from
         # `base` when the run was dispatched with one; else the commit of the last successful scheduled nightly on
         # main (one that could not run, exit 2, judged nothing, so its range is judged again; a dispatched run, which
-        # may have judged a narrower range, does not count); else, on the first night, the main commit of 24 hours ago.
+        # may have judged a narrower range, does not count); else, until a night succeeds, the commit before the one
+        # that added this workflow, so no night's range goes unjudged.
         id: base
         env:
           GH_TOKEN: ${{ github.token }}
@@ -60,7 +61,8 @@ jobs:
               --limit 1 --json headSha --jq '.[0].headSha // ""')
           fi
           if [ -z "$base" ]; then
-            base=$(git rev-list -1 --first-parent --before="24 hours ago" HEAD)
+            added=$(git log --diff-filter=A --format=%H -- .github/workflows/nightly.yml | tail -n 1)
+            base=$(git rev-parse "$added^")
           fi
           echo "Comparing $base with $(git rev-parse HEAD)"
           echo "base=$base" >> "$GITHUB_OUTPUT"

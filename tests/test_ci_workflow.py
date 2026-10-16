@@ -202,8 +202,12 @@ class NightlyBase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.repo, True)
         self.commits = []
         subprocess.run(["git", "-C", self.repo, "init", "-q", "-b", "main"], check=True, capture_output=True, env=clean_env())
-        for hours, message in ((72, "older"), (48, "two days ago"), (1, "today")):
+        for hours, message in ((72, "older"), (48, "adds the nightly workflow"), (1, "today")):
             when = "@%d +0000" % (time.time() - hours * 3600)
+            if message.startswith("adds"):
+                os.makedirs(os.path.join(self.repo, ".github", "workflows"))
+                Path(self.repo, ".github", "workflows", "nightly.yml").write_text("name: Nightly\n")
+                subprocess.run(["git", "-C", self.repo, "add", "-A"], check=True, capture_output=True, env=clean_env())
             subprocess.run(["git", "-C", self.repo, "-c", "user.email=t@example.com", "-c", "user.name=T", "-c", "commit.gpgsign=false",
                             "commit", "-q", "--allow-empty", "-m", message], check=True, capture_output=True,
                            env=clean_env({"GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when}))
@@ -242,9 +246,11 @@ class NightlyBase(unittest.TestCase):
                       "--limit 1", call)
         self.assertIn("Comparing %s with %s" % (self.commits[1], self.commits[2]), result.stdout)
 
-    def test_the_first_night_compares_from_main_of_24_hours_ago(self):
+    def test_until_a_night_succeeds_it_compares_from_before_the_workflow_was_added(self):
+        # No successful scheduled nightly yet (the first night, or every one so far could not run): the commit
+        # before the one that added the workflow, the same every night, so no night's range goes unjudged.
         result, written, _ = self.pick(answer="")
-        self.assertEqual((result.returncode, written), (0, "base=%s\n" % self.commits[1]), result.stderr)
+        self.assertEqual((result.returncode, written), (0, "base=%s\n" % self.commits[0]), result.stderr)
 
 
 if __name__ == "__main__":

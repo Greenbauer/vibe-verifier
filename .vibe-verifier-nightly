@@ -2,9 +2,9 @@
 # under the python3 and unittest the CI test job uses, comparing the main commit the last successful scheduled nightly
 # ran on with today's. The runner judges this file from that commit, so a change here applies from the next night.
 # coverage.py measures every Python process a test starts, so the gate scripts the tests run are measured too.
-# A report-only pilot (--soak): findings print as warnings, with the commits they came in with, and never fail the
-# job, but a run that cannot be judged (exit 2) still does. Per pull request the gate runs on the dashboard tests only
-# (.vibe-verifier-tests).
+# A report-only pilot (--soak): findings print as warnings and never fail the job, and the log names the commits merged
+# since; a run that cannot be judged (exit 2) still fails it. Per pull request the gate runs on the dashboard tests
+# only (.vibe-verifier-tests).
 # --timeout: each side took 784 to 1030 seconds on ubuntu-latest (pull request #220), and the second pair runs every
 # night here (the first side fills the runner's empty tool cache, so the install lines of gates/_tools.py run only at
 # the base): four sides, at most 3961 seconds, plus room.
