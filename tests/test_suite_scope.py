@@ -19,12 +19,14 @@ ENGINE = ROOT / "actions" / "suite-scope" / "suite_scope.py"
 ACTION = ROOT / "actions" / "suite-scope" / "action.yml"
 REPO, HEAD, BASE = "acme/app", "a" * 40, "b" * 40
 LIST = ".github/suite-inert"
+# The only ref the engine may read the list at: the default branch by its full name, never a tag of that name.
+MAIN = "refs/heads/main"
 WHERE = "%s on main" % LIST
 
 # Serves $FAKE/state.json: "pull" is the pull request's record, "files" its files (as GitHub lists
 # them, a hundred to a page, "listed" of them when GitHub cuts the list short) and "lists" the inert
 # list's text by ref. "fail" fails every read whose endpoint holds one of its strings, "garbage" answers
-# it with a page that is not JSON, and
+# it with a page that is not JSON, "answers" with the JSON given for it, and
 # "refuse_writes" every write. Every call's argv goes to $FAKE/argv, every write to $FAKE/writes. A read
 # of the list that does not ask for the raw file is refused, so no test passes on JSON read as patterns.
 FAKE_GH = '''#!/usr/bin/env python3
@@ -47,6 +49,10 @@ if any(part in endpoint for part in state.get("fail", [])):
 if any(part in endpoint for part in state.get("garbage", [])):
     sys.stdout.write("<html>Bad gateway</html>\\n")
     sys.exit(0)
+for part, answer in state.get("answers", {}).items():
+    if part in endpoint:
+        print(json.dumps(answer))
+        sys.exit(0)
 if "/contents/" in endpoint:
     if "Accept: application/vnd.github.raw" not in argv:
         sys.stderr.write("the list was not asked for as a raw file\\n")
@@ -111,7 +117,7 @@ class SuiteScope(unittest.TestCase):
         pull = {"number": 7, "head": {"sha": head}, "changed_files": len(changed),
                 "base": {"ref": base_ref, "sha": BASE, "repo": {"default_branch": "main"}}}
         pull.update(state.pop("pull", {}))
-        lists = {"main": INERT} if lists is None else lists
+        lists = {MAIN: INERT} if lists is None else lists
         state.update(pull=pull, files=changed, lists={"%s?ref=%s" % (LIST, ref): text for ref, text in lists.items()})
         (self.fake / "state.json").write_text(json.dumps(state))
         for name in ("argv", "writes"):
@@ -149,7 +155,7 @@ class SuiteScope(unittest.TestCase):
         self.assertEqual((verdict, reason), ("true", said))
         self.assertLessEqual(len(reason), 140)
         self.assertEqual(stdout, "::notice title=Suite scope::%s\n" % said)
-        self.assertEqual(self.calls(), ["repos/acme/app/pulls/7", "repos/acme/app/contents/%s?ref=main" % LIST,
+        self.assertEqual(self.calls(), ["repos/acme/app/pulls/7", "repos/acme/app/contents/%s?ref=%s" % (LIST, MAIN),
                                         "repos/acme/app/pulls/7/files?per_page=100&page=1"])
 
     def test_any_path_off_the_list_runs_the_suite_and_names_it(self):
@@ -164,14 +170,14 @@ class SuiteScope(unittest.TestCase):
 
     def test_a_path_under_a_directory_named_e2e_is_never_inert_whatever_the_list_says(self):
         # Playwright matches testMatch at any depth, so a list that forgets `!**/e2e/**` must not skip a new spec.
-        for lists in ({"main": INERT}, {"main": "**\n"}):
+        for lists in ({MAIN: INERT}, {MAIN: "**\n"}):
             for path in E2E_PATHS:
                 with self.subTest(path, lists=lists):
                     self.serve(files("docs/guide.md", path), lists=lists)
                     self.assert_runs("%s has a path segment named e2e, which is never inert" % path)
         # A name that only holds e2e is not a segment named e2e.
         self.serve(files("tests/e2e-lane-coverage.test.mjs", "docs/operations/preview-e2e.md", "E2E/a.md", "docs/e2e.md"),
-                   lists={"main": "**\n"})
+                   lists={MAIN: "**\n"})
         self.assertEqual(self.decide()[0], "true")
         # check judges a list with the same rule, so a path the suite reads under e2e/ is never flagged inert.
         result = self.check("**\n", "tests/e2e/new.spec.ts")
@@ -179,7 +185,7 @@ class SuiteScope(unittest.TestCase):
 
     def test_a_never_line_wins_wherever_it_is_written(self):
         first = "!docs/schema.json\ndocs/**\n"
-        self.serve(files("docs/guide.md", "docs/schema.json"), lists={"main": first})
+        self.serve(files("docs/guide.md", "docs/schema.json"), lists={MAIN: first})
         self.assert_runs("docs/schema.json is not on the inert list (%s)" % WHERE)
 
     def test_both_names_of_a_rename_count(self):
@@ -197,7 +203,9 @@ class SuiteScope(unittest.TestCase):
         self.assert_runs("GitHub listed 1 of the pull request's 2 changed files", warned=True)
         # A file listed twice is one file: two pages read while the list changed would otherwise hide another.
         self.serve(files("docs/b.md", "docs/b.md"))
-        self.assert_runs("GitHub listed 1 of the pull request's 2 changed files", warned=True)
+        self.assert_runs("GitHub listed a changed file twice", warned=True)
+        self.serve(files("docs/a.md", "docs/a.md", "docs/b.md"), pull={"changed_files": 2})
+        self.assert_runs("GitHub listed 3 of the pull request's 2 changed files", warned=True)
 
     def test_a_file_list_github_does_not_return_runs_the_suite(self):
         self.serve(files("docs/a.md"), fail=["/files"])
@@ -244,14 +252,14 @@ class SuiteScope(unittest.TestCase):
         self.assert_runs("this run is for no commit and the pull request's head is aaaaaaaa", sha="")
 
     def test_the_list_is_read_on_the_default_branch_so_a_pull_request_cannot_widen_its_own(self):
-        self.serve(files("src/app.ts", LIST), lists={"main": "docs/**\n", HEAD: "**\n", BASE: "**\n"})
+        self.serve(files("src/app.ts", LIST), lists={MAIN: "docs/**\n", "main": "**\n", HEAD: "**\n", BASE: "**\n"})
         self.assert_runs("src/app.ts is not on the inert list (%s), and 1 more changed path is not inert" % WHERE)
         self.assertEqual([call for call in self.calls() if "/contents/" in call],
-                         ["repos/acme/app/contents/%s?ref=main" % LIST])
+                         ["repos/acme/app/contents/%s?ref=%s" % (LIST, MAIN)])
 
     def test_a_default_branch_with_no_list_runs_the_suite_so_the_pull_request_that_adds_one_is_not_skipped_by_it(self):
         none = "%s names no inert path, so nothing is inert until a list merges" % WHERE
-        for lists in ({HEAD: "**\n"}, {"main": ""}, {"main": "# nothing yet\n!src/**\n"}):
+        for lists in ({HEAD: "**\n"}, {MAIN: ""}, {MAIN: "# nothing yet\n!src/**\n"}):
             with self.subTest(lists):
                 self.serve(files(LIST), lists=lists)
                 self.assert_runs(none)
@@ -260,9 +268,10 @@ class SuiteScope(unittest.TestCase):
     def test_a_list_that_cannot_be_read_runs_the_suite_with_a_warning(self):
         for text, said in (("docs/** tests/**\n", "line 1 is not one pattern (quote a path that holds a space): docs/** tests/**"),
                            ("docs/**\n'tests/**\n", "line 2: No closing quotation"),
-                           ("docs/**\n!\n", "line 2 is not one pattern (quote a path that holds a space): !")):
+                           ("docs/**\n!\n", "line 2 is not one pattern (quote a path that holds a space): !"),
+                           ("docs/**\n''\n", "line 2 is not one pattern (quote a path that holds a space): ''")):
             with self.subTest(text):
-                self.serve(files("docs/a.md"), lists={"main": text})
+                self.serve(files("docs/a.md"), lists={MAIN: text})
                 self.assert_runs("the default branch's inert list %s is malformed (%s)" % (LIST, said), warned=True)
         self.serve(files("docs/a.md"), fail=["/contents/"])
         self.assert_runs("repos/acme/app/contents/%s: gh: Bad Gateway (HTTP 502)" % LIST, warned=True)
@@ -282,6 +291,10 @@ class SuiteScope(unittest.TestCase):
                 self.serve(files("docs/a.md"), garbage=[where])
                 self.assert_runs("GitHub's answer could not be read (JSONDecodeError: Expecting value: line 1 column 1 "
                                  "(char 0))", warned=True)
+        # A page of files GitHub answers with an object is not a list of files.
+        self.serve(files("docs/a.md"), answers={"/files": {"message": "Not Found"}})
+        self.assert_runs("GitHub's answer could not be read (AttributeError: 'str' object has no attribute 'get')",
+                         warned=True)
         empty = self.fake / "no-gh"
         empty.mkdir()
         self.env["PATH"] = str(empty)
@@ -292,7 +305,7 @@ class SuiteScope(unittest.TestCase):
         # `docs/*#x` would widen to `docs/*`.
         for listed in ("docs/**\n!docs/#internal/**\n", "docs/*#x\n"):
             with self.subTest(listed):
-                self.serve(files("docs/#internal/a.ts"), lists={"main": listed})
+                self.serve(files("docs/#internal/a.ts"), lists={MAIN: listed})
                 line = listed.splitlines()[-1]
                 self.assert_runs("the default branch's inert list %s is malformed (line %d has a `#` inside a pattern, "
                                  "which would start a comment there (quote the pattern, or put a space before the "
@@ -302,9 +315,38 @@ class SuiteScope(unittest.TestCase):
         quoted = "docs/**   # documentation\n'!docs/#internal/**'   # read by the suite\n!docs/\\#raw/**\n"
         for path in ("docs/#internal/a.ts", "docs/#raw/b.ts"):
             with self.subTest(path):
-                self.serve(files("docs/guide.md", path), lists={"main": quoted})
+                self.serve(files("docs/guide.md", path), lists={MAIN: quoted})
                 self.assert_runs("%s is not on the inert list (%s)" % (path, WHERE))
-        self.serve(files("docs/guide.md"), lists={"main": quoted})
+        self.serve(files("docs/guide.md"), lists={MAIN: quoted})
+        self.assertEqual(self.decide()[0], "true")
+
+    def test_a_pattern_that_would_quietly_match_less_is_malformed(self):
+        # A gitignore-style `/` and whitespace other than a space would leave a `!` line matching nothing.
+        for line in ("!/docs/internal/**", "!docs/internal/", "/docs/**", "docs/"):
+            with self.subTest(line):
+                self.serve(files("docs/internal/a.ts"), lists={MAIN: "docs/**\n%s\n" % line})
+                self.assert_runs("the default branch's inert list %s is malformed (line 2: a pattern starts at the "
+                                 "repository root with no leading or trailing `/` (a directory is `dir/**`): %s)"
+                                 % (LIST, line), warned=True)
+        for line in ("'!docs/internal/**\u00a0'", "'!docs/internal/**\t'"):
+            with self.subTest(line):
+                self.serve(files("docs/internal/a.ts"), lists={MAIN: "docs/**\n%s\n" % line})
+                # The reason is one line, so the whitespace it names reads as a space there.
+                self.assert_runs("the default branch's inert list %s is malformed (line 2: a pattern holds whitespace "
+                                 "other than a space: %s)" % (LIST, " ".join(line.split())), warned=True)
+        # A non-breaking space before a `#` is part of the pattern to shlex, so the `#` is inside it.
+        self.serve(files("docs/internal/a.ts"), lists={MAIN: "docs/**\n!docs/internal/**\u00a0# kept\n"})
+        self.assertEqual(self.decide()[0], "false")
+        self.assertIn("has a `#` inside a pattern", self.decide()[1])
+        self.assertEqual(self.check("docs/**\n!docs/internal/\n", "scripts/deploy.sh").returncode, 2)
+
+    def test_a_never_line_covers_everything_under_the_path_it_names(self):
+        listed = "docs/**\n!docs/internal\n"
+        for path in ("docs/internal", "docs/internal/a.ts", "docs/internal/deep/b.md"):
+            with self.subTest(path):
+                self.serve(files("docs/guide.md", path), lists={MAIN: listed})
+                self.assert_runs("%s is not on the inert list (%s)" % (path, WHERE))
+        self.serve(files("docs/guide.md", "docs/internalx.md"), lists={MAIN: listed})
         self.assertEqual(self.decide()[0], "true")
 
     def test_a_reason_of_the_callers_own_runs_the_suite_and_reads_nothing(self):
@@ -355,6 +397,16 @@ class SuiteScope(unittest.TestCase):
         self.assertIn("add `!docs/parity/extract.txt`", result.stdout)
         result = self.check(INERT + "!docs/parity/extract.txt\n", "scripts/deploy.sh", "docs/parity/extract.txt")
         self.assertEqual((result.returncode, result.stdout), (0, "2 paths the suite reads, 0 on the inert list %s\n" % (self.fake / "list")))
+
+    def test_check_cannot_run_on_a_list_or_reads_file_that_is_not_there(self):
+        for args in (("--list", str(self.fake / "missing"), "--reads", str(self.fake / "missing-too")),):
+            result = self.engine("check", *args)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("cannot be checked", result.stdout)
+        (self.fake / "list").write_text(INERT)
+        result = self.engine("check", "--list", str(self.fake / "list"), "--reads", str(self.fake / "missing"))
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("cannot be checked", result.stdout)
 
     def test_check_cannot_run_on_a_malformed_list_or_with_no_path(self):
         result = self.check("docs/** tests/**\n", "scripts/deploy.sh")
@@ -412,6 +464,8 @@ class SuiteScope(unittest.TestCase):
         self.serve(files("docs/a.md"))
         self.assertEqual(self.action_step(PR="7", SHA=HEAD, ALSO_RUN="--proof claimed")[1],
                          "not-applicable=false\nreason=--proof claimed\n")
+        # One word that looks like an option still reaches the engine as the reason (`--also-run=`).
+        self.assertEqual(self.action_step(PR="7", SHA=HEAD, ALSO_RUN="--proof")[1], "not-applicable=false\nreason=--proof\n")
 
     def test_the_action_posts_the_contexts_it_is_given(self):
         self.serve([])

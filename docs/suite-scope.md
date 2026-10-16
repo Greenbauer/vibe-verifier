@@ -33,8 +33,12 @@ tests/**                           # CI self-tests no spec imports
   across directories and `?` one character, as in a feature map's `source:` globs. So `*.md` is the
   Markdown at the root and `**/*.md` is all of it.
 - A line that starts with `!` names paths that are **never inert**, whatever the other lines say and
-  wherever it is written. It is how a list says "all of `.github/` but the workflow that runs the
-  suite".
+  wherever it is written, and everything under the path it names: `!docs/internal` keeps all of
+  `docs/internal/` off the list. It is how a list says "all of `.github/` but the workflow that runs
+  the suite".
+- A pattern has no leading or trailing `/` (a directory is `dir/**`), and holds no whitespace but a
+  quoted space. A line that breaks either rule is malformed, so a pattern written the gitignore way,
+  or pasted with a non-breaking space, is never read as matching less than it says.
 - `#` starts a comment, and each entry's reason belongs beside it: the list is a claim about what the
   deploy and the suite read, and the next reader needs to know why each line is true. A pattern that
   holds a space or a `#` is quoted. A line with two patterns is malformed, never read as one, and so
@@ -104,7 +108,7 @@ The suite is not applicable only when all of these hold. Everything else runs it
 | **It targets the default branch.** | The default branch's own run verified the tree under an inert diff. Nothing verified the tree under a pull request stacked on another branch, and retargeting it later changes its diff with no new head. |
 | **GitHub listed every changed file.** The pull request reports its own count; a list of another length, an entry with no file name, a file listed twice, a read that fails, no file at all, or more than the 3000 files GitHub will list, runs the suite. | A list cut short hides the paths that matter. An empty one proves nothing. |
 | **Every changed path is on the inert list**, both names of a rename. | A path the list does not hold is a path nobody claimed is inert. Moving a file out of the application removes it there, and GitHub reports that under its old name. |
-| **The list is the default branch's**, read from GitHub by the step itself, never from the workspace. No list there, one with no pattern, or one that is malformed, runs the suite. | A pull request cannot widen the list to skip its own suite: the one that adds or widens a list is judged by the default branch's, and once it merges the next pull request is judged by the new one. This is the base the runner judges a manifest from ([architecture](architecture.md), invariant 3), read through GitHub instead of the runner's `git show`: the deciding job has no checkout, and where the base has no manifest the runner uses the head's own, which here would let the pull request that adds a list be skipped by it. |
+| **The list is the default branch's**, read from GitHub by the step itself at the branch's full name (`refs/heads/<branch>`, never a tag of the same name), never from the workspace. No list there, one with no pattern, or one that is malformed, runs the suite. | A pull request cannot widen the list to skip its own suite: the one that adds or widens a list is judged by the default branch's, and once it merges the next pull request is judged by the new one. This is the base the runner judges a manifest from ([architecture](architecture.md), invariant 3), read through GitHub instead of the runner's `git show`: the deciding job has no checkout, and where the base has no manifest the runner uses the head's own, which here would let the pull request that adds a list be skipped by it. |
 | **No reason of your own is given** (`also-run`, below). | A repository can have a rule the catalog knows nothing about. |
 
 A workflow whose suite starts on another event for a pull request's head (a deployment status, a

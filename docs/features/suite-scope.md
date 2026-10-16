@@ -25,6 +25,8 @@ From a workflow, `uses: Greenbauer/vibe-verifier/actions/suite-scope@<sha>` with
 - `tests/test_suite_scope.py::test_the_list_is_read_on_the_default_branch_so_a_pull_request_cannot_widen_its_own`
 - `tests/test_suite_scope.py::test_a_list_that_cannot_be_read_runs_the_suite_with_a_warning`
 - `tests/test_suite_scope.py::test_a_hash_inside_a_pattern_is_malformed_not_a_comment`
+- `tests/test_suite_scope.py::test_a_pattern_that_would_quietly_match_less_is_malformed`
+- `tests/test_suite_scope.py::test_a_never_line_covers_everything_under_the_path_it_names`
 - `tests/test_suite_scope.py::test_a_gh_that_cannot_run_or_answers_with_no_json_runs_the_suite_with_a_warning`
 - `tests/test_suite_scope.py::test_a_reason_of_the_callers_own_runs_the_suite_and_reads_nothing`
 - `tests/test_suite_scope.py::test_a_path_with_a_line_break_cannot_write_an_output_of_its_own`
@@ -38,6 +40,6 @@ From a workflow, `uses: Greenbauer/vibe-verifier/actions/suite-scope@<sha>` with
 - Every doubt runs the suite, and the step never fails on what it cannot read. A new fail-safe gets a test that makes the decision say run; a change that makes any existing one say not applicable is the regression this feature exists to prevent.
 - The list is read from GitHub on the default branch, never from the workspace, so the pull request that adds or widens a list is not skipped by it. Only `check` reads the workspace, because it judges the list itself.
 - A changed path is the pull request's to name. The reason is flattened to one line before it is written as a step output, or a line break in a file name would write an output of its own.
-- A `!` line wins wherever it is written. `*` stays inside one path segment, so `*.md` is only the Markdown at the root.
+- A `!` line wins wherever it is written, and covers everything under the path it names. A leading or trailing `/`, or whitespace other than a quoted space, makes a line malformed. `*` stays inside one path segment, so `*.md` is only the Markdown at the root.
 - A path with a segment named `e2e`, at any depth, is never inert whatever the list says (Playwright matches `testMatch` at any depth), and so is a changed path named `e2e` itself, which may be a submodule or a link. The rule is the engine's, not a line a list must remember.
 - When to post is the consumer's: a status on the suite's context can release whatever waits for the suite.

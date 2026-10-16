@@ -21,7 +21,9 @@ the default branch, never from a checkout, so a pull request cannot widen it to 
 
 The list is one pattern per line, `#` for comments. `**/` crosses directories, `*` stays inside one
 path segment, `?` is one character, and a pattern covers the whole path from the repository root.
-A line that starts with `!` names paths that are never inert, whatever the other lines say. A path
+A line that starts with `!` names paths that are never inert, whatever the other lines say, and
+everything under the path it names. A pattern with a leading or trailing `/`, or holding whitespace
+other than a quoted space, is malformed rather than read as matching less than it says. A path
 with a segment named `e2e`, at any depth, is never inert whatever the list says: Playwright matches
 `testMatch` at any depth, so a file under such a directory can be a spec, and no list can forget
 that. A changed path named `e2e` itself counts too: GitHub's file list does not say whether it is a
@@ -104,7 +106,8 @@ def hash_inside_a_pattern(raw):
         elif char in "'\"":
             quote = char
         elif char == "#":
-            return not previous.isspace()
+            # shlex's own whitespace, not str.isspace: a non-breaking space before a `#` is part of the pattern.
+            return previous not in " \t\r\n"
         previous = char
     return False
 
@@ -124,11 +127,25 @@ def parse_list(text):
             continue
         if len(words) > 1 or words[0] in ("", "!"):
             raise Malformed("line %d is not one pattern (quote a path that holds a space): %s" % (number, raw.strip()))
+        pattern = pattern_of(words[0], "line %d" % number, raw.strip())
         if words[0].startswith("!"):
-            never.append(glob_to_regex(words[0][1:]))
+            # `!docs/internal` keeps the directory's files off the list too, as an author used to gitignore means.
+            never += [glob_to_regex(pattern), glob_to_regex(pattern + "/**")]
         else:
-            inert.append(glob_to_regex(words[0]))
+            inert.append(glob_to_regex(pattern))
     return inert, never
+
+
+def pattern_of(word, where, line):
+    """The glob a line's one word names, its `!` dropped. Malformed where it would quietly match less than its
+    author meant: a gitignore-style leading or trailing `/`, or a tab or a non-breaking space inside it."""
+    pattern = word[1:] if word.startswith("!") else word
+    if pattern.startswith("/") or pattern.endswith("/"):
+        raise Malformed("%s: a pattern starts at the repository root with no leading or trailing `/` (a directory "
+                        "is `dir/**`): %s" % (where, line))
+    if any(char.isspace() and char != " " for char in pattern):
+        raise Malformed("%s: a pattern holds whitespace other than a space: %s" % (where, line))
+    return pattern
 
 
 def under_e2e(path):
@@ -159,7 +176,8 @@ def gh(endpoint, *args, payload=None):
 def base_list(repo, path, branch):
     """The inert list as `branch` has it, parsed; None when the branch has no such file."""
     try:
-        text = gh("repos/%s/contents/%s?ref=%s" % (repo, quote(path), quote(branch, safe="")),
+        # The branch by its full name: `ref=main` would read a tag called main, which a writer can push.
+        text = gh("repos/%s/contents/%s?ref=%s" % (repo, quote(path), quote("refs/heads/" + branch, safe="/")),
                   "-H", "Accept: application/vnd.github.raw")
     except Unread as error:
         if "HTTP 404" in str(error):
@@ -174,6 +192,8 @@ def changed_paths(repo, number, count):
     files = []
     for page in range(1, -(-count // PAGE) + 1):
         files += json.loads(gh("repos/%s/pulls/%s/files?per_page=%d&page=%d" % (repo, number, PAGE, page)))
+    if len(files) != count:
+        raise Unread("GitHub listed %d of the pull request's %d changed files" % (len(files), count))
     paths, names = [], set()
     for file in files:
         # A file the count includes and the list cannot name is a path nobody judged.
@@ -181,9 +201,9 @@ def changed_paths(repo, number, count):
             raise Unread("GitHub listed a changed file with no name")
         names.add(file["filename"])
         paths += [file["filename"]] + ([file["previous_filename"]] if file.get("previous_filename") else [])
-    # Distinct names: a file listed twice (pages read while the list changed) would hide one never listed.
+    # A file listed twice (pages read while the list changed) can hide one never listed.
     if len(names) != count:
-        raise Unread("GitHub listed %d of the pull request's %d changed files" % (len(names), count))
+        raise Unread("GitHub listed a changed file twice")
     return paths
 
 
