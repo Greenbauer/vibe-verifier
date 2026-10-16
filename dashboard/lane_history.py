@@ -242,22 +242,30 @@ def _overlap(spans, start, end):
 
 def _intervals(points, spans, limit, now):
     """Slot-seconds in each sample's interval (until the next sample, at most SAMPLE_SPAN_SECONDS):
-    (point, seconds, running, warm, idle). Running is the larger of what the sample saw and the job
-    time inside the interval: a sample misses a job shorter than the interval, and a job the listener
-    never saw finish has no span. Idle is the rest of the occupied slot time, the warm pool's share
-    first, so a short job's runner is not also counted idle."""
+    (point, seconds, running, warm, idle, weight).
+
+    Running is the job time inside the interval from job spans, plus a full interval for each runner
+    the sample saw on a job that no span covers (a job whose finish was never recorded). A sample's
+    runner that a span covers is not counted again, so a job is never longer than GitHub says.
+    Idle is the runners the sample saw up with neither a recorded job nor a covering span, for the
+    interval, less the time from each job that starts inside the interval to its end (such a runner
+    was up waiting for that job, then ran it and exited). The warm pool's share of idle comes first."""
     rows = []
     for point, seconds in zip(points, _spans(points, now)):
         host, begin = point["host"], parse_time(point["observed_at"])
-        # The newest sample's interval has not begun (0 s): weigh it as one second of what it saw, with
-        # the jobs running at that moment, so a bar holding only it does not read as empty.
+        # The newest sample's interval has not begun (0 s): weigh it as one second of what it saw, so a
+        # bar holding only it does not read as empty.
         weight = seconds or 1
-        jobs = (_overlap(spans, begin, begin + dt.timedelta(seconds=seconds)) if seconds
-                else sum(1 for start, end in spans if start <= begin <= end))
+        end = begin + dt.timedelta(seconds=weight)
+        covering = sum(1 for start, stop in spans if start <= begin <= stop)
+        unspanned = max(0, host["slots_running"] - covering)
+        jobs = (_overlap(spans, begin, end) if seconds else covering) + unspanned * weight
+        cap = limit or host["slots_occupied"]
+        running = min(jobs, cap * weight)
         # A sample from before the limit was lowered can hold more runners than it; none counts past it.
-        occupied = min(host["slots_occupied"], limit or host["slots_occupied"]) * weight
-        running = min(max(host["slots_running"] * weight, jobs), (limit or host["slots_occupied"]) * weight)
-        idle = max(0.0, occupied - running)
+        up = min(host["slots_occupied"], cap) - max(host["slots_running"], covering)
+        starting = sum((end - start).total_seconds() for start, _ in spans if begin < start < end)
+        idle = min(max(0.0, max(0, up) * weight - starting), max(0.0, cap * weight - running))
         warm = min(idle, (host.get("warm") or 0) * weight)
         rows.append((point, seconds, running, warm, idle - warm, weight))
     return rows

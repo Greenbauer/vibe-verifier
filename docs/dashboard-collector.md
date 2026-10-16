@@ -275,26 +275,32 @@ ranges[]        1h, 24h and 7d, in that order
                 GitHub sent a queued time for, else null); null when no job started in the range
 ```
 
-Running time in each sample's interval is the larger of two counts: the slots the sample saw running
-a recorded job, and the job time inside the interval from job spans (a job counts from GitHub
-assigning it to a runner until its finish, or until now while its runner still holds a slot). A
-sample misses a job shorter than the interval: on 2026-10-14 four jobs of about 17 seconds ran between
-30-second samples, their runners' jobs recorded too late to be seen, and read as 0% busy. A job with
-no recorded finish whose runner is gone has no span, but the samples still saw it. Running is at most
-the limit. The rest of the interval's occupied slot time is idle, the warm pool's size of it first, so
-a short job's runner is not also counted idle. Only `ci` and `qae` jobs count; the wait pool has its
-own slots.
+Running time in each sample's interval comes from job spans: a job counts from GitHub assigning it
+to a runner until its finish, or until now while its runner still holds a slot, so a job is never
+longer than GitHub says, whether or not a sample saw it. A sample misses a job shorter than the
+interval: on 2026-10-14 four jobs of about 17 seconds ran between 30-second samples, their runners'
+jobs recorded too late to be seen, and read as 0% busy. A runner the sample saw on a job that no span
+covers (a job whose finish was never recorded, from before the listener recorded finishes or a missed
+completion) counts for the whole interval instead. Running is at most the limit. Only `ci` and `qae`
+jobs count; the wait pool has its own slots.
+
+Idle time is the runners the sample saw up with neither a recorded job nor a covering span, for the
+interval, less the time from each job that starts inside the interval to the interval's end (that
+runner was up waiting for it, then ran it and exited), the warm pool's size of it first. So a short
+job's runner is not also counted idle. The warm share is the warm pool's size taken from all idle
+runner-slot time, whatever the kind: while the warm build runner is on a job and no replacement has
+started, an idle AI QA runner's time counts as warm.
 
 A sample stands for the time until the next sample, at most 120 seconds, so a collector outage counts
 as unsampled time rather than as whatever the last sample saw. Samples from before `slots_running`
 was recorded leave their bars empty; samples from before `warm` was recorded count the warm pool as
 idle, so for the first seven days the longer ranges overstate idle time. The newest sample's interval
-has not begun: a bar holding only it shows what that sample saw, and the totals leave it out. A slot
-whose job is matched only through GitHub, and no job span covers, counts as idle here. The reverse is
-a known limit: a runner that starts, runs a job and exits between two samples adds job time, which is
-taken from the other runners' idle time in that interval, so idle can read slightly low. The warm
-share is the warm pool's size taken from all idle runner-slot time, whatever the kind: while the warm
-build runner is on a job and no replacement has started, an idle AI QA runner's time counts as warm.
+has not begun: a bar holding only it shows what that sample saw, and the totals leave it out.
+
+Known limits, each at most one sample interval per runner: a runner seen idle that stops (an idle stop
+or warm recycle) during the interval counts idle for the whole interval; a runner that comes up after
+a sample and waits before its job counts no idle until the next sample; a runner's cleanup after its
+job counts as neither running nor idle.
 
 The output is an atomic replacement with mode `0600`. Remote output and prior snapshots are
 allowlist-projected before writing, so extra fields cannot carry raw configuration or secrets into
