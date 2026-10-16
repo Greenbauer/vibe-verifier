@@ -140,6 +140,16 @@ test("only runners the listener names read kept warm, and only while they have n
   assert.doesNotMatch(rows.join(" "), /Kept warm/);
 });
 
+test("with the listener down, slots of unknown state are counted and explained, not dropped", () => {
+  const value = snapshot(history());
+  value.telemetry.capacity.lanes = value.telemetry.capacity.lanes.filter(lane => lane.id !== "on-demand-2").concat(
+    { id: "on-demand-2", state: "unknown", registered: false, labels: [] }, { id: "on-demand-3", state: "unknown", registered: false, labels: [] });
+  const content = render(value);
+  assert.match(content.find("capacity-card")[0].text, /Runners in use now.*3 of 4/s);
+  const rows = content.find("runner-row").map(row => row.text.replace(/\s+/g, " ").trim());
+  assert.ok(rows.some(row => /^2 unknown The runner listener is not answering/.test(row)));
+});
+
 test("markup in a job name stays text", () => {
   const tags = [];
   const walk = node => { if (node.tag) tags.push(node.tag); (node.children || []).forEach(walk); };

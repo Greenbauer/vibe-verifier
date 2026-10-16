@@ -1229,3 +1229,25 @@ func TestJobHistoryMovesAFinishedJobToTheEndSoTheNewestEntriesCarryIt(t *testing
 		t.Fatalf("jobs.json order = %+v", rec.Jobs)
 	}
 }
+
+func TestJobHistoryALateStartMovesTheFinishedEntryToTheEnd(t *testing.T) {
+	h, _ := startedLane(t, orgConfig(), 1)
+	s := h.lane.trackedSlots()[0]
+	key := SetKey{"example", kindCI}
+	h.lane.jobCompleted(key, &scaleset.JobCompleted{RunnerName: s.RunnerName})
+	h.lane.recMu.Lock()
+	for n := 0; n < 2; n++ {
+		h.lane.jobs = append(h.lane.jobs, jobTiming{Kind: kindCI, Instance: 2, RunnerName: fmt.Sprintf("other-%d", n), StartedAt: "2026-01-01T12:00:00Z"})
+	}
+	h.lane.recMu.Unlock()
+	assigned := time.Date(2026, 1, 1, 11, 59, 0, 0, time.UTC)
+	h.lane.jobStarted(key, &scaleset.JobStarted{RunnerName: s.RunnerName, JobMessageBase: scaleset.JobMessageBase{RunnerAssignTime: assigned}})
+	var rec jobsRecord
+	if err := json.Unmarshal([]byte(jobsJSON(t, h.run)), &rec); err != nil {
+		t.Fatal(err)
+	}
+	last := rec.Jobs[len(rec.Jobs)-1]
+	if len(rec.Jobs) != 3 || last.RunnerName != s.RunnerName || last.StartedAt != "2026-01-01T11:59:00Z" || last.FinishedAt == "" {
+		t.Fatalf("jobs.json order = %+v", rec.Jobs)
+	}
+}

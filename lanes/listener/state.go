@@ -80,7 +80,8 @@ type queueSet struct {
 	WarmInstances []int `json:"warm_instances"`
 }
 
-// jobsRecord is jobs.json: the jobs tracked slots started, oldest first, at most maxJobHistory.
+// jobsRecord is jobs.json: the jobs tracked slots started, in order of last change (a finish or a
+// late start moves its entry to the end), at most maxJobHistory.
 type jobsRecord struct {
 	Version int         `json:"version"`
 	Jobs    []jobTiming `json:"jobs"`

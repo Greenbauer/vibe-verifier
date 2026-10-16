@@ -246,9 +246,10 @@ it to a runner) and `routing_seconds` (queued until assigned to the scale set; n
 no queued time, or one after the set time). On 2026-10-14 GitHub sent no queued time with a lane's
 job and its scale-set time was the job's GitHub `created_at` to the second, so the wait is counted from
 the set time. The start is the runner assignment, not the listener's `started_at`: the listener heard
-that 17-second job's start as it finished. A job is kept once, for seven days, at most 20,000. Because the listener keeps its newest
-500 jobs and the sampler passes on the newest 100, a lane that starts more than 100 jobs between two
-samples loses the oldest of them.
+that 17-second job's start as it finished. A job is kept once, for seven days, at most 20,000. Because the listener keeps 500 jobs in
+order of last change (a finish moves its job to the end) and the sampler passes on the newest 100, a
+lane where more than 100 jobs start or finish between two samples loses the oldest of those changes,
+which can include an older long job's finish.
 
 `history` is rewritten on every refresh, success or not:
 

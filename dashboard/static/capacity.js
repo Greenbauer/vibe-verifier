@@ -71,7 +71,7 @@
   function summary(capacity, range) {
     const shared = capacity.lanes.filter(lane => kindOf(lane) !== "wait");
     const limit = capacity.limits?.slots ?? shared.length;
-    const inUse = shared.filter(lane => !isFree(lane)).length;
+    const inUse = shared.filter(lane => !isFree(lane) && KINDS[kindOf(lane)]).length;
     const history = capacity.history;
     const waiting = history?.waiting_now;
     const label = RANGE_LABELS[range?.name] || "";
@@ -178,6 +178,8 @@
     const stateOf = states(used, capacity.history?.warm_slots);
     const limits = capacity.limits || {};
     const sharedFree = capacity.lanes.filter(isFree).length;
+    // With the listener down a slot's state is unknown and names no kind; say so rather than drop it.
+    const unknown = capacity.lanes.filter(lane => !isFree(lane) && !KINDS[kindOf(lane)]).length;
     const sharedLimit = limits.slots ?? (byKind("ci").length + byKind("qae").length + sharedFree);
     const header = el("div", { class: "runner-row runner-head muted", role: "row" },
       ...["Runner", "State", "Job", "Repository", "Time"].map(name => el("span", { role: "columnheader" }, name)));
@@ -186,7 +188,9 @@
       group("ci", byKind("ci"), stateOf, owner, now),
       group("qae", byKind("qae"), stateOf, owner, now, limits.qae_concurrency ?
         el("p", { class: "muted runner-none" }, `At most ${limits.qae_concurrency} at once.`) : null),
-      sharedFree ? freeRow(sharedFree, "A runner starts in a free slot when a job arrives.") : null);
+      sharedFree ? freeRow(sharedFree, "A runner starts in a free slot when a job arrives.") : null,
+      unknown ? el("div", { class: "runner-row state-unknown", role: "row" }, el("span", { role: "cell" }, `${unknown} unknown`),
+        el("span", { class: "muted runner-free-note", role: "cell" }, "The runner listener is not answering, so these slots' state is not known.")) : null);
     const waiting = byKind("wait");
     const pools = [shared];
     if (limits.wait_slots || waiting.length) {
