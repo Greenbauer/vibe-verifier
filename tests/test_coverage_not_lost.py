@@ -251,6 +251,18 @@ PY_APP_TEST = ("import subprocess\nimport sys\nimport unittest\n\n\nclass App(un
                "    def test_prints(self):\n"
                '        out = subprocess.run([sys.executable, "app.py"], capture_output=True, text=True, check=True).stdout\n'
                '        self.assertEqual(out, "hello world, said the witness\\n")\n')
+# A test that writes a script to a directory of its own, runs it as a child and removes the directory: its source is
+# gone by the time the report is read.
+PY_TEMP_SCRIPT_TEST = ("import shutil\nimport subprocess\nimport sys\nimport tempfile\nimport unittest\nfrom pathlib import Path\n\n\n"
+                       "class Script(unittest.TestCase):\n    def test_script(self):\n        where = tempfile.mkdtemp()\n"
+                       '        Path(where, "script.py").write_text("print(6 * 7)\\n")\n'
+                       '        out = subprocess.run([sys.executable, "script.py"], cwd=where, capture_output=True, text=True).stdout\n'
+                       "        shutil.rmtree(where)\n"
+                       '        self.assertEqual(out, "42\\n")\n')
+# A test of a package installed in the project's venv, as a dependency is.
+PY_VENDORED_TEST = ("import unittest\n\nfrom shop.price import discount\nfrom vendored import double\n\n\n"
+                    "class Member(unittest.TestCase):\n    def test_member(self):\n"
+                    "        self.assertEqual(double(discount(200, True)), 360)\n")
 PY_SITE_TEST = ('import sys\nimport unittest\n\n\nclass Site(unittest.TestCase):\n    def test_site(self):\n'
                 '        self.assertTrue(getattr(sys, "vv_project_sitecustomize", False))\n')
 
@@ -341,6 +353,30 @@ class RealCoveragePy(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(findings(result), [])
         self.assertIn("every one the pull request left unchanged still runs at the head", result.stderr)
+
+    def test_a_script_a_test_ran_from_a_directory_it_removed_does_not_stop_the_report(self):
+        # Only the checkout and the working copy are reported: a file outside them, gone before the report is read,
+        # stopped the report ("No source for code") when every file a child ran was.
+        repo = self.project({"tests/test_member.py": PY_MEMBER_CASE, "tests/test_script.py": PY_TEMP_SCRIPT_TEST, "README.md": "a\n"},
+                            {"README.md": "b\n"})
+        result = self.run_gate(repo, "--runner", "unittest", "--args", "discover -s tests")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stderr, r"the run at the head: 3 line\(s\) ran \(3 in shop/\), in \d+ seconds")
+
+    def test_a_venv_in_the_working_copy_is_not_taken_for_its_code(self):
+        # --python .venv/bin/python, with a package installed in that venv that the tests run: coverage.py skips
+        # installed packages, but not under [run] include, which measured it and refused it as the working copy's.
+        repo = self.project({".gitignore": "/.venv/\n", "tests/test_member.py": PY_VENDORED_TEST, "tests/test_plain.py": PY_PLAIN},
+                            {"tests/test_member.py": None})
+        venv = os.path.join(repo, ".venv")
+        subprocess.run([self.python, "-m", "venv", "--without-pip", venv], check=True, capture_output=True)
+        site = subprocess.run([os.path.join(venv, "bin", "python"), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                              check=True, capture_output=True, text=True).stdout.strip()
+        Path(site, "vendored.py").write_text("def double(value):\n    return value * 2\n")
+        result = gate("coverage-not-lost", repo, "--base-ref", "HEAD~1", "--python", ".venv/bin/python", "--format", "json",
+                      "--runner", "unittest", "--args", "discover -s tests")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual([(f["path"], f["line"]) for f in findings(result)], [("shop/price.py", 3)])
 
     def test_the_interpreters_own_sitecustomize_still_runs(self):
         # The gate's sitecustomize comes first on the suite's PYTHONPATH; the project's, after it, runs too.

@@ -281,9 +281,13 @@ class Python:
         out = tempfile.mkdtemp(prefix="run-", dir=self.scratch)
         settings, report = os.path.join(out, "coveragerc"), os.path.join(out, "coverage.json")
         with open(settings, "w", encoding="utf-8") as handle:
-            # parallel: a data file per process (patch = subprocess sets it too), combined below.
+            # parallel: a data file per process (patch = subprocess sets it too), combined below. The report reads
+            # only the checkout and the working copy (an editable install, refused in parse), so a script a test ran
+            # from a directory it then removed cannot stop it ("No source for code"). Not [run] include: that turns
+            # off coverage.py's own skipping of installed packages, and a venv in the working copy would be refused.
             handle.write("[run]\ndata_file = %s\ndynamic_context = test_function\nparallel = true\npatch = subprocess\n"
-                         % os.path.join(out, "data"))
+                         "[report]\ninclude =\n    %s\n    %s\n" % (os.path.join(out, "data"), os.path.join(tree, "*"),
+                                                                   os.path.join(self.repo, "*")))
         code, output = run_tool(boot + ["run", "--rcfile=" + settings, "-m", self.module] + self.args, cwd,
                                 time_left(deadline), self.module, env=self.env, budget=budget, advice=ADVICE)
         if code == 5 or re.search(r"^Ran 0 tests", output, re.MULTILINE):  # pytest's and unittest's "no test ran"

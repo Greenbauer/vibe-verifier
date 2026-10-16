@@ -784,8 +784,13 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   Ubuntu's ship one). A child records no test function, since none is on its stack, so a line only a
   child ran names none. `COVERAGE_FILE`, `COVERAGE_PROCESS_CONFIG` and `COVERAGE_PROCESS_START` are
   dropped from the suite's environment, so every process's data goes where the gate's settings say.
-  Not measured: a child given an environment of its own instead of a copy of the test's, one started
-  with `python -I` or `-E`, and one of a Python the pinned coverage.py cannot load in.
+  The report reads only files in the checkout and in the working copy (so an editable install is still
+  refused): a script a test writes to a temporary directory, runs as a child and removes cannot stop
+  it. That is the settings file's `[report] include`, not `[run] include`, which turns off coverage.py's
+  skipping of installed packages, so a package in a venv in the working copy (`--python
+  .venv/bin/python`) would be measured and refused as the working copy's. Not measured: a child given
+  an environment of its own instead of a copy of the test's, one started with `python -I` or `-E`, and
+  one of a Python the pinned coverage.py cannot load in.
 - **What ran it.** A Python finding names the test functions that ran the line at the merge base. A
   Vitest finding says whether the test files the pull request deleted, changed or moved ran it there,
   from one more run at the merge base of just those files, and lists them; a pull request that touched
