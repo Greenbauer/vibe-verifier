@@ -252,28 +252,31 @@ def declared_title(declaration):
 
 
 def test_body(lines, title):
-    """(first, last), the 1-based lines of the one test titled `title`: its declaration down to where its call closes
-    or the next declaration starts. None when no test, or more than one, carries that title."""
+    """(first, last), the 1-based lines of the one test titled `title`: its declaration down to the line that closes
+    it. None when no test, or more than one, carries that title. A body never reaches past the first non-blank line
+    indented no deeper than the declaration (a JS test's closing `});`, or a Python test's dedent), so a bracket the
+    count misreads in a comment, a regex or a template cannot stretch it over a following hook or helper; a JS
+    body also ends where the declaration's call closes, on the declaration's own line for a one-line test."""
     starts = [index for index, line in enumerate(lines)
               if DECLARATION.match(line) and declared_title("\n".join(lines[index:index + 3])) == title]
-    if len(starts) != 1:
-        return None
-    start, depth = starts[0], 0
+    return (starts[0] + 1, body_end(lines, starts[0])) if len(starts) == 1 else None
+
+
+def body_end(lines, start):
+    """The 1-based last line of the test declared at index `start` (see test_body)."""
+    indent = len(lines[start]) - len(lines[start].lstrip())
+    dedent = next((index for index in range(start + 1, len(lines))
+                   if lines[index].strip() and len(lines[index]) - len(lines[index].lstrip()) <= indent), len(lines))
     if PYTHON_TEST.match(lines[start]):
-        # A Python test's body is every line indented deeper than its `def`.
-        indent = len(lines[start]) - len(lines[start].lstrip())
-        for index in range(start + 1, len(lines)):
-            text = lines[index]
-            if text.strip() and len(text) - len(text.lstrip()) <= indent:
-                return start + 1, index
-        return start + 1, len(lines)
-    for index in range(start, len(lines)):
-        if index > start and DECLARATION.match(lines[index]):
-            return start + 1, index
+        return dedent
+    if dedent < len(lines) and CLOSERS_ONLY.match(lines[dedent].strip()):
+        dedent += 1
+    depth = 0
+    for index in range(start, dedent):
         depth += bracket_depth(lines[index].strip())
-        if index > start and depth <= 0:
-            return start + 1, index + 1
-    return start + 1, len(lines)
+        if depth <= 0:
+            return index + 1
+    return dedent
 
 
 def relocated_line(lines, proof):

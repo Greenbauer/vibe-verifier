@@ -103,6 +103,22 @@ class LineDrift(unittest.TestCase):
             self.assertRegex(problem, "fabricated quote|is in the test", proof["assertion"])
             self.assertNotIn("cited_line", proof)
 
+    def test_a_misread_bracket_or_a_one_line_test_never_reaches_a_following_hook_or_helper(self):
+        for spec in (['test("a", () => {', "  // note (", "  assert.equal(one(), 1);", "});", "beforeEach(() => {",
+                      "  assert.equal(hookOnly(), 2);", "});"],
+                     ['test("a", () => {', "  const q = `select (", "from t`;", "  assert.equal(one(), 1);", "});",
+                      "function helper() {", "  assert.equal(hookOnly(), 2);", "}"],
+                     ['test("a", () => { assert.ok(a); });', "function helper() {", "  assert.equal(hookOnly(), 2);",
+                      "}"]):
+            proof = {"file": "tests/a.test.ts", "test": "a", "line": 1, "assertion": "assert.equal(hookOnly(), 2);"}
+            self.assertIn("fabricated quote", proof_audit.proof_problem(Files(spec), proof) or "", spec[1])
+            self.assertNotIn("cited_line", proof)
+        # Inside such a body, a drifted quote is still found.
+        spec = ['test("a", () => {', "  // note (", "  assert.equal(one(), 1);", "});"]
+        proof = {"file": "tests/a.test.ts", "test": "a", "line": 1, "assertion": "assert.equal(one(), 1);"}
+        self.assertIsNone(proof_audit.proof_problem(Files(spec), proof))
+        self.assertEqual(proof["line"], 3)
+
     def test_a_python_test_body_runs_to_its_dedent(self):
         lines = ["class Bounds(unittest.TestCase):", "    def test_end(self):", "        end = bound(10)",
                  "", "        self.assertEqual(end.day, 10)", "", "    def helper(self):",
