@@ -2,5 +2,7 @@
 # into pr-inputs/. A report-only pilot (--soak): findings print as warnings and never fail the job, but a run that
 # cannot be judged (exit 2) still does. The whole suite, under the python3 and unittest the test job uses, at the
 # merge base and at the head; coverage.py measures every Python process a test starts, so the gate scripts the
-# tests run are measured too.
-coverage-not-lost --soak --runner unittest --args "discover -s tests" --body pr-inputs/body.md --timeout 3000
+# tests run are measured too. --timeout: each side took 938 to 985 seconds on ubuntu-latest (pull request #220's
+# first run), and the second pair, which runs when the first finds a line, makes four sides: about 3940 seconds,
+# plus a fifth for room.
+coverage-not-lost --soak --runner unittest --args "discover -s tests" --body pr-inputs/body.md --timeout 4800

@@ -826,7 +826,12 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   manifest so the gate blocks. This repository pilots it on its own whole suite in the `coverage-not-lost`
   job of `ci.yml`, beside the `test` job: it writes the body, then runs `.vibe-verifier-coverage`
   (`--soak --runner unittest --args 'discover -s tests'`), so the gate scripts and `bin/vibe-verifier`
-  the tests run as child processes are measured too.
+  the tests run as child processes are measured too. On ubuntu-latest each side took 938 to 985 seconds
+  and ran about 11,250 lines, 4,660 of them in `gates/` (pull request #220's first run), against 982
+  seconds for both sides when only the test process was measured: about 32 minutes a pull request when
+  the first pair finds nothing and 64 when it finds a line, which that run's first pair did (two runs of
+  the same merge base counted 11,257 and 11,243 lines). Its `--timeout` is 4800 and the job's limit 90
+  minutes.
 - **What it does not catch.** Browser and end-to-end tests: only the unit suite the runner starts is
   measured, so a loss only a Playwright test would show passes (the [QAE harness](../harnesses/qae/README.md)
   re-walks features in a browser). A line that still runs but that no test asserts on any more: a test

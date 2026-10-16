@@ -120,8 +120,9 @@ jobs:
   coverage-not-lost:
     name: coverage-not-lost
     runs-on: ubuntu-latest
-    # Above the gate's --timeout (.vibe-verifier-coverage), so a run past it says so (exit 2) before the job is killed.
-    timeout-minutes: 60
+    # Above the gate's --timeout (4800 seconds, .vibe-verifier-coverage, set from this job's measured runs), so a run
+    # past it says so (exit 2) before the job is killed.
+    timeout-minutes: 90
     permissions:
       contents: read
       pull-requests: read # gh pr view, for the body coverage-not-lost reads
