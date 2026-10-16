@@ -286,8 +286,8 @@ kinds, the columns, and failure handling.
   is on an open pull request's current head, its number, and the time. Running time counts from the
   job's start (GitHub assigning it to the runner) when the listener recorded it, else from when the
   runner was allocated. A runner shows as `Kept warm` when the listener names it as one its warm pool
-  keeps (`queue.json` `warm_instances`) and it has no job; a listener that predates that list marks
-  none. Free slots are not runners yet
+  keeps (`queue.json` `warm_instances`, at most a few seconds plus one collector refresh old) and it
+  has no job; a listener that predates that list marks none. Free slots are not runners yet
   (the listener starts one in any free slot when a job arrives), so each pool ends with one count:
   `3 free`.
 - **The shared host** meters, unchanged.

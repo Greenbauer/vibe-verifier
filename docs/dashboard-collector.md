@@ -257,8 +257,10 @@ observed_at     this refresh
 limit           the shared pool's slot limit
 waiting_now     jobs waiting for a runner now; null after a failed refresh or an unread queue
 warm            runners the warm pool keeps up; null when the queue was not read
-warm_slots      the slots the listener says the pool keeps now (`ci-3`); empty after a failed refresh,
-                an unread queue, or from a listener that predates the list
+warm_slots      the slots the listener says the pool keeps (`ci-3`), as of its last queue.json write
+                (each statistics message and each 5-second reconcile that changed it), so up to a
+                reconcile plus one collector refresh behind; empty after a failed refresh, an unread
+                queue, or from a listener that predates the list
 started         runner name to its job's start time, for the slots occupied now
 ranges[]        1h, 24h and 7d, in that order
   name, bucket_seconds (120, 1800, 10800), covered_hours

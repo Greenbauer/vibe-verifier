@@ -254,8 +254,10 @@ def _intervals(points, spans, limit, now):
         weight = seconds or 1
         jobs = (_overlap(spans, begin, begin + dt.timedelta(seconds=seconds)) if seconds
                 else sum(1 for start, end in spans if start <= begin <= end))
+        # A sample from before the limit was lowered can hold more runners than it; none counts past it.
+        occupied = min(host["slots_occupied"], limit or host["slots_occupied"]) * weight
         running = min(max(host["slots_running"] * weight, jobs), (limit or host["slots_occupied"]) * weight)
-        idle = max(0.0, host["slots_occupied"] * weight - running)
+        idle = max(0.0, occupied - running)
         warm = min(idle, (host.get("warm") or 0) * weight)
         rows.append((point, seconds, running, warm, idle - warm, weight))
     return rows

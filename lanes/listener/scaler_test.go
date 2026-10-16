@@ -1031,3 +1031,178 @@ func TestJobHistoryCompletionWithAFinishButNoRunnerTimeNeverStartsAfterIt(t *tes
 		t.Fatalf("jobs.json = %s\nwant        %s", got, want)
 	}
 }
+
+// retireSlot ends the lane's only slot the way a short job ends it: the unit runs its job and its
+// cleanup and is inactive before the listener hears of the job, so reconcile forgets the slot.
+func retireSlot(t *testing.T, h *harness) Slot {
+	t.Helper()
+	s := h.lane.trackedSlots()[0]
+	if err := removeSlotFiles(h.run, kindCI, 1); err != nil {
+		t.Fatal(err)
+	}
+	h.sys.set("example-ci-ci@1.service", "inactive")
+	h.lane.setAssigned(SetKey{"example", kindCI}, 0)
+	h.settle(t)
+	if got := h.lane.trackedSlots(); len(got) != 0 {
+		t.Fatalf("the slot is still tracked: %+v", got)
+	}
+	return s
+}
+
+func TestJobHistoryRecordsLateEventsForARetiredRunner(t *testing.T) {
+	h, _ := startedLane(t, orgConfig(), 1)
+	key := SetKey{"example", kindCI}
+	s := retireSlot(t, h)
+	h.advance(14 * time.Minute)
+	assigned := time.Date(2026, 1, 1, 12, 0, 40, 0, time.UTC)
+	base := scaleset.JobMessageBase{
+		OwnerName: "example", RepositoryName: "widgets", JobDisplayName: "lint", WorkflowRunID: 123, JobID: "456",
+		QueueTime: assigned.Add(-20 * time.Second), ScaleSetAssignTime: assigned.Add(-10 * time.Second), RunnerAssignTime: assigned,
+	}
+	h.lane.jobStarted(key, &scaleset.JobStarted{RunnerName: s.RunnerName, JobMessageBase: base})
+	base.FinishTime = assigned.Add(17 * time.Second)
+	h.lane.jobCompleted(key, &scaleset.JobCompleted{RunnerName: s.RunnerName, Result: "succeeded", JobMessageBase: base})
+	// The start is GitHub's runner-assigned time, not the listener's clock 14 minutes later.
+	want := `{"version":1,"jobs":[{"kind":"ci","instance":1,"runner_name":"` + s.RunnerName + `",` +
+		`"repository":"example/widgets","name":"lint","run_id":123,"job_id":"456",` +
+		`"queued_at":"2026-01-01T12:00:20Z","scale_set_assigned_at":"2026-01-01T12:00:30Z","runner_assigned_at":"2026-01-01T12:00:40Z",` +
+		`"started_at":"2026-01-01T12:00:40Z","finished_at":"2026-01-01T12:00:57Z"}]}` + "\n"
+	if got := jobsJSON(t, h.run); got != want {
+		t.Fatalf("jobs.json = %s\nwant        %s", got, want)
+	}
+	// Only the history: no assignment file, no slot, no log claiming the runner is unknown.
+	if _, err := os.Stat(slotDir(h.run, kindCI, 1)); !os.IsNotExist(err) {
+		t.Errorf("a late start wrote into the freed slot's directory: %v", err)
+	}
+	if got := h.lane.trackedSlots(); len(got) != 0 {
+		t.Errorf("a late event tracked a slot again: %+v", got)
+	}
+	if !h.log.has("late start of job \"lint\"") || !h.log.has("late completion of job \"lint\"") || h.log.has("does not track") {
+		t.Errorf("log:\n%s", h.log.all())
+	}
+
+	// A completion alone (its start never heard) adds the entry from GitHub's times.
+	h2, _ := startedLane(t, orgConfig(), 1)
+	s2 := retireSlot(t, h2)
+	h2.lane.jobCompleted(key, &scaleset.JobCompleted{RunnerName: s2.RunnerName, JobMessageBase: base})
+	want = `{"version":1,"jobs":[{"kind":"ci","instance":1,"runner_name":"` + s2.RunnerName + `",` +
+		`"repository":"example/widgets","name":"lint","run_id":123,"job_id":"456",` +
+		`"queued_at":"2026-01-01T12:00:20Z","scale_set_assigned_at":"2026-01-01T12:00:30Z","runner_assigned_at":"2026-01-01T12:00:40Z",` +
+		`"started_at":"2026-01-01T12:00:40Z","finished_at":"2026-01-01T12:00:57Z"}]}` + "\n"
+	if got := jobsJSON(t, h2.run); got != want {
+		t.Fatalf("jobs.json = %s\nwant        %s", got, want)
+	}
+}
+
+func TestJobHistoryIgnoresRunnersNeverTrackedAndRetiredTooLongAgo(t *testing.T) {
+	h, _ := startedLane(t, orgConfig(), 1)
+	key := SetKey{"example", kindCI}
+	h.lane.jobStarted(key, &scaleset.JobStarted{RunnerName: "someone-else"})
+	h.lane.jobCompleted(key, &scaleset.JobCompleted{RunnerName: "someone-else"})
+	if _, err := os.Stat(filepath.Join(h.run, jobsFile)); !os.IsNotExist(err) {
+		t.Fatalf("jobs.json written for a runner never tracked: %v", err)
+	}
+	if !h.log.has("started on runner someone-else, which this listener does not track") ||
+		!h.log.has("on runner someone-else, which this listener does not track") {
+		t.Errorf("log:\n%s", h.log.all())
+	}
+
+	s := retireSlot(t, h)
+	h.advance(retiredKeep + time.Second)
+	h.lane.jobStarted(key, &scaleset.JobStarted{RunnerName: s.RunnerName})
+	h.lane.jobCompleted(key, &scaleset.JobCompleted{RunnerName: s.RunnerName})
+	if _, err := os.Stat(filepath.Join(h.run, jobsFile)); !os.IsNotExist(err) {
+		t.Fatalf("jobs.json written for a runner retired past retiredKeep: %v", err)
+	}
+	if !h.log.has("started on runner " + s.RunnerName + ", which this listener does not track") {
+		t.Errorf("log:\n%s", h.log.all())
+	}
+}
+
+func TestRetiredRunnersExpireAndStayBounded(t *testing.T) {
+	h := newHarness(t, orgConfig())
+	retire := func(name string, n int) {
+		h.lane.mu.Lock()
+		defer h.lane.mu.Unlock()
+		h.lane.retire(&Slot{Kind: kindCI, Instance: n, RunnerName: name})
+	}
+	retired := func(name string) bool {
+		h.lane.mu.Lock()
+		defer h.lane.mu.Unlock()
+		_, ok := h.lane.retiredRunner(name)
+		return ok
+	}
+	retire("old", 1)
+	h.advance(retiredKeep + time.Second)
+	retire("new", 2)
+	h.lane.mu.Lock()
+	_, kept := h.lane.retired["old"]
+	h.lane.mu.Unlock()
+	if kept || !retired("new") {
+		t.Fatalf("after retiredKeep: old kept %v, new found %v", kept, retired("new"))
+	}
+	for i := 0; i < maxRetired+10; i++ {
+		h.advance(time.Millisecond)
+		retire(fmt.Sprintf("r%d", i), 1)
+	}
+	h.lane.mu.Lock()
+	n := len(h.lane.retired)
+	h.lane.mu.Unlock()
+	if n != maxRetired || retired("new") || retired("r9") || !retired("r10") || !retired(fmt.Sprintf("r%d", maxRetired+9)) {
+		t.Fatalf("%d retired runners kept, want the newest %d", n, maxRetired)
+	}
+}
+
+// queueJSON is the run dir's queue.json as written.
+func queueJSON(t *testing.T, run string) queueRecord {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(run, queueFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec queueRecord
+	if err := json.Unmarshal(body, &rec); err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+func TestReconcileRewritesQueueRecordWhenTheWarmPoolChanges(t *testing.T) {
+	h, _ := warmLane(t)
+	ci := SetKey{"example", kindCI}
+	h.settle(t)
+	if _, err := os.Stat(filepath.Join(h.run, queueFile)); !os.IsNotExist(err) {
+		t.Fatalf("queue.json written before any statistics: %v", err)
+	}
+	h.lane.recordStatistics(ci, &scaleset.RunnerScaleSetStatistic{})
+	if got := queueJSON(t, h.run); got.UpdatedAt != "2026-01-01T12:00:00Z" || !reflect.DeepEqual(got.Sets[0].WarmInstances, []int{1, 2}) {
+		t.Fatalf("queue.json = %+v", got)
+	}
+
+	// Nothing changed: reconcile leaves the file as it was.
+	h.advance(10 * time.Second)
+	h.settle(t)
+	if got := queueJSON(t, h.run); got.UpdatedAt != "2026-01-01T12:00:00Z" {
+		t.Fatalf("queue.json rewritten with nothing changed: %+v", got)
+	}
+
+	// Slot 1 takes the set's assigned job: the next reconcile drops it from the warm pool and starts
+	// slot 3 to refill it; the reconcile after, with slot 3 up, names it. No statistics arrive between.
+	h.lane.setAssigned(ci, 1)
+	h.lane.jobStarted(ci, &scaleset.JobStarted{RunnerName: h.lane.trackedSlots()[0].RunnerName})
+	h.advance(5 * time.Second)
+	h.settle(t)
+	if got := queueJSON(t, h.run); got.UpdatedAt != "2026-01-01T12:00:15Z" || !reflect.DeepEqual(got.Sets[0].WarmInstances, []int{2}) {
+		t.Fatalf("queue.json after a warm slot took a job = %+v", got)
+	}
+	h.advance(5 * time.Second)
+	h.settle(t)
+	got := queueJSON(t, h.run)
+	if got.UpdatedAt != "2026-01-01T12:00:20Z" || !reflect.DeepEqual(got.Sets[0].WarmInstances, []int{2, 3}) {
+		t.Fatalf("queue.json after the refill started = %+v", got)
+	}
+	// The statistics are kept as GitHub last sent them.
+	if want := (queueSet{Kind: kindCI, MinRunners: 2, WarmInstances: []int{2, 3}}); !reflect.DeepEqual(got.Sets, []queueSet{want}) {
+		t.Fatalf("sets = %+v", got.Sets)
+	}
+}

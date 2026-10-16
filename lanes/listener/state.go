@@ -30,8 +30,10 @@ import (
 //
 // Beside the slot directories it writes two lane-wide files for the dashboard sampler:
 //
-//	<run>/queue.json  0600  every tracked set's latest statistics, by kind, on each statistics message
-//	<run>/jobs.json   0600  the last maxJobHistory jobs a tracked slot ran, with their wait and finish times
+//	<run>/queue.json  0600  every tracked set's latest statistics and warm pool, by kind, on each
+//	                        statistics message and on each reconcile that changes its content
+//	<run>/jobs.json   0600  the last maxJobHistory jobs a tracked slot ran (or one retired within
+//	                        retiredKeep), with their wait and finish times
 const (
 	jitFile        = "jit"
 	jobFile        = "job"

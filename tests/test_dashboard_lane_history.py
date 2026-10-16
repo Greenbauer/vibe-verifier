@@ -226,6 +226,12 @@ class Ranges(unittest.TestCase):
                                       job("r1", None, ago(300), ago(290), ago(10))]}
         self.assertEqual(LH.waits([], raw, NOW)[0]["finished_at"], ago(200))
 
+    def test_a_bar_never_stacks_past_a_limit_that_was_lowered(self):
+        # A sample from when the lane had 6 slots, read against today's limit of 2.
+        hour = LH.history([sample(30, 6, 1)], [], {"slots": {"limit": 2}}, True, None, stamp(NOW))["ranges"][0]
+        bar = hour["buckets"][-1]
+        self.assertEqual((bar["running"], bar["warm"], bar["reserved"]), (1, 0, 1))
+
     def test_busy_share_never_reads_over_full(self):
         rows = [{"runner": "r%d" % n, "kind": "ci", "started_at": ago(3600), "finished_at": ago(0),
                  "wait_seconds": 0, "routing_seconds": None} for n in range(9)]
