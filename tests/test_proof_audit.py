@@ -429,6 +429,12 @@ class Declarations(unittest.TestCase):
             self.assertIn("too short to check",
                           proof_audit.quote_problem(lines, "a.test.ts", number, quote, whole=True) or "", number)
         self.assertIn("too short to check", proof_audit.quote_problem(["0"], "a.test.ts", 1, "0", whole=True))
+        # A closed assert ends its statement even with no `;` (Python, unformatted JS): a helper call after it is
+        # not the assertion's.
+        for closed in (["def test_x(self):", "    self.assertEqual(a, b)", "    helper(", "        0", "    )"],
+                       ['test("x", () => {', "  expect(a).toBe(b)", "  helper(", "    0", "  )", "})"]):
+            self.assertIn("too short to check",
+                          proof_audit.quote_problem(closed, "a.test.ts", 4, "0", whole=True) or "", closed[1])
         # A short fragment of a plan line is still refused.
         self.assertIn("too short to check", proof_audit.quote_problem(lines, "a.md", 4, "0", whole=False))
 

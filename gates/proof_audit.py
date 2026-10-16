@@ -12,8 +12,10 @@ gate cannot run. Per ID, the model's grade is checked, never trusted:
 
 - PROVEN needs at least one case, each with at least one assertion. Every assertion names a test file at
   HEAD (*.test.*, *.spec.*, __tests__/, node:test, or a Python test), a line whose whole text is the quote
-  (at least 6 characters), and the title of the test that line sits in: the nearest test declaration above
-  it (a JS test call's string literal, or a Python test function's name). One quote that is not there
+  (at least 6 characters, or a shorter value line that continues an assert or expect call still open above it
+  in the same test; never a line of closers such as `});`), and the title of the test that line sits in: the
+  nearest test declaration above it (a JS test call's string literal, `void` first or not, or a Python test
+  function's name). One quote that is not there
   makes the requirement UNPROVEN: a fabricated quote is not proof.
 - EXCLUDED needs a plan line, quoted verbatim (in part, 12 characters or more) at its line number at the merge base, and an owner section
   (`path#anchor`) that carries `[takes: ID]` at the merge base and is not one this body links.
@@ -203,17 +205,21 @@ def bracket_depth(text):
 
 def continues_assertion(lines, number, text):
     """Whether line `number`, whose whole text is `text`, is a value inside a wrapped assertion: walking up within
-    the same test, the statement it continues opens with an assert or expect call that is still open above it."""
+    the same test, the nearest statement opening above it is an assert or expect call, and that call stays open on
+    every line from its own down to the one above `number` (a closed assert, with or without a `;`, ends there)."""
     if not 1 <= number <= len(lines) or lines[number - 1].strip() != text or CLOSERS_ONLY.match(text):
         return False
-    depth = 0
     for index in range(number - 2, -1, -1):
         line = lines[index].strip()
         if DECLARATION.match(lines[index]) or line.endswith(";"):
             return False
-        depth += bracket_depth(line)
         if ASSERTION_OPEN.match(line):
-            return depth > 0
+            depth = 0
+            for below in lines[index:number - 1]:
+                depth += bracket_depth(below.strip())
+                if depth <= 0:
+                    return False
+            return True
     return False
 
 
