@@ -10,7 +10,8 @@ cover was deleted or weakened, or the code that reached it no longer does. A lin
 runs at each side agree, because coverage can change from run to run: the second pair runs only when the
 first finds a line. Lines in files the pull request deletes, and lines it changes or deletes, never count.
 Each finding is reported at its line at HEAD, with what ran it at the merge base: the test functions
-(pytest, unittest), or whether the test files the pull request deleted or changed did (Vitest).
+(pytest, unittest; none for a line only a child process ran), or whether the test files the pull request deleted or
+changed did (Vitest).
 
 A pull request body (--body, a file the workflow writes) with a line `coverage-lost: <reason>` marks the
 loss as intended: the findings are printed with the reason and do not fail the gate.

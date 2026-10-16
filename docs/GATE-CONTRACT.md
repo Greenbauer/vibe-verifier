@@ -789,9 +789,10 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   it. That is the settings file's `[report] include`, not `[run] include`, which turns off coverage.py's
   skipping of installed packages, so a package in a venv in the working copy (`--python
   .venv/bin/python`) would be measured and refused as the working copy's. Not measured: a child given
-  an environment of its own instead of a copy of the test's, one started with `python -I` or `-E`, and
+  an environment of its own instead of a copy of the test's, one started with `python -I`, `-E` or `-S`, and
   one of a Python the pinned coverage.py cannot load in.
-- **What ran it.** A Python finding names the test functions that ran the line at the merge base. A
+- **What ran it.** A Python finding names the test functions that ran the line at the merge base (none
+  for a line only a child process ran). A
   Vitest finding says whether the test files the pull request deleted, changed or moved ran it there,
   from one more run at the merge base of just those files, and lists them; a pull request that touched
   no test file says the code that reached the line changed. More such files than `--max-files`
@@ -828,9 +829,10 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   (`--soak --runner unittest --args 'discover -s tests'`), so the gate scripts and `bin/vibe-verifier`
   the tests run as child processes are measured too. On ubuntu-latest each side took 938 to 1,030
   seconds and ran about 11,500 lines, 4,690 of them in `gates/` (pull request #220's runs), against 982
-  seconds for both sides when only the test process was measured. Most of the difference is starting
-  coverage.py in each of the about 3,000 Python processes the suite starts: about 85 ms each in a Linux
-  Python 3.12 container, where the process alone takes 13. And the second pair runs on every pull
+  seconds for both sides when only the test process was measured. About half of the roughly 500 seconds
+  each side gained is starting coverage.py in each of the about 3,000 Python processes the suite starts:
+  85 ms each in a Linux Python 3.12 container, where the process alone takes 13, about 260 seconds at that
+  container's speed. And the second pair runs on every pull
   request here: the first side installs the catalog's tools into the runner's empty tool cache, so the
   install lines of `gates/_tools.py` run only at the merge base, the first pair finds them (14 lines),
   and the second, with the cache full, dismisses them. So the job takes about 66 minutes; its
