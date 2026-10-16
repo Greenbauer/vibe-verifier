@@ -23,6 +23,7 @@ dashboard reads. Only history is published; read_history() is the dashboard's re
 """
 
 import datetime as dt
+import functools
 import math
 import re
 
@@ -48,13 +49,18 @@ SAMPLE_NUMBERS = ("cpu_busy_percent", "memory_available_bytes", "workspace_free_
                   "slots_occupied", "slots_remaining_on_demand")
 
 
-def parse_time(value):
-    if not isinstance(value, str) or not TIME_RE.fullmatch(value):
-        return None
+@functools.lru_cache(maxsize=65536)  # the same sample and job times are read on every refresh
+def _parse(value):
     try:
         return dt.datetime.strptime(value, TIME_FORMAT).replace(tzinfo=dt.timezone.utc)
     except ValueError:
         return None
+
+
+def parse_time(value):
+    if not isinstance(value, str) or not TIME_RE.fullmatch(value):
+        return None
+    return _parse(value)
 
 
 def format_time(value):
@@ -244,6 +250,24 @@ def _overlap(spans, start, end):
     return sum(max(0.0, (min(stop, end) - max(begin, start)).total_seconds()) for begin, stop in spans)
 
 
+def _interval(host, begin, end, seconds, active, limit):
+    """(running, warm, idle, weight) of one sample's interval, from the spans near it (_intervals)."""
+    weight = (end - begin).total_seconds()
+    cleanup = dt.timedelta(seconds=CLEANUP_SECONDS)
+    covering = sum(1 for start, stop in active if start <= begin <= stop)
+    cleaning = sum(1 for start, stop in active if stop < begin <= stop + cleanup)
+    unspanned = max(0, host["slots_running"] - covering - cleaning)
+    jobs = (_overlap(active, begin, end) if seconds else covering) + unspanned * weight
+    cap = limit or host["slots_occupied"]
+    running = min(jobs, cap * weight)
+    # A sample from before the limit was lowered can hold more runners than it; none counts past it.
+    up = min(host["slots_occupied"], cap) - max(host["slots_running"], covering)
+    starting = sum((end - start).total_seconds() for start, _ in active if begin < start < end)
+    idle = min(max(0.0, max(0, up) * weight - starting), max(0.0, cap * weight - running))
+    warm = min(idle, (host.get("warm") or 0) * weight)
+    return running, warm, idle - warm, weight
+
+
 def _intervals(points, spans, limit, now):
     """Slot-seconds in each sample's interval (until the next sample, at most SAMPLE_SPAN_SECONDS):
     (point, seconds, running, warm, idle, weight).
@@ -254,25 +278,19 @@ def _intervals(points, spans, limit, now):
     Idle is the runners the sample saw up with neither a recorded job nor a covering span, for the
     interval, less the time from each job that starts inside the interval to its end (such a runner
     was up waiting for that job, then ran it and exited). The warm pool's share of idle comes first."""
-    rows = []
+    rows, ordered, active, index = [], sorted(spans), [], 0
     for point, seconds in zip(points, _spans(points, now)):
-        host, begin = point["host"], parse_time(point["observed_at"])
+        begin = parse_time(point["observed_at"])
         # The newest sample's interval has not begun (0 s): weigh it as one second of what it saw, so a
         # bar holding only it does not read as empty.
-        weight = seconds or 1
-        end = begin + dt.timedelta(seconds=weight)
-        covering = sum(1 for start, stop in spans if start <= begin <= stop)
-        cleaning = sum(1 for start, stop in spans if stop < begin <= stop + dt.timedelta(seconds=CLEANUP_SECONDS))
-        unspanned = max(0, host["slots_running"] - covering - cleaning)
-        jobs = (_overlap(spans, begin, end) if seconds else covering) + unspanned * weight
-        cap = limit or host["slots_occupied"]
-        running = min(jobs, cap * weight)
-        # A sample from before the limit was lowered can hold more runners than it; none counts past it.
-        up = min(host["slots_occupied"], cap) - max(host["slots_running"], covering)
-        starting = sum((end - start).total_seconds() for start, _ in spans if begin < start < end)
-        idle = min(max(0.0, max(0, up) * weight - starting), max(0.0, cap * weight - running))
-        warm = min(idle, (host.get("warm") or 0) * weight)
-        rows.append((point, seconds, running, warm, idle - warm, weight))
+        end = begin + dt.timedelta(seconds=seconds or 1)
+        # Samples come oldest first, so only the spans near this one are looked at: those started
+        # before its interval ends, until they ended more than CLEANUP_SECONDS before it began.
+        while index < len(ordered) and ordered[index][0] < end:
+            active.append(ordered[index])
+            index += 1
+        active = [span for span in active if span[1] + dt.timedelta(seconds=CLEANUP_SECONDS) >= begin]
+        rows.append((point, seconds) + _interval(point["host"], begin, end, seconds, active, limit))
     return rows
 
 

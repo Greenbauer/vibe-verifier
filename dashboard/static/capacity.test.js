@@ -39,6 +39,7 @@ function snapshot(history) {
   return { owner: "example", telemetry: { available: true, capacity: { available: true, stale: false, sampled_at: at(0),
     host: { cpu_percent: 10, memory_used_bytes: 1, memory_total_bytes: 2, workspace_disk_free_bytes: 1, workspace_disk_total_bytes: 2 },
     limits: { slots: 4, wait_slots: 2, qae_concurrency: 2, cpu_quota_cores: 4, memory_max_bytes: 1024 },
+    listener_state: "up",
     history,
     lanes: [
       { id: "ci-1", state: "busy", registered: null, labels: ["ci"], allocated_at: at(12), started_at: at(11),
@@ -144,10 +145,14 @@ test("with the listener down, slots of unknown state are counted and explained, 
   const value = snapshot(history());
   value.telemetry.capacity.lanes = value.telemetry.capacity.lanes.filter(lane => lane.id !== "on-demand-2").concat(
     { id: "on-demand-2", state: "unknown", registered: false, labels: [] }, { id: "on-demand-3", state: "unknown", registered: false, labels: [] });
+  value.telemetry.capacity.listener_state = "down";
   const content = render(value);
   assert.match(content.find("capacity-card")[0].text, /Runners in use now.*3 of 4/s);
   const rows = content.find("runner-row").map(row => row.text.replace(/\s+/g, " ").trim());
   assert.ok(rows.some(row => /^2 unknown The runner listener is not answering/.test(row)));
+  // The waiting-job pool's other slot is unknown too, not free.
+  assert.ok(rows.some(row => /^1 unknown The runner listener is not answering/.test(row)));
+  assert.ok(!rows.some(row => /^1 free Not counted/.test(row)));
 });
 
 test("markup in a job name stays text", () => {

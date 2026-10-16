@@ -289,6 +289,19 @@ class Ranges(unittest.TestCase):
         self.assertIsNone(result["limit"])
 
 
+class Speed(unittest.TestCase):
+    def test_a_full_week_with_the_most_jobs_kept_rebuilds_well_inside_a_refresh(self):
+        # 20,160 samples (a week at 30 s) and 20,000 jobs, the caps. Each sample looks only at the job
+        # spans near it; scanning every span per sample took about 170 s here, longer than a refresh.
+        import time
+        points = [sample(30 * i, 3, 2) for i in range(20160)][::-1]
+        rows = [{"runner": "r%d" % i, "kind": "ci", "started_at": ago(30 * i + 60), "finished_at": ago(30 * i),
+                 "wait_seconds": 1, "routing_seconds": None} for i in range(20000)][::-1]
+        started = time.monotonic()
+        LH.history(points, rows, {"slots": {"limit": 8, "occupied": []}}, True, None, stamp(NOW))
+        self.assertLess(time.monotonic() - started, 10)
+
+
 class Reader(unittest.TestCase):
     def published(self):
         rows = [{"runner": "now", "kind": "ci", "started_at": ago(60), "wait_seconds": 10, "routing_seconds": 4}]

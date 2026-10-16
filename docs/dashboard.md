@@ -281,7 +281,8 @@ kinds, the columns, and failure handling.
   its own Codex login, and the line under it gives the at-most count). **Waiting-job slots** hold
   jobs that only wait, such as for a preview to deploy; they are cheap and not one of the runner
   slots. Each kind is a titled group with a one-line note. A row is one runner: `Build 3`, `QA 2` or `Wait 1`
-  (each kind numbers its own slots; hover for its service, `<lane>-ci@3`), its state (`Running`; `Kept warm`; or `Idle, no job` with how long it
+  (each kind numbers its own slots; hovering says which service it is: "Service ci@3 on the runner
+  machine", the lane's `<lane>-ci@3`), its state (`Running`; `Kept warm`; or `Idle, no job` with how long it
   has been up), the job (linked when the host or GitHub gave a link), the repository and, when the job
   is on an open pull request's current head, its number, and the time. Running time counts from the
   job's start (GitHub assigning it to the runner) when the listener recorded it, else from when the
@@ -289,7 +290,8 @@ kinds, the columns, and failure handling.
   keeps (`queue.json` `warm_instances`, at most a few seconds plus one collector refresh old) and it
   has no job; a listener that predates that list marks none. Free slots are not runners yet
   (the listener starts one in any free slot when a job arrives), so each pool ends with one count:
-  `3 free`.
+  `3 free`. While the runner listener is not answering, the host knows no state for the slots
+  without a runner, so each pool shows them as one `N unknown` row instead.
 - **The shared host** meters, unchanged.
 
 The history comes only from the [Linux collector](dashboard-collector.md#lane-history); another

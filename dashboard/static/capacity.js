@@ -165,6 +165,14 @@
       ...(rows.length ? rows : [el("p", { class: "muted runner-none" }, "None right now.")]), extra || null);
   }
 
+  // The rest of the waiting-job pool: free while the listener answers, unknown while it does not
+  // (the host reports no state for those slots then, as for the runner slots).
+  function waitRest(count, listenerState) {
+    if (listenerState === "up") return freeRow(count, "Not counted in the runner slots above.");
+    return el("div", { class: "runner-row state-unknown", role: "row" }, el("span", { role: "cell" }, `${count} unknown`),
+      el("span", { class: "muted runner-free-note", role: "cell" }, "The runner listener is not answering, so these slots' state is not known."));
+  }
+
   function freeRow(count, text) {
     return el("div", { class: "runner-row state-free", role: "row" }, el("span", { role: "cell" }, `${count} free`),
       el("span", { class: "muted runner-free-note", role: "cell" }, text));
@@ -197,7 +205,7 @@
       const waitLimit = limits.wait_slots ?? waiting.length;
       pools.push(el("div", { class: "runner-pool" }, el("h3", {}, `Waiting-job slots: ${waiting.length} of ${waitLimit} in use`),
         group("wait", waiting, stateOf, owner, now),
-        waitLimit > waiting.length ? freeRow(waitLimit - waiting.length, "Not counted in the runner slots above.") : null));
+        waitLimit > waiting.length ? waitRest(waitLimit - waiting.length, capacity.listener_state) : null));
     }
     return el("div", { class: "runner-table", role: "table", "aria-label": "Runners now" }, header, ...pools);
   }
