@@ -197,6 +197,25 @@ class Ranges(unittest.TestCase):
         # Its one second of weight is not added to the totals, which cover sampled time only.
         self.assertEqual(hour["busy_percent"], 100)
 
+    def test_the_newest_sample_does_not_tip_a_bar_it_shares_with_older_samples_over_its_limit(self):
+        # Refreshes every 30 s, all 4 slots running. At 12:00:30 the newest bar (12:00:00 on) holds the
+        # 12:00:00 sample (30 s) and the newest one (0 s): it reads exactly 4, not over the limit.
+        points = [sample(seconds, 4, 4) for seconds in (90, 60, 30, 0)]
+        for phase in range(4):
+            with self.subTest(phase=phase):
+                hour = LH.history(points[:phase + 1] if phase < 3 else points, [], {"slots": {"limit": 4}}, True, None,
+                                  stamp(NOW))["ranges"][0]
+                self.assertTrue(all(bar.get("running", 0) <= 4 for bar in hour["buckets"]))
+        hour = LH.history(points, [], {"slots": {"limit": 4}}, True, None, stamp(NOW))["ranges"][0]
+        self.assertEqual(hour["buckets"][-1]["running"], 4)
+
+    def test_a_later_entry_for_a_finished_job_keeps_its_finish(self):
+        # A listener restarted between a job's completion and its late start once wrote a second entry
+        # with no finish; the finish must not be lost.
+        raw = {"version": 1, "jobs": [job("r1", None, ago(300), ago(290), ago(280), finished=ago(200)),
+                                      job("r1", None, ago(300), ago(290), ago(10))]}
+        self.assertEqual(LH.waits([], raw, NOW)[0]["finished_at"], ago(200))
+
     def test_busy_share_never_reads_over_full(self):
         rows = [{"runner": "r%d" % n, "kind": "ci", "started_at": ago(3600), "finished_at": ago(0),
                  "wait_seconds": 0, "routing_seconds": None} for n in range(9)]

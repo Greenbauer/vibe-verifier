@@ -126,6 +126,15 @@ def _clean_wait(row):
         return None
 
 
+def _keep(unique, row):
+    """The newest record of a runner's job wins, but never drops a finish an earlier one had (a
+    listener restarted between a job's completion and its late start wrote a second, unfinished one)."""
+    earlier = unique.get(row["runner"])
+    if earlier and earlier["finished_at"] and not row["finished_at"]:
+        row["finished_at"] = earlier["finished_at"]
+    unique[row["runner"]] = row
+
+
 def waits(previous_rows, raw_jobs, now):
     """The kept waits plus the listener's new ones, one per runner, newest seven days."""
     cutoff = now - dt.timedelta(seconds=HISTORY_SECONDS)
@@ -137,7 +146,7 @@ def waits(previous_rows, raw_jobs, now):
     for row in rows:
         clean = _clean_wait(row) if "runner" in row else project_job(row)
         if clean and parse_time(clean["started_at"]) >= cutoff:
-            unique[clean["runner"]] = clean
+            _keep(unique, clean)
     return sorted(unique.values(), key=lambda row: (row["started_at"], row["runner"]))[-MAX_WAITS:]
 
 
@@ -242,12 +251,14 @@ def _intervals(points, spans, limit, now):
 
 
 def _bucket(start, rows):
-    # A bar averages over its sampled seconds; one holding only the newest sample uses its weight.
-    seconds = sum(row[1] for row in rows) or sum(row[5] for row in rows)
     if not rows:
         return {"start": format_time(start)}
     waiting = [row[0]["host"]["jobs_waiting"] for row in rows if row[0]["host"].get("jobs_waiting") is not None]
-    average = lambda index: round(sum(row[index] for row in rows) / seconds, 2) if seconds else 0
+    # A bar averages over its sampled seconds. The newest sample has none yet, so it counts only in a
+    # bar that holds nothing else, at its one-second weight.
+    timed = [row for row in rows if row[1]] or rows
+    seconds = sum(row[5] for row in timed)
+    average = lambda index: round(sum(row[index] for row in timed) / seconds, 2)
     return {"start": format_time(start), "running": average(2), "warm": average(3), "reserved": average(4),
             "waiting": max(waiting) if waiting else None}
 

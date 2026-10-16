@@ -98,10 +98,6 @@ type jobTiming struct {
 	RunnerAssignedAt   string `json:"runner_assigned_at,omitempty"`
 	StartedAt          string `json:"started_at"`
 	FinishedAt         string `json:"finished_at,omitempty"`
-	// noStart marks an entry a JobCompleted made because the listener had recorded no JobStarted
-	// for the runner, so a late JobStarted fills it in rather than adding a second entry. It is not
-	// written to jobs.json.
-	noStart bool
 }
 
 // stamp is a time as the run-dir JSON files carry it: UTC, whole seconds, "" for the zero time.

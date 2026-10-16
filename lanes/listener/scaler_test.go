@@ -968,7 +968,7 @@ func TestJobHistoryCompletionWithoutAStartAddsTheJobAndALateStartFillsItIn(t *te
 	}
 }
 
-func TestJobHistoryKeepsFinishTimesAcrossARestart(t *testing.T) {
+func TestJobHistoryKeepsFinishTimesAcrossARestartAndALateStartStillFillsTheEntry(t *testing.T) {
 	h, _ := startedLane(t, orgConfig(), 1)
 	s := h.lane.trackedSlots()[0]
 	key := SetKey{"example", kindCI}
@@ -982,12 +982,15 @@ func TestJobHistoryKeepsFinishTimesAcrossARestart(t *testing.T) {
 	if len(restarted.jobs) != 1 || restarted.jobs[0].FinishedAt != "2026-01-01T12:03:00Z" {
 		t.Fatalf("history loaded at start: %+v", restarted.jobs)
 	}
-	// The next write keeps it.
+	// A start heard after the restart for the runner whose job already finished is that job's late
+	// start: it fills the saved entry in (GitHub's runner time becomes the start), no second entry.
 	h.advance(time.Minute)
-	restarted.jobStarted(key, &scaleset.JobStarted{RunnerName: s.RunnerName})
+	assigned := time.Date(2026, 1, 1, 11, 59, 30, 0, time.UTC)
+	restarted.jobStarted(key, &scaleset.JobStarted{RunnerName: s.RunnerName,
+		JobMessageBase: scaleset.JobMessageBase{RunnerAssignTime: assigned}})
 	want := `{"version":1,"jobs":[` +
-		`{"kind":"ci","instance":1,"runner_name":"` + s.RunnerName + `","started_at":"2026-01-01T12:00:00Z","finished_at":"2026-01-01T12:03:00Z"},` +
-		`{"kind":"ci","instance":1,"runner_name":"` + s.RunnerName + `","started_at":"2026-01-01T12:04:00Z"}]}` + "\n"
+		`{"kind":"ci","instance":1,"runner_name":"` + s.RunnerName + `","runner_assigned_at":"2026-01-01T11:59:30Z",` +
+		`"started_at":"2026-01-01T11:59:30Z","finished_at":"2026-01-01T12:03:00Z"}]}` + "\n"
 	if got := jobsJSON(t, h.run); got != want {
 		t.Fatalf("jobs.json = %s\nwant        %s", got, want)
 	}

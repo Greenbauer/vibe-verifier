@@ -573,12 +573,13 @@ func (t *jobTiming) setJob(j *scaleset.JobMessageBase) {
 }
 
 // recordJob adds a started job to the history and rewrites jobs.json. A JobStarted heard after the
-// JobCompleted that already made the runner's entry fills that entry in (fillFrom) instead of
-// adding a second one.
+// runner's job already finished fills that entry in (fillFrom) instead of adding a second one: a JIT
+// runner runs one job, so a start for a finished runner is that job's late start. Keying this on the
+// saved finish time, not a flag in memory, keeps it right across a listener restart.
 func (l *Lane) recordJob(ref slotRef, timing jobTiming) {
 	l.recMu.Lock()
 	defer l.recMu.Unlock()
-	if e := l.lastJob(timing.RunnerName); e != nil && e.noStart {
+	if e := l.lastJob(timing.RunnerName); e != nil && e.FinishedAt != "" {
 		e.fillFrom(timing)
 	} else {
 		l.jobs = append(l.jobs, timing)
@@ -594,7 +595,6 @@ func (l *Lane) recordFinish(ref slotRef, timing jobTiming) {
 	if e := l.lastJob(timing.RunnerName); e != nil {
 		e.FinishedAt = timing.FinishedAt
 	} else {
-		timing.noStart = true
 		l.jobs = append(l.jobs, timing)
 	}
 	l.writeJobs(ref)
@@ -616,7 +616,6 @@ func (t *jobTiming) fillFrom(start jobTiming) {
 	take(&t.ScaleSetAssignedAt, start.ScaleSetAssignedAt)
 	take(&t.RunnerAssignedAt, start.RunnerAssignedAt)
 	take(&t.StartedAt, start.RunnerAssignedAt)
-	t.noStart = false
 }
 
 // lastJob is the newest history entry for a runner, or nil. Called with l.recMu held.
