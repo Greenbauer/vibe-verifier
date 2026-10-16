@@ -167,6 +167,44 @@ class Rules(unittest.TestCase):
         self.assertIn("db/price.test.sql: a .sql test; this gate runs Vitest, node:test, pytest and unittest", result.stderr)
         self.assertIn("scripts/price.test.sh: a .sh test; this gate runs Vitest, node:test, pytest and unittest", result.stderr)
 
+    def test_a_jest_or_bun_test_is_not_judged_and_names_its_runner(self):
+        # Every file calls describe and it, as Vitest with `globals: true` also reads them: the package decides. The
+        # Python test is one this gate runs, so the verdict is its; a file taken for Vitest would stop the gate instead,
+        # since no vitest is installed here.
+        calls = 'describe("price", () => {\n  it("gives members 10% off", () => { expect(1).toBe(1); });\n});\n'
+        repo = make_repo(self, {"shop/__init__.py": "", "shop/price.py": PY_BUG, "apps/tools/package.json": "{}\n",
+                                "apps/api/package.json": '{"devDependencies": {"jest": "29.7.0"}}\n',
+                                "apps/web/package.json": '{"scripts": {"test": "jest --ci"}}\n', "apps/web/jest.config.js": "module.exports = {};\n",
+                                "apps/shop/package.json": '{"scripts": {"test": "bun test --coverage"}}\n'})
+        result = fix(repo, {"shop/price.py": PY_FIX, "tests/test_price.py": PY_UNITTEST, "apps/api/src/price.test.ts": calls,
+                            "apps/web/src/price.test.ts": calls, "apps/shop/src/price.test.ts": calls,
+                            "apps/quote/price.test.ts": 'import { describe, expect, it } from "bun:test";\n' + calls,
+                            "apps/tools/price.test.ts": 'import { describe, expect, it } from "@jest/globals";\n' + calls,
+                            "scripts/price.test.js": calls},
+                     "fix(price): members get their discount", "", "--python", sys.executable)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("tests/test_price.py: test_price.Discount.test_members_get_ten_percent_off_over_100 fails on the code before "
+                      "the fix", result.stderr)
+        for said in ("apps/api/src/price.test.ts: not judged: a Jest test (apps/api/package.json), which this gate does not run",
+                     "apps/web/src/price.test.ts: not judged: a Jest test (apps/web/jest.config.js), which this gate does not run",
+                     "apps/shop/src/price.test.ts: not judged: a bun test (apps/shop/package.json), which this gate does not run",
+                     "apps/quote/price.test.ts: not judged: a bun test (it imports bun:test), which this gate does not run",
+                     "apps/tools/price.test.ts: not judged: a Jest test (it imports @jest/globals), which this gate does not run",
+                     "scripts/price.test.js: not judged: it calls describe, it or test without importing a framework, and no "
+                     "Vitest config or package.json that names vitest holds it"):
+            self.assertIn(said, result.stderr)
+
+    def test_a_test_whose_package_runs_vitest_is_a_vitest_test_without_importing_it(self):
+        # A workspace package that names no runner runs its tests with the root's Vitest; a Vitest config says so too.
+        calls = 'describe("price", () => {\n  it("gives members 10% off", () => { expect(1).toBe(1); });\n});\n'
+        for files in ({"package.json": '{"devDependencies": {"vitest": "4.1.11"}}\n', "packages/shop/package.json": '{"name": "shop"}\n'},
+                      {"packages/shop/vitest.config.ts": "export default {};\n", "package.json": '{"devDependencies": {"jest": "29.7.0"}}\n'}):
+            repo = make_repo(self, dict({"packages/shop/src/price.ts": PRICE_BUG}, **files))
+            result = fix(repo, {"packages/shop/src/price.ts": PRICE_FIX, "packages/shop/src/price.test.ts": calls}, "fix: x", "",
+                         *self.NO_RUNNER)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("no vitest is installed for packages/shop (for packages/shop/src/price.test.ts)", result.stderr)
+
     def test_a_fix_with_a_vitest_test_and_no_vitest_installed_cannot_run(self):
         repo = self.repo()
         result = fix(repo, {"src/price.ts": PRICE_FIX, "src/price.test.ts": REPRODUCES}, "fix: x", "", *self.NO_RUNNER)

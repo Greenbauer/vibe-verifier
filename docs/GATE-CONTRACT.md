@@ -430,10 +430,19 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   runs with its own config. Python tests run under `--python` (default `python3`): its pytest when
   installed there, and unittest, loading the file as `python -m unittest discover -s <its directory>`
   would, when not or when the name has a hyphen or a dot (a test run by path, which pytest cannot
-  import). A JS file is a Vitest test when it imports `vitest` or calls `describe`, `it` or `test`; one
-  that imports `@playwright/test`, one that imports `node:test` that the repository does not run with
-  `node --test`, a shell or other test, a script judged only by its exit code, and every `--tests` path
-  are reported as not judged. The first run is at HEAD, where every test of the judged files must pass:
+  import). A JS file is a Vitest test when it imports `vitest`, or when it calls `describe`, `it` or
+  `test` without importing a framework and its package runs Vitest: Vitest with `globals: true`, Jest
+  and bun test all read those calls, so the package decides. The nearest directory, from the file's up
+  to the root, holding a Vitest config (`vitest.config.*`, `vitest.workspace.*`), a Jest config
+  (`jest.config.*`) or a `package.json` that names its runner (a `vitest` dependency; a `jest`
+  dependency or `jest` key; a script that runs `bun test`) says which; a `package.json` that names none,
+  a workspace package that runs its tests with the root's Vitest, passes the question up. Before this
+  rule a Jest or bun file was run under Vitest, and with no Vitest installed the gate stopped (exit 2)
+  on every such fix. One that imports `@playwright/test`, a Jest test (it imports `@jest/globals`, or
+  its package says Jest), a bun test (it imports `bun:test`, or its package's scripts run `bun test`),
+  a file whose calls no package claims, one that imports `node:test` that the repository does not run
+  with `node --test`, a shell or other test, a script judged only by its exit code, and every `--tests`
+  path are reported as not judged, naming the runner and the file that says so. The first run is at HEAD, where every test of the judged files must pass:
   a failing one is the pull request's red suite and exit 2, and a file that does not load there is not
   judged. The second is on the code before the fix: the working tree with every non-test path the
   fix changed (its documentation included) restored to the merge base, and its test code left at HEAD.

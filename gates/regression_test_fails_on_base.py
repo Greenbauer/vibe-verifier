@@ -28,12 +28,16 @@ test-*.py, *-test.py, *.test.py), conftest.py, anything under a `test`, `tests`,
 repository runs with `node --test`. Of it, a JS or TS file that a package.json script's
 `node ... --test ...` command selects runs that way, from that package with the command's options,
 and one --node-test declares runs as `node --test <file>` from the root (gates/_regression_node.py);
-other JS and TS tests run under Vitest (from the nearest directory with a Vitest or Vite config, else
-with a package.json). Python tests run under --python, with
+a JS or TS file that imports vitest, or calls describe, it or test in a package that runs Vitest (the
+nearest Vitest config, Jest config or package.json naming its runner, from the file's directory up, is a
+Vitest config or a package.json with a vitest dependency), runs under Vitest (from the nearest directory
+with a Vitest or Vite config, else with a package.json). Python tests run under --python, with
 pytest when it is installed there and unittest when not or when the file's name has a hyphen or a dot
-(a test run by path, which pytest cannot import). A Playwright test, a node:test file the repository
-does not run with `node --test`, a shell or other test, and a --tests path are reported as not
-judged, and a fix whose only tests are such files cannot be judged (exit 2).
+(a test run by path, which pytest cannot import). A Playwright test, a Jest test (it imports
+@jest/globals, or its package has a Jest config, a jest dependency or a `jest` key), a bun test (it
+imports bun:test, or its package's scripts run `bun test`), a node:test file the repository does not
+run with `node --test`, a shell or other test, and a --tests path are reported as not judged, naming
+the runner, and a fix whose only tests are such files cannot be judged (exit 2).
 
 The project's dependencies must be installed before the gate runs. It swaps the files the fix changed
 back to the merge base in the working tree for the second run and always puts them back, so those
@@ -48,6 +52,7 @@ files must not differ from HEAD when it starts.
     --timeout SECONDS  wall-clock limit for both runs (default 600)
 """
 import io
+import json
 import os
 import re
 import signal
@@ -74,8 +79,13 @@ TEST_CODE = TEST_NAMES + ["**/conftest.py"] + ["**/%s/**" % name for name in
 DOCS = ["**/*.md", "**/*.mdx", "**/*.rst", "**/*.adoc"]
 PLAYWRIGHT = re.compile(r"""['"]@playwright/test['"]""")
 NODE_TEST = re.compile(r"""['"]node:test['"]""")
-# A Vitest file imports vitest, or calls its globals (a config with `globals: true` needs no import).
-VITEST = re.compile(r"""['"]vitest['"]|^\s*(?:describe|it|test)(?:\.\w+)*\s*\(""", re.MULTILINE)
+VITEST = re.compile(r"""['"]vitest['"]""")
+BUN_TEST = re.compile(r"""['"]bun:test['"]""")
+JEST_GLOBALS = re.compile(r"""['"]@jest/globals['"]""")
+# Test calls with no import: Vitest with `globals: true`, Jest and bun test all read them, so the package decides.
+TEST_CALLS = re.compile(r"""^\s*(?:describe|it|test)(?:\.\w+)*\s*\(""", re.MULTILINE)
+RUNNER_NAMES = {"jest": "Jest", "bun": "bun"}
+CONFIG_RUNNERS = ((("vitest.config.", "vitest.workspace."), "vitest"), (("jest.config.",), "jest"))
 ASSERTION = re.compile(r"AssertionError\b")
 HOW = ("make one fail there through code that exists before the fix, or say why the fix cannot carry one "
        "with a body line `regression-test: none -- <reason>`")
@@ -135,6 +145,74 @@ def node_test(args, path):
     return node_plan(args.repo, path, tuple(args.node_test or ())) if path.endswith(JS) else None
 
 
+def declared_runner(package_json):
+    """'vitest', 'jest' or 'bun' when a package.json says it runs its tests so: a vitest dependency, a jest
+    dependency or `jest` key, or a script that runs `bun test`; else None."""
+    try:
+        with open(package_json, encoding="utf-8") as handle:
+            package = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(package, dict):
+        return None
+    dependencies = {}
+    for field in ("dependencies", "devDependencies"):
+        dependencies.update(package.get(field) if isinstance(package.get(field), dict) else {})
+    scripts = package.get("scripts") if isinstance(package.get("scripts"), dict) else {}
+    if "vitest" in dependencies:
+        return "vitest"
+    if "jest" in dependencies or "jest" in package:
+        return "jest"
+    if any(isinstance(script, str) and re.search(r"\bbun\s+test\b", script) for script in scripts.values()):
+        return "bun"
+    return None
+
+
+def directory_runner(repo, directory):
+    """(the runner, the file that says so) when `directory` holds a Vitest config, a Jest config or a package.json
+    that names its runner, else (None, None)."""
+    names = sorted(os.listdir(os.path.join(repo, directory)))
+    for prefixes, runner in CONFIG_RUNNERS:
+        configs = [name for name in names if name.startswith(prefixes)]
+        if configs:
+            return runner, os.path.join(directory, configs[0])
+    runner = declared_runner(os.path.join(repo, directory, "package.json")) if "package.json" in names else None
+    return (runner, os.path.join(directory, "package.json")) if runner else (None, None)
+
+
+def package_runner(repo, path):
+    """(the runner, the file that says so) for a test file that calls describe, it or test without importing a
+    framework: the nearest directory, from the file's up to the root, that names one. A package.json that names
+    none (a workspace package that runs its tests with the root's Vitest) passes the question up. (None, None)
+    when nothing does."""
+    directory = os.path.dirname(path)
+    while True:
+        found = directory_runner(repo, directory)
+        if found[0] or not directory:
+            return found
+        directory = os.path.dirname(directory)
+
+
+def framework(args, path, text):
+    """'vitest' for a JS or TS test that is neither Playwright's nor node:test's and runs under Vitest, else why it
+    is not judged."""
+    if BUN_TEST.search(text):
+        return None, "a bun test (it imports bun:test), which this gate does not run; " + RUNNERS
+    if JEST_GLOBALS.search(text):
+        return None, "a Jest test (it imports @jest/globals), which this gate does not run; " + RUNNERS
+    if VITEST.search(text):
+        return "vitest", None
+    if not TEST_CALLS.search(text):
+        return None, "a script with no test framework, judged by its exit code; " + RUNNERS
+    runner, where = package_runner(args.repo, path)
+    if runner == "vitest":
+        return "vitest", None
+    if runner:
+        return None, "a %s test (%s), which this gate does not run; %s" % (RUNNER_NAMES[runner], where, RUNNERS)
+    return None, ("it calls describe, it or test without importing a framework, and no Vitest config or package.json "
+                  "that names vitest holds it; " + RUNNERS)
+
+
 def kind(args, path):
     """'vitest', 'node' or 'python' for a test this gate runs, else why it does not."""
     if matches(path, args.tests or []):
@@ -151,9 +229,7 @@ def kind(args, path):
         return "node", None
     if NODE_TEST.search(text):
         return None, "a node:test file that no package.json script runs with `node --test` and no --node-test declares"
-    if VITEST.search(text):
-        return "vitest", None
-    return None, "a script with no test framework, judged by its exit code; " + RUNNERS
+    return framework(args, path, text)
 
 
 def run_tests(args, judged, deadline, plans):
