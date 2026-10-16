@@ -181,6 +181,18 @@ class Ranges(unittest.TestCase):
                 self.assertEqual(sum(row[2] for row in rows_[:2]), 17)  # running: the job's own 17 s
                 self.assertEqual(sum(row[3] + row[4] for row in rows_[:2]), 0)  # nobody idle
 
+    def test_a_runner_still_cleaning_up_after_its_job_adds_no_running_time(self):
+        # The seventh audit's case: a job 12:00:10 to 12:00:28; the 12:00:30 sample still sees its job
+        # recorded while the unit cleans up. It counts its own 18 s, not 18 s plus a 30 s interval.
+        at = lambda clock: stamp(datetime(2026, 10, 14, 12, *clock, tzinfo=timezone.utc))
+        rows = [{"runner": "r", "kind": "ci", "started_at": at((0, 10)), "finished_at": at((0, 28)),
+                 "wait_seconds": 0, "routing_seconds": None}]
+        points = [{"observed_at": at(clock), "host": dict(sample(0, occupied, ran)["host"])}
+                  for clock, occupied, ran in (((0, 0), 0, 0), ((0, 30), 1, 1), ((1, 0), 0, 0))]
+        intervals = LH._intervals(points, LH.job_spans(rows, set(), NOW), 2, NOW)
+        self.assertEqual(sum(row[2] for row in intervals[:2]), 18)
+        self.assertEqual(sum(row[3] + row[4] for row in intervals[:2]), 0)
+
     def test_jobs_with_no_recorded_finish_still_count_from_the_samples(self):
         # Jobs from before the listener recorded finishes, or a missed completion: no span, but every
         # sample saw all 4 slots running, so the hour is fully busy, not free.

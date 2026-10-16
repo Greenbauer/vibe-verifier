@@ -12,10 +12,10 @@ inputs come from the lane's listener through the sampler, and both are optional:
   assignment: the listener hears JobStarted late (a 17-second job's arrived as it finished). It
   ends at GitHub's finish time once the listener records the completion.
 
-Busy time takes the larger of what each sample saw and the job time between it and the next sample:
-a sample every 30 seconds misses jobs shorter than that (four such jobs read as 0% busy on 2026-10-14),
-and a job the listener never saw finish has no span. Samples give the rest: idle runners, the warm
-pool, and when the collector was watching.
+Busy time is each job's own span; a runner a sample saw on a job no span covers (its finish never
+recorded) adds that sample's interval. A sample every 30 seconds misses jobs shorter than that (four
+such jobs read as 0% busy on 2026-10-14), which the spans count. Samples give the rest: idle runners,
+the warm pool, and when the collector was watching. See docs/dashboard-collector.md for the limits.
 
 Three things are kept in the collector's root-only state, each pruned to seven days: samples (one
 per refresh, now with running and waiting counts), waits (one per job), and the derived history the
@@ -33,6 +33,10 @@ MAX_WAIT_SECONDS = HISTORY_SECONDS
 # A sample stands for the time until the next one, but a gap (the collector down) counts for at most
 # this long, so an outage is not read as hours of whatever the last sample saw.
 SAMPLE_SPAN_SECONDS = 120
+# A runner's slot stays up while its unit cleans up after the job, so a sample can still see the job
+# recorded on it. A span that ended this recently still covers the runner, so that sample does not add
+# a whole interval of running for a job already counted from its span.
+CLEANUP_SECONDS = 60
 # (name, length, bucket) in seconds: 30, 48 and 56 bars.
 RANGES = (("1h", 3600, 120), ("24h", 86400, 1800), ("7d", 604800, 10800))
 KINDS = ("ci", "qae", "wait")
@@ -258,7 +262,8 @@ def _intervals(points, spans, limit, now):
         weight = seconds or 1
         end = begin + dt.timedelta(seconds=weight)
         covering = sum(1 for start, stop in spans if start <= begin <= stop)
-        unspanned = max(0, host["slots_running"] - covering)
+        cleaning = sum(1 for start, stop in spans if stop < begin <= stop + dt.timedelta(seconds=CLEANUP_SECONDS))
+        unspanned = max(0, host["slots_running"] - covering - cleaning)
         jobs = (_overlap(spans, begin, end) if seconds else covering) + unspanned * weight
         cap = limit or host["slots_occupied"]
         running = min(jobs, cap * weight)

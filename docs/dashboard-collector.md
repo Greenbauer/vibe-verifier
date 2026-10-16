@@ -297,10 +297,21 @@ was recorded leave their bars empty; samples from before `warm` was recorded cou
 idle, so for the first seven days the longer ranges overstate idle time. The newest sample's interval
 has not begun: a bar holding only it shows what that sample saw, and the totals leave it out.
 
-Known limits, each at most one sample interval per runner: a runner seen idle that stops (an idle stop
-or warm recycle) during the interval counts idle for the whole interval; a runner that comes up after
-a sample and waits before its job counts no idle until the next sample; a runner's cleanup after its
-job counts as neither running nor idle.
+A runner the sample saw on a job is not counted as an extra interval of running when a span ended in
+the 60 seconds before the sample: the slot stays up, its job still recorded, while the unit cleans up,
+and that job is already counted from its span. That cleanup counts as neither running nor idle.
+
+Samples count runners, not which runner is which, so these limits remain, each at most one sample
+interval per runner:
+- A runner seen idle that stops (an idle stop or warm recycle) during the interval counts idle for
+  the whole interval.
+- A job starting inside an interval is taken off the idle time of the runners the sample saw up,
+  even when its own runner came up after the sample; another runner can then read up to that job's
+  time too little idle, and the late runner's own wait before its job counts no idle.
+- While a job with no recorded finish (from before the listener recorded finishes, or a missed
+  completion) runs beside short jobs whose start arrived late, a runner the sample saw on the
+  unrecorded job can be counted against a span of the short one: running reads low and idle high for
+  those intervals. This passes once the jobs without a recorded finish have ended.
 
 The output is an atomic replacement with mode `0600`. Remote output and prior snapshots are
 allowlist-projected before writing, so extra fields cannot carry raw configuration or secrets into
