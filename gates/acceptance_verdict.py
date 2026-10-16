@@ -304,7 +304,7 @@ def known_on_main(fid, known, artifacts):
         cited = re.match(r"[ \t]*step[ \t]+([0-9]+):", anchor.title, re.IGNORECASE)
         k = cited and cited.group(1)
         shot = k and os.path.join(directory, "%s-step-%s.png" % (fid, k))
-        if (anchor.path == "qae/features/base/%s.md" % fid and k in steps and anchor.title.strip() in steps[k]
+        if (anchor.path == "qae/features/base/%s.md" % fid and k in steps and anchor.title.strip().casefold() in steps[k].casefold()
                 and os.path.isfile(shot) and os.path.getsize(shot) > 0):
             return known[0]
     return None

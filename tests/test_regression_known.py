@@ -4,7 +4,7 @@ with that walk on record."""
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, png, write
+from helpers import ROOT, commit, png, write
 from test_features import RegressionWalk
 
 PROMPT = ROOT / "harnesses" / "qae" / "prompt.md"
@@ -90,4 +90,32 @@ class KnownOnMain(RegressionWalk):
         result = self.rewalk(self.AC + self.FAILED + self.KNOWN + self.PROJECTS)
         self.assertEqual(result.returncode, 1)
         self.assertIn("auth is a FAIL", result.stdout)
+
+    def test_an_anchor_into_the_pull_requests_own_walk_never_counts_even_with_the_same_text(self):
+        same = "- step 1: signed in as the test user -> the dashboard"
+        self.walk_on_main(line=same)
+        own = "regression-known: auth -- same (qae/features/auth.md::step 1: signed in as the test user -> the dashboard)\n"
+        result = self.rewalk(self.AC + self.FAILED + own + self.PROJECTS)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("auth is a FAIL", result.stdout)
+        cased = self.KNOWN.replace("::step 1:", "::Step 1:")
+        self.walk_on_main()
+        self.assertEqual(self.rewalk(self.AC + self.FAILED + cased + self.PROJECTS).returncode, 0)
+
+    def test_a_base_walk_committed_to_the_repository_is_not_evidence(self):
+        commit(self.repo, {"qae/features/base/auth.md": "- step 1: signed in as the test user -> an error page\n"})
+        # The screenshot is in the run's evidence; only the step log is the repository's, which once counted.
+        Path(self.work, "qae-artifacts", "qae", "features", "base").mkdir(parents=True, exist_ok=True)
+        Path(self.work, "qae-artifacts", "qae", "features", "base", "auth-step-1.png").write_bytes(png(1280))
+        result = self.rewalk(self.AC + self.FAILED + self.KNOWN + self.PROJECTS)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("auth is a FAIL", result.stdout)
+
+    def test_one_features_known_line_cannot_cite_anothers_base_walk(self):
+        self.walk_on_main()
+        failed = self.PROJECTS.replace("PASS -- listed", "FAIL -- empty list")
+        borrowed = self.KNOWN.replace("regression-known: auth", "regression-known: projects")
+        result = self.rewalk(self.AC + self.AUTH + failed + borrowed)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("projects is a FAIL", result.stdout)
 
