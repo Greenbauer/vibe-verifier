@@ -1,5 +1,6 @@
 """proof-audit: which assertion lines a grade may quote. A test declared `void it(...)` or `void test(...)` names
-its assertions, and a short value line counts only inside an assert or expect call still open above it."""
+its assertions, a short value line counts only inside an assert or expect call still open above it, and a quote at
+the wrong line number counts when it sits exactly once inside the test the grade names."""
 import sys
 import unittest
 
@@ -44,6 +45,63 @@ class Quotes(unittest.TestCase):
                           proof_audit.quote_problem(closed, "a.test.ts", 4, "0", whole=True) or "", closed[1])
         # A short fragment of a plan line is still refused.
         self.assertIn("too short to check", proof_audit.quote_problem(lines, "a.md", 4, "0", whole=False))
+
+
+class Files:
+    def __init__(self, lines):
+        self.text = lines
+
+    def lines(self, _ref, _path):
+        return self.text
+
+
+# Two tests, a hook and a helper, with the asserted line 5 lines below where a grader might cite it.
+SPEC = ['import test from "node:test";',                          # 1
+        "function helper() {",                                    # 2
+        '  assert.equal(helperValue(), "only in the helper");',  # 3
+        "}",                                                      # 4
+        'test("ends inside the bounds", () => {',                 # 5
+        "  const end = bound(10);",                               # 6
+        "  const start = bound(0);",                              # 7
+        "  log(end);",                                            # 8
+        "  log(start);",                                          # 9
+        "  assert.equal(end.day, 10);",                           # 10
+        "  assert.ok(end.valid);",                                # 11
+        "  assert.ok(end.valid);",                                # 12
+        "});",                                                    # 13
+        'beforeEach(() => {',                                     # 14
+        '  assert.equal(reset(), "in the hook only");',          # 15
+        "});",                                                    # 16
+        'test("another test", () => {',                           # 17
+        '  assert.equal(other(), "in another test");',           # 18
+        "});"]                                                    # 19
+
+
+def cite(line, assertion, title="ends inside the bounds"):
+    return {"file": "tests/bounds.test.ts", "test": title, "line": line, "assertion": assertion}
+
+
+class LineDrift(unittest.TestCase):
+    def test_a_quote_off_by_five_inside_its_test_counts_at_its_real_line(self):
+        proof = cite(5, "assert.equal(end.day, 10);")
+        self.assertIsNone(proof_audit.proof_problem(Files(SPEC), proof))
+        self.assertEqual((proof["line"], proof["cited_line"]), (10, 5))
+        self.assertEqual(proof_audit.proof_cite(proof),
+                         "`tests/bounds.test.ts:10` (ends inside the bounds; cited :5)")
+        exact = cite(10, "assert.equal(end.day, 10);")
+        self.assertIsNone(proof_audit.proof_problem(Files(SPEC), exact))
+        self.assertNotIn("cited_line", exact)
+
+    def test_a_quote_absent_twice_or_outside_its_test_is_still_fabricated(self):
+        for proof in (cite(10, "assert.equal(end.day, 11);"),            # absent
+                      cite(8, "assert.ok(end.valid);"),                  # twice in the test
+                      cite(18, 'assert.equal(other(), "in another test");'),   # only in another test
+                      cite(8, 'assert.equal(other(), "in another test");'),
+                      cite(8, 'assert.equal(reset(), "in the hook only");'),   # only in a hook
+                      cite(8, 'assert.equal(helperValue(), "only in the helper");')):  # only in a helper
+            problem = proof_audit.proof_problem(Files(SPEC), proof) or ""
+            self.assertRegex(problem, "fabricated quote|is in the test", proof["assertion"])
+            self.assertNotIn("cited_line", proof)
 
 
 if __name__ == "__main__":

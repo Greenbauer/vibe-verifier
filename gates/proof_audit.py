@@ -15,8 +15,9 @@ gate cannot run. Per ID, the model's grade is checked, never trusted:
   (at least 6 characters, or a shorter value line that continues an assert or expect call still open above it
   in the same test; never a line of closers such as `});`), and the title of the test that line sits in: the
   nearest test declaration above it (a JS test call's string literal, `void` first or not, or a Python test
-  function's name). One quote that is not there
-  makes the requirement UNPROVEN: a fabricated quote is not proof.
+  function's name). A quote at the wrong line number still counts when it is the whole text of exactly one line
+  inside the test the grade names; the table gives that line, and the cited one beside it. One quote that is not
+  there makes the requirement UNPROVEN: a fabricated quote is not proof.
 - EXCLUDED needs a plan line, quoted verbatim (in part, 12 characters or more) at its line number at the merge base, and an owner section
   (`path#anchor`) that carries `[takes: ID]` at the merge base and is not one this body links.
 - UNPROVEN, a missing grade or a doubled one is a finding.
@@ -250,10 +251,45 @@ def declared_title(declaration):
     return literal.group(2) if literal else None
 
 
+def test_body(lines, title):
+    """(first, last), the 1-based lines of the one test titled `title`: its declaration down to where its call closes
+    or the next declaration starts. None when no test, or more than one, carries that title."""
+    starts = [index for index, line in enumerate(lines)
+              if DECLARATION.match(line) and declared_title("\n".join(lines[index:index + 3])) == title]
+    if len(starts) != 1:
+        return None
+    start, depth = starts[0], 0
+    for index in range(start, len(lines)):
+        if index > start and DECLARATION.match(lines[index]):
+            return start + 1, index
+        depth += bracket_depth(lines[index].strip())
+        if index > start and depth <= 0:
+            return start + 1, index + 1
+    return start + 1, len(lines)
+
+
+def relocated_line(lines, proof):
+    """The line a quote cited at the wrong number really sits on: its one whole-line occurrence inside the test the
+    grade names. None when it is not there, is there twice, or sits only outside that test (a hook, a helper,
+    another test)."""
+    body = test_body(lines, proof["test"].strip())
+    text = proof["assertion"].strip()
+    if body is None or not text:
+        return None
+    first, last = body
+    hits = [number for number in range(first + 1, last + 1) if lines[number - 1].strip() == text]
+    return hits[0] if len(hits) == 1 else None
+
+
 def proof_problem(files, proof):
     path = posixpath.normpath(proof["file"].strip())
     lines = files.lines("HEAD", path)
     problem = quote_problem(lines, path, proof["line"], proof["assertion"], whole=True)
+    if problem and lines is not None and is_test_file(path, lines):
+        # The grader often has the right assertion at the wrong line number; the quote, not the number, is the proof.
+        moved = relocated_line(lines, proof)
+        if moved and moved != proof["line"] and not quote_problem(lines, path, moved, proof["assertion"], whole=True):
+            proof["cited_line"], proof["line"], problem = proof["line"], moved, None
     if problem:
         return problem
     if not is_test_file(path, lines):
@@ -322,8 +358,14 @@ def verdict(files, grades, linked):
 
 
 def proof_summary(grade):
-    return "; ".join("%s: %s" % (case["case"], ", ".join("`%s:%d` (%s)" % (proof["file"], proof["line"], proof["test"].strip())
-                                                        for proof in case["proof"])) for case in grade["cases"])
+    return "; ".join("%s: %s" % (case["case"], ", ".join(proof_cite(proof) for proof in case["proof"]))
+                     for case in grade["cases"])
+
+
+def proof_cite(proof):
+    """`file:line` (test), and the line the grader cited when the gate found the quote elsewhere in that test."""
+    moved = "; cited :%d" % proof["cited_line"] if "cited_line" in proof else ""
+    return "`%s:%d` (%s%s)" % (proof["file"], proof["line"], proof["test"].strip(), moved)
 
 
 def cell(text, limit=600):
