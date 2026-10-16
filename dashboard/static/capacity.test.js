@@ -71,7 +71,7 @@ function render(value, rerender = () => {}) {
 
 test("the summary says what is in use, what waits, and the chosen range's share and waits", () => {
   const cards = render(snapshot(history())).find("capacity-card").map(card => card.text);
-  assert.match(cards[0], /Runners in use now.*3 of 4.*Warm pool: 1 kept ready for the next job/s);
+  assert.match(cards[0], /Runners in use now.*3 of 4.*Warm pool size: 1 \(the table marks which runners\)/s);
   assert.match(cards[1], /Jobs waiting for a runner.*0/s);
   assert.match(cards[2], /Busy share.*41\.2%.*Last 24 hours: share of the 4 runner slots running a job/s);
   assert.match(cards[3], /18s typical.*2m 10s for the slowest 5% of 120 jobs\. Before that, GitHub took 3s on average/s);

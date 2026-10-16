@@ -261,7 +261,9 @@ def _interval(host, begin, end, seconds, active, limit):
     cap = limit or host["slots_occupied"]
     running = min(jobs, cap * weight)
     # A sample from before the limit was lowered can hold more runners than it; none counts past it.
-    up = min(host["slots_occupied"], cap) - max(host["slots_running"], covering)
+    # Runners on a recorded job, under a span, or cleaning up after one are not idle; the host's record
+    # and the spans can name different runners, so the larger of the two counts.
+    up = min(host["slots_occupied"], cap) - max(host["slots_running"], covering + cleaning)
     starting = sum((end - start).total_seconds() for start, _ in active if begin < start < end)
     idle = min(max(0.0, max(0, up) * weight - starting), max(0.0, cap * weight - running))
     warm = min(idle, (host.get("warm") or 0) * weight)

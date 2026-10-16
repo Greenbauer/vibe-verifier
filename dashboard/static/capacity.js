@@ -77,7 +77,7 @@
     const label = RANGE_LABELS[range?.name] || "";
     const [wait, waitDetail] = waitText(range?.wait, label);
     return el("div", { class: "capacity-cards" },
-      card("Runners in use now", `${inUse} of ${limit}`, history?.warm ? `Warm pool: ${history.warm} kept ready for the next job` : null),
+      card("Runners in use now", `${inUse} of ${limit}`, history?.warm ? `Warm pool size: ${history.warm} (the table marks which runners)` : null),
       card("Jobs waiting for a runner", Number.isInteger(waiting) ? String(waiting) : "Unknown", "Right now"),
       card("Busy share", Number.isFinite(range?.busy_percent) ? `${range.busy_percent}%` : "No data",
         `${label}: share of the ${limit} runner slots running a job`),

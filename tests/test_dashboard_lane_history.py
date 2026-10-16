@@ -161,10 +161,11 @@ class Ranges(unittest.TestCase):
                  "wait_seconds": 0, "routing_seconds": None}]
         hour = LH.history(points, rows, {"slots": {"limit": 2}}, True, None, stamp(NOW))["ranges"][0]
         self.assertEqual(hour["busy_percent"], round(100 * 17 / (120 * 2), 1))
-        # The bar holds three 30 s intervals of one runner up: idle, then idle 10 s until the job starts
-        # and the job's 17 s (its last 3 s, the runner's cleanup, are neither), then idle.
+        # The bar holds three 30 s intervals of one runner up: idle; then idle 10 s until the job starts
+        # and the job's 17 s; then the runner seen 3 s after its job ended, cleaning up, which counts as
+        # neither running nor idle.
         bar = hour["buckets"][-2]
-        self.assertEqual((bar["running"], bar["warm"], bar["reserved"]), (round(17 / 90, 2), 0, round(70 / 90, 2)))
+        self.assertEqual((bar["running"], bar["warm"], bar["reserved"]), (round(17 / 90, 2), 0, round(40 / 90, 2)))
         self.assertLessEqual(bar["running"] + bar["warm"] + bar["reserved"], 1.0)
 
     def test_a_job_a_sample_saw_counts_only_its_own_time_and_its_runner_is_not_idle(self):
@@ -180,6 +181,17 @@ class Ranges(unittest.TestCase):
                 rows_ = LH._intervals(points, LH.job_spans(rows, set(), NOW), 2, NOW)
                 self.assertEqual(sum(row[2] for row in rows_[:2]), 17)  # running: the job's own 17 s
                 self.assertEqual(sum(row[3] + row[4] for row in rows_[:2]), 0)  # nobody idle
+
+    def test_a_cleaning_runner_beside_a_job_the_host_has_not_recorded_is_not_idle(self):
+        # The confirming audit's case, limit 4: at 12:00:30 runner A is cleaning up after a job that ended
+        # at 12:00:28 (its job still recorded), runner B took a job at 12:00:25 the host has not recorded.
+        at = lambda clock: stamp(datetime(2026, 10, 14, 12, *clock, tzinfo=timezone.utc))
+        rows = [{"runner": "a", "kind": "ci", "started_at": at((0, 5)), "finished_at": at((0, 28)), "wait_seconds": 0, "routing_seconds": None},
+                {"runner": "b", "kind": "ci", "started_at": at((0, 25)), "finished_at": at((1, 0)), "wait_seconds": 0, "routing_seconds": None}]
+        point = {"observed_at": at((0, 30)), "host": dict(sample(0, 2, 1)["host"])}
+        later = {"observed_at": at((1, 0)), "host": dict(sample(0, 0, 0)["host"])}
+        row = LH._intervals([point, later], LH.job_spans(rows, set(), NOW), 4, NOW)[0]
+        self.assertEqual((row[2], row[3] + row[4]), (30, 0))
 
     def test_a_runner_still_cleaning_up_after_its_job_adds_no_running_time(self):
         # The seventh audit's case: a job 12:00:10 to 12:00:28; the 12:00:30 sample still sees its job
