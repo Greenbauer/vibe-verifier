@@ -83,6 +83,7 @@ The full rules are in the [gate contract](docs/GATE-CONTRACT.md).
 | Disposable-container self-hosted runner lanes | Optional |
 | Open pull requests kept up to date after a merge | Optional |
 | Pull requests run only the tests their changes can affect | Optional |
+| A slow suite skipped, and its statuses posted, for a diff it cannot see | Optional |
 
 ## Get started
 
@@ -246,6 +247,10 @@ A browser suite that signs in to a per-PR preview usually runs on one worker, be
 
 Most of a unit suite cannot be affected by what one pull request changed. The optional [affected tests action](actions/affected-tests/README.md) lists the test files that can be: every test whose imports reach a changed file (relative imports, tsconfig aliases, workspace packages, Python imports), plus every test that reads files, starts a process or uses a database, which the import graph cannot see into. It lists them all instead when a lockfile, a tsconfig, a test runner's config or a `package.json`'s dependencies changed, and on every push to main. The repository's own test job runs the list; nothing is judged. On a 277-pull-request history of a private TypeScript monorepo it listed every one of 132 tests a deliberate break failed. A repository starts in report mode, running the full suite too, and the action names any failure the selection would have missed.
 
+## Suite scope
+
+A browser suite that tests a deployed preview is slow and queues, and a pull request that changes one file under `docs/` waits for it like any other. The optional [suite scope action](docs/suite-scope.md) decides, before the suite's job queues, whether a pull request's diff can change what the suite verifies, from one list of inert paths the repository keeps, and posts the suite's statuses as not applicable, with the reason, when it cannot. Every doubt runs the suite: a path the list does not hold, a file list GitHub cut short, a pull request into another branch, an event that is not about a pull request. The list is read on the default branch, so a pull request cannot widen it to skip its own suite.
+
 ## Self-hosted runner lanes
 
 The optional [runner-lane kit](lanes/README.md) runs each CI job in its own disposable Sysbox container on a Linux machine you own. A small listener keeps a GitHub runner scale set per kind of job and starts one container for each job GitHub assigns it; the container takes that one job and exits, and nothing it did survives into the next. The kit is the engine only: which machine, organization, GitHub App and repositories a lane serves is a host file in your own private repository, and a machine keeps both checkouts on their `main` by itself. No gate depends on it, and where a consumer's jobs run stays that consumer's `runs-on:` choice.
@@ -273,6 +278,7 @@ For multiple projects, see [subscribing in CI](docs/GATE-CONTRACT.md#subscribing
 - [Threat model](docs/threat-model.md): untrusted inputs, mitigations, and residual risks.
 - [Gate contract](docs/GATE-CONTRACT.md): gate interface, manifests, base-policy behavior, CI subscription, wrappers, and extension rules.
 - [Feature maps](docs/feature-map.md): one file per user-facing feature, kept true by the `feature-map` gate.
+- [Suite scope](docs/suite-scope.md): skipping a slow suite for a pull request whose diff it cannot see, from one inert list, with every doubt running it.
 - [Review harness](harnesses/review/README.md): revision-bound AI review and workflow receipts.
 - [QAE harness](harnesses/qae/README.md): browser exploration, artifacts, and deterministic acceptance verdicts.
 - [Proof audit](harnesses/proof-audit/README.md): model-graded requirement proof, held to the repository by a deterministic gate.
