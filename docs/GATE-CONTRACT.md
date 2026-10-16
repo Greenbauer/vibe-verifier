@@ -762,8 +762,9 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   under Vitest 4.1.11 and its `@vitest/coverage-v8`, a script a test ran with
   `execFileSync("node", ["src/app.js"])` counted 0 on every statement while a module the test imported
   counted 1. The providers pinned for Vitest 2.1.9 to 4.1.11 have no subprocess support; Vitest 5.0.0
-  added `coverage.autoAttachSubprocess` (v8 only, off by default, through `NODE_V8_COVERAGE`), which the
-  gate does not turn on.
+  added `coverage.autoAttachSubprocess` (v8 only, off by default, through `NODE_V8_COVERAGE`, per
+  Vitest's coverage configuration docs; the pinned 5.0.3 provider sets that variable only when the option
+  is on), which the gate does not turn on.
 - **Python.** `--runner pytest` or `--runner unittest` runs `-m pytest` or `-m unittest`, plus `--args`, in
   each `--project` under coverage.py 7.16.2, pinned in `tools/coverage-not-lost-python/`, in the
   project's own interpreter (`--python`, default `python3`; a relative path is the repository's), which
@@ -829,14 +830,14 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   pull request's own tests. Start with `--soak`, which prints every finding as a warning; once its record
   is clean (each finding a real weakening, or a pull request that says why), remove `--soak` on the base
   manifest so the gate blocks. This repository pilots it two ways. Per pull request, `.vibe-verifier-tests`
-  runs it on the dashboard tests (`-p 'test_dashboard_*.py'`, `--timeout 300`; 14 to 20 seconds a side).
+  runs it on the dashboard tests (`-p 'test_dashboard_*.py'`, `--timeout 300`; under half a minute a side).
   Once a night, `nightly.yml` runs `.vibe-verifier-nightly` on main, the whole suite
   (`--soak --runner unittest --args 'discover -s tests'`), with `--base-ref` the main commit the last
   successful scheduled nightly ran on (or the `base` a `workflow_dispatch` names, a run that never moves
   where the next night starts; or, until a night succeeds, the commit before the one that added the
   workflow), so the gate scripts and `bin/vibe-verifier` the tests run as child processes are measured too.
   A loss is a warning on that night's run, and its log names the commits merged since. The runner judges `.vibe-verifier-nightly`
-  from that base, so a change to it applies from the next night. That job holds no credential in a
+  from that base, the last night's commit, so a change to it applies from the second night after it merges. That job holds no credential in a
   step that runs tests: its read-only token goes only to the step that looks up the last nightly. On the
   whole suite each side took 784 to 1,030 seconds on ubuntu-latest and ran about 11,500 lines, 4,690 of
   them in `gates/` (pull request #220's three runs; the fastest took 784 to 847 seconds a side), against 982 seconds for both
