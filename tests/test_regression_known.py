@@ -15,6 +15,8 @@ class KnownOnMain(RegressionWalk):
         prompt = " ".join(PROMPT.read_text().split())
         for phrase in ("If qae-inputs/base-site.md exists", "walk that same state once more on that site, the same way",
                        "never a state that passed here, and never a criterion",
+                       "log those steps in qae-artifacts/qae/features/base/<id>.md with screenshots "
+                       "qae-artifacts/qae/features/base/<id>-step-k.png",
                        "regression-known: <id> -- <what the base branch's site shows> (qae/features/base/<id>.md::<the step line text>)"):
             self.assertIn(phrase, prompt)
 
@@ -142,4 +144,22 @@ class KnownOnMain(RegressionWalk):
             result = self.rewalk(self.AC + lines + self.KNOWN + self.PROJECTS)
             self.assertEqual(result.returncode, 1, lines)
             self.assertNotIn("fails the same way on the base branch", result.stdout)
+
+    def test_the_known_line_must_name_this_features_base_log_when_both_have_one(self):
+        # Both features walked the base branch's site; auth's line cites projects' log, which says the same thing.
+        self.walk_on_main(fid="auth", line="- step 1: reloaded -> the dashboard")
+        self.walk_on_main(fid="projects")
+        borrowed = self.KNOWN.replace("base/auth.md", "base/projects.md")
+        result = self.rewalk(self.AC + self.FAILED + borrowed + self.PROJECTS)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("auth is a FAIL", result.stdout)
+
+    def test_the_cited_text_must_be_on_the_cited_step_not_another(self):
+        write(self.work, {"qae-artifacts/qae/features/base/auth.md": "- step 1: reloaded -> the dashboard\n"
+                                                                    "- step 2: retried; step 1: signed in as the test user -> an error page\n"})
+        for k in (1, 2):
+            Path(self.work, "qae-artifacts", "qae", "features", "base", "auth-step-%d.png" % k).write_bytes(png(1280))
+        result = self.rewalk(self.AC + self.FAILED + self.KNOWN + self.PROJECTS)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("auth is a FAIL", result.stdout)
 
