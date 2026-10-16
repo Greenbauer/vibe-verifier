@@ -825,29 +825,32 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   either side, a `--project` is outside the repository or not a directory, the project has no Vitest,
   `node` is missing, the interpreter has no pytest, or Vitest wrote no coverage report.
 - **Subscribing.** As with `changed-code-mutation`, in a manifest of its own, such as
-  `.vibe-verifier-tests`, run by a job that installs the project's dependencies and writes the body
-  file first, under a job timeout above `--timeout`, in a job that holds no secrets: the gate runs the
-  pull request's own tests. Start with `--soak`, which prints every finding as a warning; once its record
-  is clean (each finding a real weakening, or a pull request that says why), remove `--soak` on the base
-  manifest so the gate blocks. This repository pilots it two ways. Per pull request, `.vibe-verifier-tests`
-  runs it on the dashboard tests (`-p 'test_dashboard_*.py'`, `--timeout 300`; under half a minute a side).
-  Once a night, `nightly.yml` runs `.vibe-verifier-nightly` on main, the whole suite
-  (`--soak --runner unittest --args 'discover -s tests'`), with `--base-ref` the main commit the last
-  successful scheduled nightly ran on (or the `base` a `workflow_dispatch` names, a run that never moves
-  where the next night starts; or, until a night succeeds, the commit before the one that added the
-  workflow), so the gate scripts and `bin/vibe-verifier` the tests run as child processes are measured too.
-  A loss is a warning on that night's run, and its log names the commits merged since. The runner judges `.vibe-verifier-nightly`
-  from that base, the last night's commit, so a change to it applies from the second night after it merges. That job holds no credential in a
-  step that runs tests: its read-only token goes only to the step that looks up the last nightly. On the
-  whole suite each side took 784 to 1,030 seconds on ubuntu-latest and ran about 11,500 lines, 4,690 of
-  them in `gates/` (pull request #220's three runs; the fastest took 784 to 847 seconds a side), against 982 seconds for both
-  sides when only the test process was measured. Much of the 300 to 540 seconds each side gained is
-  starting coverage.py in each of the about 3,000 Python processes the suite starts: 85 ms more each, 98
-  against 13 for the process alone, measured on 2026-10-16 in a `python:3.12-bookworm` container, about
-  260 seconds at that container's speed. And the second pair runs every time here: the first side installs the catalog's tools into the
-  runner's empty tool cache, so the install lines of `gates/_tools.py` run only at the base, the first
-  pair finds them (14 lines), and the second, with the cache full, dismisses them. So a whole-suite run
-  takes 54 to 66 minutes, which is why it is nightly; its `--timeout` is 4800 and its job's limit 90
+  `.vibe-verifier-tests`, run by a job that installs the project's dependencies and writes the body file
+  first, under a job timeout above `--timeout`, in a job that holds no secrets: the gate runs the pull
+  request's own tests. Start with `--soak`, which prints every finding as a warning; once its record is
+  clean (each finding a real weakening, or a pull request that says why), remove `--soak` on the base
+  manifest so the gate blocks. This repository pilots it two ways. Per pull request,
+  `.vibe-verifier-tests` runs it on the dashboard tests (`-p 'test_dashboard_*.py'`, `--timeout 300`;
+  under half a minute a side). Once a night, `nightly.yml` runs it on main on the whole suite (`--soak
+  --runner unittest --args 'discover -s tests'`), with `--base-ref` the main commit the last successful
+  nightly ran on, so the gate scripts and `bin/vibe-verifier` the tests run as child processes are
+  measured too. A night that could not run is not counted, so its range is judged again; until a run
+  succeeds, the base is the commit before the one that added the workflow. A `workflow_dispatch` runs it
+  on demand, and with `base` compares from that commit; the next night then starts from its head, so a
+  `base` newer than the last nightly's steps past the commits in between, for a range whose suite can no
+  longer run. A loss is a warning on that night's run, and its log names the commits merged since. The
+  gate's line is the workflow's own `entries:`, which the runner never judges from a base, so a change to
+  it applies from the next run. The job holds no credential in a step that runs tests: its read-only token
+  goes only to the step that looks up the last nightly. On the whole suite each side took 784 to 1,030
+  seconds on ubuntu-latest and ran about 11,500 lines, 4,690 of them in `gates/` (pull request #220's
+  three runs; the fastest took 784 to 847 seconds a side), against 982 seconds for both sides when only
+  the test process was measured. Much of the 300 to 540 seconds each side gained is starting coverage.py
+  in each of the about 3,000 Python processes the suite starts: 85 ms more each, 98 against 13 for the
+  process alone, measured on 2026-10-16 in a `python:3.12-bookworm` container, about 260 seconds at that
+  container's speed. And the second pair runs every time here: the first side installs the catalog's tools
+  into the runner's empty tool cache, so the install lines of `gates/_tools.py` run only at the base, the
+  first pair finds them (14 lines), and the second, with the cache full, dismisses them. So a whole-suite
+  run takes 54 to 66 minutes, which is why it is nightly; its `--timeout` is 4800 and its job's limit 90
   minutes.
 - **What it does not catch.** Browser and end-to-end tests: only the unit suite the runner starts is
   measured, so a loss only a Playwright test would show passes (the [QAE harness](../harnesses/qae/README.md)

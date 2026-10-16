@@ -168,9 +168,12 @@ class NightlyCoverage(unittest.TestCase):
         coverage = job("coverage-not-lost", NIGHTLY)
         # A job-level `if:` that skips reads as green.
         self.assertIsNone(re.search(r"^    (if|needs):", coverage, re.MULTILINE), coverage)
-        self.assertIn("manifest: .vibe-verifier-nightly", coverage)
         self.assertIn("base-ref: ${{ steps.base.outputs.base }}", coverage)
-        args = gate_args(ROOT / ".vibe-verifier-nightly", "coverage-not-lost")
+        # The gate's line is the workflow's own `entries:`, never a manifest file the runner would judge from the base
+        # (the last nightly's commit), where a raised --timeout would wait a night, or never apply after a failed one.
+        self.assertNotIn("manifest:", coverage)
+        (gate_name, *args) = shlex.split(re.search(r"^          entries: (.*)$", coverage, re.MULTILINE).group(1))
+        self.assertEqual(gate_name, "coverage-not-lost")
         self.assertEqual(args[:5], ["--soak", "--runner", "unittest", "--args", "discover -s tests"])  # whole suite: no -p
         timeout = int(args[args.index("--timeout") + 1])
         minutes = int(re.search(r"^    timeout-minutes: (\d+)$", coverage, re.MULTILINE).group(1))
@@ -237,17 +240,17 @@ class NightlyBase(unittest.TestCase):
         result, written, calls = self.pick(asked=self.commits[0])
         self.assertEqual((result.returncode, written, calls), (0, "base=%s\n" % self.commits[0], []), result.stderr)
 
-    def test_a_night_compares_from_the_last_successful_scheduled_nightly_on_main(self):
+    def test_a_night_compares_from_the_last_successful_nightly_on_main(self):
         result, written, calls = self.pick(answer=self.commits[1])
         self.assertEqual((result.returncode, written), (0, "base=%s\n" % self.commits[1]), result.stderr)
         (call,) = calls
-        # Scheduled runs only: a dispatched run may have judged a narrower range (its own `base`).
-        self.assertIn("run list --repo owner/repo --workflow nightly.yml --branch main --event schedule --status success "
-                      "--limit 1", call)
+        # Any successful run on main, scheduled or dispatched: one that could not run is not counted, so its range is
+        # judged again, and a dispatch with a newer `base` is how a range that cannot run is stepped past.
+        self.assertIn("run list --repo owner/repo --workflow nightly.yml --branch main --status success --limit 1", call)
         self.assertIn("Comparing %s with %s" % (self.commits[1], self.commits[2]), result.stdout)
 
     def test_until_a_night_succeeds_it_compares_from_before_the_workflow_was_added(self):
-        # No successful scheduled nightly yet (the first night, or every one so far could not run): the commit
+        # No successful nightly yet (the first night, or every one so far could not run): the commit
         # before the one that added the workflow, the same every night, so no night's range goes unjudged.
         result, written, _ = self.pick(answer="")
         self.assertEqual((result.returncode, written), (0, "base=%s\n" % self.commits[0]), result.stderr)

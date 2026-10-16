@@ -13,7 +13,7 @@
 
 ## Reach
 
-List `coverage-not-lost --soak` (with `--runner`, `--project`, `--args` and `--body` as the project needs) in a manifest of its own, run by a job that installs the project's dependencies first; remove `--soak` on the base manifest once its record is clean. To judge a whole suite too slow for every pull request, run it on a schedule with `--base-ref` set to the last run's commit: a loss then comes with a log line naming the commits merged since. This repository does both: per pull request on its dashboard tests (`.vibe-verifier-tests`, in `ci.yml`), and once a night on main on its whole suite (`.vibe-verifier-nightly`, in `.github/workflows/nightly.yml`, which `workflow_dispatch` also runs on demand).
+List `coverage-not-lost --soak` (with `--runner`, `--project`, `--args` and `--body` as the project needs) in a manifest of its own, run by a job that installs the project's dependencies first; remove `--soak` on the base manifest once its record is clean. To judge a whole suite too slow for every pull request, run it on a schedule with `--base-ref` set to the last run's commit: a loss then comes with a log line naming the commits merged since. This repository does both: per pull request on its dashboard tests (`.vibe-verifier-tests`, in `ci.yml`), and once a night on main on its whole suite (`.github/workflows/nightly.yml`, which `workflow_dispatch` also runs on demand; the gate's line is the workflow's own `entries:`, which the runner never judges from a base, so a change to it applies from the next run).
 
 ## Verify
 
@@ -34,7 +34,7 @@ List `coverage-not-lost --soak` (with `--runner`, `--project`, `--args` and `--b
 - `tests/test_coverage_not_lost.py::test_a_loss_names_the_commits_it_came_in_with`
 - `tests/test_ci_workflow.py::test_the_whole_suite_runs_nightly_and_per_pull_request_only_the_dashboard_tests`
 - `tests/test_ci_workflow.py::test_no_step_that_runs_tests_holds_a_credential`
-- `tests/test_ci_workflow.py::test_a_night_compares_from_the_last_successful_scheduled_nightly_on_main`
+- `tests/test_ci_workflow.py::test_a_night_compares_from_the_last_successful_nightly_on_main`
 - `tests/test_ci_workflow.py::test_until_a_night_succeeds_it_compares_from_before_the_workflow_was_added`
 - `tests/test_ci_workflow.py::test_a_dispatch_with_a_base_compares_from_it`
 
