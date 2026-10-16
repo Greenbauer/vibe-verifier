@@ -179,6 +179,8 @@ class QaeArtifacts(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("console error outside the allowlist", result.stdout)
         self.assertEqual(self.run_gate("--allow-console", "/_vercel/insights/script\\.js").returncode, 0)
+        # --allow-request excuses the request, not its console line: the explorer's prompt says the same.
+        self.assertEqual(self.run_gate("--allow-request", "/_vercel/insights/script\\.js").returncode, 1)
 
     def test_an_uncaught_exception_fails_like_a_console_error(self):
         # As the pinned playwright-mcp writes a page's uncaught exception and its rejections: no level

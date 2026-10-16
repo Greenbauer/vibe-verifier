@@ -1094,7 +1094,9 @@ own line, `expected-refusal: <status> <path-or-URL>`, read from `--criteria`, wh
 handled refusal (400, 401, 403, 404, 409 or 422): it excuses exactly that status at exactly that URL
 for that run, and nothing else; `{id}` in the target stands for one path segment the run mints. With `--widths N[,N...]` (opt-in) each criterion's step screenshots
 must include one of each width, read from the PNG header; the explore job tells the explorer the same
-widths, from the same manifest line as the base has it, in `qae-inputs/widths`. With `--ticket FILE`
+widths, from the same manifest line as the base has it, in `qae-inputs/widths`, and the line's
+`--allow-console` and `--allow-request` patterns in `qae-inputs/environmental`, so the explorer never
+fails a criterion on what the gate does not judge. With `--ticket FILE`
 the ticket's criteria (`qae/TCn.md` logs) are held to the same rules, their `expected-refusal:`
 declarations count, and a pull request that declares `- None:` is still judged when its ticket lists
 criteria. A ticket criterion the body proves with a `ticket-proof:` line is not walked, so it has no log here. With `--features DIR --changed-files FILE` (the acceptance-verdict line's selection options),

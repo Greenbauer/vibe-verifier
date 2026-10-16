@@ -104,7 +104,7 @@ heading that names acceptance criteria but is not exactly `## Acceptance criteri
 the exact one), or a criterion judged against main or production, which QAE never opens. Run it on a PR
 body before pushing. Exit 2 when a file cannot be read.
 
-`qae-inputs [--manifest FILE] [--widths-file FILE] [--references DIR] [--evidence DIR] [--listing FILE]
+`qae-inputs [--manifest FILE] [--widths-file FILE] [--environmental-file FILE] [--references DIR] [--evidence DIR] [--listing FILE]
 [--digests FILE] [--turns FILE [--criteria FILE] [--ticket FILE] [--features DIR] [--shard K --shards N]
 [--share FILE] [--share-ids FILE] [--run ID] [--isolation FILE]]` prepares what the QAE
 explorer and its gates read from the site step's supplies and the QAE manifest, before the explorer runs.
@@ -114,7 +114,11 @@ qae-inputs/references.md) for the explorer, and its sha256 written to the digest
 which the workflow declares as an output so the gate judges the image the workflow supplied and never one
 the explorer wrote. Given the manifest, the `--widths` of its qae-artifacts line (judged from the base,
 like a run) are written one per line to the widths file (default qae-inputs/widths), so the explorer
-checks each criterion at the widths the gate will require; no such option writes no file. With
+checks each criterion at the widths the gate will require; no such option writes no file. Its
+`--allow-console` and `--allow-request` patterns, from the same line, are written to the environmental file
+(`--environmental-file`, default qae-inputs/environmental), one `console: <regex>` or `request: <regex>` line
+each, so the explorer never fails a criterion on a console message or request the gate does not judge; none
+writes no file. With
 `--turns FILE` it also writes the explorer's turn cap there, sized to its walks: each criterion of the PR
 body (`--criteria`, default qae-inputs/pr-body.md) and of the ticket (`--ticket`, default
 qae-inputs/ticket.md; absent is none) once per role it names and per width, plus each feature to re-walk
@@ -135,7 +139,7 @@ never one another explorer of the run created or is changing. `--isolation FILE`
 to (actions/qae-browser/console-pages.js), as JSON: `tag`, and `protected`, every record id (a UUID, 24 hex
 digits or a ULID) a criterion outside its share names, which it may not delete; for one explorer the file is
 removed. It prints `references: <n>`, one
-`<key>: <width>x<height>` line each, `widths: <list>` (or `widths: none`) and, with `--turns`,
+`<key>: <width>x<height>` line each, `widths: <list>` (or `widths: none`), `environmental: <n>` and, with `--turns`,
 `max turns: <n> (<walks> walks)` and, for one explorer of several, `share: <ids> (explorer K of N)`. Exit 2
 when a supplied file is not a PNG or its name is not a reference key, the manifest or the criteria file
 cannot be read, or the explorer has nothing to walk (the criteria changed after they were counted).
@@ -1037,17 +1041,38 @@ def criteria_ticket_coverage(args):
     return 0
 
 
-def manifest_widths(args):
-    """The --widths on the manifest's qae-artifacts line, judged from the base; [] when it has none."""
+def manifest_artifacts_options(args):
+    """The --widths, --allow-console and --allow-request on the manifest's qae-artifacts line, judged from the
+    base, the way the gate reads them; None when there is no manifest or no such line."""
     if not args.manifest:
-        return []
+        return None
     lines = [gate_args for gate, gate_args in judged_entries(args, notice=sys.stderr) if gate == "qae-artifacts"]
+    if not lines:
+        return None
     parser = argparse.ArgumentParser(prog="qae-artifacts", add_help=False)
     parser.add_argument("--widths", type=qae_artifacts.width_list, default=None)
+    parser.add_argument("--allow-console", action="append", default=[])
+    parser.add_argument("--allow-request", action="append", default=[])
     try:
-        return (parser.parse_known_args(lines[0])[0].widths or []) if lines else []
+        return parser.parse_known_args(lines[0])[0]
     except SystemExit:
-        sys.exit(fail("the qae-artifacts line in %s has a malformed --widths" % args.manifest))
+        sys.exit(fail("the qae-artifacts line in %s has a malformed --widths, --allow-console or --allow-request" % args.manifest))
+
+
+def manifest_widths(args):
+    """The --widths on the manifest's qae-artifacts line, judged from the base; [] when it has none."""
+    options = manifest_artifacts_options(args)
+    return (options.widths or []) if options else []
+
+
+def manifest_environmental(args):
+    """The `console: <regex>` and `request: <regex>` lines for what the manifest's qae-artifacts line declares
+    environmental (its --allow-console and --allow-request), judged from the base; [] when it declares none."""
+    options = manifest_artifacts_options(args)
+    if not options:
+        return []
+    return (["console: %s" % pattern for pattern in options.allow_console]
+            + ["request: %s" % pattern for pattern in options.allow_request])
 
 
 # The Claude lane's turn cap (claude-code-action's --max-turns), sized to what the explorer walks: one walk is
@@ -1226,6 +1251,7 @@ def qae_inputs_command(args):
     if not 1 <= args.shard <= args.shards:
         return fail("--shard %d is not one of --shards %d" % (args.shard, args.shards))
     widths = manifest_widths(args)
+    environmental = manifest_environmental(args)
     turns = None
     if args.turns:
         try:
@@ -1273,6 +1299,10 @@ def qae_inputs_command(args):
         os.makedirs(os.path.dirname(args.widths_file) or ".", exist_ok=True)
         with open(args.widths_file, "w", encoding="utf-8") as handle:
             handle.write("".join("%d\n" % width for width in widths))
+    if environmental:
+        os.makedirs(os.path.dirname(args.environmental_file) or ".", exist_ok=True)
+        with open(args.environmental_file, "w", encoding="utf-8") as handle:
+            handle.write("".join(line + "\n" for line in environmental))
     names = sorted(os.listdir(args.references)) if os.path.isdir(args.references) else []
     images = [name for name in names if name.endswith(".png")]
     found = {}
@@ -1300,6 +1330,7 @@ def qae_inputs_command(args):
             handle.write(json.dumps(digests, sort_keys=True) + "\n")
     print("\n".join(["references: %d" % len(found)] + ["%s: %dx%d" % (key, *size) for key, (_, size) in sorted(found.items())]
                     + ["widths: %s" % (", ".join(map(str, widths)) or "none")]
+                    + ["environmental: %d" % len(environmental)]
                     + (["max turns: %d (%d walks)" % (turns[1], turns[0])] if turns else [])
                     + (["share: %s (explorer %d of %d)" % (", ".join(item for item, _ in items) or "no criterion",
                                                            args.shard, args.shards)] if turns and args.shards > 1 else [])))
@@ -1573,9 +1604,13 @@ def main():
                         help="the list the explorer reads (default: qae-inputs/references.md)")
     inputs.add_argument("--digests", metavar="FILE", help="write {key: sha256} here, one JSON object")
     inputs.add_argument("--manifest", metavar="FILE", help="the QAE manifest: its qae-artifacts line's --widths, judged "
-                        "from the base, are written to --widths-file")
+                        "from the base, are written to --widths-file, and its --allow-console and --allow-request "
+                        "patterns to --environmental-file")
     inputs.add_argument("--widths-file", default="qae-inputs/widths", metavar="FILE",
                         help="where the widths go, one per line (default: qae-inputs/widths)")
+    inputs.add_argument("--environmental-file", default="qae-inputs/environmental", metavar="FILE",
+                        help="where the qae-artifacts line's --allow-console and --allow-request patterns go, one "
+                        "`console: <regex>` or `request: <regex>` line each (default: qae-inputs/environmental)")
     inputs.add_argument("--turns", metavar="FILE", help="write the explorer's turn cap here, sized to its walks")
     inputs.add_argument("--criteria", default="qae-inputs/pr-body.md", metavar="FILE",
                         help="with --turns, the PR body whose criteria are walked (default: qae-inputs/pr-body.md)")

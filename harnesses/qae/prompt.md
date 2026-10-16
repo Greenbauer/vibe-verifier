@@ -60,6 +60,11 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
    request the site answers with 400 or worse fails the run unless the criterion's own text declares it
    (expected-refusal: <status> <path>), and writing that in a step line declares nothing. Log each as a
    step of that criterion; any of them that fails makes the criterion a FAIL.
+   If qae-inputs/environmental exists, each of its lines is `console: <pattern>` or `request: <pattern>`, a
+   regular expression this repository's manifest declares environmental (the gate does not judge what it
+   matches): a console message a console pattern matches, and a request whose URL a request pattern matches,
+   are not the site's failure and never a reason to FAIL a criterion. Judge the criterion on what the page
+   shows.
    If the directory qae-inputs/features/ exists, each <id>.md in it describes a feature this pull
    request's changes touch, as this pull request has that file. After the criteria, re-walk each
    one in part. A feature's states are the numbered steps of its Verify section (in a file with
