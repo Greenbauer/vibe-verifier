@@ -406,8 +406,10 @@ class Declarations(unittest.TestCase):
     def test_a_void_prefixed_declaration_is_a_test(self):
         # A type-aware lint forbids node:test's floating promise, so infra tests read `void it(...)`.
         lines = ['void describe("UserPool", () => {', '  void it("keeps the policy", () => {',
-                 "    assert.equal(policy.MinimumLength, 8);", "  });", '  void test("another", () => {}); ', "});"]
+                 "    assert.equal(policy.MinimumLength, 8);", "  });", '  void test("another", () => {',
+                 "    expect(other).toBe(true);", "  });", "});"]
         self.assertEqual(proof_audit.declared_title(proof_audit.enclosing_test(lines, 3)), "keeps the policy")
+        self.assertEqual(proof_audit.declared_title(proof_audit.enclosing_test(lines, 6)), "another")
         self.assertIsNone(proof_audit.enclosing_test(lines, 1))
 
     def test_a_short_value_inside_a_wrapped_assertion_is_quotable(self):
