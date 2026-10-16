@@ -233,11 +233,13 @@ class NightlyBase(unittest.TestCase):
         result, written, calls = self.pick(asked=self.commits[0])
         self.assertEqual((result.returncode, written, calls), (0, "base=%s\n" % self.commits[0], []), result.stderr)
 
-    def test_a_night_compares_from_the_last_successful_nightly_on_main(self):
+    def test_a_night_compares_from_the_last_successful_scheduled_nightly_on_main(self):
         result, written, calls = self.pick(answer=self.commits[1])
         self.assertEqual((result.returncode, written), (0, "base=%s\n" % self.commits[1]), result.stderr)
         (call,) = calls
-        self.assertIn("run list --repo owner/repo --workflow nightly.yml --branch main --status success --limit 1", call)
+        # Scheduled runs only: a dispatched run may have judged a narrower range (its own `base`).
+        self.assertIn("run list --repo owner/repo --workflow nightly.yml --branch main --event schedule --status success "
+                      "--limit 1", call)
         self.assertIn("Comparing %s with %s" % (self.commits[1], self.commits[2]), result.stdout)
 
     def test_the_first_night_compares_from_main_of_24_hours_ago(self):
