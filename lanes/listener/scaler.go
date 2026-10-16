@@ -557,25 +557,81 @@ func (l *Lane) jobStarted(key SetKey, j *scaleset.JobStarted) {
 	}
 	ref := s.ref()
 	l.logf("job %q of %s/%s started on %s (runner %s)", j.JobDisplayName, j.OwnerName, j.RepositoryName, l.unit(ref), j.RunnerName)
-	timing := jobTiming{
-		Kind: ref.Kind, Instance: ref.N, RunnerName: s.RunnerName,
-		QueuedAt: stamp(j.QueueTime), ScaleSetAssignedAt: stamp(j.ScaleSetAssignTime),
-		RunnerAssignedAt: stamp(j.RunnerAssignTime), StartedAt: stamp(l.now()),
-	}
+	timing := jobTiming{Kind: ref.Kind, Instance: ref.N, RunnerName: s.RunnerName, StartedAt: stamp(l.now())}
 	l.mu.Unlock()
 	l.recordAssignment(ref, j.OwnerName, j.RepositoryName, j.JobDisplayName, j.WorkflowRunID, j.JobID)
-	if a, ok := assignmentFields(j.OwnerName, j.RepositoryName, j.JobDisplayName, j.WorkflowRunID, j.JobID); ok {
-		timing.Repository, timing.Name, timing.RunID, timing.JobID = a.Repository, a.Name, a.RunID, a.JobID
-	}
+	timing.setJob(&j.JobMessageBase)
 	l.recordJob(ref, timing)
 }
 
-// recordJob appends a started job to the history, dropping the oldest past maxJobHistory, and
-// rewrites jobs.json from it.
+// setJob takes the job's GitHub times and, when usable, its assignment fields from a job message.
+func (t *jobTiming) setJob(j *scaleset.JobMessageBase) {
+	t.QueuedAt, t.ScaleSetAssignedAt, t.RunnerAssignedAt = stamp(j.QueueTime), stamp(j.ScaleSetAssignTime), stamp(j.RunnerAssignTime)
+	if a, ok := assignmentFields(j.OwnerName, j.RepositoryName, j.JobDisplayName, j.WorkflowRunID, j.JobID); ok {
+		t.Repository, t.Name, t.RunID, t.JobID = a.Repository, a.Name, a.RunID, a.JobID
+	}
+}
+
+// recordJob adds a started job to the history and rewrites jobs.json. A JobStarted heard after the
+// JobCompleted that already made the runner's entry fills that entry in (fillFrom) instead of
+// adding a second one.
 func (l *Lane) recordJob(ref slotRef, timing jobTiming) {
 	l.recMu.Lock()
 	defer l.recMu.Unlock()
-	l.jobs = append(l.jobs, timing)
+	if e := l.lastJob(timing.RunnerName); e != nil && e.noStart {
+		e.fillFrom(timing)
+	} else {
+		l.jobs = append(l.jobs, timing)
+	}
+	l.writeJobs(ref)
+}
+
+// recordFinish sets when a job finished on the runner's newest history entry, or, when the listener
+// recorded no start for that runner, adds the entry from the completion, and rewrites jobs.json.
+func (l *Lane) recordFinish(ref slotRef, timing jobTiming) {
+	l.recMu.Lock()
+	defer l.recMu.Unlock()
+	if e := l.lastJob(timing.RunnerName); e != nil {
+		e.FinishedAt = timing.FinishedAt
+	} else {
+		timing.noStart = true
+		l.jobs = append(l.jobs, timing)
+	}
+	l.writeJobs(ref)
+}
+
+// fillFrom takes what a late JobStarted knows into the entry a JobCompleted made, keeping the
+// entry's value wherever the start message has none. The start becomes GitHub's runner-assigned
+// time when there is one; the listener's clock is never used, being by then past the finish.
+func (t *jobTiming) fillFrom(start jobTiming) {
+	take := func(dst *string, v string) {
+		if v != "" {
+			*dst = v
+		}
+	}
+	if start.Name != "" {
+		t.Repository, t.Name, t.RunID, t.JobID = start.Repository, start.Name, start.RunID, start.JobID
+	}
+	take(&t.QueuedAt, start.QueuedAt)
+	take(&t.ScaleSetAssignedAt, start.ScaleSetAssignedAt)
+	take(&t.RunnerAssignedAt, start.RunnerAssignedAt)
+	take(&t.StartedAt, start.RunnerAssignedAt)
+	t.noStart = false
+}
+
+// lastJob is the newest history entry for a runner, or nil. Called with l.recMu held.
+func (l *Lane) lastJob(runner string) *jobTiming {
+	for i := len(l.jobs) - 1; i >= 0; i-- {
+		if l.jobs[i].RunnerName == runner {
+			return &l.jobs[i]
+		}
+	}
+	return nil
+}
+
+// writeJobs drops the oldest jobs past maxJobHistory and rewrites jobs.json. Called with l.recMu
+// held.
+func (l *Lane) writeJobs(ref slotRef) {
 	if n := len(l.jobs); n > maxJobHistory {
 		l.jobs = append([]jobTiming(nil), l.jobs[n-maxJobHistory:]...)
 	}
@@ -597,14 +653,26 @@ func (l *Lane) recordAssignment(ref slotRef, owner, repository, name string, run
 
 func (l *Lane) jobCompleted(key SetKey, j *scaleset.JobCompleted) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	s := l.slotByRunner(j.RunnerName)
 	if s == nil {
 		l.logf("job %q completed (%s) on runner %s, which this listener does not track (%s)", j.JobDisplayName, j.Result, j.RunnerName, key)
+		l.mu.Unlock()
 		return
 	}
 	s.Phase = PhaseDone
-	l.logf("job %q of %s/%s completed (%s) on %s; the unit exits by itself", j.JobDisplayName, j.OwnerName, j.RepositoryName, j.Result, l.unit(s.ref()))
+	ref := s.ref()
+	l.logf("job %q of %s/%s completed (%s) on %s; the unit exits by itself", j.JobDisplayName, j.OwnerName, j.RepositoryName, j.Result, l.unit(ref))
+	now := l.now()
+	timing := jobTiming{Kind: ref.Kind, Instance: ref.N, RunnerName: s.RunnerName, StartedAt: stamp(now), FinishedAt: stamp(now)}
+	l.mu.Unlock()
+	timing.setJob(&j.JobMessageBase)
+	if timing.RunnerAssignedAt != "" {
+		timing.StartedAt = timing.RunnerAssignedAt
+	}
+	if !j.FinishTime.IsZero() {
+		timing.FinishedAt = stamp(j.FinishTime)
+	}
+	l.recordFinish(ref, timing)
 }
 
 // recordStatistics logs a set's statistics, keeps them for the plan and queue.json, and rewrites

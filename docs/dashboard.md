@@ -259,28 +259,35 @@ kinds, the columns, and failure handling.
 `#/capacity` shows what each of the owner's runners is doing now and how busy the lane has been
 (`dashboard/static/capacity.js`). Top to bottom:
 
-- **The limits, in words**: `Up to 8 runners at once (QAE at most 4) · 8 more for jobs that only wait ·
-  10 CPU cores · 20.0 GB memory`.
-- **Five cards**: runners in use now (`5 of 8`, the shared pool only, and how many the warm pool keeps
+- **The limits, in words**: `Up to 8 runners at once (AI QA at most 4) · 8 more for jobs that only
+  wait · 10 CPU cores · 20.0 GB memory`.
+- **Five cards**: runners in use now (`5 of 8`, the runner slots only, and how many the warm pool keeps
   up on purpose); jobs waiting for a runner right now (`Unknown` when the listener's queue was not
-  read); and, for the chosen range, the busy share, the wait for a runner and the reserved-but-idle
-  time. The wait card counts from GitHub handing a job to the lane until a runner takes it. Its value
-  is the median; its detail is the 95th percentile, the job count and, when GitHub reports when it
-  queued jobs, how long GitHub took on average before handing them over.
+  read); and, for the chosen range, the busy share (the share of the runner slots' time spent running
+  jobs, measured from each job's start and finish), the wait for a runner, and idle runners (time
+  runners were up with no job, not counting the warm pool, which the detail names separately). The
+  wait card counts from GitHub handing a job to the lane until a runner takes it. Its value is the
+  median; its detail is the 95th percentile, the job count and, when GitHub reports when it queued
+  jobs, how long GitHub took on average before handing them over.
 - **Runners over time**, with `1h`, `24h` and `7d` buttons (24h first; the choice lasts while the
-  tab is open). Each bar is one clock-aligned period (2 minutes, 30 minutes or 3 hours) of the shared
-  pool, on the pool's limit: green is the average number running a job, yellow the average reserved
+  tab is open). Each bar is one clock-aligned period (2 minutes, 30 minutes or 3 hours) of the runner
+  slots, on their limit: green is the average number running a job, pale green kept warm, yellow idle
   with no job, the dashed outline the rest (free). A red mark above a bar means jobs waited for a
   runner during it. A hatched bar had no samples (the collector was down, or the samples predate this
   history). The last bar is the period still filling. Hover a bar for its numbers.
-- **One row per runner** that holds a slot: its unit (`ci@3` is `<lane>-ci@3.service`), its state
-  (`Running`, or `Reserved, no job` with how long it has been up), the job (linked when the host or
-  GitHub gave a link), the repository and, when the job is on an open pull request's current head,
-  its number, the pool (`CI`, `QAE` or `Wait`) and the time. Running time counts from the job's start
-  (GitHub assigning it to the runner) when the listener recorded it, else from when the runner was
-  allocated. Free slots are not runners yet (the listener starts one under any free number when a
-  job arrives), so they are one row: `3
-  more · Free`.
+- **Runners now**, in two pools. **Runner slots** (`5 of 8 in use`) hold two kinds: **Build and
+  test** (the repositories' CI jobs) and **AI QA** (the QA explorer against a preview; each slot has
+  its own Codex login, and the line under it gives the at-most count). **Waiting-job slots** hold
+  jobs that only wait, such as for a preview to deploy; they are cheap and not one of the runner
+  slots. Each kind is a titled group with a one-line note. A row is one runner: `Build 3`, `QA 2` or `Wait 1`
+  (each kind numbers its own slots; hover for its service, `<lane>-ci@3`), its state (`Running`; `Kept warm`; or `Idle, no job` with how long it
+  has been up), the job (linked when the host or GitHub gave a link), the repository and, when the job
+  is on an open pull request's current head, its number, and the time. Running time counts from the
+  job's start (GitHub assigning it to the runner) when the listener recorded it, else from when the
+  runner was allocated. The host does not say which runners the warm pool keeps, so the longest-idle
+  build-and-test runners, up to the pool's size, show as `Kept warm`. Free slots are not runners yet
+  (the listener starts one in any free slot when a job arrives), so each pool ends with one count:
+  `3 free`.
 - **The shared host** meters, unchanged.
 
 The history comes only from the [Linux collector](dashboard-collector.md#lane-history); another
@@ -384,7 +391,7 @@ Other collectors can use this version 1 shape:
 Lane `state` is one of `busy`, `allocated`, `ready`, `provisionable`, `offline`, or `unknown`. `registered` is a
 separate `true`, `false`, or `null` fact because an allocated on-demand lane can have no idle runner.
 A busy lane must include a same-owner job or a positive GitHub `runner_id` with confirmed
-registration. The Capacity page shows an allocated slot as `Reserved, no job`. When the host recorded
+registration. The Capacity page shows an allocated slot as `Idle, no job` (or `Kept warm`, for the warm pool). When the host recorded
 the job, that lane is `busy` and names the job and repository even if no open pull request carries
 it, and links the job when the record has a run id and a job id. A missing record falls back to the
 current-head pull-request match, and a job that match finds carries its pull request's `pull` number. `registered: null` is omitted: this source never knows registration,

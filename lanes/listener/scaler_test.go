@@ -880,3 +880,115 @@ func TestJobHistoryRecordsWaitTimesBoundedAndSurvivesARestart(t *testing.T) {
 		t.Fatalf("history after a malformed file = %s (%v)", body, err)
 	}
 }
+
+// jobsJSON is the run dir's jobs.json as written.
+func jobsJSON(t *testing.T, run string) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(run, jobsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
+func TestJobHistoryRecordsWhenAJobFinished(t *testing.T) {
+	h, _ := startedLane(t, orgConfig(), 1)
+	s := h.lane.trackedSlots()[0]
+	key := SetKey{"example", kindCI}
+	h.lane.jobStarted(key, &scaleset.JobStarted{RunnerName: s.RunnerName})
+	h.advance(10 * time.Minute)
+	// A completion for a runner the listener does not track changes nothing.
+	h.lane.jobCompleted(key, &scaleset.JobCompleted{RunnerName: "someone-else", JobMessageBase: scaleset.JobMessageBase{FinishTime: t0}})
+	h.lane.jobCompleted(key, &scaleset.JobCompleted{
+		RunnerName: s.RunnerName, Result: "succeeded",
+		JobMessageBase: scaleset.JobMessageBase{FinishTime: t0.Add(9*time.Minute + 30*time.Second + 700*time.Millisecond)},
+	})
+	want := `{"version":1,"jobs":[{"kind":"ci","instance":1,"runner_name":"` + s.RunnerName + `",` +
+		`"started_at":"2026-01-01T12:00:00Z","finished_at":"2026-01-01T12:09:30Z"}]}` + "\n"
+	if got := jobsJSON(t, h.run); got != want {
+		t.Fatalf("jobs.json = %s\nwant        %s", got, want)
+	}
+}
+
+func TestJobHistoryFinishWithoutAFinishTimeUsesTheListenerClock(t *testing.T) {
+	h, _ := startedLane(t, orgConfig(), 1)
+	s := h.lane.trackedSlots()[0]
+	key := SetKey{"example", kindCI}
+	h.lane.jobStarted(key, &scaleset.JobStarted{RunnerName: s.RunnerName})
+	h.advance(5 * time.Minute)
+	h.lane.jobCompleted(key, &scaleset.JobCompleted{RunnerName: s.RunnerName, Result: "failed"})
+	want := `{"version":1,"jobs":[{"kind":"ci","instance":1,"runner_name":"` + s.RunnerName + `",` +
+		`"started_at":"2026-01-01T12:00:00Z","finished_at":"2026-01-01T12:05:00Z"}]}` + "\n"
+	if got := jobsJSON(t, h.run); got != want {
+		t.Fatalf("jobs.json = %s\nwant        %s", got, want)
+	}
+}
+
+func TestJobHistoryCompletionWithoutAStartAddsTheJobAndALateStartFillsItIn(t *testing.T) {
+	h, _ := startedLane(t, orgConfig(), 1)
+	s := h.lane.trackedSlots()[0]
+	key := SetKey{"example", kindCI}
+	queued := time.Date(2026, 1, 1, 11, 50, 0, 0, time.UTC)
+	base := scaleset.JobMessageBase{
+		OwnerName: "example", RepositoryName: "widgets", JobDisplayName: "build", WorkflowRunID: 123, JobID: "456",
+		QueueTime: queued, ScaleSetAssignTime: queued.Add(time.Minute), RunnerAssignTime: queued.Add(2 * time.Minute),
+		FinishTime: queued.Add(8 * time.Minute),
+	}
+	h.advance(15 * time.Minute)
+	h.lane.jobCompleted(key, &scaleset.JobCompleted{RunnerName: s.RunnerName, Result: "succeeded", JobMessageBase: base})
+	want := `{"version":1,"jobs":[{"kind":"ci","instance":1,"runner_name":"` + s.RunnerName + `",` +
+		`"repository":"example/widgets","name":"build","run_id":123,"job_id":"456",` +
+		`"queued_at":"2026-01-01T11:50:00Z","scale_set_assigned_at":"2026-01-01T11:51:00Z","runner_assigned_at":"2026-01-01T11:52:00Z",` +
+		`"started_at":"2026-01-01T11:52:00Z","finished_at":"2026-01-01T11:58:00Z"}]}` + "\n"
+	if got := jobsJSON(t, h.run); got != want {
+		t.Fatalf("jobs.json after the completion = %s\nwant        %s", got, want)
+	}
+	// The JobStarted heard afterwards fills in the same entry: no second one, the finish kept,
+	// and its start not the listener's clock, which is past the finish.
+	h.advance(time.Minute)
+	h.lane.jobStarted(key, &scaleset.JobStarted{RunnerName: s.RunnerName, JobMessageBase: base})
+	if got := jobsJSON(t, h.run); got != want {
+		t.Fatalf("jobs.json after the late start = %s\nwant        %s", got, want)
+	}
+
+	// Without GitHub's times the completion's entry starts and finishes at the listener's clock,
+	// and a late start without them leaves it so.
+	h2, _ := startedLane(t, orgConfig(), 1)
+	s2 := h2.lane.trackedSlots()[0]
+	h2.lane.jobCompleted(key, &scaleset.JobCompleted{RunnerName: s2.RunnerName})
+	h2.advance(time.Minute)
+	h2.lane.jobStarted(key, &scaleset.JobStarted{RunnerName: s2.RunnerName, JobMessageBase: scaleset.JobMessageBase{
+		OwnerName: "example", RepositoryName: "widgets", JobDisplayName: "test", QueueTime: queued,
+	}})
+	want = `{"version":1,"jobs":[{"kind":"ci","instance":1,"runner_name":"` + s2.RunnerName + `",` +
+		`"repository":"example/widgets","name":"test","queued_at":"2026-01-01T11:50:00Z",` +
+		`"started_at":"2026-01-01T12:00:00Z","finished_at":"2026-01-01T12:00:00Z"}]}` + "\n"
+	if got := jobsJSON(t, h2.run); got != want {
+		t.Fatalf("jobs.json = %s\nwant        %s", got, want)
+	}
+}
+
+func TestJobHistoryKeepsFinishTimesAcrossARestart(t *testing.T) {
+	h, _ := startedLane(t, orgConfig(), 1)
+	s := h.lane.trackedSlots()[0]
+	key := SetKey{"example", kindCI}
+	h.lane.jobStarted(key, &scaleset.JobStarted{RunnerName: s.RunnerName})
+	h.advance(3 * time.Minute)
+	h.lane.jobCompleted(key, &scaleset.JobCompleted{RunnerName: s.RunnerName})
+
+	restarted := newLane(h.lane.cfg, h.run, h.sys, h.host, h.lane.newAPI, h.log.logf)
+	restarted.now = h.lane.now
+	restarted.rebuild()
+	if len(restarted.jobs) != 1 || restarted.jobs[0].FinishedAt != "2026-01-01T12:03:00Z" {
+		t.Fatalf("history loaded at start: %+v", restarted.jobs)
+	}
+	// The next write keeps it.
+	h.advance(time.Minute)
+	restarted.jobStarted(key, &scaleset.JobStarted{RunnerName: s.RunnerName})
+	want := `{"version":1,"jobs":[` +
+		`{"kind":"ci","instance":1,"runner_name":"` + s.RunnerName + `","started_at":"2026-01-01T12:00:00Z","finished_at":"2026-01-01T12:03:00Z"},` +
+		`{"kind":"ci","instance":1,"runner_name":"` + s.RunnerName + `","started_at":"2026-01-01T12:04:00Z"}]}` + "\n"
+	if got := jobsJSON(t, h.run); got != want {
+		t.Fatalf("jobs.json = %s\nwant        %s", got, want)
+	}
+}

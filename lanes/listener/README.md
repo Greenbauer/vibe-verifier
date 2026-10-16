@@ -33,8 +33,8 @@ It uses GitHub's [`actions/scaleset`](https://github.com/actions/scaleset) clien
   start fail, the runner is removed and the files deleted, so neither outlives the attempt.
 - **Jobs.** JobStarted marks the slot busy, writes `assignment` (the job's repository and
   display name, plus the run id and job id when both can link the job) and appends the job's wait
-  times to `jobs.json`. JobCompleted marks it
-  done. The slot unit exits by itself after its one job; the listener never stops a slot that took
+  times to `jobs.json`. JobCompleted marks it done and records when the job finished in
+  `jobs.json`. The slot unit exits by itself after its one job; the listener never stops a slot that took
   a job, and forgets it once the unit is inactive and its job file is gone. A slot whose unit ends
   without taking a job (a crash, or its `RuntimeMaxSec`) has its runner removed from GitHub.
 - **Idle stop.** A slot whose runner never took a job, older than `idle_stop_sec`, is stopped
@@ -155,7 +155,7 @@ as year 1.
 | File | Written | Content |
 |---|---|---|
 | `queue.json` | On every statistics message for a set the listener serves. | `{"version":1,"updated_at":…,"sets":[…]}`: one entry per served set that has had statistics, sorted by set key (`<target> <kind>`), each `kind`, `assigned` (GitHub's assigned jobs), `running` (its running jobs) and `min_runners` (the set's warm pool, 0 for every set but the org lane's `ci`). Nothing names the target, the set or its id. |
-| `jobs.json` | On every JobStarted for a slot the listener started. | `{"version":1,"jobs":[…]}`, oldest first, at most 500 (the oldest dropped): `kind`, `instance`, `runner_name`; `repository` and `name` when `assignment` would accept them, with `run_id` and `job_id` when both can link the job; `queued_at`, `scale_set_assigned_at`, `runner_assigned_at` as GitHub sent them; `started_at`, the listener's clock when it handled JobStarted. At start the listener takes up the file it finds, so a restart keeps the history; a symlink, a file over 1 MiB or one that does not parse as version 1 is ignored (logged) and replaced by the next job. |
+| `jobs.json` | On every JobStarted and JobCompleted for a slot the listener started. | `{"version":1,"jobs":[…]}`, oldest first, at most 500 (the oldest dropped): `kind`, `instance`, `runner_name`; `repository` and `name` when `assignment` would accept them, with `run_id` and `job_id` when both can link the job; `queued_at`, `scale_set_assigned_at`, `runner_assigned_at` as GitHub sent them; `started_at`, the listener's clock when it handled JobStarted; `finished_at`, set by JobCompleted on the runner's newest entry: GitHub's finish time, or the listener's clock when GitHub sent none, and absent while the job runs. A JobCompleted for a runner with no recorded JobStarted (both in one late batch, or a restart between them) adds the entry itself, with `started_at` GitHub's `runner_assigned_at` (the listener's clock without it); a JobStarted heard after that fills the same entry in rather than adding a second. All times are UTC, whole seconds. At start the listener takes up the file it finds, so a restart keeps the history; a symlink, a file over 1 MiB or one that does not parse as version 1 is ignored (logged) and replaced by the next job. |
 
 A write that fails is logged and never stops the listener.
 

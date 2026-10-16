@@ -31,7 +31,7 @@ import (
 // Beside the slot directories it writes two lane-wide files for the dashboard sampler:
 //
 //	<run>/queue.json  0600  every tracked set's latest statistics, by kind, on each statistics message
-//	<run>/jobs.json   0600  the last maxJobHistory jobs a tracked slot started, with their wait times
+//	<run>/jobs.json   0600  the last maxJobHistory jobs a tracked slot ran, with their wait and finish times
 const (
 	jitFile        = "jit"
 	jobFile        = "job"
@@ -82,9 +82,9 @@ type jobsRecord struct {
 	Jobs    []jobTiming `json:"jobs"`
 }
 
-// jobTiming is one started job: the assignment fields when they are usable (absent otherwise),
-// and when GitHub queued it, gave it to the set and to the runner, and when the listener heard it
-// started. A time GitHub did not send is absent.
+// jobTiming is one job a tracked slot ran: the assignment fields when they are usable (absent
+// otherwise), when GitHub queued it, gave it to the set and to the runner, when the listener heard
+// it started, and when it finished. A time GitHub did not send is absent.
 type jobTiming struct {
 	Kind               string `json:"kind"`
 	Instance           int    `json:"instance"`
@@ -97,6 +97,11 @@ type jobTiming struct {
 	ScaleSetAssignedAt string `json:"scale_set_assigned_at,omitempty"`
 	RunnerAssignedAt   string `json:"runner_assigned_at,omitempty"`
 	StartedAt          string `json:"started_at"`
+	FinishedAt         string `json:"finished_at,omitempty"`
+	// noStart marks an entry a JobCompleted made because the listener had recorded no JobStarted
+	// for the runner, so a late JobStarted fills it in rather than adding a second entry. It is not
+	// written to jobs.json.
+	noStart bool
 }
 
 // stamp is a time as the run-dir JSON files carry it: UTC, whole seconds, "" for the zero time.

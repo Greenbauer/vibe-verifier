@@ -9,7 +9,12 @@ inputs come from the lane's listener through the sampler, and both are optional:
   scale set, assigned to a runner, and queued when GitHub sends it. The wait for a runner is set to
   runner; on 2026-10-14 the set time was the job's GitHub created_at to the second and no queued time
   came, so routing (queued to set) is kept only when GitHub sends one. A job counts from its runner
-  assignment: the listener hears JobStarted late (a 17-second job's arrived as it finished).
+  assignment: the listener hears JobStarted late (a 17-second job's arrived as it finished). It
+  ends at GitHub's finish time once the listener records the completion.
+
+Busy time is measured from those job spans, not from samples: a sample every 30 seconds misses jobs
+shorter than that (four such jobs read as 0% busy on 2026-10-14). Samples still give the reserved
+runners, the warm pool and when the collector was watching.
 
 Three things are kept in the collector's root-only state, each pruned to seven days: samples (one
 per refresh, now with running and waiting counts), waits (one per job), and the derived history the
@@ -33,6 +38,7 @@ KINDS = ("ci", "qae", "wait")
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 RUNNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+SHARED_KINDS = ("ci", "qae")
 SAMPLE_NUMBERS = ("cpu_busy_percent", "memory_available_bytes", "workspace_free_bytes",
                   "slots_occupied", "slots_remaining_on_demand")
 
@@ -92,14 +98,15 @@ def project_job(row):
     if not isinstance(runner, str) or not RUNNER_RE.fullmatch(runner):
         return None
     queued, routed = parse_time(row.get("queued_at")), parse_time(row.get("scale_set_assigned_at"))
-    assigned = parse_time(row.get("runner_assigned_at"))
+    assigned, finished = parse_time(row.get("runner_assigned_at")), parse_time(row.get("finished_at"))
     wait = _seconds(routed, assigned)
-    if wait is None or wait > MAX_WAIT_SECONDS:
+    if wait is None or wait > MAX_WAIT_SECONDS or (finished and finished < assigned):
         return None
     routing = _seconds(queued, routed)
     if routing is not None and routing > MAX_WAIT_SECONDS:
         routing = None
     return {"runner": runner, "kind": row["kind"], "started_at": format_time(assigned),
+            "finished_at": format_time(finished) if finished else None,
             "wait_seconds": wait, "routing_seconds": routing}
 
 
@@ -107,9 +114,12 @@ def _clean_wait(row):
     try:
         if parse_time(row.get("started_at")) is None or not RUNNER_RE.fullmatch(row.get("runner", "")):
             return None
-        routing = row.get("routing_seconds")
+        routing, finished = row.get("routing_seconds"), row.get("finished_at")
+        if finished is not None and (parse_time(finished) is None or finished < row["started_at"]):
+            return None
         return {"runner": row["runner"], "kind": row["kind"] if row.get("kind") in KINDS else None,
-                "started_at": row["started_at"], "wait_seconds": _count(row.get("wait_seconds"), MAX_WAIT_SECONDS),
+                "started_at": row["started_at"], "finished_at": finished,
+                "wait_seconds": _count(row.get("wait_seconds"), MAX_WAIT_SECONDS),
                 "routing_seconds": None if routing is None else _count(routing, MAX_WAIT_SECONDS)}
     except (AttributeError, TypeError, ValueError):
         return None
@@ -141,7 +151,7 @@ def _clean_sample(sample, cutoff):
     observed = parse_time(sample.get("observed_at"))
     metrics = sample["host"]
     clean = {name: _number(metrics[name], 100 if name == "cpu_busy_percent" else None) for name in SAMPLE_NUMBERS}
-    for name in ("slots_running", "jobs_waiting"):
+    for name in ("slots_running", "jobs_waiting", "warm"):
         if metrics.get(name) is not None:
             clean[name] = _count(metrics[name])
     if not observed or observed < cutoff:
@@ -168,7 +178,8 @@ def samples(previous, host, success, now, queue):
             "slots_occupied": host["slots"]["occupied_count"],
             "slots_remaining_on_demand": host["slots"]["remaining_on_demand"],
             "slots_running": running_count(host),
-            "jobs_waiting": queue["waiting"] if queue else None}})
+            "jobs_waiting": queue["waiting"] if queue else None,
+            "warm": queue["warm"] if queue else None}})
     unique = {sample["observed_at"]: sample for sample in kept}
     return [unique[key] for key in sorted(unique)][-MAX_SAMPLES:]
 
@@ -191,13 +202,41 @@ def _usable(sample):
     return "slots_running" in sample["host"]
 
 
-def _bucket(start, points):
+def _idle(point):
+    """A sample's runners up with no recorded job, split into the warm pool and the rest."""
+    host = point["host"]
+    reserved = max(0, host["slots_occupied"] - host["slots_running"])
+    warm = min(reserved, host.get("warm") or 0)
+    return warm, reserved - warm
+
+
+def job_spans(wait_rows, occupied, now):
+    """(start, end) of each shared-pool job: GitHub's runner assignment to its finish, or to now while
+    its runner still holds a slot. A job with neither end is left out rather than guessed."""
+    spans = []
+    for row in wait_rows:
+        if row.get("kind") not in SHARED_KINDS:
+            continue
+        end = parse_time(row.get("finished_at")) or (now if row["runner"] in occupied else None)
+        if end:
+            spans.append((parse_time(row["started_at"]), end))
+    return spans
+
+
+def _overlap(spans, start, end):
+    return sum(max(0.0, (min(stop, end) - max(begin, start)).total_seconds()) for begin, stop in spans)
+
+
+def _bucket(start, step, points, spans, now):
     if not points:
         return {"start": format_time(start)}
-    running = sum(point["host"]["slots_running"] for point in points) / len(points)
-    occupied = sum(point["host"]["slots_occupied"] for point in points) / len(points)
+    end = min(start + dt.timedelta(seconds=step), now)
+    length = max(1.0, (end - start).total_seconds())
+    idle = [_idle(point) for point in points]
     waiting = [point["host"]["jobs_waiting"] for point in points if point["host"].get("jobs_waiting") is not None]
-    return {"start": format_time(start), "running": round(running, 2), "reserved": round(max(0, occupied - running), 2),
+    return {"start": format_time(start), "running": round(_overlap(spans, start, end) / length, 2),
+            "warm": round(sum(warm for warm, _ in idle) / len(idle), 2),
+            "reserved": round(sum(rest for _, rest in idle) / len(idle), 2),
             "waiting": max(waiting) if waiting else None}
 
 
@@ -206,7 +245,7 @@ def _spans(points, now):
     return [min(SAMPLE_SPAN_SECONDS, (times[i + 1] - times[i]).total_seconds()) for i in range(len(points))]
 
 
-def range_view(name, length, step, points, wait_rows, limit, now):
+def range_view(name, length, step, points, wait_rows, limit, now, occupied=()):
     """One range's bars and totals. Bars are aligned to the clock; the last one is still filling."""
     end = dt.datetime.fromtimestamp((int(now.timestamp()) // step + 1) * step, dt.timezone.utc)
     start = end - dt.timedelta(seconds=length)
@@ -215,19 +254,23 @@ def range_view(name, length, step, points, wait_rows, limit, now):
     for point in inside:
         index = int((parse_time(point["observed_at"]) - start).total_seconds()) // step
         slots.setdefault(index, []).append(point)
-    buckets = [_bucket(start + dt.timedelta(seconds=index * step), slots.get(index, []))
+    spans = job_spans(wait_rows, set(occupied), now)
+    buckets = [_bucket(start + dt.timedelta(seconds=index * step), step, slots.get(index, []), spans, now)
                for index in range(length // step)]
-    spans = _spans(inside, now)
-    covered = sum(spans)
-    running = sum(span * point["host"]["slots_running"] for span, point in zip(spans, inside))
-    reserved = sum(span * max(0, point["host"]["slots_occupied"] - point["host"]["slots_running"])
-                   for span, point in zip(spans, inside))
-    since = format_time(now - dt.timedelta(seconds=length))
+    weights = _spans(inside, now)
+    covered = sum(weights)
+    idle = [_idle(point) for point in inside]
+    # Busy is job time over slot time since the range began or, when history is younger, since its
+    # first sample (jobs keep arriving from the listener's file across a collector outage).
+    since = max(now - dt.timedelta(seconds=length), parse_time(points[0]["observed_at"])) if points else now
+    window = (now - since).total_seconds()
+    busy = 100 * _overlap(spans, since, now) / (window * limit) if window > 0 and limit else None
     return {"name": name, "bucket_seconds": step, "buckets": buckets,
             "covered_hours": round(covered / 3600, 2),
-            "busy_percent": round(100 * running / (covered * limit), 1) if covered and limit else None,
-            "reserved_hours": round(reserved / 3600, 2) if covered else None,
-            "wait": wait_summary([row for row in wait_rows if row["started_at"] >= since])}
+            "busy_percent": None if busy is None else round(min(100.0, busy), 1),
+            "warm_hours": round(sum(weight * warm for weight, (warm, _) in zip(weights, idle)) / 3600, 2) if covered else None,
+            "idle_hours": round(sum(weight * rest for weight, (_, rest) in zip(weights, idle)) / 3600, 2) if covered else None,
+            "wait": wait_summary([row for row in wait_rows if row["started_at"] >= format_time(now - dt.timedelta(seconds=length))])}
 
 
 def history(kept_samples, wait_rows, host, host_ok, queue, now_text):
@@ -242,7 +285,8 @@ def history(kept_samples, wait_rows, host, host_ok, queue, now_text):
             "waiting_now": queue["waiting"] if host_ok and queue else None,
             "warm": queue["warm"] if queue else None,
             "started": {runner: started[runner] for runner in occupied if runner in started},
-            "ranges": [range_view(name, length, step, points, wait_rows, limit, now) for name, length, step in RANGES]}
+            "ranges": [range_view(name, length, step, points, wait_rows, limit, now, occupied)
+                       for name, length, step in RANGES]}
 
 
 def capture(previous, response, host, host_ok, now):
@@ -260,12 +304,13 @@ def _optional(value, reader):
 
 
 def _read_bucket(row):
-    if not isinstance(row, dict) or set(row) - {"start", "running", "reserved", "waiting"} or not parse_time(row.get("start")):
+    if (not isinstance(row, dict) or set(row) - {"start", "running", "warm", "reserved", "waiting"}
+            or not parse_time(row.get("start"))):
         raise ValueError
     clean = {"start": row["start"]}
     if "running" in row:
-        clean.update(running=_number(row["running"], 10000), reserved=_number(row["reserved"], 10000),
-                     waiting=_optional(row.get("waiting"), _count))
+        clean.update(running=_number(row["running"], 10000), warm=_number(row.get("warm", 0), 10000),
+                     reserved=_number(row["reserved"], 10000), waiting=_optional(row.get("waiting"), _count))
     return clean
 
 
@@ -288,7 +333,8 @@ def _read_range(row, expected):
     return {"name": name, "bucket_seconds": step, "buckets": [_read_bucket(item) for item in buckets],
             "covered_hours": _number(row.get("covered_hours"), length / 3600 + 1),
             "busy_percent": _optional(row.get("busy_percent"), lambda item: _number(item, 100)),
-            "reserved_hours": _optional(row.get("reserved_hours"), lambda item: _number(item, 64 * length / 3600)),
+            "warm_hours": _optional(row.get("warm_hours"), lambda item: _number(item, 64 * length / 3600)),
+            "idle_hours": _optional(row.get("idle_hours"), lambda item: _number(item, 64 * length / 3600)),
             "wait": _optional(row.get("wait"), _read_wait)}
 
 

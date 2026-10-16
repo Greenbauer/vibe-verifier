@@ -23,9 +23,10 @@ def ago(seconds):
     return stamp(NOW - timedelta(seconds=seconds))
 
 
-def job(runner, queued, routed, assigned, started, kind="ci"):
+def job(runner, queued, routed, assigned, started, kind="ci", finished=None):
     row = {"kind": kind, "instance": 1, "runner_name": runner, "started_at": started}
-    for key, value in (("queued_at", queued), ("scale_set_assigned_at", routed), ("runner_assigned_at", assigned)):
+    for key, value in (("queued_at", queued), ("scale_set_assigned_at", routed), ("runner_assigned_at", assigned),
+                       ("finished_at", finished)):
         if value is not None:
             row[key] = value
     return row
@@ -64,15 +65,22 @@ class Queue(unittest.TestCase):
 class Waits(unittest.TestCase):
     def test_a_job_waits_from_the_lane_to_a_runner_and_routing_is_githubs_part_before_it(self):
         row = LH.project_job(job("r-ci-1-1", ago(100), ago(90), ago(40), ago(39)))
-        self.assertEqual(row, {"runner": "r-ci-1-1", "kind": "ci", "started_at": ago(40),
+        self.assertEqual(row, {"runner": "r-ci-1-1", "kind": "ci", "started_at": ago(40), "finished_at": None,
                                "wait_seconds": 50, "routing_seconds": 10})
 
     def test_the_shape_github_sends_a_warm_runner_job_is_a_zero_wait_without_routing(self):
         # Seen on a live lane, 2026-10-14: no queued time, the set and runner times equal to the job's
         # GitHub created_at, and the listener hearing JobStarted 19 s later, as the job finished.
         row = LH.project_job(job("r-ci-1-1", None, ago(19), ago(19), ago(0)))
-        self.assertEqual(row, {"runner": "r-ci-1-1", "kind": "ci", "started_at": ago(19),
+        self.assertEqual(row, {"runner": "r-ci-1-1", "kind": "ci", "started_at": ago(19), "finished_at": None,
                                "wait_seconds": 0, "routing_seconds": None})
+
+    def test_a_finished_job_keeps_githubs_finish_and_one_finishing_before_it_started_is_dropped(self):
+        row = LH.project_job(job("r-ci-1-1", None, ago(40), ago(40), ago(39), finished=ago(23)))
+        self.assertEqual(row["finished_at"], ago(23))
+        self.assertIsNone(LH.project_job(job("r-ci-1-1", None, ago(40), ago(40), ago(39), finished=ago(41))))
+        kept = LH.waits([dict(row, finished_at="soon")], None, NOW)
+        self.assertEqual(kept, [])
 
     def test_a_job_without_both_ends_of_its_wait_is_not_a_wait(self):
         self.assertIsNone(LH.project_job(job("r-ci-1-1", ago(100), None, ago(40), ago(39))))
@@ -129,24 +137,45 @@ class Samples(unittest.TestCase):
 
 class Ranges(unittest.TestCase):
     def test_each_range_has_its_bar_count_and_the_last_bar_holds_now(self):
-        result = LH.history([sample(30, 3, 2)], [], {"slots": {"limit": 8, "occupied": []}}, True, None, stamp(NOW))
+        # The last bar is 12:00:00 to now (12:00:30). One job runs through it on a runner still in a slot,
+        # one finished half way. The sample saw 3 slots up and 2 recorded jobs, with one runner kept warm.
+        point = sample(30, 3, 2)
+        point["host"]["warm"] = 1
+        rows = [{"runner": "a", "kind": "ci", "started_at": ago(90), "finished_at": None, "wait_seconds": 0, "routing_seconds": None},
+                {"runner": "b", "kind": "qae", "started_at": ago(120), "finished_at": ago(15), "wait_seconds": 0, "routing_seconds": None}]
+        result = LH.history([point], rows, {"slots": {"limit": 8, "occupied": [{"runner_name": "a"}]}}, True, None, stamp(NOW))
         self.assertEqual([(row["name"], len(row["buckets"])) for row in result["ranges"]],
                          [("1h", 30), ("24h", 48), ("7d", 56)])
         last = result["ranges"][0]["buckets"][-1]
-        self.assertEqual(last, {"start": "2026-10-14T12:00:00Z", "running": 2, "reserved": 1, "waiting": 0})
+        self.assertEqual(last, {"start": "2026-10-14T12:00:00Z", "running": 1.5, "warm": 1, "reserved": 0, "waiting": 0})
         self.assertEqual(result["ranges"][0]["buckets"][0], {"start": "2026-10-14T11:02:00Z"})
 
-    def test_busy_share_and_reserved_hours_weigh_each_sample_by_its_time_with_gaps_capped(self):
-        # 8 slots; 4 running for 60 s, then 2 running and 2 reserved for 30 s up to now. The two-hour gap
-        # before the first sample counts nothing because nothing was sampled in it.
+    def test_busy_share_counts_job_time_so_jobs_shorter_than_a_sample_still_count(self):
+        # 8 slots. A 600 s job, a 17 s job no 30-second sample would see, a job still running for 100 s,
+        # a wait-pool job and an unfinished job whose runner is gone (neither counts).
         points = [sample(7200, 8, 8), sample(90, 4, 4), sample(30, 4, 2)]
-        result = LH.history(points, [], {"slots": {"limit": 8}}, True, None, stamp(NOW))
-        hour = result["ranges"][0]
+        points[2]["host"]["warm"] = 1
+        def row(runner, start, end, kind="ci"):
+            return {"runner": runner, "kind": kind, "started_at": ago(start), "finished_at": end and ago(end),
+                    "wait_seconds": 0, "routing_seconds": None}
+        rows = [row("long", 1200, 600), row("short", 300, 283), row("now", 100, None), row("wait", 500, 100, "wait"),
+                row("gone", 900, None)]
+        host = {"slots": {"limit": 8, "occupied": [{"runner_name": "now"}]}}
+        result = LH.history(points, rows, host, True, None, stamp(NOW))
+        hour, day = result["ranges"][0], result["ranges"][1]
+        self.assertEqual(hour["busy_percent"], round(100 * (600 + 17 + 100) / (3600 * 8), 1))
+        # The day's window starts at the first sample, two hours ago, not a day ago.
+        self.assertEqual(day["busy_percent"], round(100 * (600 + 17 + 100) / (7200 * 8), 1))
         self.assertEqual(hour["covered_hours"], round(90 / 3600, 2))
-        self.assertEqual(hour["busy_percent"], round(100 * (60 * 4 + 30 * 2) / (90 * 8), 1))
-        self.assertEqual(hour["reserved_hours"], round(30 * 2 / 3600, 2))
-        day = result["ranges"][1]
         self.assertEqual(day["covered_hours"], round((120 + 90) / 3600, 2))
+        # The last sample: 2 runners up with no job, one of them the warm pool's, for 30 s.
+        self.assertEqual((hour["warm_hours"], hour["idle_hours"]), (round(30 / 3600, 2), round(30 / 3600, 2)))
+
+    def test_busy_share_never_reads_over_full(self):
+        rows = [{"runner": "r%d" % n, "kind": "ci", "started_at": ago(3600), "finished_at": ago(0),
+                 "wait_seconds": 0, "routing_seconds": None} for n in range(9)]
+        result = LH.history([sample(7200, 8, 8)], rows, {"slots": {"limit": 8}}, True, None, stamp(NOW))
+        self.assertEqual(result["ranges"][0]["busy_percent"], 100)
 
     def test_samples_from_before_running_was_recorded_leave_the_bars_empty(self):
         old = sample(30, 3, 2)

@@ -4,8 +4,13 @@
   "use strict";
   const { element: el, formatTime, bytes, diskUsage, duration, link } = VV;
   const RANGE_LABELS = { "1h": "Last hour", "24h": "Last 24 hours", "7d": "Last 7 days" };
-  const STATE_TEXT = { busy: "Running", allocated: "Reserved, no job", unknown: "Unknown", offline: "Offline", ready: "Ready" };
-  const POOL_TEXT = { ci: "CI", qae: "QAE", wait: "Wait" };
+  const STATE_TEXT = { busy: "Running", allocated: "Idle, no job", warm: "Kept warm", unknown: "Unknown", offline: "Offline", ready: "Ready" };
+  // The machine's three kinds of runner slot, in the words the page uses for them.
+  const KINDS = {
+    ci: { title: "Build and test", short: "Build", note: "Runs the repositories' CI jobs." },
+    qae: { title: "AI QA", short: "QA", note: "Runs the QA explorer against a preview. Each slot has its own Codex login." },
+    wait: { title: "Waiting jobs", short: "Wait", note: "Holds jobs that only wait, such as for a preview to deploy. Cheap, and not one of the runner slots." }
+  };
   let chosenRange = "24h";
 
   const seconds = (from, now) => {
@@ -13,8 +18,10 @@
     return Number.isFinite(start) ? Math.max(0, (now - start) / 1000) : null;
   };
   const kindOf = lane => lane.labels[0] || lane.id.replace(/-\d+$/, "");
-  // "ci-3" is the unit <lane>-ci@3 on the machine.
-  const runnerName = lane => lane.id.replace(/-(\d+)$/, "@$1");
+  // "ci-3" is slot 3 of the build-and-test kind, "Build 3": the service <lane>-ci@3 on the runner
+  // machine. Each kind numbers its own slots, so the kind is part of the name.
+  const slotName = lane => `${KINDS[kindOf(lane)]?.short || kindOf(lane)} ${lane.id.match(/-(\d+)$/)?.[1] ?? lane.id}`;
+  const unitName = lane => lane.id.replace(/-(\d+)$/, "@$1");
   const isFree = lane => lane.state === "provisionable";
 
   function metric(label, value, percent) {
@@ -39,7 +46,7 @@
   function limitsLine(limits) {
     if (!limits) return null;
     const parts = [`Up to ${limits.slots} runners at once`];
-    if (limits.qae_concurrency) parts[0] += ` (QAE at most ${limits.qae_concurrency})`;
+    if (limits.qae_concurrency) parts[0] += ` (AI QA at most ${limits.qae_concurrency})`;
     if (limits.wait_slots) parts.push(`${limits.wait_slots} more for jobs that only wait`);
     if (Number.isFinite(limits.cpu_quota_cores)) parts.push(`${limits.cpu_quota_cores} CPU cores`);
     if (Number.isFinite(limits.memory_max_bytes)) parts.push(`${bytes(limits.memory_max_bytes)} memory`);
@@ -72,21 +79,25 @@
     return el("div", { class: "capacity-cards" },
       card("Runners in use now", `${inUse} of ${limit}`, history?.warm ? `${history.warm} kept warm on purpose` : null),
       card("Jobs waiting for a runner", Number.isInteger(waiting) ? String(waiting) : "Unknown", "Right now"),
-      card("Busy share", Number.isFinite(range?.busy_percent) ? `${range.busy_percent}%` : "No data", `${label}: runners running a job`),
+      card("Busy share", Number.isFinite(range?.busy_percent) ? `${range.busy_percent}%` : "No data",
+        `${label}: share of the ${limit} runner slots running a job`),
       card("Wait for a runner", wait, waitDetail),
-      card("Reserved but idle", Number.isFinite(range?.reserved_hours) ? `${duration(range.reserved_hours * 3600)}` : "No data", `${label}: runner up, no job`));
+      card("Idle runners", Number.isFinite(range?.idle_hours) ? duration(range.idle_hours * 3600) : "No data",
+        `${label}: runners up with no job` + (range?.warm_hours ? `, not counting ${duration(range.warm_hours * 3600)} kept warm on purpose` : "")));
   }
 
   function bar(bucket, limit, step) {
     const start = formatTime(bucket.start);
     if (!("running" in bucket)) return el("div", { class: "capacity-bar no-data", title: `${start}: no samples` });
     const pct = value => `${Math.min(100, value / limit * 100)}%`;
-    const free = Math.max(0, limit - bucket.running - bucket.reserved);
-    const tip = `${start}, ${duration(step)}: average ${bucket.running} running, ${bucket.reserved} reserved, ${free.toFixed(1)} free` +
-      (bucket.waiting ? `; up to ${bucket.waiting} jobs waiting` : "");
+    const warm = bucket.warm || 0;
+    const free = Math.max(0, limit - bucket.running - warm - bucket.reserved);
+    const tip = `${start}, ${duration(step)}: average ${bucket.running} running, ${warm} kept warm, ${bucket.reserved} idle, ` +
+      `${free.toFixed(1)} free` + (bucket.waiting ? `; up to ${bucket.waiting} jobs waiting` : "");
     return el("div", { class: "capacity-bar", title: tip },
       bucket.waiting ? el("span", { class: "waiting-mark" }) : null,
       el("span", { class: "bar-reserved", style: `height:${pct(bucket.reserved)}` }),
+      el("span", { class: "bar-warm", style: `height:${pct(warm)}` }),
       el("span", { class: "bar-running", style: `height:${pct(bucket.running)}` }));
   }
 
@@ -95,13 +106,14 @@
       ...Object.keys(RANGE_LABELS).map(name => el("button", { class: name === range.name ? "active" : null,
         "aria-pressed": name === range.name ? "true" : "false", onclick: () => { chosenRange = name; rerender(); } }, name)));
     const bars = el("div", { class: "capacity-chart", role: "img",
-      "aria-label": `Runners over the ${RANGE_LABELS[range.name].toLowerCase()}: running, reserved and free out of ${limit}` },
+      "aria-label": `Runners over the ${RANGE_LABELS[range.name].toLowerCase()}: running, kept warm, idle and free out of ${limit}` },
       ...range.buckets.map(bucket => bar(bucket, limit, range.bucket_seconds)));
     const first = range.buckets[0]?.start;
     const axis = el("div", { class: "capacity-axis muted" }, el("span", {}, formatTime(first)), el("span", {}, "now"));
     const legend = el("div", { class: "capacity-legend muted" },
       el("span", {}, el("i", { class: "swatch bar-running" }), "Running a job"),
-      el("span", {}, el("i", { class: "swatch bar-reserved" }), "Reserved, no job"),
+      el("span", {}, el("i", { class: "swatch bar-warm" }), "Kept warm"),
+      el("span", {}, el("i", { class: "swatch bar-reserved" }), "Idle, no job"),
       el("span", {}, el("i", { class: "swatch free" }), `Free (of ${limit})`),
       el("span", {}, el("i", { class: "swatch waiting-mark" }), "Jobs waited"),
       el("span", {}, el("i", { class: "swatch no-data" }), "No samples"));
@@ -109,49 +121,82 @@
       el("div", { class: "panel-title" }, el("h2", {}, "Runners over time"), buttons), bars, axis, legend);
   }
 
-  function jobCell(lane, owner) {
-    if (lane.state === "busy" && lane.job) {
-      return el("span", {}, link(lane.job.name, lane.job.url, owner) || lane.job.name);
-    }
-    if (lane.state === "allocated") return el("span", { class: "muted" }, "Waiting for GitHub to send a job");
+  function jobCell(lane, state, owner) {
+    if (state === "busy" && lane.job) return el("span", {}, link(lane.job.name, lane.job.url, owner) || lane.job.name);
+    if (state === "warm") return el("span", { class: "muted" }, "Ready for the next job; kept up on purpose");
+    if (state === "allocated") return el("span", { class: "muted" }, "Waiting for GitHub to send a job");
     return el("span", { class: "muted" }, "No job recorded");
   }
 
-  function wherePart(lane) {
-    if (!lane.job || lane.state !== "busy") return "";
+  function wherePart(lane, state) {
+    if (!lane.job || state !== "busy") return "";
     const repo = lane.job.repository.split("/")[1];
     return Number.isInteger(lane.job.pull) ? `${repo} #${lane.job.pull}` : repo;
   }
 
-  function timeCell(lane, now) {
-    const since = lane.state === "busy" ? (lane.started_at || lane.allocated_at) : lane.allocated_at;
-    const value = seconds(since, now);
+  function timeCell(lane, state, now) {
+    const value = seconds(state === "busy" ? (lane.started_at || lane.allocated_at) : lane.allocated_at, now);
     if (value == null) return "";
-    return lane.state === "allocated" ? `${duration(value)} idle` : duration(value);
+    return state === "busy" ? duration(value) : `${duration(value)} idle`;
   }
 
-  function runnerRow(lane, owner, now) {
-    const state = STATE_TEXT[lane.state] || lane.state;
-    return el("div", { class: `runner-row state-${lane.state}`, role: "row" },
-      el("span", { class: "mono", role: "cell" }, runnerName(lane)),
-      el("span", { class: "runner-state", role: "cell" }, state),
-      el("span", { role: "cell" }, jobCell(lane, owner)),
-      el("span", { class: "muted", role: "cell" }, wherePart(lane)),
-      el("span", { role: "cell" }, POOL_TEXT[kindOf(lane)] || kindOf(lane)),
-      el("span", { class: "mono", role: "cell" }, timeCell(lane, now)));
+  function runnerRow(lane, state, owner, now) {
+    return el("div", { class: `runner-row state-${state}`, role: "row" },
+      el("span", { class: "mono", role: "cell", title: `Service ${unitName(lane)} on the runner machine` }, slotName(lane)),
+      el("span", { class: "runner-state", role: "cell" }, STATE_TEXT[state] || state),
+      el("span", { role: "cell" }, jobCell(lane, state, owner)),
+      el("span", { class: "muted", role: "cell" }, wherePart(lane, state)),
+      el("span", { class: "mono", role: "cell" }, timeCell(lane, state, now)));
   }
 
+  // The warm pool keeps a few build-and-test runners up with no job on purpose. The host does not say
+  // which ones, so the longest-idle ones up to the pool's size are shown as kept warm.
+  function states(lanes, warm) {
+    const idle = lanes.filter(lane => kindOf(lane) === "ci" && lane.state === "allocated")
+      .sort((a, b) => String(a.allocated_at).localeCompare(String(b.allocated_at)));
+    const kept = new Set(idle.slice(0, warm || 0));
+    return new Map(lanes.map(lane => [lane, kept.has(lane) ? "warm" : lane.state]));
+  }
+
+  function group(kind, lanes, stateOf, owner, now, extra) {
+    const meta = KINDS[kind];
+    const rows = lanes.map(lane => runnerRow(lane, stateOf.get(lane), owner, now));
+    return el("div", { class: "runner-group", role: "rowgroup", "aria-label": meta.title },
+      el("div", { class: "runner-group-title" }, el("b", {}, meta.title), el("span", { class: "muted" }, meta.note)),
+      ...(rows.length ? rows : [el("p", { class: "muted runner-none" }, "None right now.")]), extra || null);
+  }
+
+  function freeRow(count, text) {
+    return el("div", { class: "runner-row state-free", role: "row" }, el("span", { role: "cell" }, `${count} free`),
+      el("span", { class: "muted runner-free-note", role: "cell" }, text));
+  }
+
+  // One section per kind of slot. Build-and-test and AI QA share the runner slots; waiting jobs have
+  // a pool of their own. Free slots are not runners yet, so each pool shows them as one count.
   function runnerTable(capacity, owner, now) {
     const used = capacity.lanes.filter(lane => !isFree(lane));
-    const free = capacity.lanes.length - used.length;
+    const byKind = kind => used.filter(lane => kindOf(lane) === kind);
+    const stateOf = states(used, capacity.history?.warm);
+    const limits = capacity.limits || {};
+    const sharedFree = capacity.lanes.filter(isFree).length;
+    const sharedLimit = limits.slots ?? (byKind("ci").length + byKind("qae").length + sharedFree);
     const header = el("div", { class: "runner-row runner-head muted", role: "row" },
-      ...["Runner", "State", "Job", "Repository", "Pool", "Time"].map(name => el("span", { role: "columnheader" }, name)));
-    const rows = used.map(lane => runnerRow(lane, owner, now));
-    if (free) rows.push(el("div", { class: "runner-row state-free", role: "row" },
-      el("span", { role: "cell" }, `${free} more`), el("span", { class: "runner-state", role: "cell" }, "Free"),
-      el("span", { class: "muted", role: "cell" }, "A runner starts when a job arrives"), el("span", { role: "cell" }),
-      el("span", { role: "cell" }), el("span", { role: "cell" })));
-    return el("div", { class: "runner-table", role: "table", "aria-label": "Runners now" }, header, ...rows);
+      ...["Runner", "State", "Job", "Repository", "Time"].map(name => el("span", { role: "columnheader" }, name)));
+    const shared = el("div", { class: "runner-pool" },
+      el("h3", {}, `Runner slots: ${byKind("ci").length + byKind("qae").length} of ${sharedLimit} in use`),
+      group("ci", byKind("ci"), stateOf, owner, now),
+      group("qae", byKind("qae"), stateOf, owner, now, limits.qae_concurrency ?
+        el("p", { class: "muted runner-none" }, `At most ${limits.qae_concurrency} at once.`) : null),
+      sharedFree ? freeRow(sharedFree, "A runner starts in a free slot when a job arrives.") : null);
+    const waiting = byKind("wait");
+    const pools = [shared];
+    if (limits.wait_slots || waiting.length) {
+      const waitLimit = limits.wait_slots ?? waiting.length;
+      pools.push(el("div", { class: "runner-pool" }, el("h3", {}, `Waiting-job slots: ${waiting.length} of ${waitLimit} in use`),
+        group("wait", waiting, stateOf, owner, now),
+        waitLimit > waiting.length ? freeRow(waitLimit - waiting.length, "Not counted in the runner slots above.") : null));
+    }
+    return el("div", { class: "runner-table", role: "table", "aria-label": "Runners now" }, header, ...pools);
   }
 
   function render(content, snapshot, { heading, empty, sourceBanner, rerender }) {
@@ -171,7 +216,7 @@
     content.append(lanes, hostPanel(capacity));
   }
 
-  const api = { render, runnerName, waitText, limitsLine };
+  const api = { render, slotName, waitText, limitsLine };
   if (typeof module === "object" && module.exports) module.exports = api;
   else window.VVCapacity = api;
 })();
