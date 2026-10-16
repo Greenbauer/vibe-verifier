@@ -12,8 +12,10 @@ gate cannot run. Per ID, the model's grade is checked, never trusted:
 
 - PROVEN needs at least one case, each with at least one assertion. Every assertion names a test file at
   HEAD (*.test.*, *.spec.*, __tests__/, node:test, or a Python test), a line whose whole text is the quote
-  (at least 6 characters), and the title of the test that line sits in: the nearest test declaration above
-  it (a JS test call's string literal, or a Python test function's name). One quote that is not there
+  (at least 6 characters, or a shorter value line that continues an assert or expect call still open above it
+  in the same test; never a line of closers such as `});`), and the title of the test that line sits in: the
+  nearest test declaration above it (a JS test call's string literal, `void` first or not, or a Python test
+  function's name). One quote that is not there
   makes the requirement UNPROVEN: a fabricated quote is not proof.
 - EXCLUDED needs a plan line, quoted verbatim (in part, 12 characters or more) at its line number at the merge base, and an owner section
   (`path#anchor`) that carries `[takes: ID]` at the merge base and is not one this body links.
@@ -45,12 +47,19 @@ MIN_QUOTE = 6  # an assertion is quoted as its whole line; `});` is not one
 # A line that only opens a call, `assert.equal(` or `await expect(`: the first line of a wrapped assertion,
 # which names no value it checks.
 OPENER = re.compile(r"^(?:await\s+)?[\w$.!?]+[(\[{]$")
+# The line a wrapped assertion statement opens on: an assert or expect call, awaited or not. A value prettier
+# leaves alone on a line inside one (`0,`, `[]`, `"named"`) is the line that holds the checked value, so it may be
+# quoted however short; a line of closers (`});`) is never one.
+ASSERTION_OPEN = re.compile(r"^(?:await\s+)?(?:assert\b|expect\s*[.(]|t\.assert|self\.assert)")
+CLOSERS_ONLY = re.compile(r"^[)\]}>;,\s]*$")
+STRING = re.compile(r"""(["'`])(?:\\.|(?!\1)[^\\])*\1""")
 MIN_PART = 12  # a plan line, and a test title that is not a literal, may be quoted in part
-# A test declaration: a JS test call (test(...), it(...), test.only(...), test.each(...)(...)), or a Python test
+# A test declaration: a JS test call (test(...), it(...), test.only(...), test.each(...)(...)), `void` first when a
+# type-aware lint forbids a floating promise (`void it(...)`), or a Python test
 # function. Its title is the call's first string literal, or the function's name. Only the modifiers that still
 # register a test count: test.setTimeout(...), test.slow(), test.step(...), test.describe(...) and the hooks are
 # calls inside or around tests, and taking one for the declaration would tie an assertion to no test.
-DECLARATION = re.compile(r"^\s*(?:(?:it|test|specify)(?:\.(?:only|skip|concurrent|serial|sequential|fixme|fail|failing|todo"
+DECLARATION = re.compile(r"^\s*(?:(?:void\s+)?(?:it|test|specify)(?:\.(?:only|skip|concurrent|serial|sequential|fixme|fail|failing|todo"
                          r"|each\([^)]*\)))*\s*\(|(?:async\s+)?def\s+test\w*\s*\()")
 PYTHON_TEST = re.compile(r"^\s*(?:async\s+)?def\s+(test\w*)\s*\(")
 TITLE = re.compile(r"""\(\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1""")
@@ -177,7 +186,7 @@ def quote_problem(lines, path, number, quote, whole):
     text = quote.strip()
     if lines is None:
         return "%s is not a file in the repository" % path
-    if len(text) < (MIN_QUOTE if whole else MIN_PART):
+    if len(text) < (MIN_QUOTE if whole else MIN_PART) and not (whole and continues_assertion(lines, number, text)):
         return "the quote %r at %s:%s is too short to check" % (quote, path, number)
     if not 1 <= number <= len(lines):
         return "%s has no line %d" % (path, number)
@@ -186,6 +195,32 @@ def quote_problem(lines, path, number, quote, whole):
     if whole and OPENER.match(text):
         return "%s:%d only opens a call (%r): quote the line that holds the value it checks" % (path, number, text)
     return None
+
+
+def bracket_depth(text):
+    """Openers minus closers on a line, string literals left out."""
+    text = STRING.sub("", text)
+    return sum(text.count(c) for c in "([{") - sum(text.count(c) for c in ")]}")
+
+
+def continues_assertion(lines, number, text):
+    """Whether line `number`, whose whole text is `text`, is a value inside a wrapped assertion: walking up within
+    the same test, the nearest statement opening above it is an assert or expect call, and that call stays open on
+    every line from its own down to the one above `number` (a closed assert, with or without a `;`, ends there)."""
+    if not 1 <= number <= len(lines) or lines[number - 1].strip() != text or CLOSERS_ONLY.match(text):
+        return False
+    for index in range(number - 2, -1, -1):
+        line = lines[index].strip()
+        if DECLARATION.match(lines[index]) or line.endswith(";"):
+            return False
+        if ASSERTION_OPEN.match(line):
+            depth = 0
+            for below in lines[index:number - 1]:
+                depth += bracket_depth(below.strip())
+                if depth <= 0:
+                    return False
+            return True
+    return False
 
 
 def is_test_file(path, lines):

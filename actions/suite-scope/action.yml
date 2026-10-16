@@ -1,0 +1,88 @@
+name: Vibe Verifier suite scope
+description: Decide, before a slow suite's job queues, whether a pull request's diff can change what the suite verifies; post the suite's statuses as not applicable when it cannot; or check the inert list the decision reads.
+inputs:
+  list:
+    description: >-
+      The inert list's path in the repository: one pattern per line of the paths a pull request can change
+      without changing what the suite verifies, with `!` lines for paths that are never inert
+      (docs/suite-scope.md). To decide, it is read from GitHub on the default branch, the only base a
+      pull request that skips can have, never from the workspace. With `reads`, it is read from the workspace.
+    default: ""
+  pull-request:
+    description: >-
+      The number of the pull request this run is about. Defaults to the event's, so a push, a schedule or
+      a dispatch names none and runs the suite. A workflow that tests a pull request's head on another
+      event (a deployment status, a completed workflow run) passes the number it resolved, with `sha`.
+    default: ${{ github.event.pull_request.number }}
+  sha:
+    description: >-
+      The commit this run is about. To decide, it must be the pull request's head when GitHub is read, or
+      the suite runs. To post, the commit the statuses are written on.
+    default: ${{ github.event.pull_request.head.sha }}
+  also-run:
+    description: >-
+      A reason of your own to run the suite whatever the diff, as one line (your pull request body claims
+      a proof only the suite scores, say). Anything but blank runs the suite with that reason and reads nothing.
+    default: ""
+  post:
+    description: >-
+      Posts instead of deciding: the commit status contexts to write on `sha` as success, with `reason`
+      as their description, separated by spaces or new lines. In a job that runs only when the deciding
+      step's `not-applicable` is true.
+    default: ""
+  reason:
+    description: To post, the deciding step's `reason` output.
+    default: ""
+  reads:
+    description: >-
+      Checks instead of deciding: a file, relative to the workspace, of the paths the suite or the
+      pipeline that builds what it tests reads, one per line. The step fails when the workspace's `list`
+      calls any of them inert, and when that list is malformed.
+    default: ""
+  repository:
+    description: The repository, owner/name.
+    default: ${{ github.repository }}
+  token:
+    description: A token that can read pull requests and contents (to decide) or write commit statuses (to post).
+    default: ${{ github.token }}
+outputs:
+  not-applicable:
+    description: >-
+      `true` when the suite cannot see this pull request's diff, else `false`. Run the suite's job unless
+      this is exactly `true`: a deciding job that failed or was skipped leaves it empty.
+    value: ${{ steps.scope.outputs.not-applicable }}
+  reason:
+    description: What the suite's statuses say when it is not applicable; otherwise why it runs. One line.
+    value: ${{ steps.scope.outputs.reason }}
+runs:
+  using: composite
+  steps:
+    - name: Decide, post or check
+      id: scope
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        LIST: ${{ inputs.list }}
+        PR: ${{ inputs.pull-request }}
+        SHA: ${{ inputs.sha }}
+        ALSO_RUN: ${{ inputs.also-run }}
+        POST: ${{ inputs.post }}
+        REASON: ${{ inputs.reason }}
+        READS: ${{ inputs.reads }}
+        REPO: ${{ inputs.repository }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        set -euo pipefail
+        engine="$GITHUB_ACTION_PATH/suite_scope.py"
+        if [ -n "$POST" ]; then
+          [ -n "$SHA" ] || { echo "::error::no commit to post on: pass sha outside a pull request event"; exit 1; }
+          read -r -d '' -a contexts <<<"$POST" || true
+          python3 "$engine" post --repo="$REPO" --sha="$SHA" --reason="$REASON" --url="$RUN_URL" -- "${contexts[@]}"
+        else
+          [ -n "$LIST" ] || { echo "::error::name the inert list (list:)"; exit 1; }
+          if [ -n "$READS" ]; then
+            python3 "$engine" check --list="$LIST" --reads="$READS"
+          else
+            python3 "$engine" decide --repo="$REPO" --list="$LIST" --pr="$PR" --sha="$SHA" --also-run="$ALSO_RUN"
+          fi
+        fi

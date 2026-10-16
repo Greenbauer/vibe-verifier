@@ -23,8 +23,10 @@ The model never sees the pull request's body or its `[proof:]` map: it finds the
 Its prompt ([`prompt.md`](prompt.md)) and output schema ([`schema.json`](schema.json)) are the only
 copies; CI and a laptop run the same ones. Then the [`proof-audit`](../../gates/proof_audit.py) gate,
 deterministic, holds the grades to the repository: every quoted assertion must be the whole text of its
-line (at least six characters) in a test file at HEAD, named with the title of the test that line sits in
-(the nearest test declaration above it), and an exclusion's plan line must be at its line at the merge
+line in a test file at HEAD (at least six characters, or a shorter value line such as `0,` or `[]` that
+continues an assert or expect call still open above it in the same test; a line of closers, `});`, never
+counts), named with the title of the test that line sits in (the nearest test declaration above it,
+`void it(...)` included), and an exclusion's plan line must be at its line at the merge
 base with its owner, a section the body does not link, carrying `[takes: ID]` there. A quote that is not there makes the requirement UNPROVEN: a fabricated quote is
 not proof. The gate fails on any UNPROVEN. Model output is JSON held to the schema, never prose the gate
 greps.
