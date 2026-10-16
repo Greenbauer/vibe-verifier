@@ -90,10 +90,32 @@ def annotation(level, message):
     return "::%s title=%s::%s" % (level, TITLE, " ".join(message.split()).replace("%", "%25"))
 
 
+def hash_inside_a_pattern(raw):
+    """True when an unquoted `#` follows a pattern's own character. shlex reads it as a comment that ends the
+    pattern there, so `!docs/#internal/**` would quietly mean `!docs/` and widen what is inert."""
+    quote, previous, escaped = None, " ", False
+    for char in raw:
+        if escaped:
+            escaped = False
+        elif quote:
+            quote = None if char == quote else quote
+        elif char == "\\":
+            escaped = True
+        elif char in "'\"":
+            quote = char
+        elif char == "#":
+            return not previous.isspace()
+        previous = char
+    return False
+
+
 def parse_list(text):
     """(inert, never): the compiled patterns of an inert list, the `!` lines apart."""
     inert, never = [], []
     for number, raw in enumerate(text.splitlines(), 1):
+        if hash_inside_a_pattern(raw):
+            raise Malformed("line %d has a `#` inside a pattern, which would start a comment there (quote the pattern, "
+                            "or put a space before the comment): %s" % (number, raw.strip()))
         try:
             words = shlex.split(raw, comments=True)
         except ValueError as error:
@@ -152,14 +174,16 @@ def changed_paths(repo, number, count):
     files = []
     for page in range(1, -(-count // PAGE) + 1):
         files += json.loads(gh("repos/%s/pulls/%s/files?per_page=%d&page=%d" % (repo, number, PAGE, page)))
-    if len(files) != count:
-        raise Unread("GitHub listed %d of the pull request's %d changed files" % (len(files), count))
-    paths = []
+    paths, names = [], set()
     for file in files:
         # A file the count includes and the list cannot name is a path nobody judged.
         if not isinstance(file.get("filename"), str) or not file["filename"]:
             raise Unread("GitHub listed a changed file with no name")
+        names.add(file["filename"])
         paths += [file["filename"]] + ([file["previous_filename"]] if file.get("previous_filename") else [])
+    # Distinct names: a file listed twice (pages read while the list changed) would hide one never listed.
+    if len(names) != count:
+        raise Unread("GitHub listed %d of the pull request's %d changed files" % (len(names), count))
     return paths
 
 

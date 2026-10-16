@@ -37,7 +37,9 @@ tests/**                           # CI self-tests no spec imports
   suite".
 - `#` starts a comment, and each entry's reason belongs beside it: the list is a claim about what the
   deploy and the suite read, and the next reader needs to know why each line is true. A pattern that
-  holds a space or a `#` is quoted. A line with two patterns is malformed, never read as one.
+  holds a space or a `#` is quoted. A line with two patterns is malformed, never read as one, and so
+  is a line with an unquoted `#` right after a pattern's own character (`!docs/#internal/**`), which
+  would otherwise end the pattern there.
 - A path with a segment named `e2e`, at any depth (`e2e/`, `tests/e2e/`, `apps/web/e2e/`), is
   **never inert**, whatever the list says. Playwright matches `testMatch` at any depth, so a file
   under such a directory can be a spec, and a list that forgot a `!**/e2e/**` line would skip the pull
@@ -100,7 +102,7 @@ The suite is not applicable only when all of these hold. Everything else runs it
 | **The run is about a pull request.** `pull-request` defaults to the event's, so a push, a schedule or a dispatch names none, reads nothing and runs the suite. | Only a pull request has a diff to judge. A run on the default branch is the gate on what merged. |
 | **The pull request's head is the commit this run is about** (`sha`, by default the event's head). | GitHub lists the files of the current head only. A run for an older head would be judged by another commit's diff. |
 | **It targets the default branch.** | The default branch's own run verified the tree under an inert diff. Nothing verified the tree under a pull request stacked on another branch, and retargeting it later changes its diff with no new head. |
-| **GitHub listed every changed file.** The pull request reports its own count; a list of another length, an entry with no file name, a read that fails, no file at all, or more than the 3000 files GitHub will list, runs the suite. | A list cut short hides the paths that matter. An empty one proves nothing. |
+| **GitHub listed every changed file.** The pull request reports its own count; a list of another length, an entry with no file name, a file listed twice, a read that fails, no file at all, or more than the 3000 files GitHub will list, runs the suite. | A list cut short hides the paths that matter. An empty one proves nothing. |
 | **Every changed path is on the inert list**, both names of a rename. | A path the list does not hold is a path nobody claimed is inert. Moving a file out of the application removes it there, and GitHub reports that under its old name. |
 | **The list is the default branch's**, read from GitHub by the step itself, never from the workspace. No list there, one with no pattern, or one that is malformed, runs the suite. | A pull request cannot widen the list to skip its own suite: the one that adds or widens a list is judged by the default branch's, and once it merges the next pull request is judged by the new one. This is the base the runner judges a manifest from ([architecture](architecture.md), invariant 3), read through GitHub instead of the runner's `git show`: the deciding job has no checkout, and where the base has no manifest the runner uses the head's own, which here would let the pull request that adds a list be skipped by it. |
 | **No reason of your own is given** (`also-run`, below). | A repository can have a rule the catalog knows nothing about. |
@@ -110,7 +112,7 @@ completed workflow run) passes the pull request it resolved, `pull-request: <num
 `sha: <the commit>`. The checks are the same; only the default is strict, so that a workflow that
 says nothing skips nothing outside a pull request event.
 
-**A reason of your own.** `also-run` takes one line: when it is not empty the suite runs, with that
+**A reason of your own.** `also-run` takes one line: when it is not blank the suite runs, with that
 line as the reason, and nothing is read. It is for a rule only your repository has. One consumer's
 suite is the only thing that scores a proof its pull request bodies can claim, so its deciding job
 reads the body with its own grammar first and passes "the body claims a proof only the suite

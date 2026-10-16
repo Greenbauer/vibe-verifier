@@ -23,7 +23,8 @@ WHERE = "%s on main" % LIST
 
 # Serves $FAKE/state.json: "pull" is the pull request's record, "files" its files (as GitHub lists
 # them, a hundred to a page, "listed" of them when GitHub cuts the list short) and "lists" the inert
-# list's text by ref. "fail" fails every read whose endpoint holds one of its strings, and
+# list's text by ref. "fail" fails every read whose endpoint holds one of its strings, "garbage" answers
+# it with a page that is not JSON, and
 # "refuse_writes" every write. Every call's argv goes to $FAKE/argv, every write to $FAKE/writes. A read
 # of the list that does not ask for the raw file is refused, so no test passes on JSON read as patterns.
 FAKE_GH = '''#!/usr/bin/env python3
@@ -43,6 +44,9 @@ if "-X" in argv:
 if any(part in endpoint for part in state.get("fail", [])):
     sys.stderr.write("gh: Bad Gateway (HTTP 502)\\n")
     sys.exit(1)
+if any(part in endpoint for part in state.get("garbage", [])):
+    sys.stdout.write("<html>Bad gateway</html>\\n")
+    sys.exit(0)
 if "/contents/" in endpoint:
     if "Accept: application/vnd.github.raw" not in argv:
         sys.stderr.write("the list was not asked for as a raw file\\n")
@@ -191,6 +195,9 @@ class SuiteScope(unittest.TestCase):
         # The pull request's own count is the only proof the list is whole.
         self.serve(files("docs/a.md"), pull={"changed_files": 2})
         self.assert_runs("GitHub listed 1 of the pull request's 2 changed files", warned=True)
+        # A file listed twice is one file: two pages read while the list changed would otherwise hide another.
+        self.serve(files("docs/b.md", "docs/b.md"))
+        self.assert_runs("GitHub listed 1 of the pull request's 2 changed files", warned=True)
 
     def test_a_file_list_github_does_not_return_runs_the_suite(self):
         self.serve(files("docs/a.md"), fail=["/files"])
@@ -268,6 +275,37 @@ class SuiteScope(unittest.TestCase):
         self.assert_runs("GitHub's answer could not be read (KeyError: 'head')", warned=True)
         (self.fake / "state.json").write_text(json.dumps({"pull": ["not", "a", "record"]}))
         self.assertEqual(self.decide()[0], "false")
+
+    def test_a_gh_that_cannot_run_or_answers_with_no_json_runs_the_suite_with_a_warning(self):
+        for where in ("pulls/7", "/files"):
+            with self.subTest(where):
+                self.serve(files("docs/a.md"), garbage=[where])
+                self.assert_runs("GitHub's answer could not be read (JSONDecodeError: Expecting value: line 1 column 1 "
+                                 "(char 0))", warned=True)
+        empty = self.fake / "no-gh"
+        empty.mkdir()
+        self.env["PATH"] = str(empty)
+        self.assert_runs("gh could not be run: [Errno 2] No such file or directory: 'gh'", warned=True)
+
+    def test_a_hash_inside_a_pattern_is_malformed_not_a_comment(self):
+        # shlex would end the pattern at the `#`: this `!` line would quietly mean `!docs/`, and a pattern like
+        # `docs/*#x` would widen to `docs/*`.
+        for listed in ("docs/**\n!docs/#internal/**\n", "docs/*#x\n"):
+            with self.subTest(listed):
+                self.serve(files("docs/#internal/a.ts"), lists={"main": listed})
+                line = listed.splitlines()[-1]
+                self.assert_runs("the default branch's inert list %s is malformed (line %d has a `#` inside a pattern, "
+                                 "which would start a comment there (quote the pattern, or put a space before the "
+                                 "comment): %s)" % (LIST, listed.count("\n"), line), warned=True)
+                self.assertEqual(self.check(listed, "scripts/deploy.sh").returncode, 2)
+        # Quoted, or escaped, it is part of the pattern; a comment after a space is still a comment.
+        quoted = "docs/**   # documentation\n'!docs/#internal/**'   # read by the suite\n!docs/\\#raw/**\n"
+        for path in ("docs/#internal/a.ts", "docs/#raw/b.ts"):
+            with self.subTest(path):
+                self.serve(files("docs/guide.md", path), lists={"main": quoted})
+                self.assert_runs("%s is not on the inert list (%s)" % (path, WHERE))
+        self.serve(files("docs/guide.md"), lists={"main": quoted})
+        self.assertEqual(self.decide()[0], "true")
 
     def test_a_reason_of_the_callers_own_runs_the_suite_and_reads_nothing(self):
         self.serve(files("docs/a.md"))
