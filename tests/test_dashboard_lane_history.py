@@ -137,9 +137,10 @@ class Samples(unittest.TestCase):
 
 class Ranges(unittest.TestCase):
     def test_each_range_has_its_bar_count_and_the_last_bar_holds_now(self):
-        # The last bar is 12:00:00 to now (12:00:30). One job runs through it on a runner still in a slot,
-        # one finished half way. The sample saw 3 slots up and 2 recorded jobs, with one runner kept warm.
-        point = sample(30, 3, 2)
+        # The last bar is 12:00:00 to now (12:00:30). Its sample saw 3 runners up and no job recorded yet,
+        # with a warm pool of 1. Job spans put 45 s of work in those 30 s: one job through it on a runner
+        # still in a slot, one finished half way. The rest of the 90 slot-seconds is idle, warm first.
+        point = sample(30, 3, 0)
         point["host"]["warm"] = 1
         rows = [{"runner": "a", "kind": "ci", "started_at": ago(90), "finished_at": None, "wait_seconds": 0, "routing_seconds": None},
                 {"runner": "b", "kind": "qae", "started_at": ago(120), "finished_at": ago(15), "wait_seconds": 0, "routing_seconds": None}]
@@ -147,34 +148,48 @@ class Ranges(unittest.TestCase):
         self.assertEqual([(row["name"], len(row["buckets"])) for row in result["ranges"]],
                          [("1h", 30), ("24h", 48), ("7d", 56)])
         last = result["ranges"][0]["buckets"][-1]
-        self.assertEqual(last, {"start": "2026-10-14T12:00:00Z", "running": 1.5, "warm": 1, "reserved": 0, "waiting": 0})
+        self.assertEqual(last, {"start": "2026-10-14T12:00:00Z", "running": 1.5, "warm": 1, "reserved": 0.5, "waiting": 0})
         self.assertEqual(result["ranges"][0]["buckets"][0], {"start": "2026-10-14T11:02:00Z"})
 
-    def test_busy_share_counts_job_time_so_jobs_shorter_than_a_sample_still_count(self):
-        # 8 slots. A 600 s job, a 17 s job no 30-second sample would see, a job still running for 100 s,
-        # a wait-pool job and an unfinished job whose runner is gone (neither counts).
+    def test_a_job_shorter_than_a_sample_counts_as_busy_and_its_runner_is_not_also_idle(self):
+        # Seen live on 2026-10-14: a 17 s job between 30 s samples, its runner's job recorded too late for
+        # any sample to see it running. Two slots; one runner up through four samples.
+        points = [sample(seconds, 1, 0) for seconds in (120, 90, 60, 30)]
+        rows = [{"runner": "short", "kind": "ci", "started_at": ago(80), "finished_at": ago(63),
+                 "wait_seconds": 0, "routing_seconds": None}]
+        hour = LH.history(points, rows, {"slots": {"limit": 2}}, True, None, stamp(NOW))["ranges"][0]
+        self.assertEqual(hour["busy_percent"], round(100 * 17 / (120 * 2), 1))
+        bar = hour["buckets"][-2]
+        self.assertEqual((bar["running"], bar["warm"], bar["reserved"]), (round(17 / 90, 2), 0, round(73 / 90, 2)))
+        self.assertEqual(round(bar["running"] + bar["warm"] + bar["reserved"], 2), 1.0)
+
+    def test_jobs_with_no_recorded_finish_still_count_from_the_samples(self):
+        # Jobs from before the listener recorded finishes, or a missed completion: no span, but every
+        # sample saw all 4 slots running, so the hour is fully busy, not free.
+        points = [sample(seconds, 4, 4) for seconds in range(3570, 0, -30)]
+        rows = [{"runner": "old", "kind": "ci", "started_at": ago(3500), "finished_at": None, "wait_seconds": 0, "routing_seconds": None}]
+        hour = LH.history(points, rows, {"slots": {"limit": 4}}, True, None, stamp(NOW))["ranges"][0]
+        self.assertEqual((hour["busy_percent"], hour["idle_hours"]), (100, 0))
+        self.assertEqual(hour["buckets"][-2]["running"], 4)
+
+    def test_busy_share_counts_each_sample_window_and_splits_idle_from_warm(self):
+        # 8 slots. The 7200 s sample is outside the hour. In the hour: 60 s with 4 running, then 30 s with
+        # 2 running, 2 up with no job and a warm pool of 1. A wait-pool job never counts.
         points = [sample(7200, 8, 8), sample(90, 4, 4), sample(30, 4, 2)]
         points[2]["host"]["warm"] = 1
-        def row(runner, start, end, kind="ci"):
-            return {"runner": runner, "kind": kind, "started_at": ago(start), "finished_at": end and ago(end),
-                    "wait_seconds": 0, "routing_seconds": None}
-        rows = [row("long", 1200, 600), row("short", 300, 283), row("now", 100, None), row("wait", 500, 100, "wait"),
-                row("gone", 900, None)]
-        host = {"slots": {"limit": 8, "occupied": [{"runner_name": "now"}]}}
-        result = LH.history(points, rows, host, True, None, stamp(NOW))
+        rows = [{"runner": "wait", "kind": "wait", "started_at": ago(90), "finished_at": ago(1),
+                 "wait_seconds": 0, "routing_seconds": None}]
+        result = LH.history(points, rows, {"slots": {"limit": 8}}, True, None, stamp(NOW))
         hour, day = result["ranges"][0], result["ranges"][1]
-        self.assertEqual(hour["busy_percent"], round(100 * (600 + 17 + 100) / (3600 * 8), 1))
-        # The day's window starts at the first sample, two hours ago, not a day ago.
-        self.assertEqual(day["busy_percent"], round(100 * (600 + 17 + 100) / (7200 * 8), 1))
+        self.assertEqual(hour["busy_percent"], round(100 * (60 * 4 + 30 * 2) / (90 * 8), 1))
         self.assertEqual(hour["covered_hours"], round(90 / 3600, 2))
         self.assertEqual(day["covered_hours"], round((120 + 90) / 3600, 2))
-        # The last sample: 2 runners up with no job, one of them the warm pool's, for 30 s.
         self.assertEqual((hour["warm_hours"], hour["idle_hours"]), (round(30 / 3600, 2), round(30 / 3600, 2)))
 
     def test_busy_share_never_reads_over_full(self):
         rows = [{"runner": "r%d" % n, "kind": "ci", "started_at": ago(3600), "finished_at": ago(0),
                  "wait_seconds": 0, "routing_seconds": None} for n in range(9)]
-        result = LH.history([sample(7200, 8, 8)], rows, {"slots": {"limit": 8}}, True, None, stamp(NOW))
+        result = LH.history([sample(90, 8, 8), sample(30, 8, 8)], rows, {"slots": {"limit": 8}}, True, None, stamp(NOW))
         self.assertEqual(result["ranges"][0]["busy_percent"], 100)
 
     def test_samples_from_before_running_was_recorded_leave_the_bars_empty(self):

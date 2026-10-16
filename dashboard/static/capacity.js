@@ -150,10 +150,11 @@
   }
 
   // The warm pool keeps a few build-and-test runners up with no job on purpose. The host does not say
-  // which ones, so the longest-idle ones up to the pool's size are shown as kept warm.
+  // which ones; the listener stops idle runners oldest first and keeps the newest up to the pool's
+  // size (lanes/listener/plan.go, planIdleStops), so those are the ones shown as kept warm.
   function states(lanes, warm) {
     const idle = lanes.filter(lane => kindOf(lane) === "ci" && lane.state === "allocated")
-      .sort((a, b) => String(a.allocated_at).localeCompare(String(b.allocated_at)));
+      .sort((a, b) => String(b.allocated_at).localeCompare(String(a.allocated_at)));
     const kept = new Set(idle.slice(0, warm || 0));
     return new Map(lanes.map(lane => [lane, kept.has(lane) ? "warm" : lane.state]));
   }

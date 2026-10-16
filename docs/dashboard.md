@@ -264,7 +264,8 @@ kinds, the columns, and failure handling.
 - **Five cards**: runners in use now (`5 of 8`, the runner slots only, and how many the warm pool keeps
   up on purpose); jobs waiting for a runner right now (`Unknown` when the listener's queue was not
   read); and, for the chosen range, the busy share (the share of the runner slots' time spent running
-  jobs, measured from each job's start and finish), the wait for a runner, and idle runners (time
+  jobs, from the samples and from each job's start and finish, so a job shorter than a sample counts),
+  the wait for a runner, and idle runners (time
   runners were up with no job, not counting the warm pool, which the detail names separately). The
   wait card counts from GitHub handing a job to the lane until a runner takes it. Its value is the
   median; its detail is the 95th percentile, the job count and, when GitHub reports when it queued
@@ -284,8 +285,9 @@ kinds, the columns, and failure handling.
   has been up), the job (linked when the host or GitHub gave a link), the repository and, when the job
   is on an open pull request's current head, its number, and the time. Running time counts from the
   job's start (GitHub assigning it to the runner) when the listener recorded it, else from when the
-  runner was allocated. The host does not say which runners the warm pool keeps, so the longest-idle
-  build-and-test runners, up to the pool's size, show as `Kept warm`. Free slots are not runners yet
+  runner was allocated. The host does not say which runners the warm pool keeps; the listener stops idle
+  runners oldest first and keeps the newest, so the newest idle build-and-test runners, up to the
+  pool's size, show as `Kept warm`. Free slots are not runners yet
   (the listener starts one in any free slot when a job arrives), so each pool ends with one count:
   `3 free`.
 - **The shared host** meters, unchanged.

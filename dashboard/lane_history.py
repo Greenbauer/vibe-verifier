@@ -12,9 +12,10 @@ inputs come from the lane's listener through the sampler, and both are optional:
   assignment: the listener hears JobStarted late (a 17-second job's arrived as it finished). It
   ends at GitHub's finish time once the listener records the completion.
 
-Busy time is measured from those job spans, not from samples: a sample every 30 seconds misses jobs
-shorter than that (four such jobs read as 0% busy on 2026-10-14). Samples still give the reserved
-runners, the warm pool and when the collector was watching.
+Busy time takes the larger of what each sample saw and the job time between it and the next sample:
+a sample every 30 seconds misses jobs shorter than that (four such jobs read as 0% busy on 2026-10-14),
+and a job the listener never saw finish has no span. Samples give the rest: idle runners, the warm
+pool, and when the collector was watching.
 
 Three things are kept in the collector's root-only state, each pruned to seven days: samples (one
 per refresh, now with running and waiting counts), waits (one per job), and the derived history the
@@ -202,17 +203,9 @@ def _usable(sample):
     return "slots_running" in sample["host"]
 
 
-def _idle(point):
-    """A sample's runners up with no recorded job, split into the warm pool and the rest."""
-    host = point["host"]
-    reserved = max(0, host["slots_occupied"] - host["slots_running"])
-    warm = min(reserved, host.get("warm") or 0)
-    return warm, reserved - warm
-
-
 def job_spans(wait_rows, occupied, now):
     """(start, end) of each shared-pool job: GitHub's runner assignment to its finish, or to now while
-    its runner still holds a slot. A job with neither end is left out rather than guessed."""
+    its runner still holds a slot. A job with neither end adds nothing; the samples still count it."""
     spans = []
     for row in wait_rows:
         if row.get("kind") not in SHARED_KINDS:
@@ -227,16 +220,30 @@ def _overlap(spans, start, end):
     return sum(max(0.0, (min(stop, end) - max(begin, start)).total_seconds()) for begin, stop in spans)
 
 
-def _bucket(start, step, points, spans, now):
-    if not points:
+def _intervals(points, spans, limit, now):
+    """Slot-seconds in each sample's interval (until the next sample, at most SAMPLE_SPAN_SECONDS):
+    (point, seconds, running, warm, idle). Running is the larger of what the sample saw and the job
+    time inside the interval: a sample misses a job shorter than the interval, and a job the listener
+    never saw finish has no span. Idle is the rest of the occupied slot time, the warm pool's share
+    first, so a short job's runner is not also counted idle."""
+    rows = []
+    for point, seconds in zip(points, _spans(points, now)):
+        host, begin = point["host"], parse_time(point["observed_at"])
+        jobs = _overlap(spans, begin, begin + dt.timedelta(seconds=seconds))
+        running = min(max(host["slots_running"] * seconds, jobs), (limit or host["slots_occupied"]) * seconds)
+        idle = max(0.0, host["slots_occupied"] * seconds - running)
+        warm = min(idle, (host.get("warm") or 0) * seconds)
+        rows.append((point, seconds, running, warm, idle - warm))
+    return rows
+
+
+def _bucket(start, rows):
+    seconds = sum(row[1] for row in rows)
+    if not rows:
         return {"start": format_time(start)}
-    end = min(start + dt.timedelta(seconds=step), now)
-    length = max(1.0, (end - start).total_seconds())
-    idle = [_idle(point) for point in points]
-    waiting = [point["host"]["jobs_waiting"] for point in points if point["host"].get("jobs_waiting") is not None]
-    return {"start": format_time(start), "running": round(_overlap(spans, start, end) / length, 2),
-            "warm": round(sum(warm for warm, _ in idle) / len(idle), 2),
-            "reserved": round(sum(rest for _, rest in idle) / len(idle), 2),
+    waiting = [row[0]["host"]["jobs_waiting"] for row in rows if row[0]["host"].get("jobs_waiting") is not None]
+    average = lambda index: round(sum(row[index] for row in rows) / seconds, 2) if seconds else 0
+    return {"start": format_time(start), "running": average(2), "warm": average(3), "reserved": average(4),
             "waiting": max(waiting) if waiting else None}
 
 
@@ -246,30 +253,23 @@ def _spans(points, now):
 
 
 def range_view(name, length, step, points, wait_rows, limit, now, occupied=()):
-    """One range's bars and totals. Bars are aligned to the clock; the last one is still filling."""
+    """One range's bars and totals, over the time the collector sampled. Bars are aligned to the
+    clock; the last one is still filling."""
     end = dt.datetime.fromtimestamp((int(now.timestamp()) // step + 1) * step, dt.timezone.utc)
     start = end - dt.timedelta(seconds=length)
     inside = [point for point in points if parse_time(point["observed_at"]) >= start]
+    rows = _intervals(inside, job_spans(wait_rows, set(occupied), now), limit, now)
     slots = {}
-    for point in inside:
-        index = int((parse_time(point["observed_at"]) - start).total_seconds()) // step
-        slots.setdefault(index, []).append(point)
-    spans = job_spans(wait_rows, set(occupied), now)
-    buckets = [_bucket(start + dt.timedelta(seconds=index * step), step, slots.get(index, []), spans, now)
-               for index in range(length // step)]
-    weights = _spans(inside, now)
-    covered = sum(weights)
-    idle = [_idle(point) for point in inside]
-    # Busy is job time over slot time since the range began or, when history is younger, since its
-    # first sample (jobs keep arriving from the listener's file across a collector outage).
-    since = max(now - dt.timedelta(seconds=length), parse_time(points[0]["observed_at"])) if points else now
-    window = (now - since).total_seconds()
-    busy = 100 * _overlap(spans, since, now) / (window * limit) if window > 0 and limit else None
+    for row in rows:
+        slots.setdefault(int((parse_time(row[0]["observed_at"]) - start).total_seconds()) // step, []).append(row)
+    buckets = [_bucket(start + dt.timedelta(seconds=index * step), slots.get(index, [])) for index in range(length // step)]
+    covered = sum(row[1] for row in rows)
+    total = lambda index: sum(row[index] for row in rows)
     return {"name": name, "bucket_seconds": step, "buckets": buckets,
             "covered_hours": round(covered / 3600, 2),
-            "busy_percent": None if busy is None else round(min(100.0, busy), 1),
-            "warm_hours": round(sum(weight * warm for weight, (warm, _) in zip(weights, idle)) / 3600, 2) if covered else None,
-            "idle_hours": round(sum(weight * rest for weight, (_, rest) in zip(weights, idle)) / 3600, 2) if covered else None,
+            "busy_percent": round(100 * total(2) / (covered * limit), 1) if covered and limit else None,
+            "warm_hours": round(total(3) / 3600, 2) if covered else None,
+            "idle_hours": round(total(4) / 3600, 2) if covered else None,
             "wait": wait_summary([row for row in wait_rows if row["started_at"] >= format_time(now - dt.timedelta(seconds=length))])}
 
 

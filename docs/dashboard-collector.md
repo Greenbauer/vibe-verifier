@@ -123,8 +123,9 @@ GitHub job. An older listener that does not write `assignment` is that fallback.
 
 The sampler also reads two files the lane's listener keeps directly in `/run/<lane>/`
 ([run-dir contract](../lanes/listener/README.md#the-run-dir-contract)): `queue.json`, each scale
-set's assigned and running job counts and warm-pool size, and `jobs.json`, the newest started jobs
-with GitHub's queued, scale-set-assigned and runner-assigned times. Each is read through the same
+set's assigned and running job counts and warm-pool size, and `jobs.json`, the newest jobs with
+GitHub's queued, scale-set-assigned and runner-assigned times, and the finish time once the listener
+heard the job complete (a completion it never saw start adds the job too). Each is read through the same
 no-symlink, regular-file reader, at most 1 MiB, and only the newest 100 jobs are returned. A missing
 or unreadable file is returned as `null`, never as an empty queue. The collector keeps only the
 counts and times named in [Lane history](#lane-history); repository and job names in `jobs.json` are
@@ -260,28 +261,30 @@ started         runner name to its job's start time, for the slots occupied now
 ranges[]        1h, 24h and 7d, in that order
   name, bucket_seconds (120, 1800, 10800), covered_hours
   buckets[]     30, 48 or 56 clock-aligned periods, the last one still filling: start, and when it
-                has samples, running (job time in the period over its length), warm and reserved
-                (averages of the samples' runners up with no job: the warm pool's share, then the
-                rest) and waiting (the most seen, or null)
-  busy_percent  shared-pool job time over the limit times the window, at most 100; the window is the
-                range, or since the first sample when the history is younger
+                has samples, running, warm and reserved (average slots over its sampled time: running
+                a job, up with no job for the warm pool, up with no job otherwise) and waiting (the
+                most seen, or null)
+  busy_percent  running slot time over the limit times the sampled time in the range
   warm_hours    slot time the warm pool held runners up with no job, on purpose
   idle_hours    slot time other runners held with no recorded job
   wait          jobs, p50_seconds, p95_seconds (nearest rank), routing_seconds (the mean over jobs
                 GitHub sent a queued time for, else null); null when no job started in the range
 ```
 
-Busy time comes from job spans, not samples: a job counts from GitHub assigning it to a runner until
-its finish, or until now while its runner still holds a slot. A job with no finish whose runner is gone
-is left out rather than guessed, so jobs from before the listener recorded finishes do not count. On
-2026-10-14 four jobs of about 17 seconds ran between 30-second samples and read as 0% busy; that is
-why. Only `ci` and `qae` jobs count; the wait pool has its own slots.
+Running time in each sample's interval is the larger of two counts: the slots the sample saw running
+a recorded job, and the job time inside the interval from job spans (a job counts from GitHub
+assigning it to a runner until its finish, or until now while its runner still holds a slot). A
+sample misses a job shorter than the interval: on 2026-10-14 four jobs of about 17 seconds ran between
+30-second samples, their runners' jobs recorded too late to be seen, and read as 0% busy. A job with
+no recorded finish whose runner is gone has no span, but the samples still saw it. Running is at most
+the limit. The rest of the interval's occupied slot time is idle, the warm pool's size of it first, so
+a short job's runner is not also counted idle. Only `ci` and `qae` jobs count; the wait pool has its
+own slots.
 
 A sample stands for the time until the next sample, at most 120 seconds, so a collector outage counts
 as unsampled time rather than as whatever the last sample saw. Samples from before `slots_running`
-was recorded leave their bars empty. A runner up with no recorded job is idle; the warm pool's size of
-them in each sample counts as kept warm instead. A slot whose job is matched only through GitHub
-counts as idle here.
+was recorded leave their bars empty. A slot whose job is matched only through GitHub, and no job span
+covers, counts as idle here.
 
 The output is an atomic replacement with mode `0600`. Remote output and prior snapshots are
 allowlist-projected before writing, so extra fields cannot carry raw configuration or secrets into

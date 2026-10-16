@@ -120,9 +120,10 @@ test("runners are grouped by kind in plain words, named by kind and slot, with f
   const rows = content.find("runner-row").slice(1).map(row => row.text.replace(/\s+/g, " ").trim());
   assert.deepStrictEqual(rows.length, 6);
   assert.match(rows[0], /^Build 1 Running <img src=x> widgets #41 11m/);
-  // The warm pool is one runner: the longest-idle build runner is the one shown as kept warm.
-  assert.match(rows[1], /^Build 3 Kept warm Ready for the next job; kept up on purpose 6m 0s idle/);
-  assert.match(rows[2], /^Build 4 Idle, no job Waiting for GitHub to send a job 2m 0s idle/);
+  // The warm pool is one runner: the listener keeps the newest idle one and stops older ones, so the
+  // newest idle build runner is the one shown as kept warm.
+  assert.match(rows[1], /^Build 3 Idle, no job Waiting for GitHub to send a job 6m 0s idle/);
+  assert.match(rows[2], /^Build 4 Kept warm Ready for the next job; kept up on purpose 2m 0s idle/);
   assert.match(rows[3], /^2 free A runner starts in a free slot when a job arrives\./);
   assert.match(rows[4], /^Wait 2 Running Wait for preview widgets 3m/);
   assert.match(rows[5], /^1 free Not counted in the runner slots above\./);
