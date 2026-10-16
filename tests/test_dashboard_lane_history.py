@@ -23,9 +23,10 @@ def ago(seconds):
     return stamp(NOW - timedelta(seconds=seconds))
 
 
-def job(runner, queued, routed, assigned, started, kind="ci"):
+def job(runner, queued, routed, assigned, started, kind="ci", finished=None):
     row = {"kind": kind, "instance": 1, "runner_name": runner, "started_at": started}
-    for key, value in (("queued_at", queued), ("scale_set_assigned_at", routed), ("runner_assigned_at", assigned)):
+    for key, value in (("queued_at", queued), ("scale_set_assigned_at", routed), ("runner_assigned_at", assigned),
+                       ("finished_at", finished)):
         if value is not None:
             row[key] = value
     return row
@@ -49,14 +50,16 @@ def sample(seconds_ago, occupied, running, waiting=0):
 
 class Queue(unittest.TestCase):
     def test_waiting_is_assigned_minus_running_per_set_and_warm_sums_the_pools(self):
-        raw = {"version": 1, "sets": [{"kind": "ci", "assigned": 5, "running": 3, "min_runners": 1},
+        raw = {"version": 1, "sets": [{"kind": "ci", "assigned": 5, "running": 3, "min_runners": 1, "warm_instances": [3]},
                                       {"kind": "qae", "assigned": 1, "running": 2, "min_runners": 0}]}
-        self.assertEqual(LH.project_queue(raw), {"waiting": 2, "warm": 1})
+        self.assertEqual(LH.project_queue(raw), {"waiting": 2, "warm": 1, "warm_slots": ["ci-3"]})
 
     def test_an_unreadable_queue_is_unknown_not_zero(self):
         for raw in (None, {"version": 2, "sets": []}, {"version": 1, "sets": [{"kind": "x", "assigned": 1, "running": 0}]},
                     {"version": 1, "sets": [{"kind": "ci", "assigned": -1, "running": 0}]},
-                    {"version": 1, "sets": [{"kind": "ci", "assigned": True, "running": 0}]}):
+                    {"version": 1, "sets": [{"kind": "ci", "assigned": True, "running": 0}]},
+                    {"version": 1, "sets": [{"kind": "ci", "assigned": 1, "running": 0, "warm_instances": [0]}]},
+                    {"version": 1, "sets": [{"kind": "ci", "assigned": 1, "running": 0, "warm_instances": "3"}]}):
             with self.subTest(raw=raw):
                 self.assertIsNone(LH.project_queue(raw))
 
@@ -64,15 +67,22 @@ class Queue(unittest.TestCase):
 class Waits(unittest.TestCase):
     def test_a_job_waits_from_the_lane_to_a_runner_and_routing_is_githubs_part_before_it(self):
         row = LH.project_job(job("r-ci-1-1", ago(100), ago(90), ago(40), ago(39)))
-        self.assertEqual(row, {"runner": "r-ci-1-1", "kind": "ci", "started_at": ago(40),
+        self.assertEqual(row, {"runner": "r-ci-1-1", "kind": "ci", "started_at": ago(40), "finished_at": None,
                                "wait_seconds": 50, "routing_seconds": 10})
 
     def test_the_shape_github_sends_a_warm_runner_job_is_a_zero_wait_without_routing(self):
         # Seen on a live lane, 2026-10-14: no queued time, the set and runner times equal to the job's
         # GitHub created_at, and the listener hearing JobStarted 19 s later, as the job finished.
         row = LH.project_job(job("r-ci-1-1", None, ago(19), ago(19), ago(0)))
-        self.assertEqual(row, {"runner": "r-ci-1-1", "kind": "ci", "started_at": ago(19),
+        self.assertEqual(row, {"runner": "r-ci-1-1", "kind": "ci", "started_at": ago(19), "finished_at": None,
                                "wait_seconds": 0, "routing_seconds": None})
+
+    def test_a_finished_job_keeps_githubs_finish_and_one_finishing_before_it_started_is_dropped(self):
+        row = LH.project_job(job("r-ci-1-1", None, ago(40), ago(40), ago(39), finished=ago(23)))
+        self.assertEqual(row["finished_at"], ago(23))
+        self.assertIsNone(LH.project_job(job("r-ci-1-1", None, ago(40), ago(40), ago(39), finished=ago(41))))
+        kept = LH.waits([dict(row, finished_at="soon")], None, NOW)
+        self.assertEqual(kept, [])
 
     def test_a_job_without_both_ends_of_its_wait_is_not_a_wait(self):
         self.assertIsNone(LH.project_job(job("r-ci-1-1", ago(100), None, ago(40), ago(39))))
@@ -129,24 +139,144 @@ class Samples(unittest.TestCase):
 
 class Ranges(unittest.TestCase):
     def test_each_range_has_its_bar_count_and_the_last_bar_holds_now(self):
-        result = LH.history([sample(30, 3, 2)], [], {"slots": {"limit": 8, "occupied": []}}, True, None, stamp(NOW))
+        # The last bar is 12:00:00 to now (12:00:30). Its sample saw 3 runners up and no job recorded yet,
+        # with a warm pool of 1. Job spans cover two of them: one job through the interval on a runner
+        # still in a slot, one finished half way (its runner then exits). The third is the warm one.
+        point = sample(30, 3, 0)
+        point["host"]["warm"] = 1
+        rows = [{"runner": "a", "kind": "ci", "started_at": ago(90), "finished_at": None, "wait_seconds": 0, "routing_seconds": None},
+                {"runner": "b", "kind": "qae", "started_at": ago(120), "finished_at": ago(15), "wait_seconds": 0, "routing_seconds": None}]
+        result = LH.history([point], rows, {"slots": {"limit": 8, "occupied": [{"runner_name": "a"}]}}, True, None, stamp(NOW))
         self.assertEqual([(row["name"], len(row["buckets"])) for row in result["ranges"]],
                          [("1h", 30), ("24h", 48), ("7d", 56)])
         last = result["ranges"][0]["buckets"][-1]
-        self.assertEqual(last, {"start": "2026-10-14T12:00:00Z", "running": 2, "reserved": 1, "waiting": 0})
+        self.assertEqual(last, {"start": "2026-10-14T12:00:00Z", "running": 1.5, "warm": 1, "reserved": 0, "waiting": 0})
         self.assertEqual(result["ranges"][0]["buckets"][0], {"start": "2026-10-14T11:02:00Z"})
 
-    def test_busy_share_and_reserved_hours_weigh_each_sample_by_its_time_with_gaps_capped(self):
-        # 8 slots; 4 running for 60 s, then 2 running and 2 reserved for 30 s up to now. The two-hour gap
-        # before the first sample counts nothing because nothing was sampled in it.
+    def test_a_job_shorter_than_a_sample_counts_as_busy_and_its_runner_is_not_also_idle(self):
+        # Seen live on 2026-10-14: a 17 s job between 30 s samples, its runner's job recorded too late for
+        # any sample to see it running. Two slots; one runner up through four samples.
+        points = [sample(seconds, 1, 0) for seconds in (120, 90, 60, 30)]
+        rows = [{"runner": "short", "kind": "ci", "started_at": ago(80), "finished_at": ago(63),
+                 "wait_seconds": 0, "routing_seconds": None}]
+        hour = LH.history(points, rows, {"slots": {"limit": 2}}, True, None, stamp(NOW))["ranges"][0]
+        self.assertEqual(hour["busy_percent"], round(100 * 17 / (120 * 2), 1))
+        # The bar holds three 30 s intervals of one runner up: idle; then idle 10 s until the job starts
+        # and the job's 17 s; then the runner seen 3 s after its job ended, cleaning up, which counts as
+        # neither running nor idle.
+        bar = hour["buckets"][-2]
+        self.assertEqual((bar["running"], bar["warm"], bar["reserved"]), (round(17 / 90, 2), 0, round(40 / 90, 2)))
+        self.assertLessEqual(bar["running"] + bar["warm"] + bar["reserved"], 1.0)
+
+    def test_a_job_a_sample_saw_counts_only_its_own_time_and_its_runner_is_not_idle(self):
+        # The sixth audit's case: limit 2, a job 12:00:25 to 12:00:42 (finish recorded), samples at
+        # 12:00:00, 12:00:30 (saw it running, or up with its job not yet recorded) and 12:01:00.
+        at = lambda clock: stamp(datetime(2026, 10, 14, 12, *clock, tzinfo=timezone.utc))
+        rows = [{"runner": "r", "kind": "ci", "started_at": at((0, 25)), "finished_at": at((0, 42)),
+                 "wait_seconds": 0, "routing_seconds": None}]
+        for running in (1, 0):
+            points = [{"observed_at": at(clock), "host": dict(sample(0, occupied, ran)["host"])}
+                      for clock, occupied, ran in (((0, 0), 0, 0), ((0, 30), 1, running), ((1, 0), 0, 0))]
+            with self.subTest(sampled_running=running):
+                rows_ = LH._intervals(points, LH.job_spans(rows, set(), NOW), 2, NOW)
+                self.assertEqual(sum(row[2] for row in rows_[:2]), 17)  # running: the job's own 17 s
+                self.assertEqual(sum(row[3] + row[4] for row in rows_[:2]), 0)  # nobody idle
+
+    def test_a_cleaning_runner_beside_a_job_the_host_has_not_recorded_is_not_idle(self):
+        # The confirming audit's case, limit 4: at 12:00:30 runner A is cleaning up after a job that ended
+        # at 12:00:28 (its job still recorded), runner B took a job at 12:00:25 the host has not recorded.
+        at = lambda clock: stamp(datetime(2026, 10, 14, 12, *clock, tzinfo=timezone.utc))
+        rows = [{"runner": "a", "kind": "ci", "started_at": at((0, 5)), "finished_at": at((0, 28)), "wait_seconds": 0, "routing_seconds": None},
+                {"runner": "b", "kind": "ci", "started_at": at((0, 25)), "finished_at": at((1, 0)), "wait_seconds": 0, "routing_seconds": None}]
+        point = {"observed_at": at((0, 30)), "host": dict(sample(0, 2, 1)["host"])}
+        later = {"observed_at": at((1, 0)), "host": dict(sample(0, 0, 0)["host"])}
+        row = LH._intervals([point, later], LH.job_spans(rows, set(), NOW), 4, NOW)[0]
+        self.assertEqual((row[2], row[3] + row[4]), (30, 0))
+
+    def test_a_runner_still_cleaning_up_after_its_job_adds_no_running_time(self):
+        # The seventh audit's case: a job 12:00:10 to 12:00:28; the 12:00:30 sample still sees its job
+        # recorded while the unit cleans up. It counts its own 18 s, not 18 s plus a 30 s interval.
+        at = lambda clock: stamp(datetime(2026, 10, 14, 12, *clock, tzinfo=timezone.utc))
+        rows = [{"runner": "r", "kind": "ci", "started_at": at((0, 10)), "finished_at": at((0, 28)),
+                 "wait_seconds": 0, "routing_seconds": None}]
+        points = [{"observed_at": at(clock), "host": dict(sample(0, occupied, ran)["host"])}
+                  for clock, occupied, ran in (((0, 0), 0, 0), ((0, 30), 1, 1), ((1, 0), 0, 0))]
+        intervals = LH._intervals(points, LH.job_spans(rows, set(), NOW), 2, NOW)
+        self.assertEqual(sum(row[2] for row in intervals[:2]), 18)
+        self.assertEqual(sum(row[3] + row[4] for row in intervals[:2]), 0)
+
+    def test_jobs_with_no_recorded_finish_still_count_from_the_samples(self):
+        # Jobs from before the listener recorded finishes, or a missed completion: no span, but every
+        # sample saw all 4 slots running, so the hour is fully busy, not free.
+        points = [sample(seconds, 4, 4) for seconds in range(3570, 0, -30)]
+        rows = [{"runner": "old", "kind": "ci", "started_at": ago(3500), "finished_at": None, "wait_seconds": 0, "routing_seconds": None}]
+        hour = LH.history(points, rows, {"slots": {"limit": 4}}, True, None, stamp(NOW))["ranges"][0]
+        self.assertEqual((hour["busy_percent"], hour["idle_hours"]), (100, 0))
+        self.assertEqual(hour["buckets"][-2]["running"], 4)
+
+    def test_busy_share_counts_each_sample_window_and_splits_idle_from_warm(self):
+        # 8 slots. The 7200 s sample is outside the hour. In the hour: 60 s with 4 running, then 30 s with
+        # 2 running, 2 up with no job and a warm pool of 1. A wait-pool job never counts.
         points = [sample(7200, 8, 8), sample(90, 4, 4), sample(30, 4, 2)]
-        result = LH.history(points, [], {"slots": {"limit": 8}}, True, None, stamp(NOW))
-        hour = result["ranges"][0]
-        self.assertEqual(hour["covered_hours"], round(90 / 3600, 2))
+        points[2]["host"]["warm"] = 1
+        rows = [{"runner": "wait", "kind": "wait", "started_at": ago(90), "finished_at": ago(1),
+                 "wait_seconds": 0, "routing_seconds": None}]
+        result = LH.history(points, rows, {"slots": {"limit": 8}}, True, None, stamp(NOW))
+        hour, day = result["ranges"][0], result["ranges"][1]
         self.assertEqual(hour["busy_percent"], round(100 * (60 * 4 + 30 * 2) / (90 * 8), 1))
-        self.assertEqual(hour["reserved_hours"], round(30 * 2 / 3600, 2))
-        day = result["ranges"][1]
+        self.assertEqual(hour["covered_hours"], round(90 / 3600, 2))
         self.assertEqual(day["covered_hours"], round((120 + 90) / 3600, 2))
+        self.assertEqual((hour["warm_hours"], hour["idle_hours"]), (round(30 / 3600, 2), round(30 / 3600, 2)))
+
+    def test_a_bar_holding_only_the_newest_sample_shows_what_it_saw(self):
+        # The collector appends the sample it just took, whose interval has not begun. Alone in the
+        # newest bar (12:00:00 to now, the sample at 12:00:30) it must not read as 0 running, all free.
+        points = [sample(90, 4, 4), sample(60, 4, 4), sample(0, 4, 3)]
+        points[-1]["host"]["warm"] = 1
+        rows = [{"runner": "a", "kind": "ci", "started_at": ago(5), "finished_at": None, "wait_seconds": 0, "routing_seconds": None}]
+        hour = LH.history(points, rows, {"slots": {"limit": 4, "occupied": [{"runner_name": "a"}]}}, True, None, stamp(NOW))["ranges"][0]
+        self.assertEqual(hour["buckets"][-1], {"start": "2026-10-14T12:00:00Z", "running": 3, "warm": 1, "reserved": 0, "waiting": 0})
+        # Its one second of weight is not added to the totals, which cover sampled time only.
+        self.assertEqual(hour["busy_percent"], 100)
+
+    def test_the_newest_sample_does_not_tip_a_bar_it_shares_with_older_samples_over_its_limit(self):
+        # Refreshes every 30 s for an hour, the collector's newest sample at "now", at several offsets
+        # against the bar edges, through capture(). 2 slots: 1 running, 1 warm. Every sampled bar of
+        # every range reads exactly 1 running and 1 warm, never more than the limit.
+        host = {"cpu": {"busy_percent": 1}, "memory": {"available_bytes": 1}, "workspace": {"free_bytes": 1},
+                "slots": {"limit": 2, "occupied_count": 2, "remaining_on_demand": 0,
+                          "occupied": [allocated("ci", 1, "busy", "build"), allocated("ci", 2, "warm")]}}
+        response = {"host": {"queue": {"version": 1, "sets": [{"kind": "ci", "assigned": 1, "running": 1,
+                                                                 "min_runners": 1, "warm_instances": [2]}]}}}
+        for offset in (0, 7, 29):
+            state, start = {}, NOW - timedelta(hours=1) + timedelta(seconds=offset)
+            for step in range(120):
+                state = LH.capture(state, response, host, True, stamp(start + timedelta(seconds=30 * step)))
+            history = state["history"]
+            self.assertEqual(history["warm_slots"], ["ci-2"])
+            for view in history["ranges"]:
+                for bar in (bar for bar in view["buckets"] if "running" in bar):
+                    with self.subTest(offset=offset, range=view["name"], bar=bar["start"]):
+                        self.assertEqual((bar["running"], bar["warm"], bar["reserved"]), (1, 1, 0))
+
+    def test_a_later_entry_for_a_finished_job_keeps_its_finish(self):
+        # A listener restarted between a job's completion and its late start once wrote a second entry
+        # with no finish; the finish must not be lost.
+        raw = {"version": 1, "jobs": [job("r1", None, ago(300), ago(290), ago(280), finished=ago(200)),
+                                      job("r1", None, ago(300), ago(290), ago(10))]}
+        self.assertEqual(LH.waits([], raw, NOW)[0]["finished_at"], ago(200))
+
+    def test_a_bar_never_stacks_past_a_limit_that_was_lowered(self):
+        # A sample from when the lane had 6 slots, read against today's limit of 2.
+        hour = LH.history([sample(30, 6, 1)], [], {"slots": {"limit": 2}}, True, None, stamp(NOW))["ranges"][0]
+        bar = hour["buckets"][-1]
+        self.assertEqual((bar["running"], bar["warm"], bar["reserved"]), (1, 0, 1))
+
+    def test_busy_share_never_reads_over_full(self):
+        rows = [{"runner": "r%d" % n, "kind": "ci", "started_at": ago(3600), "finished_at": ago(0),
+                 "wait_seconds": 0, "routing_seconds": None} for n in range(9)]
+        result = LH.history([sample(90, 8, 8), sample(30, 8, 8)], rows, {"slots": {"limit": 8}}, True, None, stamp(NOW))
+        self.assertEqual(result["ranges"][0]["busy_percent"], 100)
 
     def test_samples_from_before_running_was_recorded_leave_the_bars_empty(self):
         old = sample(30, 3, 2)
@@ -171,6 +301,19 @@ class Ranges(unittest.TestCase):
         self.assertIsNone(result["limit"])
 
 
+class Speed(unittest.TestCase):
+    def test_a_full_week_with_the_most_jobs_kept_rebuilds_well_inside_a_refresh(self):
+        # 20,160 samples (a week at 30 s) and 20,000 jobs, the caps. Each sample looks only at the job
+        # spans near it; scanning every span per sample took about 170 s here, longer than a refresh.
+        import time
+        points = [sample(30 * i, 3, 2) for i in range(20160)][::-1]
+        rows = [{"runner": "r%d" % i, "kind": "ci", "started_at": ago(30 * i + 60), "finished_at": ago(30 * i),
+                 "wait_seconds": 1, "routing_seconds": None} for i in range(20000)][::-1]
+        started = time.monotonic()
+        LH.history(points, rows, {"slots": {"limit": 8, "occupied": []}}, True, None, stamp(NOW))
+        self.assertLess(time.monotonic() - started, 10)
+
+
 class Reader(unittest.TestCase):
     def published(self):
         rows = [{"runner": "now", "kind": "ci", "started_at": ago(60), "wait_seconds": 10, "routing_seconds": 4}]
@@ -192,7 +335,8 @@ class Reader(unittest.TestCase):
                               ("runner", lambda v: v["started"].update({"bad name": ago(1)})),
                               ("extra", lambda v: v["ranges"][0]["buckets"][-1].update(note="x")),
                               ("negative", lambda v: v["ranges"][0]["buckets"][-1].update(running=-1)),
-                              ("wait", lambda v: v["ranges"][0]["wait"].update(p50_seconds="1"))):
+                              ("wait", lambda v: v["ranges"][0]["wait"].update(p50_seconds="1")),
+                              ("warm slot", lambda v: v.update(warm_slots=["ci-0"]))):
             with self.subTest(label), self.assertRaises((ValueError, TypeError, AttributeError)):
                 LH.read_history(broken(change))
 

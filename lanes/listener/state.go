@@ -30,8 +30,10 @@ import (
 //
 // Beside the slot directories it writes two lane-wide files for the dashboard sampler:
 //
-//	<run>/queue.json  0600  every tracked set's latest statistics, by kind, on each statistics message
-//	<run>/jobs.json   0600  the last maxJobHistory jobs a tracked slot started, with their wait times
+//	<run>/queue.json  0600  every tracked set's latest statistics and warm pool, by kind, on each
+//	                        statistics message and on each reconcile that changes its content
+//	<run>/jobs.json   0600  the last maxJobHistory jobs a tracked slot ran (or one retired within
+//	                        retiredKeep), with their wait and finish times
 const (
 	jitFile        = "jit"
 	jobFile        = "job"
@@ -74,17 +76,20 @@ type queueSet struct {
 	Assigned   int    `json:"assigned"`
 	Running    int    `json:"running"`
 	MinRunners int    `json:"min_runners"`
+	// WarmInstances are the set's idle slots the warm pool keeps (the newest min_runners), sorted.
+	WarmInstances []int `json:"warm_instances"`
 }
 
-// jobsRecord is jobs.json: the jobs tracked slots started, oldest first, at most maxJobHistory.
+// jobsRecord is jobs.json: the jobs tracked slots started, in order of last change (a finish or a
+// late start moves its entry to the end), at most maxJobHistory.
 type jobsRecord struct {
 	Version int         `json:"version"`
 	Jobs    []jobTiming `json:"jobs"`
 }
 
-// jobTiming is one started job: the assignment fields when they are usable (absent otherwise),
-// and when GitHub queued it, gave it to the set and to the runner, and when the listener heard it
-// started. A time GitHub did not send is absent.
+// jobTiming is one job a tracked slot ran: the assignment fields when they are usable (absent
+// otherwise), when GitHub queued it, gave it to the set and to the runner, when the listener heard
+// it started, and when it finished. A time GitHub did not send is absent.
 type jobTiming struct {
 	Kind               string `json:"kind"`
 	Instance           int    `json:"instance"`
@@ -97,6 +102,7 @@ type jobTiming struct {
 	ScaleSetAssignedAt string `json:"scale_set_assigned_at,omitempty"`
 	RunnerAssignedAt   string `json:"runner_assigned_at,omitempty"`
 	StartedAt          string `json:"started_at"`
+	FinishedAt         string `json:"finished_at,omitempty"`
 }
 
 // stamp is a time as the run-dir JSON files carry it: UTC, whole seconds, "" for the zero time.
