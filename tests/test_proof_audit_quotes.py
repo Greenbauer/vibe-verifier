@@ -103,6 +103,17 @@ class LineDrift(unittest.TestCase):
             self.assertRegex(problem, "fabricated quote|is in the test", proof["assertion"])
             self.assertNotIn("cited_line", proof)
 
+    def test_a_python_test_body_runs_to_its_dedent(self):
+        lines = ["class Bounds(unittest.TestCase):", "    def test_end(self):", "        end = bound(10)",
+                 "", "        self.assertEqual(end.day, 10)", "", "    def helper(self):",
+                 "        self.assertEqual(other(), 1)"]
+        proof = {"file": "tests/test_bounds.py", "test": "test_end", "line": 3,
+                 "assertion": "self.assertEqual(end.day, 10)"}
+        self.assertIsNone(proof_audit.proof_problem(Files(lines), proof))
+        self.assertEqual(proof["line"], 5)
+        stray = dict(proof, line=3, assertion="self.assertEqual(other(), 1)")
+        self.assertIn("fabricated quote", proof_audit.proof_problem(Files(lines), stray) or "")
+
 
 if __name__ == "__main__":
     unittest.main()

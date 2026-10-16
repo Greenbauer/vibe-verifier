@@ -259,6 +259,14 @@ def test_body(lines, title):
     if len(starts) != 1:
         return None
     start, depth = starts[0], 0
+    if PYTHON_TEST.match(lines[start]):
+        # A Python test's body is every line indented deeper than its `def`.
+        indent = len(lines[start]) - len(lines[start].lstrip())
+        for index in range(start + 1, len(lines)):
+            text = lines[index]
+            if text.strip() and len(text) - len(text.lstrip()) <= indent:
+                return start + 1, index
+        return start + 1, len(lines)
     for index in range(start, len(lines)):
         if index > start and DECLARATION.match(lines[index]):
             return start + 1, index
