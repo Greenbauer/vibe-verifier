@@ -36,9 +36,12 @@ tests/**                           # CI self-tests no spec imports
   wherever it is written, and everything under the path it names: `!docs/internal` keeps all of
   `docs/internal/` off the list. It is how a list says "all of `.github/` but the workflow that runs
   the suite".
-- A pattern has no leading or trailing `/` (a directory is `dir/**`), and holds no whitespace but a
-  quoted space. A line that breaks either rule is malformed, so a pattern written the gitignore way,
-  or pasted with a non-breaking space, is never read as matching less than it says.
+- A pattern has no leading or trailing `/` (a directory is `dir/**`); no `[`, `]`, `{` or `}`, which
+  would match only themselves here, not a set of names; no backslash, which shlex would drop as an
+  escape; and no whitespace but a quoted space. A line that breaks one of these rules is malformed, so
+  a pattern written with gitignore's slashes, sets or escapes, or pasted with a non-breaking space, is
+  never read as matching less than it says. A byte-order mark at the start of the file is ignored,
+  and a pattern matches a whole path, never one that only starts with it.
 - `#` starts a comment, and each entry's reason belongs beside it: the list is a claim about what the
   deploy and the suite read, and the next reader needs to know why each line is true. A pattern that
   holds a space or a `#` is quoted. A line with two patterns is malformed, never read as one, and so

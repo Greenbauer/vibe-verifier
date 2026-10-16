@@ -25,7 +25,8 @@ WHERE = "%s on main" % LIST
 
 # Serves $FAKE/state.json: "pull" is the pull request's record, "files" its files (as GitHub lists
 # them, a hundred to a page, "listed" of them when GitHub cuts the list short) and "lists" the inert
-# list's text by ref. "fail" fails every read whose endpoint holds one of its strings, "garbage" answers
+# list's text by ref. "fail" fails every read whose endpoint holds one of its strings ("silent" with no
+# message, as "refuse_writes": "silently" does every write), "garbage" answers
 # it with a page that is not JSON, "answers" with the JSON given for it, and
 # "refuse_writes" every write. Every call's argv goes to $FAKE/argv, every write to $FAKE/writes. A read
 # of the list that does not ask for the raw file is refused, so no test passes on JSON read as patterns.
@@ -37,12 +38,16 @@ with open(os.path.join(root, "argv"), "a") as handle:
     handle.write(json.dumps(argv) + "\\n")
 endpoint = argv[1]
 if "-X" in argv:
+    if state.get("refuse_writes") == "silently":
+        sys.exit(1)
     if state.get("refuse_writes"):
         sys.stderr.write("gh: Resource not accessible by integration (HTTP 403)\\n")
         sys.exit(1)
     with open(os.path.join(root, "writes"), "a") as handle:
         handle.write(json.dumps([endpoint, json.load(sys.stdin)]) + "\\n")
     sys.exit(0)
+if any(part in endpoint for part in state.get("silent", [])):
+    sys.exit(1)
 if any(part in endpoint for part in state.get("fail", [])):
     sys.stderr.write("gh: Bad Gateway (HTTP 502)\\n")
     sys.exit(1)
@@ -295,6 +300,9 @@ class SuiteScope(unittest.TestCase):
         self.serve(files("docs/a.md"), answers={"/files": {"message": "Not Found"}})
         self.assert_runs("GitHub's answer could not be read (AttributeError: 'str' object has no attribute 'get')",
                          warned=True)
+        # gh that fails and says nothing still names the read that failed.
+        self.serve(files("docs/a.md"), silent=["pulls/7"])
+        self.assert_runs("repos/acme/app/pulls/7: gh api failed", warned=True)
         empty = self.fake / "no-gh"
         empty.mkdir()
         self.env["PATH"] = str(empty)
@@ -311,12 +319,10 @@ class SuiteScope(unittest.TestCase):
                                  "which would start a comment there (quote the pattern, or put a space before the "
                                  "comment): %s)" % (LIST, listed.count("\n"), line), warned=True)
                 self.assertEqual(self.check(listed, "scripts/deploy.sh").returncode, 2)
-        # Quoted, or escaped, it is part of the pattern; a comment after a space is still a comment.
-        quoted = "docs/**   # documentation\n'!docs/#internal/**'   # read by the suite\n!docs/\\#raw/**\n"
-        for path in ("docs/#internal/a.ts", "docs/#raw/b.ts"):
-            with self.subTest(path):
-                self.serve(files("docs/guide.md", path), lists={MAIN: quoted})
-                self.assert_runs("%s is not on the inert list (%s)" % (path, WHERE))
+        # Quoted, it is part of the pattern; a comment after a space is still a comment.
+        quoted = "docs/**   # documentation\n'!docs/#internal/**'   # read by the suite\n"
+        self.serve(files("docs/guide.md", "docs/#internal/a.ts"), lists={MAIN: quoted})
+        self.assert_runs("docs/#internal/a.ts is not on the inert list (%s)" % WHERE)
         self.serve(files("docs/guide.md"), lists={MAIN: quoted})
         self.assertEqual(self.decide()[0], "true")
 
@@ -334,11 +340,33 @@ class SuiteScope(unittest.TestCase):
                 # The reason is one line, so the whitespace it names reads as a space there.
                 self.assert_runs("the default branch's inert list %s is malformed (line 2: a pattern holds whitespace "
                                  "other than a space: %s)" % (LIST, " ".join(line.split())), warned=True)
+        # Gitignore's sets would match only themselves here, and shlex drops a backslash as an escape.
+        for line in ("!docs/{internal,private}/**", "![d]ocs/internal/**"):
+            with self.subTest(line):
+                self.serve(files("docs/internal/a.ts"), lists={MAIN: "docs/**\n%s\n" % line})
+                self.assert_runs("the default branch's inert list %s is malformed (line 2: a pattern holds `[`, `]`, "
+                                 "`{` or `}`, which match only themselves here, not a set of names: %s)" % (LIST, line),
+                                 warned=True)
+        for line in ("!docs\\internal", "'!docs\\internal/**'"):
+            with self.subTest(line):
+                self.serve(files("docs/internal/a.ts"), lists={MAIN: "docs/**\n%s\n" % line})
+                self.assert_runs("the default branch's inert list %s is malformed (line 2 has a backslash, which shlex "
+                                 "would read as an escape and drop: %s)" % (LIST, line), warned=True)
         # A non-breaking space before a `#` is part of the pattern to shlex, so the `#` is inside it.
         self.serve(files("docs/internal/a.ts"), lists={MAIN: "docs/**\n!docs/internal/**\u00a0# kept\n"})
         self.assertEqual(self.decide()[0], "false")
         self.assertIn("has a `#` inside a pattern", self.decide()[1])
         self.assertEqual(self.check("docs/**\n!docs/internal/\n", "scripts/deploy.sh").returncode, 2)
+
+    def test_a_byte_order_mark_or_a_trailing_line_break_cannot_make_a_path_inert(self):
+        # An editor's byte-order mark before a first `!` line would leave it an inert line matching nothing.
+        listed = "\ufeff!docs/internal/**\ndocs/**\n"
+        self.serve(files("docs/internal/a.ts"), lists={MAIN: listed})
+        self.assert_runs("docs/internal/a.ts is not on the inert list (%s)" % WHERE)
+        self.assertEqual(self.check(listed, "docs/internal/a.ts").returncode, 0)
+        # `$` alone matches before a trailing line break; the whole path has to match.
+        self.serve(files("docs/a.md\n"))
+        self.assert_runs("docs/a.md is not on the inert list (%s)" % WHERE)
 
     def test_a_never_line_covers_everything_under_the_path_it_names(self):
         listed = "docs/**\n!docs/internal\n"
@@ -377,12 +405,15 @@ class SuiteScope(unittest.TestCase):
             "target_url": "https://github.com/acme/app/actions/runs/1"}] for context in ("preview-e2e", "browser-regressions")])
 
     def test_a_post_github_refuses_three_times_fails_naming_the_permission(self):
-        self.serve([], refuse_writes=True)
-        result = self.post("preview-e2e", "browser-regressions")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("could not post the `preview-e2e` status", result.stdout)
-        self.assertIn("statuses: write", result.stdout)
-        self.assertEqual(len(self.calls()), 3)
+        for refusal in (True, "silently"):
+            with self.subTest(refusal):
+                self.serve([], refuse_writes=refusal)
+                result = self.post("preview-e2e", "browser-regressions")
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("could not post the `preview-e2e` status", result.stdout)
+                self.assertIn("statuses: write", result.stdout)
+                self.assertEqual(len(self.calls()), 3)
+        self.assertIn("gh api failed", result.stderr)
 
     def check(self, listed, *reads):
         (self.fake / "list").write_text(listed)

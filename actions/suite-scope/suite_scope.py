@@ -22,8 +22,9 @@ the default branch, never from a checkout, so a pull request cannot widen it to 
 The list is one pattern per line, `#` for comments. `**/` crosses directories, `*` stays inside one
 path segment, `?` is one character, and a pattern covers the whole path from the repository root.
 A line that starts with `!` names paths that are never inert, whatever the other lines say, and
-everything under the path it names. A pattern with a leading or trailing `/`, or holding whitespace
-other than a quoted space, is malformed rather than read as matching less than it says. A path
+everything under the path it names. A pattern with a leading or trailing `/`, a `[`, `]`, `{`, `}`
+or backslash, or whitespace other than a quoted space, is malformed rather than read as matching less
+than it says, and a byte-order mark at the start of the list is ignored. A path
 with a segment named `e2e`, at any depth, is never inert whatever the list says: Playwright matches
 `testMatch` at any depth, so a file under such a directory can be a spec, and no list can forget
 that. A changed path named `e2e` itself counts too: GitHub's file list does not say whether it is a
@@ -92,33 +93,36 @@ def annotation(level, message):
     return "::%s title=%s::%s" % (level, TITLE, " ".join(message.split()).replace("%", "%25"))
 
 
-def hash_inside_a_pattern(raw):
-    """True when an unquoted `#` follows a pattern's own character. shlex reads it as a comment that ends the
-    pattern there, so `!docs/#internal/**` would quietly mean `!docs/` and widen what is inert."""
-    quote, previous, escaped = None, " ", False
+def lexical_fault(raw):
+    """Why shlex would not read a list line as written, or None. An unquoted `#` after a pattern's own character
+    starts a comment that ends the pattern there (`!docs/#internal/**` would quietly mean `!docs/`), and a
+    backslash is an escape shlex drops (`!docs\\internal` would mean `!docsinternal`)."""
+    quote, previous = None, " "
     for char in raw:
-        if escaped:
-            escaped = False
-        elif quote:
+        if char == "\\":
+            return "a backslash, which shlex would read as an escape and drop"
+        if quote:
             quote = None if char == quote else quote
-        elif char == "\\":
-            escaped = True
         elif char in "'\"":
             quote = char
         elif char == "#":
             # shlex's own whitespace, not str.isspace: a non-breaking space before a `#` is part of the pattern.
-            return previous not in " \t\r\n"
+            if previous in " \t\r\n":
+                return None
+            return ("a `#` inside a pattern, which would start a comment there (quote the pattern, or put a space "
+                    "before the comment)")
         previous = char
-    return False
+    return None
 
 
 def parse_list(text):
     """(inert, never): the compiled patterns of an inert list, the `!` lines apart."""
     inert, never = [], []
-    for number, raw in enumerate(text.splitlines(), 1):
-        if hash_inside_a_pattern(raw):
-            raise Malformed("line %d has a `#` inside a pattern, which would start a comment there (quote the pattern, "
-                            "or put a space before the comment): %s" % (number, raw.strip()))
+    # A byte-order mark an editor wrote would make a first `!` line an inert line that matches nothing.
+    for number, raw in enumerate(text.lstrip("\ufeff").splitlines(), 1):
+        fault = lexical_fault(raw)
+        if fault:
+            raise Malformed("line %d has %s: %s" % (number, fault, raw.strip()))
         try:
             words = shlex.split(raw, comments=True)
         except ValueError as error:
@@ -138,11 +142,15 @@ def parse_list(text):
 
 def pattern_of(word, where, line):
     """The glob a line's one word names, its `!` dropped. Malformed where it would quietly match less than its
-    author meant: a gitignore-style leading or trailing `/`, or a tab or a non-breaking space inside it."""
+    author meant: a gitignore-style leading or trailing `/`, a gitignore-style set (`[...]`, `{a,b}`) that
+    would match only itself here, or a tab or a non-breaking space inside it."""
     pattern = word[1:] if word.startswith("!") else word
     if pattern.startswith("/") or pattern.endswith("/"):
         raise Malformed("%s: a pattern starts at the repository root with no leading or trailing `/` (a directory "
                         "is `dir/**`): %s" % (where, line))
+    if any(char in "[]{}" for char in pattern):
+        raise Malformed("%s: a pattern holds `[`, `]`, `{` or `}`, which match only themselves here, not a set of "
+                        "names: %s" % (where, line))
     if any(char.isspace() and char != " " for char in pattern):
         raise Malformed("%s: a pattern holds whitespace other than a space: %s" % (where, line))
     return pattern
@@ -159,7 +167,8 @@ def is_inert(path, patterns):
     inert, never = patterns
     if under_e2e(path):
         return False
-    return any(regex.match(path) for regex in inert) and not any(regex.match(path) for regex in never)
+    # The whole path: `$` alone also matches before a trailing line break, which a file name can hold.
+    return any(regex.fullmatch(path) for regex in inert) and not any(regex.fullmatch(path) for regex in never)
 
 
 def gh(endpoint, *args, payload=None):
