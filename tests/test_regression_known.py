@@ -119,3 +119,27 @@ class KnownOnMain(RegressionWalk):
         self.assertEqual(result.returncode, 1)
         self.assertIn("projects is a FAIL", result.stdout)
 
+    def test_the_cited_step_must_be_a_step_of_the_log_with_text_and_a_non_empty_screenshot(self):
+        failing = self.AC + self.FAILED + self.KNOWN + self.PROJECTS
+        # The cited step is not a `- step 1:` line (only step 2 is), though its screenshot is there.
+        write(self.work, {"qae-artifacts/qae/features/base/auth.md": "- step 2: signed in as the test user -> an error page\n"
+                                                                    "step 1: signed in as the test user -> an error page\n"})
+        Path(self.work, "qae-artifacts", "qae", "features", "base", "auth-step-1.png").write_bytes(png(1280))
+        self.assertEqual(self.rewalk(failing).returncode, 1)
+        # An empty screenshot, and a cited step with no text (the anchor parser keeps no such title).
+        self.walk_on_main()
+        Path(self.work, "qae-artifacts", "qae", "features", "base", "auth-step-1.png").write_bytes(b"")
+        self.assertEqual(self.rewalk(failing).returncode, 1)
+        write(self.work, {"qae-artifacts/qae/features/base/auth.md": "- step 10: signed in as the test user -> an error page\n"})
+        Path(self.work, "qae-artifacts", "qae", "features", "base", "auth-step-10.png").write_bytes(png(1280))
+        bare = "regression-known: auth -- same (qae/features/base/auth.md::step 10:)\n"
+        self.assertEqual(self.rewalk(self.AC + self.FAILED + bare + self.PROJECTS).returncode, 1)
+
+    def test_a_known_line_never_rescues_a_pass_without_anchor_or_two_check_lines(self):
+        self.walk_on_main()
+        dangling = self.AUTH.replace("-> the dashboard)", "-> nowhere at all)")
+        for lines in (dangling, self.FAILED + self.FAILED):
+            result = self.rewalk(self.AC + lines + self.KNOWN + self.PROJECTS)
+            self.assertEqual(result.returncode, 1, lines)
+            self.assertNotIn("fails the same way on the base branch", result.stdout)
+
