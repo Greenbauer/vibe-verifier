@@ -1056,7 +1056,7 @@ def manifest_artifacts_options(args):
     try:
         return parser.parse_known_args(lines[0])[0]
     except SystemExit:
-        sys.exit(fail("the qae-artifacts line in %s has a malformed --widths" % args.manifest))
+        sys.exit(fail("the qae-artifacts line in %s has a malformed --widths, --allow-console or --allow-request" % args.manifest))
 
 
 def manifest_widths(args):

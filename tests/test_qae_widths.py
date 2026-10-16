@@ -166,7 +166,7 @@ class Template(unittest.TestCase):
                        "unless the criterion's own text declares it\n   (expected-refusal: <status> <path>), and writing that in "
                        "a step line declares nothing",
                        "If qae-inputs/environmental exists, each of its lines is `console: <pattern>` or `request: <pattern>`",
-                       "are not the site's failure and never a reason\n   to FAIL a criterion"):
+                       "are not the site's failure and never a reason to FAIL a criterion"):
             self.assertIn(phrase, prompt)
 
     def test_the_explore_step_passes_no_manifest_input_so_the_default_is_the_qae_manifest(self):
