@@ -268,6 +268,42 @@ class RegressionChecks(unittest.TestCase):
                       result.stdout)
         self.assertIn("acceptance-verdict: 1 finding(s), blocking", result.stdout)
 
+    def walk_on_main(self, fid="auth", line="- step 1: signed in as the test user -> an error page"):
+        write(self.work, {"qae-artifacts/qae/features/%s-main.md" % fid: line + "\n"})
+        Path(self.work, "qae-artifacts", "qae", "features", "%s-main-step-1.png" % fid).write_bytes(png(1280))
+
+    FAILED = "regression-check: auth -- FAIL -- an error page (qae/features/auth.md::step 1: signed in as the test user -> the dashboard)\n"
+    KNOWN = "regression-known: auth -- the same error page (qae/features/auth-main.md::step 1: signed in as the test user -> an error page)\n"
+
+    def test_a_fail_the_base_branch_shows_too_is_a_warning_not_a_finding(self):
+        # Replayed 2026-10-16 on 15 real re-walk FAILs: 6 were already on main, and failed pull requests that never
+        # touched them (one 5 times). The same state walked on a site built from the base branch tells them apart.
+        self.walk_on_main()
+        result = self.rewalk(self.AC + self.FAILED + self.KNOWN + self.PROJECTS)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("advisory: auth fails the same way on the base branch, so this pull request did not cause it: "
+                      "FAIL -- an error page", result.stdout)
+        self.assertIn("Base branch: the same error page", result.stdout)
+
+    def test_a_known_line_counts_only_with_its_own_walk_of_the_base_branch(self):
+        failing = self.AC + self.FAILED + self.PROJECTS
+        # No walk on the base branch's site: no step log, or a step without its screenshot.
+        self.assertIn("auth is a FAIL", self.rewalk(failing + self.KNOWN).stdout)
+        self.walk_on_main()
+        Path(self.work, "qae-artifacts", "qae", "features", "auth-main-step-1.png").unlink()
+        self.assertIn("auth is a FAIL", self.rewalk(failing + self.KNOWN).stdout)
+        self.walk_on_main()
+        # Anchored in the pull request's own walk, or in nothing that resolves, or said twice.
+        own = self.KNOWN.replace("auth-main.md::step 1: signed in as the test user -> an error page",
+                                 "auth.md::step 1: signed in as the test user -> the dashboard")
+        dangling = self.KNOWN.replace("-> an error page)", "-> a blank page)")
+        for line in (own, dangling, self.KNOWN + self.KNOWN):
+            result = self.rewalk(failing + line)
+            self.assertEqual(result.returncode, 1, line)
+            self.assertIn("auth is a FAIL", result.stdout)
+        # A known line never turns anything but a FAIL into a pass.
+        self.assertIn("auth has no `regression-check: auth` line", self.rewalk(self.AC + self.KNOWN + self.PROJECTS).stdout)
+
     def test_states_left_unwalked_are_printed_and_never_a_finding(self):
         # Real verdicts on a consumer (2026-10-07) were FAILs that said only that states were not re-walked.
         # Unwalked states now go on a regression-skip line, which fails nothing, whatever it says.

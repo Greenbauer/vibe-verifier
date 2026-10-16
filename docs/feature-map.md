@@ -278,11 +278,31 @@ selected. For each selected feature it requires:
   screenshot `qae/features/<id>-step-k.png` is there. A feature with a line and no walked step was
   not re-walked, which is a finding, never a pass. (`--features` therefore needs `--artifacts`.)
 
+**A FAIL that main has too.** A walked state can fail on a pull request that never touched it, because
+main already shows it: replayed on the 15 re-walk FAILs of 2026-10-12 to 10-15, 6 were already on
+main, and one of them failed a single unrelated pull request 5 times. When the consumer's workflow
+gives the explorer a second site built from the base branch, by writing `qae-inputs/main-site.md` (its
+URL, how to sign in there and what state it starts in, the same way `site.md` describes the
+pull request's site), the explorer walks each state that failed once more on that site, logs it to
+`qae/features/<id>-main.md` with a screenshot per step, and, when it fails the same way there, adds
+one line:
+
+```
+regression-known: sign-in -- the same error page (qae/features/sign-in-main.md::step 1: signed in as the test user -> an error page)
+```
+
+The gate then prints that feature's FAIL as a warning, naming what main shows, and does not fail
+the run: the pull request did not cause it, and main's owner fixes it. The line counts only with
+its own walk: a step and its screenshot in `<id>-main.md`, and an anchor that resolves in that log.
+Without them, or for a feature whose `regression-check` line is not a FAIL, it changes nothing.
+Without `main-site.md` the explorer walks nothing twice and a FAIL stays a finding.
+
 It prints how many steps were walked and each `regression-skip` line, and judges neither the
 number of states nor what the skip line says: nothing the gate decides is read from the
 explorer's prose. `qae-artifacts` holds the feature step logs to the same screenshot rule as the
 criteria's, and the QA review comment lists each re-walked feature with the word the explorer
-wrote and the states it left unwalked.
+wrote, what it says the base branch's site showed for a state that failed, and the states it left
+unwalked.
 
 **Limits.** The re-walk runs when the explorer runs, that is on a pull request that lists acceptance
 criteria. One that declares `- None: <why>` is not explored, so it is not re-walked either: the

@@ -322,6 +322,11 @@ jobs:
                qae-artifacts/qae/features/<id>-step-k.png, under the same rules. A state you did not get to,
                or could not set up in this environment (no such record, no sign-in for that role), is not a
                failure: log no step for it and name it on the feature's regression-skip line.
+               If qae-inputs/main-site.md exists, it names a second site, built from the base branch, with its
+               own sign-in and starting state: read it before walking it. When a state you walked here showed a
+               FAIL, walk that same state once more on that site, the same way, and log those steps in
+               qae-artifacts/qae/features/<id>-main.md with screenshots qae-artifacts/qae/features/<id>-main-step-k.png.
+               Walk nothing else there: never a state that passed here, and never a criterion.
             3. Write qae-artifacts/verdict.md with exactly one line per criterion, then the lines of each
                feature, nothing else:
                  acceptance-check: ACn -- PASS -- <one sentence> (qae/ACn.md::<the step line text that showed it, exactly as written after "- ">)
@@ -335,6 +340,9 @@ jobs:
                then, for each feature with a state you did not walk, one line naming those states by their
                numbers in its Verify section (or by test title):
                  regression-skip: <id> -- <the states not walked, for example 4, 5, 7>
+               and, for a FAIL whose state fails the same way on the base branch's site, keep the FAIL line and add
+               one line; when that site shows the state working, add none:
+                 regression-known: <id> -- <what the base branch's site shows> (qae/features/<id>-main.md::<the step line text>)
                A feature of which you walked no state gets its regression-skip line and no regression-check
                line. Never write PASS for anything you did not see in the browser. The text after :: must be
                copied verbatim from the step log line, because a gate checks that it is there.

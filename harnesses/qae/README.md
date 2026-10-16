@@ -92,6 +92,12 @@ step selects nothing and nothing changes.
   screenshot per step and adds two lines to its verdict:
   `regression-check: <id> -- PASS|FAIL -- <sentence> (qae/features/<id>.md::<step>)` and, when it
   left states unwalked, `regression-skip: <id> -- <those states>`.
+- When the site step also writes `qae-inputs/main-site.md`, a second site built from the base branch
+  (its URL, sign-in and starting state, like `site.md`), the explorer walks each state that failed
+  once more there, logs it to `qae/features/<id>-main.md` with its screenshots, and, when it fails the
+  same way, adds `regression-known: <id> -- <what that site shows> (qae/features/<id>-main.md::<step>)`.
+  `acceptance-verdict` prints such a FAIL as a warning instead of a finding (the pull request did not
+  cause it), and only with that walk on record ([feature map](../../docs/feature-map.md)).
 - A FAIL means a step that was walked showed the feature no longer works as its file describes. A
   state that was not reached, or could not be set up, is never a FAIL: it goes on the skip line. On
   a consumer's live run (2026-10-07), told to walk every numbered step and cited test of three

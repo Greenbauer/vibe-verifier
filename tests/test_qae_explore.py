@@ -288,7 +288,11 @@ class FeatureRewalk(unittest.TestCase):
                        "FAIL only when a step you walked showed that the feature no longer works the way its file describes, "
                        "never because states were left unwalked or time ran out",
                        "regression-skip: <id> -- <the states not walked, for example 4, 5, 7>",
-                       "A feature of which you walked no state gets its regression-skip line and no regression-check line"):
+                       "A feature of which you walked no state gets its regression-skip line and no regression-check line",
+                       "If qae-inputs/main-site.md exists",
+                       "walk that same state once more on that site, the same way",
+                       "never a state that passed here, and never a criterion",
+                       "regression-known: <id> -- <what the base branch's site shows> (qae/features/<id>-main.md::<the step line text>)"):
             self.assertIn(phrase, prompt)
         step = self.explore()
         step = step[step.index("- name: Select the features to re-walk"):step.index("- uses: actions/setup-node@")]

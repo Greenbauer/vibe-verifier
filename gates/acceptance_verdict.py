@@ -35,7 +35,12 @@ skipped has no line and is refused. A re-walk is partial by design, so a state t
 walk is never a finding: it names them on a `regression-skip: <id> -- <states>` line, which the gate
 prints and does not judge. A FAIL is a finding, and says a step that was walked no longer matches
 the feature file: the pull request fixes the regression or, when it means the new behaviour, updates
-the file. A feature with a line and no walked step was not re-walked, which is a finding too. A
+the file. One exception: when the workflow gave the explorer a second site built from the base branch
+(qae-inputs/main-site.md) and the failed state fails the same way there, the explorer adds one
+`regression-known: <id> -- <what that site shows>` line anchored in that walk's own step log,
+`qae/features/<id>-main.md` (a step with its screenshot `qae/features/<id>-main-step-k.png`). The
+pull request did not cause it, so the FAIL is printed as a warning, never a finding. A feature with
+a line and no walked step was not re-walked, which is a finding too. A
 feature no browser can walk (every state needs a secret, a cron or a system the explorer does not
 have) is not selected when its file, as the base has it, declares `re-walk: none -- <why>` in its
 Verify section; the gate prints it and asks for no line.
@@ -95,6 +100,8 @@ from _features import add_selection_arguments, describe, selection
 GATE = "acceptance-verdict"
 REGRESSION_TOKEN = "regression-check"
 SKIP_TOKEN = "regression-skip"
+KNOWN_TOKEN = "regression-known"
+line_verdict = verdict  # regression_findings' own `verdict` argument is the verdict text
 STEP = r"^[ \t]*-[ \t]+step[ \t]+[0-9]+:"
 STEP_LINE = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):(?P<text>.*)$", re.IGNORECASE | re.MULTILINE)
 
@@ -282,6 +289,18 @@ def regression_finding(fid, path, carried, walked, repo, tracked, artifacts):
     return why
 
 
+def known_on_main(fid, known, repo, tracked, artifacts):
+    """Feature `fid`'s one `regression-known` line when it stands, else None: the same state walked on the base
+    branch's site, with a step and its screenshot in qae/features/<id>-main.md and an anchor that resolves there."""
+    if len(known) != 1 or not walked_steps(artifacts, fid + "-main"):
+        return None
+    log = "qae/features/%s-main.md" % fid
+    found = [anchor for anchor in anchors_in(said(known[0], KNOWN_TOKEN)) if anchor.path == log]
+    if not found or all(resolves(anchor, repo, tracked, artifacts) for anchor in found):
+        return None
+    return known[0]
+
+
 def regression_findings(args, verdict, tracked):
     """One finding per feature the changes touch whose re-walk is not an anchored PASS over a walked step. What the
     explorer left unwalked (its regression-skip lines) is printed and never judged."""
@@ -293,15 +312,22 @@ def regression_findings(args, verdict, tracked):
     for line in describe(chosen) or ["re-walk: no feature's source globs match a changed file"]:
         print("%s: %s" % (GATE, line))
     lines, skipped = check_lines(verdict, REGRESSION_TOKEN), check_lines(verdict, SKIP_TOKEN)
+    known = check_lines(verdict, KNOWN_TOKEN)
     findings = []
     for fid, _ in chosen.selected:
         walked = walked_steps(args.artifacts, fid)
         print("%s: %s: %d step%s logged with a screenshot" % (GATE, fid, walked, "" if walked == 1 else "s"))
         for line in skipped.get(fid.casefold(), []):
             print("%s: %s: states not walked, as the explorer reports: %s" % (GATE, fid, said(line, SKIP_TOKEN)))
-        why = regression_finding(fid, features[fid].path, lines.get(fid.casefold(), []), walked,
-                                 args.repo, tracked, args.artifacts)
-        if why:
+        carried = lines.get(fid.casefold(), [])
+        why = regression_finding(fid, features[fid].path, carried, walked, args.repo, tracked, args.artifacts)
+        on_main = why and len(carried) == 1 and walked and line_verdict(carried[0]) == "FAIL" and \
+            known_on_main(fid, known.get(fid.casefold(), []), args.repo, tracked, args.artifacts)
+        if on_main:
+            findings.append(Finding("%s fails the same way on the base branch, so this pull request did not cause it: "
+                                    "%s. Base branch: %s" % (fid, said(carried[0], REGRESSION_TOKEN),
+                                                            said(on_main, KNOWN_TOKEN)), advisory=True))
+        elif why:
             findings.append(Finding(why))
     return findings
 
