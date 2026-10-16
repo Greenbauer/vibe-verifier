@@ -3,7 +3,10 @@
 # Mutation, only dashboard/: the gate modules are tested by running them as scripts, and mutmut sees only the
 # code a test runs in its own process.
 changed-code-mutation --source dashboard/**/*.py --python .venv-tests/bin/python
-# A report-only pilot (--soak): it prints findings as warnings and never fails the job, but a run that cannot be
-# judged (exit 2) still does. It runs the suite the way the job's own test step does: python3 and unittest.
-# coverage-not-lost has a job and a manifest of its own (.vibe-verifier-coverage).
+# Report-only pilots (--soak): they print findings as warnings and never fail the job, but a run that cannot be
+# judged (exit 2) still does. Both run the suite the way the job's own test step does: python3 and unittest.
 regression-test-fails-on-base --soak --title pr-inputs/title.txt --body pr-inputs/body.md
+# coverage-not-lost on the dashboard tests only: on the whole suite, whose tests run each gate as a child process
+# that coverage.py measures too, a pull request takes about an hour (four runs of 784 to 1030 seconds, PR #220), so
+# the whole suite runs once a night instead (.vibe-verifier-nightly, .github/workflows/nightly.yml).
+coverage-not-lost --soak --runner unittest --args "discover -s tests -p 'test_dashboard_*.py'" --body pr-inputs/body.md --timeout 300

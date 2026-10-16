@@ -667,9 +667,9 @@ changed-code-mutation --project apps/web --break 70 --soak
   `changed-code-mutation --source dashboard/**/*.py --python .venv-tests/bin/python`, limited to
   `dashboard/` because its gate modules are tested by running them as scripts. Its `pytest.ini` collects
   only `tests/test_dashboard_*.py`: under mutmut's coverage tracing the whole suite ran past 900 seconds.
-  The same file pilots `regression-test-fails-on-base` with `--soak`, under the `python3` and unittest
-  the job's test step uses, after a step that writes the pull request's title and body;
-  `coverage-not-lost` has a job and a manifest of its own beside it, on the whole suite (see
+  The same file pilots `regression-test-fails-on-base` and `coverage-not-lost` with `--soak`, under the
+  `python3` and unittest the job's test step uses, after a step that writes the pull request's title and
+  body; `coverage-not-lost` runs only the dashboard tests there, and the whole suite once a night (see
   [Coverage not lost](#coverage-not-lost)). The runner judges that file from the base like any manifest in the repository. Not `entries:`: in
   a repository's own workflow a pull request can edit it.
 - **Exit 2 also when** the suite fails at `HEAD` (Stryker cannot measure a red suite), Stryker exits
@@ -799,6 +799,10 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   (default 20) are not run again, and the findings stand without the sentence. `--max-files` bounds that
   run only: the size of a pull request never refuses a verdict, because in the history above the three
   pull requests that lost coverage changed 14, 61 and 105 files.
+- **The commits it came in with.** When a line was lost, the gate also prints the commits between the merge
+  base and the head, on the first-parent line (a merged pull request is one commit there, its number in its
+  subject), up to 20: run on main with `--base-ref` set to an earlier main commit, such as the last
+  nightly's, that names the pull requests the loss came in with.
 - **An intended loss.** `--body FILE` is the pull request body, a file the workflow writes before the
   gate, as `ticket-coverage` reads it (in GitHub Actions, from `github.event.pull_request.body`; add
   `edited` to the workflow's `pull_request` types so a reason added later runs the job again). A line
@@ -824,19 +828,24 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   file first, under a job timeout above `--timeout`, in a job that holds no secrets: the gate runs the
   pull request's own tests. Start with `--soak`, which prints every finding as a warning; once its record
   is clean (each finding a real weakening, or a pull request that says why), remove `--soak` on the base
-  manifest so the gate blocks. This repository pilots it on its own whole suite in the `coverage-not-lost`
-  job of `ci.yml`, beside the `test` job: it writes the body, then runs `.vibe-verifier-coverage`
-  (`--soak --runner unittest --args 'discover -s tests'`), so the gate scripts and `bin/vibe-verifier`
-  the tests run as child processes are measured too. On ubuntu-latest each side took 938 to 1,030
-  seconds and ran about 11,500 lines, 4,690 of them in `gates/` (pull request #220's runs), against 982
-  seconds for both sides when only the test process was measured. About half of the roughly 500 seconds
-  each side gained is starting coverage.py in each of the about 3,000 Python processes the suite starts:
-  85 ms each in a Linux Python 3.12 container, where the process alone takes 13, about 260 seconds at that
-  container's speed. And the second pair runs on every pull
-  request here: the first side installs the catalog's tools into the runner's empty tool cache, so the
-  install lines of `gates/_tools.py` run only at the merge base, the first pair finds them (14 lines),
-  and the second, with the cache full, dismisses them. So the job takes about 66 minutes; its
-  `--timeout` is 4800 and its limit 90 minutes.
+  manifest so the gate blocks. This repository pilots it two ways. Per pull request, `.vibe-verifier-tests`
+  runs it on the dashboard tests (`-p 'test_dashboard_*.py'`, `--timeout 300`; about 20 seconds a side).
+  Once a night, `nightly.yml` runs `.vibe-verifier-nightly` on main, the whole suite
+  (`--soak --runner unittest --args 'discover -s tests'`), with `--base-ref` the main commit the last
+  successful nightly ran on (or the `base` a `workflow_dispatch` names, or on the first night the main commit
+  of 24 hours ago), so the gate scripts and `bin/vibe-verifier` the tests run as child processes are
+  measured too, and a loss is reported with the commits merged since. That job holds no credential in a
+  step that runs tests: its read-only token goes only to the step that looks up the last nightly. On the
+  whole suite each side took 784 to 1,030 seconds on ubuntu-latest and ran about 11,500 lines, 4,690 of
+  them in `gates/` (pull request #220's three runs; the fastest took 784 to 847 seconds a side), against 982 seconds for both
+  sides when only the test process was measured. About half of the roughly 500 seconds each side gained
+  is starting coverage.py in each of the about 3,000 Python processes the suite starts: 85 ms each in a
+  Linux Python 3.12 container, where the process alone takes 13, about 260 seconds at that container's
+  speed. And the second pair runs every time here: the first side installs the catalog's tools into the
+  runner's empty tool cache, so the install lines of `gates/_tools.py` run only at the base, the first
+  pair finds them (14 lines), and the second, with the cache full, dismisses them. So a whole-suite run
+  takes 54 to 66 minutes, which is why it is nightly; its `--timeout` is 4800 and its job's limit 90
+  minutes.
 - **What it does not catch.** Browser and end-to-end tests: only the unit suite the runner starts is
   measured, so a loss only a Playwright test would show passes (the [QAE harness](../harnesses/qae/README.md)
   re-walks features in a browser). A line that still runs but that no test asserts on any more: a test

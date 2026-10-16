@@ -362,6 +362,7 @@ class RealCoveragePy(unittest.TestCase):
         result = self.run_gate(repo, "--runner", "unittest", "--args", "discover -s tests")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertRegex(result.stderr, r"the run at the head: 3 line\(s\) ran \(3 in shop/\), in \d+ seconds")
+        self.assertNotIn("the lines were lost", result.stderr)  # named only when a line was lost
 
     def test_a_venv_in_the_working_copy_is_not_taken_for_its_code(self):
         # --python .venv/bin/python, with a package installed in that venv that the tests run: coverage.py skips
@@ -377,6 +378,21 @@ class RealCoveragePy(unittest.TestCase):
                       "--runner", "unittest", "--args", "discover -s tests")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual([(f["path"], f["line"]) for f in findings(result)], [("shop/price.py", 3)])
+
+    def test_a_loss_names_the_commits_it_came_in_with(self):
+        # The nightly run's shape: --base-ref is the last night's commit, and two pull requests were merged since.
+        repo = make_repo(self, {"shop/__init__.py": "", "shop/price.py": PY_PRICE, "tests/test_member.py": PY_MEMBER_CASE,
+                                "tests/test_plain.py": PY_PLAIN})
+        night = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        commit(repo, {"README.md": "a\n"}, "docs: a readme (#7)")
+        git(repo, "rm", "-q", "tests/test_member.py")
+        commit(repo, {}, "test: one test fewer (#8)")
+        result = gate("coverage-not-lost", repo, "--base-ref", night, "--python", self.python, "--format", "json",
+                      "--runner", "unittest", "--args", "discover -s tests")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual([(f["path"], f["line"]) for f in findings(result)], [("shop/price.py", 3)])
+        self.assertRegex(result.stderr, r"the lines were lost in the 2 commit\(s\) after the merge base %s: [0-9a-f]{7,} "
+                                        r"test: one test fewer \(#8\); [0-9a-f]{7,} docs: a readme \(#7\)\n" % night[:12])
 
     def test_the_interpreters_own_sitecustomize_still_runs(self):
         # The gate's sitecustomize comes first on the suite's PYTHONPATH; the project's, after it, runs too.

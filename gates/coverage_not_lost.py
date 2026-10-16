@@ -11,7 +11,9 @@ runs at each side agree, because coverage can change from run to run: the second
 first finds a line. Lines in files the pull request deletes, and lines it changes or deletes, never count.
 Each finding is reported at its line at HEAD, with what ran it at the merge base: the test functions
 (pytest, unittest; none for a line only a child process ran), or whether the test files the pull request deleted or
-changed did (Vitest).
+changed did (Vitest). When lines were lost, the gate also lists the commits between the merge base and HEAD
+(first parent, so a merged pull request is one, its number in its subject): run nightly with --base-ref set to the
+last night's commit, that names the pull requests the loss came in with.
 
 A pull request body (--body, a file the workflow writes) with a line `coverage-lost: <reason>` marks the
 loss as intended: the findings are printed with the reason and do not fail the gate.
@@ -240,6 +242,14 @@ def ran_where(run):
     return "%d line(s) ran%s" % (sum(tops.values()), " (%s)" % where if where else "")
 
 
+def commits_since(repo, merge_base, most=20):
+    """'N commit(s) after the merge base <sha>: <sha> <subject>; ...', newest first, on the first-parent line."""
+    commits = git(repo, "log", "--first-parent", "--format=%h %s", merge_base + "..HEAD").splitlines()
+    more = " and %d more" % (len(commits) - most) if len(commits) > most else ""
+    return "the lines were lost in the %d commit(s) after the merge base %s: %s%s" % (
+        len(commits), merge_base[:12], "; ".join(commits[:most]), more)
+
+
 def listed(names, most=5):
     return ", ".join(names[:most]) + (" and %d more" % (len(names) - most) if len(names) > most else "")
 
@@ -353,6 +363,8 @@ def check(args):
     diff = Diff(args.repo, merge_base)
     with checkouts(args.repo, merge_base) as (scratch, trees):
         lost = losses(Suite(args, scratch, trees, merge_base), diff)
+    if lost:
+        note(commits_since(args.repo, merge_base))
     if reason and not lost:
         note("the pull request body says `coverage-lost: %s`, and no line was lost" % reason)
     return findings(args.repo, lost, reason)

@@ -9,10 +9,11 @@
 - source: `gates/_coverage_runs.py`
 - source: `tools/coverage-not-lost/**`
 - source: `tools/coverage-not-lost-python/**`
+- source: `.github/workflows/nightly.yml`
 
 ## Reach
 
-List `coverage-not-lost --soak` (with `--runner`, `--project`, `--args` and `--body` as the project needs) in a manifest of its own, run by a job that installs the project's dependencies first; remove `--soak` on the base manifest once its record is clean. This repository pilots it on its own whole suite that way: the `coverage-not-lost` job of `.github/workflows/ci.yml`, beside the `test` job, runs `.vibe-verifier-coverage`.
+List `coverage-not-lost --soak` (with `--runner`, `--project`, `--args` and `--body` as the project needs) in a manifest of its own, run by a job that installs the project's dependencies first; remove `--soak` on the base manifest once its record is clean. To judge a whole suite too slow for every pull request, run it on a schedule with `--base-ref` set to the last run's commit: a loss is then reported with the commits merged since. This repository does both: per pull request on its dashboard tests (`.vibe-verifier-tests`, in `ci.yml`), and once a night on main on its whole suite (`.vibe-verifier-nightly`, in `.github/workflows/nightly.yml`, which `workflow_dispatch` also runs on demand).
 
 ## Verify
 
@@ -30,7 +31,12 @@ List `coverage-not-lost --soak` (with `--runner`, `--project`, `--args` and `--b
 - `tests/test_coverage_not_lost.py::test_the_interpreters_own_sitecustomize_still_runs`
 - `tests/test_coverage_not_lost.py::test_a_script_a_test_ran_from_a_directory_it_removed_does_not_stop_the_report`
 - `tests/test_coverage_not_lost.py::test_a_venv_in_the_working_copy_is_not_taken_for_its_code`
-- `tests/test_ci_workflow.py::test_the_coverage_job_runs_the_whole_suite_beside_the_test_job_within_its_timeout`
+- `tests/test_coverage_not_lost.py::test_a_loss_names_the_commits_it_came_in_with`
+- `tests/test_ci_workflow.py::test_the_whole_suite_runs_nightly_and_per_pull_request_only_the_dashboard_tests`
+- `tests/test_ci_workflow.py::test_no_step_that_runs_tests_holds_a_credential`
+- `tests/test_ci_workflow.py::test_a_night_compares_from_the_last_successful_nightly_on_main`
+- `tests/test_ci_workflow.py::test_the_first_night_compares_from_main_of_24_hours_ago`
+- `tests/test_ci_workflow.py::test_a_dispatch_with_a_base_compares_from_it`
 
 ## Gotchas
 

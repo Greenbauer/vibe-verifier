@@ -1,0 +1,70 @@
+name: Nightly
+
+# coverage-not-lost on this repository's whole suite, report-only, once a night on main (.vibe-verifier-nightly). It
+# compares the main commit the last successful nightly ran on with today's, so a line lost in between is reported
+# with the commits, and so the pull requests, merged since. Pull requests run the gate on the dashboard tests only
+# (.vibe-verifier-tests, in ci.yml): on the whole suite it takes about an hour. workflow_dispatch runs it on demand,
+# from the commit `base` names when it is given.
+#
+# No step that runs tests holds a credential: the job's only one is its own read-only token, given to the step that
+# looks up the last nightly. The tests run every gate against temporary git repositories, with gh, curl and the
+# services the gates call (GitHub's API, preview deployments, model APIs) stubbed or recorded, so nothing here
+# reaches a production database, URL or person (tests/test_ci_workflow.py holds the workflow to that).
+
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: The commit to compare from (default the main commit the last successful nightly ran on)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  coverage-not-lost:
+    name: coverage-not-lost
+    runs-on: ubuntu-latest
+    # Above the gate's --timeout (4800 seconds, .vibe-verifier-nightly), so a run past it says so (exit 2) before the
+    # job is killed.
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read # gh run list, for the commit the last successful nightly ran on
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The commit to compare from
+        # `base` when the run was dispatched with one; else the commit of the last successful nightly on main (one
+        # that could not run, exit 2, judged nothing, so its range is judged again); else, on the first night, the
+        # main commit of 24 hours ago.
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ASKED: ${{ inputs.base }}
+        run: |
+          base="$ASKED"
+          if [ -z "$base" ]; then
+            base=$(gh run list --repo "$REPO" --workflow nightly.yml --branch main --status success --limit 1 \
+              --json headSha --jq '.[0].headSha // ""')
+          fi
+          if [ -z "$base" ]; then
+            base=$(git rev-list -1 --first-parent --before="24 hours ago" HEAD)
+          fi
+          echo "Comparing $base with $(git rev-parse HEAD)"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+      - name: coverage-not-lost on the whole suite
+        uses: ./actions/gates # zizmor: ignore[self-repository]
+        with:
+          manifest: .vibe-verifier-nightly
+          base-ref: ${{ steps.base.outputs.base }}

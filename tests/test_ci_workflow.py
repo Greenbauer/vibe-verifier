@@ -1,7 +1,7 @@
-"""This repository's own ci.yml: the step that lists the tests the full unittest run failed, for the
+"""This repository's own workflows: ci.yml's step that lists the tests the full unittest run failed, for the
 affected-test selection report, run under bash the way CI runs it, on a real unittest log; this suite run
-inside a gate, as regression-test-fails-on-base (.vibe-verifier-tests) and coverage-not-lost
-(.vibe-verifier-coverage) run it; and the coverage-not-lost job's shape."""
+inside a gate, as regression-test-fails-on-base and coverage-not-lost run it; and nightly.yml, which runs
+coverage-not-lost on the whole suite once a night: its shape, and the step that picks the commit to compare from."""
 import os
 import re
 import shlex
@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -17,7 +18,8 @@ from helpers import ROOT, clean_env, commit, gate, git, make_repo, runner
 
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 STEP = "List the tests the full run failed"
-COVERAGE = ROOT / ".vibe-verifier-coverage"
+NIGHTLY = ROOT / ".github" / "workflows" / "nightly.yml"
+BASE_STEP = "The commit to compare from"
 
 # One suite with every way unittest reports a failure: an assertion, an error, a failed subtest (its
 # parameters follow the id), a failed setUpClass (named by its class), and a module that does not import.
@@ -38,10 +40,10 @@ FAILING = {
 }
 
 
-def step_script():
-    """The `run:` block of the step, as the runner executes it."""
-    text = CI.read_text()
-    match = re.search(r"\n      - name: " + re.escape(STEP) + r"\n(?:        [^\n]*\n)*?        run: \|\n((?:          [^\n]*\n|\n)+)", text)
+def step_script(name=STEP, workflow=CI):
+    """The `run:` block of a workflow's step, as the runner executes it."""
+    text = workflow.read_text()
+    match = re.search(r"\n      - name: " + re.escape(name) + r"\n(?:        [^\n]*\n)*?        run: \|\n((?:          [^\n]*\n|\n)+)", text)
     return "".join(line[10:] for line in match.group(1).splitlines(True))
 
 
@@ -143,9 +145,9 @@ class SuiteInsideAGate(unittest.TestCase):
         self.assertEqual(Path(outer).read_text(), "")
 
 
-def job(name):
-    """The lines of one job of ci.yml, its own `  name:` line included."""
-    match = re.search(r"\n  %s:\n((?:    [^\n]*\n|\n)+)" % re.escape(name), CI.read_text())
+def job(name, workflow=CI):
+    """The lines of one job of a workflow, its own `  name:` line included."""
+    match = re.search(r"\n  %s:\n((?:    [^\n]*\n|\n)+)" % re.escape(name), workflow.read_text())
     return match.group(1)
 
 
@@ -158,24 +160,89 @@ def gate_args(manifest, name):
     return None
 
 
-class CoverageJob(unittest.TestCase):
-    def test_the_coverage_job_runs_the_whole_suite_beside_the_test_job_within_its_timeout(self):
-        coverage = job("coverage-not-lost")
-        # On every event and beside the test job: a job-level `if:` that skips reads as green, and `needs:` would
-        # wait for the test job.
+class NightlyCoverage(unittest.TestCase):
+    def test_the_whole_suite_runs_nightly_and_per_pull_request_only_the_dashboard_tests(self):
+        text = NIGHTLY.read_text()
+        triggers = re.search(r"\non:\n((?:  [^\n]*\n)+)", text).group(1)
+        self.assertEqual(re.findall(r"^  ([a-z_]+):", triggers, re.MULTILINE), ["schedule", "workflow_dispatch"])
+        coverage = job("coverage-not-lost", NIGHTLY)
+        # A job-level `if:` that skips reads as green.
         self.assertIsNone(re.search(r"^    (if|needs):", coverage, re.MULTILINE), coverage)
-        self.assertIn("manifest: .vibe-verifier-coverage", coverage)
-        self.assertIn("> pr-inputs/body.md", coverage)
-        args = gate_args(COVERAGE, "coverage-not-lost")
-        self.assertEqual(args[:4], ["--soak", "--runner", "unittest", "--args"])
-        self.assertEqual(args[4], "discover -s tests")  # the whole suite: no -p
-        self.assertEqual(args[args.index("--body") + 1], "pr-inputs/body.md")
+        self.assertIn("manifest: .vibe-verifier-nightly", coverage)
+        self.assertIn("base-ref: ${{ steps.base.outputs.base }}", coverage)
+        args = gate_args(ROOT / ".vibe-verifier-nightly", "coverage-not-lost")
+        self.assertEqual(args[:5], ["--soak", "--runner", "unittest", "--args", "discover -s tests"])  # whole suite: no -p
         timeout = int(args[args.index("--timeout") + 1])
         minutes = int(re.search(r"^    timeout-minutes: (\d+)$", coverage, re.MULTILINE).group(1))
         # The gate's limit covers its runs; the job's adds the checkout and the worktrees, so the gate says it
         # ran out (exit 2) before the job is killed.
         self.assertGreaterEqual(minutes * 60, timeout + 300)
-        self.assertIsNone(gate_args(ROOT / ".vibe-verifier-tests", "coverage-not-lost"))
+        self.assertIsNone(re.search(r"^  coverage-not-lost:", CI.read_text(), re.MULTILINE))
+        per_pull_request = gate_args(ROOT / ".vibe-verifier-tests", "coverage-not-lost")
+        self.assertEqual(per_pull_request[per_pull_request.index("--args") + 1], "discover -s tests -p 'test_dashboard_*.py'")
+
+    def test_no_step_that_runs_tests_holds_a_credential(self):
+        # The operator's rule: nothing this runs may reach a production database, credential, URL or person. The
+        # job's own read-only token is the only credential, and only the step that looks up the last nightly has it.
+        text = NIGHTLY.read_text()
+        self.assertNotIn("secrets.", text)
+        self.assertEqual(text.count("github.token"), 1)
+        base_step = re.search(r"\n      - name: %s\n((?:        [^\n]*\n)+)" % re.escape(BASE_STEP), text).group(1)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", base_step)
+        self.assertEqual(re.findall(r"^      ([a-z-]+):", re.search(r"\n    permissions:\n((?:      [^\n]*\n)+)", text).group(1),
+                                    re.MULTILINE), ["contents", "actions"])
+        self.assertNotIn("write", re.search(r"\n    permissions:\n((?:      [^\n]*\n)+)", text).group(1))
+
+
+class NightlyBase(unittest.TestCase):
+    """The step that picks the commit to compare from, run under bash the way the runner runs it, with a stub gh."""
+
+    def setUp(self):
+        self.repo = tempfile.mkdtemp(prefix="vv-nightly-")
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        self.commits = []
+        subprocess.run(["git", "-C", self.repo, "init", "-q", "-b", "main"], check=True, capture_output=True, env=clean_env())
+        for hours, message in ((72, "older"), (48, "two days ago"), (1, "today")):
+            when = "@%d +0000" % (time.time() - hours * 3600)
+            subprocess.run(["git", "-C", self.repo, "-c", "user.email=t@example.com", "-c", "user.name=T", "-c", "commit.gpgsign=false",
+                            "commit", "-q", "--allow-empty", "-m", message], check=True, capture_output=True,
+                           env=clean_env({"GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when}))
+            self.commits.append(subprocess.run(["git", "-C", self.repo, "rev-parse", "HEAD"], capture_output=True,
+                                               text=True, check=True).stdout.strip())
+        self.bin = tempfile.mkdtemp(prefix="vv-nightly-bin-")
+        self.addCleanup(shutil.rmtree, self.bin, True)
+        self.calls = os.path.join(self.bin, "calls")
+        stub = os.path.join(self.bin, "gh")
+        with open(stub, "w") as handle:
+            handle.write('#!/bin/sh\necho "$*" >> "%s"\nprintf "%%s" "$GH_ANSWER"\n' % self.calls)
+        os.chmod(stub, 0o755)
+
+    def pick(self, asked="", answer=""):
+        """(the step's result, the base it wrote to GITHUB_OUTPUT, the gh calls it made)."""
+        output = os.path.join(self.bin, "output")
+        open(output, "w").close()
+        env = clean_env({"PATH": self.bin + os.pathsep + os.environ["PATH"], "GITHUB_OUTPUT": output, "ASKED": asked,
+                         "GH_ANSWER": answer, "REPO": "owner/repo", "GH_TOKEN": "a-token"})
+        result = subprocess.run(["bash", "-e", "-c", step_script(BASE_STEP, NIGHTLY)], cwd=self.repo, capture_output=True,
+                                text=True, env=env)
+        written = Path(output).read_text()
+        calls = Path(self.calls).read_text().splitlines() if os.path.exists(self.calls) else []
+        return result, written, calls
+
+    def test_a_dispatch_with_a_base_compares_from_it(self):
+        result, written, calls = self.pick(asked=self.commits[0])
+        self.assertEqual((result.returncode, written, calls), (0, "base=%s\n" % self.commits[0], []), result.stderr)
+
+    def test_a_night_compares_from_the_last_successful_nightly_on_main(self):
+        result, written, calls = self.pick(answer=self.commits[1])
+        self.assertEqual((result.returncode, written), (0, "base=%s\n" % self.commits[1]), result.stderr)
+        (call,) = calls
+        self.assertIn("run list --repo owner/repo --workflow nightly.yml --branch main --status success --limit 1", call)
+        self.assertIn("Comparing %s with %s" % (self.commits[1], self.commits[2]), result.stdout)
+
+    def test_the_first_night_compares_from_main_of_24_hours_ago(self):
+        result, written, _ = self.pick(answer="")
+        self.assertEqual((result.returncode, written), (0, "base=%s\n" % self.commits[1]), result.stderr)
 
 
 if __name__ == "__main__":
