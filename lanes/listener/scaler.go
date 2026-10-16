@@ -670,6 +670,9 @@ func (l *Lane) jobCompleted(key SetKey, j *scaleset.JobCompleted) {
 	}
 	if !j.FinishTime.IsZero() {
 		timing.FinishedAt = stamp(j.FinishTime)
+		if timing.RunnerAssignedAt == "" {
+			timing.StartedAt = timing.FinishedAt // never a start after the finish GitHub reported
+		}
 	}
 	l.recordFinish(ref, timing)
 }
@@ -728,9 +731,28 @@ func (l *Lane) queueRecord() queueRecord {
 	for _, key := range keys {
 		set := *l.sets[key].stats
 		set.MinRunners = l.cfg.minRunners(key)
+		set.WarmInstances = l.warmInstances(key, set.MinRunners)
 		rec.Sets = append(rec.Sets, set)
 	}
 	return rec
+}
+
+// warmInstances are the idle slots of a set its warm pool keeps: the newest minRunners in
+// planIdleStops' order (sortIdle). Called with l.mu held.
+func (l *Lane) warmInstances(key SetKey, minRunners int) []int {
+	var idle []Slot
+	for _, s := range l.slots {
+		if s.Set == key && s.Phase == PhaseIdle {
+			idle = append(idle, *s)
+		}
+	}
+	sortIdle(idle)
+	kept := []int{}
+	for _, s := range idle[max(0, len(idle)-minRunners):] {
+		kept = append(kept, s.Instance)
+	}
+	sort.Ints(kept)
+	return kept
 }
 
 func (l *Lane) setAssigned(key SetKey, n int) {

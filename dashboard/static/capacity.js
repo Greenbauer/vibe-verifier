@@ -22,7 +22,6 @@
   // machine. Each kind numbers its own slots, so the kind is part of the name.
   const slotName = lane => `${KINDS[kindOf(lane)]?.short || kindOf(lane)} ${lane.id.match(/-(\d+)$/)?.[1] ?? lane.id}`;
   const unitName = lane => lane.id.replace(/-(\d+)$/, "@$1");
-  const slotOf = lane => Number(lane.id.match(/-(\d+)$/)?.[1] ?? 0);
   const isFree = lane => lane.state === "provisionable";
 
   function metric(label, value, percent) {
@@ -150,14 +149,12 @@
       el("span", { class: "mono", role: "cell" }, timeCell(lane, state, now)));
   }
 
-  // The warm pool keeps a few build-and-test runners up with no job on purpose. The host does not say
-  // which ones; the listener stops idle runners oldest first and keeps the newest up to the pool's
-  // size, the higher slot on a tie (lanes/listener/plan.go, planIdleStops), so those show as kept warm.
-  function states(lanes, warm) {
-    const idle = lanes.filter(lane => kindOf(lane) === "ci" && lane.state === "allocated")
-      .sort((a, b) => String(b.allocated_at).localeCompare(String(a.allocated_at)) || slotOf(b) - slotOf(a));
-    const kept = new Set(idle.slice(0, warm || 0));
-    return new Map(lanes.map(lane => [lane, kept.has(lane) ? "warm" : lane.state]));
+  // The warm pool keeps a few runners up with no job on purpose. The listener names them
+  // (queue.json warm_instances, from the same order it stops idle runners in); a runner it names that
+  // has no job reads "Kept warm". Without that list (an older listener) no runner is guessed.
+  function states(lanes, warmSlots) {
+    const kept = new Set(warmSlots || []);
+    return new Map(lanes.map(lane => [lane, lane.state === "allocated" && kept.has(lane.id) ? "warm" : lane.state]));
   }
 
   function group(kind, lanes, stateOf, owner, now, extra) {
@@ -178,7 +175,7 @@
   function runnerTable(capacity, owner, now) {
     const used = capacity.lanes.filter(lane => !isFree(lane));
     const byKind = kind => used.filter(lane => kindOf(lane) === kind);
-    const stateOf = states(used, capacity.history?.warm);
+    const stateOf = states(used, capacity.history?.warm_slots);
     const limits = capacity.limits || {};
     const sharedFree = capacity.lanes.filter(isFree).length;
     const sharedLimit = limits.slots ?? (byKind("ci").length + byKind("qae").length + sharedFree);

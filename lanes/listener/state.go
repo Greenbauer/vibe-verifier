@@ -74,6 +74,8 @@ type queueSet struct {
 	Assigned   int    `json:"assigned"`
 	Running    int    `json:"running"`
 	MinRunners int    `json:"min_runners"`
+	// WarmInstances are the set's idle slots the warm pool keeps (the newest min_runners), sorted.
+	WarmInstances []int `json:"warm_instances"`
 }
 
 // jobsRecord is jobs.json: the jobs tracked slots started, oldest first, at most maxJobHistory.

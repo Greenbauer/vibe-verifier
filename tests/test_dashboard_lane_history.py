@@ -50,14 +50,16 @@ def sample(seconds_ago, occupied, running, waiting=0):
 
 class Queue(unittest.TestCase):
     def test_waiting_is_assigned_minus_running_per_set_and_warm_sums_the_pools(self):
-        raw = {"version": 1, "sets": [{"kind": "ci", "assigned": 5, "running": 3, "min_runners": 1},
+        raw = {"version": 1, "sets": [{"kind": "ci", "assigned": 5, "running": 3, "min_runners": 1, "warm_instances": [3]},
                                       {"kind": "qae", "assigned": 1, "running": 2, "min_runners": 0}]}
-        self.assertEqual(LH.project_queue(raw), {"waiting": 2, "warm": 1})
+        self.assertEqual(LH.project_queue(raw), {"waiting": 2, "warm": 1, "warm_slots": ["ci-3"]})
 
     def test_an_unreadable_queue_is_unknown_not_zero(self):
         for raw in (None, {"version": 2, "sets": []}, {"version": 1, "sets": [{"kind": "x", "assigned": 1, "running": 0}]},
                     {"version": 1, "sets": [{"kind": "ci", "assigned": -1, "running": 0}]},
-                    {"version": 1, "sets": [{"kind": "ci", "assigned": True, "running": 0}]}):
+                    {"version": 1, "sets": [{"kind": "ci", "assigned": True, "running": 0}]},
+                    {"version": 1, "sets": [{"kind": "ci", "assigned": 1, "running": 0, "warm_instances": [0]}]},
+                    {"version": 1, "sets": [{"kind": "ci", "assigned": 1, "running": 0, "warm_instances": "3"}]}):
             with self.subTest(raw=raw):
                 self.assertIsNone(LH.project_queue(raw))
 
@@ -198,16 +200,24 @@ class Ranges(unittest.TestCase):
         self.assertEqual(hour["busy_percent"], 100)
 
     def test_the_newest_sample_does_not_tip_a_bar_it_shares_with_older_samples_over_its_limit(self):
-        # Refreshes every 30 s, all 4 slots running. At 12:00:30 the newest bar (12:00:00 on) holds the
-        # 12:00:00 sample (30 s) and the newest one (0 s): it reads exactly 4, not over the limit.
-        points = [sample(seconds, 4, 4) for seconds in (90, 60, 30, 0)]
-        for phase in range(4):
-            with self.subTest(phase=phase):
-                hour = LH.history(points[:phase + 1] if phase < 3 else points, [], {"slots": {"limit": 4}}, True, None,
-                                  stamp(NOW))["ranges"][0]
-                self.assertTrue(all(bar.get("running", 0) <= 4 for bar in hour["buckets"]))
-        hour = LH.history(points, [], {"slots": {"limit": 4}}, True, None, stamp(NOW))["ranges"][0]
-        self.assertEqual(hour["buckets"][-1]["running"], 4)
+        # Refreshes every 30 s for an hour, the collector's newest sample at "now", at several offsets
+        # against the bar edges, through capture(). 2 slots: 1 running, 1 warm. Every sampled bar of
+        # every range reads exactly 1 running and 1 warm, never more than the limit.
+        host = {"cpu": {"busy_percent": 1}, "memory": {"available_bytes": 1}, "workspace": {"free_bytes": 1},
+                "slots": {"limit": 2, "occupied_count": 2, "remaining_on_demand": 0,
+                          "occupied": [allocated("ci", 1, "busy", "build"), allocated("ci", 2, "warm")]}}
+        response = {"host": {"queue": {"version": 1, "sets": [{"kind": "ci", "assigned": 1, "running": 1,
+                                                                 "min_runners": 1, "warm_instances": [2]}]}}}
+        for offset in (0, 7, 29):
+            state, start = {}, NOW - timedelta(hours=1) + timedelta(seconds=offset)
+            for step in range(120):
+                state = LH.capture(state, response, host, True, stamp(start + timedelta(seconds=30 * step)))
+            history = state["history"]
+            self.assertEqual(history["warm_slots"], ["ci-2"])
+            for view in history["ranges"]:
+                for bar in (bar for bar in view["buckets"] if "running" in bar):
+                    with self.subTest(offset=offset, range=view["name"], bar=bar["start"]):
+                        self.assertEqual((bar["running"], bar["warm"], bar["reserved"]), (1, 1, 0))
 
     def test_a_later_entry_for_a_finished_job_keeps_its_finish(self):
         # A listener restarted between a job's completion and its late start once wrote a second entry
@@ -266,7 +276,8 @@ class Reader(unittest.TestCase):
                               ("runner", lambda v: v["started"].update({"bad name": ago(1)})),
                               ("extra", lambda v: v["ranges"][0]["buckets"][-1].update(note="x")),
                               ("negative", lambda v: v["ranges"][0]["buckets"][-1].update(running=-1)),
-                              ("wait", lambda v: v["ranges"][0]["wait"].update(p50_seconds="1"))):
+                              ("wait", lambda v: v["ranges"][0]["wait"].update(p50_seconds="1")),
+                              ("warm slot", lambda v: v.update(warm_slots=["ci-0"]))):
             with self.subTest(label), self.assertRaises((ValueError, TypeError, AttributeError)):
                 LH.read_history(broken(change))
 

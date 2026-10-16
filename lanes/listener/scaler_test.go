@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -755,9 +756,9 @@ func TestQueueRecordListsEveryTrackedSetByKindInKeyOrder(t *testing.T) {
 	}
 	// The set with no statistics yet is left out; no target, id or other count is written.
 	want := `{"version":1,"updated_at":"2026-01-01T12:01:30Z","sets":[` +
-		`{"kind":"ci","assigned":3,"running":2,"min_runners":0},` +
-		`{"kind":"qae","assigned":2,"running":0,"min_runners":0},` +
-		`{"kind":"ci","assigned":1,"running":1,"min_runners":0}]}` + "\n"
+		`{"kind":"ci","assigned":3,"running":2,"min_runners":0,"warm_instances":[]},` +
+		`{"kind":"qae","assigned":2,"running":0,"min_runners":0,"warm_instances":[]},` +
+		`{"kind":"ci","assigned":1,"running":1,"min_runners":0,"warm_instances":[]}]}` + "\n"
 	if string(body) != want {
 		t.Fatalf("queue.json = %s\nwant         %s", body, want)
 	}
@@ -778,8 +779,28 @@ func TestQueueRecordCarriesTheWarmPool(t *testing.T) {
 	cfg.Budget.MinRunners = 2
 	h := newHarness(t, cfg)
 	a := h.api(t, "example")
-	h.lane.addSet(SetKey{"example", kindCI}, 41, a)
+	ci := SetKey{"example", kindCI}
+	h.lane.addSet(ci, 41, a)
 	h.lane.addSet(SetKey{"example", kindQAE}, 42, a)
+	// Idle ci slots: 1 oldest, 2 and 4 started in the same second, 3 newest; 5 busy. The pool of 2
+	// keeps what planIdleStops would not stop: 3 and, of the tie, the higher instance 4.
+	t0 := h.now
+	h.lane.mu.Lock()
+	for n, since := range map[int]time.Time{1: t0, 2: t0.Add(5 * time.Second), 3: t0.Add(9 * time.Second), 4: t0.Add(5 * time.Second)} {
+		h.lane.slots[slotRef{kindCI, n}] = &Slot{Kind: kindCI, Instance: n, Set: ci, Phase: PhaseIdle, Since: since}
+	}
+	h.lane.slots[slotRef{kindCI, 5}] = &Slot{Kind: kindCI, Instance: 5, Set: ci, Phase: PhaseBusy, Since: t0.Add(time.Minute)}
+	h.lane.mu.Unlock()
+	stops := planIdleStops(PlanInput{Now: t0.Add(time.Hour), IdleStop: time.Minute,
+		Sets: []SetStatus{{Key: ci, Known: true, MinRunners: 2}}, Occupied: h.lane.trackedSlots()})
+	var stopped []int
+	for _, s := range stops {
+		stopped = append(stopped, s.Instance)
+	}
+	sort.Ints(stopped)
+	if !reflect.DeepEqual(stopped, []int{1, 2}) {
+		t.Fatalf("planIdleStops stops %v, want [1 2]", stopped)
+	}
 	h.lane.recordStatistics(SetKey{"example", kindQAE}, &scaleset.RunnerScaleSetStatistic{TotalAssignedJobs: 1})
 	h.lane.recordStatistics(SetKey{"example", kindCI}, &scaleset.RunnerScaleSetStatistic{TotalAssignedJobs: 5, TotalRunningJobs: 3})
 	body, err := os.ReadFile(filepath.Join(h.run, queueFile))
@@ -790,7 +811,8 @@ func TestQueueRecordCarriesTheWarmPool(t *testing.T) {
 	if err := json.Unmarshal(body, &rec); err != nil {
 		t.Fatal(err)
 	}
-	want := []queueSet{{Kind: kindCI, Assigned: 5, Running: 3, MinRunners: 2}, {Kind: kindQAE, Assigned: 1}}
+	want := []queueSet{{Kind: kindCI, Assigned: 5, Running: 3, MinRunners: 2, WarmInstances: []int{3, 4}},
+		{Kind: kindQAE, Assigned: 1, WarmInstances: []int{}}}
 	if !reflect.DeepEqual(rec.Sets, want) {
 		t.Fatalf("sets = %+v", rec.Sets)
 	}
@@ -991,6 +1013,20 @@ func TestJobHistoryKeepsFinishTimesAcrossARestartAndALateStartStillFillsTheEntry
 	want := `{"version":1,"jobs":[` +
 		`{"kind":"ci","instance":1,"runner_name":"` + s.RunnerName + `","runner_assigned_at":"2026-01-01T11:59:30Z",` +
 		`"started_at":"2026-01-01T11:59:30Z","finished_at":"2026-01-01T12:03:00Z"}]}` + "\n"
+	if got := jobsJSON(t, h.run); got != want {
+		t.Fatalf("jobs.json = %s\nwant        %s", got, want)
+	}
+}
+
+func TestJobHistoryCompletionWithAFinishButNoRunnerTimeNeverStartsAfterIt(t *testing.T) {
+	h, _ := startedLane(t, orgConfig(), 1)
+	s := h.lane.trackedSlots()[0]
+	h.advance(10 * time.Minute)
+	finish := time.Date(2026, 1, 1, 12, 4, 0, 0, time.UTC)
+	h.lane.jobCompleted(SetKey{"example", kindCI}, &scaleset.JobCompleted{RunnerName: s.RunnerName,
+		JobMessageBase: scaleset.JobMessageBase{FinishTime: finish}})
+	want := `{"version":1,"jobs":[{"kind":"ci","instance":1,"runner_name":"` + s.RunnerName + `",` +
+		`"started_at":"2026-01-01T12:04:00Z","finished_at":"2026-01-01T12:04:00Z"}]}` + "\n"
 	if got := jobsJSON(t, h.run); got != want {
 		t.Fatalf("jobs.json = %s\nwant        %s", got, want)
 	}

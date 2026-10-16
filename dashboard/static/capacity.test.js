@@ -55,7 +55,7 @@ function history() {
     wait: { jobs: 120, p50_seconds: 18, p95_seconds: 130, routing_seconds: 3 } });
   day.buckets[47] = { start: day.buckets[47].start, running: 2, warm: 0.5, reserved: 0.5, waiting: 3 };
   day.buckets[46] = { start: day.buckets[46].start, running: 1, warm: 0, reserved: 0, waiting: 0 };
-  return { observed_at: at(0), limit: 4, waiting_now: 0, warm: 1, started: {},
+  return { observed_at: at(0), limit: 4, waiting_now: 0, warm: 1, warm_slots: ["ci-4", "ci-1"], started: {},
     ranges: [range("1h", 30, 120), day, range("7d", 56, 10800)] };
 }
 
@@ -120,8 +120,7 @@ test("runners are grouped by kind in plain words, named by kind and slot, with f
   const rows = content.find("runner-row").slice(1).map(row => row.text.replace(/\s+/g, " ").trim());
   assert.deepStrictEqual(rows.length, 6);
   assert.match(rows[0], /^Build 1 Running <img src=x> widgets #41 11m/);
-  // The warm pool is one runner: the listener keeps the newest idle one and stops older ones, so the
-  // newest idle build runner is the one shown as kept warm.
+  // The listener names the runners its warm pool keeps (ci-4, and ci-1 which has since taken a job).
   assert.match(rows[1], /^Build 3 Idle, no job Waiting for GitHub to send a job 6m 0s idle/);
   assert.match(rows[2], /^Build 4 Kept warm Ready for the next job; kept up on purpose 2m 0s idle/);
   assert.match(rows[3], /^2 free A runner starts in a free slot when a job arrives\./);
@@ -132,12 +131,13 @@ test("runners are grouped by kind in plain words, named by kind and slot, with f
   assert.deepStrictEqual(content.find("runner-head")[0].children.map(cell => cell.text.trim()), ["Runner", "State", "Job", "Repository", "Time"]);
 });
 
-test("on a same-second tie the warm runner is the higher slot, as the listener keeps it", () => {
+test("only runners the listener names read kept warm, and only while they have no job", () => {
   const value = snapshot(history());
-  value.telemetry.capacity.lanes.find(lane => lane.id === "ci-4").allocated_at = value.telemetry.capacity.lanes.find(lane => lane.id === "ci-3").allocated_at;
+  value.telemetry.capacity.history.warm_slots = [];
   const rows = render(value).find("runner-row").slice(1).map(row => row.text.replace(/\s+/g, " ").trim());
   assert.match(rows[1], /^Build 3 Idle, no job/);
-  assert.match(rows[2], /^Build 4 Kept warm/);
+  assert.match(rows[2], /^Build 4 Idle, no job/);
+  assert.doesNotMatch(rows.join(" "), /Kept warm/);
 });
 
 test("markup in a job name stays text", () => {

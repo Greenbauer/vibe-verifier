@@ -71,20 +71,31 @@ def _number(value, maximum=None):
     return value
 
 
+def _warm_slots(row):
+    """A set's warm_instances as slot ids ("ci-3"); an older listener sends none."""
+    instances = row.get("warm_instances") or []
+    if not isinstance(instances, list) or len(instances) > 64 or any(_count(item, 64) < 1 for item in instances):
+        raise ValueError
+    return {"%s-%d" % (row["kind"], item) for item in instances}
+
+
 def project_queue(raw):
     """Jobs waiting for a runner and warm runners kept on purpose, summed over the lane's sets."""
     if not isinstance(raw, dict) or raw.get("version") != 1 or not isinstance(raw.get("sets"), list):
         return None
     waiting = warm = 0
+    slots = set()
     try:
         for row in raw["sets"][:64]:
             if not isinstance(row, dict) or row.get("kind") not in KINDS:
                 raise ValueError
             waiting += max(0, _count(row.get("assigned")) - _count(row.get("running")))
             warm += _count(row.get("min_runners", 0))
+            slots.update(_warm_slots(row))
     except ValueError:
         return None
-    return {"waiting": waiting, "warm": warm}
+    # warm_slots: the slots the listener's warm pool keeps now ("ci-3"); empty from an older listener.
+    return {"waiting": waiting, "warm": warm, "warm_slots": sorted(slots)}
 
 
 def _seconds(start, end):
@@ -297,9 +308,9 @@ def history(kept_samples, wait_rows, host, host_ok, queue, now_text):
     points = [sample for sample in kept_samples if _usable(sample)]
     started = {row["runner"]: row["started_at"] for row in wait_rows}
     occupied = [row.get("runner_name") for row in (slots or {}).get("occupied") or [] if row.get("runner_name")]
-    return {"observed_at": now_text, "limit": limit,
-            "waiting_now": queue["waiting"] if host_ok and queue else None,
-            "warm": queue["warm"] if queue else None,
+    current = queue if host_ok and queue else {}
+    return {"observed_at": now_text, "limit": limit, "waiting_now": current.get("waiting"),
+            "warm": queue["warm"] if queue else None, "warm_slots": current.get("warm_slots", []),
             "started": {runner: started[runner] for runner in occupied if runner in started},
             "ranges": [range_view(name, length, step, points, wait_rows, limit, now, occupied)
                        for name, length, step in RANGES]}
@@ -364,7 +375,12 @@ def read_history(value):
         raise ValueError
     if any(not RUNNER_RE.fullmatch(key) or not parse_time(item) for key, item in started.items()):
         raise ValueError
+    warm_slots = value.get("warm_slots", [])
+    if (not isinstance(warm_slots, list) or len(warm_slots) > 64
+            or any(not isinstance(item, str) or not re.fullmatch(r"(ci|qae|wait)-[1-9][0-9]?", item) for item in warm_slots)):
+        raise ValueError
     return {"observed_at": value["observed_at"], "limit": _optional(value.get("limit"), lambda item: _count(item, 64)),
             "waiting_now": _optional(value.get("waiting_now"), _count),
-            "warm": _optional(value.get("warm"), lambda item: _count(item, 64)), "started": dict(started),
+            "warm": _optional(value.get("warm"), lambda item: _count(item, 64)), "warm_slots": list(warm_slots),
+            "started": dict(started),
             "ranges": [_read_range(row, expected) for row, expected in zip(ranges, RANGES)]}

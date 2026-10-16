@@ -285,9 +285,9 @@ kinds, the columns, and failure handling.
   has been up), the job (linked when the host or GitHub gave a link), the repository and, when the job
   is on an open pull request's current head, its number, and the time. Running time counts from the
   job's start (GitHub assigning it to the runner) when the listener recorded it, else from when the
-  runner was allocated. The host does not say which runners the warm pool keeps; the listener stops idle
-  runners oldest first and keeps the newest, so the newest idle build-and-test runners, up to the
-  pool's size, show as `Kept warm`. Free slots are not runners yet
+  runner was allocated. A runner shows as `Kept warm` when the listener names it as one its warm pool
+  keeps (`queue.json` `warm_instances`) and it has no job; a listener that predates that list marks
+  none. Free slots are not runners yet
   (the listener starts one in any free slot when a job arrives), so each pool ends with one count:
   `3 free`.
 - **The shared host** meters, unchanged.

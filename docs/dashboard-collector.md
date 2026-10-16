@@ -123,7 +123,7 @@ GitHub job. An older listener that does not write `assignment` is that fallback.
 
 The sampler also reads two files the lane's listener keeps directly in `/run/<lane>/`
 ([run-dir contract](../lanes/listener/README.md#the-run-dir-contract)): `queue.json`, each scale
-set's assigned and running job counts and warm-pool size, and `jobs.json`, the newest jobs with
+set's assigned and running job counts, warm-pool size and the idle slots the pool keeps, and `jobs.json`, the newest jobs with
 GitHub's queued, scale-set-assigned and runner-assigned times, and the finish time once the listener
 heard the job complete (a completion it never saw start adds the job too). Each is read through the same
 no-symlink, regular-file reader, at most 1 MiB, and only the newest 100 jobs are returned. A missing
@@ -257,6 +257,8 @@ observed_at     this refresh
 limit           the shared pool's slot limit
 waiting_now     jobs waiting for a runner now; null after a failed refresh or an unread queue
 warm            runners the warm pool keeps up; null when the queue was not read
+warm_slots      the slots the listener says the pool keeps now (`ci-3`); empty after a failed refresh,
+                an unread queue, or from a listener that predates the list
 started         runner name to its job's start time, for the slots occupied now
 ranges[]        1h, 24h and 7d, in that order
   name, bucket_seconds (120, 1800, 10800), covered_hours
@@ -288,7 +290,9 @@ idle, so for the first seven days the longer ranges overstate idle time. The new
 has not begun: a bar holding only it shows what that sample saw, and the totals leave it out. A slot
 whose job is matched only through GitHub, and no job span covers, counts as idle here. The reverse is
 a known limit: a runner that starts, runs a job and exits between two samples adds job time, which is
-taken from the other runners' idle time in that interval, so idle can read slightly low.
+taken from the other runners' idle time in that interval, so idle can read slightly low. The warm
+share is the warm pool's size taken from all idle runner-slot time, whatever the kind: while the warm
+build runner is on a job and no replacement has started, an idle AI QA runner's time counts as warm.
 
 The output is an atomic replacement with mode `0600`. Remote output and prior snapshots are
 allowlist-projected before writing, so extra fields cannot carry raw configuration or secrets into
