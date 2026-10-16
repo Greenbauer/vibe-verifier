@@ -697,6 +697,7 @@ func (l *Lane) recordJob(ref slotRef, timing jobTiming) {
 	defer l.recMu.Unlock()
 	if e := l.lastJob(timing.RunnerName); e != nil && e.FinishedAt != "" {
 		e.fillFrom(timing)
+		l.moveLast(e)
 	} else {
 		l.jobs = append(l.jobs, timing)
 	}
@@ -710,10 +711,24 @@ func (l *Lane) recordFinish(ref slotRef, timing jobTiming) {
 	defer l.recMu.Unlock()
 	if e := l.lastJob(timing.RunnerName); e != nil {
 		e.FinishedAt = timing.FinishedAt
+		l.moveLast(e)
 	} else {
 		l.jobs = append(l.jobs, timing)
 	}
 	l.writeJobs(ref)
+}
+
+// moveLast moves a history entry to the end, so jobs.json is in order of last change: the sampler
+// passes on only the newest 100 entries, and a long job's finish must not sit behind 100 later
+// starts. Called with l.recMu held; e points into l.jobs.
+func (l *Lane) moveLast(e *jobTiming) {
+	for i := range l.jobs {
+		if &l.jobs[i] == e {
+			moved := *e
+			l.jobs = append(append(l.jobs[:i:i], l.jobs[i+1:]...), moved)
+			return
+		}
+	}
 }
 
 // fillFrom takes what a late JobStarted knows into the entry a JobCompleted made, keeping the

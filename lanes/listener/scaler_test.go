@@ -1206,3 +1206,26 @@ func TestReconcileRewritesQueueRecordWhenTheWarmPoolChanges(t *testing.T) {
 		t.Fatalf("sets = %+v", got.Sets)
 	}
 }
+
+func TestJobHistoryMovesAFinishedJobToTheEndSoTheNewestEntriesCarryIt(t *testing.T) {
+	h, _ := startedLane(t, orgConfig(), 1)
+	s := h.lane.trackedSlots()[0]
+	key := SetKey{"example", kindCI}
+	h.lane.jobStarted(key, &scaleset.JobStarted{RunnerName: s.RunnerName})
+	// Three later starts on other runners (as if on other slots), then the first job finishes.
+	h.lane.recMu.Lock()
+	for n := 0; n < 3; n++ {
+		h.lane.jobs = append(h.lane.jobs, jobTiming{Kind: kindCI, Instance: 2, RunnerName: fmt.Sprintf("other-%d", n), StartedAt: "2026-01-01T12:00:00Z"})
+	}
+	h.lane.recMu.Unlock()
+	h.advance(time.Minute)
+	h.lane.jobCompleted(key, &scaleset.JobCompleted{RunnerName: s.RunnerName})
+	var rec jobsRecord
+	if err := json.Unmarshal([]byte(jobsJSON(t, h.run)), &rec); err != nil {
+		t.Fatal(err)
+	}
+	last := rec.Jobs[len(rec.Jobs)-1]
+	if len(rec.Jobs) != 4 || last.RunnerName != s.RunnerName || last.FinishedAt != "2026-01-01T12:01:00Z" {
+		t.Fatalf("jobs.json order = %+v", rec.Jobs)
+	}
+}

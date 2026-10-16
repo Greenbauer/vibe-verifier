@@ -309,9 +309,15 @@ interval per runner:
   even when its own runner came up after the sample; another runner can then read up to that job's
   time too little idle, and the late runner's own wait before its job counts no idle.
 - While a job with no recorded finish (from before the listener recorded finishes, or a missed
-  completion) runs beside short jobs whose start arrived late, a runner the sample saw on the
-  unrecorded job can be counted against a span of the short one: running reads low and idle high for
-  those intervals. This passes once the jobs without a recorded finish have ended.
+  completion) runs beside other jobs that started or ended within the last 60 seconds, a runner the
+  sample saw on the unrecorded job can be counted against one of their spans: that lane reads less
+  busy than it was for those intervals, for as long as the overlap lasts, not one interval. This
+  passes once the jobs without a recorded finish have ended.
+
+Not bounded by one interval: a cleanup longer than 60 seconds counts as running for its time past
+60 seconds, since the sample still sees the job recorded on the slot and no recent span covers it.
+On 2026-10-16 the two lanes' 200 cleanups in the previous 24 hours took a median of 5 seconds and at
+most 14; the slot units allow up to 300.
 
 The output is an atomic replacement with mode `0600`. Remote output and prior snapshots are
 allowlist-projected before writing, so extra fields cannot carry raw configuration or secrets into
