@@ -123,8 +123,9 @@ GitHub job. An older listener that does not write `assignment` is that fallback.
 
 The sampler also reads two files the lane's listener keeps directly in `/run/<lane>/`
 ([run-dir contract](../lanes/listener/README.md#the-run-dir-contract)): `queue.json`, each scale
-set's assigned and running job counts and warm-pool size, and `jobs.json`, the newest started jobs
-with GitHub's queued, scale-set-assigned and runner-assigned times. Each is read through the same
+set's assigned and running job counts, warm-pool size and the idle slots the pool keeps, and `jobs.json`, the newest jobs with
+GitHub's queued, scale-set-assigned and runner-assigned times, and the finish time once the listener
+heard the job complete (a completion it never saw start adds the job too). Each is read through the same
 no-symlink, regular-file reader, at most 1 MiB, and only the newest 100 jobs are returned. A missing
 or unreadable file is returned as `null`, never as an empty queue. The collector keeps only the
 counts and times named in [Lane history](#lane-history); repository and job names in `jobs.json` are
@@ -229,9 +230,9 @@ Before a source has ever succeeded, its unavailable data objects and `observed_a
 
 Each `samples` entry contains only its UTC observation time and numeric host values: CPU busy
 percent, available memory, workspace free bytes, occupied slots, remaining on-demand slots, running
-slots (`slots_running`: shared-pool slots whose job the host recorded) and jobs waiting for a runner
-(`jobs_waiting`, null when the listener's queue was not read). Samples written before the last two
-existed are kept without them. Entries older than seven days are pruned. The file also keeps at most
+slots (`slots_running`: shared-pool slots whose job the host recorded), jobs waiting for a runner
+(`jobs_waiting`) and the warm pool's size (`warm`), the last two null when the listener's queue was not
+read. Samples written before these existed are kept without them. Entries older than seven days are pruned. The file also keeps at most
 20,160 samples, so intervals shorter than 30 seconds retain less than seven days. Failed
 observations do not add samples.
 
@@ -239,14 +240,16 @@ observations do not add samples.
 
 `dashboard/lane_history.py` turns the samples and the listener's two files into what the Capacity
 view draws. Each `waits` entry is one job, keyed by its runner name: `kind`, `started_at` (when GitHub
-assigned it to a runner), `wait_seconds` (GitHub assigned it to the lane's scale set until it assigned
+assigned it to a runner), `finished_at` (GitHub's finish time once the listener recorded the
+completion, else null), `wait_seconds` (GitHub assigned it to the lane's scale set until it assigned
 it to a runner) and `routing_seconds` (queued until assigned to the scale set; null when GitHub sent
 no queued time, or one after the set time). On 2026-10-14 GitHub sent no queued time with a lane's
 job and its scale-set time was the job's GitHub `created_at` to the second, so the wait is counted from
 the set time. The start is the runner assignment, not the listener's `started_at`: the listener heard
-that 17-second job's start as it finished. A job is kept once, for seven days, at most 20,000. Because the listener keeps its newest
-500 jobs and the sampler passes on the newest 100, a lane that starts more than 100 jobs between two
-samples loses the oldest of them.
+that 17-second job's start as it finished. A job is kept once, for seven days, at most 20,000. Because the listener keeps 500 jobs in
+order of last change (a finish moves its job to the end) and the sampler passes on the newest 100, a
+lane where more than 100 jobs start or finish between two samples loses the oldest of those changes,
+which can include an older long job's finish.
 
 `history` is rewritten on every refresh, success or not:
 
@@ -255,21 +258,68 @@ observed_at     this refresh
 limit           the shared pool's slot limit
 waiting_now     jobs waiting for a runner now; null after a failed refresh or an unread queue
 warm            runners the warm pool keeps up; null when the queue was not read
+warm_slots      the slots the listener says the pool keeps (`ci-3`), as of its last queue.json write
+                (each statistics message, and each reconcile that changed it: after every message, every empty long
+                poll and every 5-second tick), so up to a
+                reconcile plus one collector refresh behind; empty after a failed refresh, an unread
+                queue, or from a listener that predates the list
 started         runner name to its job's start time, for the slots occupied now
 ranges[]        1h, 24h and 7d, in that order
   name, bucket_seconds (120, 1800, 10800), covered_hours
   buckets[]     30, 48 or 56 clock-aligned periods, the last one still filling: start, and when it
-                has samples, running and reserved (averages) and waiting (the most seen, or null)
-  busy_percent  running slot time over the limit times the sampled time
-  reserved_hours  slot time a runner held with no recorded job
+                has samples, running, warm and reserved (average slots over its sampled time: running
+                a job, up with no job for the warm pool, up with no job otherwise) and waiting (the
+                most seen, or null)
+  busy_percent  running slot time over the limit times the sampled time in the range
+  warm_hours    slot time the warm pool held runners up with no job, on purpose
+  idle_hours    slot time other runners held with no recorded job
   wait          jobs, p50_seconds, p95_seconds (nearest rank), routing_seconds (the mean over jobs
                 GitHub sent a queued time for, else null); null when no job started in the range
 ```
 
+Running time in each sample's interval comes from job spans: a job counts from GitHub assigning it
+to a runner until its finish, or until now while its runner still holds a slot, so a job is never
+longer than GitHub says, whether or not a sample saw it. A sample misses a job shorter than the
+interval: on 2026-10-14 four jobs of about 17 seconds ran between 30-second samples, their runners'
+jobs recorded too late to be seen, and read as 0% busy. A runner the sample saw on a job that no span
+covers (a job whose finish was never recorded, from before the listener recorded finishes or a missed
+completion) counts for the whole interval instead. Running is at most the limit. Only `ci` and `qae`
+jobs count; the wait pool has its own slots.
+
+Idle time is the runners the sample saw up with neither a recorded job nor a covering span, for the
+interval, less the time from each job that starts inside the interval to the interval's end (that
+runner was up waiting for it, then ran it and exited), the warm pool's size of it first. So a short
+job's runner is not also counted idle. The warm share is the warm pool's size taken from all idle
+runner-slot time, whatever the kind: while the warm build runner is on a job and no replacement has
+started, an idle AI QA runner's time counts as warm.
+
 A sample stands for the time until the next sample, at most 120 seconds, so a collector outage counts
 as unsampled time rather than as whatever the last sample saw. Samples from before `slots_running`
-was recorded leave their bars empty. Running means the host recorded the slot's job; a slot whose job
-is matched only through GitHub counts as reserved here.
+was recorded leave their bars empty; samples from before `warm` was recorded count the warm pool as
+idle, so for the first seven days the longer ranges overstate idle time. The newest sample's interval
+has not begun: a bar holding only it shows what that sample saw, and the totals leave it out.
+
+A runner the sample saw on a job is not counted as an extra interval of running when a span ended in
+the 60 seconds before the sample: the slot stays up, its job still recorded, while the unit cleans up,
+and that job is already counted from its span. That cleanup counts as neither running nor idle.
+
+Samples count runners, not which runner is which, so these limits remain, each at most one sample
+interval per runner:
+- A runner seen idle that stops (an idle stop or warm recycle) during the interval counts idle for
+  the whole interval.
+- A job starting inside an interval is taken off the idle time of the runners the sample saw up,
+  even when its own runner came up after the sample; another runner can then read up to that job's
+  time too little idle, and the late runner's own wait before its job counts no idle.
+- While a job with no recorded finish (from before the listener recorded finishes, or a missed
+  completion) runs beside other jobs that started or ended within the last 60 seconds, a runner the
+  sample saw on the unrecorded job can be counted against one of their spans: that lane reads less
+  busy than it was for those intervals, for as long as the overlap lasts, not one interval. This
+  passes once the jobs without a recorded finish have ended.
+
+Not bounded by one interval: a cleanup longer than 60 seconds counts as running for its time past
+60 seconds, since the sample still sees the job recorded on the slot and no recent span covers it.
+On 2026-10-16 the two lanes' 200 cleanups in the previous 24 hours took a median of 5 seconds and at
+most 14; the slot units allow up to 300.
 
 The output is an atomic replacement with mode `0600`. Remote output and prior snapshots are
 allowlist-projected before writing, so extra fields cannot carry raw configuration or secrets into

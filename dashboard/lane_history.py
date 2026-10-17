@@ -9,7 +9,13 @@ inputs come from the lane's listener through the sampler, and both are optional:
   scale set, assigned to a runner, and queued when GitHub sends it. The wait for a runner is set to
   runner; on 2026-10-14 the set time was the job's GitHub created_at to the second and no queued time
   came, so routing (queued to set) is kept only when GitHub sends one. A job counts from its runner
-  assignment: the listener hears JobStarted late (a 17-second job's arrived as it finished).
+  assignment: the listener hears JobStarted late (a 17-second job's arrived as it finished). It
+  ends at GitHub's finish time once the listener records the completion.
+
+Busy time is each job's own span; a runner a sample saw on a job no span covers (its finish never
+recorded) adds that sample's interval. A sample every 30 seconds misses jobs shorter than that (four
+such jobs read as 0% busy on 2026-10-14), which the spans count. Samples give the rest: idle runners,
+the warm pool, and when the collector was watching. See docs/dashboard-collector.md for the limits.
 
 Three things are kept in the collector's root-only state, each pruned to seven days: samples (one
 per refresh, now with running and waiting counts), waits (one per job), and the derived history the
@@ -17,6 +23,7 @@ dashboard reads. Only history is published; read_history() is the dashboard's re
 """
 
 import datetime as dt
+import functools
 import math
 import re
 
@@ -27,23 +34,33 @@ MAX_WAIT_SECONDS = HISTORY_SECONDS
 # A sample stands for the time until the next one, but a gap (the collector down) counts for at most
 # this long, so an outage is not read as hours of whatever the last sample saw.
 SAMPLE_SPAN_SECONDS = 120
+# A runner's slot stays up while its unit cleans up after the job, so a sample can still see the job
+# recorded on it. A span that ended this recently still covers the runner, so that sample does not add
+# a whole interval of running for a job already counted from its span.
+CLEANUP_SECONDS = 60
 # (name, length, bucket) in seconds: 30, 48 and 56 bars.
 RANGES = (("1h", 3600, 120), ("24h", 86400, 1800), ("7d", 604800, 10800))
 KINDS = ("ci", "qae", "wait")
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 RUNNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+SHARED_KINDS = ("ci", "qae")
 SAMPLE_NUMBERS = ("cpu_busy_percent", "memory_available_bytes", "workspace_free_bytes",
                   "slots_occupied", "slots_remaining_on_demand")
+
+
+@functools.lru_cache(maxsize=65536)  # the same sample and job times are read on every refresh
+def _parse(value):
+    try:
+        return dt.datetime.strptime(value, TIME_FORMAT).replace(tzinfo=dt.timezone.utc)
+    except ValueError:
+        return None
 
 
 def parse_time(value):
     if not isinstance(value, str) or not TIME_RE.fullmatch(value):
         return None
-    try:
-        return dt.datetime.strptime(value, TIME_FORMAT).replace(tzinfo=dt.timezone.utc)
-    except ValueError:
-        return None
+    return _parse(value)
 
 
 def format_time(value):
@@ -64,20 +81,31 @@ def _number(value, maximum=None):
     return value
 
 
+def _warm_slots(row):
+    """A set's warm_instances as slot ids ("ci-3"); an older listener sends none."""
+    instances = row.get("warm_instances") or []
+    if not isinstance(instances, list) or len(instances) > 64 or any(_count(item, 64) < 1 for item in instances):
+        raise ValueError
+    return {"%s-%d" % (row["kind"], item) for item in instances}
+
+
 def project_queue(raw):
     """Jobs waiting for a runner and warm runners kept on purpose, summed over the lane's sets."""
     if not isinstance(raw, dict) or raw.get("version") != 1 or not isinstance(raw.get("sets"), list):
         return None
     waiting = warm = 0
+    slots = set()
     try:
         for row in raw["sets"][:64]:
             if not isinstance(row, dict) or row.get("kind") not in KINDS:
                 raise ValueError
             waiting += max(0, _count(row.get("assigned")) - _count(row.get("running")))
             warm += _count(row.get("min_runners", 0))
+            slots.update(_warm_slots(row))
     except ValueError:
         return None
-    return {"waiting": waiting, "warm": warm}
+    # warm_slots: the slots the listener's warm pool keeps now ("ci-3"); empty from an older listener.
+    return {"waiting": waiting, "warm": warm, "warm_slots": sorted(slots)}
 
 
 def _seconds(start, end):
@@ -92,14 +120,15 @@ def project_job(row):
     if not isinstance(runner, str) or not RUNNER_RE.fullmatch(runner):
         return None
     queued, routed = parse_time(row.get("queued_at")), parse_time(row.get("scale_set_assigned_at"))
-    assigned = parse_time(row.get("runner_assigned_at"))
+    assigned, finished = parse_time(row.get("runner_assigned_at")), parse_time(row.get("finished_at"))
     wait = _seconds(routed, assigned)
-    if wait is None or wait > MAX_WAIT_SECONDS:
+    if wait is None or wait > MAX_WAIT_SECONDS or (finished and finished < assigned):
         return None
     routing = _seconds(queued, routed)
     if routing is not None and routing > MAX_WAIT_SECONDS:
         routing = None
     return {"runner": runner, "kind": row["kind"], "started_at": format_time(assigned),
+            "finished_at": format_time(finished) if finished else None,
             "wait_seconds": wait, "routing_seconds": routing}
 
 
@@ -107,12 +136,24 @@ def _clean_wait(row):
     try:
         if parse_time(row.get("started_at")) is None or not RUNNER_RE.fullmatch(row.get("runner", "")):
             return None
-        routing = row.get("routing_seconds")
+        routing, finished = row.get("routing_seconds"), row.get("finished_at")
+        if finished is not None and (parse_time(finished) is None or finished < row["started_at"]):
+            return None
         return {"runner": row["runner"], "kind": row["kind"] if row.get("kind") in KINDS else None,
-                "started_at": row["started_at"], "wait_seconds": _count(row.get("wait_seconds"), MAX_WAIT_SECONDS),
+                "started_at": row["started_at"], "finished_at": finished,
+                "wait_seconds": _count(row.get("wait_seconds"), MAX_WAIT_SECONDS),
                 "routing_seconds": None if routing is None else _count(routing, MAX_WAIT_SECONDS)}
     except (AttributeError, TypeError, ValueError):
         return None
+
+
+def _keep(unique, row):
+    """The newest record of a runner's job wins, but never drops a finish an earlier one had (a
+    listener restarted between a job's completion and its late start wrote a second, unfinished one)."""
+    earlier = unique.get(row["runner"])
+    if earlier and earlier["finished_at"] and not row["finished_at"]:
+        row["finished_at"] = earlier["finished_at"]
+    unique[row["runner"]] = row
 
 
 def waits(previous_rows, raw_jobs, now):
@@ -126,7 +167,7 @@ def waits(previous_rows, raw_jobs, now):
     for row in rows:
         clean = _clean_wait(row) if "runner" in row else project_job(row)
         if clean and parse_time(clean["started_at"]) >= cutoff:
-            unique[clean["runner"]] = clean
+            _keep(unique, clean)
     return sorted(unique.values(), key=lambda row: (row["started_at"], row["runner"]))[-MAX_WAITS:]
 
 
@@ -141,7 +182,7 @@ def _clean_sample(sample, cutoff):
     observed = parse_time(sample.get("observed_at"))
     metrics = sample["host"]
     clean = {name: _number(metrics[name], 100 if name == "cpu_busy_percent" else None) for name in SAMPLE_NUMBERS}
-    for name in ("slots_running", "jobs_waiting"):
+    for name in ("slots_running", "jobs_waiting", "warm"):
         if metrics.get(name) is not None:
             clean[name] = _count(metrics[name])
     if not observed or observed < cutoff:
@@ -168,7 +209,8 @@ def samples(previous, host, success, now, queue):
             "slots_occupied": host["slots"]["occupied_count"],
             "slots_remaining_on_demand": host["slots"]["remaining_on_demand"],
             "slots_running": running_count(host),
-            "jobs_waiting": queue["waiting"] if queue else None}})
+            "jobs_waiting": queue["waiting"] if queue else None,
+            "warm": queue["warm"] if queue else None}})
     unique = {sample["observed_at"]: sample for sample in kept}
     return [unique[key] for key in sorted(unique)][-MAX_SAMPLES:]
 
@@ -191,13 +233,79 @@ def _usable(sample):
     return "slots_running" in sample["host"]
 
 
-def _bucket(start, points):
-    if not points:
+def job_spans(wait_rows, occupied, now):
+    """(start, end) of each shared-pool job: GitHub's runner assignment to its finish, or to now while
+    its runner still holds a slot. A job with neither end adds nothing; the samples still count it."""
+    spans = []
+    for row in wait_rows:
+        if row.get("kind") not in SHARED_KINDS:
+            continue
+        end = parse_time(row.get("finished_at")) or (now if row["runner"] in occupied else None)
+        if end:
+            spans.append((parse_time(row["started_at"]), end))
+    return spans
+
+
+def _overlap(spans, start, end):
+    return sum(max(0.0, (min(stop, end) - max(begin, start)).total_seconds()) for begin, stop in spans)
+
+
+def _interval(host, begin, end, seconds, active, limit):
+    """(running, warm, idle, weight) of one sample's interval, from the spans near it (_intervals)."""
+    weight = (end - begin).total_seconds()
+    cleanup = dt.timedelta(seconds=CLEANUP_SECONDS)
+    covering = sum(1 for start, stop in active if start <= begin <= stop)
+    cleaning = sum(1 for start, stop in active if stop < begin <= stop + cleanup)
+    unspanned = max(0, host["slots_running"] - covering - cleaning)
+    jobs = (_overlap(active, begin, end) if seconds else covering) + unspanned * weight
+    cap = limit or host["slots_occupied"]
+    running = min(jobs, cap * weight)
+    # A sample from before the limit was lowered can hold more runners than it; none counts past it.
+    # Runners on a recorded job, under a span, or cleaning up after one are not idle; the host's record
+    # and the spans can name different runners, so the larger of the two counts.
+    up = min(host["slots_occupied"], cap) - max(host["slots_running"], covering + cleaning)
+    starting = sum((end - start).total_seconds() for start, _ in active if begin < start < end)
+    idle = min(max(0.0, max(0, up) * weight - starting), max(0.0, cap * weight - running))
+    warm = min(idle, (host.get("warm") or 0) * weight)
+    return running, warm, idle - warm, weight
+
+
+def _intervals(points, spans, limit, now):
+    """Slot-seconds in each sample's interval (until the next sample, at most SAMPLE_SPAN_SECONDS):
+    (point, seconds, running, warm, idle, weight).
+
+    Running is the job time inside the interval from job spans, plus a full interval for each runner
+    the sample saw on a job that no span covers (a job whose finish was never recorded). A sample's
+    runner that a span covers is not counted again, so a job is never longer than GitHub says.
+    Idle is the runners the sample saw up with neither a recorded job nor a covering span, for the
+    interval, less the time from each job that starts inside the interval to its end (such a runner
+    was up waiting for that job, then ran it and exited). The warm pool's share of idle comes first."""
+    rows, ordered, active, index = [], sorted(spans), [], 0
+    for point, seconds in zip(points, _spans(points, now)):
+        begin = parse_time(point["observed_at"])
+        # The newest sample's interval has not begun (0 s): weigh it as one second of what it saw, so a
+        # bar holding only it does not read as empty.
+        end = begin + dt.timedelta(seconds=seconds or 1)
+        # Samples come oldest first, so only the spans near this one are looked at: those started
+        # before its interval ends, until they ended more than CLEANUP_SECONDS before it began.
+        while index < len(ordered) and ordered[index][0] < end:
+            active.append(ordered[index])
+            index += 1
+        active = [span for span in active if span[1] + dt.timedelta(seconds=CLEANUP_SECONDS) >= begin]
+        rows.append((point, seconds) + _interval(point["host"], begin, end, seconds, active, limit))
+    return rows
+
+
+def _bucket(start, rows):
+    if not rows:
         return {"start": format_time(start)}
-    running = sum(point["host"]["slots_running"] for point in points) / len(points)
-    occupied = sum(point["host"]["slots_occupied"] for point in points) / len(points)
-    waiting = [point["host"]["jobs_waiting"] for point in points if point["host"].get("jobs_waiting") is not None]
-    return {"start": format_time(start), "running": round(running, 2), "reserved": round(max(0, occupied - running), 2),
+    waiting = [row[0]["host"]["jobs_waiting"] for row in rows if row[0]["host"].get("jobs_waiting") is not None]
+    # A bar averages over its sampled seconds. The newest sample has none yet, so it counts only in a
+    # bar that holds nothing else, at its one-second weight.
+    timed = [row for row in rows if row[1]] or rows
+    seconds = sum(row[5] for row in timed)
+    average = lambda index: round(sum(row[index] for row in timed) / seconds, 2)
+    return {"start": format_time(start), "running": average(2), "warm": average(3), "reserved": average(4),
             "waiting": max(waiting) if waiting else None}
 
 
@@ -206,28 +314,25 @@ def _spans(points, now):
     return [min(SAMPLE_SPAN_SECONDS, (times[i + 1] - times[i]).total_seconds()) for i in range(len(points))]
 
 
-def range_view(name, length, step, points, wait_rows, limit, now):
-    """One range's bars and totals. Bars are aligned to the clock; the last one is still filling."""
+def range_view(name, length, step, points, wait_rows, limit, now, occupied=()):
+    """One range's bars and totals, over the time the collector sampled. Bars are aligned to the
+    clock; the last one is still filling."""
     end = dt.datetime.fromtimestamp((int(now.timestamp()) // step + 1) * step, dt.timezone.utc)
     start = end - dt.timedelta(seconds=length)
     inside = [point for point in points if parse_time(point["observed_at"]) >= start]
+    rows = _intervals(inside, job_spans(wait_rows, set(occupied), now), limit, now)
     slots = {}
-    for point in inside:
-        index = int((parse_time(point["observed_at"]) - start).total_seconds()) // step
-        slots.setdefault(index, []).append(point)
-    buckets = [_bucket(start + dt.timedelta(seconds=index * step), slots.get(index, []))
-               for index in range(length // step)]
-    spans = _spans(inside, now)
-    covered = sum(spans)
-    running = sum(span * point["host"]["slots_running"] for span, point in zip(spans, inside))
-    reserved = sum(span * max(0, point["host"]["slots_occupied"] - point["host"]["slots_running"])
-                   for span, point in zip(spans, inside))
-    since = format_time(now - dt.timedelta(seconds=length))
+    for row in rows:
+        slots.setdefault(int((parse_time(row[0]["observed_at"]) - start).total_seconds()) // step, []).append(row)
+    buckets = [_bucket(start + dt.timedelta(seconds=index * step), slots.get(index, [])) for index in range(length // step)]
+    covered = sum(row[1] for row in rows)
+    total = lambda index: sum(row[index] for row in rows if row[1])  # the newest sample has no time yet
     return {"name": name, "bucket_seconds": step, "buckets": buckets,
             "covered_hours": round(covered / 3600, 2),
-            "busy_percent": round(100 * running / (covered * limit), 1) if covered and limit else None,
-            "reserved_hours": round(reserved / 3600, 2) if covered else None,
-            "wait": wait_summary([row for row in wait_rows if row["started_at"] >= since])}
+            "busy_percent": round(100 * total(2) / (covered * limit), 1) if covered and limit else None,
+            "warm_hours": round(total(3) / 3600, 2) if covered else None,
+            "idle_hours": round(total(4) / 3600, 2) if covered else None,
+            "wait": wait_summary([row for row in wait_rows if row["started_at"] >= format_time(now - dt.timedelta(seconds=length))])}
 
 
 def history(kept_samples, wait_rows, host, host_ok, queue, now_text):
@@ -238,11 +343,12 @@ def history(kept_samples, wait_rows, host, host_ok, queue, now_text):
     points = [sample for sample in kept_samples if _usable(sample)]
     started = {row["runner"]: row["started_at"] for row in wait_rows}
     occupied = [row.get("runner_name") for row in (slots or {}).get("occupied") or [] if row.get("runner_name")]
-    return {"observed_at": now_text, "limit": limit,
-            "waiting_now": queue["waiting"] if host_ok and queue else None,
-            "warm": queue["warm"] if queue else None,
+    current = queue if host_ok and queue else {}
+    return {"observed_at": now_text, "limit": limit, "waiting_now": current.get("waiting"),
+            "warm": queue["warm"] if queue else None, "warm_slots": current.get("warm_slots", []),
             "started": {runner: started[runner] for runner in occupied if runner in started},
-            "ranges": [range_view(name, length, step, points, wait_rows, limit, now) for name, length, step in RANGES]}
+            "ranges": [range_view(name, length, step, points, wait_rows, limit, now, occupied)
+                       for name, length, step in RANGES]}
 
 
 def capture(previous, response, host, host_ok, now):
@@ -260,12 +366,13 @@ def _optional(value, reader):
 
 
 def _read_bucket(row):
-    if not isinstance(row, dict) or set(row) - {"start", "running", "reserved", "waiting"} or not parse_time(row.get("start")):
+    if (not isinstance(row, dict) or set(row) - {"start", "running", "warm", "reserved", "waiting"}
+            or not parse_time(row.get("start"))):
         raise ValueError
     clean = {"start": row["start"]}
     if "running" in row:
-        clean.update(running=_number(row["running"], 10000), reserved=_number(row["reserved"], 10000),
-                     waiting=_optional(row.get("waiting"), _count))
+        clean.update(running=_number(row["running"], 10000), warm=_number(row.get("warm", 0), 10000),
+                     reserved=_number(row["reserved"], 10000), waiting=_optional(row.get("waiting"), _count))
     return clean
 
 
@@ -288,7 +395,8 @@ def _read_range(row, expected):
     return {"name": name, "bucket_seconds": step, "buckets": [_read_bucket(item) for item in buckets],
             "covered_hours": _number(row.get("covered_hours"), length / 3600 + 1),
             "busy_percent": _optional(row.get("busy_percent"), lambda item: _number(item, 100)),
-            "reserved_hours": _optional(row.get("reserved_hours"), lambda item: _number(item, 64 * length / 3600)),
+            "warm_hours": _optional(row.get("warm_hours"), lambda item: _number(item, 64 * length / 3600)),
+            "idle_hours": _optional(row.get("idle_hours"), lambda item: _number(item, 64 * length / 3600)),
             "wait": _optional(row.get("wait"), _read_wait)}
 
 
@@ -302,7 +410,12 @@ def read_history(value):
         raise ValueError
     if any(not RUNNER_RE.fullmatch(key) or not parse_time(item) for key, item in started.items()):
         raise ValueError
+    warm_slots = value.get("warm_slots", [])
+    if (not isinstance(warm_slots, list) or len(warm_slots) > 64
+            or any(not isinstance(item, str) or not re.fullmatch(r"(ci|qae|wait)-[1-9][0-9]?", item) for item in warm_slots)):
+        raise ValueError
     return {"observed_at": value["observed_at"], "limit": _optional(value.get("limit"), lambda item: _count(item, 64)),
             "waiting_now": _optional(value.get("waiting_now"), _count),
-            "warm": _optional(value.get("warm"), lambda item: _count(item, 64)), "started": dict(started),
+            "warm": _optional(value.get("warm"), lambda item: _count(item, 64)), "warm_slots": list(warm_slots),
+            "started": dict(started),
             "ranges": [_read_range(row, expected) for row, expected in zip(ranges, RANGES)]}
