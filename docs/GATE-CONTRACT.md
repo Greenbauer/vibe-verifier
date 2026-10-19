@@ -510,13 +510,19 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   server's tokens name its loopback address; a hosted project's keys say `iss: supabase` and name its
   `ref`); a database connection string (postgres, mysql, mongodb, redis, amqp), or a URL carrying a
   user or password, for a host that is not this machine; the address of a hosted Supabase project; a
-  database's bare host that is not this machine (libpq's `PGHOST`, `DB_HOST`); or when its name has a KEY,
+  database's bare host that is not this machine (libpq's `PGHOST`, `DB_HOST`; a Unix socket path is this
+  machine's); or when its name has a KEY,
   SECRET, TOKEN, PASSWORD, PASSWD, PASS, CREDENTIALS, APIKEY or AUTHTOKEN part, or a part ending in
   PASSWORD, PASSWD, SECRET or TOKEN (SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN, RESEND_API_KEY,
   VERCEL_TOKEN, DB_PASSWORD, PGPASSWORD, ACTIONS_ID_TOKEN_REQUEST_TOKEN) and `--local-env NAME` does not
   declare it the local stack's. A declared name still has its value checked by the first four rules.
   Only a changed test that could be a spec is listed at all (it imports no other framework, and no
-  package.json script runs it with `node --test`), so a fix with none never starts Playwright. A refusal names the variable,
+  package.json script runs it with `node --test`), so a fix with none never starts Playwright. A test that
+  only calls `test()` or `describe()` with no import could be either (a Vitest or Jest file with globals,
+  or a spec that imports its `test` from a fixtures module): when no changed test imports
+  `@playwright/test` and the listing cannot run (a credential in the step, no Playwright), none is taken
+  for a spec and they are classified as before, with a note; a credential beside a test that imports
+  `@playwright/test` is still exit 2. A refusal names the variable,
   where it was read, and the host, issuer or project, never the value. During a run, a test that reached
   for a blocked host (`ERR_PROXY_CONNECTION_FAILED`, `NS_ERROR_PROXY_CONNECTION_REFUSED`, or a refused,
   reset or timed-out connection to the proxy's port) is exit 2, and so are a failed test of another file (a setup project a

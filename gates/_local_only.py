@@ -15,7 +15,8 @@ since a site started from one package of a monorepo loads that package's) is ref
 - its value is a database connection string (postgres, mysql, mongodb, redis, amqp), or any URL carrying a
   user or password, for a host that is not loopback;
 - its value is the address of a hosted Supabase project (*.supabase.co, *.supabase.com, *.supabase.in);
-- it holds a database's bare host that is not loopback (libpq's PGHOST and PGHOSTADDR, DB_HOST, POSTGRES_HOST);
+- it holds a database's bare host that is not loopback or a Unix socket path (libpq's PGHOST and PGHOSTADDR,
+  DB_HOST, POSTGRES_HOST);
 - or its name says it is a credential (a KEY, SECRET, TOKEN, PASSWORD, PASSWD, PASS or CREDENTIALS part, or a
   part ending in PASSWORD, PASSWD, SECRET or TOKEN, as in SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN,
   RESEND_API_KEY, VERCEL_TOKEN, DB_PASSWORD, PGPASSWORD) and
@@ -132,7 +133,8 @@ def why(name, value, local_names):
     if reason is not None:
         return reason or None
     hosts = [host.strip() for host in value.split(",") if host.strip()]
-    if database_host(name) and not all(local_host(host.rsplit(":", 1)[0] if host.count(":") == 1 else host) for host in hosts):
+    if database_host(name) and not all(local_host(host.rsplit(":", 1)[0] if host.count(":") == 1 else host) or host.startswith("/")
+                                       for host in hosts):  # a path is a Unix socket on this machine
         return "holds a database host that is not this machine (%s)" % value
     if credential_name(name) and name not in local_names:
         return "is named as a credential, and the manifest does not declare it the local stack's (--local-env %s)" % name

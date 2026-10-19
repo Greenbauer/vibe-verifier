@@ -70,9 +70,9 @@ from contextlib import contextmanager
 
 from _acceptance import DASH
 from _contract import PY_TESTS, CannotRun, Finding, git, matches, qualify, resolve_base, run_gate
-from _regression_frameworks import JS, UNSUPPORTED_NAMES, classify, maybe_playwright, node_test
+from _regression_frameworks import JS, UNSUPPORTED_NAMES, classify, listed_specs, node_test
 from _regression_node import run_node
-from _regression_playwright import collected, run_playwright
+from _regression_playwright import run_playwright
 from _regression_runners import missing, run_python, run_vitest
 from _ticket import unfenced
 from universal_checks import lex
@@ -263,8 +263,7 @@ def none_ran(not_judged, unsupported):
 def runners(args, tests, deadline):
     """classify()'s three answers, and `plans`: how the repository runs each node:test file, and the config that runs
     each Playwright spec, read at HEAD."""
-    listed = collected(args.repo, args.playwright, [path for path in tests if maybe_playwright(args, path)],
-                       set(args.local_env or ()), deadline, args.timeout) if args.playwright else ({}, {})
+    listed = listed_specs(args, tests, deadline)
     judged, not_judged, unsupported = classify(args, tests, listed)
     plans = {path: node_test(args, path) if what == "node" else listed[0][path]
              for path, what in judged.items() if what in ("node", "playwright")}

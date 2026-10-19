@@ -6,6 +6,7 @@ import http.server
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -50,6 +51,33 @@ class Refusals(Fixture):
                 result = self.refused(self.project(base=base), "--playwright playwright.config.mjs: its project targets %s, "
                                                                "which is not this machine" % base)
                 self.assertIn("never production, and never a preview, which serves the pull request's head", result.stderr)
+
+    def test_a_webserver_or_a_setup_project_pointed_elsewhere_is_refused(self):
+        # The webServer's own url and env, and a project the spec's project depends on, are checked like the spec's own.
+        head = 'import { defineConfig } from "@playwright/test";\nconst site = "http://127.0.0.1:%d";\n'
+        server = 'webServer: { command: "node server.mjs", url: %s, env: { PORT: "%d"%s } }'
+        for name, body, said in (
+                ("url", 'export default defineConfig({ testDir: "e2e", use: { baseURL: site }, %s });\n'
+                 % (server % ('"https://app.example.com"', 0, "")), "webServer 1 waits for https://app.example.com, which is not this machine"),
+                ("env", 'export default defineConfig({ testDir: "e2e", use: { baseURL: site }, %s });\n'
+                 % (server % ("site", 0, ", SUPABASE_SERVICE_ROLE_KEY: %s.join('.')"  # in parts, as a secret scanner would stop
+                              % json.dumps(jwt({"iss": "supabase", "ref": HOSTED}).split(".")))),  # a commit holding the token
+                 "webServer 1's env: SUPABASE_SERVICE_ROLE_KEY holds a token issued by supabase for project " + HOSTED),
+                ("setup", 'export default defineConfig({ testDir: "e2e", %s, projects: [\n'
+                 '  { name: "setup", testMatch: /setup\\.mjs/, use: { baseURL: "https://app.example.com" } },\n'
+                 '  { name: "e2e", dependencies: ["setup"], use: { baseURL: site } }] });\n' % (server % ("site", 0, "")),
+                 "project setup targets https://app.example.com, which is not this machine")):
+            with self.subTest(config=name):
+                repo = self.project()
+                port = int(Path(repo, "playwright.config.mjs").read_text().split("127.0.0.1:")[1].split('"')[0])
+                config = (head % port + body).replace('PORT: "0"', 'PORT: "%d"' % port)
+                Path(repo, "playwright.config.mjs").write_text(config)
+                Path(repo, "e2e").mkdir(exist_ok=True)
+                Path(repo, "e2e", "setup.mjs").write_text('import { test } from "@playwright/test";\ntest("signs in", async () => {});\n')
+                subprocess.run(["git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "add", "-A"], check=True)
+                subprocess.run(["git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c",
+                                "commit.gpgsign=false", "commit", "-qm", name], check=True)
+                self.refused(repo, said)
 
     def test_a_config_that_starts_no_site_here_is_refused(self):
         repo = self.project({"playwright.config.mjs": "import { defineConfig } from \"@playwright/test\";\n"
@@ -114,6 +142,21 @@ class Refusals(Fixture):
                           env=self.env({"RESEND_API_KEY": "re_live_value"}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("src/price.test.mjs: gives members 10% off over 100 fails on the code before the fix", result.stderr)
+
+
+    def test_a_fix_whose_only_tests_use_jest_globals_is_not_held_up_by_the_browser_path(self):
+        # describe/it with no import might be a spec (one that imports its test from a fixtures module) until a
+        # config collects it; when listing cannot run here (a credential in the step), it is classified as before:
+        # a Jest test, not judged, and never exit 2.
+        calls = 'describe("price", () => {\n  it("gives members 10% off", () => { expect(1).toBe(1); });\n});\n'
+        repo = self.project({"apps/api/jest.config.js": "module.exports = {};\n"})
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "apps/api/src/price.test.ts": calls}, "--soak",
+                          env=self.env({"RESEND_API_KEY": "re_live_value"}))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("no changed test imports @playwright/test, and listing the others under --playwright could not run, so "
+                      "none is taken for a spec", result.stderr)
+        self.assertIn("apps/api/src/price.test.ts: not judged: a Jest test (apps/api/jest.config.js)", result.stderr)
+        self.assertNotIn("re_live_value", result.stdout + result.stderr)
 
 
 class Answers(http.server.BaseHTTPRequestHandler):

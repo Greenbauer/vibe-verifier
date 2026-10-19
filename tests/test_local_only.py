@@ -36,7 +36,8 @@ class LocalOnly(unittest.TestCase):
                             ("REDIS_URL", "redis://localhost:6379"), ("SUPABASE_URL", "http://127.0.0.1:54321"),
                             ("NEXT_PUBLIC_SITE_URL", "http://app.localhost:3000"), ("GITHUB_SERVER_URL", "https://github.com"),
                             ("PLAYWRIGHT_AUTH_BYPASS", "true"), ("PWD", "/work"), ("TEST_BASE_URL", ""),
-                            ("PGHOST", "127.0.0.1:54322"), ("DB_HOST", "localhost"), ("POSTGRES_HOST", "::1"),
+                            ("PGHOST", "127.0.0.1:54322"), ("PGHOST", "/var/run/postgresql"), ("DB_HOST", "localhost"),
+                            ("POSTGRES_HOST", "::1"),
                             ("SITE_HOST", "app.example.com")):
             self.assertIsNone(_local_only.why(name, value, set()), name)
         self.assertIsNone(_local_only.why("SESSION_SECRET", "a-local-secret", {"SESSION_SECRET"}))

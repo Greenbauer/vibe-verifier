@@ -6,9 +6,11 @@ to the root, holding a Vitest config, a Jest config or a package.json that names
 import json
 import os
 import re
+import sys
 
-from _contract import PY_TESTS, matches
+from _contract import PY_TESTS, CannotRun, matches
 from _regression_node import plan as node_plan
+from _regression_playwright import collected
 
 JS = tuple("." + ext for ext in ("ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"))
 PLAYWRIGHT = re.compile(r"""['"]@playwright/test['"]""")
@@ -127,9 +129,31 @@ def maybe_playwright(args, path):
     start Playwright, so a fix with only those needs nothing a browser run does."""
     if not path.endswith(JS) or node_test(args, path):
         return False
+    return not any(found.search(text_of(args, path)) for found in (VITEST, NODE_TEST, BUN_TEST, JEST_GLOBALS))
+
+
+def text_of(args, path):
     with open(os.path.join(args.repo, path), encoding="utf-8", errors="replace") as handle:
-        text = handle.read()
-    return not any(found.search(text) for found in (VITEST, NODE_TEST, BUN_TEST, JEST_GLOBALS))
+        return handle.read()
+
+
+def listed_specs(args, tests, deadline):
+    """({path: config}, {path: why it does not load}) of the changed tests the --playwright configs collect at HEAD. A
+    test that imports @playwright/test is a spec, so a listing that cannot run (a credential in the step, no
+    Playwright) is exit 2. When every candidate only might be one (it calls test() and imports no framework, as a
+    Vitest or Jest file with globals does), such a listing means none is taken for a spec, and they are classified
+    as before, so a fix with no spec never depends on a browser run."""
+    if not args.playwright:
+        return {}, {}
+    candidates = [path for path in tests if maybe_playwright(args, path)]
+    try:
+        return collected(args.repo, args.playwright, candidates, set(args.local_env or ()), deadline, args.timeout)
+    except CannotRun as error:
+        if any(PLAYWRIGHT.search(text_of(args, path)) for path in candidates):
+            raise
+        print("regression-test-fails-on-base: no changed test imports @playwright/test, and listing the others under "
+              "--playwright could not run, so none is taken for a spec: %s" % error, file=sys.stderr, flush=True)
+        return {}, {}
 
 
 def playwright_why(args, path, unloaded):
