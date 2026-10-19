@@ -152,26 +152,6 @@
     return secondsClass(elapsedSeconds(value, now), kind);
   }
 
-  // How long CI has taken on the head's checks: from the first check's start to now while any
-  // check is still open, to the last finish once every check is done. Before any check has
-  // started it is the wait since the push. Null when the head has no checks.
-  function ciTiming(pull, now) {
-    const rows = [...(pull.checks || []), ...(pull.statuses || [])];
-    if (!rows.length && !(pull.expected || []).length) return null;
-    const times = key => rows.map(row => Date.parse(row[key])).filter(Number.isFinite);
-    const starts = times("started_at");
-    if (!starts.length) {
-      const waited = elapsedSeconds(pull.push && pull.push.pushed_at, now);
-      return { label: "CI waiting", seconds: waited };
-    }
-    const start = Math.min(...starts);
-    const ends = times("completed_at");
-    if (checkTotals(pull).remaining > 0 || !ends.length) {
-      return { label: "CI running", seconds: Math.max(0, (now - start) / 1000) };
-    }
-    return { label: "CI took", seconds: Math.max(0, (Math.max(...ends) - start) / 1000) };
-  }
-
   function formatTime(value) {
     const date = new Date(value);
     return Number.isFinite(date.getTime()) ? date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Unavailable";
@@ -444,7 +424,7 @@
     return groups;
   }
 
-  return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, ageLabel, since, ageClass, secondsClass, ciTiming, formatTime, bytes,
+  return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, ageLabel, since, elapsedSeconds, ageClass, secondsClass, formatTime, bytes,
     badge, botState, sourceStamp, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageWarning, checkTotals, combinedCategory, checkState, meterSegments, meterLabel, runningWork, unresolvedMark, behindMark,
     parseRoute, routeHash, httpsUrl, workGroups, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, paceHeader,
     quotaDeltaLabel,

@@ -3,9 +3,10 @@
 // out to GitHub.
 (function () {
   "use strict";
-  const { element: el, safeUrl, duration, ageLabel, since, ageClass, secondsClass, ciTiming, badge, flattenPulls, filterPulls,
+  const { element: el, safeUrl, duration, ageLabel, since, ageClass, secondsClass, badge, flattenPulls, filterPulls,
     groupPulls, repositoriesWithPulls, coverageWarning, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork,
     unresolvedMark, behindMark } = VV;
+  const { ciTiming } = VVTimeline;
   // The pull request whose CI timeline is open, by "<repository>#<number>": at most one, so opening a
   // row closes any other. Not saved: a reload closes it.
   const expanded = new Set();

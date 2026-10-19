@@ -4,7 +4,7 @@
 // times the collector already read and links out to GitHub.
 (function () {
   "use strict";
-  const { element: el, duration, link, checkState } = VV;
+  const { element: el, duration, link, checkState, checkTotals, elapsedSeconds } = VV;
   // GitHub picks up a job within seconds when a runner is free, so a shorter wait is not drawn:
   // only a wait for a busy runner is.
   const WAIT_SHOWN = 30 * 1000;
@@ -94,6 +94,28 @@
       reach = Math.max(reach, lane.ended ?? now);
     });
     return start;
+  }
+
+  // How long the head's latest round of CI has taken (the timeline's round): from the first check's
+  // start in it to now while any check is still open, to the last finish once every check is done.
+  // Before any check has started it is the wait since the push, and before a later round's first
+  // start the wait since that round's first job was queued. Null when the head has no checks.
+  function ciTiming(pull, now) {
+    const rows = [...(pull.checks || []), ...(pull.statuses || [])];
+    if (!rows.length && !(pull.expected || []).length) return null;
+    const all = lanes(pull), latest = latestRound(all, now);
+    // With no earlier round every check counts, even a skipped one that started just before the first job.
+    const from = all.some(lane => lane.kind === "job" && lane.queued < latest) ? latest : -Infinity;
+    const timed = rows.filter(row => at(row.started_at) != null);
+    const round = timed.filter(row => at(row.started_at) >= from);
+    if (!round.length) {
+      const seconds = timed.length ? Math.max(0, (now - from) / 1000) : elapsedSeconds(pull.push && pull.push.pushed_at, now);
+      return { label: "CI waiting", seconds };
+    }
+    const start = Math.min(...round.map(row => at(row.started_at)));
+    const ends = round.map(row => at(row.completed_at)).filter(time => time != null);
+    if (checkTotals(pull).remaining > 0 || !ends.length) return { label: "CI running", seconds: Math.max(0, (now - start) / 1000) };
+    return { label: "CI took", seconds: Math.max(0, (Math.max(...ends) - start) / 1000) };
   }
 
   // The head's latest round, grouped by workflow in the order first queued; earlier counts the checks
@@ -293,7 +315,7 @@
     return box;
   }
 
-  const api = { lanes, timeline, sharedScale, mini, detail, ticks };
+  const api = { lanes, timeline, ciTiming, sharedScale, mini, detail, ticks };
   if (typeof module === "object" && module.exports) module.exports = api;
   else window.VVTimeline = api;
 })();

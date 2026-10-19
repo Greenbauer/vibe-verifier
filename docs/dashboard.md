@@ -219,7 +219,7 @@ each commit status. It makes no extra GitHub call.
   Actions job created after no job had run or waited for 15 minutes (another app's check or a status
   posted late does not start a round), so an old round never stretches a
   row or the shared scale. The opened view says how many checks of earlier rounds it left out; the
-  counts in the CI column still include them.
+  counts in the CI column still include them. The row's CI time times the same round.
 - **The time scale** is the same for every row by default: the longest timeline on screen spans the
   column, so a 12-minute run looks short beside a 77-minute one. The toolbar's scale menu can fit
   each row to its own width instead, which shows each run's shape at the cost of comparing rows.
@@ -595,10 +595,13 @@ default text color through three days, turns yellow after that, and turns red af
 An age of exactly three days or exactly two weeks keeps the younger color.
 The right of the line under the check meter shows how long CI has taken on the head, in those
 same units and in the same size and weight as that line. When the counts leave too little room,
-it wraps onto a line of its own, still on the right. While any check is still open it is
-"CI running" and counts from the first check's start; once every check has finished it is "CI
-took" and stops at the last check's finish. Before any check has started it is "CI waiting",
-counted from the push. The time turns yellow after an hour and red after three hours; exactly an
+it wraps onto a line of its own, still on the right. It times the head's latest round of CI, the
+same round the [CI timeline](#ci-timeline) draws, so a re-run on the same commit hours later is
+timed from its own start, not the first round's. While any check is still open it is
+"CI running" and counts from the round's first check start; once every check has finished it is "CI
+took" and stops at the round's last check finish. Before any check has started it is "CI waiting",
+counted from the push; when a later round has queued but not started, it counts from that round's
+first job being queued. The time turns yellow after an hour and red after three hours; exactly an
 hour or exactly three hours keeps the younger color. A head with no checks, and a row whose checks
 are still from the previous push, show "pushed <age> ago" instead, which turns yellow after three
 hours and red after a day. Its right edge lines up with the meter, not
@@ -735,7 +738,8 @@ from the check meter, and the row's title link to GitHub and its timeline toggle
 the full pass and the head beat put it on the row.
 `tests/test_dashboard_push_kind.py` covers the latest push's label and time, and
 `tests/test_dashboard_pull_signals.py` reading it from GitHub, merge-ready titles, and the
-unresolved-comment count. `tests/test_dashboard_fresh.py` covers a head or
+unresolved-comment count. `tests/test_dashboard_push_line.py` covers the row's CI time and push
+line, including a head re-run hours later, timed by its latest round. `tests/test_dashboard_fresh.py` covers a head or
 rollup change leaving the title white and first in the detail queue, check-reading age, the
 cheap pass under an exhausted detail budget, the head beat's hourly calls, and the first
 paint after a long idle. `tests/test_dashboard_usage_charts.py` covers the usage

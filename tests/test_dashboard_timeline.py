@@ -28,6 +28,7 @@ class Timeline(unittest.TestCase):
         result = subprocess.run(["node", "-e", r'''
 const fs=require('fs');
 const helpers=require('./dashboard/static/helpers.js');
+global.VV=helpers; const {ciTiming}=require('./dashboard/static/timeline.js');
 const app=fs.readFileSync('./dashboard/static/prs.js','utf8');
 const slice=app.slice(app.indexOf('  function messageIcon('), app.indexOf('  function renderPrRows('));
 function el(tag, attrs={}, ...children) {
@@ -37,7 +38,7 @@ function el(tag, attrs={}, ...children) {
 }
 const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','since','ageClass','ageLabel','secondsClass','ciTiming', slice+'return progress;')(
   el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass,
-  helpers.ageLabel, helpers.secondsClass, helpers.ciTiming);
+  helpers.ageLabel, helpers.secondsClass, ciTiming);
 const classes=node=>!node||typeof node==='string'?[]:Array.isArray(node)?node.flatMap(classes):[node.attrs.class, ...node.children.flatMap(classes)].filter(Boolean);
 const cells=node=>Array.isArray(node)?node.map(cell=>cell.attrs.class):[node.attrs.class];
 const text=node=>!node?'':typeof node==='string'?node:Array.isArray(node)?node.map(text).join(' '):node.children.map(text).join(' ');
