@@ -112,6 +112,12 @@ class LineDrift(unittest.TestCase):
                       "}"],
                      # A one-line test whose comment opens a bracket, before a deeper-indented helper.
                      ['test("a", () => { x; }); // (', "  function helper() {", "    assert.equal(hookOnly(), 2);",
+                      "  }"],
+                     ['test("a", () => { x; }); /* ( */', "  function helper() {", "    assert.equal(hookOnly(), 2);",
+                      "  }"],
+                     ['test("a", () => { x(/a\\//); });', "  function helper() {", "    assert.equal(hookOnly(), 2);",
+                      "  }"],
+                     ['test("a", () => { x(/[(]/); });', "  function helper() {", "    assert.equal(hookOnly(), 2);",
                       "  }"]):
             proof = {"file": "tests/a.test.ts", "test": "a", "line": 1, "assertion": "assert.equal(hookOnly(), 2);"}
             self.assertIn("fabricated quote", proof_audit.proof_problem(Files(spec), proof) or "", spec[1])

@@ -54,6 +54,9 @@ OPENER = re.compile(r"^(?:await\s+)?[\w$.!?]+[(\[{]$")
 ASSERTION_OPEN = re.compile(r"^(?:await\s+)?(?:assert\b|expect\s*[.(]|t\.assert|self\.assert)")
 CLOSERS_ONLY = re.compile(r"^[)\]}>;,\s]*$")
 STRING = re.compile(r"""(["'`])(?:\\.|(?!\1)[^\\])*\1""")
+# A JS test declared and closed on one line ends `});` or `}, 5000);`; block comments are dropped first.
+ONE_LINE_TEST = re.compile(r"\}\s*(?:,\s*\d+\s*)?\)\s*;?$")
+BLOCK_COMMENT = re.compile(r"/\*.*?\*/")
 MIN_PART = 12  # a plan line, and a test title that is not a literal, may be quoted in part
 # A test declaration: a JS test call (test(...), it(...), test.only(...), test.each(...)(...)), `void` first when a
 # type-aware lint forbids a floating promise (`void it(...)`), or a Python test
@@ -271,6 +274,8 @@ def body_end(lines, start):
         return dedent
     if dedent < len(lines) and CLOSERS_ONLY.match(lines[dedent].strip()):
         dedent += 1
+    if ONE_LINE_TEST.search(BLOCK_COMMENT.sub("", lines[start]).split(" //", 1)[0].rstrip()):
+        return start + 1  # a one-line test, whatever a bracket inside a regex or comment says
     depth = 0
     for index in range(start, dedent):
         depth += bracket_depth(lines[index].strip())
