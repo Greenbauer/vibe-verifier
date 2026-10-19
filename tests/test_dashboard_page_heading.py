@@ -45,6 +45,25 @@ console.log(JSON.stringify({quiet:heading('Pull requests',null,controls),
         self.assertEqual(calls, {"app.js": ['heading("Bot usage")'], "capacity.js": ['heading("Capacity")'],
                                  "work.js": ['heading("Work")']})
 
+    def test_controls_follow_their_title_on_the_left_and_a_phone_stacks_them_in_three_rows(self):
+        css = (ROOT / "dashboard/static/styles.css").read_text()
+        def rule(selector, within=css):
+            start = within.index("\n" + selector + " {") + 1
+            return within[start:within.index("}", start)]
+        # Wide: the search is a fixed 260px and every control follows the title from the left.
+        self.assertIn("justify-content: flex-start", rule(".section-heading:has(.toolbar)"))
+        self.assertIn("display: contents", rule(".section-heading .toolbar"))
+        self.assertIn("flex: 0 1 260px", rule('.toolbar input[type="search"]'))
+        # The Capacity range buttons follow their panel title the same way.
+        self.assertIn("justify-content: flex-start", rule(".panel-title:has(.range-buttons)"))
+        # No wide-screen rule moves the Bot usage failure buttons to the right of their title.
+        self.assertNotIn(".failures .failure-buttons", css)
+        # Phone: the search fills the title's line, each group takes a full row, the menus split it.
+        phone = css[css.index("@media (max-width: 650px)"):]
+        phone = phone[:phone.index("\n}\n")]
+        self.assertIn("flex: 1 1 0", rule('  .section-heading .toolbar input[type="search"]', phone))
+        self.assertIn("flex: 1 1 100%", rule("  .section-heading .toolbar-group", phone))
+        self.assertIn("flex: 1 1 0; min-width: 0", rule("  .toolbar-group select", phone))
 
 if __name__ == "__main__":
     unittest.main()
