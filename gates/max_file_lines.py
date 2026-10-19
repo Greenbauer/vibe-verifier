@@ -83,7 +83,8 @@ def judge(args, path, start, moved):
     for unit, value, limit, was in zip(("lines", "tokens (bytes / 4)"), now, limits, before or (None, None)):
         if limit is None or value <= limit or (was is not None and value <= was):
             continue
-        origin = "" if args.all else " (%s)" % ("new file" if before is None else "%d at the base" % was)
+        where = "HEAD" if args.staged else "the base"
+        origin = "" if args.all else " (%s)" % ("new file" if before is None else "%d at %s" % (was, where))
         parts.append("%d %s, over the %d allowed%s" % (value, unit, limit, origin))
     return Finding("; ".join(parts) + ". " + SPLIT, path) if parts else None
 

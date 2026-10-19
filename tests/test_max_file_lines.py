@@ -177,7 +177,7 @@ class Staged(unittest.TestCase):
         git(repo, "add", "src/big.ts")
         result = gate("max-file-lines", repo, "--staged")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("660 lines, over the 500 allowed (650 at the base)", result.stdout)
+        self.assertIn("660 lines, over the 500 allowed (650 at HEAD)", result.stdout)
 
     def test_a_staged_move_is_compared_with_its_old_path(self):
         repo = make_repo(self, {"src/old.ts": "x\n" * 600})
