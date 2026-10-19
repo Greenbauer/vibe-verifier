@@ -199,8 +199,8 @@ def quote_problem(lines, path, number, quote, whole):
 
 
 def bracket_depth(text):
-    """Openers minus closers on a line, string literals left out."""
-    text = STRING.sub("", text)
+    """Openers minus closers on a line, string literals and a trailing `//` comment left out."""
+    text = STRING.sub("", text).split("//", 1)[0]
     return sum(text.count(c) for c in "([{") - sum(text.count(c) for c in ")]}")
 
 
