@@ -69,7 +69,7 @@ const make=tag=>({tag,attrs:{},children:[],style:{setProperty(){}},append(...c){
 const el=(tag,attrs={},...c)=>Object.assign(make(tag),{attrs,children:c.flat().filter(v=>v!=null)});
 const at=new Date(Date.now()-250000).toISOString(), strip=el('div');
 const rows=[{id:'swe',name:'SWE',role:'swe',state:'idle',stale:true,sampled_at:at,recent_2h:[]},{id:'qae',name:'QAE',role:'qae',state:'working',recent_2h:[]}];
-new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel','botState',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function prFilters/)[1])(
+new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel','botState',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function subscriptionPanel/)[1])(
  el,h.BOT_META,{agents:{rows}},{},(status,label)=>el('span',{class:'badge status-'+status},label),()=>{},v=>v,{querySelector:()=>strip},()=>'Last 2h',h.botState);
 const pills=strip.children.filter(n=>n.tag==='button');
 console.log(JSON.stringify({badges:pills.map(p=>p.children[1]).map(b=>[b.attrs.class,b.children[0]]),labels:pills.map(p=>p.attrs['aria-label']),

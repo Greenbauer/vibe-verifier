@@ -18,22 +18,6 @@
     todo: "To do", done: "Done"
   };
 
-  // Filters, the timeline scale and the selected bot, saved in this browser for every tab. Where you are lives in the URL instead.
-  function restoreViewState(raw) {
-    const state = { query: "", repository: "all", subscribed: false, attention: false, failureBot: null, timeScale: "shared" };
-    let saved;
-    try { saved = JSON.parse(raw); } catch (_) { return state; }
-    if (!saved || typeof saved !== "object") return state;
-    for (const key of ["query", "repository", "failureBot"]) {
-      if (typeof saved[key] === "string") state[key] = saved[key];
-    }
-    for (const key of ["subscribed", "attention"]) {
-      if (typeof saved[key] === "boolean") state[key] = saved[key];
-    }
-    if (["shared", "row"].includes(saved.timeScale)) state.timeScale = saved.timeScale;
-    return state;
-  }
-
   // The URL hash is the one record of the current view, so refresh, back and forward, and a copied
   // link all land in the same place: #/prs, #/usage, or #/capacity. A pull request opens on GitHub,
   // so an older #/pr/<owner>/<repo>/<number> hash is not a view and falls back to the list.
@@ -461,7 +445,7 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, ageLabel, since, ageClass, secondsClass, ciTiming, formatTime, bytes,
-    badge, botState, sourceStamp, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageWarning, checkTotals, combinedCategory, checkState, meterSegments, meterLabel, runningWork, unresolvedMark, behindMark, restoreViewState,
+    badge, botState, sourceStamp, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageWarning, checkTotals, combinedCategory, checkState, meterSegments, meterLabel, runningWork, unresolvedMark, behindMark,
     parseRoute, routeHash, httpsUrl, workGroups, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, paceHeader,
     quotaDeltaLabel,
     quotaTone, quotaCountdown, quotaGroups };

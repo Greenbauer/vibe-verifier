@@ -137,14 +137,13 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 .pr-group-title { display: flex; align-items: baseline; gap: 10px; margin: 0 0 7px; font-size: 14px; }
 .pr-group-title small { color: var(--muted); font-size: 11px; font-weight: 400; }
 .pr-list { overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; }
-.pr-item { border-top: 1px solid var(--line); }
-.pr-item:first-child { border-top: 0; }
-.pr-row { width: 100%; padding: 12px 13px; background: transparent; text-align: left; cursor: pointer; }
+.pr-row { width: 100%; border: 0; border-top: 1px solid var(--line); padding: 12px 13px; background: transparent; text-align: left; cursor: pointer; }
+.pr-row:first-child { border-top: 0; }
 .pr-row:hover, .pr-row.open { background: var(--row); }
-.pr-title { display: block; min-width: 0; color: inherit; text-decoration: none; }
+.pr-title { color: inherit; text-decoration: none; }
 .pr-title:hover { text-decoration: underline; }
 .pr-identity, .pr-work, .progress-copy, .pr-age { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.pr-identity b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-identity b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pr-identity b.merge-ready { color: var(--green); }
 .pr-identity .behind-mark { margin-left: 6px; color: var(--yellow); border: 1px solid currentColor; border-radius: 99px; padding: 0 6px; white-space: nowrap; }
 .pr-row small, .progress-copy span { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }

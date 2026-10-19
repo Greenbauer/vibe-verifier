@@ -197,13 +197,14 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
         index = (ROOT / "dashboard/static/index.html").read_text()
         self.assertIn('<script src="/assets/capacity.js"></script>', index)
         self.assertIn('<script src="/assets/timeline.js"></script>', index)
+        self.assertIn('<script src="/assets/prs.js"></script>', index)
     def test_ui_uses_text_nodes_and_the_approved_local_palette(self):
         app = (ROOT / "dashboard/static/app.js").read_text()
         helpers = (ROOT / "dashboard/static/helpers.js").read_text()
         css = (ROOT / "dashboard/static/styles.css").read_text()
         html = (ROOT / "dashboard/static/index.html").read_text()
         self.assertNotIn("innerHTML", app + helpers + (ROOT / "dashboard/static/capacity.js").read_text()
-                         + (ROOT / "dashboard/static/timeline.js").read_text())
+                         + (ROOT / "dashboard/static/timeline.js").read_text() + (ROOT / "dashboard/static/prs.js").read_text())
         for color in ("#090909", "#111111", "#282828"):
             self.assertIn(color, css)
         for color in ("#809cff", "#50d6e8"):
@@ -230,7 +231,7 @@ const rows=[1,2,3].map(n=>({id:'ci-qae-'+n,name:'QAE '+n,role:'qae',state:'idle'
 const snapshot={agents:{rows}},strip=el('div'),at=h=>new Date(Date.now()-h*3600000).toISOString();
 const recent=(value,runs)=>runs[0]?.category==='failed'?'Latest run failed':runs.length?'Last 2h':value.coverage?.history==='complete'?'No runs in 2h':'History incomplete';
 global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
-new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel','botState',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function prFilters/)[1])(el,BOT_META,snapshot,{failureBot:null},s=>el('span',{},s),()=>{},v=>v,{querySelector:()=>strip},recent,botState);
+new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel','botState',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function subscriptionPanel/)[1])(el,BOT_META,snapshot,{failureBot:null},s=>el('span',{},s),()=>{},v=>v,{querySelector:()=>strip},recent,botState);
 global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
 const samples=rows.flatMap(row=>[31,30,3,2].map(h=>({account:'a',bot:row.id,timestamp:at(h),input_tokens:40,output_tokens:0})));
 const usage={sampled_at:at(0),accounts:[],samples,pace_points:-4};

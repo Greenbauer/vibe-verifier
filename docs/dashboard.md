@@ -19,7 +19,7 @@ hash never reaches the server.
 The workspace buttons stay on screen while that view scrolls. A narrow window stacks them in a row
 above the view, and that row stays put as well. Changing views scrolls the view back to the top.
 
-A pull request row's title opens that pull request on GitHub in a new tab. The address is the pull
+The Pull requests view is `dashboard/static/prs.js`. A pull request row's title opens that pull request on GitHub in a new tab. The address is the pull
 request's `html_url` only when it is an HTTPS `github.com` link under the configured owner. Any other
 address leaves the title as text, not a link. A click anywhere else on the row, or on the arrow at
 its end, opens the row's [CI timeline](#ci-timeline) under it; the same click closes it.

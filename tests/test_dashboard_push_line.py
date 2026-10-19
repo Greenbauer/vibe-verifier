@@ -17,7 +17,7 @@ class PushLine(unittest.TestCase):
         result = self.node(r'''
 const fs=require('fs');
 const helpers=require('./dashboard/static/helpers.js');
-const app=fs.readFileSync('./dashboard/static/app.js','utf8');
+const app=fs.readFileSync('./dashboard/static/prs.js','utf8');
 const progressSource=app.slice(app.indexOf('  function messageIcon('), app.indexOf('  function renderPrRows('));
 const rowSource=app.slice(app.indexOf('  function runningNames('), app.indexOf('  function renderPulls('));
 function el(tag, attrs={}, ...children) {
@@ -32,8 +32,6 @@ function createElementNS(ns, tag) {
   return node;
 }
 global.document={createElementNS};
-// The timeline has its own tests (test_dashboard_timeline.py); these rows show the check meter.
-global.VVTimeline={mini:()=>null, detail:()=>null}; global.expanded=new Set(); global.renderPrRows=()=>{};
 const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','since','ageClass',
   'ageLabel','secondsClass','ciTiming', progressSource+'return progress;')(el, helpers.checkTotals, helpers.meterSegments,
   helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass, helpers.ageLabel, helpers.secondsClass, helpers.ciTiming);
@@ -195,7 +193,7 @@ console.log(JSON.stringify(rows));
         self.assertIsNone(result["current"]["behind"])
         self.assertIsNone(result["mixed"]["behind"])
         css = (ROOT / "dashboard/static/styles.css").read_text()
-        app = (ROOT / "dashboard/static/app.js").read_text()
+        app = (ROOT / "dashboard/static/prs.js").read_text()
         self.assertIn(".progress-layout > .progress-caption { grid-column: 1;", css)
         self.assertIn(".progress-layout > .comment-mark { grid-column: 2;", css)
         self.assertIn(".push-kind { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }", css)
