@@ -8,6 +8,7 @@
     credential_missing: "No credential file on this host yet.", credential_unsafe: "The credential file is not private to the dashboard account.",
     credential_unreadable: "The credential file cannot be read.", rejected: "The source refused the credential.",
     unreachable: "The source could not be reached.", unavailable: "The source answered with an error.",
+    redirected: "The source answered with a redirect, which the dashboard does not follow.",
     invalid_response: "The source answered in a shape this dashboard does not read.", tool_error: "The source refused the request."
   };
 

@@ -106,6 +106,20 @@ def _rpc_message(raw: str, request_id: int) -> dict:
     raise WorkError("invalid_response", "no reply to request %d" % request_id)
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuses every redirect: urllib copies the request's headers, key included, onto the next URL, any host.
+
+    Same handler as remote_sampler.NoQuotaRedirect, which runs alone over SSH and cannot be imported here.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+# The default transport: urlopen's handlers, except that a 3xx is raised as an HTTPError instead of followed.
+OPEN = urllib.request.build_opener(_NoRedirect).open
+
+
 def _fetch(opener, request: urllib.request.Request) -> tuple[str, str | None]:
     """The body and MCP session header of one HTTPS exchange, or a WorkError with the page's code."""
     try:
@@ -114,7 +128,8 @@ def _fetch(opener, request: urllib.request.Request) -> tuple[str, str | None]:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as error:
         error.close()
-        code = "rejected" if error.code in (401, 403) else "not_found" if error.code == 404 else "unavailable"
+        code = ("rejected" if error.code in (401, 403) else "not_found" if error.code == 404
+                else "redirected" if 300 <= error.code < 400 else "unavailable")
         raise WorkError(code, "HTTP %d" % error.code) from None
     except (urllib.error.URLError, OSError, TimeoutError) as error:
         raise WorkError("unreachable", str(error)) from None
@@ -128,7 +143,7 @@ class RestClient:
 
     def __init__(self, endpoint: str, token: str, opener=None):
         self.endpoint, self.token = endpoint.rstrip("/"), token
-        self.opener = opener or urllib.request.urlopen
+        self.opener = opener or OPEN
         self.headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
 
     def get(self, path: str) -> object:
@@ -153,7 +168,7 @@ class McpClient:
 
     def __init__(self, endpoint: str, token: str, opener=None):
         self.endpoint, self.token = endpoint, token
-        self.opener = opener or urllib.request.urlopen
+        self.opener = opener or OPEN
         self.session: str | None = None
         self._next_id = 0
 
