@@ -32,6 +32,8 @@ function createElementNS(ns, tag) {
   return node;
 }
 global.document={createElementNS};
+// The timeline has its own tests (test_dashboard_timeline.py); these rows show the check meter.
+global.VVTimeline={mini:()=>null, detail:()=>null}; global.expanded=new Set(); global.renderPrRows=()=>{};
 const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','since','ageClass',
   'ageLabel','secondsClass','ciTiming', progressSource+'return progress;')(el, helpers.checkTotals, helpers.meterSegments,
   helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass, helpers.ageLabel, helpers.secondsClass, helpers.ciTiming);

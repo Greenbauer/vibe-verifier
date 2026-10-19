@@ -420,6 +420,8 @@ const source = app.slice(app.indexOf('  function runningNames('), app.indexOf(' 
 function el(tag, attrs={}, ...children) {
   return {tag, attrs, children: children.flat().filter(value => value !== null && value !== undefined)};
 }
+// The timeline has its own tests (test_dashboard_timeline.py); this row shows none.
+global.VVTimeline={mini:()=>null, detail:()=>null}; global.expanded=new Set(); global.renderPrRows=()=>{};
 const prRow = new Function('el', 'safeUrl', 'snapshot', 'combinedCategory', 'badge', 'progress', 'since', 'ageClass', 'runningWork',
   'behindMark', source + 'return prRow;')(el, helpers.safeUrl, {owner: 'octocat'}, () => 'success',
   status => el('span', {}, status), () => el('div'), helpers.since, helpers.ageClass, helpers.runningWork,
@@ -431,7 +433,9 @@ const text = node => typeof node === 'string' ? node : node.children.map(text).j
 const fresh = prRow({...base, stale: false});
 const stale = prRow({...base, stale: true, checks_age_seconds: 400,
   checks_sampled_at: new Date(Date.now() - 400000).toISOString()});
-const title = row => row.children[0].children[0];
+// prRow returns the row and, when open, its timeline: the row is the first child, the bold title inside its link.
+const row = item => item.children[0];
+const title = item => row(item).children[0].children[0].children[0];
 const kept = helpers.flattenPulls({github: {repositories: [{stale: false, pulls: [{...base, stale: true}]}]}});
 const fromRepo = helpers.flattenPulls({github: {repositories: [{stale: true, pulls: [{...base, stale: false}]}]}});
 const behind = prRow({...base, stale: true, merge_ready: true, checks_age_seconds: 400,
@@ -441,7 +445,7 @@ const behind = prRow({...base, stale: true, merge_ready: true, checks_age_second
 console.log(JSON.stringify({
   freshClass: title(fresh).attrs.class,
   freshText: text(fresh),
-  staleClass: stale.attrs.class,
+  staleClass: row(stale).attrs.class,
   staleTitle: title(stale).attrs.class || '',
   staleText: text(stale),
   keptStale: kept[0].stale,

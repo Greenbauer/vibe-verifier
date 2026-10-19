@@ -9,6 +9,8 @@
   let snapshot = null;
   let loading = false, retry = 0;
   let refreshFailed = false;
+  // Pull requests whose CI timeline is open, by "<repository>#<number>". Not saved: a reload closes them.
+  const expanded = new Set();
 
   // localStorage, not sessionStorage: a reload, a new tab or a reopened window all keep the filters.
   function restoreView(owner) {
@@ -111,7 +113,11 @@
     repositories.forEach(repository => select.append(el("option", { value: repository, selected: state.repository === repository }, repository.split("/")[1])));
     const check = (label, key) => el("label", { class: "check-filter" },
       el("input", { type: "checkbox", checked: state[key], onchange: event => { state[key] = event.target.checked; renderPrRows(); } }), label);
-    return el("div", { class: "toolbar" }, search, select, check("Subscribed only", "subscribed"), check("Needs attention", "attention"));
+    const scale = el("select", { id: "time-scale", "aria-label": "CI timeline scale", onchange: event => {
+      state.timeScale = event.target.value; renderPrRows();
+    } }, el("option", { value: "shared", selected: state.timeScale === "shared" }, "Same time scale for every row"),
+      el("option", { value: "row", selected: state.timeScale === "row" }, "Fit each row's timeline"));
+    return el("div", { class: "toolbar" }, search, select, scale, check("Subscribed only", "subscribed"), check("Needs attention", "attention"));
   }
 
   function messageIcon() {
@@ -148,13 +154,16 @@
       el("span", { class: tone }, when), known ? el("span", { class: "push-kind" }, `· ${push.kind}`) : null);
   }
 
-  function progress(pull, now = Date.now()) {
+  // The row's CI timeline when any check on the head has a time; the check meter until then.
+  // scale is the shared timeline width in milliseconds, or null to fit the row.
+  function progress(pull, now = Date.now(), scale = null) {
     const totals = checkTotals(pull);
     const mark = commentMark(pull);
     const segments = totals.known ? meterSegments(totals) : [];
+    const timeline = totals.known ? VVTimeline.mini(pull, now, scale) : null;
     const meter = !totals.known ? el("b", { class: "progress-lead" }, "No checks reported")
-      : el("div", { class: "check-meter", role: "img", "aria-label": meterLabel(totals) });
-    if (totals.known) segments.forEach(segment => meter.append(el("span", {
+      : timeline || el("div", { class: "check-meter", role: "img", "aria-label": meterLabel(totals) });
+    if (totals.known && !timeline) segments.forEach(segment => meter.append(el("span", {
       class: `seg-${segment.state}`, style: `flex:${segment.count} 1 0`, title: `${segment.count} ${segment.label}`,
       "aria-hidden": "true"
     })));
@@ -182,9 +191,10 @@
       rows.append(snapshot.github.refreshing && !snapshot.github.sampled_at ? empty("Loading pull requests", "Reading selected repositories from GitHub.") : empty("No matching pull requests", "Change a filter or wait for the next successful GitHub sample."));
       return;
     }
+    const scale = state.timeScale === "row" ? null : VVTimeline.sharedScale(pulls, Date.now());
     groupPulls(pulls).forEach(group => {
       const list = el("div", { class: "pr-list" });
-      group.pulls.forEach(pull => list.append(prRow(pull)));
+      group.pulls.forEach(pull => list.append(prRow(pull, scale)));
       const name = group.repository.split("/")[1];
       rows.append(el("section", { class: "pr-group", "aria-label": `${name} pull requests` },
         el("h2", { class: "pr-group-title" }, name, el("small", {},
@@ -230,27 +240,39 @@
     return mark ? el("span", { class: "behind-mark", title: mark.title, "aria-label": mark.title }, mark.shown) : null;
   }
 
-  function prRow(pull) {
+  // A row's title opens the pull request on GitHub; the rest of the row, and the toggle at its end,
+  // opens its CI timeline under it.
+  function prRow(pull, scale = null) {
     const category = combinedCategory(pull);
     const href = safeUrl(pull.html_url, snapshot.owner);
     const now = Date.now();
+    const key = `${pull.repository}#${pull.number}`;
+    const open = expanded.has(key);
+    const detailId = `timeline-${pull.repository.replace(/[^\w-]/g, "-")}-${pull.number}`;
     const opened = href ? `Open ${pull.repository} pull request ${pull.number} on GitHub: ${pull.title}` : null;
     const reason = pull.attention_reason || "", ready = pull.merge_ready && !pull.stale;
-    return el(href ? "a" : "div", {
-      class: "pr-row",
-      href, target: href ? "_blank" : null, rel: href ? "noreferrer" : null,
-      "aria-label": opened ? opened + (ready ? ". Fully merge-ready" : "") : null
-    },
-    el("span", { class: "pr-identity" },
-      el("b", { class: ready ? "merge-ready" : null, title: ready ? "Fully merge-ready" : null }, pull.title),
-      el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`,
-        behindBadge(pull))),
-    el("span", { class: "pr-work", title: reason || null }, badge(category), ...workDetail(pull)),
-    progress(pull, now),
-    el("span", { class: "pr-age" },
-      el("span", { class: "age-stat" }, el("b", { class: ageClass(pull.created_at, now) }, since(pull.created_at, now)),
-        el("small", {}, "PR age"))),
-    el("span", { class: "chevron", "aria-hidden": "true" }, "›"));
+    const toggle = () => {
+      if (open) expanded.delete(key); else expanded.add(key);
+      renderPrRows();
+      document.querySelector(`[data-focus-key="${CSS.escape(`timeline:${key}`)}"]`)?.focus({ preventScroll: true });
+    };
+    const title = el("b", { class: ready ? "merge-ready" : null, title: ready ? "Fully merge-ready" : null }, pull.title);
+    const row = el("div", { class: open ? "pr-row open" : "pr-row", onclick: event => { if (!event.target.closest("a, button")) toggle(); } },
+      el("span", { class: "pr-identity" },
+        href ? el("a", { class: "pr-title", href, target: "_blank", rel: "noreferrer",
+          "aria-label": opened + (ready ? ". Fully merge-ready" : "") }, title) : title,
+        el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`,
+          behindBadge(pull))),
+      el("span", { class: "pr-work", title: reason || null }, badge(category), ...workDetail(pull)),
+      progress(pull, now, scale),
+      el("span", { class: "pr-age" },
+        el("span", { class: "age-stat" }, el("b", { class: ageClass(pull.created_at, now) }, since(pull.created_at, now)),
+          el("small", {}, "PR age"))),
+      el("button", { type: "button", class: "timeline-toggle", "aria-expanded": String(open), "aria-controls": detailId,
+        "aria-label": `${open ? "Hide" : "Show"} the CI timeline of pull request ${pull.number}`, "data-focus-key": `timeline:${key}`,
+        onclick: toggle }, el("span", { "aria-hidden": "true" }, "›")));
+    return el("div", { class: "pr-item" }, row, open ? VVTimeline.detail(pull, now,
+      { id: detailId, key, owner: snapshot.owner, rerender: renderPrRows }) : null);
   }
 
   function renderPulls() {
@@ -418,10 +440,12 @@
       refreshFailed = false;
       snapshot = next;
       const focused = document.activeElement;
-      const filterId = ["pr-search", "repo-filter"].includes(focused?.id) ? focused.id : null;
+      const filterId = ["pr-search", "repo-filter", "time-scale"].includes(focused?.id) ? focused.id : null;
       const selection = filterId === "pr-search" ? [focused.selectionStart, focused.selectionEnd] : null;
+      const focusKey = focused?.dataset?.focusKey;
       render();
-      const replacement = filterId && document.getElementById(filterId);
+      const replacement = (filterId && document.getElementById(filterId)) ||
+        (focusKey && document.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`));
       if (replacement) {
         replacement.focus({ preventScroll: true });
         if (selection) replacement.setSelectionRange(...selection);

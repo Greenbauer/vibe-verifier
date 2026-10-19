@@ -17,11 +17,11 @@ class ViewState(unittest.TestCase):
     def test_all_navigation_preferences_round_trip_and_invalid_values_default(self):
         result = self.node(r'''
 const {restoreViewState:restore}=require('./dashboard/static/helpers.js');
-const saved={query:'fix',repository:'Greenbauer/vibe-verifier',subscribed:true,attention:true,failureBot:'qae-1'};
+const saved={query:'fix',repository:'Greenbauer/vibe-verifier',subscribed:true,attention:true,failureBot:'qae-1',timeScale:'row'};
 console.log(JSON.stringify({saved,restored:restore(JSON.stringify(saved)),
   legacy:restore(JSON.stringify({...saved,usageRange:'7d',view:'usage',selected:'Greenbauer/vibe-verifier#12'})),
   invalid:[null,'broken','null','42',JSON.stringify({view:'other',selected:42,query:[],repository:false,
-    subscribed:'yes',attention:1,usageRange:'forever',failureBot:{}})].map(restore),defaults:restore(null)}));
+    subscribed:'yes',attention:1,usageRange:'forever',failureBot:{},timeScale:'wide'})].map(restore),defaults:restore(null)}));
 ''')
         self.assertEqual(result['restored'], result['saved'])
         # A tab saved by an older dashboard still restores its filters; its view and usage period

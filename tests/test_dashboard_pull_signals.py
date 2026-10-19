@@ -403,6 +403,7 @@ function createElementNS(ns, tag) {
   return node;
 }
 global.document={createElementNS};
+global.VVTimeline={mini:()=>null};
 const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','since','ageClass','ageLabel','secondsClass','ciTiming', slice+'return progress;')(
   el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass,
   helpers.ageLabel, helpers.secondsClass, helpers.ciTiming);

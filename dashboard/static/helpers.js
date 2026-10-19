@@ -18,9 +18,9 @@
     todo: "To do", done: "Done"
   };
 
-  // Filters and the selected bot, saved in this browser for every tab. Where you are lives in the URL instead.
+  // Filters, the timeline scale and the selected bot, saved in this browser for every tab. Where you are lives in the URL instead.
   function restoreViewState(raw) {
-    const state = { query: "", repository: "all", subscribed: false, attention: false, failureBot: null };
+    const state = { query: "", repository: "all", subscribed: false, attention: false, failureBot: null, timeScale: "shared" };
     let saved;
     try { saved = JSON.parse(raw); } catch (_) { return state; }
     if (!saved || typeof saved !== "object") return state;
@@ -30,6 +30,7 @@
     for (const key of ["subscribed", "attention"]) {
       if (typeof saved[key] === "boolean") state[key] = saved[key];
     }
+    if (["shared", "row"].includes(saved.timeScale)) state.timeScale = saved.timeScale;
     return state;
   }
 
@@ -460,7 +461,7 @@
   }
 
   return { BOT_META, STATUS_LABELS, element, safeUrl, link, duration, ageLabel, since, ageClass, secondsClass, ciTiming, formatTime, bytes,
-    badge, botState, sourceStamp, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageWarning, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork, unresolvedMark, behindMark, restoreViewState,
+    badge, botState, sourceStamp, diskUsage, flattenPulls, filterPulls, groupPulls, repositoriesWithPulls, coverageWarning, checkTotals, combinedCategory, checkState, meterSegments, meterLabel, runningWork, unresolvedMark, behindMark, restoreViewState,
     parseRoute, routeHash, httpsUrl, workGroups, quotaWindowLabel, quotaDisplayPercent, quotaPace, quotaPacePhrase, paceHeader,
     quotaDeltaLabel,
     quotaTone, quotaCountdown, quotaGroups };

@@ -187,64 +187,103 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
         buttons = [node for node in nodes(result["pressed"]) if node["tag"] == "button"]
         self.assertEqual([(text(node).strip(), node["attrs"]["aria-pressed"]) for node in buttons],
                          [("SWE1", "false"), ("QAE1", "true")])
-    def test_pull_request_row_opens_github_instead_of_a_dashboard_page(self):
-        result = self.node(r'''
+    def test_a_rows_title_opens_github_and_the_row_opens_its_ci_timeline(self):
+        result = self.node(r"""
 const fs=require('fs');
-const {safeUrl}=require('./dashboard/static/helpers.js');
+const helpers=require('./dashboard/static/helpers.js');
 const app=fs.readFileSync('./dashboard/static/app.js','utf8');
 const source=app.slice(app.indexOf('  function runningNames('),app.indexOf('  function renderPulls('));
 function el(tag, attrs={}, ...children) {
   return {tag, attrs, children:children.flat().filter(value => value !== null && value !== undefined)};
 }
+let renders=0;
+global.expanded=new Set();
+global.renderPrRows=()=>{ renders+=1; };
+global.VVTimeline={detail:(pull, now, options)=>el('div',{class:'timeline-detail', id:options.id, key:options.key, owner:options.owner})};
+global.CSS={escape:value=>value};
+global.document={querySelector:()=>null};
 const prRow=new Function('el','safeUrl','snapshot','combinedCategory','badge','progress','since','ageClass','runningWork',
-  'behindMark', source+'return prRow;')(el, safeUrl, {owner:'octocat'}, ()=>'failed',
+  'behindMark', source+'return prRow;')(el, helpers.safeUrl, {owner:'octocat'}, ()=>'failed',
   status=>el('span',{},status), ()=>el('div',{class:'progress'}),
   value=>value==='2026-09-01T00:00:00Z'?'5w':'2d',
-  value=>value==='2026-09-01T00:00:00Z'?'age-red':'age-yellow', require('./dashboard/static/helpers.js').runningWork,
-  require('./dashboard/static/helpers.js').behindMark);
+  value=>value==='2026-09-01T00:00:00Z'?'age-red':'age-yellow', helpers.runningWork, helpers.behindMark);
 const pull=(html_url, stale)=>({repository:'octocat/example',number:3,title:'Fix the gate',author:'octocat',
   head_sha:'abcdef1234567890',html_url,attention_reason:'A current-head check failed',
   created_at:'2026-10-01T00:00:00Z',stale});
 const ready=pull('https://github.com/octocat/example/pull/4', false);
 ready.merge_ready=true; ready.title='Ship the gate';
-ready.push={pushed_at:'2026-09-01T00:00:00Z', kind:'bug fix'};
+const find=(node, test)=>!node||typeof node==='string'?[]:[...(test(node)?[node]:[]), ...node.children.flatMap(child=>find(child, test))];
+const plain=node=>JSON.parse(JSON.stringify(node));
+const closed=prRow(pull('https://github.com/octocat/example/pull/3', false));
+const row=closed.children[0];
+const toggle=find(row, node=>node.tag==='button')[0];
+row.attrs.onclick({target:{closest:selector=>selector==='a, button'?{}:null}});
+const afterLinkClick=[...expanded];
+row.attrs.onclick({target:{closest:()=>null}});
+const afterRowClick=[...expanded];
+const opened=prRow(pull('https://github.com/octocat/example/pull/3', false));
+find(opened.children[0], node=>node.tag==='button')[0].attrs.onclick();
 console.log(JSON.stringify({
-  linked:prRow(pull('https://github.com/octocat/example/pull/3', false)),
-  stale:prRow(pull('https://github.com/octocat/example/pull/3', true)),
-  foreign:prRow(pull('https://github.com/evil/example/pull/3', false)),
-  missing:prRow(pull(null, false)),
-  ready:prRow(ready),
-  detail:app.includes('function renderDetail(')||app.includes('go("prs",')
+  closed:plain(closed), opened:plain(opened), afterLinkClick, afterRowClick, afterToggle:[...expanded], renders,
+  toggleControls:toggle.attrs['aria-controls'],
+  stale:plain(prRow(pull('https://github.com/octocat/example/pull/3', true))),
+  foreign:plain(prRow(pull('https://github.com/evil/example/pull/3', false))),
+  missing:plain(prRow(pull(null, false))),
+  ready:plain(prRow(ready)),
+  route:app.includes('function renderDetail(')||app.includes('go("prs",')
 }));
-''')
+""")
         def text(node):
             if isinstance(node, str):
                 return node
             return " ".join(text(child) for child in node.get("children", []))
-        linked = result["linked"]
-        self.assertEqual(linked["tag"], "a")
-        self.assertEqual(linked["attrs"]["href"], "https://github.com/octocat/example/pull/3")
-        self.assertEqual(linked["attrs"]["target"], "_blank")
-        self.assertEqual(linked["attrs"]["rel"], "noreferrer")
-        self.assertNotIn("onclick", linked["attrs"])
-        self.assertIn("on GitHub", linked["attrs"]["aria-label"])
-        self.assertIn("Fix the gate", text(linked))
-        age = next(node for node in linked["children"] if node["attrs"].get("class") == "pr-age")
+        def nodes(node):
+            if isinstance(node, str):
+                return []
+            return [node] + [descendant for child in node.get("children", []) for descendant in nodes(child)]
+        closed = result["closed"]
+        row = closed["children"][0]
+        self.assertEqual((closed["attrs"]["class"], len(closed["children"]), row["tag"], row["attrs"]["class"]),
+                         ("pr-item", 1, "div", "pr-row"))
+        # Only the title is a link, and it opens the pull request on GitHub in a new tab.
+        links = [node for node in nodes(row) if node["tag"] == "a"]
+        self.assertEqual([(link["attrs"]["href"], link["attrs"]["target"], link["attrs"]["rel"], text(link)) for link in links],
+                         [("https://github.com/octocat/example/pull/3", "_blank", "noreferrer", "Fix the gate")])
+        self.assertIn("on GitHub", links[0]["attrs"]["aria-label"])
+        toggle = [node for node in nodes(row) if node["tag"] == "button"]
+        self.assertEqual([(button["attrs"]["aria-expanded"], button["attrs"]["data-focus-key"]) for button in toggle],
+                         [("false", "timeline:octocat/example#3")])
+        self.assertIn("Show the CI timeline", toggle[0]["attrs"]["aria-label"])
+        # A click on the link or a button leaves the timeline alone; a click anywhere else on the row opens it.
+        self.assertEqual((result["afterLinkClick"], result["afterRowClick"]), ([], ["octocat/example#3"]))
+        opened = result["opened"]
+        detail = opened["children"][1]
+        self.assertEqual((detail["attrs"]["class"], detail["attrs"]["id"], detail["attrs"]["key"], detail["attrs"]["owner"]),
+                         ("timeline-detail", result["toggleControls"], "octocat/example#3", "octocat"))
+        open_toggle = [node for node in nodes(opened["children"][0]) if node["tag"] == "button"][0]
+        self.assertEqual((open_toggle["attrs"]["aria-expanded"], opened["children"][0]["attrs"]["class"]), ("true", "pr-row open"))
+        self.assertIn("Hide the CI timeline", open_toggle["attrs"]["aria-label"])
+        # The toggle closes it again, and each change redraws the list.
+        self.assertEqual((result["afterToggle"], result["renders"]), ([], 2))
+        age = next(node for node in row["children"] if node["attrs"].get("class") == "pr-age")
         got = ([part["children"] for stat in age["children"] for part in stat["children"]], age["children"][0]["children"][0]["attrs"]["class"])
         self.assertEqual(got, ([["2d"], ["PR age"]], "age-yellow"))
-        self.assertEqual([text(node) for node in linked["children"][1]["children"][1:]], ["A current-head check failed"])
-        ready = result["ready"]
-        title = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-identity")["children"][0]
+        self.assertEqual([text(node) for node in row["children"][1]["children"][1:]], ["A current-head check failed"])
+        ready = result["ready"]["children"][0]
+        title = [node for node in nodes(ready) if node["tag"] == "b"][0]
         age_only = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-age")
-        self.assertEqual((("Fully merge-ready" in ready["attrs"]["aria-label"]), title["attrs"]["class"],
+        ready_link = [node for node in nodes(ready) if node["tag"] == "a"][0]
+        self.assertEqual((("Fully merge-ready" in ready_link["attrs"]["aria-label"]), title["attrs"]["class"],
                           len(age_only["children"]), text(age_only)),
                          (True, "merge-ready", 1, "2d PR age"))
-        self.assertEqual((result["stale"]["attrs"]["class"], result["stale"]["attrs"]["href"]), ("pr-row", linked["attrs"]["href"]))
+        stale_link = [node for node in nodes(result["stale"]) if node["tag"] == "a"][0]
+        self.assertEqual(stale_link["attrs"]["href"], links[0]["attrs"]["href"])
         for key in ("foreign", "missing"):
-            row = result[key]
-            self.assertEqual((row["tag"], row["attrs"]["href"], row["attrs"]["aria-label"]), ("div", None, None))
-            self.assertIn("Fix the gate", text(row))
-        self.assertFalse(result["detail"])
+            item = result[key]
+            self.assertEqual([node for node in nodes(item) if node["tag"] == "a"], [])
+            self.assertIn("Fix the gate", text(item))
+        self.assertFalse(result["route"])
+
     def test_the_capacity_views_node_tests_pass(self):
         # capacity.test.js renders capacity.js: runner rows, folded free runners, bars, range buttons, text-only values.
         result = subprocess.run(["node", "--test", "--test-reporter=tap", str(ROOT / "dashboard/static/capacity.test.js")],
@@ -254,12 +293,14 @@ console.log(JSON.stringify({
         self.assertRegex(result.stdout, r"(?m)^# fail 0")
         index = (ROOT / "dashboard/static/index.html").read_text()
         self.assertIn('<script src="/assets/capacity.js"></script>', index)
+        self.assertIn('<script src="/assets/timeline.js"></script>', index)
     def test_ui_uses_text_nodes_and_the_approved_local_palette(self):
         app = (ROOT / "dashboard/static/app.js").read_text()
         helpers = (ROOT / "dashboard/static/helpers.js").read_text()
         css = (ROOT / "dashboard/static/styles.css").read_text()
         html = (ROOT / "dashboard/static/index.html").read_text()
-        self.assertNotIn("innerHTML", app + helpers + (ROOT / "dashboard/static/capacity.js").read_text())
+        self.assertNotIn("innerHTML", app + helpers + (ROOT / "dashboard/static/capacity.js").read_text()
+                         + (ROOT / "dashboard/static/timeline.js").read_text())
         for color in ("#090909", "#111111", "#282828"):
             self.assertIn(color, css)
         for color in ("#809cff", "#50d6e8"):

@@ -19,11 +19,12 @@ hash never reaches the server.
 The workspace buttons stay on screen while that view scrolls. A narrow window stacks them in a row
 above the view, and that row stays put as well. Changing views scrolls the view back to the top.
 
-A pull request row opens that pull request on GitHub in a new tab. The address is the pull request's
-`html_url` only when it is an HTTPS `github.com` link under the configured owner. Any other address
-leaves the row as text, not a link.
+A pull request row's title opens that pull request on GitHub in a new tab. The address is the pull
+request's `html_url` only when it is an HTTPS `github.com` link under the configured owner. Any other
+address leaves the title as text, not a link. A click anywhere else on the row, or on the arrow at
+its end, opens the row's [CI timeline](#ci-timeline) under it; the same click closes it.
 
-The search and repository filters, subscription/attention filters, and selected bot are kept in
+The search and repository filters, the CI timeline's time scale, subscription/attention filters, and selected bot are kept in
 the browser's local storage, scoped to the configured owner, and restored on a refresh, in a new
 tab, and after the browser reopens. They contain no API data or credentials, are read only by that
 dashboard origin, and stay until the viewer changes them or clears the site's data. If storage is unavailable or a saved value is invalid, the dashboard
@@ -194,6 +195,38 @@ user reads `GET /users/{owner}/repos?type=owner`. Which of those repositories ha
 request is one `GET /search/issues` (`org:` or `user:`, from the owner's type). A repository the
 search leaves out is not read further. Search can lag a new pull request by a refresh. A configured
 list does not use that search: each named repository is listed on its own.
+
+## CI timeline
+
+Each pull request row draws its current-head checks on a time axis, like a browser's network
+waterfall (`dashboard/static/timeline.js`). It reads only times the dashboard already has: each
+Actions job's created, started and finished times and its steps, each other app's check run, and
+each commit status. It makes no extra GitHub call.
+
+- **In the row**, the check meter's place holds one thin line per workflow, every job of that
+  workflow drawn on it. Green ran and passed, red failed, yellow is running, and dim yellow is a job
+  waiting for a runner. Failures are drawn on top so they are never hidden. A dashed line marks now
+  while anything is still open. Skipped checks and commit statuses are not drawn; the counts under
+  the line still name them. A head whose checks have no time yet keeps the check meter.
+- **The time scale** is the same for every row by default: the longest timeline on screen spans the
+  column, so a 12-minute run looks short beside a 77-minute one. The toolbar's scale menu can fit
+  each row to its own width instead, which shows each run's shape at the cost of comparing rows.
+- **A wait for a runner** is the time from GitHub creating a job to a runner starting it. GitHub
+  creates a job when its run starts, or, for a job that needs another, when that one finishes, so
+  waits start at those moments. A wait under 30 seconds is GitHub's normal pickup and is not drawn;
+  a longer one means every runner that job can use was busy.
+- **Opened**, the timeline lists every job under its workflow's name on an axis with round-time
+  ticks, with its run time (or "so far", or how long it has waited) and a Log link to the job on
+  GitHub when the job's page is under the configured owner. A job's name opens its steps, drawn on
+  that job's own scale (a note says so) because a one-minute job's steps on an hour's axis would be
+  dots. Bold names are the critical path: from the last job to finish, back through each job whose
+  finish created it (a finish within five seconds of a job's creation). Statuses are reports, not
+  work, so they are listed but never on that path.
+- Open rows and open steps last until the page reloads. The page's refresh every 30 seconds keeps
+  them open and keeps focus on the control that had it.
+
+`tests/test_dashboard_timeline.py` runs `dashboard/static/timeline.test.js` and checks that a row
+draws the timeline in the meter's place.
 
 ## Work view
 
@@ -615,6 +648,8 @@ and the latest push's kind are the right-hand side of that same line. A head wit
 renders as complete, and the push line sits under that notice too.
 A job that has not started has no steps yet, but it is still one waiting check, so the meter
 shows as soon as anything reports on the head. Elapsed time alone never asserts that a job is stuck.
+Once any check on the head has a time, the row's [CI timeline](#ci-timeline) takes the meter's place;
+the counts, CI time and push kind under it stay the same.
 
 ## Data lifecycle and uninstall
 
@@ -660,12 +695,15 @@ templates, and `test_dashboard_follow.py` the follower's check-run gate and roll
 `tests/test_dashboard_server.py` covers loopback HTTP, proxy and direct routing headers,
 read-only methods, Host/Origin/traversal, XSS-safe JSON, local assets and the tab icon route.
 `tests/test_dashboard_server_ui.py` covers DOM construction, filters, account usage
-math, the class on a row's age number, the push line under the meter, the current-work names,
+math, the class on a row's age number, the row's title link and timeline toggle, the push line under the meter, the current-work names,
 and the approved palette, and runs `dashboard/static/capacity.test.js` (the Capacity view's cards,
 bars, range buttons and runner rows). `tests/test_dashboard_lane_history.py` covers the lane
 history: the queue and job-wait projections, the kept samples and waits, the bars and totals, the
 published history's reader, and the collector-to-page path.
 `tests/test_dashboard_pull_age.py` covers pull-request age units and color.
+`tests/test_dashboard_timeline.py` covers the CI timeline: which checks become lanes, runner waits,
+the critical path, the shared and fitted scales, the opened rows and steps, and the row's swap from
+the check meter.
 `tests/test_dashboard_behind.py` covers how far a head is behind the default branch and that both
 the full pass and the head beat put it on the row.
 `tests/test_dashboard_push_kind.py` covers the latest push's label and time, and
