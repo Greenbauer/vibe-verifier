@@ -1,0 +1,37 @@
+id: no-unchecked-external-data-cast
+valid:
+  - |
+    const body: unknown = await response.json();
+  - |
+    const parsed = JSON.parse(text) as unknown;
+  - |
+    const order = OrderSchema.parse(await response.json());
+  - |
+    const lookup: Record<string, number> = {};
+  - |
+    const body = await request.json<unknown>();
+  - |
+    const items = list.json();
+  - |
+    const body = request.json<unknown>();
+  - |
+    const body = (await response.json()) as unknown;
+invalid:
+  - |
+    const order = (await response.json()) as Order;
+  - |
+    const config = JSON.parse(text) as Config;
+  - |
+    const pending = response.json() as Promise<Order>;
+  - |
+    const journey = await request.json<Journey>();
+  - |
+    function formatUser(row: Record<string, any>) { return row.name; }
+  - |
+    const order = (await response.json()) as unknown as Order;
+  - |
+    const config = JSON.parse(text) as unknown as Config;
+  - |
+    const pending = response.json() as unknown as Promise<Order>;
+  - |
+    const journey = request.json<Journey>();

@@ -1,0 +1,21 @@
+id: no-correctness-eslint-disable
+language: tsx
+message: >-
+  This comment switches off an ESLint rule that catches real bugs. A bare `eslint-disable` turns off
+  every rule: name the one style rule you mean. For `react-hooks/rules-of-hooks` or
+  `react-hooks/exhaustive-deps`, restructure the hook instead: call hooks unconditionally, move the
+  function into the effect, or keep a changing value in a ref.
+note: >-
+  A missing effect dependency or a conditional hook call is a stale-state or crash bug the lint rule
+  would have shown; silencing it hides the bug, not the rule.
+ignores: ['**/node_modules/**']
+rule:
+  kind: comment
+  any:
+    # The rule list ends at `--`: a hooks rule named only in the description is not disabled.
+    - regex: '^(//|/\*)[\s*]*eslint-disable(-next-line|-line)?\b([^-]|-[^-])*react-hooks/(rules-of-hooks|exhaustive-deps)'
+    # Bare: no rule named, with or without a `-- reason` description (on any number of lines); ESLint
+    # then disables every rule.
+    - regex: '(?s)^(//|/\*)[\s*]*eslint-disable(-next-line|-line)?\s*(--.*?)?\s*(\*/)?\s*$'
+    # A config comment that turns a hooks rule off: /* eslint react-hooks/exhaustive-deps: "off" */
+    - regex: '(?s)^/\*[\s*]*eslint\s.*react-hooks/(rules-of-hooks|exhaustive-deps)["'']?\s*:\s*\[?\s*["'']?(off|0)\b'
