@@ -415,7 +415,7 @@ class RowAge(unittest.TestCase):
         script = r"""
 const fs = require('fs');
 const helpers = require('./dashboard/static/helpers.js');
-const app = fs.readFileSync('./dashboard/static/app.js', 'utf8');
+const app = fs.readFileSync('./dashboard/static/prs.js', 'utf8');
 const source = app.slice(app.indexOf('  function runningNames('), app.indexOf('  function renderPulls('));
 function el(tag, attrs={}, ...children) {
   return {tag, attrs, children: children.flat().filter(value => value !== null && value !== undefined)};

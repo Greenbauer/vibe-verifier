@@ -187,64 +187,6 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
         buttons = [node for node in nodes(result["pressed"]) if node["tag"] == "button"]
         self.assertEqual([(text(node).strip(), node["attrs"]["aria-pressed"]) for node in buttons],
                          [("SWE1", "false"), ("QAE1", "true")])
-    def test_pull_request_row_opens_github_instead_of_a_dashboard_page(self):
-        result = self.node(r'''
-const fs=require('fs');
-const {safeUrl}=require('./dashboard/static/helpers.js');
-const app=fs.readFileSync('./dashboard/static/app.js','utf8');
-const source=app.slice(app.indexOf('  function runningNames('),app.indexOf('  function renderPulls('));
-function el(tag, attrs={}, ...children) {
-  return {tag, attrs, children:children.flat().filter(value => value !== null && value !== undefined)};
-}
-const prRow=new Function('el','safeUrl','snapshot','combinedCategory','badge','progress','since','ageClass','runningWork',
-  'behindMark', source+'return prRow;')(el, safeUrl, {owner:'octocat'}, ()=>'failed',
-  status=>el('span',{},status), ()=>el('div',{class:'progress'}),
-  value=>value==='2026-09-01T00:00:00Z'?'5w':'2d',
-  value=>value==='2026-09-01T00:00:00Z'?'age-red':'age-yellow', require('./dashboard/static/helpers.js').runningWork,
-  require('./dashboard/static/helpers.js').behindMark);
-const pull=(html_url, stale)=>({repository:'octocat/example',number:3,title:'Fix the gate',author:'octocat',
-  head_sha:'abcdef1234567890',html_url,attention_reason:'A current-head check failed',
-  created_at:'2026-10-01T00:00:00Z',stale});
-const ready=pull('https://github.com/octocat/example/pull/4', false);
-ready.merge_ready=true; ready.title='Ship the gate';
-ready.push={pushed_at:'2026-09-01T00:00:00Z', kind:'bug fix'};
-console.log(JSON.stringify({
-  linked:prRow(pull('https://github.com/octocat/example/pull/3', false)),
-  stale:prRow(pull('https://github.com/octocat/example/pull/3', true)),
-  foreign:prRow(pull('https://github.com/evil/example/pull/3', false)),
-  missing:prRow(pull(null, false)),
-  ready:prRow(ready),
-  detail:app.includes('function renderDetail(')||app.includes('go("prs",')
-}));
-''')
-        def text(node):
-            if isinstance(node, str):
-                return node
-            return " ".join(text(child) for child in node.get("children", []))
-        linked = result["linked"]
-        self.assertEqual(linked["tag"], "a")
-        self.assertEqual(linked["attrs"]["href"], "https://github.com/octocat/example/pull/3")
-        self.assertEqual(linked["attrs"]["target"], "_blank")
-        self.assertEqual(linked["attrs"]["rel"], "noreferrer")
-        self.assertNotIn("onclick", linked["attrs"])
-        self.assertIn("on GitHub", linked["attrs"]["aria-label"])
-        self.assertIn("Fix the gate", text(linked))
-        age = next(node for node in linked["children"] if node["attrs"].get("class") == "pr-age")
-        got = ([part["children"] for stat in age["children"] for part in stat["children"]], age["children"][0]["children"][0]["attrs"]["class"])
-        self.assertEqual(got, ([["2d"], ["PR age"]], "age-yellow"))
-        self.assertEqual([text(node) for node in linked["children"][1]["children"][1:]], ["A current-head check failed"])
-        ready = result["ready"]
-        title = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-identity")["children"][0]
-        age_only = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-age")
-        self.assertEqual((("Fully merge-ready" in ready["attrs"]["aria-label"]), title["attrs"]["class"],
-                          len(age_only["children"]), text(age_only)),
-                         (True, "merge-ready", 1, "2d PR age"))
-        self.assertEqual((result["stale"]["attrs"]["class"], result["stale"]["attrs"]["href"]), ("pr-row", linked["attrs"]["href"]))
-        for key in ("foreign", "missing"):
-            row = result[key]
-            self.assertEqual((row["tag"], row["attrs"]["href"], row["attrs"]["aria-label"]), ("div", None, None))
-            self.assertIn("Fix the gate", text(row))
-        self.assertFalse(result["detail"])
     def test_the_capacity_views_node_tests_pass(self):
         # capacity.test.js renders capacity.js: runner rows, folded free runners, bars, range buttons, text-only values.
         result = subprocess.run(["node", "--test", "--test-reporter=tap", str(ROOT / "dashboard/static/capacity.test.js")],
@@ -254,12 +196,15 @@ console.log(JSON.stringify({
         self.assertRegex(result.stdout, r"(?m)^# fail 0")
         index = (ROOT / "dashboard/static/index.html").read_text()
         self.assertIn('<script src="/assets/capacity.js"></script>', index)
+        self.assertIn('<script src="/assets/timeline.js"></script>', index)
+        self.assertIn('<script src="/assets/prs.js"></script>', index)
     def test_ui_uses_text_nodes_and_the_approved_local_palette(self):
         app = (ROOT / "dashboard/static/app.js").read_text()
         helpers = (ROOT / "dashboard/static/helpers.js").read_text()
         css = (ROOT / "dashboard/static/styles.css").read_text()
         html = (ROOT / "dashboard/static/index.html").read_text()
-        self.assertNotIn("innerHTML", app + helpers + (ROOT / "dashboard/static/capacity.js").read_text())
+        self.assertNotIn("innerHTML", app + helpers + (ROOT / "dashboard/static/capacity.js").read_text()
+                         + (ROOT / "dashboard/static/timeline.js").read_text() + (ROOT / "dashboard/static/prs.js").read_text())
         for color in ("#090909", "#111111", "#282828"):
             self.assertIn(color, css)
         for color in ("#809cff", "#50d6e8"):
@@ -286,7 +231,7 @@ const rows=[1,2,3].map(n=>({id:'ci-qae-'+n,name:'QAE '+n,role:'qae',state:'idle'
 const snapshot={agents:{rows}},strip=el('div'),at=h=>new Date(Date.now()-h*3600000).toISOString();
 const recent=(value,runs)=>runs[0]?.category==='failed'?'Latest run failed':runs.length?'Last 2h':value.coverage?.history==='complete'?'No runs in 2h':'History incomplete';
 global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
-new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel','botState',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function prFilters/)[1])(el,BOT_META,snapshot,{failureBot:null},s=>el('span',{},s),()=>{},v=>v,{querySelector:()=>strip},recent,botState);
+new Function('el','BOT_META','snapshot','state','badge','go','formatTime','document','recentRunLabel','botState',app.match(/  function renderBots\(\) \{([\s\S]*?)\n  \}\n\n  function subscriptionPanel/)[1])(el,BOT_META,snapshot,{failureBot:null},s=>el('span',{},s),()=>{},v=>v,{querySelector:()=>strip},recent,botState);
 global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
 const samples=rows.flatMap(row=>[31,30,3,2].map(h=>({account:'a',bot:row.id,timestamp:at(h),input_tokens:40,output_tokens:0})));
 const usage={sampled_at:at(0),accounts:[],samples,pace_points:-4};

@@ -19,11 +19,12 @@ hash never reaches the server.
 The workspace buttons stay on screen while that view scrolls. A narrow window stacks them in a row
 above the view, and that row stays put as well. Changing views scrolls the view back to the top.
 
-A pull request row opens that pull request on GitHub in a new tab. The address is the pull request's
-`html_url` only when it is an HTTPS `github.com` link under the configured owner. Any other address
-leaves the row as text, not a link.
+The Pull requests view is `dashboard/static/prs.js`. A pull request row's title opens that pull request on GitHub in a new tab. The address is the pull
+request's `html_url` only when it is an HTTPS `github.com` link under the configured owner. Any other
+address leaves the title as text, not a link. A click anywhere else on the row, or on the arrow at
+its end, opens the row's [CI timeline](#ci-timeline) under it; the same click closes it.
 
-The search and repository filters, subscription/attention filters, and selected bot are kept in
+The search and repository filters, the CI timeline's time scale, subscription/attention filters, and selected bot are kept in
 the browser's local storage, scoped to the configured owner, and restored on a refresh, in a new
 tab, and after the browser reopens. They contain no API data or credentials, are read only by that
 dashboard origin, and stay until the viewer changes them or clears the site's data. If storage is unavailable or a saved value is invalid, the dashboard
@@ -194,6 +195,55 @@ user reads `GET /users/{owner}/repos?type=owner`. Which of those repositories ha
 request is one `GET /search/issues` (`org:` or `user:`, from the owner's type). A repository the
 search leaves out is not read further. Search can lag a new pull request by a refresh. A configured
 list does not use that search: each named repository is listed on its own.
+
+## CI timeline
+
+Each pull request row draws its current-head checks on a time axis, like a browser's network
+waterfall (`dashboard/static/timeline.js`). It reads only times the dashboard already has: each
+Actions job's created, started and finished times and its steps, each other app's check run, and
+each commit status. It makes no extra GitHub call.
+
+- **In the row**, the Checks column holds one line per workflow, every job of that workflow drawn on
+  it. The lines split the cell's height between them, each at most 12 pixels with a 1-pixel gap (no
+  gap past 16 workflows), centered. A head with few workflows draws 12-pixel lines; a busy one gets
+  thinner lines and never a taller row. Green ran and passed, red failed, yellow is running, and dim yellow is a job
+  still waiting for a runner. Once a job has started, its wait before the run is a dim version of
+  its own color: dim green before a green run, dim red before a red one. Failures are drawn on top so they are never hidden. A dashed line marks now
+  while anything is still open. Skipped checks and commit statuses are not drawn; the counts in the
+  CI column still name them. A head whose checks have no time yet keeps the check meter.
+- **The latest round only.** A head's checks can hold more than one round of CI: a re-run, or CI
+  started again on the same commit hours later. The timeline draws the latest round, from the last
+  Actions job created after no job had run or waited for 15 minutes (another app's check or a status
+  posted late does not start a round), so an old round never stretches a
+  row or the shared scale. The opened view says how many checks of earlier rounds it left out; the
+  counts in the CI column still include them.
+- **The time scale** is the same for every row by default: the longest timeline on screen spans the
+  column, so a 12-minute run looks short beside a 77-minute one. The toolbar's scale menu can fit
+  each row to its own width instead, which shows each run's shape at the cost of comparing rows.
+- **A wait for a runner** is the time from GitHub creating a job to a runner starting it. GitHub
+  creates a job when its run starts, or, for a job that needs another, when that one finishes, so
+  waits start at those moments. A wait of 30 seconds or less is GitHub's normal pickup and is not
+  drawn; a longer one means every runner that job can use was busy. Only Actions jobs say when a
+  runner picked them up, so another app's queued check run says "queued" with its time and draws no
+  wait, and a commit status never waits.
+- **Opened**, the timeline lists every job under its workflow's name on an axis with round-time
+  ticks, with its run time (or "so far", or how long it has waited) and a Log link to the job on
+  GitHub when the job's page is under the configured owner. A job's name opens its steps, drawn on
+  that job's own scale (a note says so) because a one-minute job's steps on an hour's axis would be
+  dots. Bold names are the critical path: from the last job to finish, back through each job whose
+  finish created it (a finish within five seconds of a job's creation). Only Actions jobs are
+  created that way, so other apps' checks and statuses are listed but never on that path. A status
+  is a report another system posted: it is a tick at its last update, yellow while pending, and
+  never keeps the timeline open or widens a row's scale.
+- One row's timeline is open at a time: opening a row closes any other. The open row and open steps
+  last until the page reloads. The page's refresh every 30 seconds keeps
+  them open, and keeps focus on the scale menu, a row's arrow or a job's step toggle when one of
+  them had it.
+- A job's line is empty while it is still within its first 30 seconds of waiting, and another
+  app's queued check draws nothing until it starts; the counts in the CI column include both.
+
+`tests/test_dashboard_timeline.py` runs `dashboard/static/timeline.test.js` and `dashboard/static/prs.test.js` and checks the row's
+swap from the meter, the scale menu, and the bar colors and box.
 
 ## Work view
 
@@ -533,8 +583,9 @@ The dashboard shows source-proven failures, cancellations, waiting jobs, and cur
 The pull request list groups pull requests by repository. A repository with no open pull request
 that matches the filters gets no group. Groups are ordered by their most recently updated pull
 request, newest first; within a group the newest pull request is first and the oldest is last.
-A row's age is how long that pull request has been open, and it is the only figure in the
-right-hand column. Under a day it shows hours and minutes.
+A row's age is how long that pull request has been open. It is small text at the bottom left of the
+first column ("2mo old"), under the number, author and head, so the Checks and CI columns get the
+width; the "behind main" pill below sits at the bottom right of the same line. Under a day it shows hours and minutes.
 From a day through seven days it counts whole days, with no hours. Past seven days it counts
 whole weeks, past thirty days whole months, and from a year whole years. The number stays the
 default text color through three days, turns yellow after that, and turns red after two weeks.
@@ -548,7 +599,8 @@ counted from the push. The time turns yellow after an hour and red after three h
 hour or exactly three hours keeps the younger color. A head with no checks, and a row whose checks
 are still from the previous push, show "pushed <age> ago" instead, which turns yellow after three
 hours and red after a day. Its right edge lines up with the meter, not
-with the comment mark beside the meter. The kind of push follows the time on that same line, and
+with the comment mark beside the meter; in a row with a CI timeline the line is in the CI column,
+left-aligned under the counts, and the comment mark sits above them. The kind of push follows the time on that same line, and
 the tooltip adds how long ago the push was:
 feature, bug fix, refactor, performance, docs, test, chore, ci,
 build, style, revert, work in progress, or update when the commit message has no such prefix.
@@ -585,8 +637,8 @@ must still hold, and a required check that has not reported keeps the title whit
 "behind" before "blocked" on a branch that must be up to date, so a stale head stays white. Two
 requirements cannot be told apart from the token's own block there and are not counted: signed
 commits and a locked branch. GitHub's merge box still enforces them.
-When the repository's default branch has commits the head does not, the line under the title
-ends with a yellow "N behind main" pill (the default branch's own name when it is not main), and
+When the repository's default branch has commits the head does not, the first column's bottom line
+ends with a yellow "N behind main" pill, at the right (the default branch's own name when it is not main), and
 its tooltip says how many commits. It comes from the cheap head read, so it follows a merge to main
 within one beat, and a pull request the detail budget has not reached shows it too. It is hidden
 when the head is up to date, for a pull request from a fork, for one into a branch other than the
@@ -616,6 +668,11 @@ and the latest push's kind are the right-hand side of that same line. A head wit
 renders as complete, and the push line sits under that notice too.
 A job that has not started has no steps yet, but it is still one waiting check, so the meter
 shows as soon as anything reports on the head. Elapsed time alone never asserts that a job is stuck.
+Once any check run on the head that was not skipped has a time, the row's [CI timeline](#ci-timeline)
+takes the meter's place; commit statuses alone do not, since the row does not draw them. The timeline
+then has the Checks column to itself, and the counts, CI time and push kind move to the CI column
+beside it, the counts on one line and the CI time and push kind under them. A row with the meter keeps
+them under the meter, across both columns.
 
 ## Data lifecycle and uninstall
 
@@ -667,6 +724,10 @@ bars, range buttons and runner rows). `tests/test_dashboard_lane_history.py` cov
 history: the queue and job-wait projections, the kept samples and waits, the bars and totals, the
 published history's reader, and the collector-to-page path.
 `tests/test_dashboard_pull_age.py` covers pull-request age units and color.
+`tests/test_dashboard_timeline.py` covers the CI timeline: which checks become lanes, statuses as
+points, runner waits (jobs only, over 30 seconds), the critical path, the shared and fitted scales
+and the menu that picks them, the opened rows and steps, the bar colors and box, the row's swap
+from the check meter, and the row's title link to GitHub and its timeline toggle.
 `tests/test_dashboard_behind.py` covers how far a head is behind the default branch and that both
 the full pass and the head beat put it on the row.
 `tests/test_dashboard_push_kind.py` covers the latest push's label and time, and
