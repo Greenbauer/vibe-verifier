@@ -1470,11 +1470,15 @@ def review_criteria(criteria_text, verdict_text, ticket_text=""):
         rows.append("- %s%s, %s: %s" % (item, source, said_by, wording))
     # A feature re-walk (docs/feature-map.md) adds one line per feature; which features were required is
     # the gate's to decide, so this lists what the explorer wrote and the gate's log names any missing.
-    # A re-walk is partial by design, so the states the explorer says it left unwalked are listed too.
-    skipped = check_lines(verdict_text, "regression-skip")
+    # A re-walk is partial by design, so the states the explorer says it left unwalked are listed too, and so is
+    # what it found on the base branch's site for a state that failed (whether that counts is the gate's to say).
+    skipped, known = check_lines(verdict_text, "regression-skip"), check_lines(verdict_text, "regression-known")
     for fid, carried in check_lines(verdict_text, "regression-check").items():
         unwalked = "; ".join(said(line, "regression-skip") for line in skipped.get(fid, []))
-        rows.append("- Feature `%s` re-walked, %s%s" % (fid, explorer_said(carried), unwalked and " (not walked: %s)" % unwalked))
+        on_main = "; ".join(said(line, "regression-known") for line in known.get(fid, []))
+        rows.append("- Feature `%s` re-walked, %s%s%s" % (fid, explorer_said(carried),
+                                                         on_main and ", and says the base branch fails the same way: %s" % on_main,
+                                                         unwalked and " (not walked: %s)" % unwalked))
     return rows
 
 
