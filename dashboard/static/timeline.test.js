@@ -86,14 +86,14 @@ test("the row draws one line per workflow, real runner waits, failures and now",
   const box = timeline.mini(pull, NOW, null);
   assert.strictEqual(box.find("timeline-line").length, 3);
   assert.strictEqual(box.attrs["aria-label"], "CI timeline: 7 checks over 50m 0s, longest runner wait 38m 0s, 1 failed");
-  const waits = box.find("bar-waiting");
+  const waits = box.find("tl-waiting");
   assert.deepStrictEqual(waits.map(bar => [bar.style.get("left"), bar.style.get("width"), bar.attrs.title]),
     [["4.000%", "76.000%", "explore: waited 38m 0s for a runner, ran 5m 0s"]]);
-  assert.strictEqual(box.find("bar-failed").length, 1);
+  assert.strictEqual(box.find("tl-failed").length, 1);
   assert.strictEqual(box.find("timeline-now")[0].style.get("left"), "100.000%");
   // On the QAE line the wait is drawn first, under the runs.
   const qae = box.find("timeline-line")[1].children.map(bar => bar.className);
-  assert.deepStrictEqual(qae, ["timeline-bar bar-waiting", "timeline-bar bar-success", "timeline-bar bar-running"]);
+  assert.deepStrictEqual(qae, ["timeline-bar tl-waiting", "timeline-bar tl-success", "timeline-bar tl-running"]);
 });
 
 test("rows share one time scale unless each row is fit", () => {
@@ -142,7 +142,7 @@ test("the expanded view lists every job with its time, bold on the critical path
   assert.deepStrictEqual(steps.map(row => [row.find("timeline-name")[0].text, row.find("timeline-time")[0].text]),
     [["Checkout", "10s"], ["Unit tests", "9m 30s"]]);
   assert.strictEqual(open.find("timeline-step-scale")[0].text, "Steps on this job's own 9m 50s scale");
-  assert.deepStrictEqual(steps[1].find("timeline-bar")[0].className, "timeline-bar bar-failed");
+  assert.deepStrictEqual(steps[1].find("timeline-bar")[0].className, "timeline-bar tl-failed");
   assert.strictEqual(steps[1].find("timeline-bar")[0].style.get("left"), `${(10 / 590 * 100).toFixed(3)}%`);
 });
 
@@ -171,7 +171,7 @@ test("a commit status is a point at its last update: never a runner wait, never 
   assert.strictEqual(Math.max(...timeline.mini(pending, NOW, null).find("timeline-bar").map(edge)), 100);
   const opened = timeline.detail(pending, NOW, { id: "x", key: "k", owner: "octocat", rerender() {} });
   const row = opened.find("timeline-row").find(item => item.find("timeline-name")[0]?.text === "deploy");
-  assert.deepStrictEqual([row.find("bar-waiting").length, row.find("timeline-time")[0].text,
+  assert.deepStrictEqual([row.find("tl-waiting").length, row.find("timeline-time")[0].text,
     row.find("timeline-time")[0].attrs.title], [0, "", "deploy: Pending"]);
 });
 
@@ -185,7 +185,7 @@ test("another app's check run is never on the critical path", () => {
 test("a wait of exactly 30 seconds is GitHub's normal pickup; one second more is drawn", () => {
   const waits = { statuses: [], checks: [check(1, "a", "success"), check(2, "b", "success")],
     runs: [{ id: 1, name: "CI", jobs: [job(1, "a", at(0), at(0, 30), at(5)), job(2, "b", at(0), at(0, 31), at(5))] }] };
-  const bars = timeline.mini(waits, NOW, null).find("bar-waiting");
+  const bars = timeline.mini(waits, NOW, null).find("tl-waiting");
   assert.deepStrictEqual(bars.map(bar => bar.attrs.title), ["b: waited 31s for a runner, ran 4m 29s"]);
 });
 
@@ -193,9 +193,9 @@ test("another app's queued check says queued, never a runner wait", () => {
   const external = { statuses: [], runs: [], checks: [{ id: 40, name: "ext-ci", category: "pending", status: "queued", started_at: at(40) }] };
   const lane = timeline.timeline(external, NOW).lanes[0];
   assert.deepStrictEqual([lane.kind, lane.state], ["check", "waiting"]);
-  assert.strictEqual(timeline.mini(external, NOW, null).find("bar-waiting").length, 0);
+  assert.strictEqual(timeline.mini(external, NOW, null).find("tl-waiting").length, 0);
   const row = timeline.detail(external, NOW, { id: "x", key: "k", owner: "octocat", rerender() {} }).find("timeline-row")[1];
-  assert.deepStrictEqual([row.find("bar-waiting").length, row.find("timeline-time")[0].text, row.find("timeline-time")[0].attrs.title],
+  assert.deepStrictEqual([row.find("tl-waiting").length, row.find("timeline-time")[0].text, row.find("timeline-time")[0].attrs.title],
     [0, "queued 10m 0s", "ext-ci: queued 10m 0s"]);
 });
 

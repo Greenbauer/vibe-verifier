@@ -107,10 +107,14 @@ console.log(JSON.stringify({options:menu.children.map(option=>[option.attrs.valu
             start = css.index("\n" + selector + " {")
             return css[start:css.index("}", start)]
         # The same meaning as the check meter: green passed, red failed, yellow running, dim yellow waiting.
-        self.assertIn("background: var(--green)", rule(".bar-success"))
-        self.assertIn("background: var(--red)", rule(".bar-failed"))
-        self.assertIn("background: var(--yellow)", rule(".bar-running"))
-        self.assertIn("background: var(--yellow); opacity: .35", rule(".bar-waiting"))
+        self.assertIn("background: var(--green)", rule(".tl-success"))
+        self.assertIn("background: var(--red)", rule(".tl-failed"))
+        self.assertIn("background: var(--yellow)", rule(".tl-running"))
+        self.assertIn("background: var(--yellow); opacity: .35", rule(".tl-waiting"))
+        # Each timeline color is one rule of its own, so another view's class (Capacity's green
+        # .bar-running) can never repaint it.
+        for name in ("tl-success", "tl-failed", "tl-running", "tl-waiting"):
+            self.assertEqual(css.count("." + name + " "), 1, name)
         # Nothing drawn can leave the row's timeline box, so it never reaches the text under it.
         self.assertIn("overflow: hidden", rule(".timeline-mini"))
         self.assertIn("top: 0; bottom: 0", rule(".timeline-now"))

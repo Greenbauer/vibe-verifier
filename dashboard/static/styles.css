@@ -180,11 +180,11 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 .timeline-line, .timeline-track { position: relative; }
 .timeline-bar { position: absolute; top: 0; bottom: 0; min-width: 2px; border-radius: 1px; }
 .timeline-now { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--yellow); }
-.bar-success { background: var(--green); }
-.bar-failed { background: var(--red); }
-.bar-running { background: var(--yellow); }
-.bar-waiting { background: var(--yellow); opacity: .35; }
-.bar-cancelled, .bar-unknown { background: var(--muted); }
+.tl-success { background: var(--green); }
+.tl-failed { background: var(--red); }
+.tl-running { background: var(--yellow); }
+.tl-waiting { background: var(--yellow); opacity: .35; }
+.tl-cancelled, .tl-unknown { background: var(--muted); }
 .timeline-detail { padding: 6px 13px 14px; background: var(--row); border-top: 1px dashed var(--line); font-size: 11px; }
 .timeline-row { display: grid; grid-template-columns: minmax(120px, 230px) minmax(0, 1fr) 84px 28px; gap: 10px; align-items: center; min-height: 20px; }
 .timeline-row .timeline-track { height: 10px; }

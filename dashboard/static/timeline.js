@@ -125,7 +125,7 @@
   const percent = (ms, width) => `${(Math.min(1, Math.max(0, ms / width)) * 100).toFixed(3)}%`;
 
   function bar(from, to, state, start, width, title) {
-    return el("i", { class: `timeline-bar bar-${state}`, title,
+    return el("i", { class: `timeline-bar tl-${state}`, title,
       style: `left:${percent(from - start, width)};width:${percent(to - from, width)}` });
   }
 
@@ -273,8 +273,8 @@
       });
     });
     box.append(el("div", { class: "timeline-legend" },
-      ["success", "failed", "running"].map(state => el("span", {}, el("i", { class: `bar-${state}` }), VV.STATUS_LABELS[state])),
-      el("span", {}, el("i", { class: "bar-waiting" }), "Waiting for a runner (over 30s)"),
+      ["success", "failed", "running"].map(state => el("span", {}, el("i", { class: `tl-${state}` }), VV.STATUS_LABELS[state])),
+      el("span", {}, el("i", { class: "tl-waiting" }), "Waiting for a runner (over 30s)"),
       el("span", {}, el("b", {}, "Bold"), " jobs set the total time")));
     return box;
   }
