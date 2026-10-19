@@ -7,6 +7,8 @@ valid:
     /* eslint-disable max-lines */
     export const table = {};
   - |
+    console.log(report); // eslint-disable-line no-console
+  - |
     // A bare eslint-disable would switch every rule off, so this file names none.
     export const value = 1;
 invalid:
@@ -30,3 +32,13 @@ invalid:
   - |
     /* eslint-disable -- generated file */
     export const value = 1;
+  - |
+    load(id); // eslint-disable-line react-hooks/exhaustive-deps
+  - |
+    risky(); // eslint-disable-line
+  - |
+    /* eslint-disable react-hooks/rules-of-hooks */
+    export const value = 1;
+  - |
+    // eslint-disable-next-line no-console, react-hooks/exhaustive-deps -- both
+    load(id);

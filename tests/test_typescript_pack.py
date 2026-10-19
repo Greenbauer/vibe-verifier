@@ -23,7 +23,9 @@ class TypescriptPack(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_a_new_type_check_suppression_blocks_in_every_mapped_extension(self):
-        self.assertBlocks(judge(self, {}, {"src/a.ts": IGNORE}), "no-type-check-suppression")
+        for extension in ("ts", "tsx", "mts", "cts", "js", "mjs", "cjs"):
+            with self.subTest(extension=extension):
+                self.assertBlocks(judge(self, {}, {"src/a.%s" % extension: IGNORE}), "no-type-check-suppression")
         self.assertBlocks(judge(self, {}, {"scripts/b.mjs": "// @ts-nocheck\nexport const b = 1;\n"}),
                           "no-type-check-suppression")
 

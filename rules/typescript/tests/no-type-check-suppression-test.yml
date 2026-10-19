@@ -19,3 +19,9 @@ invalid:
   - |
     /* @ts-ignore: the legacy declaration omits it */
     load(repositories);
+  - |
+    /* @ts-nocheck */
+    export const value = 1;
+  - |
+    /** @ts-ignore */
+    load(repositories);
