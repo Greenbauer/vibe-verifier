@@ -214,8 +214,9 @@ each commit status. It makes no extra GitHub call.
 - **A wait for a runner** is the time from GitHub creating a job to a runner starting it. GitHub
   creates a job when its run starts, or, for a job that needs another, when that one finishes, so
   waits start at those moments. A wait of 30 seconds or less is GitHub's normal pickup and is not
-  drawn; a longer one means every runner that job can use was busy. Other apps' check runs and commit
-  statuses never wait for a runner.
+  drawn; a longer one means every runner that job can use was busy. Only Actions jobs say when a
+  runner picked them up, so another app's queued check run says "queued" with its time and draws no
+  wait, and a commit status never waits.
 - **Opened**, the timeline lists every job under its workflow's name on an axis with round-time
   ticks, with its run time (or "so far", or how long it has waited) and a Log link to the job on
   GitHub when the job's page is under the configured owner. A job's name opens its steps, drawn on

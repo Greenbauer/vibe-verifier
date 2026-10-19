@@ -187,3 +187,13 @@ test("a wait of exactly 30 seconds is GitHub's normal pickup; one second more is
   const bars = timeline.mini(waits, NOW, null).find("bar-waiting");
   assert.deepStrictEqual(bars.map(bar => bar.attrs.title), ["b: waited 31s for a runner, ran 4m 29s"]);
 });
+
+test("another app's queued check says queued, never a runner wait", () => {
+  const external = { statuses: [], runs: [], checks: [{ id: 40, name: "ext-ci", category: "pending", status: "queued", started_at: at(40) }] };
+  const lane = timeline.timeline(external, NOW).lanes[0];
+  assert.deepStrictEqual([lane.kind, lane.state], ["check", "waiting"]);
+  assert.strictEqual(timeline.mini(external, NOW, null).find("bar-waiting").length, 0);
+  const row = timeline.detail(external, NOW, { id: "x", key: "k", owner: "octocat", rerender() {} }).find("timeline-row")[1];
+  assert.deepStrictEqual([row.find("bar-waiting").length, row.find("timeline-time")[0].text, row.find("timeline-time")[0].attrs.title],
+    [0, "queued 10m 0s", "ext-ci: queued 10m 0s"]);
+});

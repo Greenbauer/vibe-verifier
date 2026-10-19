@@ -116,11 +116,17 @@
     return (lane.started ?? now) - lane.queued;
   }
 
+  // Only an Actions job says when a runner picked it up. Another app's queued check is waiting on
+  // that app, not on a runner, so its queue time is never counted or drawn as a runner wait.
+  function runnerWait(lane, now) {
+    return lane.kind === "job" ? waited(lane, now) : 0;
+  }
+
   function laneTitle(lane, now) {
     if (lane.kind === "status") return `${lane.name}: ${lane.label}`;
     const parts = [];
-    const wait = waited(lane, now);
-    if (lane.state === "waiting") parts.push(`waiting ${seconds(wait)} for a runner`);
+    const wait = runnerWait(lane, now);
+    if (lane.state === "waiting") parts.push(lane.kind === "job" ? `waiting ${seconds(wait)} for a runner` : `queued ${seconds(waited(lane, now))}`);
     else if (wait > WAIT_SHOWN) parts.push(`waited ${seconds(wait)} for a runner`);
     if (lane.state === "running") parts.push(`running ${seconds(now - lane.started)}`);
     else if (lane.started != null && lane.ended > lane.started) parts.push(`ran ${seconds(lane.ended - lane.started)}`);
@@ -131,14 +137,14 @@
     const title = laneTitle(lane, now);
     const ran = lane.started ?? now;
     const parts = [];
-    if (ran - lane.queued > WAIT_SHOWN) parts.push(bar(lane.queued, ran, "waiting", start, width, title));
+    if (runnerWait(lane, now) > WAIT_SHOWN) parts.push(bar(lane.queued, ran, "waiting", start, width, title));
     if (lane.started != null) parts.push(bar(lane.started, lane.ended ?? now, lane.state, start, width, title));
     return parts;
   }
 
   function summary(line, now) {
     const jobs = line.lanes.filter(lane => lane.kind !== "status");
-    const longest = Math.max(0, ...jobs.map(lane => waited(lane, now)));
+    const longest = Math.max(0, ...jobs.map(lane => runnerWait(lane, now)));
     const failed = jobs.filter(lane => lane.state === "failed").length;
     return [`CI timeline: ${jobs.length} ${jobs.length === 1 ? "check" : "checks"} over ${seconds(line.row.span)}`,
       longest > WAIT_SHOWN ? `longest runner wait ${seconds(longest)}` : null,
@@ -189,7 +195,7 @@
 
   function laneText(lane, now) {
     if (lane.kind === "status") return "";
-    if (lane.state === "waiting") return `waiting ${seconds(waited(lane, now))}`;
+    if (lane.state === "waiting") return `${lane.kind === "job" ? "waiting" : "queued"} ${seconds(waited(lane, now))}`;
     if (lane.state === "running") return `${seconds(now - lane.started)} so far`;
     return lane.ended > lane.started ? seconds(lane.ended - lane.started) : "";
   }
