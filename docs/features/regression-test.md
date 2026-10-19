@@ -9,6 +9,7 @@
 - source: `gates/_regression_runners.py`
 - source: `gates/_regression_python.py`
 - source: `gates/_regression_node.py`
+- source: `gates/_regression_frameworks.py`
 
 ## Reach
 
@@ -41,6 +42,10 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
 - `tests/test_regression_test.py::test_a_fix_that_changes_only_tests_docs_or_comments_passes_without_running_a_test`
 - `tests/test_regression_test.py::test_a_pull_request_that_is_not_a_fix_passes_without_running_a_test`
 - `tests/test_regression_test.py::test_a_test_that_fails_at_head_is_a_red_suite_and_cannot_run`
+- `tests/test_regression_frameworks.py::test_a_jest_or_bun_test_is_not_judged_and_names_its_runner`
+- `tests/test_regression_frameworks.py::test_a_fix_whose_only_tests_are_jest_or_bun_tests_passes_qualified_and_is_never_exit_2`
+- `tests/test_regression_frameworks.py::test_a_test_whose_package_runs_vitest_is_a_vitest_test_without_importing_it`
+- `tests/test_regression_frameworks.py::test_each_way_a_package_names_its_runner`
 - `tests/test_regression_test.py::test_pytest_a_test_that_passes_there_or_fails_only_on_a_missing_module_fails`
 - `tests/test_regression_test.py::test_unittest_a_test_whose_failing_check_is_in_a_subtest_fails_on_the_code_before_the_fix`
 - `tests/test_regression_node.py::test_a_node_test_that_fails_on_the_code_before_the_fix_passes`
@@ -55,7 +60,7 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
 
 - A fix is a title whose conventional-commit type is `fix`. A fix that cannot carry a test says why on a body line `regression-test: none -- <reason>`; the reason is printed as a warning and the pass is qualified.
 - A test that fails before the fix only because a module, export, file or script it needs does not exist yet is a finding (exit 1), not exit 2: the gate ran, and the author can act on it (test through code that exists before the fix, or write the reason line). As exit 2 it would also break every soak, which never masks exit 2.
-- It runs Vitest, node:test, pytest and unittest. A Playwright, shell or SQL test, a node:test file the repository does not run with `node --test` (no package.json script selects it and no `--node-test` declares it), and a script judged only by its exit code, is reported as not judged; a fix whose only tests are such files is exit 2.
+- It runs Vitest, node:test, pytest and unittest. A test that calls `describe`, `it` or `test` without importing a framework is Vitest's only when its package runs Vitest (the nearest Vitest config, Jest config or `package.json` naming its runner says which); a Jest or bun test is not judged, naming the runner and the file that says so, and a fix whose only tests are Jest or bun tests passes qualified with each file as an advisory, never exit 2. A Playwright, shell or SQL test, a node:test file the repository does not run with `node --test` (no package.json script selects it and no `--node-test` declares it), and a script judged only by its exit code, is reported as not judged; a fix whose only tests are such files is exit 2.
 - A node:test file runs alone, under Node's TAP reporter, with the script's own options less the reporter, `--watch`, sharding, coverage and isolation, which the gate sets. A file that does not load is reported by Node only as its process's stderr, which TAP keeps and JUnit drops: the gate reads the error from there. Tested on Node 20, 22 and 24.
 - Shell tests stay not judged: neither a plain `*.test.sh` script nor bats reports anything but wording that separates a failed check from a file or command that does not exist yet ([why](../GATE-CONTRACT.md#regression-test-fails-on-base)).
 - It swaps the files the fix changed back to the merge base in the working tree for the second run and always puts them back, so they must not differ from HEAD when it starts.
