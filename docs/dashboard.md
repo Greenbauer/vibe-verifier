@@ -268,8 +268,9 @@ A source that fails keeps its last items, marked stale with the reason (`unreach
 does. A source never read says why (`credential_missing`, `credential_unsafe`) instead of showing an
 empty board. Nothing is kept across a restart, and the dashboard never writes to a source: there is
 no claim, status, amend, or answer control. More than 100 items in a source shows the oldest 100 and
-says so. `tests/test_dashboard_work.py` covers the configuration, the key file, the transports, every
-kind, the columns, failure handling, and that a to-do source's key never reaches the page.
+says so. `tests/test_dashboard_work.py` covers the configuration, the key file, both transports, both
+kinds, the columns, and failure handling; `tests/test_dashboard_work_todos.py` covers the
+`supabase-todos` kind, including that its key never reaches the page.
 
 ## Capacity view
 
