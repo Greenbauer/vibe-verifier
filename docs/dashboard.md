@@ -655,8 +655,8 @@ and the latest push's kind are the right-hand side of that same line. A head wit
 renders as complete, and the push line sits under that notice too.
 A job that has not started has no steps yet, but it is still one waiting check, so the meter
 shows as soon as anything reports on the head. Elapsed time alone never asserts that a job is stuck.
-Once any check run on the head has a time, the row's [CI timeline](#ci-timeline) takes the meter's
-place; commit statuses alone do not, since the row does not draw them. The counts, CI time and push
+Once any check run on the head that was not skipped has a time, the row's [CI timeline](#ci-timeline)
+takes the meter's place; commit statuses alone do not, since the row does not draw them. The counts, CI time and push
 kind under it stay the same.
 
 ## Data lifecycle and uninstall
