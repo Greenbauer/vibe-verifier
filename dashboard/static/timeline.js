@@ -20,41 +20,43 @@
   const at = value => { const time = Date.parse(value); return Number.isFinite(time) ? time : null; };
   const seconds = ms => duration(Math.max(0, ms) / 1000);
 
-  // Every current-head check that has a time, as a lane: an Actions job (kind "job", with its queue
-  // time and steps), another app's check run ("check"), or a commit status ("status"). A status is a
-  // report another system posted, not work on a runner, so it is a point at its last update, never
-  // open and never waiting. Skipped checks never ran and are left out.
+  // A status is a report another system posted, not work on a runner: a point at its last update,
+  // never open and never waiting. A pending one is that system still working, drawn as running.
+  function statusLane(row, group) {
+    const when = at(row.completed_at) ?? at(row.started_at);
+    if (when == null) return null;
+    const state = checkState(row);
+    return { id: `${group.key}/${row.id}`, name: row.name, kind: "status", group,
+      state: state === "waiting" ? "running" : state, label: VV.STATUS_LABELS[row.category] || state,
+      queued: when, started: when, ended: when, url: row.details_url, steps: [] };
+  }
+
+  // An Actions job (with its queue time and steps), or another app's check run (job is null).
+  function workLane(row, group, job) {
+    const state = checkState(row);
+    const queued = at(job && job.created_at) ?? at(row.started_at);
+    if (queued == null) return null;
+    const open = state === "running" || state === "waiting";
+    const started = state === "waiting" ? null : at(job ? job.started_at : row.started_at) ?? queued;
+    const ended = open ? null : at(job ? job.completed_at : row.completed_at) ?? started ?? queued;
+    return { id: `${group.key}/${row.id}`, name: row.name, kind: job ? "job" : "check", group, state, queued, started,
+      ended: ended == null ? null : Math.max(ended, started ?? queued),
+      url: (job && job.html_url) || row.details_url, steps: (job && job.steps) || [] };
+  }
+
+  // Every current-head check that has a time, as a lane: an Actions job (kind "job"), another app's
+  // check run ("check"), or a commit status ("status"). Skipped checks never ran and are left out.
   function lanes(pull) {
     const jobs = new Map();
     (pull.runs || []).forEach(run => (run.jobs || []).forEach(job => jobs.set(job.id, { job, run })));
-    const result = [];
-    const add = (row, kind, group, job) => {
-      const state = checkState(row);
-      if (state === "skipped") return;
-      if (kind === "status") {
-        const when = at(row.completed_at) ?? at(row.started_at);
-        // A pending status is another system still working, drawn as running, never as a wait.
-        if (when != null) result.push({ id: `${group.key}/${row.id}`, name: row.name, kind, group,
-          state: state === "waiting" ? "running" : state, label: VV.STATUS_LABELS[row.category] || state,
-          queued: when, started: when, ended: when, url: row.details_url, steps: [] });
-        return;
-      }
-      const queued = at(job && job.created_at) ?? at(row.started_at);
-      if (queued == null) return;
-      const open = state === "running" || state === "waiting";
-      const started = state === "waiting" ? null : at(job ? job.started_at : row.started_at) ?? queued;
-      const ended = open ? null : at(job ? job.completed_at : row.completed_at) ?? started ?? queued;
-      result.push({ id: `${group.key}/${row.id}`, name: row.name, kind, group, state, queued, started,
-        ended: ended == null ? null : Math.max(ended, started ?? queued),
-        url: (job && job.html_url) || row.details_url, steps: (job && job.steps) || [] });
-    };
-    (pull.checks || []).forEach(row => {
+    const ran = row => checkState(row) !== "skipped";
+    const work = (pull.checks || []).filter(ran).map(row => {
       const found = jobs.get(row.id);
-      if (found) add(row, "job", { key: `run-${found.run.id}`, name: found.run.name }, found.job);
-      else add(row, "check", { key: "checks", name: "Other checks" }, null);
+      return found ? workLane(row, { key: `run-${found.run.id}`, name: found.run.name }, found.job)
+        : workLane(row, { key: "checks", name: "Other checks" }, null);
     });
-    (pull.statuses || []).forEach(row => add(row, "status", { key: "statuses", name: "Commit statuses" }, null));
-    return result;
+    const statuses = (pull.statuses || []).filter(ran).map(row => statusLane(row, { key: "statuses", name: "Commit statuses" }));
+    return [...work, ...statuses].filter(Boolean);
   }
 
   // The chain of jobs that set the total time: from the last Actions job to finish, back through each
