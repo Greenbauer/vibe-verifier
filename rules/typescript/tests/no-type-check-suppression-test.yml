@@ -1,0 +1,21 @@
+id: no-type-check-suppression
+valid:
+  - |
+    // @ts-expect-error the library declares the option as string, but it accepts a number
+    configure({ retries: 3 });
+  - |
+    // The code below never needs a ts-ignore.
+    const total = add(1, 2);
+  - |
+    // Stryker's preprocessor adds `// @ts-nocheck` to every copy it writes.
+    const copies = collect();
+invalid:
+  - |
+    // @ts-ignore
+    configure({ retries: 3 });
+  - |
+    // @ts-nocheck
+    export const value = 1;
+  - |
+    /* @ts-ignore: the legacy declaration omits it */
+    load(repositories);

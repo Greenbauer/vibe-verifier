@@ -1,0 +1,14 @@
+id: no-type-check-suppression
+language: tsx
+message: >-
+  `@ts-ignore` and `@ts-nocheck` switch the type checker off, and nothing ever switches it back on.
+  Fix the type instead. When a dependency's own types are wrong, put `@ts-expect-error` with the
+  reason on that one line: it fails as soon as the error is gone, so it cannot outlive the problem.
+note: >-
+  These suppressions rarely get removed: in a review of three repositories' history, 134 of 155
+  added in four months were still in place, and one repository had type checking off in 65 files.
+ignores: ['**/node_modules/**']
+rule:
+  kind: comment
+  # A directive only counts at the start of the comment, as TypeScript reads it; prose naming it does not.
+  regex: '^(//|/\*)[\s*]*@ts-(ignore|nocheck)\b'

@@ -1,0 +1,37 @@
+id: no-unchecked-external-data-cast
+language: tsx
+severity: warning
+message: >-
+  This asserts the shape of data from outside the program (a response body, parsed JSON, a database
+  row) without checking it. Take the type from the source that owns the shape instead: the generated
+  database Row type, a contract type the producer exports, or a schema parse at this boundary. If the
+  data really is unknown, type it `unknown` and narrow it.
+note: >-
+  Advisory, not blocking: most such casts are harmless, but the ones that are not ship a stale
+  hand-written type (a renamed field, a nullable column read as present) straight to the UI.
+ignores: ['**/node_modules/**']
+rule:
+  any:
+    - pattern: (await $X.json()) as $T
+    - pattern: $X.json() as $T
+    - pattern: JSON.parse($$$ARGS) as $T
+    - kind: call_expression
+      all:
+        # tree-sitter parses `await x.json<T>()` with the await inside the call's function field.
+        - has:
+            field: function
+            any:
+              - kind: member_expression
+                has: {field: property, regex: ^json$}
+              - kind: await_expression
+                has:
+                  kind: member_expression
+                  has: {field: property, regex: ^json$}
+        - has:
+            field: type_arguments
+            not:
+              regex: ^<\s*unknown\s*>$
+    - kind: generic_type
+      regex: ^Record\s*<\s*string\s*,\s*any\s*>$
+  not:
+    pattern: $E as unknown
