@@ -192,9 +192,8 @@ class Selection(unittest.TestCase):
         self.assertIn("no feature files in docs/map/", result.stderr)
 
 
-class RegressionChecks(unittest.TestCase):
-    """acceptance-verdict --features: one anchored PASS over at least one walked step per feature the changes touch,
-    selected by the gate. A re-walk is partial: what was left unwalked is printed, never judged."""
+class RegressionWalk(unittest.TestCase):
+    """A branch that changes two features' files and a run's evidence with one walked step of each (no tests here)."""
 
     BODY = "## Acceptance criteria\n\n- The login form shows an error on a wrong password\n"
     AC = "acceptance-check: AC1 -- PASS -- shown (qae/AC1.md::step 1: wrong password -> an error)\n"
@@ -229,6 +228,12 @@ class RegressionChecks(unittest.TestCase):
 
     AUTH = "regression-check: auth -- PASS -- still signs in (qae/features/auth.md::step 1: signed in as the test user -> the dashboard)\n"
     PROJECTS = "regression-check: projects -- PASS -- listed (qae/features/projects.md::step 1: opened /projects -> two projects listed)\n"
+
+
+
+class RegressionChecks(RegressionWalk):
+    """acceptance-verdict --features: one anchored PASS over at least one walked step per feature the changes touch,
+    selected by the gate. A re-walk is partial: what was left unwalked is printed, never judged."""
 
     def test_every_selected_feature_with_an_anchored_pass_passes(self):
         result = self.rewalk(self.AC + self.AUTH + self.PROJECTS)
