@@ -28,3 +28,11 @@ invalid:
   - |
     /// @ts-nocheck
     export const value = 1;
+  - |
+    // @TS-NOCHECK
+    export const value = 1;
+  - |
+    /*
+     * The generated client is wrong here.
+     * @ts-ignore */
+    load(repositories);

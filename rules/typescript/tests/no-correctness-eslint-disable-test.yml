@@ -12,6 +12,9 @@ valid:
     // eslint-disable-next-line no-console -- see react-hooks/exhaustive-deps docs
     console.log(report);
   - |
+    /* eslint react-hooks/exhaustive-deps: "error" */
+    export const value = 1;
+  - |
     // A bare eslint-disable would switch every rule off, so this file names none.
     export const value = 1;
 invalid:
@@ -45,3 +48,10 @@ invalid:
   - |
     // eslint-disable-next-line no-console, react-hooks/exhaustive-deps -- both
     load(id);
+  - |
+    /* eslint-disable -- generated
+       by the codegen tool */
+    export const value = 1;
+  - |
+    /* eslint react-hooks/exhaustive-deps: "off" */
+    export const value = 1;

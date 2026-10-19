@@ -14,5 +14,8 @@ rule:
   any:
     # The rule list ends at `--`: a hooks rule named only in the description is not disabled.
     - regex: '^(//|/\*)[\s*]*eslint-disable(-next-line|-line)?\b([^-]|-[^-])*react-hooks/(rules-of-hooks|exhaustive-deps)'
-    # Bare: no rule named, with or without a `-- reason` description; ESLint then disables every rule.
-    - regex: '^(//|/\*)[\s*]*eslint-disable(-next-line|-line)?\s*(--.*?)?\s*(\*/)?\s*$'
+    # Bare: no rule named, with or without a `-- reason` description (on any number of lines); ESLint
+    # then disables every rule.
+    - regex: '(?s)^(//|/\*)[\s*]*eslint-disable(-next-line|-line)?\s*(--.*?)?\s*(\*/)?\s*$'
+    # A config comment that turns a hooks rule off: /* eslint react-hooks/exhaustive-deps: "off" */
+    - regex: '(?s)^/\*[\s*]*eslint\s.*react-hooks/(rules-of-hooks|exhaustive-deps)["'']?\s*:\s*\[?\s*["'']?(off|0)\b'
