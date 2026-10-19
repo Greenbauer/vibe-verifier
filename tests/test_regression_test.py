@@ -194,6 +194,23 @@ class Rules(unittest.TestCase):
                      "Vitest config or package.json that names vitest holds it"):
             self.assertIn(said, result.stderr)
 
+    def test_a_fix_whose_only_tests_are_jest_or_bun_tests_passes_qualified_and_is_never_exit_2(self):
+        # The repository's own runner, which this gate does not run yet: not the job's fault, so not exit 2, and a soak
+        # in a Jest or bun repository stays green. Any other test the gate cannot run beside them keeps exit 2.
+        calls = 'describe("price", () => {\n  it("gives members 10% off", () => { expect(1).toBe(1); });\n});\n'
+        files = {"apps/api/src/price.test.ts": calls, "apps/quote/price.test.ts": 'import { expect, it } from "bun:test";\n' + calls}
+        repo = make_repo(self, {"src/price.ts": PRICE_BUG, "apps/api/jest.config.js": "module.exports = {};\n"})
+        result = fix(repo, dict({"src/price.ts": PRICE_FIX}, **files), "fix(price): x", "", "--format", "json", *self.NO_RUNNER)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([(f["path"], f["advisory"], f["message"].split(", which")[0]) for f in findings(result)], [
+            ("apps/api/src/price.test.ts", True, "not judged: a Jest test (apps/api/jest.config.js)"),
+            ("apps/quote/price.test.ts", True, "not judged: a bun test (it imports bun:test)")])
+        repo = make_repo(self, {"src/price.ts": PRICE_BUG, "apps/api/jest.config.js": "module.exports = {};\n"})
+        result = fix(repo, dict({"src/price.ts": PRICE_FIX, "db/price.test.sql": "select 1;\n"}, **files), "fix(price): x", "",
+                     "--soak", *self.NO_RUNNER)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("no changed test is one this gate can run", result.stderr)
+
     def test_a_test_whose_package_runs_vitest_is_a_vitest_test_without_importing_it(self):
         # A workspace package that names no runner runs its tests with the root's Vitest; a Vitest config says so too.
         calls = 'describe("price", () => {\n  it("gives members 10% off", () => { expect(1).toBe(1); });\n});\n'

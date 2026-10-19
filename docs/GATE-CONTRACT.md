@@ -477,7 +477,10 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
 - **Exit 2 also when** no changed test is one it can run (only Playwright, shell or SQL tests, or
   node:test files the repository does not run with `node --test`, say: `--node-test` or the reason line is
   the way out), the project's Vitest or Node is not installed, a runner writes no report, or the runs
-  pass `--timeout`.
+  pass `--timeout`. A fix whose only such tests are Jest or bun tests is not exit 2: they run under the
+  repository's own runner, which this gate does not run yet, so nothing in the job is wrong. It passes
+  qualified (`PASS (not judged: ...)`), each file an advisory finding naming its runner, and a soak in a
+  Jest or bun repository stays green.
 - **Shell tests are not judged**, by design. A `*.test.sh` script reports only an exit status and free
   text: a failed check and a sourced file that does not exist yet both exit 1, and a command that does
   not exist yet exits 127 only when the script stops on it. bats, the shell runner with structured
