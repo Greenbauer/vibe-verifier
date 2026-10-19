@@ -38,6 +38,7 @@ class LocalOnly(unittest.TestCase):
                             ("PLAYWRIGHT_AUTH_BYPASS", "true"), ("PWD", "/work"), ("TEST_BASE_URL", ""),
                             ("PGHOST", "127.0.0.1:54322"), ("PGHOST", "/var/run/postgresql"), ("DB_HOST", "localhost"),
                             ("POSTGRES_HOST", "::1"), ("DATABASE_URL", "host=127.0.0.1 port=54322 user=postgres"),
+                            ("DATABASE_URL", "postgresql:///app"), ("DATABASE_URL", "postgres://u:p@[::1]:5432,localhost:5433/app"),
                             ("NOTES", "a host=b thing"),
                             ("SITE_HOST", "app.example.com")):
             self.assertIsNone(_local_only.why(name, value, set()), name)
@@ -57,7 +58,11 @@ class LocalOnly(unittest.TestCase):
                 ("PGHOST", "db.%s.supabase.co" % HOSTED, "holds a database host that is not this machine"),
                 ("REDIS_HOSTNAME", "localhost,cache.example.com", "holds a database host that is not this machine"),
                 ("DATABASE_URL", "host=db.example.com user=app password=pw dbname=app",
-                 "holds a connection string for db.example.com, which is not this machine")):
+                 "holds a connection string for db.example.com, which is not this machine"),
+                ("DATABASE_URL", "host=localhost,db.example.com user=app password=pw", "holds a connection string for db.example.com"),
+                ("DATABASE_URL", "host=127.0.0.1 hostaddr=10.0.0.5 user=app password=pw", "holds a connection string for 10.0.0.5"),
+                ("DATABASE_URL", "postgresql:///app?host=db.example.com&password=pw", "holds a connection string for db.example.com"),
+                ("DATABASE_URL", "postgres://u:p@db.example.com:5432,127.0.0.1:5432/app", "holds a connection string for db.example.com")):
             self.assertIn(said, _local_only.why(name, value, {name}) or "", name)
         for name in ("SUPABASE_ACCESS_TOKEN", "VERCEL_TOKEN", "RESEND_API_KEY", "NETSUITE_CONSUMER_KEY", "CRON_SECRET",
                      "SUPABASE_DB_PASSWORD", "AWS_SECRET_ACCESS_KEY", "GH_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "DB_PASS",

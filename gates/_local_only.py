@@ -12,14 +12,16 @@ since a site started from one package of a monorepo loads that package's) is ref
 - its value is a JWT not issued by a local stack. Supabase's local CLI signs its keys `iss: supabase-demo`,
   and a local auth server's tokens name its loopback address; a hosted project's keys say `iss: supabase`
   and name the project's `ref`, and any other issuer (a deploy platform's OIDC token, say) is not this job's;
-- its value is a database connection string (postgres, mysql, mongodb, redis, amqp), or any URL carrying a
-  user or password, for a host that is not loopback;
+- its value is a database connection string (postgres, mysql, mongodb, redis, amqp, or libpq's keyword form)
+  naming any host that is not loopback or a Unix socket path (every host of a list, and a `host` or `hostaddr`
+  parameter), or any URL carrying a user or password for a host that is not loopback;
 - its value is the address of a hosted Supabase project (*.supabase.co, *.supabase.com, *.supabase.in);
 - it holds a database's bare host that is not loopback or a Unix socket path (libpq's PGHOST and PGHOSTADDR,
   DB_HOST, POSTGRES_HOST);
-- or its name says it is a credential (a KEY, SECRET, TOKEN, PASSWORD, PASSWD, PASS or CREDENTIALS part, or a
-  part ending in PASSWORD, PASSWD, SECRET or TOKEN, as in SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN,
-  RESEND_API_KEY, VERCEL_TOKEN, DB_PASSWORD, PGPASSWORD) and
+- or its name says it is a credential (a KEY, SECRET, TOKEN, PASSWORD, PASSWD, PASS, PWD or CREDENTIALS part,
+  the shell's own PWD aside, a part ending in PASSWORD, PASSWD, SECRET or TOKEN, or libpq's PGPASSFILE,
+  PGSERVICE or PGSERVICEFILE, as in SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN, RESEND_API_KEY,
+  VERCEL_TOKEN, DB_PASSWORD, PGPASSWORD, MYSQL_PWD) and
   the manifest does not declare it the local stack's with --local-env NAME. A declared name still has its
   value checked by the four rules above.
 
@@ -27,17 +29,19 @@ Values are never printed: a refusal names the variable, where it was read, and t
 """
 import base64
 import binascii
+import functools
 import ipaddress
 import json
 import os
 import re
 import socket
+import subprocess
 import threading
 import urllib.parse
 
 DATABASE_PARTS = {"DB", "DATABASE", "POSTGRES", "POSTGRESQL", "PG", "MYSQL", "MARIADB", "MONGO", "MONGODB", "REDIS", "SUPABASE"}
 # libpq's keyword form of a connection string: `host=db.example.com user=app password=secret dbname=app`.
-LIBPQ_HOST = re.compile(r"(?:^|\s)(?:host|hostaddr)\s*=\s*'?([^\s',]+)")
+LIBPQ_HOSTS = re.compile(r"(?:^|\s)(?:host|hostaddr)\s*=\s*'?([^\s']+)")
 LIBPQ_KEYS = re.compile(r"(?:^|\s)(?:user|password|dbname|port|sslmode)\s*=")
 # Variables that point a database client at a password file or a service entry, wherever it is.
 CREDENTIAL_NAMES = {"PGPASSFILE", "PGSERVICE", "PGSERVICEFILE"}
@@ -113,13 +117,42 @@ def database_host(name):
     return bool(parts & {"PGHOST", "PGHOSTADDR"} or parts & {"HOST", "HOSTNAME"} and parts & DATABASE_PARTS)
 
 
-def libpq_reason(value):
-    """value_reason() of a libpq keyword connection string (`host=... user=...`), or None when `value` is not one."""
-    found = LIBPQ_HOST.search(value) if LIBPQ_KEYS.search(value) else None
-    if not found:
+def host_of(item):
+    """The host of `host`, `host:port`, `[v6]` or `[v6]:port`."""
+    item = item.strip()
+    if item.startswith("["):
+        return item[1:item.find("]")] if "]" in item else item
+    return item.rsplit(":", 1)[0] if item.count(":") == 1 else item
+
+
+def database_hosts(value):
+    """Every host a database connection string names, or None when `value` is not one: a URL's hosts (libpq takes a
+    list, `h1:5432,h2:5432`) and its `host` and `hostaddr` parameters, or every `host` and `hostaddr` of libpq's
+    keyword form. A URL with no host (`postgresql:///app`) is a Unix socket on this machine."""
+    if "://" in value:
+        try:
+            parsed = urllib.parse.urlsplit(value)
+        except ValueError:
+            return None
+        if parsed.scheme.lower() not in DATABASE_SCHEMES:
+            return None
+        query = urllib.parse.parse_qs(parsed.query)
+        hosts = parsed.netloc.rsplit("@", 1)[-1].split(",") + [part for key in ("host", "hostaddr")
+                                                               for item in query.get(key, []) for part in item.split(",")]
+    elif LIBPQ_KEYS.search(value):
+        hosts = [part for item in LIBPQ_HOSTS.findall(value) for part in item.split(",")]
+    else:
         return None
-    host = found.group(1)
-    return "" if local_host(host) or host.startswith("/") else "holds a connection string for %s, which is not this machine" % host
+    return [host_of(item) for item in hosts if item.strip()]
+
+
+def remote_database(value):
+    """The first host of a database connection string that is not this machine (a path is a Unix socket here), "" when
+    every host is this machine, None when `value` is not a connection string."""
+    hosts = database_hosts(value)
+    if hosts is None:
+        return None
+    return next((host for host in hosts if not (local_host(host) or host.startswith("/"))), "")
 
 
 def value_reason(value):
@@ -131,13 +164,16 @@ def value_reason(value):
         if issuer == LOCAL_ISSUER or local_url(issuer):
             return ""
         return "holds a token issued by %s%s" % (issuer or "an unnamed issuer", " for project %s" % ref if ref else "")
+    remote = remote_database(value)
+    if remote is not None:
+        return remote and "holds a connection string for %s, which is not this machine" % remote
     found = address(value)
     if not found:
-        return libpq_reason(value)
+        return None
     scheme, host, userinfo = found
-    if scheme in DATABASE_SCHEMES or userinfo:
-        return "" if local_host(host) else "holds %s for %s, which is not this machine" % (
-            "a connection string" if scheme in DATABASE_SCHEMES else "an address with a password in it", host or "no host")
+    if userinfo:
+        return "" if local_host(host) else "holds an address with a password in it for %s, which is not this machine" % (
+            host or "no host")
     if host.lower().endswith(HOSTED_SUPABASE):
         return "holds the address of a hosted Supabase project (%s)" % host
     return None
@@ -196,6 +232,32 @@ class Refuser:
         self.thread.join()
         self.server.close()
         return sorted(set(self.hosts))
+
+
+# What the Node side of a run is told, so its fetch and http go to the gate's proxy for every host but this machine.
+NO_PROXY = "localhost,127.0.0.1,::1,.localhost"
+PROBE = ('const http = require("http"); fetch("http://fetch.vv-probe.invalid/").catch(() => {}).finally(() => '
+         'http.get("http://http.vv-probe.invalid/", (response) => response.resume()).on("error", () => {}));')
+
+
+def proxy_env(port):
+    """The environment that sends Node's own fetch and http, and any library that reads HTTP_PROXY, to the proxy at
+    `port` for every host but loopback. A raw TCP client, such as a database driver, does not read it."""
+    proxy = "http://127.0.0.1:%d" % port
+    return {"HTTP_PROXY": proxy, "HTTPS_PROXY": proxy, "http_proxy": proxy, "https_proxy": proxy,
+            "NO_PROXY": NO_PROXY, "no_proxy": NO_PROXY, "NODE_USE_ENV_PROXY": "1"}
+
+
+@functools.lru_cache(maxsize=None)
+def node_follows_proxy():
+    """Whether the Node on PATH sends both fetch and http.get to the proxy under proxy_env(), probed with one of each
+    to a name that cannot resolve: a Node that does not would let the site's server reach other hosts unseen."""
+    refuser = Refuser()
+    try:
+        subprocess.run(["node", "-e", PROBE], env=dict(os.environ, **proxy_env(refuser.port)), capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {host.split(":")[0] for host in refuser.close()} == {"fetch.vv-probe.invalid", "http.vv-probe.invalid"}
 
 
 def dotenv(path):

@@ -485,8 +485,9 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   `webServer` (one that serves the working tree, not an earlier build), the job's own local stack, and
   its browsers ([what each repository provides, and the cost](features/regression-test.md#browser-specs---playwright)).
   The gate never runs the config as it is: it writes a `.ts` wrapper beside it for each call that imports
-  it, routes every browser context and the `request` fixture through a proxy that is a bound,
-  never-listening port on the runner bypassed only for loopback names, sets every `webServer`'s
+  it, routes every browser context and the `request` fixture through a proxy the gate runs on the
+  runner, bypassed only for loopback names (`<-loopback>` first, so Chromium's own bypass of link-local
+  addresses such as a cloud metadata service's is off), sets every `webServer`'s
   `reuseExistingServer` to false, and reports through a reporter of its own. Each run is one attempt
   (`--retries=0`) with its output in a scratch directory; `expected` is a pass, `unexpected` a failure
   with its error (`Expected` and `Received` kept), `skipped` a skip. A file that does not load stops
@@ -512,9 +513,10 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   user or password, for a host that is not this machine; the address of a hosted Supabase project; a
   database's bare host or a libpq keyword connection string (`host=... password=...`) that is not this machine (libpq's `PGHOST`, `DB_HOST`; a Unix socket path is this
   machine's); or when its name has a KEY,
-  SECRET, TOKEN, PASSWORD, PASSWD, PASS, CREDENTIALS, APIKEY or AUTHTOKEN part, or a part ending in
-  PASSWORD, PASSWD, SECRET or TOKEN (SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN, RESEND_API_KEY,
-  VERCEL_TOKEN, DB_PASSWORD, PGPASSWORD, ACTIONS_ID_TOKEN_REQUEST_TOKEN) and `--local-env NAME` does not
+  SECRET, TOKEN, PASSWORD, PASSWD, PASS, PWD, CREDENTIALS, APIKEY or AUTHTOKEN part (the shell's own
+  `PWD` aside), a part ending in PASSWORD, PASSWD, SECRET or TOKEN, or is libpq's `PGPASSFILE`,
+  `PGSERVICE` or `PGSERVICEFILE` (SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN, RESEND_API_KEY,
+  VERCEL_TOKEN, DB_PASSWORD, PGPASSWORD, MYSQL_PWD, ACTIONS_ID_TOKEN_REQUEST_TOKEN) and `--local-env NAME` does not
   declare it the local stack's. A declared name still has its value checked by the first four rules.
   Only a changed test that could be a spec is listed at all (it imports no other framework, and no
   package.json script runs it with `node --test`), so a fix with none never starts Playwright. A test that
@@ -532,7 +534,8 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   at its address, a global setup that threw): the run cannot say whether the bug shows. The Node side of
   the run (the site's server, the specs' own code, a global setup) gets the same proxy through
   `HTTP_PROXY`/`HTTPS_PROXY`, `NO_PROXY` for loopback and `NODE_USE_ENV_PROXY=1`, which Node's own `fetch`
-  and `http` follow (Node 22.23 checked) as do libraries that read `HTTP_PROXY`. A raw TCP client, such
+  and `http` follow (Node 22.23 checked) as do libraries that read `HTTP_PROXY`; before the first run the
+  gate probes that the Node on PATH sends both through the proxy, and is exit 2 when it does not. A raw TCP client, such
   as a database driver, is not proxied; the refusal of credentials and database hosts for anywhere else
   is what keeps it from reaching outside the job.
 - **Exit 2 also when** no changed test is one it can run (only Playwright specs no `--playwright` config

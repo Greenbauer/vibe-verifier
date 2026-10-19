@@ -218,5 +218,16 @@ class RealBrowser(Fixture):
         tree_is_head(self, repo)
 
 
+    def test_a_link_local_address_goes_to_the_proxy_too(self):
+        # Chromium goes direct to 169.254/16 (where a cloud metadata service answers) unless told otherwise.
+        repo = self.project()
+        spec = SPEC + 'test("reads the metadata", async ({ page }) => {\n  await page.goto("http://169.254.1.1:8081/", { timeout: 3000 });\n' \
+                      '  await expect(page.locator("body")).toHaveText("credentials", { timeout: 1000 });\n});\n'
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/metadata.spec.mjs": spec}, "--soak")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("e2e/metadata.spec.mjs: reads the metadata failed in a run that reached for 169.254.1.1:8081", result.stderr)
+        tree_is_head(self, repo)
+
+
 if __name__ == "__main__":
     unittest.main()

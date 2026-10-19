@@ -18,9 +18,10 @@ an ES module package; an .mjs wrapper of a .ts config fails on 1.59), which impo
   of webServers is not in what a reporter sees.
 
 The Node side of the run (the site's server, the specs' own code, a global setup) gets the same proxy through
-HTTP_PROXY and HTTPS_PROXY with NO_PROXY for loopback and NODE_USE_ENV_PROXY=1 (node_proxy()), which Node's own
-fetch and http follow on Node 22.23 and which libraries that read HTTP_PROXY follow; a raw TCP client such as a
-database driver does not, and the refusal of credentials for anywhere else is what stops it authenticating there.
+HTTP_PROXY and HTTPS_PROXY with NO_PROXY for loopback and NODE_USE_ENV_PROXY=1 (_local_only.proxy_env()), which
+Node's own fetch and http follow, and libraries that read HTTP_PROXY; the gate first probes that the Node on PATH
+does (_local_only.node_follows_proxy) and is exit 2 when it does not. A raw TCP client such as a database driver
+does not read it, and the refusal of credentials and database hosts for anywhere else is what stops it there.
 
 Before each run, `playwright test --list`, which loads the config and the specs and starts no server, no global
 setup and no browser, says which project collects which spec and with what baseURL. The gate refuses (exit 2)
@@ -49,8 +50,9 @@ from _regression_runners import ADVICE, Run, first_line, remaining
 from _tools import run_tool
 
 CLIS = (os.path.join("@playwright", "test", "cli.js"), os.path.join("playwright", "cli.js"))
-BYPASS = "localhost,127.0.0.1,[::1],*.localhost"
-NO_PROXY = "localhost,127.0.0.1,::1,.localhost"
+# <-loopback> ends Chromium's own bypass of loopback and link-local addresses (169.254/16, where a cloud metadata
+# service answers): only the names after it go direct.
+BYPASS = "<-loopback>,localhost,127.0.0.1,[::1],*.localhost"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 REGEX_SPECIAL = re.compile(r"([\\^$.*+?()[\]{}|/])")
 LOCAL_ONLY = ("This gate runs a spec only against a site the config's webServer starts on this machine, reading the "
@@ -132,15 +134,6 @@ def refuse_credentials(where, environment, paths, local_names, servers=()):
         raise CannotRun(REFUSED % (where, "; ".join(refused)))
 
 
-def node_proxy(port):
-    """The environment that sends the Node side of a run (the site's server, the specs' own code, a global setup) to the
-    same dead proxy: Node's fetch and http with NODE_USE_ENV_PROXY (Node 22.23 checked), and any library that reads
-    HTTP_PROXY. A raw TCP client, such as a database driver, does not read it."""
-    proxy = "http://127.0.0.1:%d" % port
-    return {"HTTP_PROXY": proxy, "HTTPS_PROXY": proxy, "http_proxy": proxy, "https_proxy": proxy,
-            "NO_PROXY": NO_PROXY, "no_proxy": NO_PROXY, "NODE_USE_ENV_PROXY": "1"}
-
-
 def read_json(path):
     try:
         with open(path, encoding="utf-8") as handle:
@@ -162,6 +155,9 @@ def call(repo, config, files, listing, local_names, deadline, timeout):
     if entry is None or not shutil.which("node"):
         raise CannotRun("no Playwright is installed for %s: install the project's dependencies, its browsers and its local "
                         "stack before this gate, which runs the project's own Playwright" % config)
+    if not _local_only.node_follows_proxy():
+        raise CannotRun("the Node on PATH does not send fetch and http through HTTP_PROXY with NODE_USE_ENV_PROXY=1, so the "
+                        "site's server could reach other hosts unseen and this gate does not start it (Node 22.23 is checked)")
     scratch = tempfile.mkdtemp(prefix="vv-regression-")
     wrapper = os.path.join(directory, ".vv-regression-%d.config.ts" % os.getpid())
     refuser = _local_only.Refuser()
@@ -176,7 +172,7 @@ def call(repo, config, files, listing, local_names, deadline, timeout):
         command = ["node", entry, "test", "--config", wrapper, "--output", os.path.join(scratch, "results"), "--retries=0"]
         command += ["--list", "--pass-with-no-tests"] if listing else []
         code, output = run_tool(command + [pattern(os.path.join(root, path)) for path in files], directory,
-                                remaining(deadline, timeout), "Playwright", env=dict(os.environ, **node_proxy(port)),
+                                remaining(deadline, timeout), "Playwright", env=dict(os.environ, **_local_only.proxy_env(port)),
                                 budget=timeout, advice=ADVICE)
         found = read_json(report)
         if not isinstance(found, dict):
