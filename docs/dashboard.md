@@ -197,7 +197,8 @@ list does not use that search: each named repository is listed on its own.
 
 ## Work view
 
-`#/work` is a board of the plans and requests a session could pick up, and of what waits on a person.
+`#/work` is a board of the plans and requests a session could pick up, of a person's own to-dos, and
+of what waits on a person.
 It appears in the menu only when the configuration has `work_sources`, a list of at most eight
 read-only queues:
 
@@ -207,13 +208,16 @@ read-only queues:
    "token_file": "/etc/vibe-dashboard/example/plans.token", "repository": "octocat/example",
    "app_origin": "https://plans.example.test"},
   {"id": "calls", "label": "Calls", "kind": "calls", "endpoint": "https://calls.example.test/api/mcp",
-   "token_file": "/etc/vibe-dashboard/example/calls.token"}
+   "token_file": "/etc/vibe-dashboard/example/calls.token"},
+  {"id": "todos", "label": "Zach's to-dos", "kind": "supabase-todos",
+   "url": "https://your-project-ref.supabase.co", "table": "todos",
+   "token_file": "/etc/vibe-dashboard/example/todos.token"}
 ]
 ```
 
 Each source is reached over HTTPS with `Authorization: Bearer`, the bearer read from `token_file` on
-every refresh. The file must be a regular file of the account running the dashboard that no other
-account can read (mode 0600), so a replaced key is used without a restart and the key never enters
+every refresh (a `supabase-todos` source sends it as `apikey` too). The file must be a regular file
+of the account running the dashboard that no other account can read (mode 0600), so a replaced key is used without a restart and the key never enters
 the configuration. Give each source a read-only key where the source has one. `id` is a lowercase
 slug, `label` what the page shows. `kind` says how the source is read; the dashboard makes only
 these reads:
@@ -222,6 +226,18 @@ these reads:
 |---|---|---|---|---|
 | `plans` | a read API's base URL | `GET <endpoint>/plans?limit=100`, answering `{"plans": [...]}` | `GET <endpoint>/plans/<planId>` | the plan body (`planMarkdown`), every amendment oldest first (`amendments`), status, claimant, PR, preview, blocked reason |
 | `calls` | an MCP server (streamable HTTP) | the `list_open_calls` tool twice: `{limit: 100}` for the open Calls, and `{status: ["closed", "merged"], limit: 100}` for the done ones, which that tool leaves out unless asked | the `get_call` tool, `{callId}` | the brief, every follow-up with its design references, every ask with its ruling, status, submitter, claim, PR, preview |
+
+A `supabase-todos` source takes `url` (the Supabase project URL, an HTTPS origin) and `table` (a
+lowercase table name) in place of `endpoint`, and no `repository` or `app_origin`. Its table has the
+columns `id`, `title`, `notes`, `status` (`todo`, `in_progress`, `waiting` or `done`), `area`,
+`source`, `source_url`, `due_date`, `created_at`, `updated_at` and `done_at`. Row-level security can
+stay on with no anon access: the key in `token_file` is one that may read the table (a service-role or
+secret key), and it is sent only to that project, server side, never to the page. One read, `GET
+<url>/rest/v1/<table>?select=...&or=(status.neq.done,done_at.gte.<14 days ago>)&order=created_at.asc&limit=100`,
+lists the rows not done and those done in the last 14 days (a done row with no `done_at` is not
+shown). `todo` is To do, `in_progress` In progress, `waiting` Waiting on you and `done` Done; a card
+shows the title, the area, the due date and, when `source_url` is HTTPS, links the title to it, with
+the notes behind a toggle.
 
 A done Call is kept only when it was updated in the last 30 days; the tool lists oldest first with
 no paging, so a full page of done Calls reads as truncated (newer ones may be missing). A merged or
@@ -236,9 +252,10 @@ The board has four columns, each oldest first. A column is one card with its ite
 - **To do**: `submitted` or `backlog`, not picked up yet.
 - **In progress**: any other open status, claimed or being built.
 - **Waiting on you**: an ask with no ruling, a `blocked` item (with its reason, or "no reason
-  recorded"), an `await_answer` item, or a `pr_ready` item (its PR waits on review and merge). An
-  item here is in no other column. On a phone the columns stack and this one comes first.
-- **Done**: `merged` or `closed` (for Calls, those updated in the last 30 days), behind a Show toggle.
+  recorded"), an `await_answer` item, a `pr_ready` item (its PR waits on review and merge), or a
+  to-do whose status is `waiting`. An item here is in no other column. On a phone the columns stack and this one comes first.
+- **Done**: `merged` or `closed` (for Calls, those updated in the last 30 days), and to-dos done in
+  the last 14 days, behind a Show toggle.
 
 Every row shows when the item was created and last updated; the update age is yellow after three
 days and red after two weeks, and the summary line counts open items not updated in over two weeks,
@@ -251,8 +268,8 @@ A source that fails keeps its last items, marked stale with the reason (`unreach
 does. A source never read says why (`credential_missing`, `credential_unsafe`) instead of showing an
 empty board. Nothing is kept across a restart, and the dashboard never writes to a source: there is
 no claim, status, amend, or answer control. More than 100 items in a source shows the oldest 100 and
-says so. `tests/test_dashboard_work.py` covers the configuration, the key file, both transports, both
-kinds, the columns, and failure handling.
+says so. `tests/test_dashboard_work.py` covers the configuration, the key file, the transports, every
+kind, the columns, failure handling, and that a to-do source's key never reaches the page.
 
 ## Capacity view
 
