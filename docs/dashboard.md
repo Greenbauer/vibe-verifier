@@ -227,10 +227,13 @@ each commit status. It makes no extra GitHub call.
   is a report another system posted: it is a tick at its last update, yellow while pending, and
   never keeps the timeline open or widens a row's scale.
 - Open rows and open steps last until the page reloads. The page's refresh every 30 seconds keeps
-  them open and keeps focus on the control that had it.
+  them open, and keeps focus on the scale menu, a row's arrow or a job's step toggle when one of
+  them had it.
+- A job's line is empty while it is still within its first 30 seconds of waiting, and another
+  app's queued check draws nothing until it starts; the counts under the line include both.
 
-`tests/test_dashboard_timeline.py` runs `dashboard/static/timeline.test.js` and checks that a row
-draws the timeline in the meter's place.
+`tests/test_dashboard_timeline.py` runs `dashboard/static/timeline.test.js` and checks the row's
+swap from the meter, the scale menu, and the bar colors and box.
 
 ## Work view
 
@@ -652,8 +655,9 @@ and the latest push's kind are the right-hand side of that same line. A head wit
 renders as complete, and the push line sits under that notice too.
 A job that has not started has no steps yet, but it is still one waiting check, so the meter
 shows as soon as anything reports on the head. Elapsed time alone never asserts that a job is stuck.
-Once any check on the head has a time, the row's [CI timeline](#ci-timeline) takes the meter's place;
-the counts, CI time and push kind under it stay the same.
+Once any check run on the head has a time, the row's [CI timeline](#ci-timeline) takes the meter's
+place; commit statuses alone do not, since the row does not draw them. The counts, CI time and push
+kind under it stay the same.
 
 ## Data lifecycle and uninstall
 
@@ -705,9 +709,10 @@ bars, range buttons and runner rows). `tests/test_dashboard_lane_history.py` cov
 history: the queue and job-wait projections, the kept samples and waits, the bars and totals, the
 published history's reader, and the collector-to-page path.
 `tests/test_dashboard_pull_age.py` covers pull-request age units and color.
-`tests/test_dashboard_timeline.py` covers the CI timeline: which checks become lanes, runner waits,
-the critical path, the shared and fitted scales, the opened rows and steps, and the row's swap from
-the check meter.
+`tests/test_dashboard_timeline.py` covers the CI timeline: which checks become lanes, statuses as
+points, runner waits (jobs only, over 30 seconds), the critical path, the shared and fitted scales
+and the menu that picks them, the opened rows and steps, the bar colors and box, and the row's swap
+from the check meter.
 `tests/test_dashboard_behind.py` covers how far a head is behind the default branch and that both
 the full pass and the head beat put it on the row.
 `tests/test_dashboard_push_kind.py` covers the latest push's label and time, and
