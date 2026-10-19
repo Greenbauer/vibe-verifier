@@ -48,7 +48,7 @@ TODO_DONE_WINDOW = timedelta(days=14)
 # A to-do's status, as the board's phase and the reason it waits on a person.
 TODO_PHASES = {"todo": ("queued", None), "in_progress": ("active", None),
                "waiting": ("active", "Marked waiting"), "done": ("done", None)}
-TODO_COLUMNS = "id,title,notes,status,area,source,source_url,due_date,created_at,updated_at,done_at"
+TODO_COLUMNS = "id,title,notes,status,area,source,source_url,due,created_at,updated_at,done_at"
 QUEUED = {"submitted", "backlog"}
 PROTOCOL_VERSION = "2025-06-18"
 
@@ -370,7 +370,7 @@ def _todo(row: dict) -> dict | None:
         return None
     item_phase, reason = TODO_PHASES[status]
     notes = _text(row.get("notes"), MAX_BODY)
-    due = row.get("due_date")
+    due = row.get("due")
     return {
         "id": identity, "label": _text(row.get("area"), 40) or "to-do", "title": _text(row.get("title"), 200) or "(untitled)",
         "status": status, "phase": item_phase, "waiting": {"who": "operator", "reason": reason} if reason else None,

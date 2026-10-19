@@ -429,7 +429,7 @@ TODOS_URL = "https://project-ref.supabase.example.test"
 
 def todo_row(todo_id, status, **extra):
     row = {"id": todo_id, "title": "To-do " + todo_id, "notes": None, "status": status, "area": "personal",
-           "source": "chat", "source_url": None, "due_date": None, "created_at": "2026-10-01T09:00:00+00:00",
+           "source": "chat", "source_url": None, "due": None, "created_at": "2026-10-01T09:00:00+00:00",
            "updated_at": "2026-10-02T09:00:00+00:00", "done_at": None}
     row.update(extra)
     return row
@@ -453,7 +453,7 @@ class FakeTable:
 
 def todos_table():
     return FakeTable([
-        todo_row("t-todo", "todo", area="work", due_date="2026-10-20", notes="Call back about the <b>quote</b>",
+        todo_row("t-todo", "todo", area="work", due="2026-10-20", notes="Call back about the <b>quote</b>",
                  source_url="https://chat.example.test/thread/1"),
         todo_row("t-doing", "in_progress", area="home", source_url="http://insecure.example.test/x"),
         todo_row("t-wait", "waiting", area=None),
@@ -508,12 +508,13 @@ class Todos(unittest.TestCase):
         self.assertEqual(len(table.calls), 1)
         method, url, authorization, apikey = table.calls[0]
         self.assertEqual((method, authorization, apikey), ("GET", "Bearer " + KEY, KEY))
-        self.assertTrue(url.startswith(TODOS_URL + "/rest/v1/todos?select=id,title,notes,status,area,"), url)
+        self.assertTrue(url.startswith(TODOS_URL + "/rest/v1/todos?select=id,title,notes,status,area,source,source_url,due,"
+                                       "created_at,updated_at,done_at&"), url)
         # NOW less 14 days, as PostgREST's or filter: the rows not done, and done ones since then.
         self.assertIn("&or=(status.neq.done,done_at.gte.2026-09-28T15%3A00%3A00Z)&order=created_at.asc&limit=100", url)
         self.assertNotIn(KEY, url)
 
-    def test_statuses_map_to_the_four_columns_with_area_due_date_and_source_link(self):
+    def test_statuses_map_to_the_four_columns_with_area_due_and_source_link(self):
         items, truncated = collect_todos(SupabaseClient(TODOS_URL, KEY, todos_table()), self.source, NOW)
         self.assertFalse(truncated)
         by_id = {item["id"]: item for item in items}

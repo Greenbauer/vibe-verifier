@@ -230,7 +230,7 @@ these reads:
 A `supabase-todos` source takes `url` (the Supabase project URL, an HTTPS origin) and `table` (a
 lowercase table name) in place of `endpoint`, and no `repository` or `app_origin`. Its table has the
 columns `id`, `title`, `notes`, `status` (`todo`, `in_progress`, `waiting` or `done`), `area`,
-`source`, `source_url`, `due_date`, `created_at`, `updated_at` and `done_at`. Row-level security can
+`source`, `source_url`, `due`, `created_at`, `updated_at` and `done_at`. Row-level security can
 stay on with no anon access: the key in `token_file` is one that may read the table (a service-role or
 secret key), and it is sent only to that project, server side, never to the page. One read, `GET
 <url>/rest/v1/<table>?select=...&or=(status.neq.done,done_at.gte.<14 days ago>)&order=created_at.asc&limit=100`,
