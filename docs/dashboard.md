@@ -342,7 +342,7 @@ kinds, the columns, failure handling, and that a redirect never carries a key to
   wait card counts from GitHub handing a job to the lane until a runner takes it. Its value is the
   median; its detail is the 95th percentile, the job count and, when GitHub reports when it queued
   jobs, how long GitHub took on average before handing them over.
-- **Runners over time**, with `1h`, `24h` and `7d` buttons (24h first; the choice lasts while the
+- **Runners over time**, with `1h`, `24h` and `7d` buttons right after the title (24h first; the choice lasts while the
   tab is open). Each bar is one clock-aligned period (2 minutes, 30 minutes or 3 hours) of the runner
   slots, on their limit: green is the average number running a job, pale green kept warm, yellow idle
   with no job, the dashed outline the rest (free). A red mark above a bar means jobs waited for a

@@ -68,6 +68,7 @@ test("the filters come as the search, then the two menus together, then the two 
     [["input", ""], ["div", "toolbar-group"], ["div", "toolbar-group"]]);
   const [, menus, checks] = toolbar.children;
   assert.deepStrictEqual(menus.children.map(node => node.attrs.id), ["repo-filter", "time-scale"]);
+  assert.strictEqual(menus.children[0].children[0].text, "All repositories");
   assert.deepStrictEqual(checks.children.map(node => node.text), ["Subscribed only", "Needs attention"]);
 });
 
