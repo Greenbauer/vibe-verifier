@@ -119,6 +119,8 @@ console.log(JSON.stringify({options:menu.children.map(option=>[option.attrs.valu
         self.assertIn("flex: 1 1 0; min-height: 0; max-height: 12px", rule(".timeline-line"))
         self.assertIn("gap: 1px", rule(".timeline-mini"))
         self.assertIn("gap: 0", rule(".timeline-mini.dense"))
+        # The first column's bottom line holds the age at the left and the behind pill at the right.
+        self.assertIn("justify-content: space-between", rule(".pr-meta"))
         self.assertIn("align-self: stretch", rule(".timeline-cell"))
         # A row with the check meter keeps its caption under it, across the Checks and CI columns.
         self.assertIn("grid-column: 3 / 5", rule(".pr-row > .progress-copy:not(.ci-copy)"))

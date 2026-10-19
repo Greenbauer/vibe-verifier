@@ -41,7 +41,7 @@ const pull = (number, extra) => ({ repository: "octocat/example", number, title:
   statuses: [], expected: [], runs: [], checks: [], ...extra });
 const timed = pull(2, { checks: [{ id: 1, name: "test", category: "failed", status: "completed" }],
   runs: [{ id: 9, name: "CI", jobs: [{ id: 1, name: "test", created_at: at(0), started_at: at(1), completed_at: at(20), steps: [] }] }] });
-const untimed = pull(1, { checks: [{ id: 3, name: "lint", category: "pending", status: "queued" }] });
+const untimed = pull(1, { checks: [{ id: 3, name: "lint", category: "pending", status: "queued" }], behind_by: 2 });
 const snapshot = { owner: "octocat", github: { coverage: { selected: 1 }, sampled_at: at(59),
   repositories: [{ repository: "octocat/example", pulls: [timed, untimed] }] } };
 const state = { query: "", repository: "all", subscribed: false, attention: false, timeScale: "shared" };
@@ -70,4 +70,15 @@ test("a click on a row opens its timeline under it and keeps focus on its arrow;
   assert.strictEqual(rows()[1].attrs.id, arrow.attrs["aria-controls"]);
   arrow.handlers.click();
   assert.deepStrictEqual(rows().map(node => node.className), ["pr-row", "pr-row"]);
+});
+
+test("the first column reads title, then number, author and head, then the age at the left and how far behind at the right", () => {
+  prs.render(content, snapshot, state, page);
+  const identity = row(1).find("pr-identity")[0];
+  assert.deepStrictEqual(identity.children.map(node => node.tag), ["b", "small", "span"]);
+  assert.strictEqual(identity.children[1].text, "#1 · octocat · abcdef12");
+  const bottom = identity.children[2];
+  assert.deepStrictEqual([bottom.className, bottom.children.map(node => node.className)], ["pr-meta", ["pr-age", "behind-mark"]]);
+  assert.match(bottom.children[0].text, /^1h 0m old$/);
+  assert.strictEqual(bottom.children[1].text, "2 behind main");
 });
