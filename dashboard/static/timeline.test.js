@@ -116,7 +116,7 @@ test("a dense head still fits its lines in the row", () => {
 
 test("the expanded view lists every job with its time, bold on the critical path, links only to the owner's GitHub", () => {
   let renders = 0;
-  const options = { id: "timeline-7", key: "octocat/example#7", owner: "octocat", rerender: () => { renders += 1; } };
+  const options = { id: "timeline-7", key: "pull-7", owner: "octocat", rerender: () => { renders += 1; } };
   const box = timeline.detail(pull, NOW, options);
   assert.strictEqual(box.attrs.id, "timeline-7");
   assert.deepStrictEqual(box.find("timeline-group").map(node => node.text), ["CI", "QAE", "Other checks", "Commit statuses"]);

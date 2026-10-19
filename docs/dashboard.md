@@ -703,7 +703,7 @@ templates, and `test_dashboard_follow.py` the follower's check-run gate and roll
 `tests/test_dashboard_server.py` covers loopback HTTP, proxy and direct routing headers,
 read-only methods, Host/Origin/traversal, XSS-safe JSON, local assets and the tab icon route.
 `tests/test_dashboard_server_ui.py` covers DOM construction, filters, account usage
-math, the class on a row's age number, the row's title link and timeline toggle, the push line under the meter, the current-work names,
+math, the class on a row's age number, the push line under the meter, the current-work names,
 and the approved palette, and runs `dashboard/static/capacity.test.js` (the Capacity view's cards,
 bars, range buttons and runner rows). `tests/test_dashboard_lane_history.py` covers the lane
 history: the queue and job-wait projections, the kept samples and waits, the bars and totals, the
@@ -711,8 +711,8 @@ published history's reader, and the collector-to-page path.
 `tests/test_dashboard_pull_age.py` covers pull-request age units and color.
 `tests/test_dashboard_timeline.py` covers the CI timeline: which checks become lanes, statuses as
 points, runner waits (jobs only, over 30 seconds), the critical path, the shared and fitted scales
-and the menu that picks them, the opened rows and steps, the bar colors and box, and the row's swap
-from the check meter.
+and the menu that picks them, the opened rows and steps, the bar colors and box, the row's swap
+from the check meter, and the row's title link to GitHub and its timeline toggle.
 `tests/test_dashboard_behind.py` covers how far a head is behind the default branch and that both
 the full pass and the head beat put it on the row.
 `tests/test_dashboard_push_kind.py` covers the latest push's label and time, and
