@@ -122,10 +122,17 @@ class LineDrift(unittest.TestCase):
                          'test("a", () => { x(/[(]/); });// c',
                          'test("a", () => expect(/[(]/.test(s)).toBe(true));',
                          'test("a", wrap(() => { x(/[(]/); }));',
-                         'test("a", () => { x("a //b", /[(]/); });')):
+                         'test("a", () => { x("a //b", /[(]/); });',
+                         'test("a", () => { x(/a\\//, /[(]/); }); // c')):
             proof = {"file": "tests/a.test.ts", "test": "a", "line": 1, "assertion": "assert.equal(hookOnly(), 2);"}
             self.assertIn("fabricated quote", proof_audit.proof_problem(Files(spec), proof) or "", spec[1])
             self.assertNotIn("cited_line", proof)
+        # A multi-line test whose opening line ends in a comment closing a bracket is still multi-line.
+        for opening in ('test("a", () => { // wip (see x)', 'test("a", async () => { // gets "x" (y)'):
+            spec = [opening, "  const one = 1;", "  assert.equal(one(), 1);", "});"]
+            proof = {"file": "tests/a.test.ts", "test": "a", "line": 1, "assertion": "assert.equal(one(), 1);"}
+            self.assertIsNone(proof_audit.proof_problem(Files(spec), proof), opening)
+            self.assertEqual(proof["line"], 3)
         # Inside such a body, a drifted quote is still found.
         spec = ['test("a", () => {', "  // note (", "  assert.equal(one(), 1);", "});"]
         proof = {"file": "tests/a.test.ts", "test": "a", "line": 1, "assertion": "assert.equal(one(), 1);"}

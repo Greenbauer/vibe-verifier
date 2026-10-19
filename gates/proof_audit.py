@@ -205,7 +205,10 @@ def closes_on_its_line(line):
     declaration ends with the `{`, `(` or `=>` that opens its body)."""
     raw = BLOCK_COMMENT.sub("", line).rstrip()
     bare = STRING.sub("", raw).split("//", 1)[0].rstrip()
-    return any(text.endswith((")", ");")) for text in (raw, bare))
+    if bare.endswith(("{", "(", "=>", ",", "[")):
+        return False  # it opens a body on the next lines, whatever a trailing comment ends with
+    uncommented = raw.rsplit(" //", 1)[0].rstrip()
+    return any(text.endswith((")", ");")) for text in (raw, uncommented, bare))
 
 
 def bracket_depth(text):
