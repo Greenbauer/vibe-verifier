@@ -125,8 +125,9 @@ console.log(JSON.stringify({options:menu.children.map(option=>[option.attrs.valu
         self.assertIn("flex: 1 1 0; min-height: 0; max-height: 12px", rule(".timeline-line"))
         self.assertIn("gap: 1px", rule(".timeline-mini"))
         self.assertIn("gap: 0", rule(".timeline-mini.dense"))
-        # The first column's bottom line holds the age at the left and the behind pill at the right.
-        self.assertIn("justify-content: space-between", rule(".pr-meta"))
+        # The first column's bottom line holds the age, then the behind pill right beside it.
+        self.assertNotIn("space-between", rule(".pr-meta"))
+        self.assertIn("gap: 2px 8px", rule(".pr-meta"))
         # The behind pill is the same size as the status badge beside it.
         for part in ("padding: 1px 6px", "font-size: 10px", "line-height: 1.45"):
             self.assertIn(part, rule(".badge"))
@@ -244,6 +245,27 @@ console.log(JSON.stringify({
             self.assertEqual([node for node in nodes(item) if node["tag"] == "a"], [])
             self.assertIn("Fix the gate", text(item))
         self.assertFalse(result["route"])
+    def test_gray_bars_are_in_the_legend_and_say_why_they_are_gray(self):
+        # Gray is a cancelled job or one with a result the dashboard does not know; both were unexplained.
+        got = self.node(r"""
+global.document={createElement:tag=>({tag,children:[],attrs:{},className:'',textContent:'',style:{setProperty(){}},
+  append(...items){this.children.push(...items);},setAttribute(k,v){this.attrs[k]=v;},addEventListener(){}}),
+  createTextNode:data=>({data})};
+global.Node=Object; global.window=global; global.VV=require('./dashboard/static/helpers.js');
+const timeline=require('./dashboard/static/timeline.js');
+const at=m=>new Date(Date.parse('2026-10-19T14:00:00Z')+m*60000).toISOString(), now=Date.parse('2026-10-19T15:00:00Z');
+const job=(id,name)=>({id,name,created_at:at(0),started_at:at(0),completed_at:at(10),steps:[]});
+const pull={statuses:[], checks:[{id:1,name:'lint',category:'cancelled',status:'completed'},{id:2,name:'audit',category:'unknown',status:'completed'}],
+  runs:[{id:1,name:'CI',jobs:[job(1,'lint'),job(2,'audit')]}]};
+const text=node=>!node?'':node.data!==undefined?node.data:[node.textContent,...node.children.map(text)].join('');
+const walk=node=>!node||node.data!==undefined?[]:[node,...node.children.flatMap(walk)];
+const detail=timeline.detail(pull, now, {id:'x', key:'k', owner:'octocat', rerender(){}});
+const legend=walk(detail).find(node=>node.className==='timeline-legend');
+console.log(JSON.stringify({legend:text(legend), titles:walk(timeline.mini(pull, now, null)).filter(node=>/tl-(cancelled|unknown)/.test(node.className)).map(node=>node.attrs.title)}));
+""")
+        self.assertIn("Cancelled or result unknown", got["legend"])
+        self.assertEqual(got["titles"], ["lint: ran 10m 0s, cancelled", "audit: ran 10m 0s, result unknown"])
+
 
 if __name__ == "__main__":
     unittest.main()
