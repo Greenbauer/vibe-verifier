@@ -121,6 +121,10 @@ console.log(JSON.stringify({options:menu.children.map(option=>[option.attrs.valu
         self.assertIn("gap: 0", rule(".timeline-mini.dense"))
         # The first column's bottom line holds the age at the left and the behind pill at the right.
         self.assertIn("justify-content: space-between", rule(".pr-meta"))
+        # The behind pill is the same size as the status badge beside it.
+        for part in ("padding: 1px 6px", "font-size: 10px", "line-height: 1.45"):
+            self.assertIn(part, rule(".badge"))
+            self.assertIn(part, rule(".pr-identity .behind-mark"))
         self.assertIn("align-self: stretch", rule(".timeline-cell"))
         # A row with the check meter keeps its caption under it, across the Checks and CI columns.
         self.assertIn("grid-column: 3 / 5", rule(".pr-row > .progress-copy:not(.ci-copy)"))
