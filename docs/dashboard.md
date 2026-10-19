@@ -206,7 +206,8 @@ each commit status. It makes no extra GitHub call.
 - **In the row**, the Checks column holds one line per workflow, every job of that workflow drawn on
   it. The lines split the cell's height between them, each at most 12 pixels with a 1-pixel gap (no
   gap past 16 workflows), centered. A head with few workflows draws 12-pixel lines; a busy one gets
-  thinner lines and never a taller row. Green ran and passed, red failed, yellow is running, and dim yellow is a job
+  thinner lines and never a taller row. Green ran and passed, red failed, yellow is running, gray was cancelled (or
+  finished with a result the dashboard does not know), and dim yellow is a job
   still waiting for a runner. Once a job has started, its wait before the run is a dim version of
   its own color: dim green before a green run, dim red before a red one. Failures are drawn on top so they are never hidden. A dashed line marks now
   while anything is still open. Skipped checks and commit statuses are not drawn; the counts in the

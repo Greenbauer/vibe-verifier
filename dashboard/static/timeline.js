@@ -147,6 +147,9 @@
     else if (wait > WAIT_SHOWN) parts.push(`waited ${seconds(wait)} for a runner`);
     if (lane.state === "running") parts.push(`running ${seconds(now - lane.started)}`);
     else if (lane.started != null && lane.ended > lane.started) parts.push(`ran ${seconds(lane.ended - lane.started)}`);
+    // Gray bars say why they are gray.
+    if (lane.state === "cancelled") parts.push("cancelled");
+    if (lane.state === "unknown") parts.push("result unknown");
     return parts.length ? `${lane.name}: ${parts.join(", ")}` : lane.name;
   }
 
@@ -283,6 +286,7 @@
     });
     box.append(el("div", { class: "timeline-legend" },
       ["success", "failed", "running"].map(state => el("span", {}, el("i", { class: `tl-${state}` }), VV.STATUS_LABELS[state])),
+      el("span", {}, el("i", { class: "tl-cancelled" }), "Cancelled or result unknown"),
       el("span", {}, el("i", { class: "tl-waiting" }), "Waiting for a runner (over 30s)"),
       el("span", {}, el("i", { class: "tl-success tl-dim" }), "Waited for a runner, then ran (dim of its result)"),
       el("span", {}, el("b", {}, "Bold"), " jobs set the total time")));
