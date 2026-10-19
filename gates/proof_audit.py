@@ -15,8 +15,9 @@ gate cannot run. Per ID, the model's grade is checked, never trusted:
   (at least 6 characters, or a shorter value line that continues an assert or expect call still open above it
   in the same test; never a line of closers such as `});`), and the title of the test that line sits in: the
   nearest test declaration above it (a JS test call's string literal, `void` first or not, or a Python test
-  function's name). One quote that is not there
-  makes the requirement UNPROVEN: a fabricated quote is not proof.
+  function's name). A quote at the wrong line number still counts when it is the whole text of exactly one line
+  inside the test the grade names; the table gives that line, and the cited one beside it. One quote that is not
+  there makes the requirement UNPROVEN: a fabricated quote is not proof.
 - EXCLUDED needs a plan line, quoted verbatim (in part, 12 characters or more) at its line number at the merge base, and an owner section
   (`path#anchor`) that carries `[takes: ID]` at the merge base and is not one this body links.
 - UNPROVEN, a missing grade or a doubled one is a finding.
@@ -53,6 +54,7 @@ OPENER = re.compile(r"^(?:await\s+)?[\w$.!?]+[(\[{]$")
 ASSERTION_OPEN = re.compile(r"^(?:await\s+)?(?:assert\b|expect\s*[.(]|t\.assert|self\.assert)")
 CLOSERS_ONLY = re.compile(r"^[)\]}>;,\s]*$")
 STRING = re.compile(r"""(["'`])(?:\\.|(?!\1)[^\\])*\1""")
+BLOCK_COMMENT = re.compile(r"/\*.*?\*/")
 MIN_PART = 12  # a plan line, and a test title that is not a literal, may be quoted in part
 # A test declaration: a JS test call (test(...), it(...), test.only(...), test.each(...)(...)), `void` first when a
 # type-aware lint forbids a floating promise (`void it(...)`), or a Python test
@@ -197,9 +199,21 @@ def quote_problem(lines, path, number, quote, whole):
     return None
 
 
+def closes_on_its_line(line):
+    """Whether a JS test declaration line also closes its call: a one-line test ends `)` or `);`, read with its
+    block comments dropped, and again with its strings and a trailing `//` comment dropped too (a multi-line
+    declaration ends with the `{`, `(` or `=>` that opens its body)."""
+    raw = BLOCK_COMMENT.sub("", line).rstrip()
+    bare = STRING.sub("", raw).split("//", 1)[0].rstrip()
+    if bare.endswith(("{", "(", "=>", ",", "[")):
+        return False  # it opens a body on the next lines, whatever a trailing comment ends with
+    uncommented = raw.rsplit(" //", 1)[0].rstrip()
+    return any(text.endswith((")", ");")) for text in (raw, uncommented, bare))
+
+
 def bracket_depth(text):
-    """Openers minus closers on a line, string literals left out."""
-    text = STRING.sub("", text)
+    """Openers minus closers on a line, string literals and a trailing `//` comment left out."""
+    text = STRING.sub("", text).split("//", 1)[0]
     return sum(text.count(c) for c in "([{") - sum(text.count(c) for c in ")]}")
 
 
@@ -250,10 +264,58 @@ def declared_title(declaration):
     return literal.group(2) if literal else None
 
 
+def test_body(lines, title):
+    """(first, last), the 1-based lines of the one test titled `title`: its declaration down to the line that closes
+    it. None when no test, or more than one, carries that title. A body never reaches past the first non-blank line
+    indented no deeper than the declaration (a JS test's closing `});`, or a Python test's dedent), so a bracket the
+    count misreads in a comment, a regex or a template cannot stretch it over a following hook or helper; a JS
+    body also ends where the declaration's call closes, on the declaration's own line for a one-line test."""
+    starts = [index for index, line in enumerate(lines)
+              if DECLARATION.match(line) and declared_title("\n".join(lines[index:index + 3])) == title]
+    return (starts[0] + 1, body_end(lines, starts[0])) if len(starts) == 1 else None
+
+
+def body_end(lines, start):
+    """The 1-based last line of the test declared at index `start` (see test_body)."""
+    indent = len(lines[start]) - len(lines[start].lstrip())
+    dedent = next((index for index in range(start + 1, len(lines))
+                   if lines[index].strip() and len(lines[index]) - len(lines[index].lstrip()) <= indent), len(lines))
+    if PYTHON_TEST.match(lines[start]):
+        return dedent
+    if dedent < len(lines) and CLOSERS_ONLY.match(lines[dedent].strip()):
+        dedent += 1
+    if closes_on_its_line(lines[start]):
+        return start + 1  # a one-line test, whatever a bracket inside a regex or comment says
+    depth = 0
+    for index in range(start, dedent):
+        depth += bracket_depth(lines[index].strip())
+        if depth <= 0:
+            return index + 1
+    return dedent
+
+
+def relocated_line(lines, proof):
+    """The line a quote cited at the wrong number really sits on: its one whole-line occurrence inside the test the
+    grade names. None when it is not there, is there twice, or sits only outside that test (a hook, a helper,
+    another test)."""
+    body = test_body(lines, proof["test"].strip())
+    text = proof["assertion"].strip()
+    if body is None or not text:
+        return None
+    first, last = body
+    hits = [number for number in range(first + 1, last + 1) if lines[number - 1].strip() == text]
+    return hits[0] if len(hits) == 1 else None
+
+
 def proof_problem(files, proof):
     path = posixpath.normpath(proof["file"].strip())
     lines = files.lines("HEAD", path)
     problem = quote_problem(lines, path, proof["line"], proof["assertion"], whole=True)
+    if problem and lines is not None and is_test_file(path, lines):
+        # The grader often has the right assertion at the wrong line number; the quote, not the number, is the proof.
+        moved = relocated_line(lines, proof)
+        if moved and moved != proof["line"] and not quote_problem(lines, path, moved, proof["assertion"], whole=True):
+            proof["cited_line"], proof["line"], problem = proof["line"], moved, None
     if problem:
         return problem
     if not is_test_file(path, lines):
@@ -322,8 +384,14 @@ def verdict(files, grades, linked):
 
 
 def proof_summary(grade):
-    return "; ".join("%s: %s" % (case["case"], ", ".join("`%s:%d` (%s)" % (proof["file"], proof["line"], proof["test"].strip())
-                                                        for proof in case["proof"])) for case in grade["cases"])
+    return "; ".join("%s: %s" % (case["case"], ", ".join(proof_cite(proof) for proof in case["proof"]))
+                     for case in grade["cases"])
+
+
+def proof_cite(proof):
+    """`file:line` (test), and the line the grader cited when the gate found the quote elsewhere in that test."""
+    moved = "; cited :%d" % proof["cited_line"] if "cited_line" in proof else ""
+    return "`%s:%d` (%s%s)" % (proof["file"], proof["line"], proof["test"].strip(), moved)
 
 
 def cell(text, limit=600):

@@ -26,7 +26,10 @@ deterministic, holds the grades to the repository: every quoted assertion must b
 line in a test file at HEAD (at least six characters, or a shorter value line such as `0,` or `[]` that
 continues an assert or expect call still open above it in the same test; a line of closers, `});`, never
 counts), named with the title of the test that line sits in (the nearest test declaration above it,
-`void it(...)` included), and an exclusion's plan line must be at its line at the merge
+`void it(...)` included). A grader often has the right assertion at the wrong line number: a quote that is not on
+its cited line still counts when it is the whole text of exactly one line inside the test the grade names, and the
+table gives that line with the cited one beside it (`cited :33`); a quote absent there, repeated there, or found only
+in another test, a hook or a helper does not. An exclusion's plan line must be at its line at the merge
 base with its owner, a section the body does not link, carrying `[takes: ID]` there. A quote that is not there makes the requirement UNPROVEN: a fabricated quote is
 not proof. The gate fails on any UNPROVEN. Model output is JSON held to the schema, never prose the gate
 greps.

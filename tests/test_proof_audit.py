@@ -104,8 +104,9 @@ class ProofAudit(unittest.TestCase):
         self.assert_code(result, 0)
 
     def test_a_fabricated_quote_is_unproven(self):
-        for line, assertion in ((12, 'assert.equal(cropped(), "second.png");'), (11, 'assert.equal(cropped(), "first.png");'),
-                                (99, 'assert.equal(cropped(), "first.png");')):
+        # Text that is nowhere, text from another test, and a line past the file's end.
+        for line, assertion in ((12, 'assert.equal(cropped(), "second.png");'), (12, 'assert.equal(reread.title, "Lake");'),
+                                (99, 'assert.equal(cropped(), "third.png");')):
             with self.subTest(line=line, assertion=assertion):
                 case = {"case": CASE_8["case"], "proof": [dict(CASE_8["proof"][0], line=line, assertion=assertion)]}
                 grades = valid()
@@ -114,6 +115,14 @@ class ProofAudit(unittest.TestCase):
                 self.assert_code(result, 1, "C-8 UNPROVEN", "docs/plan.md:6")
                 self.assertIn("| C-8 | UNPROVEN |", table)
                 self.assertRegex(result.stdout, "fabricated quote|has no line 99")
+
+    def test_the_right_quote_at_the_wrong_line_of_its_test_is_proven_where_it_is(self):
+        case = {"case": CASE_8["case"], "proof": [dict(CASE_8["proof"][0], line=11)]}
+        grades = valid()
+        grades[1] = grade("C-8", "PROVEN", [case])
+        result, table = self.audit(self.repo(), envelope(1, ["C-15", "C-8", "C-30"], grades))
+        self.assert_code(result, 0)
+        self.assertIn("`tests/covers.test.ts:12` (a second PNG dropped with the first is not cropped; cited :11)", table)
 
     def test_a_quote_too_short_to_mean_anything_is_unproven(self):
         case = {"case": CASE_8["case"], "proof": [dict(CASE_8["proof"][0], assertion=");")]}
