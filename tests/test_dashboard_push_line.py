@@ -17,6 +17,7 @@ class PushLine(unittest.TestCase):
         result = self.node(r'''
 const fs=require('fs');
 const helpers=require('./dashboard/static/helpers.js');
+global.VV=helpers; const {ciTiming}=require('./dashboard/static/timeline.js');
 const app=fs.readFileSync('./dashboard/static/prs.js','utf8');
 const progressSource=app.slice(app.indexOf('  function messageIcon('), app.indexOf('  function renderPrRows('));
 const rowSource=app.slice(app.indexOf('  function runningNames('), app.indexOf('  function renderPulls('));
@@ -34,7 +35,7 @@ function createElementNS(ns, tag) {
 global.document={createElementNS};
 const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','since','ageClass',
   'ageLabel','secondsClass','ciTiming', progressSource+'return progress;')(el, helpers.checkTotals, helpers.meterSegments,
-  helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass, helpers.ageLabel, helpers.secondsClass, helpers.ciTiming);
+  helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass, helpers.ageLabel, helpers.secondsClass, ciTiming);
 const prRow=new Function('el','safeUrl','snapshot','combinedCategory','badge','progress','since','ageClass','runningWork',
   'behindMark', rowSource+'return prRow;')(el, helpers.safeUrl, {owner:'octocat'}, helpers.combinedCategory,
   status=>el('span',{class:'badge'}, status), progress, helpers.since, helpers.ageClass, helpers.runningWork, helpers.behindMark);
@@ -88,7 +89,23 @@ const step=(id, name, stepName, at)=>({
 const older=step(1,'sync-preview-branch','Redeploy the preview with a very long step name', '2026-10-06T00:00:10Z');
 const newest=step(2,'auth-probe','Resolve the preview under test with another long step name', '2026-10-06T00:02:10Z');
 const middle=step(3,'package-audit','Read the lockfile and report outdated packages', '2026-10-06T00:01:10Z');
+// CI ran on the head seven hours ago, then again on the same commit ten minutes ago: a re-run.
+const firstRound={check:{id:11, name:'unit', category:'success', status:'completed', started_at:'2026-10-05T17:00:00Z',
+  completed_at:'2026-10-05T17:20:00Z'}, job:{id:11, created_at:'2026-10-05T16:59:30Z', started_at:'2026-10-05T17:00:00Z',
+  completed_at:'2026-10-05T17:20:00Z', steps:[]}};
+const rerun=(check, job)=>({...base, push:{pushed_at:'2026-10-05T16:59:00Z', kind:'feature'}, checks:[firstRound.check, {id:12, name:'unit', ...check}],
+  runs:[{id:1, name:'CI', jobs:[firstRound.job, {id:12, steps:[], ...job}]}]});
 const rows={
+  rerunRunning:summarize(prRow(rerun({category:'pending', status:'in_progress', started_at:'2026-10-05T23:50:00Z'},
+    {created_at:'2026-10-05T23:49:30Z', started_at:'2026-10-05T23:50:00Z'}))),
+  rerunDone:summarize(prRow(rerun({category:'success', status:'completed', started_at:'2026-10-05T23:50:00Z', completed_at:'2026-10-05T23:58:00Z'},
+    {created_at:'2026-10-05T23:49:30Z', started_at:'2026-10-05T23:50:00Z', completed_at:'2026-10-05T23:58:00Z'}))),
+  rerunQueued:summarize(prRow(rerun({category:'pending', status:'queued'}, {created_at:'2026-10-05T23:55:00Z'}))),
+  oneRound:summarize(prRow({...base, push:{pushed_at:'2026-10-05T23:48:00Z', kind:'feature'}, checks:[{id:13, name:'preview',
+    category:'skipped', status:'completed', started_at:'2026-10-05T23:49:00Z', completed_at:'2026-10-05T23:49:00Z'}, {id:12, name:'unit',
+    category:'success', status:'completed', started_at:'2026-10-05T23:50:00Z', completed_at:'2026-10-05T23:58:00Z'}],
+    runs:[{id:1, name:'CI', jobs:[{id:12, steps:[], created_at:'2026-10-05T23:49:30Z', started_at:'2026-10-05T23:50:00Z',
+      completed_at:'2026-10-05T23:58:00Z'}]}]})),
   mixed:summarize(prRow({...base, attention_reason:'Current-head work is still running',
     unresolved_comments:1, review_threads:1, comments_complete:true, comment_count:1,
     push:{pushed_at:'2026-09-15T00:00:00Z', kind:'sync with a very long base branch name'},
@@ -144,6 +161,12 @@ console.log(JSON.stringify(rows));
         self.assertEqual(result["mixed"]["pushClass"], "age-yellow")
         self.assertEqual(result["mixed"]["pushKind"], "· sync with a very long base branch name")
         self.assertEqual(result["mixed"]["pushTitle"], "CI running 2h 0m · pushed 3w ago · sync with a very long base branch name")
+        # A second round on the same commit hours later is timed alone, as the CI timeline draws it.
+        self.assertEqual(result["rerunRunning"]["pushWhen"], "CI running 10m 0s")
+        self.assertEqual(result["rerunDone"]["pushWhen"], "CI took 8m 0s")
+        self.assertEqual(result["rerunQueued"]["pushWhen"], "CI waiting 5m 0s")
+        # With one round, a check that started before the first job (here a skipped one) still counts.
+        self.assertEqual(result["oneRound"]["pushWhen"], "CI took 9m 0s")
         # Once every check is done the time stops: first start to last finish.
         self.assertEqual(result["passed"]["pushWhen"], "CI took 42m 0s")
         self.assertIsNone(result["passed"]["pushClass"])

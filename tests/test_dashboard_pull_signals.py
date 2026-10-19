@@ -405,7 +405,7 @@ function createElementNS(ns, tag) {
 global.document={createElementNS};
 const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','since','ageClass','ageLabel','secondsClass','ciTiming', slice+'return progress;')(
   el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass,
-  helpers.ageLabel, helpers.secondsClass, helpers.ciTiming);
+  helpers.ageLabel, helpers.secondsClass, ()=>null);
 const base={runs:[], checks:[{name:'test', category:'success', status:'completed'}], statuses:[], expected:[]};
 function marks(node) {
   const found=[];
