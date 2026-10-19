@@ -33,7 +33,10 @@ nearest Vitest config, Jest config or package.json naming its runner, from the f
 Vitest config or a package.json with a vitest dependency; gates/_regression_frameworks.py), runs under Vitest (from the nearest directory
 with a Vitest or Vite config, else with a package.json). Python tests run under --python, with
 pytest when it is installed there and unittest when not or when the file's name has a hyphen or a dot
-(a test run by path, which pytest cannot import). A Playwright test, a Jest test (it imports
+(a test run by path, which pytest cannot import). A Playwright spec that a --playwright config collects runs
+under that config against the site its webServer starts on this machine, each run refused (exit 2) first when a
+target is not this machine or what the run inherits holds a credential for anywhere else
+(gates/_regression_playwright.py, gates/_local_only.py). Another Playwright test, a Jest test (it imports
 @jest/globals, or its package has a Jest config, a jest dependency or a `jest` key), a bun test (it
 imports bun:test, or its package's scripts run `bun test`), a node:test file the repository does not
 run with `node --test`, a shell or other test, and a --tests path are reported as not judged, naming
@@ -51,6 +54,8 @@ files must not differ from HEAD when it starts.
     --tests GLOB       more paths that are test code, never run (repeatable; an e2e directory, say)
     --node-test GLOB   node:test files the repository runs as `node --test <file>` some way no package.json
                        script says (a shell script, a workflow step): run that way (repeatable)
+    --playwright CONFIG  a Playwright config whose specs run against the site its webServer starts (repeatable)
+    --local-env NAME   a variable named like a credential that holds the job's own local stack's secret (repeatable)
     --timeout SECONDS  wall-clock limit for both runs (default 600)
 """
 import io
@@ -64,8 +69,9 @@ from contextlib import contextmanager
 
 from _acceptance import DASH
 from _contract import PY_TESTS, CannotRun, Finding, git, matches, qualify, resolve_base, run_gate
-from _regression_frameworks import RUNNERS, UNSUPPORTED_NAMES, framework
-from _regression_node import plan as node_plan, run_node
+from _regression_frameworks import JS, UNSUPPORTED_NAMES, classify, node_test
+from _regression_node import run_node
+from _regression_playwright import collected, run_playwright
 from _regression_runners import missing, run_python, run_vitest
 from _ticket import unfenced
 from universal_checks import lex
@@ -74,13 +80,10 @@ GATE = "regression-test-fails-on-base"
 FIX = re.compile(r"^\s*fix(?:\([^)]*\))?!?:", re.IGNORECASE)
 REASON = re.compile(r"^[ \t]*(?:[-*+][ \t]+)?regression-test:[ \t]*none[ \t]*" + DASH + r"[ \t]*(?P<reason>\S.*?)[ \t]*$",
                     re.IGNORECASE)
-JS = tuple("." + ext for ext in ("ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"))
 TEST_NAMES = ["**/*.test.*", "**/*.spec.*", "**/__tests__/**"] + PY_TESTS  # the names new-source-has-test reads
 TEST_CODE = TEST_NAMES + ["**/conftest.py"] + ["**/%s/**" % name for name in
                                                ("test", "tests", "__tests__", "__mocks__", "__snapshots__", "__fixtures__")]
 DOCS = ["**/*.md", "**/*.mdx", "**/*.rst", "**/*.adoc"]
-PLAYWRIGHT = re.compile(r"""['"]@playwright/test['"]""")
-NODE_TEST = re.compile(r"""['"]node:test['"]""")
 ASSERTION = re.compile(r"AssertionError\b")
 HOW = ("make one fail there through code that exists before the fix, or say why the fix cannot carry one "
        "with a body line `regression-test: none -- <reason>`")
@@ -134,33 +137,9 @@ def comments_only(repo, base, path):
     return code_of(path, before) == code_of(path, after)
 
 
-def node_test(args, path):
-    """How the repository runs a JS or TS file with `node --test` (gates/_regression_node.py), or None."""
-    return node_plan(args.repo, path, tuple(args.node_test or ())) if path.endswith(JS) else None
-
-
-def kind(args, path):
-    """(its runner, None) for a test this gate runs ('vitest', 'node' or 'python'); ('jest' or 'bun', why) for a test
-    of a runner it does not run yet; else (None, why)."""
-    if matches(path, args.tests or []):
-        return None, "declared test code (--tests), which this gate does not run"
-    if path.endswith(".py") and matches(path, PY_TESTS):
-        return "python", None
-    if not path.endswith(JS):
-        return None, "a %s test; %s" % (os.path.splitext(path)[1] or "file", RUNNERS)
-    with open(os.path.join(args.repo, path), encoding="utf-8", errors="replace") as handle:
-        text = handle.read()
-    if PLAYWRIGHT.search(text):
-        return None, "a Playwright test, which needs a browser and a running site"
-    if node_test(args, path):
-        return "node", None
-    if NODE_TEST.search(text):
-        return None, "a node:test file that no package.json script runs with `node --test` and no --node-test declares"
-    return framework(args.repo, path, text)
-
-
 def run_tests(args, judged, deadline, plans):
-    """{path: Run} of the judged files; `plans` is how the repository runs each node:test one, read at HEAD."""
+    """{path: Run} of the judged files; `plans` is how the repository runs each node:test one, and the config that
+    runs each Playwright one, read at HEAD."""
     runs = {}
     vitest = [path for path, what in judged.items() if what == "vitest"]
     python = [path for path, what in judged.items() if what == "python"]
@@ -171,6 +150,9 @@ def run_tests(args, judged, deadline, plans):
         runs.update(run_node(args.repo, node, deadline, args.timeout))
     if python:
         runs.update(run_python(args.repo, args.python, python, deadline, args.timeout))
+    browser = {path: plans[path] for path, what in judged.items() if what == "playwright"}
+    if browser:
+        runs.update(run_playwright(args.repo, browser, set(args.local_env or ()), deadline, args.timeout))
     return runs
 
 
@@ -264,20 +246,6 @@ def verdict(repo, passed, base_runs):
     return [Finding("no new or changed test fails on the code before the fix, so none shows the bug it fixes: " + HOW)] + findings
 
 
-def classify(args, tests):
-    """({path: runner} of the tests this gate runs, [(path, why)] of the others, {path: runner} of those whose runner
-    this gate does not run yet)."""
-    judged, not_judged, unsupported = {}, [], {}
-    for path in tests:
-        what, why = kind(args, path)
-        if what and what not in UNSUPPORTED_NAMES:
-            judged[path] = what
-        else:
-            not_judged.append((path, why))
-            unsupported.update({path: what} if what else {})
-    return judged, not_judged, unsupported
-
-
 def none_ran(not_judged, unsupported):
     """The verdict of a fix none of whose changed tests this gate ran: when every one is a test of a runner it does
     not run yet ({path: runner} in `unsupported`), the repository's own, nothing in the job is wrong, so a qualified
@@ -293,14 +261,17 @@ def none_ran(not_judged, unsupported):
 
 def compare(args, base, changed, tests, is_test_code):
     """Run the changed tests at HEAD and on the code before the fix, and judge them."""
-    judged, not_judged, unsupported = classify(args, tests)
-    plans = {path: node_test(args, path) for path, what in judged.items() if what == "node"}
     dirty = git(args.repo, "--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=all", "--",
                 *[path for _, path in changed])
     if dirty:
         raise CannotRun("the working tree differs from HEAD at a path the pull request changed (%s): this gate swaps those "
                         "files and puts them back, so commit or stash first" % dirty.split("\0")[0][3:])
     deadline = time.monotonic() + args.timeout
+    listed = collected(args.repo, args.playwright, [path for path in tests if path.endswith(JS)], set(args.local_env or ()),
+                       deadline, args.timeout) if args.playwright else ({}, {})
+    judged, not_judged, unsupported = classify(args, tests, listed)
+    plans = {path: node_test(args, path) if what == "node" else listed[0][path]
+             for path, what in judged.items() if what in ("node", "playwright")}
     passed = passed_at_head(run_tests(args, judged, deadline, plans) if judged else {}, judged, not_judged)
     for path, why in not_judged:
         note("%s: not judged: %s" % (path, why))
@@ -350,6 +321,10 @@ def add_arguments(parser):
     parser.add_argument("--tests", action="append", metavar="GLOB", help="more paths that are test code, never run (repeatable)")
     parser.add_argument("--node-test", action="append", metavar="GLOB",
                         help="node:test files run as `node --test <file>` from the repository root (repeatable)")
+    parser.add_argument("--playwright", action="append", metavar="CONFIG",
+                        help="a Playwright config whose specs this gate runs, against the site its webServer starts here (repeatable)")
+    parser.add_argument("--local-env", action="append", metavar="NAME",
+                        help="a variable named like a credential that holds the job's own local stack's secret (repeatable)")
     parser.add_argument("--timeout", type=int, default=600, help="seconds both test runs may take together (default 600)")
 
 

@@ -24,12 +24,14 @@ PYTHON_RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_regre
 
 # What a failure reads like when something the test needs does not exist, one capture group naming it:
 # Node and Vite resolving a module, Vitest reading an export the module lacks (its import becomes
-# `__vi_import_0__.name` or `__vite_ssr_import_0__.name`), Python importing, any file a test opens or runs.
+# `__vi_import_0__.name` or `__vite_ssr_import_0__.name`, and Babel's CommonJS output, which Playwright runs a
+# TypeScript spec through, `(0 , _module.name)`), Python importing, any file a test opens or runs.
 MISSING = [re.compile(pattern) for pattern in (
     r"Cannot find (?:module|package) '([^']+)'",
     r"Failed to load url (\S+)",
     r'Failed to resolve import "([^"]+)"',
     r"__vi(?:te_ssr)?_import_\d+__\.([\w$]+)\)? is not a (?:function|constructor)",
+    r"\(0 , _[\w$]+\.([\w$]+)\) is not a (?:function|constructor)",
     r'No "([^"]+)" export is defined on the "[^"]+" mock',
     r"does not provide an export named '([^']+)'",
     r"No module named '([^']+)'",

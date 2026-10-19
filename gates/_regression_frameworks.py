@@ -1,5 +1,5 @@
-"""Which runner a JS or TS test file of a fix belongs to, for regression-test-fails-on-base: read from the file's
-imports and from how its package runs its tests, never from the calls alone. A file that only calls describe, it or
+"""Which runner a changed test file of a fix belongs to, for regression-test-fails-on-base. A JS or TS file's is read
+from the file's imports and from how its repository runs it, never from the calls alone. A file that only calls describe, it or
 test is read the same by Vitest with `globals: true`, Jest and bun test, so the nearest directory, from the file's up
 to the root, holding a Vitest config, a Jest config or a package.json that names its runner decides.
 """
@@ -7,6 +7,12 @@ import json
 import os
 import re
 
+from _contract import PY_TESTS, matches
+from _regression_node import plan as node_plan
+
+JS = tuple("." + ext for ext in ("ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"))
+PLAYWRIGHT = re.compile(r"""['"]@playwright/test['"]""")
+NODE_TEST = re.compile(r"""['"]node:test['"]""")
 VITEST = re.compile(r"""['"]vitest['"]""")
 BUN_TEST = re.compile(r"""['"]bun:test['"]""")
 JEST_GLOBALS = re.compile(r"""['"]@jest/globals['"]""")
@@ -85,3 +91,55 @@ def framework(repo, path, text):
         return runner, "a %s test (%s), which this gate does not run; %s" % (RUNNER_NAMES[runner], where, RUNNERS)
     return None, ("it calls describe, it or test without importing a framework, and no Vitest config or package.json "
                   "that names vitest holds it; " + RUNNERS)
+
+
+def node_test(args, path):
+    """How the repository runs a JS or TS file with `node --test` (gates/_regression_node.py), or None."""
+    return node_plan(args.repo, path, tuple(args.node_test or ())) if path.endswith(JS) else None
+
+
+def kind(args, path, listed):
+    """(its runner, None) for a test this gate runs ('vitest', 'node' or 'python'); ('jest' or 'bun', why) for a test
+    of a runner it does not run yet; else (None, why). `listed` is ({path: config}, {path: why it does not load}) of
+    the --playwright configs at HEAD: a spec one collects runs, even when --tests also names it."""
+    if path in listed[0]:
+        return "playwright", None
+    if matches(path, args.tests or []):
+        return None, "declared test code (--tests), which this gate does not run"
+    if path.endswith(".py") and matches(path, PY_TESTS):
+        return "python", None
+    if not path.endswith(JS):
+        return None, "a %s test; %s" % (os.path.splitext(path)[1] or "file", RUNNERS)
+    with open(os.path.join(args.repo, path), encoding="utf-8", errors="replace") as handle:
+        text = handle.read()
+    if PLAYWRIGHT.search(text):
+        return None, playwright_why(args, path, listed[1])
+    if node_test(args, path):
+        return "node", None
+    if NODE_TEST.search(text):
+        return None, "a node:test file that no package.json script runs with `node --test` and no --node-test declares"
+    return framework(args.repo, path, text)
+
+
+def playwright_why(args, path, unloaded):
+    """Why a Playwright spec is not run: no --playwright config collects it, or it does not load under one."""
+    if path in unloaded:
+        return "a Playwright test that does not load at HEAD: " + unloaded[path]
+    if args.playwright:
+        return "a Playwright test that no --playwright config (%s) collects" % ", ".join(args.playwright)
+    return ("a Playwright test, which needs a browser and a running site; name the config that runs it with --playwright, "
+            "and this gate runs it against the site that config's webServer starts on this machine")
+
+
+def classify(args, tests, listed):
+    """({path: runner} of the tests this gate runs, [(path, why)] of the others, {path: runner} of those whose runner
+    this gate does not run yet)."""
+    judged, not_judged, unsupported = {}, [], {}
+    for path in tests:
+        what, why = kind(args, path, listed)
+        if what and what not in UNSUPPORTED_NAMES:
+            judged[path] = what
+        else:
+            not_judged.append((path, why))
+            unsupported.update({path: what} if what else {})
+    return judged, not_judged, unsupported

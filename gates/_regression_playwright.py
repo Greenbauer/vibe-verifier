@@ -210,19 +210,24 @@ def collected(repo, configs, paths, local_names, deadline, timeout):
     return found, {path: why for path, why in broken.items() if path not in found}
 
 
-def refuse_targets(config, files, tests, projects, servers, directory, local_names):
-    """Exit 2 unless every project that runs `files`, and every project those depend on, goes to this machine, and the
-    config starts a webServer here whose env and .env files hold no credential for anywhere else."""
-    running = {project for path in files for project in tests[path]}
-    pending = list(running)
+def running(files, tests, projects):
+    """The projects a run of `files` starts: those that collect one, and every project they depend on or tear down with."""
+    started = {project for path in files for project in tests[path]}
+    pending = list(started)
     while pending:
         project = projects.get(pending.pop(), {})
         for name in project.get("dependencies", []) + ([project["teardown"]] if project.get("teardown") else []):
-            if name not in running:
-                running.add(name)
+            if name not in started:
+                started.add(name)
                 pending.append(name)
+    return started
+
+
+def refuse_targets(config, files, tests, projects, servers, directory, local_names):
+    """Exit 2 unless every project that runs `files`, and every project those depend on, goes to this machine, and the
+    config starts a webServer here whose env and .env files hold no credential for anywhere else."""
     problems = []
-    for name in sorted(running):
+    for name in sorted(running(files, tests, projects)):
         label, url = "project %s" % name if name else "its project", projects.get(name, {}).get("baseURL")
         if not url:
             problems.append("%s sets no baseURL, so where its specs go cannot be checked" % label)
@@ -263,20 +268,25 @@ def read_run(report, wanted, config, port, repo):
     return runs
 
 
+def run_config(repo, config, files, local_names, deadline, timeout):
+    """{path: Run} of `files` under `config`: listed, its targets and credentials refused, then run. A file that does
+    not load, or that the config no longer collects, is a Run with that as its load error."""
+    root = os.path.realpath(repo)
+    tests, errors, projects, servers = listed(repo, config, files, local_names, deadline, timeout)
+    runs = {path: Run(errors.get(path) or "%s does not collect it" % config, {}) for path in files if path not in tests}
+    loadable = [path for path in files if path in tests]
+    if loadable:
+        refuse_targets(config, loadable, tests, projects, servers, os.path.dirname(os.path.join(root, config)), local_names)
+        report, _, port = call(repo, config, loadable, False, local_names, deadline, timeout)
+        runs.update(read_run(report, {os.path.realpath(os.path.join(root, path)): path for path in loadable}, config, port, root))
+    return runs
+
+
 def run_playwright(repo, plans, local_names, deadline, timeout):
     """Each file in `plans` ({path: config}) under its config, against the site the config's webServer starts on this
-    machine. A file that does not load, or that the config no longer collects, is a Run with that as its load error."""
-    root = os.path.realpath(repo)
+    machine."""
     runs = {}
     for config in sorted(set(plans.values())):
-        files = sorted(path for path, which in plans.items() if which == config)
-        tests, errors, projects, servers = listed(repo, config, files, local_names, deadline, timeout)
-        for path in files:
-            if path not in tests:
-                runs[path] = Run(errors.get(path) or "%s does not collect it" % config, {})
-        loadable = [path for path in files if path in tests]
-        if loadable:
-            refuse_targets(config, loadable, tests, projects, servers, os.path.dirname(os.path.join(root, config)), local_names)
-            report, _, port = call(repo, config, loadable, False, local_names, deadline, timeout)
-            runs.update(read_run(report, {os.path.realpath(os.path.join(root, path)): path for path in loadable}, config, port, root))
+        runs.update(run_config(repo, config, sorted(path for path, which in plans.items() if which == config),
+                               local_names, deadline, timeout))
     return runs

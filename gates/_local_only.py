@@ -90,27 +90,33 @@ def credential_name(name):
     return any(part in CREDENTIAL_PARTS for part in re.split(r"[^A-Z0-9]+", name.upper()))
 
 
-def why(name, value, local_names):
-    """Why the variable `name` holding `value` could reach something that is not this machine, or None."""
-    value = value.strip()
-    if not value:
-        return None
+def value_reason(value):
+    """What `value` says by its shape alone: why it reaches something that is not this machine, "" when it is this
+    machine's, None when its shape says neither (a plain string, an address of no database)."""
     issued = token(value)
     if issued:
         issuer, ref = issued
         if issuer == LOCAL_ISSUER or local_url(issuer):
-            return None
+            return ""
         return "holds a token issued by %s%s" % (issuer or "an unnamed issuer", " for project %s" % ref if ref else "")
     found = address(value)
-    if found:
-        scheme, host, userinfo = found
-        if scheme in DATABASE_SCHEMES or userinfo:
-            if local_host(host):
-                return None
-            return "holds %s for %s, which is not this machine" % (
-                "a connection string" if scheme in DATABASE_SCHEMES else "an address with a password in it", host or "no host")
-        if host.lower().endswith(HOSTED_SUPABASE):
-            return "holds the address of a hosted Supabase project (%s)" % host
+    if not found:
+        return None
+    scheme, host, userinfo = found
+    if scheme in DATABASE_SCHEMES or userinfo:
+        return "" if local_host(host) else "holds %s for %s, which is not this machine" % (
+            "a connection string" if scheme in DATABASE_SCHEMES else "an address with a password in it", host or "no host")
+    if host.lower().endswith(HOSTED_SUPABASE):
+        return "holds the address of a hosted Supabase project (%s)" % host
+    return None
+
+
+def why(name, value, local_names):
+    """Why the variable `name` holding `value` could reach something that is not this machine, or None."""
+    value = value.strip()
+    reason = value_reason(value) if value else ""
+    if reason is not None:
+        return reason or None
     if credential_name(name) and name not in local_names:
         return "is named as a credential, and the manifest does not declare it the local stack's (--local-env %s)" % name
     return None
@@ -124,12 +130,8 @@ def dotenv(path):
             found = DOTENV_LINE.match(line)
             if not found or line.lstrip().startswith("#"):
                 continue
-            value = found.group(2)
-            if len(value) > 1 and value[0] in "'\"`" and value.endswith(value[0]):
-                value = value[1:-1]
-            else:
-                value = re.sub(r"\s+#.*$", "", value)
-            pairs.append((found.group(1), value))
+            quoted = re.match(r"""(['"`])(.*?)\1""", found.group(2))
+            pairs.append((found.group(1), quoted.group(2) if quoted else re.sub(r"\s+#.*$", "", found.group(2))))
     return pairs
 
 

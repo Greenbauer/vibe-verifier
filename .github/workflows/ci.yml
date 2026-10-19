@@ -114,8 +114,9 @@ jobs:
 
   # The QAE browser action against a real apt and the pinned Playwright, which its tests stub: it reads
   # the missing system packages from that Playwright's own report, so a pin bump that changes the
-  # report shows here before a consumer pins it. Then the chromium it installed has to start, and
-  # the harness's two page hooks have to work in the playwright-mcp it installed.
+  # report shows here before a consumer pins it. Then the chromium it installed has to start, the
+  # harness's two page hooks have to work in the playwright-mcp it installed, and the regression gate
+  # has to run a fix's browser spec with that Playwright, before the fix and after it.
   qae-browser:
     name: qae-browser
     runs-on: ubuntu-latest
@@ -163,6 +164,13 @@ jobs:
         run: |
           test -f "$QAE_MCP"
           python3 -m unittest discover -s tests -p 'test_qae_secret_names.py' -v
+      - name: Run a fix's browser spec at the head and before the fix, with the Playwright and chromium it installed
+        # regression-test-fails-on-base --playwright on synthetic repositories whose config starts a site on the runner
+        # (tests/test_regression_playwright.py). Its browser class skips where chromium is not installed, as in the test
+        # job; VV_REGRESSION_BROWSER=required makes a missing browser fail here instead, so a skip never reads as a pass.
+        env:
+          VV_REGRESSION_BROWSER: required
+        run: python3 -m unittest discover -s tests -p 'test_regression_playwright.py' -v
 
   # The runner-lane kit (lanes/README.md) is Linux-only and has tests of its own, which stub every
   # system tool on PATH: nothing is installed, mounted or started on the runner. Ubuntu 24.04, not

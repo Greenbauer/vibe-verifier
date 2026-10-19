@@ -398,6 +398,7 @@ asks for a test for every new source file in any pull request, this gate only of
 regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.md
 regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.md --python .venv/bin/python --tests 'e2e/**'
 regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.md --node-test 'scripts/**/*.test.mjs'
+regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.md --playwright playwright.config.ts --tests 'e2e/**'
 ```
 
 - **Declared inputs.** The title and body are files the workflow writes before the gate runs, with
@@ -426,7 +427,7 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   with the command's own options and leading `NAME=value` assignments (which options take a separate
   value is read from `node --help`), less the ones the gate sets (the reporter, `--watch`, sharding,
   coverage, isolation); a `--node-test` file runs as `node --test <file>` from the root, and a `--tests`
-  match wins over both. Each file runs alone under the TAP reporter
+  match wins over both (but not over `--playwright`, below). Each file runs alone under the TAP reporter
   (`--test-reporter=tap --test-reporter-destination=<file>`; tested on Node 20, 22 and 24). A Vitest
   test (below) runs under Vitest (read through its JSON reporter; tested on 4.x), from the nearest directory
   holding a Vitest or Vite config, else a `package.json`, else the root, so each package of a monorepo
@@ -441,8 +442,9 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   dependency or `jest` key; a script that runs `bun test`) says which; a `package.json` that names none,
   a workspace package that runs its tests with the root's Vitest, passes the question up. Before this
   rule a Jest or bun file was run under Vitest, and with no Vitest installed the gate stopped (exit 2)
-  on every such fix. One that imports `@playwright/test`, a Jest test (it imports `@jest/globals`, or
-  its package says Jest), a bun test (it imports `bun:test`, or its package's scripts run `bun test`),
+  on every such fix. One that imports `@playwright/test` that no `--playwright` config collects, a Jest
+  test (it imports `@jest/globals`, or its package says Jest), a bun test (it imports `bun:test`, or its
+  package's scripts run `bun test`),
   a file whose calls no package claims, one that imports `node:test` that the repository does not run
   with `node --test`, a shell or other test, a script judged only by its exit code, and every `--tests`
   path are reported as not judged, with why: a Jest or bun test names its runner and the import or the
@@ -475,9 +477,52 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   2: the gate ran and has a verdict on the test, the author can act on it (test the bug through code that
   exists before the fix, or declare the reason line, as for a fix that is itself a new migration), and
   exit 2, which `--soak` never masks, would turn a soak red on every such pull request.
-- **Exit 2 also when** no changed test is one it can run (only Playwright, shell or SQL tests, or
-  node:test files the repository does not run with `node --test`, say: `--node-test` or the reason line is
-  the way out), the project's Vitest or Node is not installed, a runner writes no report, or the runs
+- **Browser specs (`--playwright CONFIG`).** A changed JS or TS test file that a config the manifest names
+  collects (`playwright test --list`) runs under that config, even when `--tests` also names it, so
+  `--tests 'e2e/**'` keeps a spec's helpers at the head while the spec runs. The site under test is the
+  one the config's own `webServer` starts on the runner from the working tree as the gate left it: the
+  head in the first run, the code before the fix in the second. The repository provides that
+  `webServer` (one that serves the working tree, not an earlier build), the job's own local stack, and
+  its browsers ([what each repository provides, and the cost](features/regression-test.md#browser-specs---playwright)).
+  The gate never runs the config as it is: it writes a `.ts` wrapper beside it for each call that imports
+  it, routes every browser context and the `request` fixture through a proxy that is a bound,
+  never-listening port on the runner bypassed only for loopback names, sets every `webServer`'s
+  `reuseExistingServer` to false, and reports through a reporter of its own. Each run is one attempt
+  (`--retries=0`) with its output in a scratch directory; `expected` is a pass, `unexpected` a failure
+  with its error (`Expected` and `Received` kept), `skipped` a skip. A file that does not load stops
+  Playwright collecting any file, so a failed listing is listed again one file at a time; a file that
+  does not load before the fix only because something it imports is missing is that finding, as above
+  (Babel's `(0 , _module.name) is not a function` included, the form a TypeScript spec in a CommonJS
+  package takes).
+- **Production is refused before anything starts.** `playwright test --list` loads the config and the
+  specs and starts no server, global setup or browser; from it, before each run, the gate refuses (exit
+  2): a project that runs a changed spec, or one such a project depends on, whose `baseURL` is unset or
+  not this machine (localhost, a `*.localhost` name, 127.0.0.0/8, ::1); a `webServer` url that is not
+  this machine; a config with no `webServer`. A preview is refused like any other address, since it
+  serves the pull request's head and never the code before the fix. Before every Playwright call, and
+  for each `webServer`'s `env` and `cwd` after the listing, it refuses a credential for anywhere else
+  in what the run inherits (`gates/_local_only.py`): the gate's environment, which Playwright, the site
+  and the browser inherit, a `webServer`'s `env`, and the `.env` files a framework loads (`.env`,
+  `.env.<mode>`, `.env.local`, not an `.example`, `.sample`, `.template` or `.dist`) from the repository
+  root, the config's directory and each `webServer`'s `cwd`. A variable is refused when its value is a
+  JWT not issued by a local stack (the Supabase CLI's local keys say `iss: supabase-demo`, a local auth
+  server's tokens name its loopback address; a hosted project's keys say `iss: supabase` and name its
+  `ref`); a database connection string (postgres, mysql, mongodb, redis, amqp), or a URL carrying a
+  user or password, for a host that is not this machine; the address of a hosted Supabase project; or
+  when its name has a KEY, SECRET, TOKEN, PASSWORD, PASSWD, PASS, CREDENTIALS, APIKEY or AUTHTOKEN part
+  (SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN, RESEND_API_KEY, VERCEL_TOKEN, DB_PASSWORD,
+  ACTIONS_ID_TOKEN_REQUEST_TOKEN) and `--local-env NAME` does not declare it the local stack's. A
+  declared name still has its value checked by the first three rules. A refusal names the variable,
+  where it was read, and the host, issuer or project, never the value. During a run, a test that reached
+  for a blocked host (`ERR_PROXY_CONNECTION_FAILED`, `NS_ERROR_PROXY_CONNECTION_REFUSED`, or a refused
+  connection to the proxy's port) is exit 2, and so are a failed test of another file (a setup project a
+  spec depends on) and an error no test owns (a `webServer` that did not start, one already answering
+  at its address, a global setup that threw): the run cannot say whether the bug shows. Code of the
+  spec's own that connects from Node is not proxied; the credential refusal is what keeps it from
+  authenticating anywhere else.
+- **Exit 2 also when** no changed test is one it can run (only Playwright specs no `--playwright` config
+  collects, shell or SQL tests, or node:test files the repository does not run with `node --test`, say:
+  `--playwright`, `--node-test` or the reason line is the way out), the project's Vitest or Node is not installed, a runner writes no report, or the runs
   pass `--timeout`. A fix whose only such tests are Jest or bun tests is not exit 2: they run under the
   repository's own runner, which this gate does not run yet, so nothing in the job is wrong. It passes
   qualified (`PASS (not judged: ...)`), each file an advisory finding naming its runner, and a soak in a
