@@ -5,13 +5,15 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import unittest
 import urllib.error
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dashboard.config import ConfigError, WorkSource, load_config
-from dashboard.work import McpClient, RestClient, WorkError, WorkFeed, _rpc_message, collect_calls, collect_plans, read_token
+from dashboard.work import McpClient, RestClient, SupabaseClient, WorkError, WorkFeed, _rpc_message, collect_calls, collect_plans, read_token
 from test_dashboard_config_telemetry import config_value
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -226,6 +228,52 @@ class Protocol(unittest.TestCase):
         with self.assertRaises(WorkError) as tool:
             McpClient("https://q.example.test", "x", refusing).call("list_plans", {})
         self.assertEqual(tool.exception.code, "tool_error")
+
+
+def local_server(answer):
+    """A real HTTP server on 127.0.0.1 that records each request's path and headers and answers with ``answer``."""
+    seen = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def _answer(self):
+            seen.append((self.command, self.path, self.headers))
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            status, headers, body = answer(self.path)
+            self.send_response(status)
+            for name, value in headers.items():
+                self.send_header(name, value)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        do_GET = do_POST = _answer
+
+        def log_message(self, *_):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, "http://127.0.0.1:%d" % server.server_address[1], seen
+
+
+class Redirects(unittest.TestCase):
+    def test_a_redirect_is_not_followed_so_the_key_never_reaches_its_target(self):
+        target, target_url, reached = local_server(lambda path: (200, {"Content-Type": "application/json"}, b"[]"))
+        source, source_url, asked = local_server(lambda path: (302, {"Location": target_url + "/stolen"}, b""))
+        for server in (target, source):
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+        clients = [RestClient(source_url + "/api/v1", "secret").get,
+                   SupabaseClient(source_url, "secret").get,
+                   lambda path: McpClient(source_url + "/api/mcp", "secret").call("list_open_calls", {})]
+        for read in clients:
+            with self.assertRaises(WorkError) as redirected:
+                read("/plans")
+            self.assertEqual(redirected.exception.code, "redirected")
+        self.assertEqual(len(asked), 3)
+        self.assertTrue(all(headers.get("Authorization") == "Bearer secret" for _, _, headers in asked))
+        self.assertEqual(asked[1][2].get("apikey"), "secret")
+        self.assertEqual(reached, [])
 
 
 class Queues(unittest.TestCase):

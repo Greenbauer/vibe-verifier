@@ -304,12 +304,13 @@ and asks, as plain text.
 
 Sources are read in the background every five minutes, whether or not a page is open, one after another.
 A source that fails keeps its last items, marked stale with the reason (`unreachable`, `unavailable`,
-`invalid_response`, `tool_error`); a refused key (`rejected`) forgets them, as lost GitHub access
+`redirected`, `invalid_response`, `tool_error`); a refused key (`rejected`) forgets them, as lost GitHub access
 does. A source never read says why (`credential_missing`, `credential_unsafe`) instead of showing an
-empty board. Nothing is kept across a restart, and the dashboard never writes to a source: there is
-no claim, status, amend, or answer control. More than 100 items in a source shows the oldest 100 and
+empty board. A source that answers with a redirect is not followed and reads as `redirected`, because
+following it would send the source's key to the redirect target. Nothing is kept across a restart,
+and the dashboard never writes to a source: there is no claim, status, amend, or answer control. More than 100 items in a source shows the oldest 100 and
 says so. `tests/test_dashboard_work.py` covers the configuration, the key file, both transports, both
-kinds, the columns, and failure handling; `tests/test_dashboard_work_todos.py` covers the
+kinds, the columns, failure handling, and that a redirect never carries a key to its target; `tests/test_dashboard_work_todos.py` covers the
 `supabase-todos` kind, including that its key never reaches the page.
 
 ## Capacity view
