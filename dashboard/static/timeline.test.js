@@ -86,14 +86,14 @@ test("the row draws one line per workflow, real runner waits, failures and now",
   const box = timeline.mini(pull, NOW, null);
   assert.strictEqual(box.find("timeline-line").length, 3);
   assert.strictEqual(box.attrs["aria-label"], "CI timeline: 7 checks over 50m 0s, longest runner wait 38m 0s, 1 failed");
-  const waits = box.find("tl-waiting");
+  const waits = box.find("tl-dim");
   assert.deepStrictEqual(waits.map(bar => [bar.style.get("left"), bar.style.get("width"), bar.attrs.title]),
     [["4.000%", "76.000%", "explore: waited 38m 0s for a runner, ran 5m 0s"]]);
   assert.strictEqual(box.find("tl-failed").length, 1);
   assert.strictEqual(box.find("timeline-now")[0].style.get("left"), "100.000%");
   // On the QAE line the wait is drawn first, under the runs.
   const qae = box.find("timeline-line")[1].children.map(bar => bar.className);
-  assert.deepStrictEqual(qae, ["timeline-bar tl-waiting", "timeline-bar tl-success", "timeline-bar tl-running"]);
+  assert.deepStrictEqual(qae, ["timeline-bar tl-success tl-dim", "timeline-bar tl-success", "timeline-bar tl-running"]);
 });
 
 test("rows share one time scale unless each row is fit", () => {
@@ -185,7 +185,7 @@ test("another app's check run is never on the critical path", () => {
 test("a wait of exactly 30 seconds is GitHub's normal pickup; one second more is drawn", () => {
   const waits = { statuses: [], checks: [check(1, "a", "success"), check(2, "b", "success")],
     runs: [{ id: 1, name: "CI", jobs: [job(1, "a", at(0), at(0, 30), at(5)), job(2, "b", at(0), at(0, 31), at(5))] }] };
-  const bars = timeline.mini(waits, NOW, null).find("tl-waiting");
+  const bars = timeline.mini(waits, NOW, null).find("tl-dim");
   assert.deepStrictEqual(bars.map(bar => bar.attrs.title), ["b: waited 31s for a runner, ran 4m 29s"]);
 });
 
@@ -219,4 +219,15 @@ test("a head with an earlier round of CI draws only the latest round and says ho
   runs: [{ id: 1, name: "CI", jobs: [job(1, "build", at(0), at(0), at(30))] }] };
   assert.deepStrictEqual([timeline.timeline(late, NOW).lanes.map(lane => lane.name), timeline.timeline(late, NOW).earlier],
     [["build", "Vercel Preview Comments"], 0]);
+});
+
+test("a job still waiting is dim yellow; a started job's wait is a dim version of its own color", () => {
+  const queue = { statuses: [], checks: [check(1, "build", "success"), check(2, "deploy", "pending", "queued")],
+    runs: [{ id: 1, name: "CI", jobs: [job(1, "build", at(0), at(10), at(20)), job(2, "deploy", at(30), at(30), null)] }] };
+  const box = timeline.mini(queue, NOW, null);
+  assert.deepStrictEqual([box.find("tl-dim").map(bar => [bar.className, bar.attrs.title]), box.find("tl-waiting").map(bar => bar.attrs.title)],
+    [[["timeline-bar tl-success tl-dim", "build: waited 10m 0s for a runner, ran 10m 0s"]], ["deploy: waiting 20m 0s for a runner"]]);
+  const legend = timeline.detail(queue, NOW, { id: "x", key: "k", owner: "octocat", rerender() {} }).find("timeline-legend")[0];
+  assert.deepStrictEqual(legend.children.map(item => item.children[0].className).filter(Boolean),
+    ["tl-success", "tl-failed", "tl-running", "tl-waiting", "tl-success tl-dim"]);
 });

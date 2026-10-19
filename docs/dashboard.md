@@ -207,7 +207,8 @@ each commit status. It makes no extra GitHub call.
   it. The lines split the cell's height between them, each at most 12 pixels with a 1-pixel gap (no
   gap past 16 workflows), centered. A head with few workflows draws 12-pixel lines; a busy one gets
   thinner lines and never a taller row. Green ran and passed, red failed, yellow is running, and dim yellow is a job
-  waiting for a runner. Failures are drawn on top so they are never hidden. A dashed line marks now
+  still waiting for a runner. Once a job has started, its wait before the run is a dim version of
+  its own color: dim green before a green run, dim red before a red one. Failures are drawn on top so they are never hidden. A dashed line marks now
   while anything is still open. Skipped checks and commit statuses are not drawn; the counts in the
   CI column still name them. A head whose checks have no time yet keeps the check meter.
 - **The latest round only.** A head's checks can hold more than one round of CI: a re-run, or CI

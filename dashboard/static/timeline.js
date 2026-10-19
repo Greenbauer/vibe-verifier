@@ -124,8 +124,8 @@
 
   const percent = (ms, width) => `${(Math.min(1, Math.max(0, ms / width)) * 100).toFixed(3)}%`;
 
-  function bar(from, to, state, start, width, title) {
-    return el("i", { class: `timeline-bar tl-${state}`, title,
+  function bar(from, to, state, start, width, title, dim = false) {
+    return el("i", { class: `timeline-bar tl-${state}${dim ? " tl-dim" : ""}`, title,
       style: `left:${percent(from - start, width)};width:${percent(to - from, width)}` });
   }
 
@@ -154,7 +154,10 @@
     const title = laneTitle(lane, now);
     const ran = lane.started ?? now;
     const parts = [];
-    if (runnerWait(lane, now) > WAIT_SHOWN) parts.push(bar(lane.queued, ran, "waiting", start, width, title));
+    // A job still waiting is dim yellow; once it has started, its wait is a dim version of its own
+    // color, so a job that passed is not drawn half yellow.
+    if (runnerWait(lane, now) > WAIT_SHOWN) parts.push(lane.started == null ? bar(lane.queued, ran, "waiting", start, width, title)
+      : bar(lane.queued, ran, lane.state, start, width, title, true));
     if (lane.started != null) parts.push(bar(lane.started, lane.ended ?? now, lane.state, start, width, title));
     return parts;
   }
@@ -275,6 +278,7 @@
     box.append(el("div", { class: "timeline-legend" },
       ["success", "failed", "running"].map(state => el("span", {}, el("i", { class: `tl-${state}` }), VV.STATUS_LABELS[state])),
       el("span", {}, el("i", { class: "tl-waiting" }), "Waiting for a runner (over 30s)"),
+      el("span", {}, el("i", { class: "tl-success tl-dim" }), "Waited for a runner, then ran (dim of its result)"),
       el("span", {}, el("b", {}, "Bold"), " jobs set the total time")));
     return box;
   }

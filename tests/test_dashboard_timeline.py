@@ -111,9 +111,10 @@ console.log(JSON.stringify({options:menu.children.map(option=>[option.attrs.valu
         self.assertIn("background: var(--red)", rule(".tl-failed"))
         self.assertIn("background: var(--yellow)", rule(".tl-running"))
         self.assertIn("background: var(--yellow); opacity: .35", rule(".tl-waiting"))
+        self.assertIn("opacity: .35", rule(".tl-dim"))
         # Each timeline color is one rule of its own, so another view's class (Capacity's green
         # .bar-running) can never repaint it.
-        for name in ("tl-success", "tl-failed", "tl-running", "tl-waiting"):
+        for name in ("tl-success", "tl-failed", "tl-running", "tl-waiting", "tl-dim"):
             self.assertEqual(css.count("." + name + " "), 1, name)
         # Nothing drawn can leave the row's timeline box, so it never reaches the text under it.
         self.assertIn("overflow: hidden", rule(".timeline-mini"))
