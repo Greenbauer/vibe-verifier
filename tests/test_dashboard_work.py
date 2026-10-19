@@ -453,7 +453,7 @@ class FakeTable:
 
 def todos_table():
     return FakeTable([
-        todo_row("t-todo", "todo", area="work", due="2026-10-20", notes="Call back about the <b>quote</b>",
+        todo_row("t-todo", "todo", area="errands", due="2026-10-20", notes="Call back about the <b>quote</b>",
                  source_url="https://chat.example.test/thread/1"),
         todo_row("t-doing", "in_progress", area="home", source_url="http://insecure.example.test/x"),
         todo_row("t-wait", "waiting", area=None),
@@ -508,7 +508,7 @@ class Todos(unittest.TestCase):
         self.assertEqual(len(table.calls), 1)
         method, url, authorization, apikey = table.calls[0]
         self.assertEqual((method, authorization, apikey), ("GET", "Bearer " + KEY, KEY))
-        self.assertTrue(url.startswith(TODOS_URL + "/rest/v1/todos?select=id,title,notes,status,area,source,source_url,due,"
+        self.assertTrue(url.startswith(TODOS_URL + "/rest/v1/todos?select=id,title,notes,status,area,source_url,due,"
                                        "created_at,updated_at,done_at&"), url)
         # NOW less 14 days, as PostgREST's or filter: the rows not done, and done ones since then.
         self.assertIn("&or=(status.neq.done,done_at.gte.2026-09-28T15%3A00%3A00Z)&order=created_at.asc&limit=100", url)
@@ -523,7 +523,7 @@ class Todos(unittest.TestCase):
             "t-wait": ("active", {"who": "operator", "reason": "Marked waiting"}), "t-done-recent": ("done", None)})
         first = by_id["t-todo"]
         self.assertEqual((first["label"], first["title"], first["due"], first["item_url"], first["body"], first["detail"]),
-                         ("work", "To-do t-todo", "2026-10-20", "https://chat.example.test/thread/1",
+                         ("errands", "To-do t-todo", "2026-10-20", "https://chat.example.test/thread/1",
                           "Call back about the <b>quote</b>", True))
         self.assertEqual((first["created_at"], first["updated_at"]), ("2026-10-01T09:00:00Z", "2026-10-02T09:00:00Z"))
         # Only an https source link becomes a link; a row with no area is labelled "to-do".
@@ -590,7 +590,7 @@ console.log(JSON.stringify(content));
         row = snapshot["sources"][0]
         self.assertEqual((row["kind"], row["label"], row["error"], len(row["items"])), ("supabase-todos", "Zach's to-dos", None, 4))
         page = self.render(snapshot)
-        for text in ("Zach's to-dos", "To-do t-todo", "due 2026-10-20", "work", "https://chat.example.test/thread/1",
+        for text in ("Zach's to-dos", "To-do t-todo", "due 2026-10-20", "errands", "https://chat.example.test/thread/1",
                      "Marked waiting", "To do"):
             self.assertIn(text, page)
         # A to-do has no claim, so no card says "unclaimed".

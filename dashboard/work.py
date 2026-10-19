@@ -48,7 +48,7 @@ TODO_DONE_WINDOW = timedelta(days=14)
 # A to-do's status, as the board's phase and the reason it waits on a person.
 TODO_PHASES = {"todo": ("queued", None), "in_progress": ("active", None),
                "waiting": ("active", "Marked waiting"), "done": ("done", None)}
-TODO_COLUMNS = "id,title,notes,status,area,source,source_url,due,created_at,updated_at,done_at"
+TODO_COLUMNS = "id,title,notes,status,area,source_url,due,created_at,updated_at,done_at"
 QUEUED = {"submitted", "backlog"}
 PROTOCOL_VERSION = "2025-06-18"
 
