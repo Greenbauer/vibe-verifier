@@ -158,3 +158,32 @@ test("axis ticks land on round times, at most six", () => {
   assert.deepStrictEqual(timeline.ticks(40 * 1000), [0, 10, 20, 30, 40]);
   assert.deepStrictEqual(timeline.ticks(77 * 60 * 1000), [0, 900, 1800, 2700, 3600, 4500]);
 });
+
+test("a commit status is a point at its last update: never a runner wait, never open, never stretching a row", () => {
+  const pending = { checks: [check(1, "build", "success")], runs: [{ id: 1, name: "CI", jobs: [job(1, "build", at(0), at(0), at(10))] }],
+    statuses: [{ id: 9, name: "deploy", category: "pending", status: "pending", started_at: at(-180), completed_at: at(-180) }] };
+  const line = timeline.timeline(pending, NOW);
+  const status = line.lanes.find(lane => lane.kind === "status");
+  assert.deepStrictEqual([status.started, status.ended, line.running], [status.queued, status.queued, false]);
+  assert.strictEqual(timeline.sharedScale([pending], NOW), 10 * 60 * 1000);
+  // The row does not draw statuses, so fitting the row fits the build, not the status three hours earlier.
+  assert.strictEqual(Math.max(...timeline.mini(pending, NOW, null).find("timeline-bar").map(edge)), 100);
+  const opened = timeline.detail(pending, NOW, { id: "x", key: "k", owner: "octocat", rerender() {} });
+  const row = opened.find("timeline-row").find(item => item.find("timeline-name")[0]?.text === "deploy");
+  assert.deepStrictEqual([row.find("bar-waiting").length, row.find("timeline-time")[0].text,
+    row.find("timeline-time")[0].attrs.title], [0, "", "deploy: Pending"]);
+});
+
+test("another app's check run is never on the critical path", () => {
+  const vercel = { statuses: [], checks: [check(1, "build", "success"), check(2, "e2e", "success"),
+    { id: 3, name: "Vercel", category: "success", status: "completed", started_at: at(1), completed_at: at(30) }],
+  runs: [{ id: 1, name: "CI", jobs: [job(1, "build", at(0), at(0), at(5)), job(2, "e2e", at(5), at(5), at(25))] }] };
+  assert.deepStrictEqual(timeline.timeline(vercel, NOW).lanes.filter(lane => lane.critical).map(lane => lane.name).sort(), ["build", "e2e"]);
+});
+
+test("a wait of exactly 30 seconds is GitHub's normal pickup; one second more is drawn", () => {
+  const waits = { statuses: [], checks: [check(1, "a", "success"), check(2, "b", "success")],
+    runs: [{ id: 1, name: "CI", jobs: [job(1, "a", at(0), at(0, 30), at(5)), job(2, "b", at(0), at(0, 31), at(5))] }] };
+  const bars = timeline.mini(waits, NOW, null).find("bar-waiting");
+  assert.deepStrictEqual(bars.map(bar => bar.attrs.title), ["b: waited 31s for a runner, ran 4m 29s"]);
+});

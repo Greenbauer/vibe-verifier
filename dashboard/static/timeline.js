@@ -20,36 +20,48 @@
   const at = value => { const time = Date.parse(value); return Number.isFinite(time) ? time : null; };
   const seconds = ms => duration(Math.max(0, ms) / 1000);
 
-  // Every current-head check that has a time, as a lane: an Actions job (with its queue time and
-  // steps), another app's check run, or a commit status. Skipped checks never ran and are left out.
+  // Every current-head check that has a time, as a lane: an Actions job (kind "job", with its queue
+  // time and steps), another app's check run ("check"), or a commit status ("status"). A status is a
+  // report another system posted, not work on a runner, so it is a point at its last update, never
+  // open and never waiting. Skipped checks never ran and are left out.
   function lanes(pull) {
     const jobs = new Map();
     (pull.runs || []).forEach(run => (run.jobs || []).forEach(job => jobs.set(job.id, { job, run })));
     const result = [];
-    const add = (row, group, job) => {
+    const add = (row, kind, group, job) => {
       const state = checkState(row);
       if (state === "skipped") return;
+      if (kind === "status") {
+        const when = at(row.completed_at) ?? at(row.started_at);
+        // A pending status is another system still working, drawn as running, never as a wait.
+        if (when != null) result.push({ id: `${group.key}/${row.id}`, name: row.name, kind, group,
+          state: state === "waiting" ? "running" : state, label: VV.STATUS_LABELS[row.category] || state,
+          queued: when, started: when, ended: when, url: row.details_url, steps: [] });
+        return;
+      }
       const queued = at(job && job.created_at) ?? at(row.started_at);
       if (queued == null) return;
       const open = state === "running" || state === "waiting";
       const started = state === "waiting" ? null : at(job ? job.started_at : row.started_at) ?? queued;
       const ended = open ? null : at(job ? job.completed_at : row.completed_at) ?? started ?? queued;
-      result.push({ id: `${group.key}/${row.id}`, name: row.name, group, state, queued, started,
+      result.push({ id: `${group.key}/${row.id}`, name: row.name, kind, group, state, queued, started,
         ended: ended == null ? null : Math.max(ended, started ?? queued),
         url: (job && job.html_url) || row.details_url, steps: (job && job.steps) || [] });
     };
     (pull.checks || []).forEach(row => {
       const found = jobs.get(row.id);
-      add(row, found ? { key: `run-${found.run.id}`, name: found.run.name } : { key: "checks", name: "Other checks" }, found && found.job);
+      if (found) add(row, "job", { key: `run-${found.run.id}`, name: found.run.name }, found.job);
+      else add(row, "check", { key: "checks", name: "Other checks" }, null);
     });
-    (pull.statuses || []).forEach(row => add(row, { key: "statuses", name: "Commit statuses" }, null));
+    (pull.statuses || []).forEach(row => add(row, "status", { key: "statuses", name: "Commit statuses" }, null));
     return result;
   }
 
-  // The chain of jobs that set the total time: from the last job to finish, back through each job
-  // whose finish created it. Statuses are reports, not work, so they are never on the chain.
+  // The chain of jobs that set the total time: from the last Actions job to finish, back through each
+  // job whose finish created it. Only Actions jobs are created by another's finish, so other apps'
+  // checks and statuses are never on the chain.
   function markCritical(all, now) {
-    const work = all.filter(lane => lane.group.key !== "statuses");
+    const work = all.filter(lane => lane.kind === "job");
     const end = lane => lane.ended ?? now;
     let current = work.reduce((best, lane) => (!best || end(lane) > end(best) ? lane : best), null);
     const seen = new Set();
@@ -63,26 +75,31 @@
     }
   }
 
+  function extent(list, now) {
+    if (!list.length) return null;
+    const start = Math.min(...list.map(lane => lane.queued));
+    return { start, span: Math.max(Math.max(...list.map(lane => lane.ended ?? now)) - start, 1000) };
+  }
+
   // The head's lanes grouped by workflow, groups in the order they were first queued. Null when no
-  // check on the head has a time yet.
+  // check on the head has a time yet. start and span cover every lane, for the opened view; row
+  // covers only what the row draws (no statuses), or is null when that is nothing.
   function timeline(pull, now) {
     const all = lanes(pull);
     if (!all.length) return null;
     markCritical(all, now);
-    const start = Math.min(...all.map(lane => lane.queued));
-    const finish = Math.max(...all.map(lane => lane.ended ?? now));
     const groups = new Map();
     all.slice().sort((a, b) => a.queued - b.queued || (a.started ?? a.queued) - (b.started ?? b.queued)).forEach(lane => {
       if (!groups.has(lane.group.key)) groups.set(lane.group.key, { ...lane.group, lanes: [] });
       groups.get(lane.group.key).lanes.push(lane);
     });
-    return { start, span: Math.max(finish - start, 1000), groups: [...groups.values()], lanes: all,
-      running: all.some(lane => lane.ended == null) };
+    return { ...extent(all, now), row: extent(all.filter(lane => lane.kind !== "status"), now),
+      groups: [...groups.values()], lanes: all, running: all.some(lane => lane.ended == null) };
   }
 
-  // The longest timeline among the rows on screen, so every row is drawn on the same scale.
+  // The longest row timeline on screen, so every row is drawn on the same scale.
   function sharedScale(pulls, now) {
-    const spans = pulls.map(pull => timeline(pull, now)).filter(Boolean).map(line => line.span);
+    const spans = pulls.map(pull => timeline(pull, now)?.row).filter(Boolean).map(row => row.span);
     return spans.length ? Math.max(...spans) : null;
   }
 
@@ -98,10 +115,11 @@
   }
 
   function laneTitle(lane, now) {
+    if (lane.kind === "status") return `${lane.name}: ${lane.label}`;
     const parts = [];
     const wait = waited(lane, now);
     if (lane.state === "waiting") parts.push(`waiting ${seconds(wait)} for a runner`);
-    else if (wait >= WAIT_SHOWN) parts.push(`waited ${seconds(wait)} for a runner`);
+    else if (wait > WAIT_SHOWN) parts.push(`waited ${seconds(wait)} for a runner`);
     if (lane.state === "running") parts.push(`running ${seconds(now - lane.started)}`);
     else if (lane.started != null && lane.ended > lane.started) parts.push(`ran ${seconds(lane.ended - lane.started)}`);
     return parts.length ? `${lane.name}: ${parts.join(", ")}` : lane.name;
@@ -111,17 +129,17 @@
     const title = laneTitle(lane, now);
     const ran = lane.started ?? now;
     const parts = [];
-    if (ran - lane.queued >= WAIT_SHOWN) parts.push(bar(lane.queued, ran, "waiting", start, width, title));
+    if (ran - lane.queued > WAIT_SHOWN) parts.push(bar(lane.queued, ran, "waiting", start, width, title));
     if (lane.started != null) parts.push(bar(lane.started, lane.ended ?? now, lane.state, start, width, title));
     return parts;
   }
 
   function summary(line, now) {
-    const jobs = line.lanes.filter(lane => lane.group.key !== "statuses");
+    const jobs = line.lanes.filter(lane => lane.kind !== "status");
     const longest = Math.max(0, ...jobs.map(lane => waited(lane, now)));
     const failed = jobs.filter(lane => lane.state === "failed").length;
-    return [`CI timeline: ${jobs.length} ${jobs.length === 1 ? "check" : "checks"} over ${seconds(line.span)}`,
-      longest >= WAIT_SHOWN ? `longest runner wait ${seconds(longest)}` : null,
+    return [`CI timeline: ${jobs.length} ${jobs.length === 1 ? "check" : "checks"} over ${seconds(line.row.span)}`,
+      longest > WAIT_SHOWN ? `longest runner wait ${seconds(longest)}` : null,
       failed ? `${failed} failed` : null].filter(Boolean).join(", ");
   }
 
@@ -131,15 +149,16 @@
     const line = timeline(pull, now);
     if (!line) return null;
     const groups = line.groups.filter(group => group.key !== "statuses");
-    if (!groups.length) return null;
-    const width = Math.max(scale || 0, line.span);
+    if (!line.row) return null;
+    const { start, span } = line.row;
+    const width = Math.max(scale || 0, span);
     const gap = groups.length > 10 ? 0 : 1;
     const height = Math.max(1, Math.min(4, Math.floor((MINI_HEIGHT - gap * (groups.length - 1)) / groups.length)));
     const box = el("div", { class: "timeline-mini", role: "img", "aria-label": summary(line, now), style: `gap:${gap}px` });
     groups.forEach(group => box.append(el("div", { class: "timeline-line", style: `height:${height}px` },
       group.lanes.slice().sort((a, b) => LAYER[a.state] - LAYER[b.state])
-        .flatMap(lane => laneBars(lane, line.start, width, now)))));
-    if (line.running) box.append(el("i", { class: "timeline-now", style: `left:${percent(now - line.start, width)}` }));
+        .flatMap(lane => laneBars(lane, start, width, now)))));
+    if (line.running) box.append(el("i", { class: "timeline-now", style: `left:${percent(now - start, width)}` }));
     return box;
   }
 
@@ -167,6 +186,7 @@
   }
 
   function laneText(lane, now) {
+    if (lane.kind === "status") return "";
     if (lane.state === "waiting") return `waiting ${seconds(waited(lane, now))}`;
     if (lane.state === "running") return `${seconds(now - lane.started)} so far`;
     return lane.ended > lane.started ? seconds(lane.ended - lane.started) : "";

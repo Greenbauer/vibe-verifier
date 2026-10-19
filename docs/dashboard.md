@@ -213,15 +213,18 @@ each commit status. It makes no extra GitHub call.
   each row to its own width instead, which shows each run's shape at the cost of comparing rows.
 - **A wait for a runner** is the time from GitHub creating a job to a runner starting it. GitHub
   creates a job when its run starts, or, for a job that needs another, when that one finishes, so
-  waits start at those moments. A wait under 30 seconds is GitHub's normal pickup and is not drawn;
-  a longer one means every runner that job can use was busy.
+  waits start at those moments. A wait of 30 seconds or less is GitHub's normal pickup and is not
+  drawn; a longer one means every runner that job can use was busy. Other apps' check runs and commit
+  statuses never wait for a runner.
 - **Opened**, the timeline lists every job under its workflow's name on an axis with round-time
   ticks, with its run time (or "so far", or how long it has waited) and a Log link to the job on
   GitHub when the job's page is under the configured owner. A job's name opens its steps, drawn on
   that job's own scale (a note says so) because a one-minute job's steps on an hour's axis would be
   dots. Bold names are the critical path: from the last job to finish, back through each job whose
-  finish created it (a finish within five seconds of a job's creation). Statuses are reports, not
-  work, so they are listed but never on that path.
+  finish created it (a finish within five seconds of a job's creation). Only Actions jobs are
+  created that way, so other apps' checks and statuses are listed but never on that path. A status
+  is a report another system posted: it is a tick at its last update, yellow while pending, and
+  never keeps the timeline open or widens a row's scale.
 - Open rows and open steps last until the page reloads. The page's refresh every 30 seconds keeps
   them open and keeps focus on the control that had it.
 

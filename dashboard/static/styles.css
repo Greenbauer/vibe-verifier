@@ -169,10 +169,10 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 .timeline-toggle { min-height: 28px; width: 18px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 18px; line-height: 1; }
 .timeline-toggle span { display: inline-block; transition: transform .15s; }
 .timeline-toggle[aria-expanded="true"] span { transform: rotate(90deg); }
-.timeline-mini { position: relative; display: flex; flex-direction: column; width: 100%; min-width: 48px; }
+.timeline-mini { position: relative; display: flex; flex-direction: column; width: 100%; min-width: 48px; overflow: hidden; }
 .timeline-line, .timeline-track { position: relative; }
 .timeline-bar { position: absolute; top: 0; bottom: 0; min-width: 2px; border-radius: 1px; }
-.timeline-now { position: absolute; top: -2px; bottom: -2px; border-left: 1px dashed var(--yellow); }
+.timeline-now { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--yellow); }
 .bar-success { background: var(--green); }
 .bar-failed { background: var(--red); }
 .bar-running { background: var(--yellow); }
@@ -339,7 +339,7 @@ button.timeline-name { min-height: 0; padding: 0; border: 0; background: transpa
   .pr-row { grid-template-columns: minmax(0, 1fr) auto; padding: 13px 11px; }
   .pr-work, .progress-copy { grid-column: 1 / 3; }
   .pr-age { grid-column: 2; grid-row: 1; gap: 4px; }
-  .timeline-toggle { display: none; }
+  .timeline-toggle { grid-column: 1 / 3; justify-self: end; min-height: 22px; }
   .timeline-detail { padding: 6px 11px 12px; }
   .timeline-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) 52px 24px; gap: 6px; }
   .timeline-tick:nth-child(even) { visibility: hidden; }
