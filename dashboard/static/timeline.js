@@ -14,7 +14,7 @@
   // A head's checks can hold more than one round of CI: a re-run, or CI started again on the same
   // commit hours later. Nothing running or waiting for this long ends a round.
   const ROUND_GAP = 15 * 60 * 1000;
-  // Drawing order on a shared line: waits underneath, failures on top so a red job is never hidden.
+  // Drawing order of runs on a shared line, above every wait: failures on top so a red job is never hidden.
   const LAYER = { waiting: 0, success: 1, cancelled: 1, unknown: 1, running: 2, failed: 3 };
   const TICKS = [10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400];
   const openSteps = new Set();
@@ -150,16 +150,21 @@
     return parts.length ? `${lane.name}: ${parts.join(", ")}` : lane.name;
   }
 
-  function laneBars(lane, start, width, now) {
+  // A job still waiting is dim yellow; once it has started, its wait is a dim version of its own
+  // color, so a job that passed is not drawn half yellow. Null when the wait is not drawn.
+  function waitBar(lane, start, width, now) {
+    if (runnerWait(lane, now) <= WAIT_SHOWN) return null;
     const title = laneTitle(lane, now);
-    const ran = lane.started ?? now;
-    const parts = [];
-    // A job still waiting is dim yellow; once it has started, its wait is a dim version of its own
-    // color, so a job that passed is not drawn half yellow.
-    if (runnerWait(lane, now) > WAIT_SHOWN) parts.push(lane.started == null ? bar(lane.queued, ran, "waiting", start, width, title)
-      : bar(lane.queued, ran, lane.state, start, width, title, true));
-    if (lane.started != null) parts.push(bar(lane.started, lane.ended ?? now, lane.state, start, width, title));
-    return parts;
+    return lane.started == null ? bar(lane.queued, now, "waiting", start, width, title)
+      : bar(lane.queued, lane.started, lane.state, start, width, title, true);
+  }
+
+  function runBar(lane, start, width, now) {
+    return lane.started == null ? null : bar(lane.started, lane.ended ?? now, lane.state, start, width, laneTitle(lane, now));
+  }
+
+  function laneBars(lane, start, width, now) {
+    return [waitBar(lane, start, width, now), runBar(lane, start, width, now)].filter(Boolean);
   }
 
   function summary(line, now) {
@@ -184,8 +189,9 @@
     // they lose their gap too, so a busy head gets thinner lines and never a taller row.
     const box = el("div", { class: groups.length > 16 ? "timeline-mini dense" : "timeline-mini", role: "img", "aria-label": summary(line, now) });
     groups.forEach(group => box.append(el("div", { class: "timeline-line" },
-      group.lanes.slice().sort((a, b) => LAYER[a.state] - LAYER[b.state])
-        .flatMap(lane => laneBars(lane, start, width, now)))));
+      // Every wait first, so a dim wait never covers another job's run.
+      ...[waitBar, runBar].map(draw => group.lanes.slice().sort((a, b) => LAYER[a.state] - LAYER[b.state])
+        .map(lane => draw(lane, start, width, now)).filter(Boolean)))));
     if (line.running) box.append(el("i", { class: "timeline-now", style: `left:${percent(now - start, width)}` }));
     return box;
   }

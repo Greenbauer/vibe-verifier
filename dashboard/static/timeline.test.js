@@ -231,3 +231,12 @@ test("a job still waiting is dim yellow; a started job's wait is a dim version o
   assert.deepStrictEqual(legend.children.map(item => item.children[0].className).filter(Boolean),
     ["tl-success", "tl-failed", "tl-running", "tl-waiting", "tl-success tl-dim"]);
 });
+
+test("a failed or running job's wait is a dim version of its color, drawn under every run on its line", () => {
+  const mixed = { statuses: [], checks: [check(1, "a", "success"), check(2, "b", "failed"), check(3, "c", "pending", "in_progress")],
+    runs: [{ id: 1, name: "CI", jobs: [job(1, "a", at(20), at(20), at(40)), job(2, "b", at(20), at(35), at(40)),
+      job(3, "c", at(20), at(41), null)] }] };
+  const line = timeline.mini(mixed, NOW, null).find("timeline-line")[0];
+  assert.deepStrictEqual(line.children.map(bar => bar.className), ["timeline-bar tl-running tl-dim", "timeline-bar tl-failed tl-dim",
+    "timeline-bar tl-success", "timeline-bar tl-running", "timeline-bar tl-failed"]);
+});

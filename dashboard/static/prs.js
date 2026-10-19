@@ -6,7 +6,8 @@
   const { element: el, safeUrl, duration, ageLabel, since, ageClass, secondsClass, ciTiming, badge, flattenPulls, filterPulls,
     groupPulls, repositoriesWithPulls, coverageWarning, checkTotals, combinedCategory, meterSegments, meterLabel, runningWork,
     unresolvedMark, behindMark } = VV;
-  // Pull requests whose CI timeline is open, by "<repository>#<number>". Not saved: a reload closes them.
+  // The pull request whose CI timeline is open, by "<repository>#<number>": at most one, so opening a
+  // row closes any other. Not saved: a reload closes it.
   const expanded = new Set();
   let content, snapshot, state, heading, empty, rememberView;
 
@@ -160,7 +161,9 @@
     const id = `timeline-${pull.repository.replace(/[^\w-]/g, "-")}-${pull.number}`;
     return { key, id, open: expanded.has(key), timeline: VVTimeline.mini(pull, now, scale),
       toggle: () => {
-        if (expanded.has(key)) expanded.delete(key); else expanded.add(key);
+        const opening = !expanded.has(key);
+        expanded.clear();
+        if (opening) expanded.add(key);
         renderPrRows();
         document.querySelector(`[data-focus-key="${CSS.escape(`timeline:${key}`)}"]`)?.focus({ preventScroll: true });
       },

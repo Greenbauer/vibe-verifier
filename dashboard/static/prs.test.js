@@ -82,3 +82,13 @@ test("the first column reads title, then number, author and head, then the age a
   assert.match(bottom.children[0].text, /^1h 0m old$/);
   assert.strictEqual(bottom.children[1].text, "2 behind main");
 });
+
+test("opening one row's timeline closes any other", () => {
+  prs.render(content, snapshot, state, page);
+  row(2).handlers.click({ target: { closest: () => null } });
+  row(1).handlers.click({ target: { closest: () => null } });
+  assert.deepStrictEqual(rows().map(node => node.className), ["pr-row", "pr-row open", "timeline-detail"]);
+  assert.strictEqual(content.find("timeline-detail").length, 1);
+  row(1).handlers.click({ target: { closest: () => null } });
+  assert.deepStrictEqual(rows().map(node => node.className), ["pr-row", "pr-row"]);
+});

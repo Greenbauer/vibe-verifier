@@ -235,7 +235,8 @@ each commit status. It makes no extra GitHub call.
   created that way, so other apps' checks and statuses are listed but never on that path. A status
   is a report another system posted: it is a tick at its last update, yellow while pending, and
   never keeps the timeline open or widens a row's scale.
-- Open rows and open steps last until the page reloads. The page's refresh every 30 seconds keeps
+- One row's timeline is open at a time: opening a row closes any other. The open row and open steps
+  last until the page reloads. The page's refresh every 30 seconds keeps
   them open, and keeps focus on the scale menu, a row's arrow or a job's step toggle when one of
   them had it.
 - A job's line is empty while it is still within its first 30 seconds of waiting, and another
