@@ -49,7 +49,7 @@ def todos_table():
         todo_row("t-todo", "todo", area="errands", due="2026-10-20", notes="Call back about the <b>quote</b>",
                  source_url="https://chat.example.test/thread/1"),
         todo_row("t-doing", "in_progress", area="home", source_url="http://insecure.example.test/x"),
-        todo_row("t-wait", "waiting", area=None),
+        todo_row("t-wait", "waiting", area=None, notes=""),
         todo_row("t-done-recent", "done", done_at="2026-09-29T15:00:00Z"),
         # Older than 14 days, or done with no done_at: the filter should have left these out; they never show.
         todo_row("t-done-old", "done", done_at="2026-09-27T15:00:00Z"),

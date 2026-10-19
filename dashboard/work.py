@@ -369,7 +369,7 @@ def _todo(row: dict) -> dict | None:
     if identity is None or status not in TODO_PHASES:
         return None
     item_phase, reason = TODO_PHASES[status]
-    notes = _text(row.get("notes"), MAX_BODY)
+    notes = _text(row.get("notes"), MAX_BODY) or None
     due = row.get("due")
     return {
         "id": identity, "label": _text(row.get("area"), 40) or "to-do", "title": _text(row.get("title"), 200) or "(untitled)",
