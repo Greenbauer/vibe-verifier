@@ -735,7 +735,8 @@ from the check meter, and the row's title link to GitHub and its timeline toggle
 the full pass and the head beat put it on the row.
 `tests/test_dashboard_push_kind.py` covers the latest push's label and time, and
 `tests/test_dashboard_pull_signals.py` reading it from GitHub, merge-ready titles, and the
-unresolved-comment count. `tests/test_dashboard_fresh.py` covers a head or
+unresolved-comment count. `tests/test_dashboard_push_line.py` covers the row's CI time and push
+line, including a head re-run hours later, timed by its latest round. `tests/test_dashboard_fresh.py` covers a head or
 rollup change leaving the title white and first in the detail queue, check-reading age, the
 cheap pass under an exhausted detail budget, the head beat's hourly calls, and the first
 paint after a long idle. `tests/test_dashboard_usage_charts.py` covers the usage
