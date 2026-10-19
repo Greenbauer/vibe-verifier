@@ -584,7 +584,7 @@ reason, which Bandit honours and the review reads in the diff. A file Bandit can
 `cognitive-complexity` and `max-file-lines` judge the source files a pull request changed, against
 the same files at the base: a file is a finding only when it has more functions over the
 complexity limit than it had (or is new and has any), when its over-limit costs got worse, or
-when it is over the line cap and grew since the merge base. "Worse" compares the file's over-limit costs, sorted
+when it is over the line or token cap and grew on that measure since the merge base (tokens are bytes / 4). "Worse" compares the file's over-limit costs, sorted
 highest first, with the merge base's at the same rank: each must be no higher. That judges the
 file's costs, not named functions, because eslint does not name them: a function that grows
 fails the file unless a costlier one in it dropped far enough to take the lower rank, and a file
@@ -603,7 +603,9 @@ are ignored the same way (`--no-inline-config`). Python files go to complexipy, 
 measure JS, TS and Python files by default; `--source` narrows them. `cognitive-complexity` never
 measures a test: JS and TS test files, `conftest.py`, and any file named `test_*.py`, `*_test.py`,
 `test-*.py`, `*-test.py` or `*.test.py` (the Python test names `new-source-has-test` reads, one list
-in `gates/_contract.py`). `max-file-lines` measures tests too.
+in `gates/_contract.py`). `max-file-lines` measures tests too. `max-file-lines --staged` judges the
+index against `HEAD` instead of the branch against the merge base, so a pre-commit hook can run the
+same ratchet on what is about to be committed.
 
 ### Changed-code mutation
 
