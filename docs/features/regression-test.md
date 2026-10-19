@@ -9,6 +9,7 @@
 - source: `gates/_regression_runners.py`
 - source: `gates/_regression_python.py`
 - source: `gates/_regression_node.py`
+- source: `gates/_regression_frameworks.py`
 
 ## Reach
 
@@ -41,9 +42,10 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
 - `tests/test_regression_test.py::test_a_fix_that_changes_only_tests_docs_or_comments_passes_without_running_a_test`
 - `tests/test_regression_test.py::test_a_pull_request_that_is_not_a_fix_passes_without_running_a_test`
 - `tests/test_regression_test.py::test_a_test_that_fails_at_head_is_a_red_suite_and_cannot_run`
-- `tests/test_regression_test.py::test_a_jest_or_bun_test_is_not_judged_and_names_its_runner`
-- `tests/test_regression_test.py::test_a_fix_whose_only_tests_are_jest_or_bun_tests_passes_qualified_and_is_never_exit_2`
-- `tests/test_regression_test.py::test_a_test_whose_package_runs_vitest_is_a_vitest_test_without_importing_it`
+- `tests/test_regression_frameworks.py::test_a_jest_or_bun_test_is_not_judged_and_names_its_runner`
+- `tests/test_regression_frameworks.py::test_a_fix_whose_only_tests_are_jest_or_bun_tests_passes_qualified_and_is_never_exit_2`
+- `tests/test_regression_frameworks.py::test_a_test_whose_package_runs_vitest_is_a_vitest_test_without_importing_it`
+- `tests/test_regression_frameworks.py::test_each_way_a_package_names_its_runner`
 - `tests/test_regression_test.py::test_pytest_a_test_that_passes_there_or_fails_only_on_a_missing_module_fails`
 - `tests/test_regression_test.py::test_unittest_a_test_whose_failing_check_is_in_a_subtest_fails_on_the_code_before_the_fix`
 - `tests/test_regression_node.py::test_a_node_test_that_fails_on_the_code_before_the_fix_passes`

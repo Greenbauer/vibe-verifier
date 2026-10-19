@@ -30,7 +30,7 @@ repository runs with `node --test`. Of it, a JS or TS file that a package.json s
 and one --node-test declares runs as `node --test <file>` from the root (gates/_regression_node.py);
 a JS or TS file that imports vitest, or calls describe, it or test in a package that runs Vitest (the
 nearest Vitest config, Jest config or package.json naming its runner, from the file's directory up, is a
-Vitest config or a package.json with a vitest dependency), runs under Vitest (from the nearest directory
+Vitest config or a package.json with a vitest dependency; gates/_regression_frameworks.py), runs under Vitest (from the nearest directory
 with a Vitest or Vite config, else with a package.json). Python tests run under --python, with
 pytest when it is installed there and unittest when not or when the file's name has a hyphen or a dot
 (a test run by path, which pytest cannot import). A Playwright test, a Jest test (it imports
@@ -54,7 +54,6 @@ files must not differ from HEAD when it starts.
     --timeout SECONDS  wall-clock limit for both runs (default 600)
 """
 import io
-import json
 import os
 import re
 import signal
@@ -65,6 +64,7 @@ from contextlib import contextmanager
 
 from _acceptance import DASH
 from _contract import PY_TESTS, CannotRun, Finding, git, matches, qualify, resolve_base, run_gate
+from _regression_frameworks import RUNNERS, UNSUPPORTED_NAMES, framework
 from _regression_node import plan as node_plan, run_node
 from _regression_runners import missing, run_python, run_vitest
 from _ticket import unfenced
@@ -81,19 +81,9 @@ TEST_CODE = TEST_NAMES + ["**/conftest.py"] + ["**/%s/**" % name for name in
 DOCS = ["**/*.md", "**/*.mdx", "**/*.rst", "**/*.adoc"]
 PLAYWRIGHT = re.compile(r"""['"]@playwright/test['"]""")
 NODE_TEST = re.compile(r"""['"]node:test['"]""")
-VITEST = re.compile(r"""['"]vitest['"]""")
-BUN_TEST = re.compile(r"""['"]bun:test['"]""")
-JEST_GLOBALS = re.compile(r"""['"]@jest/globals['"]""")
-# Test calls with no import: Vitest with `globals: true`, Jest and bun test all read them, so the package decides.
-TEST_CALLS = re.compile(r"""^\s*(?:describe|it|test)(?:\.\w+)*\s*\(""", re.MULTILINE)
-# The runners a repository may run its tests with that this gate does not run yet, as its messages name them.
-RUNNER_NAMES = {"jest": "Jest", "bun": "bun"}
-UNSUPPORTED_NAMES = {"jest": "Jest", "bun": "bun test"}
-CONFIG_RUNNERS = ((("vitest.config.", "vitest.workspace."), "vitest"), (("jest.config.",), "jest"))
 ASSERTION = re.compile(r"AssertionError\b")
 HOW = ("make one fail there through code that exists before the fix, or say why the fix cannot carry one "
        "with a body line `regression-test: none -- <reason>`")
-RUNNERS = "this gate runs Vitest, node:test, pytest and unittest"
 
 
 def note(text):
@@ -149,74 +139,6 @@ def node_test(args, path):
     return node_plan(args.repo, path, tuple(args.node_test or ())) if path.endswith(JS) else None
 
 
-def declared_runner(package_json):
-    """'vitest', 'jest' or 'bun' when a package.json says it runs its tests so: a vitest dependency, a jest
-    dependency or `jest` key, or a script that runs `bun test`; else None."""
-    try:
-        with open(package_json, encoding="utf-8") as handle:
-            package = json.load(handle)
-    except (OSError, ValueError):
-        return None
-    if not isinstance(package, dict):
-        return None
-    dependencies = {}
-    for field in ("dependencies", "devDependencies"):
-        dependencies.update(package.get(field) if isinstance(package.get(field), dict) else {})
-    scripts = package.get("scripts") if isinstance(package.get("scripts"), dict) else {}
-    if "vitest" in dependencies:
-        return "vitest"
-    if "jest" in dependencies or "jest" in package:
-        return "jest"
-    if any(isinstance(script, str) and re.search(r"\bbun\s+test\b", script) for script in scripts.values()):
-        return "bun"
-    return None
-
-
-def directory_runner(repo, directory):
-    """(the runner, the file that says so) when `directory` holds a Vitest config, a Jest config or a package.json
-    that names its runner, else (None, None)."""
-    names = sorted(os.listdir(os.path.join(repo, directory)))
-    for prefixes, runner in CONFIG_RUNNERS:
-        configs = [name for name in names if name.startswith(prefixes)]
-        if configs:
-            return runner, os.path.join(directory, configs[0])
-    runner = declared_runner(os.path.join(repo, directory, "package.json")) if "package.json" in names else None
-    return (runner, os.path.join(directory, "package.json")) if runner else (None, None)
-
-
-def package_runner(repo, path):
-    """(the runner, the file that says so) for a test file that calls describe, it or test without importing a
-    framework: the nearest directory, from the file's up to the root, that names one. A package.json that names
-    none (a workspace package that runs its tests with the root's Vitest) passes the question up. (None, None)
-    when nothing does."""
-    directory = os.path.dirname(path)
-    while True:
-        found = directory_runner(repo, directory)
-        if found[0] or not directory:
-            return found
-        directory = os.path.dirname(directory)
-
-
-def framework(args, path, text):
-    """('vitest', None) for a JS or TS test that is neither Playwright's nor node:test's and runs under Vitest;
-    ('jest' or 'bun', why) for one its package runs with a runner this gate does not run yet; else (None, why)."""
-    if BUN_TEST.search(text):
-        return "bun", "a bun test (it imports bun:test), which this gate does not run; " + RUNNERS
-    if JEST_GLOBALS.search(text):
-        return "jest", "a Jest test (it imports @jest/globals), which this gate does not run; " + RUNNERS
-    if VITEST.search(text):
-        return "vitest", None
-    if not TEST_CALLS.search(text):
-        return None, "a script with no test framework, judged by its exit code; " + RUNNERS
-    runner, where = package_runner(args.repo, path)
-    if runner == "vitest":
-        return "vitest", None
-    if runner:
-        return runner, "a %s test (%s), which this gate does not run; %s" % (RUNNER_NAMES[runner], where, RUNNERS)
-    return None, ("it calls describe, it or test without importing a framework, and no Vitest config or package.json "
-                  "that names vitest holds it; " + RUNNERS)
-
-
 def kind(args, path):
     """(its runner, None) for a test this gate runs ('vitest', 'node' or 'python'); ('jest' or 'bun', why) for a test
     of a runner it does not run yet; else (None, why)."""
@@ -234,7 +156,7 @@ def kind(args, path):
         return "node", None
     if NODE_TEST.search(text):
         return None, "a node:test file that no package.json script runs with `node --test` and no --node-test declares"
-    return framework(args, path, text)
+    return framework(args.repo, path, text)
 
 
 def run_tests(args, judged, deadline, plans):
@@ -342,17 +264,36 @@ def verdict(repo, passed, base_runs):
     return [Finding("no new or changed test fails on the code before the fix, so none shows the bug it fixes: " + HOW)] + findings
 
 
-def compare(args, base, changed, tests, is_test_code):
-    """Run the changed tests at HEAD and on the code before the fix, and judge them."""
+def classify(args, tests):
+    """({path: runner} of the tests this gate runs, [(path, why)] of the others, {path: runner} of those whose runner
+    this gate does not run yet)."""
     judged, not_judged, unsupported = {}, [], {}
     for path in tests:
         what, why = kind(args, path)
-        if what in RUNNER_NAMES:
-            unsupported[path] = what
-        if what and what not in RUNNER_NAMES:
+        if what and what not in UNSUPPORTED_NAMES:
             judged[path] = what
         else:
             not_judged.append((path, why))
+            unsupported.update({path: what} if what else {})
+    return judged, not_judged, unsupported
+
+
+def none_ran(not_judged, unsupported):
+    """The verdict of a fix none of whose changed tests this gate ran: when every one is a test of a runner it does
+    not run yet ({path: runner} in `unsupported`), the repository's own, nothing in the job is wrong, so a qualified
+    pass with each file an advisory; else exit 2."""
+    if not_judged and all(path in unsupported for path, _ in not_judged):
+        qualify("not judged: the changed tests run under %s, which this gate does not run yet"
+                % " and ".join(sorted({UNSUPPORTED_NAMES[runner] for runner in unsupported.values()})))
+        return [Finding("not judged: " + why, path, advisory=True) for path, why in not_judged]
+    raise CannotRun("no changed test is one this gate can run (%s); a fix whose only test needs what this gate does not "
+                    "have can say so with a body line `regression-test: none -- <reason>`"
+                    % "; ".join("%s: %s" % item for item in not_judged))
+
+
+def compare(args, base, changed, tests, is_test_code):
+    """Run the changed tests at HEAD and on the code before the fix, and judge them."""
+    judged, not_judged, unsupported = classify(args, tests)
     plans = {path: node_test(args, path) for path, what in judged.items() if what == "node"}
     dirty = git(args.repo, "--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=all", "--",
                 *[path for _, path in changed])
@@ -363,15 +304,8 @@ def compare(args, base, changed, tests, is_test_code):
     passed = passed_at_head(run_tests(args, judged, deadline, plans) if judged else {}, judged, not_judged)
     for path, why in not_judged:
         note("%s: not judged: %s" % (path, why))
-    if not passed and not_judged and all(path in unsupported for path, _ in not_judged):
-        # The repository's own runner, which this gate does not run yet: not judged, and not the job's fault (exit 2).
-        qualify("not judged: the changed tests run under %s, which this gate does not run yet"
-                % " and ".join(sorted({UNSUPPORTED_NAMES[runner] for runner in unsupported.values()})))
-        return [Finding("not judged: " + why, path, advisory=True) for path, why in not_judged]
     if not passed:
-        raise CannotRun("no changed test is one this gate can run (%s); a fix whose only test needs what this gate does not "
-                        "have can say so with a body line `regression-test: none -- <reason>`"
-                        % "; ".join("%s: %s" % item for item in not_judged))
+        return none_ran(not_judged, unsupported)
     with code_before_the_fix(args.repo, base, [(status, path) for status, path in changed if not is_test_code(path)]):
         base_runs = run_tests(args, {path: judged[path] for path in passed}, deadline, plans)
     return verdict(args.repo, passed, base_runs)
