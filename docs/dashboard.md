@@ -210,6 +210,11 @@ each commit status. It makes no extra GitHub call.
   waiting for a runner. Failures are drawn on top so they are never hidden. A dashed line marks now
   while anything is still open. Skipped checks and commit statuses are not drawn; the counts in the
   CI column still name them. A head whose checks have no time yet keeps the check meter.
+- **The latest round only.** A head's checks can hold more than one round of CI: a re-run, or CI
+  started again on the same commit hours later. The timeline draws the latest round, from the last
+  check created after nothing had run or waited for 15 minutes, so an old round never stretches a
+  row or the shared scale. The opened view says how many checks of earlier rounds it left out; the
+  counts in the CI column still include them.
 - **The time scale** is the same for every row by default: the longest timeline on screen spans the
   column, so a 12-minute run looks short beside a 77-minute one. The toolbar's scale menu can fit
   each row to its own width instead, which shows each run's shape at the cost of comparing rows.

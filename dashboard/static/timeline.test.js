@@ -161,12 +161,13 @@ test("axis ticks land on round times, at most six", () => {
 
 test("a commit status is a point at its last update: never a runner wait, never open, never stretching a row", () => {
   const pending = { checks: [check(1, "build", "success")], runs: [{ id: 1, name: "CI", jobs: [job(1, "build", at(0), at(0), at(10))] }],
-    statuses: [{ id: 9, name: "deploy", category: "pending", status: "pending", started_at: at(-180), completed_at: at(-180) }] };
+    statuses: [{ id: 9, name: "deploy", category: "pending", status: "pending", started_at: at(4), completed_at: at(4) },
+      { id: 8, name: "old", category: "pending", status: "pending", started_at: at(-180), completed_at: at(-180) }] };
   const line = timeline.timeline(pending, NOW);
   const status = line.lanes.find(lane => lane.kind === "status");
-  assert.deepStrictEqual([status.started, status.ended, line.running], [status.queued, status.queued, false]);
+  assert.deepStrictEqual([status.name, status.started, status.ended, line.running], ["deploy", status.queued, status.queued, false]);
+  // A status from three hours before the round is not part of it, so it widens neither the row nor the scale.
   assert.strictEqual(timeline.sharedScale([pending], NOW), 10 * 60 * 1000);
-  // The row does not draw statuses, so fitting the row fits the build, not the status three hours earlier.
   assert.strictEqual(Math.max(...timeline.mini(pending, NOW, null).find("timeline-bar").map(edge)), 100);
   const opened = timeline.detail(pending, NOW, { id: "x", key: "k", owner: "octocat", rerender() {} });
   const row = opened.find("timeline-row").find(item => item.find("timeline-name")[0]?.text === "deploy");
@@ -196,4 +197,20 @@ test("another app's queued check says queued, never a runner wait", () => {
   const row = timeline.detail(external, NOW, { id: "x", key: "k", owner: "octocat", rerender() {} }).find("timeline-row")[1];
   assert.deepStrictEqual([row.find("bar-waiting").length, row.find("timeline-time")[0].text, row.find("timeline-time")[0].attrs.title],
     [0, "queued 10m 0s", "ext-ci: queued 10m 0s"]);
+});
+
+test("a head with an earlier round of CI draws only the latest round and says how many it left out", () => {
+  const rerun = { statuses: [{ id: 9, name: "preview", category: "success", started_at: at(5), completed_at: at(5) }],
+    checks: [check(1, "lint", "success"), check(2, "test", "success"), check(3, "lint", "success"), check(4, "e2e", "failed")],
+    runs: [{ id: 1, name: "CI", jobs: [job(1, "lint", at(0), at(0), at(2)), job(2, "test", at(0), at(0), at(20))] },
+      { id: 2, name: "CI", jobs: [job(3, "lint", at(400), at(400), at(402)), job(4, "e2e", at(402), at(402), at(410))] }] };
+  const line = timeline.timeline(rerun, NOW + 400 * 60 * 1000);
+  assert.deepStrictEqual([line.lanes.map(lane => lane.name), line.row.span, line.earlier], [["lint", "e2e"], 10 * 60 * 1000, 2]);
+  assert.deepStrictEqual(line.lanes.filter(lane => lane.critical).map(lane => lane.name), ["lint", "e2e"]);
+  const note = timeline.detail(rerun, NOW + 400 * 60 * 1000, { id: "x", key: "k", owner: "octocat", rerender() {} }).find("timeline-earlier");
+  assert.strictEqual(note[0].text, "2 checks from an earlier round of CI on this head are not drawn.");
+  // A wait of up to 15 minutes with nothing running is still the same round.
+  const pause = { statuses: [], checks: [check(1, "a", "success"), check(2, "b", "success")],
+    runs: [{ id: 1, name: "CI", jobs: [job(1, "a", at(0), at(0), at(5)), job(2, "b", at(20), at(20), at(22))] }] };
+  assert.deepStrictEqual([timeline.timeline(pause, NOW).lanes.length, timeline.timeline(pause, NOW).earlier], [2, 0]);
 });

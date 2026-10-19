@@ -11,6 +11,9 @@
   // GitHub creates a job that needs another the moment that one finishes. A finish this close to a
   // job's creation is read as the job it waited for.
   const LINK_SLACK = 5 * 1000;
+  // A head's checks can hold more than one round of CI: a re-run, or CI started again on the same
+  // commit hours later. Nothing running or waiting for this long ends a round.
+  const ROUND_GAP = 15 * 60 * 1000;
   // Drawing order on a shared line: waits underneath, failures on top so a red job is never hidden.
   const LAYER = { waiting: 0, success: 1, cancelled: 1, unknown: 1, running: 2, failed: 3 };
   const TICKS = [10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400];
@@ -82,11 +85,24 @@
     return { start, span: Math.max(Math.max(...list.map(lane => lane.ended ?? now)) - start, 1000) };
   }
 
-  // The head's lanes grouped by workflow, groups in the order they were first queued. Null when no
-  // check on the head has a time yet. start and span cover every lane, for the opened view; row
-  // covers only what the row draws (no statuses), or is null when that is nothing.
+  // The start of the head's latest round: the last check created after nothing had run for ROUND_GAP.
+  function latestRound(all, now) {
+    let start = -Infinity, reach = -Infinity;
+    all.filter(lane => lane.kind !== "status").sort((a, b) => a.queued - b.queued).forEach(lane => {
+      if (lane.queued - reach > ROUND_GAP) start = lane.queued;
+      reach = Math.max(reach, lane.ended ?? now);
+    });
+    return start;
+  }
+
+  // The head's latest round, grouped by workflow in the order first queued; earlier counts the checks
+  // of earlier rounds, which are not drawn. Null when no check on the head has a time yet. start and
+  // span cover every lane drawn, for the opened view; row covers only what the row draws (no
+  // statuses), or is null when that is nothing.
   function timeline(pull, now) {
-    const all = lanes(pull);
+    const every = lanes(pull);
+    const from = latestRound(every, now);
+    const all = every.filter(lane => lane.queued >= from);
     if (!all.length) return null;
     markCritical(all, now);
     const groups = new Map();
@@ -95,7 +111,8 @@
       groups.get(lane.group.key).lanes.push(lane);
     });
     return { ...extent(all, now), row: extent(all.filter(lane => lane.kind !== "status"), now),
-      groups: [...groups.values()], lanes: all, running: all.some(lane => lane.ended == null) };
+      groups: [...groups.values()], lanes: all, running: all.some(lane => lane.ended == null),
+      earlier: every.filter(lane => lane.kind !== "status" && lane.queued < from).length };
   }
 
   // The longest row timeline on screen, so every row is drawn on the same scale.
@@ -229,6 +246,8 @@
       return box;
     }
     const width = line.span;
+    if (line.earlier) box.append(el("p", { class: "muted timeline-earlier" },
+      `${line.earlier} ${line.earlier === 1 ? "check" : "checks"} from an earlier round of CI on this head ${line.earlier === 1 ? "is" : "are"} not drawn.`));
     box.append(axis(width));
     line.groups.forEach(group => {
       box.append(el("div", { class: "timeline-group" }, group.name));
