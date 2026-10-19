@@ -79,7 +79,7 @@ pack through the gate.
 | Pack | Rules | Purpose |
 |---|---|---|
 | `example` | `no-debugger` (TypeScript) | Exercises the mechanism in the tests and shows the layout. |
-| `typescript` | `no-memoized-rejecting-init`, `no-resolve-undefined-in-catch`, `no-raw-main-entry-check` (`.ts`/`.tsx`/`.js` via its `sgconfig.yml`) | Bugs that pass type checks and unit tests: a cached promise that replays one failure forever, a catch block that turns a failure into success, an entry-point check that is false on any path with a space. |
+| `typescript` | `no-memoized-rejecting-init`, `no-resolve-undefined-in-catch`, `no-raw-main-entry-check`, `no-type-check-suppression`, `no-correctness-eslint-disable`, `no-unchecked-external-data-cast` (advisory) (`.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.mjs`/`.cjs` via its `sgconfig.yml`) | Bugs that pass type checks and unit tests: a cached promise that replays one failure forever, a catch block that turns a failure into success, an entry-point check that is false on any path with a space. Checks switched off and never switched back on: `@ts-ignore`/`@ts-nocheck`, a bare `eslint-disable`, a silenced React hooks rule. Advisory: a cast that asserts the shape of a response body, parsed JSON or a `Record<string, any>` row instead of taking it from the source that owns it. |
 | `supabase` | `supabase-service-role-not-ssr-client`, `supabase-upsert-ignore-duplicates` | Client and PostgREST behavior that silently changes who a query runs as, or turns a lost insert race into an error. |
 
 Each pack rule was replayed before it shipped; new rules follow the same bar. Rules come into a pack after being replayed against the history of the repositories it would
