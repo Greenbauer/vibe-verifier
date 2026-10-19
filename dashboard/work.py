@@ -376,7 +376,7 @@ def _todo(row: dict) -> dict | None:
         "status": status, "phase": item_phase, "waiting": {"who": "operator", "reason": reason} if reason else None,
         "due": due[:10] if isinstance(due, str) and due else None,
         "item_url": _https(row.get("source_url")), "created_at": _time(row.get("created_at")),
-        "updated_at": _time(row.get("updated_at")) or _time(row.get("created_at")),
+        "updated_at": _time(row.get("updated_at")),
         "body": notes, "detail": notes is not None, "updates": [], "asks": [], "refs": [],
         "pr_number": None, "pr_url": None, "preview_url": None, "claimed_by": None, "requester": None,
         "blocked_reason": None, "status_text": None,
