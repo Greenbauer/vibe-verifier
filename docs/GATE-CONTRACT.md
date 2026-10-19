@@ -510,7 +510,7 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   server's tokens name its loopback address; a hosted project's keys say `iss: supabase` and name its
   `ref`); a database connection string (postgres, mysql, mongodb, redis, amqp), or a URL carrying a
   user or password, for a host that is not this machine; the address of a hosted Supabase project; a
-  database's bare host that is not this machine (libpq's `PGHOST`, `DB_HOST`; a Unix socket path is this
+  database's bare host or a libpq keyword connection string (`host=... password=...`) that is not this machine (libpq's `PGHOST`, `DB_HOST`; a Unix socket path is this
   machine's); or when its name has a KEY,
   SECRET, TOKEN, PASSWORD, PASSWD, PASS, CREDENTIALS, APIKEY or AUTHTOKEN part, or a part ending in
   PASSWORD, PASSWD, SECRET or TOKEN (SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN, RESEND_API_KEY,
@@ -523,10 +523,12 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   `@playwright/test` and the listing cannot run (a credential in the step, no Playwright), none is taken
   for a spec and they are classified as before, with a note; a credential beside a test that imports
   `@playwright/test` is still exit 2. A refusal names the variable,
-  where it was read, and the host, issuer or project, never the value. During a run, a test that reached
-  for a blocked host (`ERR_PROXY_CONNECTION_FAILED`, `NS_ERROR_PROXY_CONNECTION_REFUSED`, or a refused,
-  reset or timed-out connection to the proxy's port) is exit 2, and so are a failed test of another file (a setup project a
-  spec depends on) and an error no test owns (a `webServer` that did not start, one already answering
+  where it was read, and the host, issuer or project, never the value. During a run, the proxy is one the
+  gate runs on the runner (`gates/_local_only.py`, `Refuser`): it answers every request 403 and records the
+  host it asked for. A changed spec that failed in a run that reached for any host is exit 2, whatever made
+  the request (the spec, a page's script, an in-page fetch, the site's server): the failure cannot be told
+  from the block, and a request made only before the fix would otherwise read as the bug showing. So are a
+  failed test of another file (a setup project a spec depends on) and an error no test owns (a `webServer` that did not start, one already answering
   at its address, a global setup that threw): the run cannot say whether the bug shows. The Node side of
   the run (the site's server, the specs' own code, a global setup) gets the same proxy through
   `HTTP_PROXY`/`HTTPS_PROXY`, `NO_PROXY` for loopback and `NODE_USE_ENV_PROXY=1`, which Node's own `fetch`

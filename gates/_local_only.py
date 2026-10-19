@@ -31,9 +31,16 @@ import ipaddress
 import json
 import os
 import re
+import socket
+import threading
 import urllib.parse
 
 DATABASE_PARTS = {"DB", "DATABASE", "POSTGRES", "POSTGRESQL", "PG", "MYSQL", "MARIADB", "MONGO", "MONGODB", "REDIS", "SUPABASE"}
+# libpq's keyword form of a connection string: `host=db.example.com user=app password=secret dbname=app`.
+LIBPQ_HOST = re.compile(r"(?:^|\s)(?:host|hostaddr)\s*=\s*'?([^\s',]+)")
+LIBPQ_KEYS = re.compile(r"(?:^|\s)(?:user|password|dbname|port|sslmode)\s*=")
+# Variables that point a database client at a password file or a service entry, wherever it is.
+CREDENTIAL_NAMES = {"PGPASSFILE", "PGSERVICE", "PGSERVICEFILE"}
 CREDENTIAL_PARTS = {"KEY", "KEYS", "SECRET", "SECRETS", "TOKEN", "TOKENS", "PASSWORD", "PASSWORDS", "PASSWD", "PASS",
                     "CREDENTIAL", "CREDENTIALS", "APIKEY", "AUTHTOKEN"}
 DATABASE_SCHEMES = {"postgres", "postgresql", "mysql", "mariadb", "mongodb", "mongodb+srv", "redis", "rediss", "amqp", "amqps"}
@@ -92,10 +99,11 @@ def address(value):
 
 
 def credential_name(name):
-    """A KEY, SECRET, TOKEN, PASSWORD, PASSWD, PASS or CREDENTIALS part, or a part ending in PASSWORD, PASSWD, SECRET
-    or TOKEN (libpq's PGPASSWORD)."""
-    return any(part in CREDENTIAL_PARTS or part.endswith(("PASSWORD", "PASSWD", "SECRET", "TOKEN"))
-               for part in re.split(r"[^A-Z0-9]+", name.upper()))
+    """A KEY, SECRET, TOKEN, PASSWORD, PASSWD, PASS, PWD or CREDENTIALS part (the shell's own PWD and OLDPWD aside), a
+    part ending in PASSWORD, PASSWD, SECRET or TOKEN (libpq's PGPASSWORD), or libpq's password file or service."""
+    parts = re.split(r"[^A-Z0-9]+", name.upper())
+    return name.upper() in CREDENTIAL_NAMES or name not in ("PWD", "OLDPWD") and any(
+        part in CREDENTIAL_PARTS or part == "PWD" or part.endswith(("PASSWORD", "PASSWD", "SECRET", "TOKEN")) for part in parts)
 
 
 def database_host(name):
@@ -103,6 +111,15 @@ def database_host(name):
     a database's (DB_HOST, POSTGRES_HOST, REDIS_HOSTNAME)."""
     parts = set(re.split(r"[^A-Z0-9]+", name.upper()))
     return bool(parts & {"PGHOST", "PGHOSTADDR"} or parts & {"HOST", "HOSTNAME"} and parts & DATABASE_PARTS)
+
+
+def libpq_reason(value):
+    """value_reason() of a libpq keyword connection string (`host=... user=...`), or None when `value` is not one."""
+    found = LIBPQ_HOST.search(value) if LIBPQ_KEYS.search(value) else None
+    if not found:
+        return None
+    host = found.group(1)
+    return "" if local_host(host) or host.startswith("/") else "holds a connection string for %s, which is not this machine" % host
 
 
 def value_reason(value):
@@ -116,7 +133,7 @@ def value_reason(value):
         return "holds a token issued by %s%s" % (issuer or "an unnamed issuer", " for project %s" % ref if ref else "")
     found = address(value)
     if not found:
-        return None
+        return libpq_reason(value)
     scheme, host, userinfo = found
     if scheme in DATABASE_SCHEMES or userinfo:
         return "" if local_host(host) else "holds %s for %s, which is not this machine" % (
@@ -139,6 +156,46 @@ def why(name, value, local_names):
     if credential_name(name) and name not in local_names:
         return "is named as a credential, and the manifest does not declare it the local stack's (--local-env %s)" % name
     return None
+
+
+class Refuser:
+    """A proxy on this machine that every request of a run goes to, for any host but loopback: it answers each one
+    403 and records the host it asked for (`CONNECT host:443`, or the URL of a plain `GET`), so the gate knows the run
+    reached for somewhere else even when no test's own error says so (a page's script, an in-page fetch, the site's
+    server-side fetch)."""
+
+    def __init__(self):
+        self.hosts = []
+        self.server = socket.socket()
+        self.server.bind(("127.0.0.1", 0))
+        self.server.listen(16)
+        self.server.settimeout(0.2)
+        self.port = self.server.getsockname()[1]
+        self.done = threading.Event()
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    def serve(self):
+        while not self.done.is_set():
+            try:
+                connection, _ = self.server.accept()
+            except OSError:  # the accept timed out, or the server closed
+                continue
+            with connection:
+                try:
+                    connection.settimeout(2)
+                    line = connection.recv(4096).split(b"\r\n", 1)[0].decode("latin-1").split()
+                    target = line[1] if len(line) > 1 else "?"
+                    self.hosts.append(urllib.parse.urlsplit(target).netloc or target)
+                    connection.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                except OSError:
+                    pass
+
+    def close(self):
+        self.done.set()
+        self.thread.join()
+        self.server.close()
+        return sorted(set(self.hosts))
 
 
 def dotenv(path):

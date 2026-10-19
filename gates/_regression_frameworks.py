@@ -24,7 +24,7 @@ TEST_CALLS = re.compile(r"""^\s*(?:describe|it|test)(?:\.\w+)*\s*\(""", re.MULTI
 RUNNER_NAMES = {"jest": "Jest", "bun": "bun"}
 UNSUPPORTED_NAMES = {"jest": "Jest", "bun": "bun test"}
 CONFIG_RUNNERS = ((("vitest.config.", "vitest.workspace."), "vitest"), (("jest.config.",), "jest"))
-RUNNERS = "this gate runs Vitest, node:test, pytest and unittest"
+RUNNERS = "this gate runs Vitest, node:test, pytest and unittest, and Playwright specs with --playwright"
 
 
 def declared_runner(package_json):

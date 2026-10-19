@@ -37,7 +37,8 @@ class LocalOnly(unittest.TestCase):
                             ("NEXT_PUBLIC_SITE_URL", "http://app.localhost:3000"), ("GITHUB_SERVER_URL", "https://github.com"),
                             ("PLAYWRIGHT_AUTH_BYPASS", "true"), ("PWD", "/work"), ("TEST_BASE_URL", ""),
                             ("PGHOST", "127.0.0.1:54322"), ("PGHOST", "/var/run/postgresql"), ("DB_HOST", "localhost"),
-                            ("POSTGRES_HOST", "::1"),
+                            ("POSTGRES_HOST", "::1"), ("DATABASE_URL", "host=127.0.0.1 port=54322 user=postgres"),
+                            ("NOTES", "a host=b thing"),
                             ("SITE_HOST", "app.example.com")):
             self.assertIsNone(_local_only.why(name, value, set()), name)
         self.assertIsNone(_local_only.why("SESSION_SECRET", "a-local-secret", {"SESSION_SECRET"}))
@@ -54,11 +55,13 @@ class LocalOnly(unittest.TestCase):
                 ("WEBHOOK", "https://user:pass@hooks.example.com/x", "holds an address with a password in it for hooks.example.com"),
                 ("SUPABASE_URL", "https://%s.supabase.co" % HOSTED, "holds the address of a hosted Supabase project"),
                 ("PGHOST", "db.%s.supabase.co" % HOSTED, "holds a database host that is not this machine"),
-                ("REDIS_HOSTNAME", "localhost,cache.example.com", "holds a database host that is not this machine")):
+                ("REDIS_HOSTNAME", "localhost,cache.example.com", "holds a database host that is not this machine"),
+                ("DATABASE_URL", "host=db.example.com user=app password=pw dbname=app",
+                 "holds a connection string for db.example.com, which is not this machine")):
             self.assertIn(said, _local_only.why(name, value, {name}) or "", name)
         for name in ("SUPABASE_ACCESS_TOKEN", "VERCEL_TOKEN", "RESEND_API_KEY", "NETSUITE_CONSUMER_KEY", "CRON_SECRET",
                      "SUPABASE_DB_PASSWORD", "AWS_SECRET_ACCESS_KEY", "GH_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "DB_PASS",
-                     "npm_config__authtoken", "PGPASSWORD", "MYSQLPASSWORD", "STRIPESECRET"):
+                     "npm_config__authtoken", "PGPASSWORD", "MYSQLPASSWORD", "STRIPESECRET", "MYSQL_PWD", "PGPASSFILE", "PGSERVICE"):
             self.assertIn("is named as a credential", _local_only.why(name, "a-value", set()) or "", name)
 
     def test_only_loopback_is_this_machine(self):

@@ -10,8 +10,8 @@ job's own local stack (a local database started before the gate) for that site t
 The gate never runs the config as it is. For each Playwright call it writes a wrapper beside the config, a .ts
 file (Playwright 1.59 and 1.64 both load a .ts wrapper of a .ts, .mts, .js, .mjs or .cjs config, in a CommonJS or
 an ES module package; an .mjs wrapper of a .ts config fails on 1.59), which imports the config and:
-- gives every browser context a proxy that is a port on this machine nothing listens on, bypassed only for
-  loopback names, so a page or the `request` fixture that reaches for any other host fails;
+- gives every browser context a proxy on this machine (_local_only.Refuser), bypassed only for loopback names,
+  that answers every request 403 and records the host it asked for;
 - starts every webServer itself (`reuseExistingServer: false`): a server already running serves whatever code it
   was started with, so Playwright fails on one rather than test the wrong code;
 - reports through the gate's reporter (REPORTER), and writes the webServers it was given to a file, since a list
@@ -33,15 +33,14 @@ Each run is one attempt (--retries=0) with its output in a scratch directory. A 
 a pass, `unexpected` a failure with its error, `skipped` a skip. A file that does not load stops Playwright
 collecting any file, so a listing that fails is listed again one file at a time to find which. A test that
 reached for a blocked host, a failed test of another file (a setup project the spec depends on), and an error
-no test owns (a webServer that did not start, a global setup that threw) are exit 2: the run cannot say whether
-the bug shows. A spec is listed at all only when it could be one (gates/_regression_frameworks.py,
+no test owns (a webServer that did not start, a global setup that threw) are exit 2, and so is a changed spec that
+failed in a run that reached for any host the proxy recorded: the run cannot say whether the bug shows. A spec is listed at all only when it could be one (gates/_regression_frameworks.py,
 maybe_playwright): a fix whose tests import another framework, or that node:test runs, never starts Playwright.
 """
 import json
 import os
 import re
 import shutil
-import socket
 import tempfile
 
 import _local_only
@@ -152,7 +151,8 @@ def read_json(path):
 
 def call(repo, config, files, listing, local_names, deadline, timeout):
     """One `playwright test` of `files` (repository-relative) under `config`, through the wrapper: (the reporter's
-    report, the webServers the config gave, the blocked port). The environment is checked first, every call."""
+    report, the webServers the config gave, the proxy, closed, whose hosts are what the run reached for). The
+    environment is checked first, every call."""
     root = os.path.realpath(repo)
     directory = os.path.dirname(os.path.join(root, config))
     if not os.path.isfile(os.path.join(root, config)):
@@ -164,9 +164,8 @@ def call(repo, config, files, listing, local_names, deadline, timeout):
                         "stack before this gate, which runs the project's own Playwright" % config)
     scratch = tempfile.mkdtemp(prefix="vv-regression-")
     wrapper = os.path.join(directory, ".vv-regression-%d.config.ts" % os.getpid())
-    with socket.socket() as probe:  # a port nothing listens on: a connection to it is refused at once
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
+    refuser = _local_only.Refuser()
+    port = refuser.port
     try:
         report, servers, reporter = (os.path.join(scratch, name) for name in ("report.json", "servers.json", "reporter.cjs"))
         with open(reporter, "w", encoding="utf-8") as handle:
@@ -182,8 +181,9 @@ def call(repo, config, files, listing, local_names, deadline, timeout):
         found = read_json(report)
         if not isinstance(found, dict):
             raise CannotRun("Playwright wrote no report for %s (exit %d): %s" % (config, code, output.strip()[-2000:]))
-        return found, read_json(servers) or [], port
+        return found, read_json(servers) or [], refuser
     finally:
+        refuser.close()
         if os.path.lexists(wrapper):
             os.remove(wrapper)
         shutil.rmtree(scratch, ignore_errors=True)
@@ -259,28 +259,28 @@ def refuse_targets(config, files, tests, projects, servers, directory, local_nam
         os.path.normpath(os.path.join(directory, server.get("cwd") or ".")))], local_names, servers)
 
 
-def read_run(report, wanted, config, port, repo):
-    """{path: Run} of the wanted {real path: path} in one run's report."""
+def read_run(report, wanted, config, reached, repo):
+    """{path: Run} of the wanted {real path: path} in one run's report; `reached` is the hosts the run asked the proxy
+    for. A changed spec that failed in a run that reached for any is exit 2: its failure cannot be told from the
+    block (a request made only before the fix would otherwise read as the bug showing)."""
     if report["errors"]:
         raise CannotRun("the Playwright run of %s stopped before its tests could show anything: %s"
                         % (config, described(report["errors"][0])))
-    blocked = re.compile(r"ERR_PROXY_CONNECTION_FAILED|NS_ERROR_PROXY_CONNECTION_REFUSED|"
-                         r"(?:ECONNREFUSED|ECONNRESET|ETIMEDOUT) 127\.0\.0\.1:%d\b" % port)
     runs = {path: Run(None, {}) for path in wanted.values()}
     for test in report["tests"]:
         error = described(test["error"])
         name = " > ".join(([test["project"]] if test["project"] else []) + test["titles"])
         path = wanted.get(os.path.realpath(test["file"]))
         where = "%s: %s" % (path or os.path.relpath(test["file"], repo), name)
-        if blocked.search(ANSI.sub("", test["error"] or "")):
-            raise CannotRun("%s reached for a host that is not this machine, which this gate blocks: %s. %s"
-                            % (where, error, LOCAL_ONLY))
         status = {"expected": "passed", "skipped": "skipped"}.get(test["outcome"], "failed")
         if path is None:
             if status == "failed":
                 raise CannotRun("%s failed in the run, and a changed spec depends on it (a setup project, say), so the "
                                 "run cannot show whether the bug shows: %s" % (where, error))
             continue
+        if status == "failed" and reached:
+            raise CannotRun("%s failed in a run that reached for %s, which this gate blocks, so the failure cannot be told "
+                            "from the block: %s. %s" % (where, ", ".join(reached), error, LOCAL_ONLY))
         runs[path].tests[name] = (status, error if status == "failed" else "")
     return runs
 
@@ -294,8 +294,9 @@ def run_config(repo, config, files, local_names, deadline, timeout):
     loadable = [path for path in files if path in tests]
     if loadable:
         refuse_targets(config, loadable, tests, projects, servers, os.path.dirname(os.path.join(root, config)), local_names)
-        report, _, port = call(repo, config, loadable, False, local_names, deadline, timeout)
-        runs.update(read_run(report, {os.path.realpath(os.path.join(root, path)): path for path in loadable}, config, port, root))
+        report, _, refuser = call(repo, config, loadable, False, local_names, deadline, timeout)
+        runs.update(read_run(report, {os.path.realpath(os.path.join(root, path)): path for path in loadable}, config,
+                             refuser.close(), root))
     return runs
 
 

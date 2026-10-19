@@ -43,15 +43,21 @@ createServer((request, response) => {
 """
 # The same site, whose server first fetches another host and records how that went: the Node side of a run is proxied too.
 SERVER_FETCHES = SERVER.replace('appendFileSync("started.log", "started\\n");', """const outside = await fetch("https://rates.example.com/", { signal: AbortSignal.timeout(5000) })
-  .then((response) => "reached " + response.status, (error) => "blocked " + (error.cause?.code || error.name));
+  .then((response) => "reached " + response.status, () => "blocked");
 appendFileSync("started.log", "outside: " + outside + "\\n");""")
+# Before the fix the page's total comes from another host's script, which the run blocks; the fix renders it itself.
+SERVER_SCRIPT = SERVER.replace("response.end(`<h1 id=\"total\">${discount(200, true)}</h1>`);",
+                               "response.end(discount(200, true) === 200 ? '<h1 id=\"total\"></h1><script src=\"https://cdn.example.com/total.js\">'\n"
+                               "    + '</script>' : `<h1 id=\"total\">${discount(200, true)}</h1>`);")
 CONFIG = """import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "e2e",
   use: { baseURL: %(base)s },
   webServer: { command: "node server.mjs", url: "http://127.0.0.1:%(port)d", env: { PORT: "%(port)d" } },
+  globalSetup: "./global-setup.mjs",
 });
 """
+GLOBAL_SETUP = 'import { appendFileSync } from "node:fs";\nexport default () => appendFileSync("global-setup.log", "ran\\n");\n'
 SPEC = 'import { test, expect } from "@playwright/test";\n'
 REPRODUCES = SPEC + 'test("members get 10% off over 100", async ({ page }) => {\n  await page.goto("/");\n' \
                     '  await expect(page.locator("#total")).toHaveText("180", { timeout: 3000 });\n});\n'
@@ -84,8 +90,8 @@ class Fixture(unittest.TestCase):
     def project(self, files=None, base=None):
         self.port = free_port()
         config = CONFIG % {"base": json.dumps(base or "http://127.0.0.1:%d" % self.port), "port": self.port}
-        repo = make_repo(self, dict({".gitignore": "node_modules\nstarted.log\n", "package.json": '{"type": "module"}\n',
-                                     "server.mjs": SERVER, "src/price.mjs": PRICE_BUG, "playwright.config.mjs": config},
+        repo = make_repo(self, dict({".gitignore": "node_modules\nstarted.log\nglobal-setup.log\n", "package.json": '{"type": "module"}\n',
+                                     "global-setup.mjs": GLOBAL_SETUP, "server.mjs": SERVER, "src/price.mjs": PRICE_BUG, "playwright.config.mjs": config},
                                     **(files or {})))
         stand_in = Path(repo, "node_modules", "@playwright", "test")
         stand_in.mkdir(parents=True)
@@ -145,6 +151,7 @@ class RealBrowser(Fixture):
         self.assertIn('e2e/price.spec.mjs: members get 10% off over 100 fails on the code before the fix: Error: '
                       'expect(locator).toHaveText(expected) failed Expected: "180" Received: "200"', result.stderr)
         self.assertEqual(Path(repo, "started.log").read_text(), "started\n" * 2)  # the head's site, then the one before the fix
+        self.assertEqual(Path(repo, "global-setup.log").read_text(), "ran\n" * 2)
         self.assertEqual(Path(repo, "src/price.mjs").read_text(), PRICE_FIX)
         tree_is_head(self, repo)
 
@@ -174,25 +181,40 @@ class RealBrowser(Fixture):
         spec = SPEC + 'test("reads the rates", async ({ page }) => {\n  await page.goto("https://rates.example.com/today");\n});\n'
         result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/rates.spec.mjs": spec}, "--soak")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("e2e/rates.spec.mjs: reads the rates reached for a host that is not this machine, which this gate blocks: "
-                      "Error: page.goto: net::ERR_PROXY_CONNECTION_FAILED at https://rates.example.com/today", result.stderr)
+        self.assertIn("e2e/rates.spec.mjs: reads the rates failed in a run that reached for rates.example.com:443, which this gate "
+                      "blocks, so the failure cannot be told from the block: Error: page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at "
+                      "https://rates.example.com/today", result.stderr)
         tree_is_head(self, repo)
 
     def test_the_request_fixture_reaching_for_another_host_is_blocked_and_cannot_be_judged(self):
         repo = self.project()
-        spec = SPEC + 'test("reads the rates", async ({ request }) => {\n  await request.get("https://rates.example.com/today");\n});\n'
+        spec = SPEC + 'test("reads the rates", async ({ request }) => {\n' \
+                      '  expect((await request.get("https://rates.example.com/today")).ok()).toBe(true);\n});\n'
         result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/rates.spec.mjs": spec}, "--soak")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertRegex(result.stderr, r"e2e/rates\.spec\.mjs: reads the rates reached for a host that is not this machine, which this "
-                                        r"gate blocks: Error: apiRequestContext\.get: connect ECONNREFUSED 127\.0\.0\.1:\d+")
+        self.assertRegex(result.stderr, r"e2e/rates\.spec\.mjs: reads the rates failed in a run that reached for rates\.example\.com"
+                                        r"(:443)?, which this gate blocks, so the failure cannot be told from the block")
         tree_is_head(self, repo)
 
     def test_the_site_s_own_server_reaching_for_another_host_is_blocked(self):
-        # Node's fetch in the site's server goes through the same dead proxy (HTTPS_PROXY with NODE_USE_ENV_PROXY), in both runs.
+        # Node's fetch in the site's server goes through the same proxy (HTTPS_PROXY with NODE_USE_ENV_PROXY), in both runs.
+        # At the head the spec passes all the same; before the fix it fails in a run that reached out: not the bug showing.
         repo = self.project({"server.mjs": SERVER_FETCHES})
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES})
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(Path(repo, "started.log").read_text(), "outside: blocked ECONNREFUSED\n" * 2)
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(Path(repo, "started.log").read_text(), "outside: blocked\n" * 2)
+        self.assertIn("e2e/price.spec.mjs: members get 10% off over 100 failed in a run that reached for rates.example.com:443",
+                      result.stderr)
+        tree_is_head(self, repo)
+
+    def test_a_failure_before_the_fix_in_a_run_that_reached_out_is_not_the_bug_showing(self):
+        # Before the fix the page's total comes from another host's script, which the run blocks; the spec fails there for
+        # that alone, and no test's own error says so. The proxy recorded the request, so it is exit 2, not a pass.
+        repo = self.project({"server.mjs": SERVER_SCRIPT})
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("e2e/price.spec.mjs: members get 10% off over 100 failed in a run that reached for cdn.example.com:443, "
+                      "which this gate blocks, so the failure cannot be told from the block", result.stderr)
         tree_is_head(self, repo)
 
 

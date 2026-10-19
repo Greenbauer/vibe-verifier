@@ -19,8 +19,8 @@ assertion there before its tests run (any other error that stops it there means 
 fails when they all pass there, which does not
 reproduce the bug, and when the only failures there are a module, export, file or script the test
 needs not existing yet, which does not show the bug either. Each runner's structured report decides
-(Vitest's JSON reporter, node:test's TAP reporter, pytest's reports, unittest's results), never an
-exit code.
+(Vitest's JSON reporter, node:test's TAP reporter, pytest's reports, unittest's results, a Playwright
+reporter of the gate's), never an exit code.
 
 Test code is a file named as a test (`*.test.*`, `*.spec.*`, `__tests__/`, and test_*.py, *_test.py,
 test-*.py, *-test.py, *.test.py), conftest.py, anything under a `test`, `tests`, `__tests__`,

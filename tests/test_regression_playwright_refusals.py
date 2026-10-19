@@ -42,6 +42,7 @@ class Refusals(Fixture):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn(said, result.stderr)
         self.assertFalse(Path(repo, "started.log").exists(), "the site started")
+        self.assertFalse(Path(repo, "global-setup.log").exists(), "the global setup ran")
         tree_is_head(self, repo)
         return result
 
