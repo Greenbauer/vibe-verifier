@@ -23,7 +23,7 @@ class TypescriptPack(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_a_new_type_check_suppression_blocks_in_every_mapped_extension(self):
-        for extension in ("ts", "tsx", "mts", "cts", "js", "mjs", "cjs"):
+        for extension in ("ts", "tsx", "mts", "cts", "js", "mjs", "cjs", "jsx"):
             with self.subTest(extension=extension):
                 self.assertBlocks(judge(self, {}, {"src/a.%s" % extension: IGNORE}), "no-type-check-suppression")
         self.assertBlocks(judge(self, {}, {"scripts/b.mjs": "// @ts-nocheck\nexport const b = 1;\n"}),
@@ -37,6 +37,7 @@ class TypescriptPack(unittest.TestCase):
     def test_a_silenced_hooks_rule_or_a_bare_disable_blocks(self):
         hooks = "useEffect(() => {\n  load(id);\n  // eslint-disable-next-line react-hooks/exhaustive-deps\n}, []);\n"
         self.assertBlocks(judge(self, {}, {"src/a.tsx": hooks}), "no-correctness-eslint-disable")
+        self.assertBlocks(judge(self, {}, {"src/a.jsx": hooks}), "no-correctness-eslint-disable")
         self.assertBlocks(judge(self, {}, {"src/b.ts": "// eslint-disable-next-line -- legacy\nrisky();\n"}),
                           "no-correctness-eslint-disable")
 
