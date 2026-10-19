@@ -120,7 +120,18 @@ def renamed(repo, base):
     that also rewrites most of the file is below git's similarity threshold, reports as new, and
     is judged as new: that is a rewrite.
     """
-    fields = _paths(repo, "--name-status", "-M", base + "...HEAD")  # status, old, new for a rename
+    return _rename_pairs(_paths(repo, "--name-status", "-M", base + "...HEAD"))
+
+
+def staged_changes(repo):
+    """The staged counterpart of changed_files and renamed, for a pre-commit check: (files added,
+    copied, modified or renamed in the index against HEAD, {path in the index: path at HEAD})."""
+    files = _paths(repo, "--cached", "--name-only", "--diff-filter=ACMR")
+    return files, _rename_pairs(_paths(repo, "--cached", "--name-status", "-M"))
+
+
+def _rename_pairs(fields):
+    """{new path: old path} from NUL-separated --name-status fields: status, old, new for a rename."""
     pairs, i = {}, 0
     while i < len(fields):
         if fields[i].startswith("R"):

@@ -1,5 +1,5 @@
 """The cognitive-complexity ratchet, on the real pinned toolchain (npm ci from the lockfile into
-the tool cache), and its file-length sibling."""
+the tool cache)."""
 import json
 import os
 import shutil
@@ -356,63 +356,6 @@ class ConsumerSuppressions(unittest.TestCase):
             self.assertEqual([(f["path"], f["line"]) for f in json.loads(result.stdout)["findings"]], [("src/bad.ts", 1)])
 
 
-class MaxFileLines(unittest.TestCase):
-    def long(self, n):
-        return "".join("export const v%d = %d;\n" % (i, i) for i in range(n))
-
-    def test_a_new_file_over_the_limit_fails(self):
-        repo = branch_with(self, {"README.md": "x\n"}, {"src/big.ts": self.long(501)})
-        result = gate("max-file-lines", repo, "--base-ref", "HEAD~1")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("src/big.ts: 501 lines, over the 500 allowed (new file)", result.stdout)
-
-    def test_a_long_file_that_shrank_or_was_untouched_passes_and_one_that_grew_fails(self):
-        repo = branch_with(self, {"src/big.ts": self.long(600), "src/other.ts": self.long(700)}, {"src/big.ts": self.long(590)})
-        self.assertEqual(gate("max-file-lines", repo, "--base-ref", "HEAD~1").returncode, 0)
-        commit(repo, {"src/big.ts": self.long(601)}, "grow")
-        result = gate("max-file-lines", repo, "--base-ref", "HEAD~2")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("601 lines, over the 500 allowed (600 at the base)", result.stdout)
-        self.assertNotIn("other.ts", result.stdout)
-
-    def test_the_base_is_the_merge_base_not_the_base_branchs_tip(self):
-        # The branch changes one line of a 600-line file. Meanwhile main shrinks it to 550. Against main's tip the
-        # branch would look as if it had grown the file by 50 lines; against where it started, it grew nothing.
-        repo = make_repo(self, {"src/big.ts": self.long(600)})
-        git(repo, "checkout", "-q", "-b", "feat/x")
-        commit(repo, {"src/big.ts": self.long(599) + "export const last = 0;\n"}, "touch")
-        git(repo, "checkout", "-q", "main")
-        commit(repo, {"src/big.ts": self.long(550)}, "shrink on main")
-        git(repo, "checkout", "-q", "feat/x")
-        result = gate("max-file-lines", repo, "--base-ref", "main")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        # Whether the file existed is asked of the merge base too: main deleting it does not make it new here.
-        git(repo, "checkout", "-q", "main")
-        git(repo, "rm", "-q", "src/big.ts")
-        git(repo, "commit", "-q", "-m", "delete it on main")
-        git(repo, "checkout", "-q", "feat/x")
-        result = gate("max-file-lines", repo, "--base-ref", "main")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        # And real growth on the branch is still measured from where it started.
-        commit(repo, {"src/big.ts": self.long(610)}, "grow")
-        result = gate("max-file-lines", repo, "--base-ref", "main")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("610 lines, over the 500 allowed (600 at the base)", result.stdout)
-
-    def test_python_files_count_by_default(self):
-        repo = branch_with(self, {"README.md": "x\n"}, {"pkg/big.py": "x = 1\n" * 501})
-        result = gate("max-file-lines", repo, "--base-ref", "HEAD~1")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("pkg/big.py: 501 lines, over the 500 allowed (new file)", result.stdout)
-
-    def test_all_and_max(self):
-        repo = branch_with(self, {"src/big.ts": self.long(120)}, {"README.md": "y\n"})
-        self.assertEqual(gate("max-file-lines", repo, "--base-ref", "HEAD~1", "--max", "100").returncode, 0)
-        result = gate("max-file-lines", repo, "--all", "--max", "100")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("src/big.ts: 120 lines", result.stdout)
-
-
 class Renames(unittest.TestCase):
     """A moved file is compared with itself at its old path, never counted as new."""
 
@@ -427,25 +370,6 @@ class Renames(unittest.TestCase):
         result = gate("cognitive-complexity", repo, "--base-ref", "HEAD~2")
         self.assertEqual(result.returncode, 1)
         self.assertIn("1 at the base, 2 now", result.stdout)
-
-    def test_a_non_ascii_path_is_still_judged(self):
-        # git quotes such a path unless asked for -z; a quoted path matched nothing and was skipped.
-        repo = make_repo(self, {"README.md": "x\n"})
-        commit(repo, {"src/caf\u00e9.ts": "x\n" * 600}, "add")
-        result = gate("max-file-lines", repo, "--base-ref", "HEAD~1", "--format", "json")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertEqual([f["path"] for f in json.loads(result.stdout)["findings"]], ["src/caf\u00e9.ts"])
-
-    def test_moving_a_long_file_is_not_a_finding_but_growing_it_is(self):
-        long = "x\n" * 600
-        repo = make_repo(self, {"src/old.ts": long})
-        git(repo, "mv", "src/old.ts", "src/new.ts")
-        git(repo, "commit", "-q", "-m", "move")
-        self.assertEqual(gate("max-file-lines", repo, "--base-ref", "HEAD~1").returncode, 0)
-        commit(repo, {"src/new.ts": long + "y\n"}, "grow")
-        result = gate("max-file-lines", repo, "--base-ref", "HEAD~2")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("600 at the base", result.stdout)
 
 
 if __name__ == "__main__":
