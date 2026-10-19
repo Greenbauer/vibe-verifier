@@ -9,6 +9,9 @@ Each configured source is reached over HTTPS with a bearer read from a local fil
   ``submitter``, ``claim``, ...), read twice: once for the open statuses (its default) and once for
   ``merged`` and ``closed``, of which only those updated in the last DONE_WINDOW are kept. Then
   ``get_call`` (the row plus ``brief``, ``followups``, ``designRefs`` and ``asks``) for each open one.
+- ``supabase-todos``: one table of a Supabase project read through PostgREST, ``GET
+  <url>/rest/v1/<table>`` with the key as both ``apikey`` and bearer: the rows not done, and the done
+  ones whose ``done_at`` is in the last TODO_DONE_WINDOW.
 
 Only those reads are ever made. A source that fails keeps its last items, marked stale with
 the failure's code; a source never read shows the code and no items, not an empty queue.
@@ -41,6 +44,11 @@ MAX_UPDATES = 100
 MAX_TOKEN_BYTES = 4096
 DONE = {"merged", "closed"}
 DONE_WINDOW = timedelta(days=30)
+TODO_DONE_WINDOW = timedelta(days=14)
+# A to-do's status, as the board's phase and the reason it waits on a person.
+TODO_PHASES = {"todo": ("queued", None), "in_progress": ("active", None),
+               "waiting": ("active", "Marked waiting"), "done": ("done", None)}
+TODO_COLUMNS = "id,title,notes,status,area,source_url,due,created_at,updated_at,done_at"
 QUEUED = {"submitted", "backlog"}
 PROTOCOL_VERSION = "2025-06-18"
 
@@ -98,6 +106,20 @@ def _rpc_message(raw: str, request_id: int) -> dict:
     raise WorkError("invalid_response", "no reply to request %d" % request_id)
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuses every redirect: urllib copies the request's headers, key included, onto the next URL, any host.
+
+    Same handler as remote_sampler.NoQuotaRedirect, which runs alone over SSH and cannot be imported here.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+# The default transport: urlopen's handlers, except that a 3xx is raised as an HTTPError instead of followed.
+OPEN = urllib.request.build_opener(_NoRedirect).open
+
+
 def _fetch(opener, request: urllib.request.Request) -> tuple[str, str | None]:
     """The body and MCP session header of one HTTPS exchange, or a WorkError with the page's code."""
     try:
@@ -106,7 +128,8 @@ def _fetch(opener, request: urllib.request.Request) -> tuple[str, str | None]:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as error:
         error.close()
-        code = "rejected" if error.code in (401, 403) else "not_found" if error.code == 404 else "unavailable"
+        code = ("rejected" if error.code in (401, 403) else "not_found" if error.code == 404
+                else "redirected" if 300 <= error.code < 400 else "unavailable")
         raise WorkError(code, "HTTP %d" % error.code) from None
     except (urllib.error.URLError, OSError, TimeoutError) as error:
         raise WorkError("unreachable", str(error)) from None
@@ -120,10 +143,11 @@ class RestClient:
 
     def __init__(self, endpoint: str, token: str, opener=None):
         self.endpoint, self.token = endpoint.rstrip("/"), token
-        self.opener = opener or urllib.request.urlopen
+        self.opener = opener or OPEN
+        self.headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
 
     def get(self, path: str) -> object:
-        headers = {"Authorization": "Bearer " + self.token, "Accept": "application/json"}
+        headers = self.headers
         raw, _ = _fetch(self.opener, urllib.request.Request(self.endpoint + path, None, headers, method="GET"))
         try:
             return json.loads(raw)
@@ -131,12 +155,20 @@ class RestClient:
             raise WorkError("invalid_response", "%s did not return JSON" % path) from None
 
 
+class SupabaseClient(RestClient):
+    """PostgREST under a Supabase project URL: the key goes as ``apikey`` and as the bearer."""
+
+    def __init__(self, url: str, key: str, opener=None):
+        super().__init__(url.rstrip("/") + "/rest/v1", key, opener)
+        self.headers["apikey"] = key
+
+
 class McpClient:
     """A minimal MCP client over streamable HTTP: initialize once, then call tools."""
 
     def __init__(self, endpoint: str, token: str, opener=None):
         self.endpoint, self.token = endpoint, token
-        self.opener = opener or urllib.request.urlopen
+        self.opener = opener or OPEN
         self.session: str | None = None
         self._next_id = 0
 
@@ -302,7 +334,8 @@ def _plan(client: RestClient, source: WorkSource, row: dict) -> dict | None:
     return _finish(item, source, "plans")
 
 
-def collect_plans(client: RestClient, source: WorkSource) -> tuple[list[dict], bool]:
+def collect_plans(client: RestClient, source: WorkSource, now: datetime | None = None) -> tuple[list[dict], bool]:
+    # Every collector takes the feed's clock; plans keep no done window, so this one does not use it.
     listing = client.get("/plans?limit=%d" % MAX_ITEMS)
     rows = listing.get("plans") if isinstance(listing, dict) else None
     if not isinstance(rows, list):
@@ -346,7 +379,43 @@ def collect_calls(client: McpClient, source: WorkSource, now: datetime | None = 
     return [item for item in items if item], len(rows) >= MAX_ITEMS or len(done) >= MAX_ITEMS
 
 
-COLLECTORS = {"plans": (RestClient, collect_plans), "calls": (McpClient, collect_calls)}
+def _todo(row: dict) -> dict | None:
+    identity, status = _item_id(row.get("id")), row.get("status")
+    if identity is None or status not in TODO_PHASES:
+        return None
+    item_phase, reason = TODO_PHASES[status]
+    notes = _text(row.get("notes"), MAX_BODY) or None
+    due = row.get("due")
+    return {
+        "id": identity, "label": _text(row.get("area"), 40) or "to-do", "title": _text(row.get("title"), 200) or "(untitled)",
+        "status": status, "phase": item_phase, "waiting": {"who": "operator", "reason": reason} if reason else None,
+        "due": due[:10] if isinstance(due, str) and due else None,
+        "item_url": _https(row.get("source_url")), "created_at": _time(row.get("created_at")),
+        "updated_at": _time(row.get("updated_at")),
+        "body": notes, "detail": notes is not None, "updates": [], "asks": [], "refs": [],
+        "pr_number": None, "pr_url": None, "preview_url": None, "claimed_by": None, "requester": None,
+        "blocked_reason": None, "status_text": None,
+    }
+
+
+def collect_todos(client: SupabaseClient, source: WorkSource, now: datetime | None = None) -> tuple[list[dict], bool]:
+    since = ((now or datetime.now(timezone.utc)) - TODO_DONE_WINDOW).replace(microsecond=0)
+    query = "select=%s&or=(status.neq.done,done_at.gte.%s)&order=created_at.asc&limit=%d" % (
+        TODO_COLUMNS, quote(iso_time(since), safe=""), MAX_ITEMS)
+    rows = client.get("/%s?%s" % (quote(source.table or "", safe=""), query))
+    if not isinstance(rows, list):
+        raise WorkError("invalid_response", "the table read returned no rows")
+
+    def shown(row: dict) -> bool:
+        # The window is applied here too: a done row with no done_at, or an older one, never shows.
+        done_at = parse_time(row.get("done_at"))
+        return row.get("status") != "done" or (done_at is not None and done_at >= since)
+    items = [_todo(row) for row in _rows(rows) if shown(row)]
+    return [item for item in items if item], len(rows) >= MAX_ITEMS
+
+
+COLLECTORS = {"plans": (RestClient, collect_plans), "calls": (McpClient, collect_calls),
+              "supabase-todos": (SupabaseClient, collect_todos)}
 
 
 class WorkFeed:
@@ -367,7 +436,8 @@ class WorkFeed:
     def _read(self, source: WorkSource) -> dict:
         try:
             transport, collect = COLLECTORS[source.kind]
-            items, truncated = collect(transport(source.endpoint, read_token(source.token_file, self.uid), self.opener), source)
+            client = transport(source.endpoint, read_token(source.token_file, self.uid), self.opener)
+            items, truncated = collect(client, source, self.wall_clock())
             return {"items": items, "truncated": truncated, "sampled_at": iso_time(self.wall_clock()), "error": None}
         except WorkError as error:
             return {"error": error.code}

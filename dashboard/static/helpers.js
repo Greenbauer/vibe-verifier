@@ -14,7 +14,8 @@
     pending: "Pending", running: "Running", waiting: "Waiting", unknown: "Unknown", working: "Working", idle: "Idle",
     paused: "Paused", down: "Down", ready: "Ready", busy: "Busy", offline: "Offline",
     submitted: "Queued", backlog: "Backlog", in_progress: "In progress", in_review: "In review",
-    pr_ready: "PR ready", await_answer: "Awaiting answer", blocked: "Blocked", merged: "Merged", closed: "Closed"
+    pr_ready: "PR ready", await_answer: "Awaiting answer", blocked: "Blocked", merged: "Merged", closed: "Closed",
+    todo: "To do", done: "Done"
   };
 
   // Filters and the selected bot, saved in this browser for every tab. Where you are lives in the URL instead.

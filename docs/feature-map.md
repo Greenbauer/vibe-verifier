@@ -273,16 +273,42 @@ from its own arguments and the map, and never takes the explorer's word for whic
 selected. For each selected feature it requires:
 
 - exactly one `regression-check` line, a PASS whose anchor resolves. A missing line, a FAIL, or a
-  PASS that points at nothing is a finding;
+  PASS that points at nothing is a finding, except a FAIL the base branch has too (below);
 - at least one walked step in the evidence: a `- step k:` line in `qae/features/<id>.md` whose
   screenshot `qae/features/<id>-step-k.png` is there. A feature with a line and no walked step was
   not re-walked, which is a finding, never a pass. (`--features` therefore needs `--artifacts`.)
+
+**A FAIL that main has too.** A walked state can fail on a pull request that never touched it, because
+main already shows it: replayed on the 15 re-walk FAILs of 2026-10-12 to 10-15, 6 were already on
+main, and one of them failed a single unrelated pull request 5 times. When the consumer's workflow
+gives the explorer a second site built from the base branch, by writing `qae-inputs/base-site.md` (its
+URL, how to sign in there and what state it starts in, the same way `site.md` describes the
+pull request's site), the explorer walks each state that failed once more on that site, logs it to
+`qae/features/base/<id>.md` with a screenshot per step, and, when it fails the same way there, adds
+one line:
+
+```
+regression-known: sign-in -- the same error page (qae/features/base/sign-in.md::step 1: signed in as the test user -> an error page)
+```
+
+The gate then prints that feature's FAIL as a warning, naming what main shows, and does not fail
+the run: the pull request did not cause it, and main's owner fixes it. The line counts only with
+its own walk: an anchor that resolves to a step line of `base/<id>.md`, and that step's screenshot,
+neither of them a file the pull request's branch commits (the evidence directory can sit inside the
+checkout).
+Without them, or for a feature whose `regression-check` line is not a FAIL, it changes nothing.
+Without `base-site.md` the explorer walks nothing twice and a FAIL stays a finding. The gate
+judges the evidence, not that file. Two limits: whether the base branch fails "the same way" is
+the explorer's reading of both walks, like any verdict it writes; and `qae-artifacts` still judges
+every request to the pull request's own declared origins, so a base-branch site should use origins
+of its own (its own API and database) or a failure it shows there can fail the run anyway.
 
 It prints how many steps were walked and each `regression-skip` line, and judges neither the
 number of states nor what the skip line says: nothing the gate decides is read from the
 explorer's prose. `qae-artifacts` holds the feature step logs to the same screenshot rule as the
 criteria's, and the QA review comment lists each re-walked feature with the word the explorer
-wrote and the states it left unwalked.
+wrote, what it says the base branch's site showed for a state that failed, and the states it left
+unwalked.
 
 **Limits.** The re-walk runs when the explorer runs, that is on a pull request that lists acceptance
 criteria. One that declares `- None: <why>` is not explored, so it is not re-walked either: the

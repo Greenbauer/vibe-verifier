@@ -74,9 +74,11 @@ class WorkSource:
     token_file: Path
     repository: str | None = None
     app_origin: str | None = None
+    # supabase-todos only: the table PostgREST reads under <endpoint>/rest/v1.
+    table: str | None = None
 
 
-WORK_KINDS = ("plans", "calls")
+WORK_KINDS = ("plans", "calls", "supabase-todos")
 
 
 def _https_url(value: object, where: str, *, origin_only: bool) -> str:
@@ -109,7 +111,9 @@ def _work_repository(value: object, owner: str) -> str | None:
 def _parse_work_source(row: object, owner: str) -> WorkSource:
     if not isinstance(row, dict):
         raise ConfigError("work source must be an object")
-    _only_keys(row, {"id", "label", "kind", "endpoint", "token_file", "repository", "app_origin"}, "work source")
+    todos = row.get("kind") == "supabase-todos"
+    _only_keys(row, {"id", "label", "kind", "url", "table", "token_file"} if todos else
+               {"id", "label", "kind", "endpoint", "token_file", "repository", "app_origin"}, "work source")
     identity, label, kind, token_file = row.get("id"), row.get("label"), row.get("kind"), row.get("token_file")
     if not isinstance(identity, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", identity):
         raise ConfigError("work source id must be a lowercase slug")
@@ -119,6 +123,12 @@ def _parse_work_source(row: object, owner: str) -> WorkSource:
         raise ConfigError("work source kind must be one of: %s" % ", ".join(WORK_KINDS))
     if not isinstance(token_file, str) or not Path(token_file).is_absolute():
         raise ConfigError("work source token_file must be an absolute path")
+    if todos:
+        table = row.get("table")
+        if not isinstance(table, str) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", table):
+            raise ConfigError("work source table must be a lowercase table name")
+        return WorkSource(identity, label, kind, _https_url(row.get("url"), "work source url", origin_only=True),
+                          Path(token_file), table=table)
     app_origin = row.get("app_origin")
     return WorkSource(identity, label, kind, _https_url(row.get("endpoint"), "work source endpoint", origin_only=False),
                       Path(token_file), _work_repository(row.get("repository"), owner),
