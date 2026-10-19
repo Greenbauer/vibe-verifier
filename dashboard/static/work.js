@@ -20,6 +20,7 @@
 
   function workDetail(item, now) {
     if (!item.detail) return null;
+    if (item.source_kind === "supabase-todos") return el("details", { class: "work-detail" }, el("summary", {}, "Notes"), workText(item.body));
     const parts = [];
     if (item.status_text) parts.push(el("p", { class: "muted" }, item.status_text));
     if (item.body) parts.push(el("h3", {}, "Request"), workText(item.body));
@@ -39,7 +40,9 @@
 
   function workCard(item, now) {
     const updated = ageClass(item.updated_at, now);
-    const who = [item.requester ? `from ${item.requester}` : null,
+    // A to-do has no claim; it has a due date.
+    const todo = item.source_kind === "supabase-todos";
+    const who = todo ? (item.due ? `due ${item.due}` : null) : [item.requester ? `from ${item.requester}` : null,
       item.claimed_by ? `claimed by ${item.claimed_by}` : (item.phase === "done" ? null : "unclaimed")].filter(Boolean).join(" · ");
     return el("article", { class: "work-card" },
       el("div", { class: "work-card-head" }, el("span", { class: "mono muted" }, item.label), badge(item.status)),
@@ -80,8 +83,8 @@
     content.append(el("div", { class: "work-board" },
       workColumn("todo", "To do", "Not picked up yet, oldest first", groups.todo, now),
       workColumn("progress", "In progress", "Claimed or being built", groups.progress, now),
-      workColumn("waiting", "Waiting on you", "Blocked, an Ask without a ruling, or a PR to merge", groups.waiting, now),
-      workColumn("done", "Done", "Merged or closed", groups.done, now, true)));
+      workColumn("waiting", "Waiting on you", "Blocked, an Ask without a ruling, a PR to merge, or a to-do marked waiting", groups.waiting, now),
+      workColumn("done", "Done", "Merged, closed, or a to-do done", groups.done, now, true)));
   }
 
   window.VVWork = { render };
