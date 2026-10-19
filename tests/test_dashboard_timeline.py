@@ -87,7 +87,7 @@ const renderPrRows=new Function('el','state','snapshot','rememberView','flattenP
 const prFilters=new Function('el','state','repositoriesWithPulls','renderPrRows', filters+'return prFilters;')(
   el, state, helpers.repositoriesWithPulls, renderPrRows);
 const toolbar=prFilters(pulls);
-const menu=toolbar.children.find(node=>node.attrs.id==='time-scale');
+const menu=toolbar.children.flatMap(node=>node.attrs.class==='toolbar-group'?node.children:[node]).find(node=>node.attrs.id==='time-scale');
 renderPrRows();
 menu.attrs.onchange({target:{value:'row'}});
 console.log(JSON.stringify({options:menu.children.map(option=>[option.attrs.value, option.attrs.selected, option.children[0]]),
@@ -95,8 +95,8 @@ console.log(JSON.stringify({options:menu.children.map(option=>[option.attrs.valu
 """], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         got = json.loads(result.stdout)
-        self.assertEqual(got["options"], [["shared", True, "Same time scale for every row"],
-                                          ["row", False, "Fit each row's timeline"]])
+        self.assertEqual(got["options"], [["shared", True, "Same time scale"],
+                                          ["row", False, "Fit each row"]])
         self.assertEqual(got["label"], "CI timeline scale")
         # The menu saves the choice and redraws: the shared scale first, then null, which fits each row.
         self.assertEqual((got["state"], got["drawn"]), ("row", [3600000, None]))

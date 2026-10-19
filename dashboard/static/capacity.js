@@ -212,7 +212,7 @@
 
   function render(content, snapshot, { heading, empty, sourceBanner, rerender }) {
     const capacity = snapshot.telemetry.available ? snapshot.telemetry.capacity : null;
-    content.replaceChildren(heading("Capacity", "What each runner is doing, and how busy the lane has been."));
+    content.replaceChildren(heading("Capacity"));
     if (!capacity || !capacity.available) { content.append(empty("Capacity telemetry unavailable", "No valid current-owner capacity snapshot was provided.")); return; }
     if (capacity.stale) content.append(sourceBanner(`Capacity telemetry is stale. Last sample: ${formatTime(capacity.sampled_at)}.`, "warning"));
     const now = Date.now();

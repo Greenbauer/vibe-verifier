@@ -119,14 +119,16 @@ main { min-width: 0; min-height: 0; overflow: auto; padding: 12px 22px; }
 }
 .section-heading { margin-bottom: 12px; }
 .section-heading p { margin-top: 6px; font-size: 12px; }
-.section-heading:has(.toolbar) { flex-wrap: wrap; align-items: center; }
-.section-heading .toolbar { flex: 1 1 700px; justify-content: flex-end; margin: 0; }
+.section-heading:has(.toolbar) { flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 12px; }
+/* The toolbar's search and two groups wrap as items of the heading row itself, so whatever fits stays beside the title. */
+.section-heading .toolbar { display: contents; }
 .title-warning { display: flex; align-items: center; gap: 6px; color: var(--yellow); }
 .warning-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--yellow); }
 .source-banner { margin: 0 0 12px; padding: 9px 12px; border: 1px solid var(--line); border-left: 3px solid var(--green); border-radius: 5px; background: var(--panel); font-size: 12px; }
 .source-banner.warning { border-left-color: var(--yellow); }
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
-.toolbar input[type="search"] { flex: 1 1 240px; }
+.toolbar input[type="search"] { flex: 0 1 260px; width: 260px; min-width: 0; }
+.toolbar-group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 input[type="search"], select { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 8px 10px; }
 .check-filter { min-height: 36px; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
 .check-filter input { accent-color: var(--green); }
@@ -343,6 +345,9 @@ button.timeline-name { min-height: 0; padding: 0; border: 0; background: transpa
   main { padding: 16px 11px; }
   h1 { font-size: 21px; }
   input[type="search"], select { font-size: 16px; }
+  .section-heading .toolbar input[type="search"] { flex: 1 1 0; width: auto; }
+  .section-heading .toolbar-group { flex: 1 1 100%; min-width: 0; flex-wrap: nowrap; }
+  .toolbar-group select { flex: 1 1 0; min-width: 0; }
   .list-heading { display: none; }
   .pr-row { grid-template-columns: minmax(0, 1fr) auto; padding: 13px 11px; }
   .pr-work, .progress-copy, .pr-row > .progress-copy:not(.ci-copy), .timeline-cell { grid-column: 1 / 3; }
