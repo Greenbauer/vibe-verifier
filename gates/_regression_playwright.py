@@ -10,12 +10,17 @@ job's own local stack (a local database started before the gate) for that site t
 The gate never runs the config as it is. For each Playwright call it writes a wrapper beside the config, a .ts
 file (Playwright 1.59 and 1.64 both load a .ts wrapper of a .ts, .mts, .js, .mjs or .cjs config, in a CommonJS or
 an ES module package; an .mjs wrapper of a .ts config fails on 1.59), which imports the config and:
-- gives every browser context a proxy that is a port on this machine the gate holds bound and never listens on,
-  bypassed only for loopback names, so a page or the `request` fixture that reaches for any other host fails;
+- gives every browser context a proxy that is a port on this machine nothing listens on, bypassed only for
+  loopback names, so a page or the `request` fixture that reaches for any other host fails;
 - starts every webServer itself (`reuseExistingServer: false`): a server already running serves whatever code it
   was started with, so Playwright fails on one rather than test the wrong code;
 - reports through the gate's reporter (REPORTER), and writes the webServers it was given to a file, since a list
   of webServers is not in what a reporter sees.
+
+The Node side of the run (the site's server, the specs' own code, a global setup) gets the same proxy through
+HTTP_PROXY and HTTPS_PROXY with NO_PROXY for loopback and NODE_USE_ENV_PROXY=1 (node_proxy()), which Node's own
+fetch and http follow on Node 22.23 and which libraries that read HTTP_PROXY follow; a raw TCP client such as a
+database driver does not, and the refusal of credentials for anywhere else is what stops it authenticating there.
 
 Before each run, `playwright test --list`, which loads the config and the specs and starts no server, no global
 setup and no browser, says which project collects which spec and with what baseURL. The gate refuses (exit 2)
@@ -29,7 +34,8 @@ a pass, `unexpected` a failure with its error, `skipped` a skip. A file that doe
 collecting any file, so a listing that fails is listed again one file at a time to find which. A test that
 reached for a blocked host, a failed test of another file (a setup project the spec depends on), and an error
 no test owns (a webServer that did not start, a global setup that threw) are exit 2: the run cannot say whether
-the bug shows.
+the bug shows. A spec is listed at all only when it could be one (gates/_regression_frameworks.py,
+maybe_playwright): a fix whose tests import another framework, or that node:test runs, never starts Playwright.
 """
 import json
 import os
@@ -45,6 +51,7 @@ from _tools import run_tool
 
 CLIS = (os.path.join("@playwright", "test", "cli.js"), os.path.join("playwright", "cli.js"))
 BYPASS = "localhost,127.0.0.1,[::1],*.localhost"
+NO_PROXY = "localhost,127.0.0.1,::1,.localhost"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 REGEX_SPECIAL = re.compile(r"([\\^$.*+?()[\]{}|/])")
 LOCAL_ONLY = ("This gate runs a spec only against a site the config's webServer starts on this machine, reading the "
@@ -120,10 +127,19 @@ def described(message):
     return " ".join([first_line(lines[0])] + [line for line in lines[1:8] if line.startswith(("Expected", "Received"))])
 
 
-def refuse_credentials(where, environment, directories, local_names, servers=()):
-    refused = _local_only.refusals(environment, directories, local_names, servers)
+def refuse_credentials(where, environment, paths, local_names, servers=()):
+    refused = _local_only.refusals(environment, paths, local_names, servers)
     if refused:
         raise CannotRun(REFUSED % (where, "; ".join(refused)))
+
+
+def node_proxy(port):
+    """The environment that sends the Node side of a run (the site's server, the specs' own code, a global setup) to the
+    same dead proxy: Node's fetch and http with NODE_USE_ENV_PROXY (Node 22.23 checked), and any library that reads
+    HTTP_PROXY. A raw TCP client, such as a database driver, does not read it."""
+    proxy = "http://127.0.0.1:%d" % port
+    return {"HTTP_PROXY": proxy, "HTTPS_PROXY": proxy, "http_proxy": proxy, "https_proxy": proxy,
+            "NO_PROXY": NO_PROXY, "no_proxy": NO_PROXY, "NODE_USE_ENV_PROXY": "1"}
 
 
 def read_json(path):
@@ -141,17 +157,17 @@ def call(repo, config, files, listing, local_names, deadline, timeout):
     directory = os.path.dirname(os.path.join(root, config))
     if not os.path.isfile(os.path.join(root, config)):
         raise CannotRun("--playwright %s is not a file in the repository" % config)
-    refuse_credentials("--playwright " + config, dict(os.environ), [root, directory], local_names)
+    refuse_credentials("--playwright " + config, dict(os.environ), _local_only.env_files_under(root), local_names)
     entry = cli(directory)
     if entry is None or not shutil.which("node"):
         raise CannotRun("no Playwright is installed for %s: install the project's dependencies, its browsers and its local "
                         "stack before this gate, which runs the project's own Playwright" % config)
     scratch = tempfile.mkdtemp(prefix="vv-regression-")
     wrapper = os.path.join(directory, ".vv-regression-%d.config.ts" % os.getpid())
-    block = socket.socket()
+    with socket.socket() as probe:  # a port nothing listens on: a connection to it is refused at once
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
     try:
-        block.bind(("127.0.0.1", 0))  # bound and never listening: a connection to it is refused
-        port = block.getsockname()[1]
         report, servers, reporter = (os.path.join(scratch, name) for name in ("report.json", "servers.json", "reporter.cjs"))
         with open(reporter, "w", encoding="utf-8") as handle:
             handle.write(REPORTER)
@@ -161,13 +177,13 @@ def call(repo, config, files, listing, local_names, deadline, timeout):
         command = ["node", entry, "test", "--config", wrapper, "--output", os.path.join(scratch, "results"), "--retries=0"]
         command += ["--list", "--pass-with-no-tests"] if listing else []
         code, output = run_tool(command + [pattern(os.path.join(root, path)) for path in files], directory,
-                                remaining(deadline, timeout), "Playwright", budget=timeout, advice=ADVICE)
+                                remaining(deadline, timeout), "Playwright", env=dict(os.environ, **node_proxy(port)),
+                                budget=timeout, advice=ADVICE)
         found = read_json(report)
         if not isinstance(found, dict):
             raise CannotRun("Playwright wrote no report for %s (exit %d): %s" % (config, code, output.strip()[-2000:]))
         return found, read_json(servers) or [], port
     finally:
-        block.close()
         if os.path.lexists(wrapper):
             os.remove(wrapper)
         shutil.rmtree(scratch, ignore_errors=True)
@@ -239,8 +255,8 @@ def refuse_targets(config, files, tests, projects, servers, directory, local_nam
                  for index, server in enumerate(servers) if server.get("url") and not _local_only.local_url(server["url"])]
     if problems:
         raise CannotRun("--playwright %s: %s. %s" % (config, "; ".join(problems), LOCAL_ONLY))
-    refuse_credentials("--playwright " + config, {}, [os.path.normpath(os.path.join(directory, server.get("cwd") or "."))
-                                                       for server in servers], local_names, servers)
+    refuse_credentials("--playwright " + config, {}, [path for server in servers for path in _local_only.env_files(
+        os.path.normpath(os.path.join(directory, server.get("cwd") or ".")))], local_names, servers)
 
 
 def read_run(report, wanted, config, port, repo):
@@ -248,7 +264,8 @@ def read_run(report, wanted, config, port, repo):
     if report["errors"]:
         raise CannotRun("the Playwright run of %s stopped before its tests could show anything: %s"
                         % (config, described(report["errors"][0])))
-    blocked = re.compile(r"ERR_PROXY_CONNECTION_FAILED|NS_ERROR_PROXY_CONNECTION_REFUSED|ECONNREFUSED 127\.0\.0\.1:%d\b" % port)
+    blocked = re.compile(r"ERR_PROXY_CONNECTION_FAILED|NS_ERROR_PROXY_CONNECTION_REFUSED|"
+                         r"(?:ECONNREFUSED|ECONNRESET|ETIMEDOUT) 127\.0\.0\.1:%d\b" % port)
     runs = {path: Run(None, {}) for path in wanted.values()}
     for test in report["tests"]:
         error = described(test["error"])

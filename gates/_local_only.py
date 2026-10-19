@@ -6,7 +6,8 @@ production credentials or a production address.
 A target is local when its host is loopback: localhost, a *.localhost name, 127.0.0.0/8 or ::1.
 
 A variable (from the gate's environment, which Playwright, the site and the browser inherit; a webServer's
-`env`; or a .env file a framework loads) is refused when:
+`env`; or a .env file a framework would load anywhere in the repository but node_modules and hidden directories,
+since a site started from one package of a monorepo loads that package's) is refused when:
 
 - its value is a JWT not issued by a local stack. Supabase's local CLI signs its keys `iss: supabase-demo`,
   and a local auth server's tokens name its loopback address; a hosted project's keys say `iss: supabase`
@@ -14,10 +15,12 @@ A variable (from the gate's environment, which Playwright, the site and the brow
 - its value is a database connection string (postgres, mysql, mongodb, redis, amqp), or any URL carrying a
   user or password, for a host that is not loopback;
 - its value is the address of a hosted Supabase project (*.supabase.co, *.supabase.com, *.supabase.in);
-- or its name says it is a credential (a KEY, SECRET, TOKEN, PASSWORD, PASSWD, PASS or CREDENTIALS part,
-  as in SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN, RESEND_API_KEY, VERCEL_TOKEN, DB_PASSWORD) and
+- it holds a database's bare host that is not loopback (libpq's PGHOST and PGHOSTADDR, DB_HOST, POSTGRES_HOST);
+- or its name says it is a credential (a KEY, SECRET, TOKEN, PASSWORD, PASSWD, PASS or CREDENTIALS part, or a
+  part ending in PASSWORD, PASSWD, SECRET or TOKEN, as in SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN,
+  RESEND_API_KEY, VERCEL_TOKEN, DB_PASSWORD, PGPASSWORD) and
   the manifest does not declare it the local stack's with --local-env NAME. A declared name still has its
-  value checked by the three rules above.
+  value checked by the four rules above.
 
 Values are never printed: a refusal names the variable, where it was read, and the host, issuer or project.
 """
@@ -29,6 +32,7 @@ import os
 import re
 import urllib.parse
 
+DATABASE_PARTS = {"DB", "DATABASE", "POSTGRES", "POSTGRESQL", "PG", "MYSQL", "MARIADB", "MONGO", "MONGODB", "REDIS", "SUPABASE"}
 CREDENTIAL_PARTS = {"KEY", "KEYS", "SECRET", "SECRETS", "TOKEN", "TOKENS", "PASSWORD", "PASSWORDS", "PASSWD", "PASS",
                     "CREDENTIAL", "CREDENTIALS", "APIKEY", "AUTHTOKEN"}
 DATABASE_SCHEMES = {"postgres", "postgresql", "mysql", "mariadb", "mongodb", "mongodb+srv", "redis", "rediss", "amqp", "amqps"}
@@ -87,7 +91,17 @@ def address(value):
 
 
 def credential_name(name):
-    return any(part in CREDENTIAL_PARTS for part in re.split(r"[^A-Z0-9]+", name.upper()))
+    """A KEY, SECRET, TOKEN, PASSWORD, PASSWD, PASS or CREDENTIALS part, or a part ending in PASSWORD, PASSWD, SECRET
+    or TOKEN (libpq's PGPASSWORD)."""
+    return any(part in CREDENTIAL_PARTS or part.endswith(("PASSWORD", "PASSWD", "SECRET", "TOKEN"))
+               for part in re.split(r"[^A-Z0-9]+", name.upper()))
+
+
+def database_host(name):
+    """Whether `name` holds a database's bare host: libpq's PGHOST and PGHOSTADDR, or a HOST or HOSTNAME part beside
+    a database's (DB_HOST, POSTGRES_HOST, REDIS_HOSTNAME)."""
+    parts = set(re.split(r"[^A-Z0-9]+", name.upper()))
+    return bool(parts & {"PGHOST", "PGHOSTADDR"} or parts & {"HOST", "HOSTNAME"} and parts & DATABASE_PARTS)
 
 
 def value_reason(value):
@@ -117,6 +131,9 @@ def why(name, value, local_names):
     reason = value_reason(value) if value else ""
     if reason is not None:
         return reason or None
+    hosts = [host.strip() for host in value.split(",") if host.strip()]
+    if database_host(name) and not all(local_host(host.rsplit(":", 1)[0] if host.count(":") == 1 else host) for host in hosts):
+        return "holds a database host that is not this machine (%s)" % value
     if credential_name(name) and name not in local_names:
         return "is named as a credential, and the manifest does not declare it the local stack's (--local-env %s)" % name
     return None
@@ -146,13 +163,22 @@ def env_files(directory):
             and os.path.isfile(os.path.join(directory, name))]
 
 
-def refusals(environment, directories, local_names, servers=()):
-    """Why each variable the run would inherit is refused: from `environment`, the .env files in `directories`,
-    and each webServer's `env` ({"env": {...}} in `servers`). [] when nothing is."""
+def env_files_under(root):
+    """Every .env file a framework would load anywhere under `root`, but in node_modules or a hidden directory: a
+    site started from a package of a monorepo (`pnpm --filter web dev`) loads its package's."""
+    found = []
+    for directory, names, _ in os.walk(root):
+        names[:] = sorted(name for name in names if name != "node_modules" and not name.startswith("."))
+        found += env_files(directory)
+    return found
+
+
+def refusals(environment, paths, local_names, servers=()):
+    """Why each variable the run would inherit is refused: from `environment`, the .env files in `paths`, and each
+    webServer's `env` ({"env": {...}} in `servers`). [] when nothing is."""
     found = [("the environment", name, value) for name, value in sorted(environment.items())]
-    for directory in dict.fromkeys(directories):
-        for path in env_files(directory):
-            found += [(path, name, value) for name, value in dotenv(path)]
+    for path in dict.fromkeys(paths):
+        found += [(path, name, value) for name, value in dotenv(path)]
     for index, server in enumerate(servers):
         found += [("webServer %d's env" % (index + 1), name, str(value)) for name, value in sorted((server.get("env") or {}).items())]
     return ["%s: %s %s" % (where, name, reason) for where, name, value in found

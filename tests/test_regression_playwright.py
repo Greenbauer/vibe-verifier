@@ -8,12 +8,11 @@ playwright's own program), and the catalog pins `playwright`, not `@playwright/t
 same three files, so the gate finds `@playwright/test/cli.js` as it does in a subscriber, and every line that
 runs a test is Playwright's.
 
-`Refusals` needs Playwright's package but no browser: PLAYWRIGHT_BROWSERS_PATH names an empty directory, so a run
-that got as far as a browser would fail on a missing one instead. `RealBrowser` needs the pinned chromium; it
+The refusals, which need no browser, are tests/test_regression_playwright_refusals.py. `RealBrowser` needs the
+pinned chromium; it
 skips without one, except where VV_REGRESSION_BROWSER=required (the catalog's qae-browser CI job), where that is
 a failure. The gate runs with a minimal environment (PATH, HOME, TMPDIR, LANG and the browsers path), never this
 machine's own, whose tokens it would rightly refuse."""
-import http.server
 import json
 import os
 import shutil
@@ -21,12 +20,10 @@ import socket
 import subprocess
 import sys
 import tempfile
-import threading
 import unittest
 from pathlib import Path
 
 from helpers import ROOT, make_repo
-from test_local_only import HOSTED, jwt
 from test_regression_test import findings, tree_is_head
 
 sys.path.insert(0, str(ROOT / "gates"))
@@ -44,6 +41,10 @@ createServer((request, response) => {
   response.end(`<h1 id="total">${discount(200, true)}</h1>`);
 }).listen(Number(process.env.PORT), "127.0.0.1");
 """
+# The same site, whose server first fetches another host and records how that went: the Node side of a run is proxied too.
+SERVER_FETCHES = SERVER.replace('appendFileSync("started.log", "started\\n");', """const outside = await fetch("https://rates.example.com/", { signal: AbortSignal.timeout(5000) })
+  .then((response) => "reached " + response.status, (error) => "blocked " + (error.cause?.code || error.name));
+appendFileSync("started.log", "outside: " + outside + "\\n");""")
 CONFIG = """import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "e2e",
@@ -118,99 +119,6 @@ class Fixture(unittest.TestCase):
                               capture_output=True, text=True, env=env or self.env())
 
 
-class Refusals(Fixture):
-    """Stopped before any of the pull request's code starts: no server, no global setup, no browser."""
-
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        cls.browsers = tempfile.mkdtemp(prefix="vv-no-browsers-")
-
-    @classmethod
-    def tearDownClass(cls):
-        shutil.rmtree(cls.browsers, ignore_errors=True)
-
-    def refused(self, repo, said, env=None):
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak", env=env)
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn(said, result.stderr)
-        self.assertFalse(Path(repo, "started.log").exists(), "the site started")
-        tree_is_head(self, repo)
-        return result
-
-    def test_a_target_that_is_not_this_machine_is_refused_before_anything_starts(self):
-        for base in ("https://app.example.com", "https://pr-7.preview.example.com"):
-            with self.subTest(base=base):
-                result = self.refused(self.project(base=base), "--playwright playwright.config.mjs: its project targets %s, "
-                                                               "which is not this machine" % base)
-                self.assertIn("never production, and never a preview, which serves the pull request's head", result.stderr)
-
-    def test_a_config_that_starts_no_site_here_is_refused(self):
-        repo = self.project({"playwright.config.mjs": "import { defineConfig } from \"@playwright/test\";\n"
-                                                      "export default defineConfig({ testDir: \"e2e\", use: { baseURL: "
-                                                      "\"http://127.0.0.1:4321\" } });\n"})
-        self.refused(repo, "it starts no webServer, so nothing serves the code under test from this working tree")
-
-    def test_a_production_credential_in_what_the_run_inherits_is_refused_before_playwright_starts(self):
-        secrets = {"SUPABASE_SERVICE_ROLE_KEY": jwt({"iss": "supabase", "ref": HOSTED, "role": "service_role"}),
-                   "DATABASE_URL": "postgresql://postgres:hunter2@db.%s.supabase.co:5432/postgres" % HOSTED,
-                   "NEXT_PUBLIC_SUPABASE_URL": "https://%s.supabase.co" % HOSTED, "RESEND_API_KEY": "re_live_value"}
-        repo = self.project({".env.production": "NETSUITE_TOKEN_SECRET=ns-live-value\n"})
-        result = self.refused(repo, "the environment: SUPABASE_SERVICE_ROLE_KEY holds a token issued by supabase for project "
-                                    + HOSTED, env=self.env(secrets))
-        for said in ("the environment: DATABASE_URL holds a connection string for db.%s.supabase.co, which is not this machine" % HOSTED,
-                     "the environment: NEXT_PUBLIC_SUPABASE_URL holds the address of a hosted Supabase project (%s.supabase.co)" % HOSTED,
-                     "the environment: RESEND_API_KEY is named as a credential, and the manifest does not declare it",
-                     "/.env.production: NETSUITE_TOKEN_SECRET is named as a credential"):
-            self.assertIn(said, result.stderr)
-        for value in list(secrets.values()) + ["hunter2", "ns-live-value"]:
-            self.assertNotIn(value, result.stdout + result.stderr)
-
-    def test_a_site_whose_local_stack_is_not_running_cannot_be_judged(self):
-        # The site needs the job's local database; none is running, so it exits before it serves.
-        server = SERVER.replace('appendFileSync("started.log", "started\\n");',
-                                'console.error("the local database at 127.0.0.1:54322 is not running"); process.exit(1);')
-        repo = self.project({"server.mjs": server})
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("the Playwright run of playwright.config.mjs stopped before its tests could show anything: "
-                      "Error: Process from config.webServer was not able to start. Exit code: 1", result.stderr)
-        tree_is_head(self, repo)
-
-    def test_a_server_already_answering_at_the_site_s_address_cannot_be_judged(self):
-        # It would serve whatever code it was started with, so Playwright must not reuse it.
-        repo = self.project()
-        squatter = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Answers)
-        threading.Thread(target=squatter.serve_forever, daemon=True).start()
-        try:
-            result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
-        finally:
-            squatter.shutdown()
-            squatter.server_close()
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("the Playwright run of playwright.config.mjs stopped before its tests could show anything: "
-                      "Error: http://127.0.0.1:%d is already used" % self.port, result.stderr)
-        tree_is_head(self, repo)
-
-    def test_no_playwright_installed_cannot_be_judged(self):
-        repo = self.project()
-        shutil.rmtree(Path(repo, "node_modules"))
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("no Playwright is installed for playwright.config.mjs", result.stderr)
-
-
-class Answers(http.server.BaseHTTPRequestHandler):
-    """A server already running at the site's address: it answers every request, and logs nothing."""
-
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-
-    def log_message(self, *_):
-        pass
-
-
 def has_browser():
     """Whether the pinned Playwright's chromium is installed where this environment's Playwright looks."""
     toolchain = Path(ensure_node_tool("qae-browser")) / "node_modules" / "playwright"
@@ -268,6 +176,23 @@ class RealBrowser(Fixture):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("e2e/rates.spec.mjs: reads the rates reached for a host that is not this machine, which this gate blocks: "
                       "Error: page.goto: net::ERR_PROXY_CONNECTION_FAILED at https://rates.example.com/today", result.stderr)
+        tree_is_head(self, repo)
+
+    def test_the_request_fixture_reaching_for_another_host_is_blocked_and_cannot_be_judged(self):
+        repo = self.project()
+        spec = SPEC + 'test("reads the rates", async ({ request }) => {\n  await request.get("https://rates.example.com/today");\n});\n'
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/rates.spec.mjs": spec}, "--soak")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertRegex(result.stderr, r"e2e/rates\.spec\.mjs: reads the rates reached for a host that is not this machine, which this "
+                                        r"gate blocks: Error: apiRequestContext\.get: connect ECONNREFUSED 127\.0\.0\.1:\d+")
+        tree_is_head(self, repo)
+
+    def test_the_site_s_own_server_reaching_for_another_host_is_blocked(self):
+        # Node's fetch in the site's server goes through the same dead proxy (HTTPS_PROXY with NODE_USE_ENV_PROXY), in both runs.
+        repo = self.project({"server.mjs": SERVER_FETCHES})
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(Path(repo, "started.log").read_text(), "outside: blocked ECONNREFUSED\n" * 2)
         tree_is_head(self, repo)
 
 

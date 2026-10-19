@@ -39,7 +39,8 @@ target is not this machine or what the run inherits holds a credential for anywh
 (gates/_regression_playwright.py, gates/_local_only.py). Another Playwright test, a Jest test (it imports
 @jest/globals, or its package has a Jest config, a jest dependency or a `jest` key), a bun test (it
 imports bun:test, or its package's scripts run `bun test`), a node:test file the repository does not
-run with `node --test`, a shell or other test, and a --tests path are reported as not judged, naming
+run with `node --test`, a shell or other test, and a --tests path no --playwright config collects are
+reported as not judged, naming
 the runner, and a fix whose only tests are such files cannot be judged (exit 2), except that a fix whose
 only such files are Jest or bun tests (the repository's own runner, which this gate does not run yet)
 passes qualified, each file an advisory, so a soak in a Jest or bun repository is not exit 2.
@@ -69,7 +70,7 @@ from contextlib import contextmanager
 
 from _acceptance import DASH
 from _contract import PY_TESTS, CannotRun, Finding, git, matches, qualify, resolve_base, run_gate
-from _regression_frameworks import JS, UNSUPPORTED_NAMES, classify, node_test
+from _regression_frameworks import JS, UNSUPPORTED_NAMES, classify, maybe_playwright, node_test
 from _regression_node import run_node
 from _regression_playwright import collected, run_playwright
 from _regression_runners import missing, run_python, run_vitest
@@ -259,6 +260,17 @@ def none_ran(not_judged, unsupported):
                     % "; ".join("%s: %s" % item for item in not_judged))
 
 
+def runners(args, tests, deadline):
+    """classify()'s three answers, and `plans`: how the repository runs each node:test file, and the config that runs
+    each Playwright spec, read at HEAD."""
+    listed = collected(args.repo, args.playwright, [path for path in tests if maybe_playwright(args, path)],
+                       set(args.local_env or ()), deadline, args.timeout) if args.playwright else ({}, {})
+    judged, not_judged, unsupported = classify(args, tests, listed)
+    plans = {path: node_test(args, path) if what == "node" else listed[0][path]
+             for path, what in judged.items() if what in ("node", "playwright")}
+    return judged, not_judged, unsupported, plans
+
+
 def compare(args, base, changed, tests, is_test_code):
     """Run the changed tests at HEAD and on the code before the fix, and judge them."""
     dirty = git(args.repo, "--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=all", "--",
@@ -267,11 +279,7 @@ def compare(args, base, changed, tests, is_test_code):
         raise CannotRun("the working tree differs from HEAD at a path the pull request changed (%s): this gate swaps those "
                         "files and puts them back, so commit or stash first" % dirty.split("\0")[0][3:])
     deadline = time.monotonic() + args.timeout
-    listed = collected(args.repo, args.playwright, [path for path in tests if path.endswith(JS)], set(args.local_env or ()),
-                       deadline, args.timeout) if args.playwright else ({}, {})
-    judged, not_judged, unsupported = classify(args, tests, listed)
-    plans = {path: node_test(args, path) if what == "node" else listed[0][path]
-             for path, what in judged.items() if what in ("node", "playwright")}
+    judged, not_judged, unsupported, plans = runners(args, tests, deadline)
     passed = passed_at_head(run_tests(args, judged, deadline, plans) if judged else {}, judged, not_judged)
     for path, why in not_judged:
         note("%s: not judged: %s" % (path, why))

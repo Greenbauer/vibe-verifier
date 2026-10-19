@@ -121,6 +121,17 @@ def kind(args, path, listed):
     return framework(args.repo, path, text)
 
 
+def maybe_playwright(args, path):
+    """Whether a changed test could be a Playwright spec, so it is listed under the --playwright configs: a JS or TS
+    file that imports no other framework and that no package.json script runs with `node --test`. The others never
+    start Playwright, so a fix with only those needs nothing a browser run does."""
+    if not path.endswith(JS) or node_test(args, path):
+        return False
+    with open(os.path.join(args.repo, path), encoding="utf-8", errors="replace") as handle:
+        text = handle.read()
+    return not any(found.search(text) for found in (VITEST, NODE_TEST, BUN_TEST, JEST_GLOBALS))
+
+
 def playwright_why(args, path, unloaded):
     """Why a Playwright spec is not run: no --playwright config collects it, or it does not load under one."""
     if path in unloaded:

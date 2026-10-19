@@ -35,7 +35,9 @@ class LocalOnly(unittest.TestCase):
                             ("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"),
                             ("REDIS_URL", "redis://localhost:6379"), ("SUPABASE_URL", "http://127.0.0.1:54321"),
                             ("NEXT_PUBLIC_SITE_URL", "http://app.localhost:3000"), ("GITHUB_SERVER_URL", "https://github.com"),
-                            ("PLAYWRIGHT_AUTH_BYPASS", "true"), ("PWD", "/work"), ("TEST_BASE_URL", "")):
+                            ("PLAYWRIGHT_AUTH_BYPASS", "true"), ("PWD", "/work"), ("TEST_BASE_URL", ""),
+                            ("PGHOST", "127.0.0.1:54322"), ("DB_HOST", "localhost"), ("POSTGRES_HOST", "::1"),
+                            ("SITE_HOST", "app.example.com")):
             self.assertIsNone(_local_only.why(name, value, set()), name)
         self.assertIsNone(_local_only.why("SESSION_SECRET", "a-local-secret", {"SESSION_SECRET"}))
 
@@ -49,11 +51,13 @@ class LocalOnly(unittest.TestCase):
                  "holds a connection string for aws-0-us-east-1.pooler.supabase.com"),
                 ("DIRECT_URL", "postgresql://db.internal.example.com/app", "holds a connection string for db.internal.example.com"),
                 ("WEBHOOK", "https://user:pass@hooks.example.com/x", "holds an address with a password in it for hooks.example.com"),
-                ("SUPABASE_URL", "https://%s.supabase.co" % HOSTED, "holds the address of a hosted Supabase project")):
+                ("SUPABASE_URL", "https://%s.supabase.co" % HOSTED, "holds the address of a hosted Supabase project"),
+                ("PGHOST", "db.%s.supabase.co" % HOSTED, "holds a database host that is not this machine"),
+                ("REDIS_HOSTNAME", "localhost,cache.example.com", "holds a database host that is not this machine")):
             self.assertIn(said, _local_only.why(name, value, {name}) or "", name)
         for name in ("SUPABASE_ACCESS_TOKEN", "VERCEL_TOKEN", "RESEND_API_KEY", "NETSUITE_CONSUMER_KEY", "CRON_SECRET",
                      "SUPABASE_DB_PASSWORD", "AWS_SECRET_ACCESS_KEY", "GH_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "DB_PASS",
-                     "npm_config__authtoken"):
+                     "npm_config__authtoken", "PGPASSWORD", "MYSQLPASSWORD", "STRIPESECRET"):
             self.assertIn("is named as a credential", _local_only.why(name, "a-value", set()) or "", name)
 
     def test_only_loopback_is_this_machine(self):
@@ -69,6 +73,13 @@ class LocalOnly(unittest.TestCase):
             (directory / name).write_text("export A_KEY='x' # a comment\nB=\"y\"\n# C_TOKEN=z\nD=plain # note\n")
         self.assertEqual([Path(path).name for path in _local_only.env_files(str(directory))], [".env", ".env.local", ".env.production"])
         self.assertEqual(_local_only.dotenv(str(directory / ".env")), [("A_KEY", "x"), ("B", "y"), ("D", "plain")])
+        # Anywhere in the repository, as a site started from one package of a monorepo loads its package's, but not
+        # in node_modules or a hidden directory.
+        for path in ("apps/web/.env.local", "node_modules/pkg/.env", ".next/.env", "apps/web/.env.example"):
+            (directory / path).parent.mkdir(parents=True, exist_ok=True)
+            (directory / path).write_text("A=b\n")
+        self.assertEqual([str(Path(path).relative_to(directory)) for path in _local_only.env_files_under(str(directory))],
+                         [".env", ".env.local", ".env.production", "apps/web/.env.local"])
 
 
 class Filters(unittest.TestCase):

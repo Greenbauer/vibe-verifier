@@ -502,24 +502,31 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   serves the pull request's head and never the code before the fix. Before every Playwright call, and
   for each `webServer`'s `env` and `cwd` after the listing, it refuses a credential for anywhere else
   in what the run inherits (`gates/_local_only.py`): the gate's environment, which Playwright, the site
-  and the browser inherit, a `webServer`'s `env`, and the `.env` files a framework loads (`.env`,
-  `.env.<mode>`, `.env.local`, not an `.example`, `.sample`, `.template` or `.dist`) from the repository
-  root, the config's directory and each `webServer`'s `cwd`. A variable is refused when its value is a
+  and the browser inherit, a `webServer`'s `env`, and every `.env` file a framework would load (`.env`,
+  `.env.<mode>`, `.env.local`, not an `.example`, `.sample`, `.template` or `.dist`) anywhere in the
+  repository but `node_modules` and hidden directories, since a site started from one package of a
+  monorepo loads that package's. A variable is refused when its value is a
   JWT not issued by a local stack (the Supabase CLI's local keys say `iss: supabase-demo`, a local auth
   server's tokens name its loopback address; a hosted project's keys say `iss: supabase` and name its
   `ref`); a database connection string (postgres, mysql, mongodb, redis, amqp), or a URL carrying a
-  user or password, for a host that is not this machine; the address of a hosted Supabase project; or
-  when its name has a KEY, SECRET, TOKEN, PASSWORD, PASSWD, PASS, CREDENTIALS, APIKEY or AUTHTOKEN part
-  (SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN, RESEND_API_KEY, VERCEL_TOKEN, DB_PASSWORD,
-  ACTIONS_ID_TOKEN_REQUEST_TOKEN) and `--local-env NAME` does not declare it the local stack's. A
-  declared name still has its value checked by the first three rules. A refusal names the variable,
+  user or password, for a host that is not this machine; the address of a hosted Supabase project; a
+  database's bare host that is not this machine (libpq's `PGHOST`, `DB_HOST`); or when its name has a KEY,
+  SECRET, TOKEN, PASSWORD, PASSWD, PASS, CREDENTIALS, APIKEY or AUTHTOKEN part, or a part ending in
+  PASSWORD, PASSWD, SECRET or TOKEN (SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN, RESEND_API_KEY,
+  VERCEL_TOKEN, DB_PASSWORD, PGPASSWORD, ACTIONS_ID_TOKEN_REQUEST_TOKEN) and `--local-env NAME` does not
+  declare it the local stack's. A declared name still has its value checked by the first four rules.
+  Only a changed test that could be a spec is listed at all (it imports no other framework, and no
+  package.json script runs it with `node --test`), so a fix with none never starts Playwright. A refusal names the variable,
   where it was read, and the host, issuer or project, never the value. During a run, a test that reached
-  for a blocked host (`ERR_PROXY_CONNECTION_FAILED`, `NS_ERROR_PROXY_CONNECTION_REFUSED`, or a refused
-  connection to the proxy's port) is exit 2, and so are a failed test of another file (a setup project a
+  for a blocked host (`ERR_PROXY_CONNECTION_FAILED`, `NS_ERROR_PROXY_CONNECTION_REFUSED`, or a refused,
+  reset or timed-out connection to the proxy's port) is exit 2, and so are a failed test of another file (a setup project a
   spec depends on) and an error no test owns (a `webServer` that did not start, one already answering
-  at its address, a global setup that threw): the run cannot say whether the bug shows. Code of the
-  spec's own that connects from Node is not proxied; the credential refusal is what keeps it from
-  authenticating anywhere else.
+  at its address, a global setup that threw): the run cannot say whether the bug shows. The Node side of
+  the run (the site's server, the specs' own code, a global setup) gets the same proxy through
+  `HTTP_PROXY`/`HTTPS_PROXY`, `NO_PROXY` for loopback and `NODE_USE_ENV_PROXY=1`, which Node's own `fetch`
+  and `http` follow (Node 22.23 checked) as do libraries that read `HTTP_PROXY`. A raw TCP client, such
+  as a database driver, is not proxied; the refusal of credentials and database hosts for anywhere else
+  is what keeps it from reaching outside the job.
 - **Exit 2 also when** no changed test is one it can run (only Playwright specs no `--playwright` config
   collects, shell or SQL tests, or node:test files the repository does not run with `node --test`, say:
   `--playwright`, `--node-test` or the reason line is the way out), the project's Vitest or Node is not installed, a runner writes no report, or the runs
