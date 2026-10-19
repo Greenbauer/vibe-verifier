@@ -427,8 +427,8 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   value is read from `node --help`), less the ones the gate sets (the reporter, `--watch`, sharding,
   coverage, isolation); a `--node-test` file runs as `node --test <file>` from the root, and a `--tests`
   match wins over both. Each file runs alone under the TAP reporter
-  (`--test-reporter=tap --test-reporter-destination=<file>`; tested on Node 20, 22 and 24). Other JS and
-  TS tests run under Vitest (read through its JSON reporter; tested on 4.x), from the nearest directory
+  (`--test-reporter=tap --test-reporter-destination=<file>`; tested on Node 20, 22 and 24). A Vitest
+  test (below) runs under Vitest (read through its JSON reporter; tested on 4.x), from the nearest directory
   holding a Vitest or Vite config, else a `package.json`, else the root, so each package of a monorepo
   runs with its own config. Python tests run under `--python` (default `python3`): its pytest when
   installed there, and unittest, loading the file as `python -m unittest discover -s <its directory>`
@@ -445,7 +445,8 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   its package says Jest), a bun test (it imports `bun:test`, or its package's scripts run `bun test`),
   a file whose calls no package claims, one that imports `node:test` that the repository does not run
   with `node --test`, a shell or other test, a script judged only by its exit code, and every `--tests`
-  path are reported as not judged, naming the runner and the file that says so. The first run is at HEAD, where every test of the judged files must pass:
+  path are reported as not judged, with why: a Jest or bun test names its runner and the import or the
+  file that says so. The first run is at HEAD, where every test of the judged files must pass:
   a failing one is the pull request's red suite and exit 2, and a file that does not load there is not
   judged. The second is on the code before the fix: the working tree with every non-test path the
   fix changed (its documentation included) restored to the merge base, and its test code left at HEAD.

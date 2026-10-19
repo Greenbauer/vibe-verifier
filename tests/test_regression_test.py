@@ -200,8 +200,13 @@ class Rules(unittest.TestCase):
         calls = 'describe("price", () => {\n  it("gives members 10% off", () => { expect(1).toBe(1); });\n});\n'
         files = {"apps/api/src/price.test.ts": calls, "apps/quote/price.test.ts": 'import { expect, it } from "bun:test";\n' + calls}
         repo = make_repo(self, {"src/price.ts": PRICE_BUG, "apps/api/jest.config.js": "module.exports = {};\n"})
-        result = fix(repo, dict({"src/price.ts": PRICE_FIX}, **files), "fix(price): x", "", "--format", "json", *self.NO_RUNNER)
+        qualifier = Path(tempfile.mkdtemp(prefix="vv-qualifier-")) / "note"
+        self.addCleanup(shutil.rmtree, qualifier.parent, True)
+        result = fix(repo, dict({"src/price.ts": PRICE_FIX}, **files), "fix(price): x", "", "--format", "json", *self.NO_RUNNER,
+                     env={"VIBE_VERIFIER_QUALIFIER": str(qualifier)})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(qualifier.read_text(), "not judged: the changed tests run under Jest and bun test, which this gate does not "
+                                                "run yet")
         self.assertEqual([(f["path"], f["advisory"], f["message"].split(", which")[0]) for f in findings(result)], [
             ("apps/api/src/price.test.ts", True, "not judged: a Jest test (apps/api/jest.config.js)"),
             ("apps/quote/price.test.ts", True, "not judged: a bun test (it imports bun:test)")])
