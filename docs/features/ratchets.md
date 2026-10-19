@@ -24,7 +24,7 @@ Add `cognitive-complexity` and `max-file-lines` to `.vibe-verifier`.
 - `tests/test_complexity.py::test_the_base_is_the_merge_base_not_the_base_branchs_tip`
 - `tests/test_max_file_lines.py::test_a_long_file_that_shrank_or_was_untouched_passes_and_one_that_grew_fails`
 - `tests/test_max_file_lines.py::test_a_new_file_of_few_lines_over_the_token_limit_fails_and_says_how_to_split`
-- `tests/test_max_file_lines.py::test_an_over_limit_file_may_shrink_or_be_moved_but_not_grow`
+- `tests/test_max_file_lines.py::test_an_over_limit_file_may_shrink_but_not_grow`
 - `tests/test_max_file_lines.py::test_a_staged_new_file_over_the_limit_fails_and_an_unstaged_one_is_not_judged`
 - `tests/test_max_file_lines.py::test_the_staged_content_is_judged_not_the_working_tree`
 - `tests/test_complexity.py::test_an_inline_eslint_disable_does_not_hide_a_function`

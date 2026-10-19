@@ -113,7 +113,7 @@ class MaxTokens(unittest.TestCase):
         repo = branch_with(self, {"README.md": "x\n"}, {"src/wide.ts": wide(5000)})
         self.assertEqual(gate("max-file-lines", repo, "--base-ref", "HEAD~1").returncode, 0)
 
-    def test_an_over_limit_file_may_shrink_or_be_moved_but_not_grow(self):
+    def test_an_over_limit_file_may_shrink_but_not_grow(self):
         repo = branch_with(self, {"src/wide.ts": wide(6000)}, {"src/wide.ts": wide(5900)})
         self.assertEqual(gate("max-file-lines", repo, "--base-ref", "HEAD~1").returncode, 0)
         # Same line count, more bytes: the line measure did not grow, the token measure did.
@@ -127,6 +127,16 @@ class MaxTokens(unittest.TestCase):
         result = gate("max-file-lines", repo, "--base-ref", "HEAD~1", "--format", "json")
         [finding] = json.loads(result.stdout)["findings"]
         self.assertRegex(finding["message"], r"^1000 lines, over the 500 allowed \(new file\); \d+ tokens \(bytes / 4\)")
+
+    def test_files_not_written_by_hand_are_not_judged_and_exclude_drops_more(self):
+        # Lockfiles are not source; node_modules and *.d.ts never count; generated source is --exclude'd.
+        repo = branch_with(self, {"README.md": "x\n"}, {
+            "package-lock.json": wide(9000), "pnpm-lock.yaml": wide(9000), "node_modules/x/index.js": wide(9000),
+            "src/types.d.ts": wide(9000), "src/gen/client.ts": wide(9000), "src/app.ts": wide(9000)})
+        result = gate("max-file-lines", repo, "--base-ref", "HEAD~1", "--format", "json")
+        self.assertEqual([f["path"] for f in json.loads(result.stdout)["findings"]], ["src/app.ts", "src/gen/client.ts"])
+        result = gate("max-file-lines", repo, "--base-ref", "HEAD~1", "--exclude", "src/gen/**", "--format", "json")
+        self.assertEqual([f["path"] for f in json.loads(result.stdout)["findings"]], ["src/app.ts"])
 
     def test_max_tokens_sets_the_limit_and_zero_turns_it_off(self):
         repo = branch_with(self, {"README.md": "x\n"}, {"src/wide.ts": wide(3000)})
