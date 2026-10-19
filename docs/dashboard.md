@@ -203,8 +203,9 @@ waterfall (`dashboard/static/timeline.js`). It reads only times the dashboard al
 Actions job's created, started and finished times and its steps, each other app's check run, and
 each commit status. It makes no extra GitHub call.
 
-- **In the row**, the check meter's place holds one thin line per workflow, every job of that
-  workflow drawn on it. Green ran and passed, red failed, yellow is running, and dim yellow is a job
+- **In the row**, the Checks column holds one line per workflow, every job of that workflow drawn on
+  it. The lines share the cell's whole height, each up to 12 pixels with a 1-pixel gap, so a head with
+  many workflows gets thinner lines rather than a taller row. Green ran and passed, red failed, yellow is running, and dim yellow is a job
   waiting for a runner. Failures are drawn on top so they are never hidden. A dashed line marks now
   while anything is still open. Skipped checks and commit statuses are not drawn; the counts under
   the line still name them. A head whose checks have no time yet keeps the check meter.
@@ -232,7 +233,7 @@ each commit status. It makes no extra GitHub call.
 - A job's line is empty while it is still within its first 30 seconds of waiting, and another
   app's queued check draws nothing until it starts; the counts under the line include both.
 
-`tests/test_dashboard_timeline.py` runs `dashboard/static/timeline.test.js` and checks the row's
+`tests/test_dashboard_timeline.py` runs `dashboard/static/timeline.test.js` and `dashboard/static/prs.test.js` and checks the row's
 swap from the meter, the scale menu, and the bar colors and box.
 
 ## Work view
@@ -588,7 +589,8 @@ counted from the push. The time turns yellow after an hour and red after three h
 hour or exactly three hours keeps the younger color. A head with no checks, and a row whose checks
 are still from the previous push, show "pushed <age> ago" instead, which turns yellow after three
 hours and red after a day. Its right edge lines up with the meter, not
-with the comment mark beside the meter. The kind of push follows the time on that same line, and
+with the comment mark beside the meter; in a row with a CI timeline the line is in the CI column,
+left-aligned under the counts, and the comment mark sits above them. The kind of push follows the time on that same line, and
 the tooltip adds how long ago the push was:
 feature, bug fix, refactor, performance, docs, test, chore, ci,
 build, style, revert, work in progress, or update when the commit message has no such prefix.
@@ -657,8 +659,10 @@ renders as complete, and the push line sits under that notice too.
 A job that has not started has no steps yet, but it is still one waiting check, so the meter
 shows as soon as anything reports on the head. Elapsed time alone never asserts that a job is stuck.
 Once any check run on the head that was not skipped has a time, the row's [CI timeline](#ci-timeline)
-takes the meter's place; commit statuses alone do not, since the row does not draw them. The counts, CI time and push
-kind under it stay the same.
+takes the meter's place; commit statuses alone do not, since the row does not draw them. The timeline
+then has the Checks column to itself, and the counts, CI time and push kind move to the CI column
+beside it, the counts on one line and the CI time and push kind under them. A row with the meter keeps
+them under the meter, across both columns.
 
 ## Data lifecycle and uninstall
 

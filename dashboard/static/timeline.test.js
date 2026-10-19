@@ -105,13 +105,12 @@ test("rows share one time scale unless each row is fit", () => {
   assert.strictEqual(timeline.sharedScale([{ checks: [], statuses: [], runs: [] }], NOW), null);
 });
 
-test("a dense head still fits its lines in the row", () => {
+test("a dense head draws every workflow as a line, sized by the stylesheet", () => {
   const runs = Array.from({ length: 20 }, (_, index) => ({ id: index, name: `wf-${index}`, jobs: [job(index, `job-${index}`, at(0), at(0), at(1))] }));
   const box = timeline.mini({ checks: runs.map(run => check(run.id, run.name, "success")), statuses: [], runs }, NOW, null);
   const lines = box.find("timeline-line");
   assert.strictEqual(lines.length, 20);
-  assert.strictEqual(box.style.get("gap"), "0px");
-  assert.ok(lines.every(line => parseInt(line.style.get("height"), 10) * 20 <= 32));
+  assert.ok(lines.every(line => line.style.get("height") === undefined));
 });
 
 test("the expanded view lists every job with its time, bold on the critical path, links only to the owner's GitHub", () => {

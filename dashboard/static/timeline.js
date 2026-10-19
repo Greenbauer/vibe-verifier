@@ -11,7 +11,6 @@
   // GitHub creates a job that needs another the moment that one finishes. A finish this close to a
   // job's creation is read as the job it waited for.
   const LINK_SLACK = 5 * 1000;
-  const MINI_HEIGHT = 32;
   // Drawing order on a shared line: waits underneath, failures on top so a red job is never hidden.
   const LAYER = { waiting: 0, success: 1, cancelled: 1, unknown: 1, running: 2, failed: 3 };
   const TICKS = [10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400];
@@ -160,10 +159,9 @@
     if (!line.row) return null;
     const { start, span } = line.row;
     const width = Math.max(scale || 0, span);
-    const gap = groups.length > 10 ? 0 : 1;
-    const height = Math.max(1, Math.min(4, Math.floor((MINI_HEIGHT - gap * (groups.length - 1)) / groups.length)));
-    const box = el("div", { class: "timeline-mini", role: "img", "aria-label": summary(line, now), style: `gap:${gap}px` });
-    groups.forEach(group => box.append(el("div", { class: "timeline-line", style: `height:${height}px` },
+    // The lines share the row's height between them (styles.css), so a busy head gets thinner lines, not a taller row.
+    const box = el("div", { class: "timeline-mini", role: "img", "aria-label": summary(line, now) });
+    groups.forEach(group => box.append(el("div", { class: "timeline-line" },
       group.lanes.slice().sort((a, b) => LAYER[a.state] - LAYER[b.state])
         .flatMap(lane => laneBars(lane, start, width, now)))));
     if (line.running) box.append(el("i", { class: "timeline-now", style: `left:${percent(now - start, width)}` }));

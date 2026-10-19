@@ -14,12 +14,15 @@ class Timeline(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
-    def test_the_timelines_node_tests_pass(self):
+    def test_the_timeline_and_pull_request_views_node_tests_pass(self):
         # timeline.test.js: lanes, critical path, row lines and scale, expanded rows, steps, axis ticks.
-        result = subprocess.run(["node", "--test", "--test-reporter=tap", str(ROOT / "dashboard/static/timeline.test.js")],
-                                cwd=ROOT, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("# fail 0", result.stdout)
+        # prs.test.js: the whole view rendered, the Checks and CI columns, and a row opening its timeline.
+        for name in ("timeline.test.js", "prs.test.js"):
+            result = subprocess.run(["node", "--test", "--test-reporter=tap", str(ROOT / "dashboard/static" / name)],
+                                    cwd=ROOT, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertRegex(result.stdout, r"(?m)^# pass [1-9]")
+            self.assertIn("# fail 0", result.stdout)
 
     def test_a_row_draws_the_timeline_in_place_of_the_meter_and_keeps_its_caption(self):
         result = subprocess.run(["node", "-e", r'''
@@ -35,20 +38,25 @@ function el(tag, attrs={}, ...children) {
 const progress=new Function('el','checkTotals','meterSegments','meterLabel','unresolvedMark','since','ageClass','ageLabel','secondsClass','ciTiming', slice+'return progress;')(
   el, helpers.checkTotals, helpers.meterSegments, helpers.meterLabel, helpers.unresolvedMark, helpers.since, helpers.ageClass,
   helpers.ageLabel, helpers.secondsClass, helpers.ciTiming);
-const classes=node=>!node||typeof node==='string'?[]:[node.attrs.class, ...node.children.flatMap(classes)].filter(Boolean);
-const text=node=>!node?'':typeof node==='string'?node:node.children.map(text).join(' ');
+const classes=node=>!node||typeof node==='string'?[]:Array.isArray(node)?node.flatMap(classes):[node.attrs.class, ...node.children.flatMap(classes)].filter(Boolean);
+const cells=node=>Array.isArray(node)?node.map(cell=>cell.attrs.class):[node.attrs.class];
+const text=node=>!node?'':typeof node==='string'?node:Array.isArray(node)?node.map(text).join(' '):node.children.map(text).join(' ');
 const base={runs:[], statuses:[], expected:[], checks:[{name:'test', category:'failed', status:'completed'}]};
 const mini=()=>el('div',{class:'timeline-mini'});
 const timed=progress(base, Date.now(), mini());
 const untimed=progress(base, Date.now(), null);
 const none=progress({runs:[], statuses:[], expected:[], checks:[]}, Date.now(), mini());
-console.log(JSON.stringify({timed:classes(timed), timedText:text(timed), untimed:classes(untimed), none:classes(none)}));
+console.log(JSON.stringify({timed:classes(timed), timedCells:cells(timed), timedText:text(timed), untimed:classes(untimed),
+  untimedCells:cells(untimed), none:classes(none)}));
 '''], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         got = json.loads(result.stdout)
         self.assertIn("timeline-mini", got["timed"])
         self.assertNotIn("check-meter", got["timed"])
         self.assertIn("1 failed", got["timedText"])
+        # The bars get the Checks cell to themselves; the counts and CI time move to the CI column.
+        self.assertEqual(got["timedCells"], ["timeline-cell", "progress-copy ci-copy"])
+        self.assertEqual(got["untimedCells"], ["progress-copy"])
         self.assertIn("check-meter", got["untimed"])
         # A head with no checks says so, even if handed a timeline.
         self.assertIn("progress-lead", got["none"])
@@ -106,6 +114,12 @@ console.log(JSON.stringify({options:menu.children.map(option=>[option.attrs.valu
         # Nothing drawn can leave the row's timeline box, so it never reaches the text under it.
         self.assertIn("overflow: hidden", rule(".timeline-mini"))
         self.assertIn("top: 0; bottom: 0", rule(".timeline-now"))
+        # The lines share the whole Checks cell, at most 12px each with a 1px gap, so a busy head never grows the row.
+        self.assertIn("flex: 1 1 0; min-height: 1px; max-height: 12px", rule(".timeline-line"))
+        self.assertIn("gap: 1px", rule(".timeline-mini"))
+        self.assertIn("align-self: stretch", rule(".timeline-cell"))
+        # A row with the check meter keeps its caption under it, across the Checks and CI columns.
+        self.assertIn("grid-column: 3 / 5", rule(".pr-row > .progress-copy:not(.ci-copy)"))
         # The toggle stays on screen at every width, so a keyboard can always open a timeline.
         self.assertNotIn(".timeline-toggle { display: none", css)
 

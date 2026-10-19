@@ -61,26 +61,27 @@
       el("span", { class: tone }, when), known ? el("span", { class: "push-kind" }, `· ${push.kind}`) : null);
   }
 
-  // The row's CI timeline (from rowView) when there is one; the check meter otherwise.
+  // The row's checks. With a CI timeline (from rowView) the bars get the Checks cell to themselves and
+  // the counts, CI time and push kind move to the CI column: two cells. Otherwise the check meter with
+  // that caption under it, in one cell across both columns.
   function progress(pull, now = Date.now(), timeline = null) {
     const totals = checkTotals(pull);
     const mark = commentMark(pull);
     const segments = totals.known ? meterSegments(totals) : [];
+    const open = segments.filter(segment => segment.state !== "success")
+      .map(segment => `${segment.count} ${segment.label.toLowerCase()}`);
+    const caption = el("div", { class: "progress-caption" },
+      el("span", { class: "progress-counts" }, totals.known ? (open.join(" · ") || "All passed") : "Progress is not shown as complete"),
+      pushLine(pull, now));
+    if (totals.known && timeline) return [el("div", { class: "timeline-cell" }, timeline), el("div", { class: "progress-copy ci-copy" }, mark, caption)];
     const meter = !totals.known ? el("b", { class: "progress-lead" }, "No checks reported")
-      : timeline || el("div", { class: "check-meter", role: "img", "aria-label": meterLabel(totals) });
-    if (totals.known && !timeline) segments.forEach(segment => meter.append(el("span", {
+      : el("div", { class: "check-meter", role: "img", "aria-label": meterLabel(totals) });
+    if (totals.known) segments.forEach(segment => meter.append(el("span", {
       class: `seg-${segment.state}`, style: `flex:${segment.count} 1 0`, title: `${segment.count} ${segment.label}`,
       "aria-hidden": "true"
     })));
-    const open = segments.filter(segment => segment.state !== "success")
-      .map(segment => `${segment.count} ${segment.label.toLowerCase()}`);
-    const caption = totals.known ? (open.join(" · ") || "All passed") : "Progress is not shown as complete";
     return el("div", { class: "progress-copy" },
-      el("div", { class: mark ? "progress-layout has-mark" : "progress-layout" },
-        meter, mark,
-        el("div", { class: "progress-caption" },
-          el("span", { class: "progress-counts" }, caption),
-          pushLine(pull, now))));
+      el("div", { class: mark ? "progress-layout has-mark" : "progress-layout" }, meter, mark, caption));
   }
 
   function renderPrRows() {
@@ -197,7 +198,7 @@
     const pulls = flattenPulls(snapshot);
     content.replaceChildren(heading("Pull requests", null, coverageWarning(snapshot.github.coverage, snapshot.github), prFilters(pulls)),
       el("div", { class: "list-heading" }, el("span", { id: "pr-count" }),
-        el("span", {}, "Current work"), el("span", {}, "Checks"), el("span", {}, "Age")),
+        el("span", {}, "Current work"), el("span", {}, "Checks"), el("span", {}, "CI"), el("span", {}, "Age")),
       el("div", { id: "pr-rows", class: "pr-groups" }));
     renderPrRows();
   }
@@ -209,5 +210,7 @@
     renderPulls();
   }
 
-  window.VVPrs = { render };
+  const api = { render };
+  if (typeof module === "object" && module.exports) module.exports = api;
+  else window.VVPrs = api;
 })();
