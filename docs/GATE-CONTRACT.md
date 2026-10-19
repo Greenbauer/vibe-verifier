@@ -531,13 +531,16 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   the request (the spec, a page's script, an in-page fetch, the site's server): the failure cannot be told
   from the block, and a request made only before the fix would otherwise read as the bug showing. So are a
   failed test of another file (a setup project a spec depends on) and an error no test owns (a `webServer` that did not start, one already answering
-  at its address, a global setup that threw): the run cannot say whether the bug shows. The Node side of
-  the run (the site's server, the specs' own code, a global setup) gets the same proxy through
-  `HTTP_PROXY`/`HTTPS_PROXY`, `NO_PROXY` for loopback and `NODE_USE_ENV_PROXY=1`, which Node's own `fetch`
-  and `http` follow (Node 22.23 checked) as do libraries that read `HTTP_PROXY`; before the first run the
-  gate probes that the Node on PATH sends both through the proxy, and is exit 2 when it does not. A raw TCP client, such
-  as a database driver, is not proxied; the refusal of credentials and database hosts for anywhere else
-  is what keeps it from reaching outside the job.
+  at its address, a global setup that threw): the run cannot say whether the bug shows. Every Node
+  process of the run (the Playwright runner and its workers, the site's server, a global setup) preloads
+  a guard through `NODE_OPTIONS` (`gates/_local_only.py`, `GUARD`) that refuses any TCP connection to a
+  host that is not this machine as `ECONNREFUSED` and records the host, whatever opens it (`fetch`, `http`
+  with its own `Agent`, a database driver, `net.connect`); those hosts count as reached like the proxy's.
+  `HTTP_PROXY`/`HTTPS_PROXY` point Node's global agents, and on Linux a browser a global setup launches
+  itself, at the proxy too. Not covered: a process that clears `NODE_OPTIONS`, a process the site starts
+  that is not Node, and a browser a global setup launches itself on macOS (or, on Linux, for a
+  link-local address); the refusal of credentials and database hosts for anywhere else is what keeps
+  those from authenticating outside the job.
 - **Exit 2 also when** no changed test is one it can run (only Playwright specs no `--playwright` config
   collects, shell or SQL tests, or node:test files the repository does not run with `node --test`, say:
   `--playwright`, `--node-test` or the reason line is the way out), the project's Vitest or Node is not installed, a runner writes no report, or the runs

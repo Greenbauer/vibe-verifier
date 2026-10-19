@@ -29,13 +29,11 @@ Values are never printed: a refusal names the variable, where it was read, and t
 """
 import base64
 import binascii
-import functools
 import ipaddress
 import json
 import os
 import re
 import socket
-import subprocess
 import threading
 import urllib.parse
 
@@ -236,28 +234,59 @@ class Refuser:
 
 # What the Node side of a run is told, so its fetch and http go to the gate's proxy for every host but this machine.
 NO_PROXY = "localhost,127.0.0.1,::1,.localhost"
-PROBE = ('const http = require("http"); fetch("http://fetch.vv-probe.invalid/").catch(() => {}).finally(() => '
-         'http.get("http://http.vv-probe.invalid/", (response) => response.resume()).on("error", () => {}));')
 
 
 def proxy_env(port):
-    """The environment that sends Node's own fetch and http, and any library that reads HTTP_PROXY, to the proxy at
-    `port` for every host but loopback. A raw TCP client, such as a database driver, does not read it."""
+    """The environment that sends Node's global fetch and http, a library that reads HTTP_PROXY, and on Linux a
+    Chromium launched without a proxy of its own (a global setup's sign-in browser), to the proxy at `port` for every
+    host but loopback. GUARD stops whatever in Node does not follow it."""
     proxy = "http://127.0.0.1:%d" % port
     return {"HTTP_PROXY": proxy, "HTTPS_PROXY": proxy, "http_proxy": proxy, "https_proxy": proxy,
             "NO_PROXY": NO_PROXY, "no_proxy": NO_PROXY, "NODE_USE_ENV_PROXY": "1"}
 
 
-@functools.lru_cache(maxsize=None)
-def node_follows_proxy():
-    """Whether the Node on PATH sends both fetch and http.get to the proxy under proxy_env(), probed with one of each
-    to a name that cannot resolve: a Node that does not would let the site's server reach other hosts unseen."""
-    refuser = Refuser()
+# Preloaded into every Node process of a run (NODE_OPTIONS --require): the Playwright runner and its workers, the
+# site's server, a global setup. A TCP connection to a host that is not this machine fails as ECONNREFUSED and its
+# host is recorded, whatever opens it: fetch, http with its own Agent, a database driver, a raw net.connect.
+GUARD = r"""// Written by regression-test-fails-on-base: this process may open a TCP connection only to this machine.
+const fs = require("fs");
+const net = require("net");
+const local = (host) => host === "localhost" || /\.localhost\.?$/.test(host) || /^127\./.test(host) || host === "::1"
+  || host === "[::1]" || /^::ffff:127\./.test(host);
+const connect = net.Socket.prototype.connect;
+net.Socket.prototype.connect = function (...args) {
+  const first = Array.isArray(args[0]) ? args[0][0] : args[0];
+  const options = first !== null && typeof first === "object" ? first
+    : typeof first === "string" && !/^\d+$/.test(first) ? { path: first } : { port: first, host: args[1] };
+  const host = String(typeof options.host === "string" ? options.host : "localhost").toLowerCase();
+  if (options.path || local(host)) return connect.apply(this, args);
+  const where = host.includes(":") ? "[" + host + "]:" + options.port : host + ":" + options.port;
+  try { fs.appendFileSync(process.env.VV_REGRESSION_REACHED, where + "\n"); } catch (error) {}
+  const refused = Object.assign(new Error("connect ECONNREFUSED " + where + " (regression-test-fails-on-base allows only this "
+    + "machine)"), { code: "ECONNREFUSED", syscall: "connect" });
+  process.nextTick(() => this.destroy(refused));
+  return this;
+};
+"""
+
+
+def node_guard(scratch):
+    """({NODE_OPTIONS, VV_REGRESSION_REACHED} that preload GUARD into a run's Node processes, the file it records each
+    blocked connection's host in)."""
+    guard, reached = os.path.join(scratch, "local-only.cjs"), os.path.join(scratch, "reached.txt")
+    with open(guard, "w", encoding="utf-8") as handle:
+        handle.write(GUARD)
+    options = (os.environ.get("NODE_OPTIONS", "") + ' --require "%s"' % guard).strip()
+    return {"NODE_OPTIONS": options, "VV_REGRESSION_REACHED": reached}, reached
+
+
+def reached_by_node(path):
+    """The hosts GUARD refused in a run, from its record."""
     try:
-        subprocess.run(["node", "-e", PROBE], env=dict(os.environ, **proxy_env(refuser.port)), capture_output=True, timeout=60)
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return {host.split(":")[0] for host in refuser.close()} == {"fetch.vv-probe.invalid", "http.vv-probe.invalid"}
+        with open(path, encoding="utf-8") as handle:
+            return [line.strip() for line in handle if line.strip()]
+    except OSError:
+        return []
 
 
 def dotenv(path):

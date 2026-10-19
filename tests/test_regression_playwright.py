@@ -45,6 +45,14 @@ createServer((request, response) => {
 SERVER_FETCHES = SERVER.replace('appendFileSync("started.log", "started\\n");', """const outside = await fetch("https://rates.example.com/", { signal: AbortSignal.timeout(5000) })
   .then((response) => "reached " + response.status, () => "blocked");
 appendFileSync("started.log", "outside: " + outside + "\\n");""")
+# The same site, whose server first opens two connections no proxy setting reaches: http with its own Agent, and a raw
+# socket to a database. Every Node process of a run is guarded, so both are refused and recorded.
+SERVER_CONNECTS = SERVER.replace('appendFileSync("started.log", "started\\n");', """import http from "node:http";
+import net from "node:net";
+const agent = await new Promise((done) => http.get("http://rates.example.com/", { agent: new http.Agent() }, () => done("reached"))
+  .on("error", (error) => done(error.code)));
+const raw = await new Promise((done) => net.connect(5432, "db.example.com", () => done("reached")).on("error", (error) => done(error.code)));
+appendFileSync("started.log", "agent: " + agent + ", raw: " + raw + "\\n");""")
 # Before the fix the page's total comes from another host's script, which the run blocks; the fix renders it itself.
 SERVER_SCRIPT = SERVER.replace("response.end(`<h1 id=\"total\">${discount(200, true)}</h1>`);",
                                "response.end(discount(200, true) === 200 ? '<h1 id=\"total\"></h1><script src=\"https://cdn.example.com/total.js\">'\n"
@@ -226,6 +234,16 @@ class RealBrowser(Fixture):
         result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/metadata.spec.mjs": spec}, "--soak")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("e2e/metadata.spec.mjs: reads the metadata failed in a run that reached for 169.254.1.1:8081", result.stderr)
+        tree_is_head(self, repo)
+
+
+    def test_a_node_connection_of_any_kind_to_another_host_is_refused_and_recorded(self):
+        repo = self.project({"server.mjs": SERVER_CONNECTS})
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(Path(repo, "started.log").read_text(), "agent: ECONNREFUSED, raw: ECONNREFUSED\n" * 2)
+        self.assertIn("failed in a run that reached for db.example.com:5432, rates.example.com:80, which this gate blocks",
+                      result.stderr)
         tree_is_head(self, repo)
 
 

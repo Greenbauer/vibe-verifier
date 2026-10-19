@@ -160,18 +160,6 @@ class Refusals(Fixture):
         self.assertNotIn("re_live_value", result.stdout + result.stderr)
 
 
-    def test_a_node_that_ignores_the_proxy_is_refused(self):
-        # A Node whose fetch and http do not follow HTTP_PROXY would let the site's server reach other hosts unseen.
-        repo, bin_dir = self.project(), Path(tempfile.mkdtemp(prefix="vv-node-"))
-        self.addCleanup(shutil.rmtree, bin_dir, True)
-        (bin_dir / "node").write_text("#!/bin/sh\nunset NODE_USE_ENV_PROXY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy\n"
-                                      "exec %s \"$@\"\n" % shutil.which("node"))
-        (bin_dir / "node").chmod(0o755)
-        env = self.env()
-        result = self.refused(repo, "the Node on PATH does not send fetch and http through HTTP_PROXY with NODE_USE_ENV_PROXY=1",
-                              env=dict(env, PATH="%s%s%s" % (bin_dir, os.pathsep, env["PATH"])))
-        self.assertIn("this gate does not start it", result.stderr)
-
     def test_a_fix_whose_only_tests_use_vitest_globals_is_judged_as_before(self):
         # A Vitest file with globals might be a spec, so it is listed; with a credential in the step that listing cannot
         # run, and it is classified as it was before --playwright: here, a Vitest test with no Vitest installed.

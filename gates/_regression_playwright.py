@@ -17,11 +17,12 @@ an ES module package; an .mjs wrapper of a .ts config fails on 1.59), which impo
 - reports through the gate's reporter (REPORTER), and writes the webServers it was given to a file, since a list
   of webServers is not in what a reporter sees.
 
-The Node side of the run (the site's server, the specs' own code, a global setup) gets the same proxy through
-HTTP_PROXY and HTTPS_PROXY with NO_PROXY for loopback and NODE_USE_ENV_PROXY=1 (_local_only.proxy_env()), which
-Node's own fetch and http follow, and libraries that read HTTP_PROXY; the gate first probes that the Node on PATH
-does (_local_only.node_follows_proxy) and is exit 2 when it does not. A raw TCP client such as a database driver
-does not read it, and the refusal of credentials and database hosts for anywhere else is what stops it there.
+Every Node process of the run (the Playwright runner and its workers, the site's server, a global setup) preloads
+a guard (_local_only.GUARD, through NODE_OPTIONS) that refuses any TCP connection to a host that is not this machine
+and records the host, whatever opens it: fetch, http with its own Agent, a database driver. HTTP_PROXY and
+HTTPS_PROXY point at the same proxy (_local_only.proxy_env), for Node's global agents and for a Chromium on Linux
+that a global setup launches itself. Not covered: a process that clears NODE_OPTIONS, a non-Node process the site
+starts, and on macOS, or for a link-local address on Linux, a browser the global setup launches itself.
 
 Before each run, `playwright test --list`, which loads the config and the specs and starts no server, no global
 setup and no browser, says which project collects which spec and with what baseURL. The gate refuses (exit 2)
@@ -144,8 +145,8 @@ def read_json(path):
 
 def call(repo, config, files, listing, local_names, deadline, timeout):
     """One `playwright test` of `files` (repository-relative) under `config`, through the wrapper: (the reporter's
-    report, the webServers the config gave, the proxy, closed, whose hosts are what the run reached for). The
-    environment is checked first, every call."""
+    report, the webServers the config gave, the hosts the run reached for: its browser contexts and the `request`
+    fixture through the proxy, its Node processes through the guard). The environment is checked first, every call."""
     root = os.path.realpath(repo)
     directory = os.path.dirname(os.path.join(root, config))
     if not os.path.isfile(os.path.join(root, config)):
@@ -155,9 +156,6 @@ def call(repo, config, files, listing, local_names, deadline, timeout):
     if entry is None or not shutil.which("node"):
         raise CannotRun("no Playwright is installed for %s: install the project's dependencies, its browsers and its local "
                         "stack before this gate, which runs the project's own Playwright" % config)
-    if not _local_only.node_follows_proxy():
-        raise CannotRun("the Node on PATH does not send fetch and http through HTTP_PROXY with NODE_USE_ENV_PROXY=1, so the "
-                        "site's server could reach other hosts unseen and this gate does not start it (Node 22.23 is checked)")
     scratch = tempfile.mkdtemp(prefix="vv-regression-")
     wrapper = os.path.join(directory, ".vv-regression-%d.config.ts" % os.getpid())
     refuser = _local_only.Refuser()
@@ -169,15 +167,16 @@ def call(repo, config, files, listing, local_names, deadline, timeout):
         with open(wrapper, "w", encoding="utf-8") as handle:
             handle.write(WRAPPER % {"config": os.path.basename(config), "port": port, "bypass": BYPASS, "servers": json.dumps(servers),
                                     "reporter": json.dumps(reporter), "report": json.dumps(report)})
+        guard, record = _local_only.node_guard(scratch)
         command = ["node", entry, "test", "--config", wrapper, "--output", os.path.join(scratch, "results"), "--retries=0"]
         command += ["--list", "--pass-with-no-tests"] if listing else []
         code, output = run_tool(command + [pattern(os.path.join(root, path)) for path in files], directory,
-                                remaining(deadline, timeout), "Playwright", env=dict(os.environ, **_local_only.proxy_env(port)),
+                                remaining(deadline, timeout), "Playwright", env=dict(os.environ, **_local_only.proxy_env(port), **guard),
                                 budget=timeout, advice=ADVICE)
         found = read_json(report)
         if not isinstance(found, dict):
             raise CannotRun("Playwright wrote no report for %s (exit %d): %s" % (config, code, output.strip()[-2000:]))
-        return found, read_json(servers) or [], refuser
+        return found, read_json(servers) or [], sorted(set(refuser.close()) | set(_local_only.reached_by_node(record)))
     finally:
         refuser.close()
         if os.path.lexists(wrapper):
@@ -290,9 +289,9 @@ def run_config(repo, config, files, local_names, deadline, timeout):
     loadable = [path for path in files if path in tests]
     if loadable:
         refuse_targets(config, loadable, tests, projects, servers, os.path.dirname(os.path.join(root, config)), local_names)
-        report, _, refuser = call(repo, config, loadable, False, local_names, deadline, timeout)
+        report, _, reached = call(repo, config, loadable, False, local_names, deadline, timeout)
         runs.update(read_run(report, {os.path.realpath(os.path.join(root, path)): path for path in loadable}, config,
-                             refuser.close(), root))
+                             reached, root))
     return runs
 
 
