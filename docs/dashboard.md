@@ -586,7 +586,7 @@ that matches the filters gets no group. Groups are ordered by their most recentl
 request, newest first; within a group the newest pull request is first and the oldest is last.
 A row's age is how long that pull request has been open. It is small text at the bottom left of the
 first column ("2mo old"), under the number, author and head, so the Checks and CI columns get the
-width; the "behind main" pill below sits at the bottom right of the same line. Under a day it shows hours and minutes.
+width; the "behind main" pill below sits right beside it on the same line. Under a day it shows hours and minutes.
 From a day through seven days it counts whole days, with no hours. Past seven days it counts
 whole weeks, past thirty days whole months, and from a year whole years. The number stays the
 default text color through three days, turns yellow after that, and turns red after two weeks.
@@ -639,7 +639,7 @@ must still hold, and a required check that has not reported keeps the title whit
 requirements cannot be told apart from the token's own block there and are not counted: signed
 commits and a locked branch. GitHub's merge box still enforces them.
 When the repository's default branch has commits the head does not, the first column's bottom line
-ends with a yellow "N behind main" pill, at the right (the default branch's own name when it is not main), and
+ends with a yellow "N behind main" pill, beside the age (the default branch's own name when it is not main), and
 its tooltip says how many commits. It comes from the cheap head read, so it follows a merge to main
 within one beat, and a pull request the detail budget has not reached shows it too. It is hidden
 when the head is up to date, for a pull request from a fork, for one into a branch other than the

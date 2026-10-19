@@ -185,7 +185,7 @@
         href ? el("a", { class: "pr-title", href, target: "_blank", rel: "noreferrer",
           "aria-label": opened + (ready ? ". Fully merge-ready" : "") }, pull.title) : pull.title),
       el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`),
-      // The bottom line: the age on the left, how far the head is behind its base on the right.
+      // The bottom line: the age, then how far the head is behind its base, beside it.
       el("span", { class: "pr-meta" },
         el("span", { class: "pr-age", title: "How long the pull request has been open" },
           el("span", { class: "age-stat" }, el("b", { class: ageClass(pull.created_at, now) }, since(pull.created_at, now)),
