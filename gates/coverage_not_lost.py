@@ -10,16 +10,20 @@ cover was deleted or weakened, or the code that reached it no longer does. A lin
 runs at each side agree, because coverage can change from run to run: the second pair runs only when the
 first finds a line. Lines in files the pull request deletes, and lines it changes or deletes, never count.
 Each finding is reported at its line at HEAD, with what ran it at the merge base: the test functions
-(pytest, unittest), or whether the test files the pull request deleted or changed did (Vitest).
+(pytest, unittest; none for a line only a child process ran), or whether the test files the pull request deleted or
+changed did (Vitest). When lines were lost, the gate also lists the commits between the merge base and HEAD
+(first parent, so a merged pull request is one, its number in its subject): run nightly with --base-ref set to the
+last night's commit, that names the pull requests the loss came in with.
 
 A pull request body (--body, a file the workflow writes) with a line `coverage-lost: <reason>` marks the
 loss as intended: the findings are printed with the reason and do not fail the gate.
 
 Runners: the project's own Vitest 2 to 5, with @vitest/coverage-v8 at exactly its version (the project's own,
 else the catalog's pin of that version in tools/coverage-not-lost); or coverage.py 7.16.2 (pinned in
-tools/coverage-not-lost-python) around the project's own pytest or unittest. Install the project's
-dependencies first. A suite that fails at either side, no runner or provider, no test run at either side, or
-a run past --timeout cannot run (exit 2): never a pass.
+tools/coverage-not-lost-python) around the project's own pytest or unittest, measuring every Python process the
+suite starts too (a script a test runs with subprocess). Install the project's dependencies first. A suite that
+fails at either side, no runner or provider, no test run at either side, or a run past --timeout cannot run
+(exit 2): never a pass. Each run says how many lines ran, by top directory, and how long it took.
 
     --runner NAME       vitest, pytest or unittest (default vitest)
     --project DIR       where the suite runs, relative to the repository (repeatable; default its root)
@@ -218,8 +222,32 @@ class Suite:
                             "compare%s" % (project, self.sides[side], red.args[0], hint))
 
     def measure(self):
-        """(merge base, head): every project's coverage at each side, as one."""
-        return tuple(union([self.run(side, project) for project in self.projects]) for side in ("base", "head"))
+        """(merge base, head): every project's coverage at each side, as one. Each side's run says what it measured
+        and how long it took, which is what --timeout is set from."""
+        sides = []
+        for side in ("base", "head"):
+            began = time.monotonic()
+            sides.append(union([self.run(side, project) for project in self.projects]))
+            note("the run at the %s: %s, in %d seconds" % (self.sides[side], ran_where(sides[-1]), time.monotonic() - began))
+        return tuple(sides)
+
+
+def ran_where(run):
+    """'N line(s) ran (n in dir/, ...)': the lines a run ran, by the top directory of their file."""
+    tops = {}
+    for path, lines in run.lines.items():
+        top = "in %s/" % path.split("/")[0] if "/" in path else "at the root"
+        tops[top] = tops.get(top, 0) + sum(lines.values())
+    where = ", ".join("%d %s" % (n, top) for top, n in sorted(tops.items(), key=lambda item: (-item[1], item[0])) if n)
+    return "%d line(s) ran%s" % (sum(tops.values()), " (%s)" % where if where else "")
+
+
+def commits_since(repo, merge_base, most=20):
+    """'N commit(s) after the merge base <sha>: <sha> <subject>; ...', newest first, on the first-parent line."""
+    commits = git(repo, "log", "--first-parent", "--format=%h %s", merge_base + "..HEAD").splitlines()
+    more = " and %d more" % (len(commits) - most) if len(commits) > most else ""
+    return "the lines were lost in the %d commit(s) after the merge base %s: %s%s" % (
+        len(commits), merge_base[:12], "; ".join(commits[:most]), more)
 
 
 def listed(names, most=5):
@@ -335,6 +363,8 @@ def check(args):
     diff = Diff(args.repo, merge_base)
     with checkouts(args.repo, merge_base) as (scratch, trees):
         lost = losses(Suite(args, scratch, trees, merge_base), diff)
+    if lost:
+        note(commits_since(args.repo, merge_base))
     if reason and not lost:
         note("the pull request body says `coverage-lost: %s`, and no line was lost" % reason)
     return findings(args.repo, lost, reason)

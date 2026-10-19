@@ -4,7 +4,8 @@ name: CI
 # selection would have left out), then runs this repository's own manifest through the composite action,
 # which is the only place that action executes before a consumer exists, then the gates that run this
 # repository's own tests (.vibe-verifier-tests): mutation-testing changed dashboard code, and the report-only
-# pilots of regression-test-fails-on-base and coverage-not-lost. The lanes jobs run the runner-lane kit's own suites (lanes/README.md).
+# pilots of regression-test-fails-on-base and coverage-not-lost, the last on the dashboard tests only (the whole suite
+# runs once a night, .github/workflows/nightly.yml). The lanes jobs run the runner-lane kit's own suites (lanes/README.md).
 
 on:
   pull_request:

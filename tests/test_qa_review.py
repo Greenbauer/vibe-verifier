@@ -106,6 +106,15 @@ class QaReview(unittest.TestCase):
         self.verdict = self.file("verdict.md", VERDICT)
         self.assertNotIn("re-walked", self.posted(gates="failure"))
 
+    def test_a_fail_the_base_branch_has_too_says_so(self):
+        self.verdict = self.file("verdict.md", VERDICT + "regression-check: sign-in -- FAIL -- the dashboard never opened "
+                                                         "(qae/features/sign-in.md::step 1: signed in -> a blank page)\n"
+                                                         "regression-known: sign-in -- the same blank page "
+                                                         "(qae/features/base/sign-in.md::step 1: signed in -> a blank page)\n")
+        self.assertIn("- Feature `sign-in` re-walked, explorer says FAIL, and says the base branch fails the same way: "
+                      "the same blank page (qae/features/base/sign-in.md::step 1: signed in -> a blank page)\n",
+                      self.posted(gates="failure"))
+
     def test_a_re_walk_names_the_states_the_explorer_left_unwalked(self):
         # A re-walk covers at most a few states of a feature, so "re-walked" alone would overstate it. A
         # skip line with no check line is a feature that was not re-walked: the gate's log names it.
