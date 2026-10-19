@@ -229,7 +229,7 @@ test("a job still waiting is dim yellow; a started job's wait is a dim version o
     [[["timeline-bar tl-success tl-dim", "build: waited 10m 0s for a runner, ran 10m 0s"]], ["deploy: waiting 20m 0s for a runner"]]);
   const legend = timeline.detail(queue, NOW, { id: "x", key: "k", owner: "octocat", rerender() {} }).find("timeline-legend")[0];
   assert.deepStrictEqual(legend.children.map(item => item.children[0].className).filter(Boolean),
-    ["tl-success", "tl-failed", "tl-running", "tl-waiting", "tl-success tl-dim"]);
+    ["tl-success", "tl-failed", "tl-running", "tl-cancelled", "tl-waiting", "tl-success tl-dim"]);
 });
 
 test("a failed or running job's wait is a dim version of its color, drawn under every run on its line", () => {
@@ -239,4 +239,14 @@ test("a failed or running job's wait is a dim version of its color, drawn under 
   const line = timeline.mini(mixed, NOW, null).find("timeline-line")[0];
   assert.deepStrictEqual(line.children.map(bar => bar.className), ["timeline-bar tl-running tl-dim", "timeline-bar tl-failed tl-dim",
     "timeline-bar tl-success", "timeline-bar tl-running", "timeline-bar tl-failed"]);
+});
+
+test("a cancelled job or one with an unknown result is gray, says so in its tooltip, and is in the legend", () => {
+  const stopped = { statuses: [], checks: [check(1, "lint", "cancelled"), check(2, "audit", "unknown")],
+    runs: [{ id: 1, name: "CI", jobs: [job(1, "lint", at(0), at(0), at(30)), job(2, "audit", at(0), at(0), at(10))] }] };
+  const bars = timeline.mini(stopped, NOW, null).find("timeline-bar");
+  assert.deepStrictEqual(bars.map(bar => [bar.className, bar.attrs.title]), [
+    ["timeline-bar tl-cancelled", "lint: ran 30m 0s, cancelled"], ["timeline-bar tl-unknown", "audit: ran 10m 0s, result unknown"]]);
+  const legend = timeline.detail(stopped, NOW, { id: "x", key: "k", owner: "octocat", rerender() {} }).find("timeline-legend")[0];
+  assert.ok(legend.text.includes("Cancelled or result unknown"));
 });
