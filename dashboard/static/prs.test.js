@@ -72,7 +72,7 @@ test("a click on a row opens its timeline under it and keeps focus on its arrow;
   assert.deepStrictEqual(rows().map(node => node.className), ["pr-row", "pr-row"]);
 });
 
-test("the first column reads title, then number, author and head, then the age at the left and how far behind at the right", () => {
+test("the first column reads title, then number, author and head, then the age and how far behind beside it", () => {
   prs.render(content, snapshot, state, page);
   const identity = row(1).find("pr-identity")[0];
   assert.deepStrictEqual(identity.children.map(node => node.tag), ["b", "small", "span"]);

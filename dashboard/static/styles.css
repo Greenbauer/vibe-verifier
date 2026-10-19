@@ -148,7 +148,7 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 .pr-identity b.merge-ready { color: var(--green); }
 .pr-identity .behind-mark { color: var(--yellow); border: 1px solid currentColor; border-radius: 99px; padding: 1px 6px; font-size: 10px; line-height: 1.45; white-space: nowrap; }
 .pr-row small, .progress-copy span { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
-.pr-meta { display: flex; justify-content: space-between; align-items: center; gap: 2px 10px; min-width: 0; }
+.pr-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
 .pr-age { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .age-stat { display: inline-flex; align-items: baseline; gap: 3px; }
 .age-stat b { font-size: 11px; }

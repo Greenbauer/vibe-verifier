@@ -1,2 +1,2 @@
 languageGlobs:
-  tsx: ['*.ts', '*.mts', '*.cts', '*.js', '*.mjs', '*.cjs']
+  tsx: ['*.ts', '*.mts', '*.cts', '*.js', '*.mjs', '*.cjs', '*.jsx']
