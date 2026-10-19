@@ -1,10 +1,12 @@
 """A re-walk FAIL the base branch has too (docs/feature-map.md, "A FAIL that main has too"): the explorer walks
 the failed state once more on a site built from the base branch, and the gate turns that FAIL into a warning only
 with that walk on record."""
+import os
+import shutil
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, commit, png, write
+from helpers import ROOT, commit, gate, git, png, write
 from test_features import RegressionWalk
 
 PROMPT = ROOT / "harnesses" / "qae" / "prompt.md"
@@ -203,4 +205,24 @@ class KnownOnMain(RegressionWalk):
         result = self.rewalk(self.AC + lines)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("advisory: Reports fails the same way on the base branch", result.stdout)
+
+    def test_an_anchor_path_must_be_the_log_itself_not_one_ending_like_it(self):
+        self.walk_on_main()
+        longer = self.KNOWN.replace("(qae/features/base/auth.md", "(qae-artifacts/qae/features/base/auth.md")
+        self.assertEqual(self.rewalk(self.AC + self.FAILED + longer + self.PROJECTS).returncode, 1)
+
+    def test_a_base_walk_the_pull_request_commits_into_an_evidence_directory_in_its_checkout_is_not_evidence(self):
+        # The verify job's evidence directory is inside the checkout: a pull request could commit a base walk there.
+        evidence = Path(self.repo, "qae-artifacts")
+        shutil.copytree(Path(self.work, "qae-artifacts"), evidence)
+        commit(self.repo, {"qae-artifacts/qae/features/base/auth.md": "- step 1: signed in as the test user -> an error page\n"})
+        Path(evidence, "qae", "features", "base", "auth-step-1.png").write_bytes(png(1280))
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "evidence")
+        write(self.work, {"verdict.md": self.AC + self.FAILED + self.KNOWN + self.PROJECTS, "pr-body.md": self.BODY})
+        result = gate("acceptance-verdict", self.repo, "--criteria", os.path.join(self.work, "pr-body.md"),
+                      "--verdict", os.path.join(self.work, "verdict.md"), "--artifacts", str(evidence),
+                      "--features", "docs/features", "--changed-files", os.path.join(self.work, "changed-files"))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("auth is a FAIL", result.stdout)
 

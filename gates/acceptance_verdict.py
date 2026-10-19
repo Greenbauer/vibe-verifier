@@ -289,14 +289,21 @@ def regression_finding(fid, path, carried, walked, repo, tracked, artifacts):
     return why
 
 
-def known_on_main(fid, known, artifacts):
+def known_on_main(fid, known, repo, tracked, artifacts):
     """Feature `fid`'s one `regression-known` line when it stands, else None: an anchor `qae/features/base/<id>.md::
     step k: ...` whose text is on that `- step k:` line of the run's own log of the same state walked on the base
-    branch's site (never a tracked file of that name), and whose screenshot qae/features/base/<id>-step-k.png is a
-    non-empty file. Base walks have a directory of their own, and an id holds no `/`, so no feature names another's."""
+    branch's site, and whose screenshot qae/features/base/<id>-step-k.png is a non-empty file. Both are read under
+    --artifacts and neither may be a file the pull request's branch tracks: an evidence directory inside the checkout
+    would otherwise let a pull request commit its own base walk. Base walks have a directory of their own, and an id
+    holds no `/`, so no feature names another's."""
     directory = os.path.join(artifacts, "qae", "features", "base")
     log = os.path.join(directory, fid + ".md")
-    if len(known) != 1 or not os.path.isfile(log):
+
+    def committed(path):
+        rel = os.path.relpath(os.path.realpath(path), os.path.realpath(repo)).replace(os.sep, "/")
+        return rel in tracked
+
+    if len(known) != 1 or not os.path.isfile(log) or committed(log):
         return None
     with open(log, encoding="utf-8", errors="replace") as handle:
         steps = {m.group("k"): "step %s:%s" % (m.group("k"), m.group("text")) for m in STEP_LINE.finditer(handle.read())}
@@ -305,7 +312,7 @@ def known_on_main(fid, known, artifacts):
         k = cited and anchor.title[cited.end():].strip() and cited.group(1)  # `step 10: .` parses as `step 10:`
         shot = k and os.path.join(directory, "%s-step-%s.png" % (fid, k))
         if (anchor.path == "qae/features/base/%s.md" % fid and k in steps and anchor.title.strip().casefold() in steps[k].casefold()
-                and os.path.isfile(shot) and os.path.getsize(shot) > 0):
+                and os.path.isfile(shot) and os.path.getsize(shot) > 0 and not committed(shot)):
             return known[0]
     return None
 
@@ -331,7 +338,7 @@ def regression_findings(args, verdict, tracked):
         carried = lines.get(fid.casefold(), [])
         why = regression_finding(fid, features[fid].path, carried, walked, args.repo, tracked, args.artifacts)
         on_main = why and len(carried) == 1 and walked and line_verdict(carried[0]) == "FAIL" and \
-            known_on_main(fid, known.get(fid.casefold(), []), args.artifacts)
+            known_on_main(fid, known.get(fid.casefold(), []), args.repo, tracked, args.artifacts)
         if on_main:
             findings.append(Finding("%s fails the same way on the base branch, so this pull request did not cause it: "
                                     "%s. Base branch: %s" % (fid, said(carried[0], REGRESSION_TOKEN),
