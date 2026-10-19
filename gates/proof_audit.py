@@ -15,9 +15,10 @@ gate cannot run. Per ID, the model's grade is checked, never trusted:
   (at least 6 characters, or a shorter value line that continues an assert or expect call still open above it
   in the same test; never a line of closers such as `});`), and the title of the test that line sits in: the
   nearest test declaration above it (a JS test call's string literal, `void` first or not, or a Python test
-  function's name). A quote at the wrong line number still counts when it is the whole text of exactly one line
-  inside the test the grade names; the table gives that line, and the cited one beside it. One quote that is not
-  there makes the requirement UNPROVEN: a fabricated quote is not proof.
+  function's name), and inside that test's body, never a hook or helper after it. A quote at the wrong line
+  number still counts when it is the whole text of exactly one line inside the test the grade names;
+  the table gives that line, and the cited one beside it. One quote that is not there makes the requirement
+  UNPROVEN: a fabricated quote is not proof.
 - EXCLUDED needs a plan line, quoted verbatim (in part, 12 characters or more) at its line number at the merge base, and an owner section
   (`path#anchor`) that carries `[takes: ID]` at the merge base and is not one this body links.
 - UNPROVEN, a missing grade or a doubled one is a finding.
@@ -45,6 +46,8 @@ from _affected_tests import JS_TESTS, NODE_TEST
 from _contract import PY_TESTS, CannotRun, Finding, git, matches, planted, qualify, run_gate
 from _proof_audit import SCHEMA, merge_base, proof_summary, requirements, table, write_table
 from _schema_subset import schema_problem
+from _test_body import (CLOSERS_ONLY, DECLARATION, body_end, bracket_depth, declaration_above, declared_title,
+                        test_body)
 from _ticket import LINK, links, unfenced
 import ticket_coverage
 
@@ -57,19 +60,7 @@ OPENER = re.compile(r"^(?:await\s+)?[\w$.!?]+[(\[{]$")
 # leaves alone on a line inside one (`0,`, `[]`, `"named"`) is the line that holds the checked value, so it may be
 # quoted however short; a line of closers (`});`) is never one.
 ASSERTION_OPEN = re.compile(r"^(?:await\s+)?(?:assert\b|expect\s*[.(]|t\.assert|self\.assert)")
-CLOSERS_ONLY = re.compile(r"^[)\]}>;,\s]*$")
-STRING = re.compile(r"""(["'`])(?:\\.|(?!\1)[^\\])*\1""")
-BLOCK_COMMENT = re.compile(r"/\*.*?\*/")
 MIN_PART = 12  # a plan line, and a test title that is not a literal, may be quoted in part
-# A test declaration: a JS test call (test(...), it(...), test.only(...), test.each(...)(...)), `void` first when a
-# type-aware lint forbids a floating promise (`void it(...)`), or a Python test
-# function. Its title is the call's first string literal, or the function's name. Only the modifiers that still
-# register a test count: test.setTimeout(...), test.slow(), test.step(...), test.describe(...) and the hooks are
-# calls inside or around tests, and taking one for the declaration would tie an assertion to no test.
-DECLARATION = re.compile(r"^\s*(?:(?:void\s+)?(?:it|test|specify)(?:\.(?:only|skip|concurrent|serial|sequential|fixme|fail|failing|todo"
-                         r"|each\([^)]*\)))*\s*\(|(?:async\s+)?def\s+test\w*\s*\()")
-PYTHON_TEST = re.compile(r"^\s*(?:async\s+)?def\s+(test\w*)\s*\(")
-TITLE = re.compile(r"""\(\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1""")
 # A model usage limit as the Codex CLI words it ("You've hit your usage limit ... try again at 3:05 PM."):
 # the same pattern bin/vibe-verifier's USAGE_LIMIT reads from an explorer's failure annotation.
 USAGE_LIMIT = re.compile(r"You(?:'|’)ve (?:hit|reached) your (?:[\w-]+ ){0,3}limit\b", re.I)
@@ -168,24 +159,6 @@ def quote_problem(lines, path, number, quote, whole):
     return None
 
 
-def closes_on_its_line(line):
-    """Whether a JS test declaration line also closes its call: a one-line test ends `)` or `);`, read with its
-    block comments dropped, and again with its strings and a trailing `//` comment dropped too (a multi-line
-    declaration ends with the `{`, `(` or `=>` that opens its body)."""
-    raw = BLOCK_COMMENT.sub("", line).rstrip()
-    bare = STRING.sub("", raw).split("//", 1)[0].rstrip()
-    if bare.endswith(("{", "(", "=>", ",", "[")):
-        return False  # it opens a body on the next lines, whatever a trailing comment ends with
-    uncommented = raw.rsplit(" //", 1)[0].rstrip()
-    return any(text.endswith((")", ");")) for text in (raw, uncommented, bare))
-
-
-def bracket_depth(text):
-    """Openers minus closers on a line, string literals and a trailing `//` comment left out."""
-    text = STRING.sub("", text).split("//", 1)[0]
-    return sum(text.count(c) for c in "([{") - sum(text.count(c) for c in ")]}")
-
-
 def continues_assertion(lines, number, text):
     """Whether line `number`, whose whole text is `text`, is a value inside a wrapped assertion: walking up within
     the same test, the nearest statement opening above it is an assert or expect call, and that call stays open on
@@ -214,54 +187,6 @@ def is_test_file(path, lines):
     return matches(path, PY_TESTS)
 
 
-def enclosing_test(lines, number):
-    """The nearest test declaration above line `number`, with the two lines after it (a long title is
-    wrapped onto the next line), or None. An assertion belongs to the test it sits in."""
-    for index in range(number - 2, -1, -1):
-        if DECLARATION.match(lines[index]):
-            return "\n".join(lines[index:index + 3])
-    return None
-
-
-def declared_title(declaration):
-    """The title a declaration gives its test: a Python test function's name, or the string literal a JS
-    test call opens with; None when the title is not a literal (a variable)."""
-    python = PYTHON_TEST.search(declaration)
-    if python:
-        return python.group(1)
-    literal = TITLE.search(declaration)
-    return literal.group(2) if literal else None
-
-
-def test_body(lines, title):
-    """(first, last), the 1-based lines of the one test titled `title`: its declaration down to the line that closes
-    it. None when no test, or more than one, carries that title. A body never reaches past the first non-blank line
-    indented no deeper than the declaration (a JS test's closing `});`, or a Python test's dedent), so a bracket the
-    count misreads in a comment, a regex or a template cannot stretch it over a following hook or helper; a JS
-    body also ends where the declaration's call closes, on the declaration's own line for a one-line test."""
-    starts = [index for index, line in enumerate(lines)
-              if DECLARATION.match(line) and declared_title("\n".join(lines[index:index + 3])) == title]
-    return (starts[0] + 1, body_end(lines, starts[0])) if len(starts) == 1 else None
-
-
-def body_end(lines, start):
-    """The 1-based last line of the test declared at index `start` (see test_body)."""
-    indent = len(lines[start]) - len(lines[start].lstrip())
-    dedent = next((index for index in range(start + 1, len(lines))
-                   if lines[index].strip() and len(lines[index]) - len(lines[index].lstrip()) <= indent), len(lines))
-    if PYTHON_TEST.match(lines[start]):
-        return dedent
-    if dedent < len(lines) and CLOSERS_ONLY.match(lines[dedent].strip()):
-        dedent += 1
-    if closes_on_its_line(lines[start]):
-        return start + 1  # a one-line test, whatever a bracket inside a regex or comment says
-    depth = 0
-    for index in range(start, dedent):
-        depth += bracket_depth(lines[index].strip())
-        if depth <= 0:
-            return index + 1
-    return dedent
-
 
 def relocated_line(lines, proof):
     """The line a quote cited at the wrong number really sits on: its one whole-line occurrence inside the test the
@@ -289,14 +214,24 @@ def proof_problem(files, proof):
         return problem
     if not is_test_file(path, lines):
         return "%s is not a test file" % path
-    declaration = enclosing_test(lines, proof["line"])
-    if declaration is None:
-        return "no test is declared above %s:%d" % (path, proof["line"])
-    title, declared = proof["test"].strip(), declared_title(declaration)
-    if declared is not None and title != declared:
-        return "%s:%d is in the test %r, not %r" % (path, proof["line"], declared, title)
+    return test_problem(lines, path, proof["line"], proof["test"].strip())
+
+
+def test_problem(lines, path, number, title):
+    """Why line `number` is not in the test titled `title`, or None."""
+    start = declaration_above(lines, number)
+    if start is None:
+        return "no test is declared above %s:%d" % (path, number)
+    declaration = "\n".join(lines[start:start + 3])
+    declared = declared_title(declaration)
     if declared is None and (len(title) < MIN_PART or title not in declaration):
-        return "the test around %s:%d is not titled %r" % (path, proof["line"], title)
+        return "the test around %s:%d is not titled %r" % (path, number, title)
+    if declared is not None and title != declared:
+        return "%s:%d is in the test %r, not %r" % (path, number, declared, title)
+    # The nearest declaration above a hook or helper is the test before it, so the line must also be inside
+    # that test's body.
+    if number > body_end(lines, start, brackets=False):
+        return "%s:%d is below the end of the test %r (in a hook or helper after it)" % (path, number, title)
     return None
 
 

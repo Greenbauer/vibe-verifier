@@ -1,6 +1,7 @@
 """proof-audit: which assertion lines a grade may quote. A test declared `void it(...)` or `void test(...)` names
 its assertions, a short value line counts only inside an assert or expect call still open above it, and a quote at
-the wrong line number counts when it sits exactly once inside the test the grade names."""
+the wrong line number counts when it sits exactly once inside the test the grade names, and a line cited exactly
+counts only inside that test's body (gates/_test_body.py), never in a hook or helper after it."""
 import sys
 import unittest
 
@@ -8,8 +9,15 @@ from helpers import ROOT
 
 sys.path.insert(0, str(ROOT / "gates"))
 import _proof_audit  # noqa: E402
+import _test_body  # noqa: E402
 import proof_audit  # noqa: E402
 
+
+
+def declared_above(lines, number):
+    """The title of the test declared nearest above line `number`."""
+    start = proof_audit.declaration_above(lines, number)
+    return proof_audit.declared_title("\n".join(lines[start:start + 3]))
 
 class Quotes(unittest.TestCase):
     def test_a_void_prefixed_declaration_is_a_test(self):
@@ -17,9 +25,9 @@ class Quotes(unittest.TestCase):
         lines = ['void describe("UserPool", () => {', '  void it("keeps the policy", () => {',
                  "    assert.equal(policy.MinimumLength, 8);", "  });", '  void test("another", () => {',
                  "    expect(other).toBe(true);", "  });", "});"]
-        self.assertEqual(proof_audit.declared_title(proof_audit.enclosing_test(lines, 3)), "keeps the policy")
-        self.assertEqual(proof_audit.declared_title(proof_audit.enclosing_test(lines, 6)), "another")
-        self.assertIsNone(proof_audit.enclosing_test(lines, 1))
+        self.assertEqual(declared_above(lines, 3), "keeps the policy")
+        self.assertEqual(declared_above(lines, 6), "another")
+        self.assertIsNone(proof_audit.declaration_above(lines, 1))
 
     def test_a_short_value_inside_a_wrapped_assertion_is_quotable(self):
         lines = ['test("counts", async () => {', "  assert.equal(", "    await count(),", "    0", "  );",
@@ -139,6 +147,84 @@ class LineDrift(unittest.TestCase):
         proof = {"file": "tests/a.test.ts", "test": "a", "line": 1, "assertion": "assert.equal(one(), 1);"}
         self.assertIsNone(proof_audit.proof_problem(Files(spec), proof))
         self.assertEqual(proof["line"], 3)
+
+    def test_a_hook_or_helper_line_cited_exactly_is_not_the_test_above_it(self):
+        self.assertEqual(_test_body.body_end(SPEC, 4, brackets=False), 13)
+        problem = proof_audit.proof_problem(Files(SPEC), cite(15, 'assert.equal(reset(), "in the hook only");'))
+        self.assertIn("below the end of the test 'ends inside the bounds' (in a hook or helper", problem or "")
+        lines = ["class Bounds(unittest.TestCase):", "    def test_end(self):", "        self.assertEqual(end.day, 10)",
+                 "", "    def helper(self):", "        self.assertEqual(other(), 1)"]
+        helper = {"file": "tests/test_bounds.py", "test": "test_end", "line": 6,
+                  "assertion": "self.assertEqual(other(), 1)"}
+        self.assertIn("below the end of the test 'test_end'", proof_audit.proof_problem(Files(lines), helper) or "")
+        inside = dict(helper, line=3, assertion="self.assertEqual(end.day, 10)")
+        self.assertIsNone(proof_audit.proof_problem(Files(lines), inside))
+        # A bracket the count misreads (in a regex) does not cut the body short for a line cited exactly.
+        spec = ['test("a", () => {', "  const r = /\\)\\)/;", "  assert.equal(one(), 1);", "});"]
+        proof = {"file": "tests/a.test.ts", "test": "a", "line": 3, "assertion": "assert.equal(one(), 1);"}
+        self.assertIsNone(proof_audit.proof_problem(Files(spec), proof))
+        # A declaration that wraps onto a line at its own indent, and a template literal whose text starts at
+        # column 0, are still inside the test; a helper after it is not.
+        spec = ['test("a", async ({', "  page", "}, testInfo) => {", "  const fixture = `", "select 1", "`;",
+                "  assert.equal(one(), 1);", "});", "async function helper() {", "  assert.equal(hookOnly(), 2);", "}"]
+        self.assertEqual(_test_body.body_end(spec, 0, brackets=False), 8)
+        proof = {"file": "tests/a.test.ts", "test": "a", "line": 7, "assertion": "assert.equal(one(), 1);"}
+        self.assertIsNone(proof_audit.proof_problem(Files(spec), proof))
+        # A declaration wrapped over many fixtures, one per line, opens its body where it ends.
+        fixtures = ["  fixture%d," % number for number in range(12)]
+        wide = ['test("wide", async ({'] + fixtures + ["}) => {", "  assert.equal(one(), 1);", "});"]
+        self.assertIsNone(proof_audit.proof_problem(Files(wide), dict(proof, test="wide", line=len(wide) - 1)))
+        # A body that opens on the declaration's own line, with code after it there, still ends at its own close.
+        for opened, title, path in (([' test("a", async () => { const x = 1;', "   expect(x).toBe(1);", " });",
+                                    " function helper() {", "   expect(cleanup()).toBe(true);", " }"], "a", "tests/a.test.ts"),
+                                  (["class A(unittest.TestCase):", "    def test_a(self): pass", "",
+                                    "    def helper(self):", "        expect(cleanup()).toBe(true);"], "test_a",
+                                   "tests/test_a.py")):
+            cited = {"file": path, "test": title, "line": 5, "assertion": "expect(cleanup()).toBe(true);"}
+            self.assertIn("below the end of the test", proof_audit.proof_problem(Files(opened), cited) or "", path)
+        # An expression-arrow test with a timeout, as prettier wraps it, ends at its own `);`, not at the hook's `=> {`.
+        arrow = ["test(", '  "renders the summary card",', "  () => expect(card()).toBe(1),", "  30_000,", ");",
+                 "afterAll(() => {", "  expect(cleanupEverythingAgain()).toBe(true);", "});"]
+        cited = {"file": "tests/a.test.ts", "test": "renders the summary card", "line": 7,
+                 "assertion": "expect(cleanupEverythingAgain()).toBe(true);"}
+        self.assertIn("below the end of the test", proof_audit.proof_problem(Files(arrow), cited) or "")
+        # A regex literal holding a quote, a backtick or a bracket is stepped over whole, so it neither ends the
+        # body early nor lets a following hook in; a division is not a regex.
+        regex = ['test("a", () => {', "  expect(q.replace(/'/g, \"\")).toBe(`", "select 1", "`);",
+                 "  expect(s).toMatch(/^[^`(]*$/);", "  const r = total / count; const t = `", "x`;",
+                 "  expect(after()).toBe(1);", "});", "afterEach(() => {", "  expect(cleanupAfterStrip()).toBe(true);",
+                 "});"]
+        inside = {"file": "tests/a.test.ts", "test": "a", "line": 8, "assertion": "expect(after()).toBe(1);"}
+        self.assertIsNone(proof_audit.proof_problem(Files(regex), inside))
+        hook = dict(inside, line=11, assertion="expect(cleanupAfterStrip()).toBe(true);")
+        self.assertIn("below the end of the test", proof_audit.proof_problem(Files(regex), hook) or "")
+        stray = dict(proof, line=10, assertion="assert.equal(hookOnly(), 2);")
+        self.assertIn("below the end of the test 'a'", proof_audit.proof_problem(Files(spec), stray) or "")
+
+    def test_strings_comments_and_shared_titles_neither_end_a_test_early_nor_reopen_one(self):
+        def problem(spec, line, assertion, title):
+            return proof_audit.proof_problem(Files(spec), {"file": "tests/a.test.ts" if spec[0].startswith(("test", "describe"))
+                                                           else "tests/test_a.py", "test": title, "line": line,
+                                                           "assertion": assertion})
+        # A Python fixture string and a comment at column 0 stay inside the test.
+        python = ["class A(unittest.TestCase):", "    def test_a(self):", '        text = """', "line one", '"""',
+                  "# a commented-out line", "        self.assertEqual(parse(text), 2)", "", "    def helper(self):",
+                  "        self.assertEqual(other(), 1)"]
+        self.assertIsNone(problem(python, 7, "self.assertEqual(parse(text), 2)", "test_a"))
+        self.assertIn("below the end of the test", problem(python, 10, "self.assertEqual(other(), 1)", "test_a") or "")
+        # An apostrophe inside a template literal does not hide its closing backtick.
+        spec = ['test("a", () => {', "  expect(normalize(`it's`)).toBe(\"it's\");", "});", "", "afterEach(() => {",
+                "  expect(cleanup()).toBe(true);", "});"]
+        self.assertIn("below the end of the test", problem(spec, 6, "expect(cleanup()).toBe(true);", "a") or "")
+        # A title two tests share, and a title that is not a literal, still end at their own test.
+        for spec, title in ((['describe("x", () => {', '  test("renders", () => {', "    expect(a).toBe(1);", "  });",
+                              "  afterEach(() => {", "    expect(cleanup()).toBe(true);", "  });", "});",
+                              'describe("y", () => {', '  test("renders", () => {', "    expect(b).toBe(2);", "  });",
+                              "});"], "renders"),
+                            (['test(name + " renders the card", () => {', "  expect(a).toBe(1);", "});",
+                              "afterEach(() => {", "  expect(cleanup()).toBe(true);", "});"], "renders the card")):
+            line = spec.index("    expect(cleanup()).toBe(true);" if title == "renders" else "  expect(cleanup()).toBe(true);") + 1
+            self.assertIn("below the end of the test", problem(spec, line, "expect(cleanup()).toBe(true);", title) or "")
 
     def test_a_python_test_body_runs_to_its_dedent(self):
         lines = ["class Bounds(unittest.TestCase):", "    def test_end(self):", "        end = bound(10)",
