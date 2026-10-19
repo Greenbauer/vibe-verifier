@@ -181,24 +181,24 @@
       el("b", { class: ready ? "merge-ready" : null, title: ready ? "Fully merge-ready" : null },
         href ? el("a", { class: "pr-title", href, target: "_blank", rel: "noreferrer",
           "aria-label": opened + (ready ? ". Fully merge-ready" : "") }, pull.title) : pull.title),
-      el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`,
-        behindBadge(pull))),
+      el("span", { class: "pr-meta" },
+        el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`,
+          behindBadge(pull)),
+        el("span", { class: "pr-age", title: "How long the pull request has been open" },
+          el("span", { class: "age-stat" }, el("b", { class: ageClass(pull.created_at, now) }, since(pull.created_at, now)),
+            el("small", {}, "old"))))),
     el("span", { class: "pr-work", title: reason || null }, badge(category), ...workDetail(pull)),
     progress(pull, now, view.timeline),
-    el("span", { class: "pr-age" },
-      el("span", { class: "age-stat" }, el("b", { class: ageClass(pull.created_at, now) }, since(pull.created_at, now)),
-        el("small", {}, "PR age"))),
     el("button", { type: "button", class: "timeline-toggle", "aria-expanded": String(Boolean(view.open)), "aria-controls": view.id,
       "aria-label": `${view.open ? "Hide" : "Show"} the CI timeline of pull request ${pull.number}`,
       "data-focus-key": view.key && `timeline:${view.key}`, onclick: view.toggle }, el("span", { "aria-hidden": "true" }, "›")));
   }
 
-
   function renderPulls() {
     const pulls = flattenPulls(snapshot);
     content.replaceChildren(heading("Pull requests", null, coverageWarning(snapshot.github.coverage, snapshot.github), prFilters(pulls)),
       el("div", { class: "list-heading" }, el("span", { id: "pr-count" }),
-        el("span", {}, "Current work"), el("span", {}, "Checks"), el("span", {}, "CI"), el("span", {}, "Age")),
+        el("span", {}, "Current work"), el("span", {}, "Checks"), el("span", {}, "CI")),
       el("div", { id: "pr-rows", class: "pr-groups" }));
     renderPrRows();
   }

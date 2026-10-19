@@ -52,7 +52,7 @@ const row = number => rows().find(node => node.className.startsWith("pr-row") &&
 
 test("a row with a timeline puts the bars in Checks and the words in CI; a meter row keeps both in one cell", () => {
   prs.render(content, snapshot, state, page);
-  assert.deepStrictEqual(content.find("list-heading")[0].children.map(cell => cell.text), ["2 pull requests", "Current work", "Checks", "CI", "Age"]);
+  assert.deepStrictEqual(content.find("list-heading")[0].children.map(cell => cell.text), ["2 pull requests", "Current work", "Checks", "CI"]);
   const cells = row(2).children.map(cell => cell.className);
   assert.deepStrictEqual(cells.slice(2, 4), ["timeline-cell", "progress-copy ci-copy"]);
   assert.match(row(2).find("ci-copy")[0].text, /1 failed/);

@@ -208,17 +208,21 @@ console.log(JSON.stringify({
                          ("timeline-detail", result["view"]["id"], key, "octocat"))
         # The arrow closes it again, and each change redraws the list.
         self.assertEqual((result["afterToggle"], result["renders"]), ([], 2))
-        age = next(node for node in row["children"] if node["attrs"].get("class") == "pr-age")
+        # The age is subtext on the first column's meta line, not a column of its own.
+        identity = row["children"][0]
+        age = next(node for node in nodes(identity) if node["attrs"].get("class") == "pr-age")
         got = ([part["children"] for stat in age["children"] for part in stat["children"]], age["children"][0]["children"][0]["attrs"]["class"])
-        self.assertEqual(got, ([["2d"], ["PR age"]], "age-yellow"))
+        self.assertEqual(got, ([["2d"], ["old"]], "age-yellow"))
+        self.assertEqual([child["attrs"].get("class") for child in row["children"]],
+                         ["pr-identity", "pr-work", "progress", "timeline-toggle"])
         self.assertEqual([text(node) for node in row["children"][1]["children"][1:]], ["A current-head check failed"])
         ready = result["ready"]
         title = ready["children"][0]["children"][0]
         ready_link = [node for node in nodes(ready) if node["tag"] == "a"][0]
-        age_only = next(node for node in ready["children"] if node["attrs"].get("class") == "pr-age")
+        age_only = next(node for node in nodes(ready) if node["attrs"].get("class") == "pr-age")
         self.assertEqual((("Fully merge-ready" in ready_link["attrs"]["aria-label"]), title["attrs"]["class"],
                           len(age_only["children"]), text(age_only)),
-                         (True, "merge-ready", 1, "2d PR age"))
+                         (True, "merge-ready", 1, "2d old"))
         # A row drawn without the list's view has no toggle action and shows the meter (no timeline).
         self.assertEqual([node["attrs"].get("onclick") for node in nodes(ready) if node["tag"] == "button"], [None])
         stale_link = [node for node in nodes(result["stale"]) if node["tag"] == "a"][0]

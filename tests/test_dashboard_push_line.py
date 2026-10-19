@@ -137,7 +137,7 @@ const rows={
 };
 console.log(JSON.stringify(rows));
 ''')
-        self.assertEqual(result["mixed"]["age"], ["5d", "PR age", "age-yellow", 1])
+        self.assertEqual(result["mixed"]["age"], ["5d", "old", "age-yellow", 1])
         self.assertEqual(result["mixed"]["counts"], "2 waiting · 2 skipped")
         # A queued check keeps CI running from the first start, not from the push three weeks ago.
         self.assertEqual(result["mixed"]["pushWhen"], "CI running 2h 0m")

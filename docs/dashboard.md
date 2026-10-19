@@ -580,8 +580,8 @@ The dashboard shows source-proven failures, cancellations, waiting jobs, and cur
 The pull request list groups pull requests by repository. A repository with no open pull request
 that matches the filters gets no group. Groups are ordered by their most recently updated pull
 request, newest first; within a group the newest pull request is first and the oldest is last.
-A row's age is how long that pull request has been open, and it is the only figure in the
-right-hand column. Under a day it shows hours and minutes.
+A row's age is how long that pull request has been open. It is small text at the end of the line
+under the title ("2mo old"), so the Checks and CI columns get the width. Under a day it shows hours and minutes.
 From a day through seven days it counts whole days, with no hours. Past seven days it counts
 whole weeks, past thirty days whole months, and from a year whole years. The number stays the
 default text color through three days, turns yellow after that, and turns red after two weeks.

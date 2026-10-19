@@ -131,7 +131,7 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 .check-filter { min-height: 36px; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
 .check-filter input { accent-color: var(--green); }
 
-.list-heading, .pr-row { display: grid; grid-template-columns: minmax(220px, 1.4fr) minmax(170px, 1fr) minmax(160px, 1fr) minmax(165px, .65fr) 118px 18px; gap: 12px; align-items: center; }
+.list-heading, .pr-row { display: grid; grid-template-columns: minmax(220px, 1.4fr) minmax(170px, 1fr) minmax(200px, 1.3fr) minmax(165px, .65fr) 18px; gap: 12px; align-items: center; }
 .pr-row > .progress-copy:not(.ci-copy) { grid-column: 3 / 5; }
 .list-heading { padding: 8px 13px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .6px; }
 .pr-groups { display: flex; flex-direction: column; gap: 18px; }
@@ -143,14 +143,15 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 .pr-row:hover, .pr-row.open { background: var(--row); }
 .pr-title { color: inherit; text-decoration: none; }
 .pr-title:hover { text-decoration: underline; }
-.pr-identity, .pr-work, .progress-copy, .pr-age { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.pr-identity, .pr-work, .progress-copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .pr-identity b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pr-identity b.merge-ready { color: var(--green); }
 .pr-identity .behind-mark { margin-left: 6px; color: var(--yellow); border: 1px solid currentColor; border-radius: 99px; padding: 0 6px; white-space: nowrap; }
 .pr-row small, .progress-copy span { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
-.pr-age { align-items: flex-end; gap: 6px; text-align: right; font-variant-numeric: tabular-nums; }
-.age-stat { min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
-.age-stat small { max-width: 9.5em; }
+.pr-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; }
+.pr-age { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.age-stat { display: inline-flex; align-items: baseline; gap: 3px; }
+.age-stat b { font-size: 11px; }
 .pr-age .age-yellow, .progress-copy .age-yellow { color: var(--yellow); }
 .pr-age .age-red, .progress-copy .age-red { color: var(--red); }
 .pr-work .work-line, .pr-work .work-more { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -332,7 +333,7 @@ button.timeline-name { min-height: 0; padding: 0; border: 0; background: transpa
   .sidebar { position: static; z-index: 18; flex-direction: row; padding: 6px 10px; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; }
   .nav-label { display: none; }
   .sidebar button { font-size: 12px; }
-  .list-heading, .pr-row { grid-template-columns: minmax(190px, 1.3fr) minmax(140px, 1fr) minmax(120px, .9fr) minmax(110px, .5fr) 108px 18px; gap: 8px; }
+  .list-heading, .pr-row { grid-template-columns: minmax(190px, 1.3fr) minmax(140px, 1fr) minmax(140px, 1.1fr) minmax(110px, .5fr) 18px; gap: 8px; }
 }
 
 @media (max-width: 650px) {
@@ -345,7 +346,6 @@ button.timeline-name { min-height: 0; padding: 0; border: 0; background: transpa
   .pr-row { grid-template-columns: minmax(0, 1fr) auto; padding: 13px 11px; }
   .pr-work, .progress-copy, .pr-row > .progress-copy:not(.ci-copy), .timeline-cell { grid-column: 1 / 3; }
   .timeline-cell { min-height: 40px; }
-  .pr-age { grid-column: 2; grid-row: 1; gap: 4px; }
   .timeline-toggle { grid-column: 1 / 3; justify-self: end; min-height: 22px; }
   .timeline-detail { padding: 6px 11px 12px; }
   .timeline-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) 52px 24px; gap: 6px; }
