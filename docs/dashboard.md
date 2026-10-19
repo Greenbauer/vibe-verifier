@@ -212,7 +212,8 @@ each commit status. It makes no extra GitHub call.
   CI column still name them. A head whose checks have no time yet keeps the check meter.
 - **The latest round only.** A head's checks can hold more than one round of CI: a re-run, or CI
   started again on the same commit hours later. The timeline draws the latest round, from the last
-  check created after nothing had run or waited for 15 minutes, so an old round never stretches a
+  Actions job created after no job had run or waited for 15 minutes (another app's check or a status
+  posted late does not start a round), so an old round never stretches a
   row or the shared scale. The opened view says how many checks of earlier rounds it left out; the
   counts in the CI column still include them.
 - **The time scale** is the same for every row by default: the longest timeline on screen spans the

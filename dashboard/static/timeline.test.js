@@ -213,4 +213,10 @@ test("a head with an earlier round of CI draws only the latest round and says ho
   const pause = { statuses: [], checks: [check(1, "a", "success"), check(2, "b", "success")],
     runs: [{ id: 1, name: "CI", jobs: [job(1, "a", at(0), at(0), at(5)), job(2, "b", at(20), at(20), at(22))] }] };
   assert.deepStrictEqual([timeline.timeline(pause, NOW).lanes.length, timeline.timeline(pause, NOW).earlier], [2, 0]);
+  // Another app's check posted long after CI ended is not a new round.
+  const late = { statuses: [], checks: [check(1, "build", "success"),
+    { id: 2, name: "Vercel Preview Comments", category: "success", status: "completed", started_at: at(55), completed_at: at(55) }],
+  runs: [{ id: 1, name: "CI", jobs: [job(1, "build", at(0), at(0), at(30))] }] };
+  assert.deepStrictEqual([timeline.timeline(late, NOW).lanes.map(lane => lane.name), timeline.timeline(late, NOW).earlier],
+    [["build", "Vercel Preview Comments"], 0]);
 });

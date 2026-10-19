@@ -85,10 +85,11 @@
     return { start, span: Math.max(Math.max(...list.map(lane => lane.ended ?? now)) - start, 1000) };
   }
 
-  // The start of the head's latest round: the last check created after nothing had run for ROUND_GAP.
+  // The start of the head's latest round: the last Actions job created after none had run for
+  // ROUND_GAP. Only jobs make rounds: another app's check or a status posted late is not CI starting.
   function latestRound(all, now) {
     let start = -Infinity, reach = -Infinity;
-    all.filter(lane => lane.kind !== "status").sort((a, b) => a.queued - b.queued).forEach(lane => {
+    all.filter(lane => lane.kind === "job").sort((a, b) => a.queued - b.queued).forEach(lane => {
       if (lane.queued - reach > ROUND_GAP) start = lane.queued;
       reach = Math.max(reach, lane.ended ?? now);
     });
