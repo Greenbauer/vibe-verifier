@@ -389,7 +389,7 @@ class CommentMark(unittest.TestCase):
         source = r'''
 const fs=require('fs');
 const helpers=require('./dashboard/static/helpers.js');
-const app=fs.readFileSync('./dashboard/static/app.js','utf8');
+const app=fs.readFileSync('./dashboard/static/prs.js','utf8');
 const slice=app.slice(app.indexOf('  function messageIcon('), app.indexOf('  function renderPrRows('));
 function el(tag, attrs={}, ...children) {
   const node={tag, attrs, children:children.flat().filter(value => value !== null && value !== undefined)};

@@ -17,7 +17,7 @@ class PushLine(unittest.TestCase):
         result = self.node(r'''
 const fs=require('fs');
 const helpers=require('./dashboard/static/helpers.js');
-const app=fs.readFileSync('./dashboard/static/app.js','utf8');
+const app=fs.readFileSync('./dashboard/static/prs.js','utf8');
 const progressSource=app.slice(app.indexOf('  function messageIcon('), app.indexOf('  function renderPrRows('));
 const rowSource=app.slice(app.indexOf('  function runningNames('), app.indexOf('  function renderPulls('));
 function el(tag, attrs={}, ...children) {
@@ -137,7 +137,7 @@ const rows={
 };
 console.log(JSON.stringify(rows));
 ''')
-        self.assertEqual(result["mixed"]["age"], ["5d", "PR age", "age-yellow", 1])
+        self.assertEqual(result["mixed"]["age"], ["5d", "old", "age-yellow", 1])
         self.assertEqual(result["mixed"]["counts"], "2 waiting · 2 skipped")
         # A queued check keeps CI running from the first start, not from the push three weeks ago.
         self.assertEqual(result["mixed"]["pushWhen"], "CI running 2h 0m")
@@ -193,7 +193,7 @@ console.log(JSON.stringify(rows));
         self.assertIsNone(result["current"]["behind"])
         self.assertIsNone(result["mixed"]["behind"])
         css = (ROOT / "dashboard/static/styles.css").read_text()
-        app = (ROOT / "dashboard/static/app.js").read_text()
+        app = (ROOT / "dashboard/static/prs.js").read_text()
         self.assertIn(".progress-layout > .progress-caption { grid-column: 1;", css)
         self.assertIn(".progress-layout > .comment-mark { grid-column: 2;", css)
         self.assertIn(".push-kind { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }", css)
