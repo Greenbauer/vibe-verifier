@@ -293,17 +293,20 @@ def known_on_main(fid, known, repo, tracked, artifacts):
     """Feature `fid`'s one `regression-known` line when it stands, else None: an anchor `qae/features/base/<id>.md::
     step k: ...` whose text is on that `- step k:` line of the run's own log of the same state walked on the base
     branch's site, and whose screenshot qae/features/base/<id>-step-k.png is a non-empty file. Both are read under
-    --artifacts and neither may be a file the pull request's branch tracks: an evidence directory inside the checkout
-    would otherwise let a pull request commit its own base walk. Base walks have a directory of their own, and an id
-    holds no `/`, so no feature names another's."""
-    directory = os.path.join(artifacts, "qae", "features", "base")
+    --artifacts, which can sit inside the checkout of the pull request being judged, so a pull request must not be
+    able to supply its own base walk: nothing on the way to the base directory, and neither file, may be a symbolic
+    link (one could point at the pull request's own walk), and the branch may track nothing under that directory.
+    Base walks have a directory of their own, and an id holds no `/`, so no feature names another's."""
+    root = os.path.realpath(artifacts)
+    directory = os.path.join(root, "qae", "features", "base")
     log = os.path.join(directory, fid + ".md")
+    rel = os.path.relpath(directory, os.path.realpath(repo)).replace(os.sep, "/")
+    supplied = any(path == rel or path.startswith(rel + "/") for path in tracked)
 
-    def committed(path):
-        rel = os.path.relpath(os.path.realpath(path), os.path.realpath(repo)).replace(os.sep, "/")
-        return rel in tracked
+    def plain(path):
+        return os.path.isfile(path) and not os.path.islink(path) and os.path.realpath(path) == path
 
-    if len(known) != 1 or not os.path.isfile(log) or committed(log):
+    if len(known) != 1 or supplied or not plain(log):
         return None
     with open(log, encoding="utf-8", errors="replace") as handle:
         steps = {m.group("k"): "step %s:%s" % (m.group("k"), m.group("text")) for m in STEP_LINE.finditer(handle.read())}
@@ -312,7 +315,7 @@ def known_on_main(fid, known, repo, tracked, artifacts):
         k = cited and anchor.title[cited.end():].strip() and cited.group(1)  # `step 10: .` parses as `step 10:`
         shot = k and os.path.join(directory, "%s-step-%s.png" % (fid, k))
         if (anchor.path == "qae/features/base/%s.md" % fid and k in steps and anchor.title.strip().casefold() in steps[k].casefold()
-                and os.path.isfile(shot) and os.path.getsize(shot) > 0 and not committed(shot)):
+                and plain(shot) and os.path.getsize(shot) > 0):
             return known[0]
     return None
 

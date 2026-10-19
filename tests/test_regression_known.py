@@ -211,18 +211,50 @@ class KnownOnMain(RegressionWalk):
         longer = self.KNOWN.replace("(qae/features/base/auth.md", "(qae-artifacts/qae/features/base/auth.md")
         self.assertEqual(self.rewalk(self.AC + self.FAILED + longer + self.PROJECTS).returncode, 1)
 
-    def test_a_base_walk_the_pull_request_commits_into_an_evidence_directory_in_its_checkout_is_not_evidence(self):
-        # The verify job's evidence directory is inside the checkout: a pull request could commit a base walk there.
+    def evidence_in_checkout(self):
+        """The run's evidence copied into the checkout, where the verify job keeps it; returns the directory."""
         evidence = Path(self.repo, "qae-artifacts")
         shutil.copytree(Path(self.work, "qae-artifacts"), evidence)
-        commit(self.repo, {"qae-artifacts/qae/features/base/auth.md": "- step 1: signed in as the test user -> an error page\n"})
-        Path(evidence, "qae", "features", "base", "auth-step-1.png").write_bytes(png(1280))
-        git(self.repo, "add", "-A")
-        git(self.repo, "commit", "-q", "-m", "evidence")
-        write(self.work, {"verdict.md": self.AC + self.FAILED + self.KNOWN + self.PROJECTS, "pr-body.md": self.BODY})
-        result = gate("acceptance-verdict", self.repo, "--criteria", os.path.join(self.work, "pr-body.md"),
-                      "--verdict", os.path.join(self.work, "verdict.md"), "--artifacts", str(evidence),
-                      "--features", "docs/features", "--changed-files", os.path.join(self.work, "changed-files"))
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("auth is a FAIL", result.stdout)
+        return evidence
+
+    def rewalk_in(self, evidence, verdict):
+        write(self.work, {"verdict.md": verdict, "pr-body.md": self.BODY})
+        return gate("acceptance-verdict", self.repo, "--criteria", os.path.join(self.work, "pr-body.md"),
+                    "--verdict", os.path.join(self.work, "verdict.md"), "--artifacts", str(evidence),
+                    "--features", "docs/features", "--changed-files", os.path.join(self.work, "changed-files"))
+
+    def test_a_base_walk_the_pull_request_commits_into_the_checkout_is_not_evidence(self):
+        # Each half alone: a committed log with the run's screenshot, and the run's log with a committed screenshot.
+        for committed in ("auth.md", "auth-step-1.png"):
+            with self.subTest(committed=committed):
+                self.setUp()
+                evidence = self.evidence_in_checkout()
+                base = Path(evidence, "qae", "features", "base")
+                base.mkdir(parents=True, exist_ok=True)
+                Path(base, "auth.md").write_text("- step 1: signed in as the test user -> an error page\n")
+                Path(base, "auth-step-1.png").write_bytes(png(1280))
+                git(self.repo, "add", "-f", str(Path(base, committed)))
+                git(self.repo, "commit", "-q", "-m", "evidence")
+                result = self.rewalk_in(evidence, self.AC + self.FAILED + self.KNOWN + self.PROJECTS)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("auth is a FAIL", result.stdout)
+
+    def test_a_link_into_the_pull_requests_own_walk_is_not_a_base_walk(self):
+        # The base log and screenshot as links to the pull request's own walk, and the base directory as a link
+        # to the feature directory: either way the known line cites the pull request's own step text.
+        own = "regression-known: auth -- same (qae/features/base/auth.md::step 1: signed in as the test user -> the dashboard)\n"
+        for shape in ("files", "directory"):
+            with self.subTest(shape=shape):
+                self.setUp()
+                evidence = self.evidence_in_checkout()
+                features = Path(evidence, "qae", "features")
+                if shape == "files":
+                    Path(features, "base").mkdir()
+                    os.symlink("../auth.md", Path(features, "base", "auth.md"))
+                    os.symlink("../auth-step-1.png", Path(features, "base", "auth-step-1.png"))
+                else:
+                    os.symlink(".", Path(features, "base"))
+                result = self.rewalk_in(evidence, self.AC + self.FAILED + own + self.PROJECTS)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("auth is a FAIL", result.stdout)
 
