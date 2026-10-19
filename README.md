@@ -143,7 +143,7 @@ Each gate is a command-line program that reads a working tree and its Git histor
 | `bandit` | New [Bandit](https://bandit.readthedocs.io/) security results in changed Python files, such as a shell command built from input or an unsafe YAML load |
 | `osv-scanner` | Known-vulnerable versions a pull request adds to a dependency file (Python requirements and lockfiles, npm, pnpm, yarn and Bun lockfiles), from the [OSV](https://osv.dev/) database |
 | `cognitive-complexity` | New files with functions over the complexity limit, or changed files with more of them or with one that got worse |
-| `max-file-lines` | New files over the line limit, or existing files over it that grew |
+| `max-file-lines` | New files over the line or token limit (500 lines, 5000 tokens, a token being 4 bytes), or existing files over one that grew on it; each finding says how to split the file. `--staged` runs it on a commit's staged files, as a pre-commit check |
 | `repo-rules` | New findings of the repository's own [ast-grep](https://ast-grep.github.io/) rules and of catalog [rule packs](rules/README.md), each with a message saying what to write instead |
 | `universal-checks` | A place in the code that breaks one of the repository's standing rules, `ci/universal-checks.md`: every match of a rule's population (every call shape of an API, say) must conform to it, and a rule whose population matches nothing fails closed. The rules are read at the merge base, so a pull request cannot weaken its own ([format](docs/GATE-CONTRACT.md#universal-checks)) |
 | `ticket-coverage` | Plan requirements without IDs or criteria, and linked ticket IDs without HEAD proof or a deferral accepted at the merge base ([subscription and grammar](docs/features/ticket-coverage.md)) |
