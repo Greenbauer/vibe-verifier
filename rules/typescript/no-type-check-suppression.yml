@@ -10,5 +10,6 @@ note: >-
 ignores: ['**/node_modules/**']
 rule:
   kind: comment
-  # A directive only counts at the start of the comment, as TypeScript reads it; prose naming it does not.
-  regex: '^(//|/\*)[\s*]*@ts-(ignore|nocheck)\b'
+  # A directive only counts at the start of the comment, as TypeScript reads it (`//`, `///` or a block
+  # comment); prose naming it does not.
+  regex: '^/(/|\*)[/\s*]*@ts-(ignore|nocheck)\b'

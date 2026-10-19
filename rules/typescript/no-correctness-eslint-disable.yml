@@ -12,6 +12,7 @@ ignores: ['**/node_modules/**']
 rule:
   kind: comment
   any:
-    - regex: '^(//|/\*)[\s*]*eslint-disable(-next-line|-line)?\b.*react-hooks/(rules-of-hooks|exhaustive-deps)'
+    # The rule list ends at `--`: a hooks rule named only in the description is not disabled.
+    - regex: '^(//|/\*)[\s*]*eslint-disable(-next-line|-line)?\b([^-]|-[^-])*react-hooks/(rules-of-hooks|exhaustive-deps)'
     # Bare: no rule named, with or without a `-- reason` description; ESLint then disables every rule.
     - regex: '^(//|/\*)[\s*]*eslint-disable(-next-line|-line)?\s*(--.*?)?\s*(\*/)?\s*$'

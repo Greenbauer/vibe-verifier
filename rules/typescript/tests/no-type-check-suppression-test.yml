@@ -25,3 +25,6 @@ invalid:
   - |
     /** @ts-ignore */
     load(repositories);
+  - |
+    /// @ts-nocheck
+    export const value = 1;
