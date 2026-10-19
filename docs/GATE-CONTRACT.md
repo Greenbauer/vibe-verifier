@@ -427,16 +427,26 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   value is read from `node --help`), less the ones the gate sets (the reporter, `--watch`, sharding,
   coverage, isolation); a `--node-test` file runs as `node --test <file>` from the root, and a `--tests`
   match wins over both. Each file runs alone under the TAP reporter
-  (`--test-reporter=tap --test-reporter-destination=<file>`; tested on Node 20, 22 and 24). Other JS and
-  TS tests run under Vitest (read through its JSON reporter; tested on 4.x), from the nearest directory
+  (`--test-reporter=tap --test-reporter-destination=<file>`; tested on Node 20, 22 and 24). A Vitest
+  test (below) runs under Vitest (read through its JSON reporter; tested on 4.x), from the nearest directory
   holding a Vitest or Vite config, else a `package.json`, else the root, so each package of a monorepo
   runs with its own config. Python tests run under `--python` (default `python3`): its pytest when
   installed there, and unittest, loading the file as `python -m unittest discover -s <its directory>`
   would, when not or when the name has a hyphen or a dot (a test run by path, which pytest cannot
-  import). A JS file is a Vitest test when it imports `vitest` or calls `describe`, `it` or `test`; one
-  that imports `@playwright/test`, one that imports `node:test` that the repository does not run with
-  `node --test`, a shell or other test, a script judged only by its exit code, and every `--tests` path
-  are reported as not judged. The first run is at HEAD, where every test of the judged files must pass:
+  import). A JS file is a Vitest test when it imports `vitest`, or when it calls `describe`, `it` or
+  `test` without importing a framework and its package runs Vitest: Vitest with `globals: true`, Jest
+  and bun test all read those calls, so the package decides. The nearest directory, from the file's up
+  to the root, holding a Vitest config (`vitest.config.*`, `vitest.workspace.*`), a Jest config
+  (`jest.config.*`) or a `package.json` that names its runner (a `vitest` dependency; a `jest`
+  dependency or `jest` key; a script that runs `bun test`) says which; a `package.json` that names none,
+  a workspace package that runs its tests with the root's Vitest, passes the question up. Before this
+  rule a Jest or bun file was run under Vitest, and with no Vitest installed the gate stopped (exit 2)
+  on every such fix. One that imports `@playwright/test`, a Jest test (it imports `@jest/globals`, or
+  its package says Jest), a bun test (it imports `bun:test`, or its package's scripts run `bun test`),
+  a file whose calls no package claims, one that imports `node:test` that the repository does not run
+  with `node --test`, a shell or other test, a script judged only by its exit code, and every `--tests`
+  path are reported as not judged, with why: a Jest or bun test names its runner and the import or the
+  file that says so. The first run is at HEAD, where every test of the judged files must pass:
   a failing one is the pull request's red suite and exit 2, and a file that does not load there is not
   judged. The second is on the code before the fix: the working tree with every non-test path the
   fix changed (its documentation included) restored to the merge base, and its test code left at HEAD.
@@ -468,7 +478,10 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
 - **Exit 2 also when** no changed test is one it can run (only Playwright, shell or SQL tests, or
   node:test files the repository does not run with `node --test`, say: `--node-test` or the reason line is
   the way out), the project's Vitest or Node is not installed, a runner writes no report, or the runs
-  pass `--timeout`.
+  pass `--timeout`. A fix whose only such tests are Jest or bun tests is not exit 2: they run under the
+  repository's own runner, which this gate does not run yet, so nothing in the job is wrong. It passes
+  qualified (`PASS (not judged: ...)`), each file an advisory finding naming its runner, and a soak in a
+  Jest or bun repository stays green.
 - **Shell tests are not judged**, by design. A `*.test.sh` script reports only an exit status and free
   text: a failed check and a sourced file that does not exist yet both exit 1, and a command that does
   not exist yet exits 127 only when the script stops on it. bats, the shell runner with structured
@@ -584,7 +597,7 @@ reason, which Bandit honours and the review reads in the diff. A file Bandit can
 `cognitive-complexity` and `max-file-lines` judge the source files a pull request changed, against
 the same files at the base: a file is a finding only when it has more functions over the
 complexity limit than it had (or is new and has any), when its over-limit costs got worse, or
-when it is over the line cap and grew since the merge base. "Worse" compares the file's over-limit costs, sorted
+when it is over the line or token cap and grew on that measure since the merge base (tokens are bytes / 4). "Worse" compares the file's over-limit costs, sorted
 highest first, with the merge base's at the same rank: each must be no higher. That judges the
 file's costs, not named functions, because eslint does not name them: a function that grows
 fails the file unless a costlier one in it dropped far enough to take the lower rank, and a file
@@ -603,7 +616,9 @@ are ignored the same way (`--no-inline-config`). Python files go to complexipy, 
 measure JS, TS and Python files by default; `--source` narrows them. `cognitive-complexity` never
 measures a test: JS and TS test files, `conftest.py`, and any file named `test_*.py`, `*_test.py`,
 `test-*.py`, `*-test.py` or `*.test.py` (the Python test names `new-source-has-test` reads, one list
-in `gates/_contract.py`). `max-file-lines` measures tests too.
+in `gates/_contract.py`). `max-file-lines` measures tests too. `max-file-lines --staged` judges the
+index against `HEAD` instead of the branch against the merge base, so a pre-commit hook can run the
+same ratchet on what is about to be committed.
 
 ### Changed-code mutation
 
