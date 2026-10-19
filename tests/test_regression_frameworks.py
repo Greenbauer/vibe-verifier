@@ -21,28 +21,34 @@ JEST_AND_BUN = {"apps/api/src/price.test.ts": CALLS, "apps/quote/price.test.ts":
 class Frameworks(unittest.TestCase):
 
     def test_a_jest_or_bun_test_is_not_judged_and_names_its_runner(self):
-        # The Python test is one this gate runs, so the verdict is its; a file taken for Vitest would stop the gate instead.
-        repo = make_repo(self, {"shop/__init__.py": "", "shop/price.py": PY_BUG, "apps/tools/package.json": "{}\n",
-                                "apps/api/package.json": '{"devDependencies": {"jest": "29.7.0"}}\n',
-                                "apps/web/package.json": '{"scripts": {"test": "jest --ci"}}\n', "apps/web/jest.config.js": "module.exports = {};\n",
-                                "apps/shop/package.json": '{"scripts": {"test": "bun test --coverage"}}\n'})
-        result = fix(repo, {"shop/price.py": PY_FIX, "tests/test_price.py": PY_UNITTEST, "apps/api/src/price.test.ts": CALLS,
-                            "apps/web/src/price.test.ts": CALLS, "apps/shop/src/price.test.ts": CALLS,
-                            "apps/quote/price.test.ts": 'import { describe, expect, it } from "bun:test";\n' + CALLS,
-                            "apps/tools/price.test.ts": 'import { describe, expect, it } from "@jest/globals";\n' + CALLS,
-                            "scripts/price.test.js": CALLS},
-                     "fix(price): members get their discount", "", "--python", sys.executable)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("tests/test_price.py: test_price.Discount.test_members_get_ten_percent_off_over_100 fails on the code before "
-                      "the fix", result.stderr)
-        for said in ("apps/api/src/price.test.ts: not judged: a Jest test (apps/api/package.json), which this gate does not run",
-                     "apps/web/src/price.test.ts: not judged: a Jest test (apps/web/jest.config.js), which this gate does not run",
-                     "apps/shop/src/price.test.ts: not judged: a bun test (apps/shop/package.json), which this gate does not run",
-                     "apps/quote/price.test.ts: not judged: a bun test (it imports bun:test), which this gate does not run",
-                     "apps/tools/price.test.ts: not judged: a Jest test (it imports @jest/globals), which this gate does not run",
-                     "scripts/price.test.js: not judged: it calls describe, it or test without importing a framework, and no "
-                     "Vitest config or package.json that names vitest holds it"):
-            self.assertIn(said, result.stderr)
+        # The Python test is one this gate runs, so the verdict is its, with --soak or without; a file taken for Vitest would
+        # stop the gate instead.
+        packages = {"apps/tools/package.json": "{}\n", "apps/api/package.json": '{"devDependencies": {"jest": "29.7.0"}}\n',
+                    "apps/cli/package.json": '{"dependencies": {"jest": "29.7.0"}}\n',
+                    "apps/lib/package.json": '{"jest": {"testEnvironment": "node"}}\n',
+                    "apps/web/package.json": '{"scripts": {"test": "jest --ci"}}\n', "apps/web/jest.config.js": "module.exports = {};\n",
+                    "apps/shop/package.json": '{"scripts": {"test": "bun test --coverage"}}\n'}
+        tests = {"apps/%s/src/price.test.ts" % app: CALLS for app in ("api", "cli", "lib", "web", "shop")}
+        tests.update({"apps/quote/price.test.ts": 'import { describe, expect, it } from "bun:test";\n' + CALLS,
+                      "apps/tools/price.test.ts": 'import { describe, expect, it } from "@jest/globals";\n' + CALLS,
+                      "scripts/price.test.js": CALLS})
+        for soak in ((), ("--soak",)):
+            repo = make_repo(self, dict({"shop/__init__.py": "", "shop/price.py": PY_BUG}, **packages))
+            result = fix(repo, dict({"shop/price.py": PY_FIX, "tests/test_price.py": PY_UNITTEST}, **tests),
+                         "fix(price): members get their discount", "", "--python", sys.executable, *soak)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("tests/test_price.py: test_price.Discount.test_members_get_ten_percent_off_over_100 fails on the code "
+                          "before the fix", result.stderr)
+            for said in ("apps/api/src/price.test.ts: not judged: a Jest test (apps/api/package.json), which this gate does not run",
+                         "apps/cli/src/price.test.ts: not judged: a Jest test (apps/cli/package.json), which this gate does not run",
+                         "apps/lib/src/price.test.ts: not judged: a Jest test (apps/lib/package.json), which this gate does not run",
+                         "apps/web/src/price.test.ts: not judged: a Jest test (apps/web/jest.config.js), which this gate does not run",
+                         "apps/shop/src/price.test.ts: not judged: a bun test (apps/shop/package.json), which this gate does not run",
+                         "apps/quote/price.test.ts: not judged: a bun test (it imports bun:test), which this gate does not run",
+                         "apps/tools/price.test.ts: not judged: a Jest test (it imports @jest/globals), which this gate does not run",
+                         "scripts/price.test.js: not judged: it calls describe, it or test without importing a framework, and no "
+                         "Vitest config or package.json that names vitest holds it"):
+                self.assertIn(said, result.stderr)
 
     def test_a_fix_whose_only_tests_are_jest_or_bun_tests_passes_qualified_and_is_never_exit_2(self):
         # The repository's own runner, which this gate does not run yet: not the job's fault, so not exit 2, and a soak
@@ -69,7 +75,8 @@ class Frameworks(unittest.TestCase):
     def test_a_test_whose_package_runs_vitest_is_a_vitest_test_without_importing_it(self):
         # A workspace package that names no runner runs its tests with the root's Vitest; a Vitest config says so too.
         for files in ({"package.json": '{"devDependencies": {"vitest": "4.1.11"}}\n', "packages/shop/package.json": '{"name": "shop"}\n'},
-                      {"packages/shop/vitest.config.ts": "export default {};\n", "package.json": '{"devDependencies": {"jest": "29.7.0"}}\n'}):
+                      {"packages/shop/vitest.config.ts": "export default {};\n", "package.json": '{"devDependencies": {"jest": "29.7.0"}}\n'},
+                      {"packages/shop/vitest.workspace.ts": "export default [];\n", "package.json": '{"jest": {}}\n'}):
             repo = make_repo(self, dict({"packages/shop/src/price.ts": PRICE_BUG}, **files))
             result = fix(repo, {"packages/shop/src/price.ts": PRICE_FIX, "packages/shop/src/price.test.ts": CALLS}, "fix: x", "",
                          *NO_RUNNER)
