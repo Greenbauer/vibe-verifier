@@ -54,8 +54,6 @@ OPENER = re.compile(r"^(?:await\s+)?[\w$.!?]+[(\[{]$")
 ASSERTION_OPEN = re.compile(r"^(?:await\s+)?(?:assert\b|expect\s*[.(]|t\.assert|self\.assert)")
 CLOSERS_ONLY = re.compile(r"^[)\]}>;,\s]*$")
 STRING = re.compile(r"""(["'`])(?:\\.|(?!\1)[^\\])*\1""")
-# A JS test declared and closed on one line ends `});` or `}, 5000);`; block comments are dropped first.
-ONE_LINE_TEST = re.compile(r"\}\s*(?:,\s*\d+\s*)?\)\s*;?$")
 BLOCK_COMMENT = re.compile(r"/\*.*?\*/")
 MIN_PART = 12  # a plan line, and a test title that is not a literal, may be quoted in part
 # A test declaration: a JS test call (test(...), it(...), test.only(...), test.each(...)(...)), `void` first when a
@@ -201,6 +199,15 @@ def quote_problem(lines, path, number, quote, whole):
     return None
 
 
+def closes_on_its_line(line):
+    """Whether a JS test declaration line also closes its call: a one-line test ends `)` or `);`, read with its
+    block comments dropped, and again with its strings and a trailing `//` comment dropped too (a multi-line
+    declaration ends with the `{`, `(` or `=>` that opens its body)."""
+    raw = BLOCK_COMMENT.sub("", line).rstrip()
+    bare = STRING.sub("", raw).split("//", 1)[0].rstrip()
+    return any(text.endswith((")", ");")) for text in (raw, bare))
+
+
 def bracket_depth(text):
     """Openers minus closers on a line, string literals and a trailing `//` comment left out."""
     text = STRING.sub("", text).split("//", 1)[0]
@@ -274,7 +281,7 @@ def body_end(lines, start):
         return dedent
     if dedent < len(lines) and CLOSERS_ONLY.match(lines[dedent].strip()):
         dedent += 1
-    if ONE_LINE_TEST.search(BLOCK_COMMENT.sub("", lines[start]).split(" //", 1)[0].rstrip()):
+    if closes_on_its_line(lines[start]):
         return start + 1  # a one-line test, whatever a bracket inside a regex or comment says
     depth = 0
     for index in range(start, dedent):

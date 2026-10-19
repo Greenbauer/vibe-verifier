@@ -118,7 +118,11 @@ class LineDrift(unittest.TestCase):
                      ['test("a", () => { x(/a\\//); });', "  function helper() {", "    assert.equal(hookOnly(), 2);",
                       "  }"],
                      ['test("a", () => { x(/[(]/); });', "  function helper() {", "    assert.equal(hookOnly(), 2);",
-                      "  }"]):
+                      "  }"]) + tuple([line, "  function helper() {", "    assert.equal(hookOnly(), 2);", "  }"] for line in (
+                         'test("a", () => { x(/[(]/); });// c',
+                         'test("a", () => expect(/[(]/.test(s)).toBe(true));',
+                         'test("a", wrap(() => { x(/[(]/); }));',
+                         'test("a", () => { x("a //b", /[(]/); });')):
             proof = {"file": "tests/a.test.ts", "test": "a", "line": 1, "assertion": "assert.equal(hookOnly(), 2);"}
             self.assertIn("fabricated quote", proof_audit.proof_problem(Files(spec), proof) or "", spec[1])
             self.assertNotIn("cited_line", proof)
