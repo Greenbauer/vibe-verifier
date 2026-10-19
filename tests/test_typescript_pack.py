@@ -1,4 +1,4 @@
-"""The typescript pack's suppression rules through the real repo-rules gate."""
+"""The typescript pack's suppression rules, and the .jsx mapping of both TSX packs, through the real repo-rules gate."""
 
 import unittest
 
@@ -7,11 +7,11 @@ from helpers import commit, gate, make_repo
 IGNORE = "// @ts-ignore\nload(x);\n"
 
 
-def judge(test, base, head):
+def judge(test, base, head, pack="typescript"):
     """The gate's result for a pull request that turns the files in base into those in head."""
     repo = make_repo(test, dict(base, **{"README.md": "x\n"}))
     commit(repo, head)
-    return gate("repo-rules", repo, "--base-ref", "HEAD~1", "--pack", "typescript")
+    return gate("repo-rules", repo, "--base-ref", "HEAD~1", "--pack", pack)
 
 
 class TypescriptPack(unittest.TestCase):
@@ -54,6 +54,10 @@ class TypescriptPack(unittest.TestCase):
         result = judge(self, {}, {"src/c.ts": "export const order = (await response.json()) as Order;\n"})
         self.assertPasses(result)
         self.assertIn("no-unchecked-external-data-cast", result.stdout)
+
+    def test_the_supabase_pack_judges_jsx_files_too(self):
+        admin = "export const admin = createServerClient(url, process.env.SUPABASE_SERVICE_ROLE_KEY, { cookies });\n"
+        self.assertBlocks(judge(self, {}, {"src/admin.jsx": admin}, "supabase"), "supabase-service-role-not-ssr-client")
 
 
 if __name__ == "__main__":
