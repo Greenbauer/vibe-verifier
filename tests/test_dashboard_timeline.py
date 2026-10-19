@@ -114,9 +114,11 @@ console.log(JSON.stringify({options:menu.children.map(option=>[option.attrs.valu
         # Nothing drawn can leave the row's timeline box, so it never reaches the text under it.
         self.assertIn("overflow: hidden", rule(".timeline-mini"))
         self.assertIn("top: 0; bottom: 0", rule(".timeline-now"))
-        # The lines share the whole Checks cell, at most 12px each with a 1px gap, so a busy head never grows the row.
-        self.assertIn("flex: 1 1 0; min-height: 1px; max-height: 12px", rule(".timeline-line"))
+        # The lines share the Checks cell, at most 12px each with a 1px gap. No line has a height of its own and
+        # a dense box drops the gap, so the timeline adds no height and a busy head never grows the row.
+        self.assertIn("flex: 1 1 0; min-height: 0; max-height: 12px", rule(".timeline-line"))
         self.assertIn("gap: 1px", rule(".timeline-mini"))
+        self.assertIn("gap: 0", rule(".timeline-mini.dense"))
         self.assertIn("align-self: stretch", rule(".timeline-cell"))
         # A row with the check meter keeps its caption under it, across the Checks and CI columns.
         self.assertIn("grid-column: 3 / 5", rule(".pr-row > .progress-copy:not(.ci-copy)"))

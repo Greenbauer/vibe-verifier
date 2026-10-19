@@ -159,8 +159,9 @@
     if (!line.row) return null;
     const { start, span } = line.row;
     const width = Math.max(scale || 0, span);
-    // The lines share the row's height between them (styles.css), so a busy head gets thinner lines, not a taller row.
-    const box = el("div", { class: "timeline-mini", role: "img", "aria-label": summary(line, now) });
+    // The lines share the Checks cell's height (styles.css): none has a height of its own, and past 16
+    // they lose their gap too, so a busy head gets thinner lines and never a taller row.
+    const box = el("div", { class: groups.length > 16 ? "timeline-mini dense" : "timeline-mini", role: "img", "aria-label": summary(line, now) });
     groups.forEach(group => box.append(el("div", { class: "timeline-line" },
       group.lanes.slice().sort((a, b) => LAYER[a.state] - LAYER[b.state])
         .flatMap(lane => laneBars(lane, start, width, now)))));

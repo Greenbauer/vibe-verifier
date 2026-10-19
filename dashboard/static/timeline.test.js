@@ -111,6 +111,7 @@ test("a dense head draws every workflow as a line, sized by the stylesheet", () 
   const lines = box.find("timeline-line");
   assert.strictEqual(lines.length, 20);
   assert.ok(lines.every(line => line.style.get("height") === undefined));
+  assert.deepStrictEqual([box.className, timeline.mini(pull, NOW, null).className], ["timeline-mini dense", "timeline-mini"]);
 });
 
 test("the expanded view lists every job with its time, bold on the critical path, links only to the owner's GitHub", () => {

@@ -204,11 +204,12 @@ Actions job's created, started and finished times and its steps, each other app'
 each commit status. It makes no extra GitHub call.
 
 - **In the row**, the Checks column holds one line per workflow, every job of that workflow drawn on
-  it. The lines share the cell's whole height, each up to 12 pixels with a 1-pixel gap, so a head with
-  many workflows gets thinner lines rather than a taller row. Green ran and passed, red failed, yellow is running, and dim yellow is a job
+  it. The lines split the cell's height between them, each at most 12 pixels with a 1-pixel gap (no
+  gap past 16 workflows), centered. A head with few workflows draws 12-pixel lines; a busy one gets
+  thinner lines and never a taller row. Green ran and passed, red failed, yellow is running, and dim yellow is a job
   waiting for a runner. Failures are drawn on top so they are never hidden. A dashed line marks now
-  while anything is still open. Skipped checks and commit statuses are not drawn; the counts under
-  the line still name them. A head whose checks have no time yet keeps the check meter.
+  while anything is still open. Skipped checks and commit statuses are not drawn; the counts in the
+  CI column still name them. A head whose checks have no time yet keeps the check meter.
 - **The time scale** is the same for every row by default: the longest timeline on screen spans the
   column, so a 12-minute run looks short beside a 77-minute one. The toolbar's scale menu can fit
   each row to its own width instead, which shows each run's shape at the cost of comparing rows.
@@ -231,7 +232,7 @@ each commit status. It makes no extra GitHub call.
   them open, and keeps focus on the scale menu, a row's arrow or a job's step toggle when one of
   them had it.
 - A job's line is empty while it is still within its first 30 seconds of waiting, and another
-  app's queued check draws nothing until it starts; the counts under the line include both.
+  app's queued check draws nothing until it starts; the counts in the CI column include both.
 
 `tests/test_dashboard_timeline.py` runs `dashboard/static/timeline.test.js` and `dashboard/static/prs.test.js` and checks the row's
 swap from the meter, the scale menu, and the bar colors and box.
