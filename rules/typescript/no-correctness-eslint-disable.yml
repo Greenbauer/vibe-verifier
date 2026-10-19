@@ -13,4 +13,5 @@ rule:
   kind: comment
   any:
     - regex: '^(//|/\*)[\s*]*eslint-disable(-next-line|-line)?\b.*react-hooks/(rules-of-hooks|exhaustive-deps)'
-    - regex: '^(//|/\*)[\s*]*eslint-disable(-next-line|-line)?\s*(\*/)?\s*$'
+    # Bare: no rule named, with or without a `-- reason` description; ESLint then disables every rule.
+    - regex: '^(//|/\*)[\s*]*eslint-disable(-next-line|-line)?\s*(--.*?)?\s*(\*/)?\s*$'

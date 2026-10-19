@@ -15,6 +15,9 @@ rule:
     - pattern: (await $X.json()) as $T
     - pattern: $X.json() as $T
     - pattern: JSON.parse($$$ARGS) as $T
+    - pattern: (await $X.json()) as unknown as $T
+    - pattern: $X.json() as unknown as $T
+    - pattern: JSON.parse($$$ARGS) as unknown as $T
     - kind: call_expression
       all:
         # tree-sitter parses `await x.json<T>()` with the await inside the call's function field.

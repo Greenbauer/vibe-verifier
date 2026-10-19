@@ -20,7 +20,7 @@ Add `.vibe-verifier-rules/` with a rule and its test, subscribe with `repo-rules
 
 - `tests/test_repo_rules.py::test_a_new_violation_fails_and_an_identical_one_already_at_the_base_does_not`
 - `tests/test_repo_rules.py::test_editing_a_violation_in_place_is_not_new`
-- `tests/test_typescript_pack.py::test_a_new_type_check_suppression_blocks`
+- `tests/test_typescript_pack.py::test_a_new_type_check_suppression_blocks_in_every_mapped_extension`
 - `tests/test_rules_doc.py::test_write_appends_the_block_then_replaces_it_in_place`
 - `tests/test_rules_doc.py::test_a_stale_block_is_a_finding_on_its_first_line_and_soak_reports_it_only`
 

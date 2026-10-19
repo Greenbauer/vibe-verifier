@@ -23,3 +23,7 @@ invalid:
     const journey = await request.json<Journey>();
   - |
     function formatUser(row: Record<string, any>) { return row.name; }
+  - |
+    const order = (await response.json()) as unknown as Order;
+  - |
+    const config = JSON.parse(text) as unknown as Config;

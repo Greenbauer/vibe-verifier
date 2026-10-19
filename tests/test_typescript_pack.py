@@ -4,28 +4,52 @@ import unittest
 
 from helpers import commit, gate, make_repo
 
+IGNORE = "// @ts-ignore\nload(x);\n"
 
-def new_file_findings(test, path, source):
-    repo = make_repo(test, {"README.md": "x\n"})
-    commit(repo, {path: source})
+
+def judge(test, base, head):
+    """The gate's result for a pull request that turns the files in base into those in head."""
+    repo = make_repo(test, dict(base, **{"README.md": "x\n"}))
+    commit(repo, head)
     return gate("repo-rules", repo, "--base-ref", "HEAD~1", "--pack", "typescript")
 
 
 class TypescriptPack(unittest.TestCase):
-    def test_a_new_type_check_suppression_blocks(self):
-        result = new_file_findings(self, "src/a.ts", "// @ts-ignore\nload(x);\n")
+    def assertBlocks(self, result, rule):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("no-type-check-suppression", result.stdout)
+        self.assertIn(rule, result.stdout)
 
-    def test_a_silenced_hooks_rule_blocks(self):
-        source = "useEffect(() => {\n  load(id);\n  // eslint-disable-next-line react-hooks/exhaustive-deps\n}, []);\n"
-        result = new_file_findings(self, "src/b.tsx", source)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("no-correctness-eslint-disable", result.stdout)
+    def assertPasses(self, result):
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_new_type_check_suppression_blocks_in_every_mapped_extension(self):
+        self.assertBlocks(judge(self, {}, {"src/a.ts": IGNORE}), "no-type-check-suppression")
+        self.assertBlocks(judge(self, {}, {"scripts/b.mjs": "// @ts-nocheck\nexport const b = 1;\n"}),
+                          "no-type-check-suppression")
+
+    def test_ts_expect_error_and_prose_naming_a_directive_pass(self):
+        self.assertPasses(judge(self, {}, {"src/a.ts": "// @ts-expect-error the types say string\nconfigure(3);\n"}))
+        self.assertPasses(judge(self, {}, {"src/b.ts": "// Its preprocessor adds `// @ts-nocheck` to each copy.\n"
+                                                       "export const b = 1;\n"}))
+
+    def test_a_silenced_hooks_rule_or_a_bare_disable_blocks(self):
+        hooks = "useEffect(() => {\n  load(id);\n  // eslint-disable-next-line react-hooks/exhaustive-deps\n}, []);\n"
+        self.assertBlocks(judge(self, {}, {"src/a.tsx": hooks}), "no-correctness-eslint-disable")
+        self.assertBlocks(judge(self, {}, {"src/b.ts": "// eslint-disable-next-line -- legacy\nrisky();\n"}),
+                          "no-correctness-eslint-disable")
+
+    def test_a_disable_naming_a_style_rule_passes(self):
+        self.assertPasses(judge(self, {}, {"src/a.ts": "// eslint-disable-next-line no-console -- CLI output\n"
+                                                       "console.log(report);\n"}))
+
+    def test_a_suppression_already_at_the_base_does_not_block_but_another_one_does(self):
+        base = {"src/a.ts": IGNORE}
+        self.assertPasses(judge(self, base, {"src/a.ts": IGNORE + "export const a = 1;\n"}))
+        self.assertBlocks(judge(self, base, {"src/a.ts": IGNORE + IGNORE}), "no-type-check-suppression")
 
     def test_an_unchecked_external_data_cast_is_reported_but_does_not_block(self):
-        result = new_file_findings(self, "src/c.ts", "export const order = (await response.json()) as Order;\n")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = judge(self, {}, {"src/c.ts": "export const order = (await response.json()) as Order;\n"})
+        self.assertPasses(result)
         self.assertIn("no-unchecked-external-data-cast", result.stdout)
 
 

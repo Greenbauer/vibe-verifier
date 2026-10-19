@@ -24,3 +24,9 @@ invalid:
   - |
     /* eslint-disable */
     export const value = 1;
+  - |
+    // eslint-disable-next-line -- legacy code
+    const anything = risky();
+  - |
+    /* eslint-disable -- generated file */
+    export const value = 1;
