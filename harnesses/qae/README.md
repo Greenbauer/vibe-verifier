@@ -82,7 +82,10 @@ itself included. A committed file the explorer does not write would otherwise su
 a committed link would point the gates at a walk the branch wrote. The finding names each path; the
 fix is to remove it from the branch. A run's own evidence is regular files the workflow wrote, so it
 never trips this. The explore job uploads what the checkout had under `qae-artifacts/` with the
-explorer's files, so the refusal holds there too.
+explorer's files, so the refusal holds there too. What the pull request's own code writes while it
+runs is another matter: the default site step serves it on the explore job's runner, where it can
+write untracked files into `qae-artifacts/` that are uploaded as the explorer's. A site served apart
+from the workspace (a container, or a hosted preview) keeps it out.
 
 The gates refuse at any pin from this change on. A consumer's copy of the verify job made before it
 also downloads into the checkout (`path: qae-evidence`), where a committed

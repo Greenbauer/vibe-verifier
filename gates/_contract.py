@@ -233,7 +233,8 @@ def planted(repo, artifacts):
     and a link it commits (a file, a directory, or the directory itself) points the gate at whatever it names.
     So run_gate judges nothing until this is empty. A run's own evidence is regular files the workflow wrote."""
     found = []
-    rel = os.path.relpath(os.path.abspath(artifacts), os.path.abspath(repo)).replace(os.sep, "/")
+    parent, name = os.path.split(os.path.abspath(artifacts))  # the directory itself unresolved: a link is a finding
+    rel = os.path.relpath(os.path.join(os.path.realpath(parent), name), os.path.realpath(repo)).replace(os.sep, "/")
     if rel != ".." and not rel.startswith("../"):
         found += ["the pull request tracks %s" % path for path in sorted(tracked_files(repo))
                   if path == rel or path.startswith(rel + "/") or rel.startswith(path + "/")]
