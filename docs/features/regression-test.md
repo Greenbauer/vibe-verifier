@@ -56,7 +56,7 @@ A changed spec that one of those configs collects (`playwright test --list`) run
 What the repository provides:
 
 - **A runner with Docker**, and the gate's step not in a job `container:` (the gate mounts the job's own paths into its containers). GitHub's hosted Ubuntu runners have Docker, and the catalog's self-hosted lanes give each job its own Docker daemon ([lanes](../../lanes/README.md)).
-- **A config whose `webServer` serves the working tree**: a dev server (`next dev`), or a build and a start in one command, on a loopback address, with every project's `baseURL` there. It runs inside Playwright's image, which has Node and npm but not pnpm or yarn, so the command calls the framework's own binary (`node_modules/.bin/next dev -p 3000`) or npm. A server that only starts a build made earlier (`next start` alone) serves the head in both runs, and the spec then reads as not reproducing the bug. A repository whose main config targets a preview can name a second config for the gate that imports the first and adds the `webServer`.
+- **A config whose `webServer` serves the working tree**: a dev server (`next dev`), or a build and a start in one command, on a loopback address, with every project's `baseURL` there. It runs inside Playwright's image, which has Node (24 in 1.64.1's), npm and yarn but not pnpm, so the command calls the framework's own binary (`node_modules/.bin/next dev -p 3000`), npm or yarn. A server that only starts a build made earlier (`next start` alone) serves the head in both runs, and the spec then reads as not reproducing the bug. A repository whose main config targets a preview can name a second config for the gate that imports the first and adds the `webServer`.
 - **The job's own local stack**, started before the gate on a Docker network, named with `--stack-network` (the Supabase CLI's is `supabase_network_<project_id>`): the database with its migrations and the test accounts the specs sign in as (`supabase start`, then `supabase db reset` with a seed), and the site's environment pointing at its ports on 127.0.0.1. `supabase status -o env --override-name api.url=NEXT_PUBLIC_SUPABASE_URL` is the Supabase CLI's own example for writing those variables; its keys say `iss: supabase-demo`, which the gate reads as local. The gate restarts the stack twice, so it runs after the job's other steps that use it.
 - **The project's packages installed**, with a Playwright version that has an official image (every release has one; an alpha or a fork names an image with `--browser-image`). No browser install on the runner: the image holds the browsers.
 - A site that **reaches no other host while its specs run** (turn analytics, error reporting, remote scripts and a framework's own start-up requests such as telemetry off in the gate's config, or a failure cannot be judged), and **no site build that fetches from the internet** (`next/font/google` downloads its fonts when the site compiles, and the seal refuses it like any other host: self-host the fonts, or mock them in the gate's config).
@@ -68,9 +68,9 @@ What it costs each fix pull request whose changed tests include a spec, measured
 
 | Part | Measured |
 | --- | --- |
-| Pulling Playwright's image, once per machine that keeps it | 960 MB (arm64): 44 s on a home connection (Docker Desktop, Apple M4 Pro) |
-| Moving the stack in and restarting it, then out and restarting it | a Supabase stack of five containers: 30 s in, 22 s out (Docker Desktop, Apple M4 Pro); a one-container stand-in: 3.4 s and 3.5 s |
-| Each Playwright call in the seal (container start plus the work) | on the catalog's fixture (a node server, one spec): a listing 0.6 to 0.7 s, a run 1.2 s passing and 4.3 s failing on a 3 s timeout (Docker Desktop, Apple M4 Pro) |
+| Pulling Playwright's image, once per machine that keeps it | 2.5 GB (amd64): 34 s on a GitHub-hosted Ubuntu runner (Docker 28.0.4); 960 MB (arm64): 44 s on Docker Desktop, Apple M4 Pro |
+| Moving the stack in and restarting it, then out and restarting it | a Supabase stack of five containers (database, auth, REST, API gateway, mail catcher): 30 s in, 22 s out (Docker Desktop, Apple M4 Pro); a one-container stand-in: 0.3 s each way on the GitHub-hosted runner |
+| Each Playwright call in the seal (container start plus the work) | on the catalog's fixture (a node server, one spec), GitHub-hosted runner: a listing 0.6 to 0.8 s, a run 1.0 to 2.2 s passing and 4.1 to 4.2 s failing on a 3 s timeout; the whole gate 2 to 12 s |
 | What the job already pays for this gate's runs: the stack's start, the site's start or build twice, the specs twice | `supabase start` 36 to 41 s and `supabase db reset` 33 to 35 s on a subscriber's self-hosted lane (12 runs, 4 repositories); a Next.js build 71 to 86 s each |
 
 So the gate adds about a minute of its own (stack moves) plus the image pull where it is not cached, on top of the site's two starts and the specs. It runs in a job no required check waits on. The job runs on every pull request unless its workflow starts the stack only for a title of type `fix`.
@@ -106,7 +106,7 @@ So the gate adds about a minute of its own (stack moves) plus the image pull whe
 - `tests/test_regression_playwright.py::test_a_failure_before_the_fix_in_a_run_that_reached_out_is_not_the_bug_showing`
 - `tests/test_regression_playwright_network.py::test_the_listener_hears_a_container_that_is_not_sealed`
 - `tests/test_regression_playwright_network.py::test_a_raw_node_socket_from_the_site_is_refused_and_counted`
-- `tests/test_regression_playwright_network.py::test_a_node_started_by_its_own_path_with_an_empty_environment_is_refused`
+- `tests/test_regression_playwright_network.py::test_a_different_node_first_on_path_with_an_empty_environment_is_refused`
 - `tests/test_regression_playwright_network.py::test_this_machine_is_off_the_network_too`
 - `tests/test_regression_playwright_network.py::test_a_page_s_webrtc_sends_nothing_off_the_network`
 - `tests/test_regression_playwright_network.py::test_a_cloud_metadata_address_is_refused`

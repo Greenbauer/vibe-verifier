@@ -16,7 +16,7 @@ back and restarted again, so the job's later steps find the stack as they left i
 Inside the run's container the gate's entry (SEAL_JS) forwards each port the stack publishes on this machine
 (127.0.0.1:<host port>) to its container on the network, so the site's settings for the stack work unchanged, and
 records what the network refused: every outside name a process looked up (Docker's DNS hands a name it does not
-know to a recorder at 127.0.0.1:53, set with --dns) and the kernel's count of IPv4 packets that had no route (Ip
+know to a recorder at 127.0.0.1:53, set with --dns; --dns-search . keeps the runner's own search domain off it) and the kernel's count of IPv4 packets that had no route (Ip
 OutNoRoutes in the container's own /proc/net/snmp, for an address given as numbers, from any process). An IPv6
 address given as numbers is refused the same way but not counted: Chromium's own check of whether IPv6 reaches the
 internet counts there on every run. The project's own files are mounted at the same path, and the run's user is this process's.
@@ -206,7 +206,7 @@ class Seal:
                   for arg in ("-e", key)]
         try:
             code, output = run_tool(
-                ["docker", "run", "--rm", "--init", "--name", name, "--network", self.network, "--dns", "127.0.0.1",
+                ["docker", "run", "--rm", "--init", "--name", name, "--network", self.network, "--dns", "127.0.0.1", "--dns-search", ".",
                  "--user", "%d:%d" % (os.getuid(), os.getgid()), "--shm-size", "1g", "-e", "HOME=/tmp",
                  "-e", "VV_SEAL_RECORD=" + record, *passed, "-v", "%s:%s" % (root, root), "-v", "%s:%s" % (scratch, scratch),
                  "-w", directory, image, "node", entry, json.dumps(self.forwards), *command],

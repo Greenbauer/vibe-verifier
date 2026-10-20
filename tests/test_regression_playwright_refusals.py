@@ -139,8 +139,13 @@ class Refusals(Fixture):
         self.assertIn("no Playwright is installed for playwright.config.mjs", result.stderr)
 
     def test_no_docker_cannot_be_judged(self):
-        # PATH without any directory that holds docker: only the sealed run needs it.
-        path = os.pathsep.join(entry for entry in os.environ["PATH"].split(os.pathsep) if not os.path.exists(os.path.join(entry, "docker")))
+        # PATH without any directory that holds docker, and git linked in on its own (on Linux both are in /usr/bin).
+        tools = tempfile.mkdtemp(prefix="vv-no-docker-")
+        self.addCleanup(shutil.rmtree, tools, True)
+        real = subprocess.run(["git", "--exec-path"], capture_output=True, text=True, check=True).stdout.strip()
+        os.symlink(os.path.realpath(os.path.join(real, "git")), os.path.join(tools, "git"))  # git itself, not a wrapper
+        path = os.pathsep.join([tools] + [entry for entry in os.environ["PATH"].split(os.pathsep)
+                                          if not os.path.exists(os.path.join(entry, "docker"))])
         refused(self, self.project(), "no docker command: this gate runs browser specs in a Docker network sealed off from "
                                       "everything but the job's own containers, so the runner needs Docker",
                 env=self.env({"PATH": path}))

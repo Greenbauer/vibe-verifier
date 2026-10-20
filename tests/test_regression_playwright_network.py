@@ -5,7 +5,7 @@ An outside listener (a container on an ordinary Docker network, its TCP and UDP 
 machine) records every packet that reaches it. A container that is not sealed reaches it directly and through this
 machine's published port, so the listener does hear a way out (the control). Then each way out the review rounds
 found is tried from a sealed run, and the listener hears none of them: a raw Node socket from the site's server, a
-node started by its own path with an empty environment, a page's WebRTC, a cloud metadata address, a spec's own
+different node first on PATH that starts the real one with an empty environment, a page's WebRTC, a cloud metadata address, a spec's own
 proxy, and this machine itself. Each was counted as refused, so a changed spec that failed in that run is exit 2.
 And the job's stack, moved into the seal, is reachable from the site at its usual loopback port, cannot reach the
 listener itself, and is back on its own network, reachable from this machine, afterwards.
@@ -108,7 +108,9 @@ class Network(Browser):
         said = json.loads(docker("run", "--rm", "--network", self.outside, self.image, "node", "-e", TRY, self.address,
                                  self.gateway, str(self.published)))
         self.assertEqual(said, {"direct": "connected", "machine": "connected", "udp": "sent"})
-        self.assertEqual(len(self.heard()), len(before) + 3)
+        heard = [line.split()[0] for line in self.heard()[len(before):]]
+        self.assertGreaterEqual(heard.count("tcp"), 2, heard)  # directly, and through this machine's published port
+        self.assertGreaterEqual(heard.count("udp"), 1, heard)
 
     def test_a_raw_node_socket_from_the_site_is_refused_and_counted(self):
         before = self.heard()
@@ -120,17 +122,23 @@ class Network(Browser):
         self.assertEqual(self.heard(), before)
         tree_is_head(self, repo)
 
-    def test_a_node_started_by_its_own_path_with_an_empty_environment_is_refused(self):
-        # No NODE_OPTIONS, no PATH, no proxy settings: nothing the run sets up is left, and the kernel refuses it all the same.
+    def test_a_different_node_first_on_path_with_an_empty_environment_is_refused(self):
+        # As a package manager's own wrapper is (Yarn 1 puts one first on PATH): a `node` that starts the real one with an
+        # empty environment, so no NODE_OPTIONS, no PATH and no proxy setting of the run is left. The kernel refuses it the same.
         before = self.heard()
-        repo = self.project({"server.mjs": SERVER_CONNECTS})
+        shim = '#!/bin/sh\necho shim >> shim.log\nexec env -i PORT="$PORT" TARGET_ADDRESS="$TARGET_ADDRESS" ' \
+               'TARGET_PORT="$TARGET_PORT" "$REAL_NODE" "$@"\n'
+        repo = self.project({"server.mjs": SERVER_CONNECTS, "bin/node": shim,
+                             ".gitignore": "node_modules\nstarted.log\nglobal-setup.log\nshim.log\n"})
+        os.chmod(Path(repo, "bin", "node"), 0o755)
         config = Path(repo, "playwright.config.mjs")
-        config.write_text(config.read_text().replace('command: "node server.mjs"', 'command: "env -i PORT=$PORT TARGET_ADDRESS='
-                                                     '$TARGET_ADDRESS TARGET_PORT=$TARGET_PORT $(command -v node) server.mjs"'))
+        config.write_text(config.read_text().replace('command: "node server.mjs"', 'command: "export REAL_NODE=$(command -v node); '
+                                                     'export PATH=$PWD/bin:$PATH; node server.mjs"'))
         subprocess.run(["git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
-                        "commit", "-qam", "own node"], check=True)
+                        "commit", "-qam", "another node"], check=True)
         result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, env=self.target(self.address, 8443))
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(Path(repo, "shim.log").read_text(), "shim\n" * 2)  # the other node started the site, both runs
         self.assertEqual(Path(repo, "started.log").read_text(), "outside: ENETUNREACH\n" * 2)
         self.assertEqual(self.heard(), before)
         tree_is_head(self, repo)
