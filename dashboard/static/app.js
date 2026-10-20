@@ -59,11 +59,11 @@
   }
 
   function announce(message) { announcement.textContent = message; }
-  // The line under the title is the subtitle, or a warning in its place; controls sit to the right and wrap below when narrow.
-  function heading(title, subtitle, warning, controls) {
+  // A page title with no description under it; a warning, when there is one, takes the line under the
+  // title. Controls follow the title on the left and wrap below it when narrow.
+  function heading(title, warning, controls) {
     const line = warning
-      ? el("p", { class: "title-warning", role: "status" }, el("i", { class: "warning-dot", "aria-hidden": "true" }), warning)
-      : subtitle ? el("p", { class: "muted" }, subtitle) : null;
+      ? el("p", { class: "title-warning", role: "status" }, el("i", { class: "warning-dot", "aria-hidden": "true" }), warning) : null;
     return el("div", { class: "section-heading" }, el("div", { class: "section-title" }, el("h1", {}, title), line), controls);
   }
   function empty(title, detail) {
@@ -238,7 +238,7 @@
 
   function renderUsage() {
     const usage = snapshot.agents?.usage;
-    content.replaceChildren(heading("Bot usage", "Measured tokens and subscription capacity."));
+    content.replaceChildren(heading("Bot usage"));
     if (usage?.available) {
       if (usage.stale) content.append(sourceBanner(`Usage telemetry is stale. Last sample: ${formatTime(usage.sampled_at)}.`, "warning"));
       const quotas = usage.accounts.filter(account => account.quota_windows.length);
