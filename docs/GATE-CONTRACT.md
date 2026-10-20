@@ -605,7 +605,7 @@ instead ([the seal](#regression-test-fails-on-base)).
   framework would load anywhere in the repository but `node_modules` and hidden directories (for
   `coverage-not-lost`, in the checkout of the side it runs too, so a committed `.env` file the pull
   request deletes is read at the merge base), and a file a node:test script's `--env-file` or
-  `--env-file-if-exists` loads. A variable
+  `--env-file-if-exists` loads (for coverage-not-lost's node:test commands, one its `--args` names too). A variable
   named like a credential that `--local-env NAME` does not declare, a JWT not issued by a local stack, a
   connection string or password-bearing URL for another host, a database host that is not this machine,
   a hosted Supabase address, a webhook, or a token whose shape names its service is exit 2 before the
@@ -914,7 +914,8 @@ coverage-not-lost --runner node-test --soak                    # the files packa
   merge base and does not run at the head. Each line of the merge base is mapped to the head through
   the diff (`git diff -U0 -M`), so a line that only moved, in its file or with its file, is compared
   where it now is; a line the pull request changed or deleted, and every line of a file it deleted,
-  never counts, and neither does a line that is not a statement at the head. A file the head's run did
+  never counts, and neither does a line that is not a statement at the head (node:test counts every
+  line but a blank one, below). A file the head's run did
   not measure at all ran none of its lines. Test code never counts, as `regression-test-fails-on-base`
   reads it (test and spec files, the Python test names, `conftest.py`, and anything under a `test`,
   `tests`, `__tests__`, `__mocks__`, `__snapshots__` or `__fixtures__` directory, and for node:test every
@@ -1007,8 +1008,8 @@ coverage-not-lost --runner node-test --soak                    # the files packa
   not lines, so a line at the edge of code that stopped running can be found with it: a stand-in
   compiler's file lost the closing brace of the function above the one that stopped running too. Each
   `--runner` is a comparison of its own, so code that moves from a Vitest test to a node:test file is a
-  loss to the Vitest line. Measured on Node 22.23 (macOS and Debian) and 24.21 (Debian); ubuntu-latest,
-  where the catalog's CI runs, has 22.23.
+  loss to the Vitest line. Measured on Node 22.23 (macOS and Debian) and 24.21 (Debian); the 22 releases
+  before 22.23 are accepted but were not run here. ubuntu-latest, where the catalog's CI runs, has 22.23.
 - **Guarded runs.** Every run of the suite, at either side, starts under `gates/_local_guard.py`
   ([Test runs reach only this machine](#test-runs-reach-only-this-machine)): a credential for anywhere
   else in what it would inherit is exit 2 before it starts (`--local-env NAME` declares a secret of the
@@ -1017,8 +1018,8 @@ coverage-not-lost --runner node-test --soak                    # the files packa
   and what was refused. One that passed says what it refused and is compared as usual, so code that
   ran because a connection was refused (an error branch) counts as run. For node:test, each command at a
   side is a run of its own, and every command's environment (with its script's assignments and the files
-  its `--env-file` options load) is checked before the first one starts, so a credential in any script
-  runs no test.
+  an `--env-file` option of the script or of `--args` loads) is checked before the first one starts, so a
+  credential in any script runs no test.
 - **What ran it.** A Python finding names the test functions that ran the line at the merge base (none
   for a line only a child process ran). A Vitest or node:test finding says whether the test files the
   pull request deleted, changed or moved ran it there,

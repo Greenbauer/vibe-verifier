@@ -259,6 +259,18 @@ class NodeTestCoverage(unittest.TestCase):
         self.assertNotIn("tok_in_script", result.stdout + result.stderr)
         self.assertFalse(Path(ran).exists())  # no test process started, not even the first command's
 
+    def test_a_file_an_env_file_option_of_args_loads_is_checked_too(self):
+        ran = marker(self)
+        first = 'import { appendFileSync } from "node:fs";\nappendFileSync(process.env.VV_RAN, "ran\\n");\n' + PLAIN_TEST
+        repo = project(self, {"src/price.mjs": PRICE, "test/a.test.mjs": first, "README.md": "a\n",
+                              "config/test.env": "DATABASE_URL=postgresql://app:pw-in-env-file@db.example.com:5432/app\n"},
+                       {"README.md": "b\n"})
+        result = run_gate(repo, "--soak", "--args=--env-file=config/test.env", env={"VV_RAN": ran})
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("config/test.env: DATABASE_URL holds a connection string for db.example.com", result.stderr)
+        self.assertNotIn("pw-in-env-file", result.stdout + result.stderr)
+        self.assertFalse(Path(ran).exists())
+
 
 class CompiledFiles(unittest.TestCase):
     """A file a loader compiles is measured at its own lines through the loader's source map (--enable-source-maps), and

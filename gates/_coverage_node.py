@@ -19,12 +19,13 @@ coverage file written there, so a Node process a test starts and a worker thread
 child_process copies the variable into the child's environment, even into one the test gives it of its own. A child
 killed by a signal writes nothing, so its lines are not measured. `--enable-source-maps` makes Node map a file a loader
 compiled (ts-node, say) back to the file's own lines through the source map the loader wrote. Node leaves out
-node_modules and its own modules. Measured on Node 22.23 and 24.21; a Node before 22 is refused (exit 2).
+node_modules and its own modules. Measured on Node 22.23 and 24.21; a Node before 22 is refused (exit 2), and the 22
+releases before 22.23 are accepted without having been run here.
 
 Every command is guarded (gates/_local_guard.py), as the other runners' runs are: a credential for anywhere else in
-what it inherits (with the script's assignments and the files its --env-file options load) is exit 2, checked for every
-command of the side before the first one starts, and a connection to anything but this machine is refused in every
-Node process that keeps NODE_OPTIONS.
+what it inherits (with the script's assignments and the files an --env-file option of the script or of --args loads)
+is exit 2, checked for every command of the side before the first one starts, and a connection to anything but this
+machine is refused in every Node process that keeps NODE_OPTIONS.
 """
 import contextlib
 import json
@@ -131,7 +132,8 @@ class NodeTest:
             for how, chosen in groups:  # every command's guard first: a refusal runs no test
                 what = "the node --test run of %s in the %s checkout" % (how.source, os.path.basename(tree))
                 guard = guards.enter_context(Guard("coverage-not-lost", self.repo, self.local, more=(tree,)))
-                runs.append((how, chosen, what, guard, guard.env(what, base=ENV, extra=how.env, files=env_files(how))))
+                loads = env_files(how._replace(flags=[*how.flags, *self.args]))  # --env-file from the script or --args
+                runs.append((how, chosen, what, guard, guard.env(what, base=ENV, extra=how.env, files=loads)))
             for run in runs:
                 ran, any_test = self.run_files(tree, *run, deadline, budget)
                 tested = tested or any_test
