@@ -30,8 +30,10 @@ import tempfile
 import time
 
 from _contract import CannotRun, git
+from _local_guard import Guard
 from _tools import ensure_python_tool, run_tool
 
+NAME = "changed-code-mutation"
 TOOL = "changed-code-mutation-python"
 NOTHING = "vv-select-no-mutant"
 KILLED = {1, 3}
@@ -203,16 +205,18 @@ def left_out(path, source, spans):
             note("%s:%d: left out by its `# pragma: no mutate` comment" % (path, number))
 
 
-def collect(boot, python, workspace, deadline, timeout):
+def collect(boot, python, workspace, deadline, timeout, guard):
     """Step 1, generate: whether mutmut wrote coverage stats. Without them, pytest decides between a failing
     suite (CannotRun) and one no test of which reaches the changed functions."""
-    _, output = run_tool(boot + [NOTHING], workspace, deadline - time.monotonic(), "mutmut", budget=timeout)
+    env = guard.env("mutmut")
+    _, output = run_tool(boot + [NOTHING], workspace, deadline - time.monotonic(), "mutmut", env=env, budget=timeout)
     if read_json(os.path.join(workspace, "mutants", "mutmut-stats.json")) is not None:
         return True
     returncode, suite = run_tool([python, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--ignore=mutants"],
-                                 workspace, deadline - time.monotonic(), "pytest", budget=timeout)
+                                 workspace, deadline - time.monotonic(), "pytest", env=env, budget=timeout)
     if returncode not in (0, 5):  # 5: pytest collected no test, so nothing can reach the changed code
         print(output + suite, file=sys.stderr)
+        guard.judge("the project's tests (pytest exited %d)" % returncode, "the mutmut run")
         raise CannotRun("the project's tests fail without any mutant (pytest exited %d; the output is above)" % returncode)
     note("no test reaches a function the pull request changed, so every mutant on its changed lines is not covered")
     return False
@@ -258,25 +262,29 @@ def classify(where, codes, prefix, output):
     return killed, undetected, excluded
 
 
-def mutate(repo, prefix, ranges, python, timeout):
-    """Run mutmut on {path relative to the project: [(first, last)]}; (killed, undetected, excluded), the last
-    two as [((path, line), text)] with repository paths."""
+def mutate(repo, prefix, ranges, python, timeout, local_names):
+    """Run mutmut on {path relative to the project: [(first, last)]} under gates/_local_guard.py; (killed, undetected,
+    excluded), the last two as [((path, line), text)] with repository paths. A run that refused a connection and
+    killed a mutant cannot be judged."""
     deadline = time.monotonic() + timeout
     python = interpreter(python, repo)
     site = run_tool([ensure_python_tool(TOOL, python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
                     None, 60, "python")[1].strip().splitlines()[-1]
-    with tempfile.TemporaryDirectory(prefix="vv-mutation-py-") as workspace:
+    with tempfile.TemporaryDirectory(prefix="vv-mutation-py-") as workspace, Guard(NAME, repo, local_names) as guard:
         copy_project(repo, prefix, workspace)
         write_config(workspace, sorted(ranges))
         boot = [python, "-c", BOOT % site, "run"]
-        covered = collect(boot, python, workspace, deadline, timeout)
+        covered = collect(boot, python, workspace, deadline, timeout, guard)
         where = select(workspace, prefix, ranges)
         codes, output = {name: 33 for name in where}, ""  # 33: mutmut's "no tests"
         if where and covered:
-            _, output = run_tool(boot + sorted(where), workspace, deadline - time.monotonic(), "mutmut", budget=timeout)
+            _, output = run_tool(boot + sorted(where), workspace, deadline - time.monotonic(), "mutmut",
+                                 env=guard.env("mutmut"), budget=timeout)
             for path in ranges:
                 codes.update((read_json(os.path.join(workspace, "mutants", path + ".meta")) or {}).get("exit_code_by_key", {}))
-    return classify(where, codes, prefix, output)
+        result = classify(where, codes, prefix, output)
+        guard.judge("the tests that killed %d mutant(s)" % result[0] if result[0] else None, "the mutmut run")
+    return result
 
 
 def clip(text):

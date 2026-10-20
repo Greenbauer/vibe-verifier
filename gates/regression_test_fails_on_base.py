@@ -32,9 +32,10 @@ a JS or TS file that imports vitest, or calls describe, it or test in a package 
 (gates/_regression_frameworks.py), runs under Vitest (from the nearest directory with a Vitest or Vite
 config, else with a package.json). Python tests run under --python, with
 pytest when it is installed there and unittest when not or when the file's name has a hyphen or a dot
-(a test run by path, which pytest cannot import). A Playwright spec that a --playwright config collects runs
-under it in a sealed Docker network (gates/_regression_playwright.py, gates/_regression_sealed.py,
-gates/_local_only.py). Another Playwright test, a Jest test, a bun test (gates/_regression_frameworks.py
+(a test run by path, which pytest cannot import). Each of those test processes runs under gates/_local_guard.py:
+a credential for anywhere else in what it inherits is exit 2, a connection to anything but this machine is
+refused, and a failure in a run that refused one is exit 2. A Playwright spec that a --playwright config collects
+runs under it in a sealed Docker network (gates/_regression_playwright.py, gates/_regression_sealed.py). Another Playwright test, a Jest test, a bun test (gates/_regression_frameworks.py
 says which), a node:test file the repository does not run with `node --test`, a shell or other test,
 and a --tests path no --playwright config collects are reported as not judged, naming the runner; a fix
 whose only tests are such files cannot be judged (exit 2), except that one whose only such files are
@@ -67,7 +68,8 @@ from contextlib import contextmanager
 
 from _acceptance import DASH
 from _contract import PY_TESTS, CannotRun, Finding, git, matches, qualify, resolve_base, run_gate
-from _regression_frameworks import JS, UNSUPPORTED_NAMES, classify, listed_specs, node_test
+from _local_guard import add_local_env
+from _regression_frameworks import JS, UNSUPPORTED_NAMES, node_test, runners
 from _regression_node import run_node
 from _regression_playwright import run_playwright
 from _regression_sealed import sealed
@@ -139,19 +141,19 @@ def comments_only(repo, base, path):
 def run_tests(args, judged, deadline, plans):
     """{path: Run} of the judged files; `plans` is how the repository runs each node:test one, and the config that
     runs each Playwright one, read at HEAD."""
-    runs = {}
+    runs, local = {}, set(args.local_env or ())
     vitest = [path for path, what in judged.items() if what == "vitest"]
     python = [path for path, what in judged.items() if what == "python"]
     node = {path: plans[path] for path, what in judged.items() if what == "node"}
     if vitest:
-        runs.update(run_vitest(args.repo, vitest, deadline, args.timeout))
+        runs.update(run_vitest(args.repo, vitest, deadline, args.timeout, local))
     if node:
-        runs.update(run_node(args.repo, node, deadline, args.timeout))
+        runs.update(run_node(args.repo, node, deadline, args.timeout, local))
     if python:
-        runs.update(run_python(args.repo, args.python, python, deadline, args.timeout))
+        runs.update(run_python(args.repo, args.python, python, deadline, args.timeout, local))
     browser = {path: plans[path] for path, what in judged.items() if what == "playwright"}
     if browser:
-        runs.update(run_playwright(args.repo, browser, set(args.local_env or ()), deadline, args.timeout))
+        runs.update(run_playwright(args.repo, browser, local, deadline, args.timeout))
     return runs
 
 
@@ -258,16 +260,6 @@ def none_ran(not_judged, unsupported):
                     % "; ".join("%s: %s" % item for item in not_judged))
 
 
-def runners(args, tests, deadline):
-    """classify()'s three answers, and `plans`: how the repository runs each node:test file, and the config that runs
-    each Playwright spec, read at HEAD."""
-    listed = listed_specs(args, tests, deadline)
-    judged, not_judged, unsupported = classify(args, tests, listed)
-    plans = {path: node_test(args, path) if what == "node" else listed[0][path]
-             for path, what in judged.items() if what in ("node", "playwright")}
-    return judged, not_judged, unsupported, plans
-
-
 def compare(args, base, changed, tests, is_test_code):
     """Run the changed tests at HEAD and on the code before the fix, and judge them."""
     dirty = git(args.repo, "--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=all", "--",
@@ -332,8 +324,7 @@ def add_arguments(parser):
     parser.add_argument("--stack-network", action="append", metavar="NAME",
                         help="the Docker network of the job's local stack, moved into the seal (repeatable)")
     parser.add_argument("--browser-image", metavar="IMAGE", help="the image the specs run in (default: Playwright's own)")
-    parser.add_argument("--local-env", action="append", metavar="NAME",
-                        help="a variable named like a credential that holds the job's own local stack's secret (repeatable)")
+    add_local_env(parser)
     parser.add_argument("--timeout", type=int, default=600, help="seconds both test runs may take together (default 600)")
 
 

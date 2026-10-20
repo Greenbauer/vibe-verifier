@@ -12,6 +12,7 @@
 - source: `gates/_regression_frameworks.py`
 - source: `gates/_regression_playwright.py`
 - source: `gates/_local_only.py`
+- source: `gates/_local_guard.py`
 - source: `gates/_regression_sealed.py`
 - source: `tools/regression-browser/**`
 
@@ -37,6 +38,8 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
 
 `--python` names the project's interpreter, `--tests GLOB` declares more test code it never runs (an end-to-end directory's helpers, say; a spec a `--playwright` config collects runs all the same), `--node-test GLOB` declares node:test files the repository runs as `node --test <file>` from a shell script or a workflow step rather than a package.json script, `--timeout` bounds both runs (default 600 seconds). A node:test file a package.json script runs (`"test:unit": "node --require ./setup.cjs --test src/*.test.mjs"`) needs no declaration: the gate reads the script and runs the file the same way, from that package. The rules, what it runs and why are in [the gate contract](../GATE-CONTRACT.md#regression-test-fails-on-base).
 
+Each Vitest run, node:test file and Python run is guarded ([the rules](../GATE-CONTRACT.md#test-runs-reach-only-this-machine)): the gate's step holds no credential for anywhere else, and neither does a `.env` file in the repository or a file a node:test script loads with `--env-file`, or the run is exit 2 before it starts (`--local-env NAME`, repeatable, declares a secret of the job's own local stack); a connection to anything but this machine is refused, and a changed test that fails in a run that refused one is exit 2.
+
 ### Browser specs (`--playwright`)
 
 `--playwright CONFIG` (repeatable) names a Playwright config the gate runs a fix's browser specs with; `--stack-network NAME` (repeatable) names the Docker network the job's local stack runs on; `--local-env NAME` (repeatable) declares a variable named like a credential that holds a secret of the job's own local stack; `--browser-image IMAGE` names the image to run in when the project's Playwright version has no official one:
@@ -51,7 +54,7 @@ A changed spec that one of those configs collects (`playwright test --list`) run
 
 **What the network refused** is recorded: every outside name a process looked up, and the kernel's count of IPv4 packets that had no route (an address given as numbers). A changed spec that fails in a run whose network refused anything is exit 2, whichever request it was (the spec's own, a page's script, an in-page fetch, the site's server-side fetch): its failure cannot be told from the refusal, and a request made only before the fix would otherwise read as the bug showing. A spec that passes all the same is judged as usual.
 
-**Before anything runs**, the gate refuses (exit 2) a credential for anywhere else in what the run inherits: the gate's environment and every `.env` file a framework would load anywhere in the repository but `node_modules` and hidden directories ([the rules](../GATE-CONTRACT.md#regression-test-fails-on-base)). From the sealed listing, before any server, global setup or browser starts, it refuses a project that runs a changed spec, or one it depends on, whose `baseURL` is not set or is not loopback (localhost, a `*.localhost` name, 127.0.0.0/8, ::1), a `webServer` url that is not loopback, a config with no `webServer`, and a credential in a `webServer`'s `env`. A fix whose changed tests all import Vitest, `@jest/globals` or `bun:test`, or that node:test runs, never starts Playwright (one that imports another runner, such as mocha, is listed, and not collected); a test that only calls `test()` or `describe()` with no import (a Vitest or Jest file with globals, or a spec that imports its `test` from a fixtures module) is listed, and when no changed test imports `@playwright/test` and that listing cannot run (a credential in the step, no Playwright, no Docker), they are classified as before.
+**Before anything runs**, the gate refuses (exit 2) a credential for anywhere else in what the run inherits: the gate's environment and every `.env` file a framework would load anywhere in the repository but `node_modules` and hidden directories ([the rules](../GATE-CONTRACT.md#regression-test-fails-on-base)). From the sealed listing, before any server, global setup or browser starts, it refuses a project that runs a changed spec, or one it depends on, whose `baseURL` is not set or is not loopback (localhost, a `*.localhost` name, 127.0.0.0/8, ::1), a `webServer` url that is not loopback, a config with no `webServer`, and a credential in a `webServer`'s `env`. A fix whose changed tests all import Vitest, `@jest/globals` or `bun:test`, or that node:test runs, never starts Playwright (one that imports another runner, such as mocha, is listed, and not collected); a test that only calls `test()` or `describe()` with no import (a Vitest or Jest file with globals, or a spec that imports its `test` from a fixtures module) is listed, and when no changed test imports `@playwright/test` and that listing cannot run (a credential in the step, no Playwright, no Docker), they are classified as before (a credential in the step then stops the unit run of a Vitest file the same way, exit 2; a Jest file is not run).
 
 What the repository provides:
 
@@ -134,6 +137,17 @@ So the gate adds about a minute of its own (66 s of stack moves for Supabase on 
 - `tests/test_local_only.py::test_what_the_job_s_own_local_stack_holds_is_local`
 - `tests/test_local_only.py::test_what_reaches_somewhere_else_is_refused_even_when_declared_local`
 - `tests/test_local_only.py::test_a_token_that_says_what_it_is_is_refused_under_any_name_and_never_printed`
+- `tests/test_local_guard.py::test_node_refuses_every_other_address_and_name_before_anything_is_sent_and_records_each`
+- `tests/test_local_guard.py::test_node_reaches_this_machine`
+- `tests/test_local_guard.py::test_python_refuses_every_other_address_and_records_each`
+- `tests/test_local_guard.py::test_python_reaches_this_machine_and_the_interpreters_own_sitecustomize_still_runs`
+- `tests/test_local_guard.py::test_a_guard_inside_a_guarded_run_records_in_its_own_run`
+- `tests/test_local_guard.py::test_a_credential_for_anywhere_else_is_refused_before_anything_starts_and_never_printed`
+- `tests/test_local_guard.py::test_a_failure_in_a_run_that_refused_anything_cannot_be_judged`
+- `tests/test_local_guard_gates.py::test_a_run_that_reaches_only_this_machine_is_judged_as_before`
+- `tests/test_local_guard_gates.py::test_a_failure_in_a_run_that_reached_out_cannot_be_judged`
+- `tests/test_local_guard_gates.py::test_a_credential_for_anywhere_else_stops_each_runner_before_it_starts`
+- `tests/test_local_guard_gates.py::test_a_file_or_an_assignment_a_node_test_script_gives_its_process_is_checked_too`
 
 ## Gotchas
 
@@ -150,3 +164,5 @@ So the gate adds about a minute of its own (66 s of stack moves for Supabase on 
 - The stack's own containers keep Docker's default capabilities, and this machine keeps an interface on the sealed network (with no IPv4 address). So a root process in a stack container could send raw traffic to this machine itself, and what this machine then does with it is not tested here. The run's container, where the pull request's specs and site run, holds no capability and cannot.
 - The stack's containers are restarted in the seal and again after it. A container whose state lives only in memory loses it; one that is not healthy again within the gate's `--timeout` is exit 2.
 - A spec's failure that comes from the site's own server (a 500 the code before the fix throws) counts as the bug showing, like any failure that does not say something is missing.
+- The unit runs' guard is a preload, not a seal: it refuses what Node's `net` module and Python's `socket` module connect to, in every process that keeps `NODE_OPTIONS` and `PYTHONPATH`. It does not refuse a Unix socket or named pipe (which a proxy can forward anywhere), curl, psql or another program that is neither, a database driver that opens its socket in native code (libpq under psycopg, Prisma's engine), a process started with an environment of its own or `python -I`, UDP from Node's `dgram` or a Python `sendto`, or a name lookup, whose query reaches the resolver ([the list](../GATE-CONTRACT.md#test-runs-reach-only-this-machine)). The step holding no credential for anywhere else, which the gate checks, is what covers those.
+- A test that installs something (`npm ci`, `pip install`) has it refused: give it npm's cache, or a wheel directory with `PIP_NO_INDEX=1` and `PIP_FIND_LINKS`, as this repository's `ci.yml` does for its own pilot.

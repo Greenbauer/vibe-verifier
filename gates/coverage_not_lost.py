@@ -18,12 +18,12 @@ last night's commit, that names the pull requests the loss came in with.
 A pull request body (--body, a file the workflow writes) with a line `coverage-lost: <reason>` marks the
 loss as intended: the findings are printed with the reason and do not fail the gate.
 
-Runners: the project's own Vitest 2 to 5, with @vitest/coverage-v8 at exactly its version (the project's own,
-else the catalog's pin of that version in tools/coverage-not-lost); or coverage.py 7.16.2 (pinned in
-tools/coverage-not-lost-python) around the project's own pytest or unittest, measuring every Python process the
-suite starts too (a script a test runs with subprocess). Install the project's dependencies first. A suite that
-fails at either side, no runner or provider, no test run at either side, or a run past --timeout cannot run
-(exit 2): never a pass. Each run says how many lines ran, by top directory, and how long it took.
+Runners (gates/_coverage_runs.py): the project's own Vitest 2 to 5, with @vitest/coverage-v8 at exactly its
+version; or coverage.py 7.16.2 around the project's own pytest or unittest, measuring every Python process the
+suite starts too. Each run is guarded (gates/_local_guard.py): a credential for anywhere else in what it inherits
+is exit 2, and a connection to anything but this machine is refused. Install the project's dependencies first. A
+suite that fails at either side (or in a run that refused a connection), no runner or provider, no test run at
+either side, or a run past --timeout cannot run (exit 2). Each run says how many lines ran, and how long it took.
 
     --runner NAME       vitest, pytest or unittest (default vitest)
     --project DIR       where the suite runs, relative to the repository (repeatable; default its root)
@@ -31,27 +31,25 @@ fails at either side, no runner or provider, no test run at either side, or a ru
                         `-m unittest`; such as --args 'discover -s tests')
     --python PATH       the project's interpreter (default python3; a relative path is the repository's)
     --body FILE         the pull request body, read for a `coverage-lost: <reason>` line
+    --local-env NAME    a variable named like a credential that holds the job's own local stack's secret (repeatable)
     --timeout SECONDS   wall-clock limit for every run together (default 900)
     --max-files N       Vitest: run again at most this many deleted or changed test files to say which ran a
                         lost line (default 20); more are not run, and the findings stand without it
 """
-import contextlib
 import os
 import posixpath
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
 import time
 
 from _contract import CannotRun, Finding, git, renamed, resolve_base, run_gate
+from _coverage_checkouts import checkouts
 from _coverage_runs import RUNNERS, Coverage, Red
+from _local_guard import add_local_env
 
 GATE = "coverage-not-lost"
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 REASON = re.compile(r"^[ \t]*(?:[-*+][ \t]+)?coverage-lost:[ \t]*(\S.*?)[ \t]*$", re.MULTILINE)
-CACHES = {".vite", ".vitest", ".cache"}  # a run writes these: each checkout gets its own
 
 
 def note(text):
@@ -153,51 +151,6 @@ def project_of(repo, project):
     if not os.path.isdir(os.path.join(repo, project)):
         raise CannotRun("--project %s is not a directory" % project)
     return project
-
-
-def mirror(source, target):
-    """`target` as a directory of links to `source`'s entries: a link entry is copied as the same link, so a
-    relative one (a workspace package) resolves inside this checkout; a scope directory is mirrored the same way."""
-    os.makedirs(target, exist_ok=True)
-    for entry in os.scandir(source):
-        link = os.path.join(target, entry.name)
-        if entry.name in CACHES or os.path.lexists(link):
-            continue
-        if entry.is_symlink():
-            os.symlink(os.readlink(entry.path), link)
-        elif entry.name.startswith("@") and entry.is_dir():
-            mirror(entry.path, link)
-        else:
-            os.symlink(entry.path, link)
-
-
-def link_ignored(repo, tree):
-    """Give a checkout the working copy's ignored files (links) and node_modules directories (mirrors)."""
-    for path in git(repo, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory").split("\0"):
-        name = path.rstrip("/")
-        source, target = os.path.join(repo, name), os.path.join(tree, name)
-        if not name or os.path.lexists(target) or not os.path.isdir(os.path.dirname(target)):
-            continue
-        if path.endswith("/") and posixpath.basename(name) == "node_modules":
-            mirror(source, target)
-        elif not path.endswith("/"):
-            os.symlink(source, target)
-
-
-@contextlib.contextmanager
-def checkouts(repo, merge_base):
-    """(scratch directory, {"base": checkout of the merge base, "head": checkout of HEAD}), removed afterwards."""
-    scratch = tempfile.mkdtemp(prefix="vv-coverage-")
-    try:
-        trees = {}
-        for side, revision in (("base", merge_base), ("head", "HEAD")):
-            trees[side] = os.path.join(scratch, side)
-            git(repo, "-c", "core.hooksPath=" + os.devnull, "worktree", "add", "--detach", "--quiet", trees[side], revision)
-            link_ignored(repo, trees[side])
-        yield scratch, trees
-    finally:
-        shutil.rmtree(scratch, ignore_errors=True)  # links are removed, never followed
-        subprocess.run(["git", "-C", repo, "worktree", "prune"], capture_output=True)
 
 
 class Suite:
@@ -376,6 +329,7 @@ def add_arguments(parser):
     parser.add_argument("--args", default="", metavar="TEXT", help="more arguments for the runner, split like a shell")
     parser.add_argument("--python", default="python3", help="the project's interpreter (default python3)")
     parser.add_argument("--body", metavar="FILE", help="the pull request body, read for a `coverage-lost: <reason>` line")
+    add_local_env(parser)
     parser.add_argument("--timeout", type=int, default=900, help="seconds every run together may take (default 900)")
     parser.add_argument("--max-files", type=int, default=20,
                         help="Vitest: the most deleted or changed test files run again to say which ran a lost line (default 20)")

@@ -57,7 +57,7 @@ class LocalOnly(unittest.TestCase):
                 ("WEBHOOK", "https://user:pass@hooks.example.com/x", "holds an address with a password in it for hooks.example.com"),
                 ("SUPABASE_URL", "https://%s.supabase.co" % HOSTED, "holds the address of a hosted Supabase project"),
                 ("PGHOST", "db.%s.supabase.co" % HOSTED, "holds a database host that is not this machine"),
-                ("REDIS_HOSTNAME", "localhost,cache.example.com", "holds a database host that is not this machine"),
+                ("REDIS_HOSTNAME", "localhost,cache.example.com:6380", "holds a database host that is not this machine (cache.example.com)"),
                 ("DATABASE_URL", "host=db.example.com user=app password=pw dbname=app",
                  "holds a connection string for db.example.com, which is not this machine"),
                 ("DATABASE_URL", "host=localhost,db.example.com user=app password=pw", "holds a connection string for db.example.com"),

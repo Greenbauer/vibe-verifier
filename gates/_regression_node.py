@@ -25,7 +25,8 @@ import tempfile
 from collections import defaultdict, namedtuple
 
 from _contract import CannotRun, matches
-from _regression_runners import ADVICE, Run, first_line, remaining
+from _local_guard import Guard
+from _regression_runners import ADVICE, Run, first_failure, first_line, remaining
 from _tools import run_tool
 
 Plan = namedtuple("Plan", "cwd flags env source")
@@ -253,8 +254,19 @@ def tap_run(text, names):
     return Run(reason, {})
 
 
-def run_node(repo, plans, deadline, timeout):
-    """Each file in `plans` ({path: Plan}) under `node --test`, alone, the way its Plan says."""
+def env_files(how):
+    """The files a Plan's `--env-file` and `--env-file-if-exists` options load, as paths."""
+    found = []
+    for index, flag in enumerate(how.flags):
+        name, given, value = flag.partition("=")
+        if name in ("--env-file", "--env-file-if-exists"):
+            found.append(os.path.join(how.cwd, value if given else (how.flags[index + 1:] or [""])[0]))
+    return found
+
+
+def run_node(repo, plans, deadline, timeout, local_names):
+    """Each file in `plans` ({path: Plan}) under `node --test`, alone and guarded, the way its Plan says (its script's
+    `NAME=value` assignments and the files its `--env-file` options load are in what the guard checks)."""
     if not shutil.which("node"):
         raise CannotRun("no node on PATH for %s: this gate runs node:test files with the project's own Node" % sorted(plans)[0])
     runs = {}
@@ -265,17 +277,20 @@ def run_node(repo, plans, deadline, timeout):
         try:
             out = os.path.join(scratch, "report.tap")
             command = ["node", *how.flags, "--test", "--test-reporter=tap", "--test-reporter-destination=" + out, given]
-            code, output = run_tool(command, how.cwd, remaining(deadline, timeout), "node --test",
-                                    env=dict(os.environ, **how.env), budget=timeout, advice=ADVICE)
-            try:
-                with open(out, encoding="utf-8", errors="replace") as handle:
-                    text = handle.read()
-            except OSError:
-                text = ""
-            if not text.startswith("TAP version"):
-                raise CannotRun("node --test wrote no TAP report for %s (run as %s, exit %d): %s"
-                                % (path, how.source, code, output.strip()[-2000:]))
+            with Guard("regression-test-fails-on-base", repo, local_names) as guard:
+                code, output = run_tool(command, how.cwd, remaining(deadline, timeout), "node --test",
+                                        env=guard.env("node --test of " + path, extra=how.env, files=env_files(how)),
+                                        budget=timeout, advice=ADVICE)
+                try:
+                    with open(out, encoding="utf-8", errors="replace") as handle:
+                        text = handle.read()
+                except OSError:
+                    text = ""
+                if not text.startswith("TAP version"):
+                    raise CannotRun("node --test wrote no TAP report for %s (run as %s, exit %d): %s"
+                                    % (path, how.source, code, output.strip()[-2000:]))
+                runs[path] = tap_run(text, {given, full})
+                guard.judge(first_failure({path: runs[path]}), "the run of node --test of " + path)
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
-        runs[path] = tap_run(text, {given, full})
     return runs

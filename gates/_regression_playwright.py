@@ -49,9 +49,6 @@ REGEX_SPECIAL = re.compile(r"([\\^$.*+?()[\]{}|/])")
 LOCAL_ONLY = ("This gate runs a spec only against a site the config's webServer starts in its sealed network, reading "
               "the job's own local stack: never production, and never a preview, which serves the pull request's head "
               "and not the code before the fix")
-REFUSED = ("%s would run the pull request's code with a credential for somewhere other than this machine in what it "
-           "inherits, so this gate does not start it: %s. Run the gate in a step whose environment holds only the "
-           "job's own local stack, and declare a local secret the stack needs with --local-env NAME")
 WRAPPER = """// Written by regression-test-fails-on-base for one Playwright call, and removed after it.
 import * as loaded from "./%(config)s";
 import { writeFileSync } from "node:fs";
@@ -116,12 +113,6 @@ def described(message):
     return " ".join([first_line(lines[0])] + [line for line in lines[1:8] if line.startswith(("Expected", "Received"))])
 
 
-def refuse_credentials(where, environment, paths, local_names, servers=()):
-    refused = _local_only.refusals(environment, paths, local_names, servers)
-    if refused:
-        raise CannotRun(REFUSED % (where, "; ".join(refused)))
-
-
 def read_json(path):
     try:
         with open(path, encoding="utf-8") as handle:
@@ -138,7 +129,7 @@ def call(repo, config, files, listing, local_names, deadline, timeout):
     directory = os.path.dirname(os.path.join(root, config))
     if not os.path.isfile(os.path.join(root, config)):
         raise CannotRun("--playwright %s is not a file in the repository" % config)
-    refuse_credentials("--playwright " + config, dict(os.environ), _local_only.env_files_under(root), local_names)
+    _local_only.refuse("--playwright " + config, dict(os.environ), _local_only.env_files_under(root), local_names)
     entry = cli(directory)
     if entry is None:
         raise CannotRun("no Playwright is installed for %s: install the project's dependencies and start its local stack "
@@ -233,7 +224,7 @@ def refuse_targets(config, files, tests, projects, servers, directory, local_nam
                  for index, server in enumerate(servers) if server.get("url") and not _local_only.local_url(server["url"])]
     if problems:
         raise CannotRun("--playwright %s: %s. %s" % (config, "; ".join(problems), LOCAL_ONLY))
-    refuse_credentials("--playwright " + config, {}, [path for server in servers for path in _local_only.env_files(
+    _local_only.refuse("--playwright " + config, {}, [path for server in servers for path in _local_only.env_files(
         os.path.normpath(os.path.join(directory, server.get("cwd") or ".")))], local_names, servers)
 
 

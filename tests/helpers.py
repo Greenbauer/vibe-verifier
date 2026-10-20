@@ -11,6 +11,10 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "gates") not in sys.path:
+    sys.path.append(str(ROOT / "gates"))  # appended: a gate module never shadows an installed package here
+import _local_only  # noqa: E402  (gates/ is not a package)
+
 CI_VARIABLES = ("GITHUB_BASE_REF", "GITHUB_HEAD_REF", "GITHUB_REF_NAME", "GITHUB_REF_TYPE",
                 "VIBE_VERIFIER_BASE_REF", "GITHUB_STEP_SUMMARY", "VIBE_VERIFIER_MANIFEST", "VIBE_VERIFIER_QUALIFIER")
 
@@ -18,8 +22,10 @@ CI_VARIABLES = ("GITHUB_BASE_REF", "GITHUB_HEAD_REF", "GITHUB_REF_NAME", "GITHUB
 def clean_env(extra=None):
     """CI sets these for the repository under test, and the runner sets the last two for the gate that runs
     this suite (coverage-not-lost, regression-test-fails-on-base); a temp repo, or a gate a test runs, must
-    not inherit them."""
-    env = {key: value for key, value in os.environ.items() if key not in CI_VARIABLES}
+    not inherit them. Nor this machine's own credentials (a variable gates/_local_only.py refuses): the gates
+    that run a project's tests refuse to start with one, and a test that means to pass one says so in `extra`."""
+    env = {key: value for key, value in os.environ.items()
+           if key not in CI_VARIABLES and not _local_only.why(key, value, set())}
     env.update(extra or {})
     return env
 

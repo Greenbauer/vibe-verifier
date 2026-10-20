@@ -3,14 +3,17 @@ name: Nightly
 # coverage-not-lost on this repository's whole suite, report-only, once a night on main. It compares the main commit
 # the last successful nightly ran on with today's: a line lost in between is a warning on that night's run, and its
 # log names the commits, and so the pull requests, merged since. Pull requests run the gate on the dashboard tests only
-# (.vibe-verifier-tests, in ci.yml): on the whole suite it takes about an hour. workflow_dispatch runs it on demand;
+# (.vibe-verifier-tests, in ci.yml): on the whole suite it takes 24 to 70 minutes. workflow_dispatch runs it on demand;
 # with `base`, from that commit, and the next night then starts from its head, so a `base` newer than the last
 # nightly's steps past the commits in between (for a range whose suite can no longer run).
 #
 # No step that runs tests holds a credential: the job's only one is its own read-only token, given to the step that
 # looks up the last nightly. The tests run every gate against temporary git repositories, with gh, curl and the
 # services the gates call (GitHub's API, preview deployments, model APIs) stubbed or recorded, so nothing here
-# reaches a production database, URL or person (tests/test_ci_workflow.py holds the workflow to that).
+# reaches a production database, URL or person (tests/test_ci_workflow.py holds the workflow to that). The gate runs
+# the suite under gates/_local_guard.py, which refuses every Node and Python connection off this machine, so what the
+# tests install (fixtures, the catalog's pinned tools) is put on the runner before it: npm's cache, the catalog's tool
+# cache, and a directory of wheels pip installs from with no index.
 
 on:
   schedule:
@@ -66,14 +69,36 @@ jobs:
           fi
           echo "Comparing $base with $(git rev-parse HEAD)"
           echo "base=$base" >> "$GITHUB_OUTPUT"
+      - name: Fill the caches the tests install from
+        # Outside the guard: npm ci of each test fixture fills npm's cache (an npm ci with the tarballs there makes no
+        # connection), the hash-pinned wheels of each requirements file the tests or the tools install go in one
+        # directory, and every pinned node toolchain and binary goes in the catalog's tool cache.
+        run: |
+          set -euo pipefail
+          for lock in tests/fixtures/*/package-lock.json; do
+            deps=$(mktemp -d)
+            cp "$lock" "$(dirname "$lock")/package.json" "$deps"
+            (cd "$deps" && npm ci --ignore-scripts --no-audit --no-fund --silent)
+          done
+          for requirements in tests/requirements-pytest.txt tests/fixtures/*/requirements.txt tools/*/requirements.txt; do
+            python3 -m pip download --quiet --disable-pip-version-check --require-hashes --only-binary :all: --no-deps \
+              -d "$RUNNER_TEMP/wheels" -r "$requirements"
+          done
+          for lock in tools/*/package-lock.json; do
+            python3 bin/vibe-verifier tool "$(basename "$(dirname "$lock")")" > /dev/null
+          done
+          python3 -c 'import sys; sys.path.insert(0, "gates"); import _tools; [_tools.ensure(name) for name in sorted(_tools.TOOLS)]'
       - name: coverage-not-lost on the whole suite
         uses: ./actions/gates # zizmor: ignore[self-repository]
+        env:
+          PIP_NO_INDEX: "1"
+          PIP_FIND_LINKS: ${{ runner.temp }}/wheels
         # The gate's line is here, not in a manifest file: the runner judges a manifest file from the base, the last
         # nightly's commit, so a change to it would wait a night, or never apply after a night that could not run.
         # `entries:` is never judged from a base, and main's workflow is reviewed. --timeout: each side took 784 to
-        # 1030 seconds on ubuntu-latest (pull request #220), and the second pair runs every time here (the first
-        # side fills the runner's empty tool cache, so the install lines of gates/_tools.py run only at the base):
-        # four sides, at most 3961 seconds, plus room.
+        # 1030 seconds on ubuntu-latest (pull request #220), and a night that finds a line runs the second pair:
+        # four sides, at most 3961 seconds, plus room. (With the caches filled above, a night that finds none ran
+        # two sides, of 715 and 727 seconds and of 957 and 995 seconds, in two dispatches on 2026-10-20.)
         with:
           entries: coverage-not-lost --soak --runner unittest --args "discover -s tests" --timeout 4800
           base-ref: ${{ steps.base.outputs.base }}
