@@ -508,8 +508,7 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   runs each is moved back and restarted, also when a run could not be judged. A container on an internal
   network publishes no port, so while the stack is sealed a relay (a container of the gate's own on an
   ordinary network, running only a forwarder to the stack) publishes its ports on this machine again, and
-  the gate's own Vitest, node:test and Python runs of the same fix still reach it (tested with node:test
-  and Python). In the run's container each TCP port the stack publishes on this machine is forwarded from
+  the gate's own runs of the same fix on this machine still reach it (tested with node:test and Python). In the run's container each TCP port the stack publishes on this machine is forwarded from
   the same loopback address, so the site's settings for the stack work unchanged. What the network
   refused is recorded: each outside name a process looked up (Docker's DNS hands a name it does not know
   to a recorder in the run's container, set with `--dns`) and the kernel's count of IPv4 packets with no
@@ -548,8 +547,9 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   not declare it the local stack's; a value that is a webhook address (a `hooks.` host, a `/webhooks/` path,
   a deploy hook) or a token whose shape names its service (a GitHub, Slack, npm or Supabase access token, a Stripe live key or an AWS access key id) is refused under any name, and any address on loopback is local under any name. A declared name still has
   its value checked by the value rules.
-  Only a changed test that could be a spec is listed at all (it imports no other framework, and no
-  package.json script runs it with `node --test`), so a fix with none never starts Playwright. A test that
+  Only a changed test that could be a spec is listed at all (it imports none of Vitest, `@jest/globals` or `bun:test`, and no
+  package.json script runs it with `node --test`; a file that imports another runner, such as mocha, is
+  listed and then not collected), so a fix with none never starts Playwright. A test that
   only calls `test()` or `describe()` with no import could be either (a Vitest or Jest file with globals,
   or a spec that imports its `test` from a fixtures module): when no changed test imports
   `@playwright/test` and the listing cannot run (a credential in the step, no Playwright), none is taken

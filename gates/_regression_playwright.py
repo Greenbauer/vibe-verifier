@@ -29,8 +29,8 @@ collecting any file, so a listing that fails is listed again one file at a time 
 another file (a setup project the spec depends on) and an error no test owns (a webServer that did not start, a
 global setup that threw) are exit 2, and so is a changed spec that failed in a run whose network refused anything:
 the failure cannot be told from the refusal. A spec is listed at all only when it could be one
-(gates/_regression_frameworks.py, maybe_playwright): a fix whose tests import another framework, or that node:test
-runs, never starts Playwright.
+(gates/_regression_frameworks.py, maybe_playwright): a fix whose tests import vitest, @jest/globals or bun:test, or
+that node:test runs, never starts Playwright.
 """
 import json
 import os

@@ -125,8 +125,9 @@ def kind(args, path, listed):
 
 def maybe_playwright(args, path):
     """Whether a changed test could be a Playwright spec, so it is listed under the --playwright configs: a JS or TS
-    file that imports no other framework and that no package.json script runs with `node --test`. The others never
-    start Playwright, so a fix with only those needs nothing a browser run does."""
+    file that imports none of vitest, @jest/globals or bun:test and that no package.json script runs with
+    `node --test`. The others never start Playwright, so a fix with only those needs nothing a browser run does (a file
+    that imports another runner, such as mocha, is listed, and not collected)."""
     if not path.endswith(JS) or node_test(args, path):
         return False
     return not any(found.search(text_of(args, path)) for found in (VITEST, NODE_TEST, BUN_TEST, JEST_GLOBALS))

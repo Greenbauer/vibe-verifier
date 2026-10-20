@@ -8,6 +8,7 @@ loopback, a config with no webServer, a credential in a webServer's env; with th
 stack not running) and the wrapper loading each shape of config. They need Docker, as `Browser` says."""
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -92,6 +93,21 @@ class SealedRefusals(Browser):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("the Playwright run of playwright.config.mjs stopped before its tests could show anything: "
                       "Error: Process from config.webServer was not able to start. Exit code: 1", result.stderr)
+        tree_is_head(self, repo)
+
+    def test_a_stack_network_with_no_containers_cannot_be_judged(self):
+        # Named but empty: the job's stack is not running. The first run says so, and the seal leaves nothing behind.
+        network = "vv-empty-" + secrets.token_hex(3)
+        subprocess.run(["docker", "network", "create", network], capture_output=True, check=True)
+        self.addCleanup(subprocess.run, ["docker", "network", "rm", network], capture_output=True)
+        repo = self.project()
+        listed = ["docker", "network", "ls", "--filter", "name=vv-regression-", "--format", "{{.Name}}"]
+        before = subprocess.run(listed, capture_output=True, text=True, check=True).stdout
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--stack-network", network, "--soak")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--stack-network %s has no containers: start the job's local stack before this gate" % network, result.stderr)
+        self.assertFalse(Path(repo, "started.log").exists(), "the site started")
+        self.assertEqual(subprocess.run(listed, capture_output=True, text=True, check=True).stdout, before)
         tree_is_head(self, repo)
 
     def test_each_config_shape_loads_through_the_wrapper(self):
