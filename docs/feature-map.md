@@ -293,9 +293,9 @@ regression-known: sign-in -- the same error page (qae/features/base/sign-in.md::
 
 The gate then prints that feature's FAIL as a warning, naming what main shows, and does not fail
 the run: the pull request did not cause it, and main's owner fixes it. The line counts only with
-its own walk: an anchor that resolves to a step line of `base/<id>.md`, and that step's screenshot,
-neither of them a file the pull request's branch commits (the evidence directory can sit inside the
-checkout).
+its own walk: an anchor that resolves to a step line of `base/<id>.md`, and that step's screenshot.
+The pull request cannot supply them: the gate judges no evidence the checkout supplied
+([harnesses/qae/README.md](../harnesses/qae/README.md#evidence-the-pull-request-supplies)).
 Without them, or for a feature whose `regression-check` line is not a FAIL, it changes nothing.
 Without `base-site.md` the explorer walks nothing twice and a FAIL stays a finding. The gate
 judges the evidence, not that file. Two limits: whether the base branch fails "the same way" is

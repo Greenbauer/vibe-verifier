@@ -83,6 +83,9 @@ The ticket's criteria (opt-in, harnesses/qae/README.md):
                           line per criterion: a second, or one naming no ticket criterion, is a finding.
                           A line inside an HTML comment or a code fence proves nothing
 
+Evidence the checkout supplied (a file the branch tracks at or under --artifacts, or a symbolic link
+there) is a finding, and none of the evidence is judged (gates/_contract.py, planted).
+
 A missing input file is exit 2: nothing was graded. A criteria file with no criteria in it is a
 finding, because a repository that subscribes to this gate has decided its PRs state them.
 """
@@ -289,24 +292,15 @@ def regression_finding(fid, path, carried, walked, repo, tracked, artifacts):
     return why
 
 
-def known_on_main(fid, known, repo, tracked, artifacts):
+def known_on_main(fid, known, artifacts):
     """Feature `fid`'s one `regression-known` line when it stands, else None: an anchor `qae/features/base/<id>.md::
     step k: ...` whose text is on that `- step k:` line of the run's own log of the same state walked on the base
-    branch's site, and whose screenshot qae/features/base/<id>-step-k.png is a non-empty file. Both are read under
-    --artifacts, which can sit inside the checkout of the pull request being judged, so a pull request must not be
-    able to supply its own base walk: nothing on the way to the base directory, and neither file, may be a symbolic
-    link (one could point at the pull request's own walk), and the branch may track nothing under that directory.
+    branch's site, and whose screenshot qae/features/base/<id>-step-k.png is a non-empty file. The pull request
+    cannot supply that walk: no gate judges evidence the checkout supplied (gates/_contract.py, planted).
     Base walks have a directory of their own, and an id holds no `/`, so no feature names another's."""
-    root = os.path.realpath(artifacts)
-    directory = os.path.join(root, "qae", "features", "base")
+    directory = os.path.join(artifacts, "qae", "features", "base")
     log = os.path.join(directory, fid + ".md")
-    rel = os.path.relpath(directory, os.path.realpath(repo)).replace(os.sep, "/")
-    supplied = any(path == rel or path.startswith(rel + "/") for path in tracked)
-
-    def plain(path):
-        return os.path.isfile(path) and not os.path.islink(path) and os.path.realpath(path) == path
-
-    if len(known) != 1 or supplied or not plain(log):
+    if len(known) != 1 or not os.path.isfile(log):
         return None
     with open(log, encoding="utf-8", errors="replace") as handle:
         steps = {m.group("k"): "step %s:%s" % (m.group("k"), m.group("text")) for m in STEP_LINE.finditer(handle.read())}
@@ -315,7 +309,7 @@ def known_on_main(fid, known, repo, tracked, artifacts):
         k = cited and anchor.title[cited.end():].strip() and cited.group(1)  # `step 10: .` parses as `step 10:`
         shot = k and os.path.join(directory, "%s-step-%s.png" % (fid, k))
         if (anchor.path == "qae/features/base/%s.md" % fid and k in steps and anchor.title.strip().casefold() in steps[k].casefold()
-                and plain(shot) and os.path.getsize(shot) > 0):
+                and os.path.isfile(shot) and os.path.getsize(shot) > 0):
             return known[0]
     return None
 
@@ -341,7 +335,7 @@ def regression_findings(args, verdict, tracked):
         carried = lines.get(fid.casefold(), [])
         why = regression_finding(fid, features[fid].path, carried, walked, args.repo, tracked, args.artifacts)
         on_main = why and len(carried) == 1 and walked and line_verdict(carried[0]) == "FAIL" and \
-            known_on_main(fid, known.get(fid.casefold(), []), args.repo, tracked, args.artifacts)
+            known_on_main(fid, known.get(fid.casefold(), []), args.artifacts)
         if on_main:
             findings.append(Finding("%s fails the same way on the base branch, so this pull request did not cause it: "
                                     "%s. Base branch: %s" % (fid, said(carried[0], REGRESSION_TOKEN),

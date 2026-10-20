@@ -225,6 +225,7 @@ class KnownOnMain(RegressionWalk):
 
     def test_a_base_walk_the_pull_request_commits_into_the_checkout_is_not_evidence(self):
         # Each half alone: a committed log with the run's screenshot, and the run's log with a committed screenshot.
+        # Refused with all the evidence (gates/_contract.py, planted), tests/test_qae_planted_evidence.py has the rest.
         for committed in ("auth.md", "auth-step-1.png"):
             with self.subTest(committed=committed):
                 self.setUp()
@@ -237,7 +238,7 @@ class KnownOnMain(RegressionWalk):
                 git(self.repo, "commit", "-q", "-m", "evidence")
                 result = self.rewalk_in(evidence, self.AC + self.FAILED + self.KNOWN + self.PROJECTS)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertIn("auth is a FAIL", result.stdout)
+                self.assertIn("is not only the run's own, so none of it is judged", result.stdout)
 
     def test_a_link_into_the_pull_requests_own_walk_is_not_a_base_walk(self):
         # The base log and screenshot as links to the pull request's own walk, and the base directory as a link
@@ -256,5 +257,5 @@ class KnownOnMain(RegressionWalk):
                     os.symlink(".", Path(features, "base"))
                 result = self.rewalk_in(evidence, self.AC + self.FAILED + own + self.PROJECTS)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertIn("auth is a FAIL", result.stdout)
+                self.assertIn("is not only the run's own, so none of it is judged", result.stdout)
 

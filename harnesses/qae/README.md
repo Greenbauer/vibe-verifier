@@ -61,13 +61,33 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
    declared, in `qae-inputs/site-url`), reads the criteria with the same action, and, when there
    was a criterion to explore, downloads the run's evidence and merges it into `qae-artifacts/`: each
    explorer's, from the newest attempt it left any in (this attempt's on a full re-run, an earlier
-   one's when only the verify job, or only another explorer, is run again). The verdict,
+   one's when only the verify job, or only another explorer, is run again). The download goes to the
+   runner's temporary directory, outside the checkout, and the merge stops before writing anything
+   when the checkout already has a `qae-artifacts/` (Git makes no empty directory, so the pull
+   request committed it). See [evidence the pull request supplies](#evidence-the-pull-request-supplies). The verdict,
    `qae-inputs/verdict.md`, is the `verdicts/<n>.md` files of that evidence in explorer order: no
    pull request comment is read. Then it runs the
    [`acceptance-verdict`](../../gates/acceptance_verdict.py) gate through the composite action with
    the manifest [`manifest`](manifest) (`.vibe-verifier-qae` in the consumer), unless the pull request
    needs no check ([below](#which-pull-requests-need-a-check)). Last, whatever happened before it,
    it posts or edits the [QA review comment](#the-qa-review-comment).
+
+## Evidence the pull request supplies
+
+The verify job judges the pull request's own checkout, and the evidence sits in `qae-artifacts/`
+inside it. So both gates that read `--artifacts` refuse to judge any of it when the checkout
+supplied some (`planted` in [gates/_contract.py](../../gates/_contract.py)): a path the branch tracks
+at, under or on the way to the evidence directory, or a symbolic link anywhere in it, the directory
+itself included. A committed file the explorer does not write would otherwise survive the merge, and
+a committed link would point the gates at a walk the branch wrote. The finding names each path; the
+fix is to remove it from the branch. A run's own evidence is regular files the workflow wrote, so it
+never trips this. The explore job uploads what the checkout had under `qae-artifacts/` with the
+explorer's files, so the refusal holds there too.
+
+The gates refuse at any pin from this change on. A consumer's copy of the verify job made before it
+also downloads into the checkout (`path: qae-evidence`), where a committed
+`qae-evidence/qae-artifacts-9/` would be taken as the newest attempt: copy the download step and the
+merge step again, as well as moving the pins.
 
 ## Re-walking the features a pull request touches
 
