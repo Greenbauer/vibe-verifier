@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, commit, gate, install_fixture, make_repo
+from helpers import ROOT, commit, gate, git, install_fixture, make_repo
 from test_local_guard_gates import (FIXTURE, IN_DOTENV, IN_ENV, JS_GUARDED, JS_OUTSIDE, JS_PRICE_FIX, OUTSIDE, PY_GUARDED,
                                     PY_OUTSIDE, PY_PRICE_FIX, UNITTEST, VITEST)
 
@@ -121,6 +121,19 @@ class GuardedRuns(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertRegex(result.stderr, said + r"(, [^:]+)?: the gate refused it, because a gate's test runs reach only "
                                                        r"this machine, so the failure cannot be told from the refusal")
+
+    def test_a_dotenv_file_only_the_merge_base_has_is_checked_in_the_checkout_that_loads_it(self):
+        # The pull request deletes a committed .env file: the working copy has none, but the run at the merge base
+        # runs in a checkout that does.
+        repo = make_repo(self, {".env.production": "DATABASE_URL=postgresql://app:pw-at-base@db.example.com:5432/app\n",
+                                "shop/__init__.py": "", "shop/guarded.py": PY_GUARDED, "shop/price.py": PY_PRICE_FIX,
+                                "tests/test_price.py": UNITTEST.replace("OUTSIDE", "")})
+        git(repo, "rm", "-q", ".env.production")
+        commit(repo, {})
+        result = run("unittest", repo, "--soak")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("/base/.env.production: DATABASE_URL holds a connection string for db.example.com", result.stderr)
+        self.assertNotIn("pw-at-base", result.stdout + result.stderr)
 
     def test_a_credential_for_anywhere_else_stops_each_runner_before_it_starts(self):
         for kind, mutation in self.KINDS:

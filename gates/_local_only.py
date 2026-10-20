@@ -204,10 +204,10 @@ def why(name, value, local_names):
     reason = value_reason(value) if value else ""
     if reason is not None:
         return reason or None
-    hosts = [host.strip() for host in value.split(",") if host.strip()]
-    if database_host(name) and not all(local_host(host.rsplit(":", 1)[0] if host.count(":") == 1 else host) or host.startswith("/")
-                                       for host in hosts):  # a path is a Unix socket on this machine
-        return "holds a database host that is not this machine (%s)" % value
+    remote = [host_of(host) for host in value.split(",")  # a path is a Unix socket on this machine
+              if host.strip() and not (local_host(host_of(host)) or host.strip().startswith("/"))]
+    if database_host(name) and remote:
+        return "holds a database host that is not this machine (%s)" % remote[0]  # the host, never the whole value
     if credential_name(name) and name not in local_names:
         return "is named as a credential, and the manifest does not declare it the local stack's (--local-env %s)" % name
     return None

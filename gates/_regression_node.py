@@ -254,9 +254,19 @@ def tap_run(text, names):
     return Run(reason, {})
 
 
+def env_files(how):
+    """The files a Plan's `--env-file` and `--env-file-if-exists` options load, as paths."""
+    found = []
+    for index, flag in enumerate(how.flags):
+        name, given, value = flag.partition("=")
+        if name in ("--env-file", "--env-file-if-exists"):
+            found.append(os.path.join(how.cwd, value if given else (how.flags[index + 1:] or [""])[0]))
+    return found
+
+
 def run_node(repo, plans, deadline, timeout, local_names):
     """Each file in `plans` ({path: Plan}) under `node --test`, alone and guarded, the way its Plan says (its script's
-    `NAME=value` assignments are in what the guard checks)."""
+    `NAME=value` assignments and the files its `--env-file` options load are in what the guard checks)."""
     if not shutil.which("node"):
         raise CannotRun("no node on PATH for %s: this gate runs node:test files with the project's own Node" % sorted(plans)[0])
     runs = {}
@@ -269,7 +279,8 @@ def run_node(repo, plans, deadline, timeout, local_names):
             command = ["node", *how.flags, "--test", "--test-reporter=tap", "--test-reporter-destination=" + out, given]
             with Guard("regression-test-fails-on-base", repo, local_names) as guard:
                 code, output = run_tool(command, how.cwd, remaining(deadline, timeout), "node --test",
-                                        env=guard.env("node --test of " + path, extra=how.env), budget=timeout, advice=ADVICE)
+                                        env=guard.env("node --test of " + path, extra=how.env, files=env_files(how)),
+                                        budget=timeout, advice=ADVICE)
                 try:
                     with open(out, encoding="utf-8", errors="replace") as handle:
                         text = handle.read()

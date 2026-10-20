@@ -1,6 +1,6 @@
 """regression-test-fails-on-base's test processes under gates/_local_guard.py, both ways, for each runner it starts: Vitest
 (the fixture's 4.1.11, npm ci from tests/fixtures/coverage-not-lost), node:test (the Node on PATH) and Python (unittest
-under the python3 on PATH). Each fixture test reaches a server of its own on this machine, by number and as localhost;
+under the python3 on PATH). Each fixture test reaches a server of its own on 127.0.0.1 by the name localhost;
 the guarded ones also try an outside address (192.0.2.1, TEST-NET-1) and start a child process that tries another
 (192.0.2.2), and expect both refused. The same fixtures run coverage-not-lost and changed-code-mutation in
 tests/test_local_guard_runs.py."""
@@ -177,6 +177,20 @@ class RegressionRunners(unittest.TestCase):
                         self.assertNotIn(value, result.stdout + result.stderr)
                     self.assertNotIn("fails on the code before the fix", result.stderr)
                     tree_is_head(self, repo)
+
+    def test_a_file_a_node_test_script_loads_with_env_file_is_checked_too(self):
+        # config/test.env is no .env name: only the script's own --env-file says the test process loads it.
+        for value, code in (("postgresql://app:pw-in-env-file@db.example.com:5432/app", 2),
+                            ("postgresql://postgres:postgres@127.0.0.1:54322/postgres", 0)):
+            with self.subTest(value=value.split("@")[1]):
+                script = {"type": "module", "scripts": {"test": "node --env-file config/test.env --test src/*.test.mjs"}}
+                repo = make_repo(self, {"package.json": json.dumps(script) + "\n", "config/test.env": "DATABASE_URL=%s\n" % value,
+                                        "src/price.mjs": JS_PRICE_BUG, "src/guarded.mjs": JS_GUARDED})
+                result = fix(repo, {"src/price.mjs": JS_PRICE_FIX, "src/price.test.mjs": NODE_TEST.replace("OUTSIDE", "")}, TITLE, "")
+                self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                self.assertEqual("config/test.env: DATABASE_URL holds a connection string for db.example.com" in result.stderr, code == 2)
+                self.assertNotIn("pw-in-env-file", result.stdout + result.stderr)
+                tree_is_head(self, repo)
 
 
 if __name__ == "__main__":

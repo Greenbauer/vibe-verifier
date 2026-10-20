@@ -1,9 +1,10 @@
 """What every test process changed-code-mutation, coverage-not-lost and regression-test-fails-on-base start runs under.
 They run the pull request's own tests, so before each test process starts the gate refuses (exit 2) a credential for
-anywhere else in what it would inherit (gates/_local_only.py: the environment it gets, and every .env file a framework
-would load in the repository), and the process starts with a guard that refuses a connection to anything that is not
-this machine: loopback, as _local_only reads it (127.0.0.0/8, ::1, an IPv4 loopback address mapped into IPv6, and the
-names localhost and *.localhost, whose addresses are looked up and must all be loopback).
+anywhere else in what it would inherit (gates/_local_only.py: the environment it gets, every .env file a framework
+would load in the repository and in the checkout the run uses, and a file its command loads with --env-file), and the
+process starts with a guard that refuses a connection to anything that is not this machine: an address in 127.0.0.0/8
+or ::1 (an IPv4 loopback address mapped into IPv6 too), or the name localhost or a *.localhost name, which the guard
+looks up and refuses when any address it gives is not loopback.
 
 - Node: NODE_GUARD, preloaded with NODE_OPTIONS=--require into every Node process and worker thread that inherits the
   variable (Vitest's workers, a node:test file's process, StrykerJS's, a child a test starts). It replaces
@@ -15,15 +16,18 @@ names localhost and *.localhost, whose addresses are looked up and must all be l
   refuse an IPv4 or IPv6 address that is not loopback, TCP or UDP, the same way; a name socket.create_connection looks
   up first has already been sent to the resolver by then. It then runs the sitecustomize it hides (HIDDEN).
 
-A refused connection fails in the test as ECONNREFUSED and is written to the run's record (VV_LOCAL_ONLY_RECORD, a JSON
-line naming where it went). After each run the gate reads the record: a run in which a test failed and anything was
-refused cannot be judged (exit 2), since the failure cannot be told from the refusal; a run that passed says what it
-refused.
+A refused connection fails in the test as ECONNREFUSED and is written to the run's record, a JSON line naming where it
+went, in a file whose path is written into the guard itself, so a process that keeps the guard records whatever else
+its environment drops. After each run the gate reads the record: a run in which a test failed and anything was refused
+cannot be judged (exit 2), since the failure cannot be told from the refusal; a run that passed says what it refused.
 
 Not covered: a process that is neither Node nor Python (curl, psql, the Supabase CLI, bun), a socket opened in native
-code (a driver such as libpq under psycopg, or Prisma's query engine), a process started with an environment that drops
-NODE_OPTIONS or PYTHONPATH, or with python -I, -E or -S, code that replaces the guarded connect with its own, and UDP
-sent without connect (Node's dgram, the DNS queries of dns.resolve, Python's sendto).
+code (a driver such as libpq under psycopg, or Prisma's query engine) or through Python's _socket directly, a process or
+a Node worker thread started with an environment that drops NODE_OPTIONS or PYTHONPATH, a Python started with -I, -E or
+-S, code that replaces the guarded connect with its own, UDP from Node's dgram and UDP Python sends without connecting,
+and a name looked up on its own (Node's dns.lookup and dns.resolve, Python's getaddrinfo, which
+socket.create_connection calls before it connects): the query reaches the resolver. Nor does the refusal read a
+credential file outside the repository (~/.pgpass, ~/.aws/credentials, a .env above its root).
 """
 import json
 import os
@@ -34,7 +38,6 @@ import tempfile
 import _local_only
 from _contract import CannotRun
 
-RECORD = "VV_LOCAL_ONLY_RECORD"
 UNJUDGED = ("%s failed in %s, which tried to reach %s: the gate refused it, because a gate's test runs reach only this "
             "machine, so the failure cannot be told from the refusal. Stub that call in the test, or point it at the job's "
             "own local stack")
@@ -48,7 +51,7 @@ const { constants } = require("os");
 const MARK = Symbol.for("vibe-verifier.local-only");
 const connect = net.Socket.prototype.connect;
 if (!connect[MARK]) {
-  const record = process.env.VV_LOCAL_ONLY_RECORD;
+  const record = __RECORD__;
   // true for 127.0.0.0/8 and ::1 (an IPv4 loopback address mapped into IPv6 too), false for any other address, null for a name.
   const loopback = (host) => {
     if (net.isIPv4(host)) return host.startsWith("127.");
@@ -117,7 +120,7 @@ def _vv_local_only():
     import socket
     if getattr(socket.socket.connect, "_vv_local_only", False):
         return
-    record = os.environ.get("VV_LOCAL_ONLY_RECORD")
+    record = __RECORD__
     connect, connect_ex, lookup = socket.socket.connect, socket.socket.connect_ex, socket.getaddrinfo
     opened, write, close = os.open, os.write, os.close
 
@@ -210,15 +213,17 @@ def add_local_env(parser):
 
 class Guard:
     """One test run's guard: a scratch directory holding the Node preload, the Python sitecustomize and the record of
-    what the run's processes were refused. `gate` names the notes it prints."""
+    what the run's processes were refused. `gate` names the notes it prints; the .env files of `repo` and of every
+    directory in `more` (the checkout a run uses, when it is not the repository) are checked before a process starts."""
 
-    def __init__(self, gate, repo, local_names):
-        self.gate, self.repo, self.local_names = gate, repo, set(local_names or ())
+    def __init__(self, gate, repo, local_names, more=()):
+        self.gate, self.roots, self.local_names = gate, [repo, *more], set(local_names or ())
         self.scratch = tempfile.mkdtemp(prefix="vv-guard-")
         self.node, self.site = os.path.join(self.scratch, "guard.cjs"), os.path.join(self.scratch, "site")
         self.record = os.path.join(self.scratch, "refused.jsonl")
         os.makedirs(self.site)
-        for path, text in ((self.node, NODE_GUARD), (os.path.join(self.site, "sitecustomize.py"), PYTHON_GUARD + HIDDEN)):
+        for path, text in ((self.node, NODE_GUARD.replace("__RECORD__", json.dumps(self.record))),
+                           (os.path.join(self.site, "sitecustomize.py"), PYTHON_GUARD.replace("__RECORD__", repr(self.record)) + HIDDEN)):
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(text)
 
@@ -228,13 +233,13 @@ class Guard:
     def __exit__(self, *_):
         shutil.rmtree(self.scratch, ignore_errors=True)
 
-    def env(self, where, base=None, extra=None):
+    def env(self, where, base=None, extra=None, files=()):
         """The environment `where` (what starts, for a refusal) runs with: `base` (default this process's) and `extra`,
-        refused (exit 2) when it or a .env file in the repository holds a credential for anywhere else, with the guard
-        first on NODE_OPTIONS and PYTHONPATH."""
+        refused (exit 2) when it, a .env file of the guard's directories, or one of `files` its command loads holds a
+        credential for anywhere else, with the guard first on NODE_OPTIONS and PYTHONPATH."""
         environment = dict(os.environ if base is None else base, **(extra or {}))
-        _local_only.refuse(where, environment, _local_only.env_files_under(self.repo), self.local_names)
-        environment[RECORD] = self.record
+        found = [path for root in self.roots for path in _local_only.env_files_under(root)] + [path for path in files if os.path.isfile(path)]
+        _local_only.refuse(where, environment, [os.path.realpath(path) for path in found], self.local_names)  # a linked file once
         environment["NODE_OPTIONS"] = " ".join(filter(None, ["--require " + json.dumps(self.node), environment.get("NODE_OPTIONS")]))
         environment["PYTHONPATH"] = os.pathsep.join(filter(None, [self.site, environment.get("PYTHONPATH")]))
         return environment

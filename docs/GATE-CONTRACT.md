@@ -599,8 +599,11 @@ instead ([the seal](#regression-test-fails-on-base)).
 - **Before it starts: no credential for anywhere else.** What the process would inherit is read with the
   rules `--playwright` uses (`gates/_local_only.py`, listed under
   [Regression test fails on base](#regression-test-fails-on-base)): the environment it gets (for a
-  node:test file, with its package.json script's `NAME=value` assignments) and every `.env` file a
-  framework would load anywhere in the repository but `node_modules` and hidden directories. A variable
+  node:test file, with its package.json script's `NAME=value` assignments), every `.env` file a
+  framework would load anywhere in the repository but `node_modules` and hidden directories (for
+  `coverage-not-lost`, in the checkout of the side it runs too, so a committed `.env` file the pull
+  request deletes is read at the merge base), and a file a node:test script's `--env-file` or
+  `--env-file-if-exists` loads. A variable
   named like a credential that `--local-env NAME` does not declare, a JWT not issued by a local stack, a
   connection string or password-bearing URL for another host, a database host that is not this machine,
   a hosted Supabase address, a webhook, or a token whose shape names its service is exit 2 before the
@@ -618,23 +621,30 @@ instead ([the seal](#regression-test-fails-on-base)).
   address that is not loopback is refused, TCP or UDP; it then runs the `sitecustomize` it hides
   (coverage-not-lost's, then the interpreter's own). A child process a test starts inherits both
   variables, so it is guarded too. A refusal fails in the test as `ECONNREFUSED` and is written to the
-  run's record (`VV_LOCAL_ONLY_RECORD`, one JSON line per refusal naming where it went).
+  run's record, one JSON line naming where it went, in a file whose path is written into the guard
+  itself: a child given an environment of its own that keeps `NODE_OPTIONS` or `PYTHONPATH` is refused
+  and recorded.
 - **A failure in a run that refused anything cannot be judged.** A run is one guarded process and its
-  children: Vitest in one project, one node:test file, the Python test run, one side's coverage run, the
-  StrykerJS run, the mutmut run. A test that failed in a run whose record holds a refusal is exit 2,
+  children: Vitest in one project, one node:test file, the Python test run, each `--project`'s coverage
+  run at each side, the StrykerJS run, the mutmut run. A test that failed in a run whose record holds a refusal is exit 2,
   because its failure cannot be told from the refusal: for `regression-test-fails-on-base` a failing test
   or a file that did not load, at the head or before the fix; for `coverage-not-lost` a suite that failed
   at either side; for `changed-code-mutation` a killed mutant or a failing initial run (StrykerJS and
   mutmut run many mutants in shared processes, so the record cannot say whose tests met the refusal). A
   run that refused something and passed all the same says what it refused and is judged as usual.
 - **Not refused.** A process that is neither Node nor Python (curl, psql, the Supabase CLI, bun); a
-  socket opened in native code (a database driver such as libpq under psycopg, or Prisma's query engine);
-  a process started with an environment that drops `NODE_OPTIONS` or `PYTHONPATH`, or with `python -I`,
-  `-E` or `-S`; code that replaces the guarded `connect` with its own; UDP sent without connecting
-  (Node's `dgram`, the DNS queries of `dns.resolve`, Python's `sendto`); and the lookup of a name Python
-  makes before it connects (`socket.create_connection` and urllib3 resolve a name first, so the query goes
-  to the resolver before the connection is refused). For those the step's environment is what keeps
-  production out, and the first rule refuses a credential there.
+  socket opened in native code (a database driver such as libpq under psycopg, or Prisma's query engine)
+  or through Python's `_socket` module directly; a process, or a Node worker thread, started with an
+  environment that drops `NODE_OPTIONS` or `PYTHONPATH`, or a Python started with `-I`, `-E` or `-S`;
+  code that replaces the guarded `connect` with its own; UDP from Node's `dgram`, connected or not, and
+  UDP Python sends without connecting (`sendto`); and a name looked up on its own (Node's `dns.lookup`
+  and `dns.resolve`, Python's `getaddrinfo`, which `socket.create_connection` and urllib3 call before
+  they connect): the query reaches the resolver, and only the connection that follows is refused. For
+  those the step's environment is what keeps production out, and the first rule refuses a credential
+  there. That rule reads only the files above: a credential file outside the repository (`~/.pgpass`,
+  `~/.aws/credentials`, `~/.netrc`, a `.env` above the repository's root that python-dotenv's
+  `find_dotenv()` walks up to, a Vite `envDir` outside it) is not read, so the job's runner must hold
+  none.
 - **What a test installs must already be here.** The gate installs its own tools (StrykerJS, mutmut,
   coverage.py, a coverage provider) before any guard starts. A test that installs something itself, an
   `npm ci` or a `pip install` inside a test, is refused like any other connection: give it npm's cache,
@@ -1036,8 +1046,11 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   container's speed. And until the step above filled the tool cache, the second pair ran every time here:
   the first side installed the catalog's tools into the runner's empty tool cache, so the install lines of
   `gates/_tools.py` ran only at the base, the first pair found them (14 lines), and the second, with the
-  cache full, dismissed them. So a whole-suite run took 54 to 66 minutes, which is why it is nightly; its
-  `--timeout` is 4800 and its job's limit 90 minutes.
+  cache full, dismissed them, so a whole-suite run took 54 to 66 minutes. With the caches filled first
+  (16 seconds), the first pair finds no such line: a dispatched run of the guarded suite on 2026-10-20 took
+  715 and 727 seconds a side (11,767 and 12,130 lines), the guard refused nothing at either side, and the
+  job took 24 minutes. It stays nightly, with `--timeout` 4800 and a job limit of 90 minutes, room for
+  the second pair on a night that finds a line.
 - **What it does not catch.** Browser and end-to-end tests: only the unit suite the runner starts is
   measured, so a loss only a Playwright test would show passes (the [QAE harness](../harnesses/qae/README.md)
   re-walks features in a browser). A line that still runs but that no test asserts on any more: a test

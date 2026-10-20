@@ -226,7 +226,7 @@ class Vitest:
                    "--coverage.reportsDirectory=" + os.path.join(out, "coverage"), "--reporter=json",
                    "--outputFile.json=" + results] + self.args + list(files)
         what = "the vitest run in the %s checkout" % os.path.basename(tree)
-        with Guard("coverage-not-lost", self.repo, self.local) as guard:
+        with Guard("coverage-not-lost", self.repo, self.local, more=(tree,)) as guard:
             code, output = run_tool(command, cwd, time_left(deadline), "vitest", env=guard.env(what, base=ENV), budget=budget,
                                     advice=ADVICE)
             summary = read_json(results) or {}
@@ -288,7 +288,7 @@ class Python:
                          "[report]\ninclude =\n    %s\n    %s\n" % (os.path.join(out, "data"), os.path.join(tree, "*"),
                                                                    os.path.join(self.repo, "*")))
         what = "the %s run in the %s checkout" % (self.module, os.path.basename(tree))
-        with Guard("coverage-not-lost", self.repo, self.local) as guard:
+        with Guard("coverage-not-lost", self.repo, self.local, more=(tree,)) as guard:
             code, output = run_tool(boot + ["run", "--rcfile=" + settings, "-m", self.module] + self.args, cwd,
                                     time_left(deadline), self.module, env=guard.env(what, base=self.env), budget=budget, advice=ADVICE)
             empty = code == 5 or re.search(r"^Ran 0 tests", output, re.MULTILINE)  # pytest's and unittest's "no test ran"

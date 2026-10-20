@@ -34,7 +34,9 @@ const lookup = (host, options, callback) => { console.log("looked up " + host); 
   console.log("name:", await attempt({ host: "example.com", port: 443, lookup }));
   console.log("fetch:", await fetch("http://192.0.2.2/").then(() => "reached", (error) => error.cause.code));
   console.log("https:", await new Promise((resolve) => https.get("https://example.com/", () => resolve("reached")).on("error", (error) => resolve(error.code))));
-  console.log("child:", execFileSync(process.execPath, ["-e", "require('net').connect(80, '192.0.2.3').on('error', (e) => console.log(e.code))"]).toString().trim());
+  // A child given an environment of its own that keeps only the guard: refused, and still in the run's record.
+  console.log("child:", execFileSync(process.execPath, ["-e", "require('net').connect(80, '192.0.2.3').on('error', (e) => console.log(e.code))"],
+                                     { env: { NODE_OPTIONS: process.env.NODE_OPTIONS } }).toString().trim());
   await new Promise((resolve) => new Worker("require('net').connect(80, '192.0.2.4').on('error', (e) => console.log('worker: ' + e.code))", { eval: true }).on("exit", resolve));
   console.log("localhost elsewhere:", await attempt({ host: "db.localhost", port: 5432, lookup: (host, options, callback) => callback(null, [{ address: "192.0.2.6", family: 4 }]) }));
 })();
@@ -53,7 +55,7 @@ const read = (options) => new Promise((resolve) => {
 })();
 """
 PY_OUTSIDE = r"""
-import socket, subprocess, sys
+import os, socket, subprocess, sys
 for host in ("192.0.2.1", "::ffff:192.0.2.2"):
     try:
         socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET).connect((host, 80))
@@ -62,7 +64,9 @@ for host in ("192.0.2.1", "::ffff:192.0.2.2"):
         print(host, error.strerror)
 print("connect_ex:", socket.socket().connect_ex(("192.0.2.3", 80)) == __import__("errno").ECONNREFUSED)
 child = "import socket\ntry:\n    socket.create_connection(('192.0.2.4', 80), timeout=5)\nexcept ConnectionRefusedError as error:\n    print(error.strerror)"
-print("child:", subprocess.run([sys.executable, "-c", child], capture_output=True, text=True).stdout.strip())
+# A child given an environment of its own that keeps only the guard: refused, and still in the run's record.
+print("child:", subprocess.run([sys.executable, "-c", child], capture_output=True, text=True,
+                               env={"PYTHONPATH": os.environ["PYTHONPATH"]}).stdout.strip())
 """
 PY_HERE = r"""
 import os, socket, sys, tempfile
