@@ -28,23 +28,17 @@ test-*.py, *-test.py, *.test.py), conftest.py, anything under a `test`, `tests`,
 repository runs with `node --test`. Of it, a JS or TS file that a package.json script's
 `node ... --test ...` command selects runs that way, from that package with the command's options,
 and one --node-test declares runs as `node --test <file>` from the root (gates/_regression_node.py);
-a JS or TS file that imports vitest, or calls describe, it or test in a package that runs Vitest (the
-nearest Vitest config, Jest config or package.json naming its runner, from the file's directory up, is a
-Vitest config or a package.json with a vitest dependency; gates/_regression_frameworks.py), runs under Vitest (from the nearest directory
-with a Vitest or Vite config, else with a package.json). Python tests run under --python, with
+a JS or TS file that imports vitest, or calls describe, it or test in a package that runs Vitest
+(gates/_regression_frameworks.py), runs under Vitest (from the nearest directory with a Vitest or Vite
+config, else with a package.json). Python tests run under --python, with
 pytest when it is installed there and unittest when not or when the file's name has a hyphen or a dot
 (a test run by path, which pytest cannot import). A Playwright spec that a --playwright config collects runs
-under that config against the site its webServer starts on this machine, each run refused (exit 2) first when a
-target is not this machine or what the run inherits holds a credential for anywhere else
-(gates/_regression_playwright.py, gates/_local_only.py), and kept from reaching anywhere else during it
-(gates/_local_network.py). Another Playwright test, a Jest test (it imports
-@jest/globals, or its package has a Jest config, a jest dependency or a `jest` key), a bun test (it
-imports bun:test, or its package's scripts run `bun test`), a node:test file the repository does not
-run with `node --test`, a shell or other test, and a --tests path no --playwright config collects are
-reported as not judged, naming
-the runner, and a fix whose only tests are such files cannot be judged (exit 2), except that a fix whose
-only such files are Jest or bun tests (the repository's own runner, which this gate does not run yet)
-passes qualified, each file an advisory, so a soak in a Jest or bun repository is not exit 2.
+under it in a sealed Docker network (gates/_regression_playwright.py, gates/_regression_sealed.py,
+gates/_local_only.py). Another Playwright test, a Jest test, a bun test (gates/_regression_frameworks.py
+says which), a node:test file the repository does not run with `node --test`, a shell or other test,
+and a --tests path no --playwright config collects are reported as not judged, naming the runner; a fix
+whose only tests are such files cannot be judged (exit 2), except that one whose only such files are
+Jest or bun tests passes qualified, each file an advisory, so a soak there is not exit 2.
 
 The project's dependencies must be installed before the gate runs. It swaps the files the fix changed
 back to the merge base in the working tree for the second run and always puts them back, so those
@@ -57,6 +51,8 @@ files must not differ from HEAD when it starts.
     --node-test GLOB   node:test files the repository runs as `node --test <file>` some way no package.json
                        script says (a shell script, a workflow step): run that way (repeatable)
     --playwright CONFIG  a Playwright config whose specs run against the site its webServer starts (repeatable)
+    --stack-network NAME  the Docker network of the job's local stack, moved into the seal (repeatable)
+    --browser-image IMAGE  the image specs run in (default: Playwright's for the project's version)
     --local-env NAME   a variable named like a credential that holds the job's own local stack's secret (repeatable)
     --timeout SECONDS  wall-clock limit for both runs (default 600)
 """
@@ -74,6 +70,7 @@ from _contract import PY_TESTS, CannotRun, Finding, git, matches, qualify, resol
 from _regression_frameworks import JS, UNSUPPORTED_NAMES, classify, listed_specs, node_test
 from _regression_node import run_node
 from _regression_playwright import run_playwright
+from _regression_sealed import sealed
 from _regression_runners import missing, run_python, run_vitest
 from _ticket import unfenced
 from universal_checks import lex
@@ -279,14 +276,15 @@ def compare(args, base, changed, tests, is_test_code):
         raise CannotRun("the working tree differs from HEAD at a path the pull request changed (%s): this gate swaps those "
                         "files and puts them back, so commit or stash first" % dirty.split("\0")[0][3:])
     deadline = time.monotonic() + args.timeout
-    judged, not_judged, unsupported, plans = runners(args, tests, deadline)
-    passed = passed_at_head(run_tests(args, judged, deadline, plans) if judged else {}, judged, not_judged)
-    for path, why in not_judged:
-        note("%s: not judged: %s" % (path, why))
-    if not passed:
-        return none_ran(not_judged, unsupported)
-    with code_before_the_fix(args.repo, base, [(status, path) for status, path in changed if not is_test_code(path)]):
-        base_runs = run_tests(args, {path: judged[path] for path in passed}, deadline, plans)
+    with sealed(args.stack_network or [], args.browser_image, deadline, args.timeout):
+        judged, not_judged, unsupported, plans = runners(args, tests, deadline)
+        passed = passed_at_head(run_tests(args, judged, deadline, plans) if judged else {}, judged, not_judged)
+        for path, why in not_judged:
+            note("%s: not judged: %s" % (path, why))
+        if not passed:
+            return none_ran(not_judged, unsupported)
+        with code_before_the_fix(args.repo, base, [(status, path) for status, path in changed if not is_test_code(path)]):
+            base_runs = run_tests(args, {path: judged[path] for path in passed}, deadline, plans)
     return verdict(args.repo, passed, base_runs)
 
 
@@ -331,6 +329,9 @@ def add_arguments(parser):
                         help="node:test files run as `node --test <file>` from the repository root (repeatable)")
     parser.add_argument("--playwright", action="append", metavar="CONFIG",
                         help="a Playwright config whose specs this gate runs, against the site its webServer starts here (repeatable)")
+    parser.add_argument("--stack-network", action="append", metavar="NAME",
+                        help="the Docker network of the job's local stack, moved into the seal (repeatable)")
+    parser.add_argument("--browser-image", metavar="IMAGE", help="the image the specs run in (default: Playwright's own)")
     parser.add_argument("--local-env", action="append", metavar="NAME",
                         help="a variable named like a credential that holds the job's own local stack's secret (repeatable)")
     parser.add_argument("--timeout", type=int, default=600, help="seconds both test runs may take together (default 600)")

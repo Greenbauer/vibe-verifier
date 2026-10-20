@@ -1,7 +1,7 @@
-"""What a browser run of regression-test-fails-on-base may reach: this machine, and no credential for anywhere
-else. The run starts the pull request's own code (a site, its global setup, the specs), so the gate refuses
-(exit 2) before Playwright starts when anything that code inherits could reach a production database,
-production credentials or a production address.
+"""What a browser run of regression-test-fails-on-base may inherit: no credential for anywhere else. The run
+starts the pull request's own code (a site, its global setup, the specs), so the gate refuses (exit 2) before
+Playwright starts when anything that code inherits is a credential for a production database, production
+credentials or a production address. What the run may reach, its sealed network, is gates/_regression_sealed.py.
 
 A target is local when its host is loopback: localhost, a *.localhost name, 127.0.0.0/8 or ::1.
 

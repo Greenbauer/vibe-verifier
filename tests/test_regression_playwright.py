@@ -1,17 +1,15 @@
 """regression-test-fails-on-base on Playwright specs (--playwright): the gate on synthetic repositories whose
-Playwright config starts a small site on this machine (a node http server that renders src/price.mjs), run by
-the catalog's pinned Playwright (tools/qae-browser, the build the QAE harness installs) and its chromium.
+Playwright config starts a small site (a node http server that renders src/price.mjs), run in the gate's sealed
+Docker network by a real Playwright: tools/regression-browser pins @playwright/test to a release whose official image
+(mcr.microsoft.com/playwright:v<version>-noble) holds its browsers, and each repository gets a copy of it in its
+node_modules, as a subscriber's install would put it there.
 
-The fixture's `@playwright/test` is a stand-in. The published package is three re-exports of `playwright`
-(index.js `module.exports = require('playwright/test')`, index.mjs the same as ES exports, and cli.js running
-playwright's own program), and the catalog pins `playwright`, not `@playwright/test`. The stand-in holds those
-same three files, so the gate finds `@playwright/test/cli.js` as it does in a subscriber, and every line that
-runs a test is Playwright's.
-
-The refusals, which need no browser, are tests/test_regression_playwright_refusals.py; what a run may reach (a
-link-local address, a Node process's own connections, WebRTC) is tests/test_regression_playwright_network.py.
-`Browser`'s tests need the pinned chromium; they skip without one, except where VV_REGRESSION_BROWSER=required
-(the catalog's qae-browser CI job, which runs both browser modules), where that is a failure. The gate runs with a minimal environment (PATH, HOME, TMPDIR, LANG and the browsers path), never this
+The refusals made before anything runs, which need no Docker, and those made from the sealed listing are
+tests/test_regression_playwright_refusals.py; the seal itself, both ways (each way out the review rounds found is
+refused, and the job's stack is reachable), is tests/test_regression_playwright_network.py. `Browser`'s tests need
+Docker and pull Playwright's image, so they run only where VV_REGRESSION_SEALED is set: 1 runs them when Docker
+answers and skips them when not; `required` (the catalog's regression-browser CI job) makes no Docker a failure.
+The gate runs with a minimal environment (PATH, HOME, TMPDIR, LANG and Docker's own settings), never this
 machine's own, whose tokens it would rightly refuse."""
 import json
 import os
@@ -41,7 +39,7 @@ createServer((request, response) => {
   response.end(`<h1 id="total">${discount(200, true)}</h1>`);
 }).listen(Number(process.env.PORT), "127.0.0.1");
 """
-# The same site, whose server first fetches another host and records how that went: the Node side of a run is proxied too.
+# The same site, whose server first fetches another host and records how that went: the network refuses it.
 SERVER_FETCHES = SERVER.replace('appendFileSync("started.log", "started\\n");', """const outside = await fetch("https://rates.example.com/", { signal: AbortSignal.timeout(5000) })
   .then((response) => "reached " + response.status, () => "blocked");
 appendFileSync("started.log", "outside: " + outside + "\\n");""")
@@ -63,13 +61,7 @@ REPRODUCES = SPEC + 'test("members get 10% off over 100", async ({ page }) => {\
                     '  await expect(page.locator("#total")).toHaveText("180", { timeout: 3000 });\n});\n'
 DOES_NOT_REPRODUCE = SPEC + 'test("the total shows", async ({ page }) => {\n  await page.goto("/");\n' \
                             '  await expect(page.locator("#total")).toBeVisible();\n});\n'
-STAND_IN = {  # @playwright/test as published: three re-exports of playwright
-    "package.json": json.dumps({"name": "@playwright/test", "main": "index.js", "bin": {"playwright": "cli.js"},
-                                "exports": {".": {"import": "./index.mjs", "require": "./index.js", "default": "./index.js"}}}),
-    "index.js": "module.exports = require('playwright/test');\n",
-    "index.mjs": "export * from 'playwright/test';\nexport { default } from 'playwright/test';\n",
-    "cli.js": "#!/usr/bin/env node\nconst { program } = require('playwright/lib/program');\nprogram.parse(process.argv);\n",
-}
+PACKAGES = (("@playwright", "test"), ("playwright",), ("playwright-core",))
 
 
 def free_port():
@@ -79,13 +71,11 @@ def free_port():
 
 
 class Fixture(unittest.TestCase):
-    """A repository whose Playwright config starts the site above, with the pinned Playwright linked in."""
-
-    browsers = None  # None: Playwright's own default; a path: PLAYWRIGHT_BROWSERS_PATH
+    """A repository whose Playwright config starts the site above, with the pinned Playwright copied in."""
 
     @classmethod
     def setUpClass(cls):
-        cls.toolchain = Path(ensure_node_tool("qae-browser")) / "node_modules"
+        cls.toolchain = Path(ensure_node_tool("regression-browser")) / "node_modules"
 
     def project(self, files=None, base=None):
         self.port = free_port()
@@ -93,18 +83,13 @@ class Fixture(unittest.TestCase):
         repo = make_repo(self, dict({".gitignore": "node_modules\nstarted.log\nglobal-setup.log\n", "package.json": '{"type": "module"}\n',
                                      "global-setup.mjs": GLOBAL_SETUP, "server.mjs": SERVER, "src/price.mjs": PRICE_BUG, "playwright.config.mjs": config},
                                     **(files or {})))
-        stand_in = Path(repo, "node_modules", "@playwright", "test")
-        stand_in.mkdir(parents=True)
-        for name, text in STAND_IN.items():
-            (stand_in / name).write_text(text)
-        for name in ("playwright", "playwright-core"):
-            os.symlink(self.toolchain / name, Path(repo, "node_modules", name))
+        for parts in PACKAGES:  # copied, not linked: the sealed run mounts the repository and nothing outside it
+            shutil.copytree(self.toolchain.joinpath(*parts), Path(repo, "node_modules", *parts), symlinks=True)
         return repo
 
     def env(self, extra=None):
-        env = {name: os.environ[name] for name in ("PATH", "HOME", "TMPDIR", "LANG") if name in os.environ}
-        browsers = self.browsers or os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
-        return dict(env, **({"PLAYWRIGHT_BROWSERS_PATH": browsers} if browsers else {}), **(extra or {}))
+        return dict({name: value for name, value in os.environ.items()
+                     if name in ("PATH", "HOME", "TMPDIR", "LANG") or name.startswith("DOCKER_")}, **(extra or {}))
 
     def fix(self, repo, files, *args, env=None):
         """Commit `files` on a branch and run the gate against main with the fixture's config and a minimal env."""
@@ -125,28 +110,31 @@ class Fixture(unittest.TestCase):
                               capture_output=True, text=True, env=env or self.env())
 
 
-def has_browser():
-    """Whether the pinned Playwright's chromium is installed where this environment's Playwright looks."""
-    toolchain = Path(ensure_node_tool("qae-browser")) / "node_modules" / "playwright"
-    found = subprocess.run(["node", "-e", "process.stdout.write(require(%s).chromium.executablePath())" % json.dumps(str(toolchain))],
-                           capture_output=True, text=True)
-    return found.returncode == 0 and os.path.exists(found.stdout)
+def has_docker():
+    try:
+        return subprocess.run(["docker", "version"], capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 class Browser(Fixture):
-    """Needs the pinned chromium: skips without it, fails without it where VV_REGRESSION_BROWSER=required."""
+    """Runs the gate's sealed Docker runs: only where VV_REGRESSION_SEALED is set, and a failure without Docker where
+    it says `required`."""
 
     @classmethod
     def setUpClass(cls):
+        wanted = os.environ.get("VV_REGRESSION_SEALED")
+        if not wanted:
+            raise unittest.SkipTest("the sealed runs need Docker and pull Playwright's image: set VV_REGRESSION_SEALED=1")
+        if not has_docker():
+            if wanted == "required":
+                raise AssertionError("VV_REGRESSION_SEALED=required, and no Docker daemon answers")
+            raise unittest.SkipTest("no Docker daemon answers")
         super().setUpClass()
-        if not has_browser():
-            if os.environ.get("VV_REGRESSION_BROWSER") == "required":
-                raise AssertionError("VV_REGRESSION_BROWSER=required, and the pinned Playwright's chromium is not installed")
-            raise unittest.SkipTest("the pinned Playwright's chromium is not installed (actions/qae-browser installs it)")
 
 
 class RealBrowser(Browser):
-    """The specs run in the pinned chromium against the site the config starts, at the head and before the fix."""
+    """The specs run in Playwright's image against the site the config starts, at the head and before the fix."""
 
     def test_a_browser_spec_that_fails_on_the_code_before_the_fix_passes(self):
         repo = self.project()
@@ -185,8 +173,8 @@ class RealBrowser(Browser):
         spec = SPEC + 'test("reads the rates", async ({ page }) => {\n  await page.goto("https://rates.example.com/today");\n});\n'
         result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/rates.spec.mjs": spec}, "--soak")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("e2e/rates.spec.mjs: reads the rates failed in a run that reached for rates.example.com:443, which this gate "
-                      "blocks, so the failure cannot be told from the block: Error: page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at "
+        self.assertIn("e2e/rates.spec.mjs: reads the rates failed in a run whose sealed network refused rates.example.com, so "
+                      "the failure cannot be told from the refusal: Error: page.goto: net::ERR_NAME_NOT_RESOLVED at "
                       "https://rates.example.com/today", result.stderr)
         tree_is_head(self, repo)
 
@@ -196,29 +184,29 @@ class RealBrowser(Browser):
                       '  expect((await request.get("https://rates.example.com/today")).ok()).toBe(true);\n});\n'
         result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/rates.spec.mjs": spec}, "--soak")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertRegex(result.stderr, r"e2e/rates\.spec\.mjs: reads the rates failed in a run that reached for rates\.example\.com"
-                                        r"(:443)?, which this gate blocks, so the failure cannot be told from the block")
+        self.assertIn("e2e/rates.spec.mjs: reads the rates failed in a run whose sealed network refused rates.example.com, so "
+                      "the failure cannot be told from the refusal", result.stderr)
         tree_is_head(self, repo)
 
     def test_the_site_s_own_server_reaching_for_another_host_is_blocked(self):
-        # Node's fetch in the site's server goes through the same proxy (HTTPS_PROXY with NODE_USE_ENV_PROXY), in both runs.
-        # At the head the spec passes all the same; before the fix it fails in a run that reached out: not the bug showing.
+        # The network refuses the site's server-side fetch in both runs. At the head the spec passes all the same; before
+        # the fix it fails in a run whose network refused something: not the bug showing.
         repo = self.project({"server.mjs": SERVER_FETCHES})
         result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertEqual(Path(repo, "started.log").read_text(), "outside: blocked\n" * 2)
-        self.assertIn("e2e/price.spec.mjs: members get 10% off over 100 failed in a run that reached for rates.example.com:443",
-                      result.stderr)
+        self.assertIn("e2e/price.spec.mjs: members get 10% off over 100 failed in a run whose sealed network refused "
+                      "rates.example.com", result.stderr)
         tree_is_head(self, repo)
 
     def test_a_failure_before_the_fix_in_a_run_that_reached_out_is_not_the_bug_showing(self):
-        # Before the fix the page's total comes from another host's script, which the run blocks; the spec fails there for
-        # that alone, and no test's own error says so. The proxy recorded the request, so it is exit 2, not a pass.
+        # Before the fix the page's total comes from another host's script, which the network refuses; the spec fails there
+        # for that alone, and no test's own error says so. The name was recorded, so it is exit 2, not a pass.
         repo = self.project({"server.mjs": SERVER_SCRIPT})
         result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("e2e/price.spec.mjs: members get 10% off over 100 failed in a run that reached for cdn.example.com:443, "
-                      "which this gate blocks, so the failure cannot be told from the block", result.stderr)
+        self.assertIn("e2e/price.spec.mjs: members get 10% off over 100 failed in a run whose sealed network refused "
+                      "cdn.example.com, so the failure cannot be told from the refusal", result.stderr)
         tree_is_head(self, repo)
 
 

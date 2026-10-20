@@ -1,137 +1,219 @@
-"""regression-test-fails-on-base --playwright keeping a run on this machine, in the pinned chromium on the fixture of
-tests/test_regression_playwright.py: a link-local address goes to the gate's proxy, a Node process's own
-connections of any kind are refused and recorded by the guard (gates/_local_network.py), also when a webServer's env
-sets its own NODE_OPTIONS, a site on IPv6 loopback is this machine, and a page's WebRTC sends nothing past the
-proxy, the flag that limits it keeping a config's own launch options. Skips without the browser, as tests/test_regression_playwright.py does."""
-import socket
+"""regression-test-fails-on-base --playwright keeping a run inside its sealed Docker network, both ways, on the fixture
+of tests/test_regression_playwright.py.
+
+An outside listener (a container on an ordinary Docker network, its TCP and UDP ports also published on this
+machine) records every packet that reaches it. A container that is not sealed reaches it directly and through this
+machine's published port, so the listener does hear a way out (the control). Then each way out the review rounds
+found is tried from a sealed run, and the listener hears none of them: a raw Node socket from the site's server, a
+node started by its own path with an empty environment, a page's WebRTC, a cloud metadata address, a spec's own
+proxy, and this machine itself. Each was counted as refused, so a changed spec that failed in that run is exit 2.
+And the job's stack, moved into the seal, is reachable from the site at its usual loopback port, cannot reach the
+listener itself, and is back on its own network, reachable from this machine, afterwards.
+
+Skips without Docker, as tests/test_regression_playwright.py does (VV_REGRESSION_SEALED)."""
+import json
+import os
+import re
+import secrets
+import shutil
 import subprocess
-import threading
+import sys
+import tempfile
+import time
 import unittest
+import urllib.request
 from pathlib import Path
 
-from test_regression_playwright import PRICE_FIX, REPRODUCES, SERVER, SPEC, Browser
+from test_regression_playwright import PRICE_FIX, REPRODUCES, SERVER, SPEC, Browser, free_port
 from test_regression_test import tree_is_head
 
-# The same site, whose server first opens two connections no proxy setting reaches: http with its own Agent, and a raw
-# socket to a database. Every Node process of a run is guarded, so both are refused and recorded.
-SERVER_CONNECTS = SERVER.replace('appendFileSync("started.log", "started\\n");', """import http from "node:http";
-import net from "node:net";
-const agent = await new Promise((done) => http.get("http://rates.example.com/", { agent: new http.Agent() }, () => done("reached"))
-  .on("error", () => done("blocked")));
-const raw = await new Promise((done) => net.connect(5432, "db.example.com", () => done("reached")).on("error", () => done("blocked")));
-appendFileSync("started.log", "agent: " + agent + ", raw: " + raw + "\\n");""")
+LISTENER = r"""const fs = require("fs"), net = require("net"), dgram = require("dgram");
+const log = (line) => fs.appendFileSync("/record/heard.log", line + "\n");
+net.createServer((socket) => { log("tcp " + socket.remoteAddress); socket.end("answered\n"); }).listen(8443, "0.0.0.0");
+dgram.createSocket("udp4").on("message", (message, from) => log("udp " + from.address)).bind(3478, "0.0.0.0", () => log("ready"));
+"""
+TRY = r"""const net = require("net"), dgram = require("dgram");
+const [address, gateway, port] = process.argv.slice(1);
+const tcp = (host, to) => new Promise((done) => net.connect({ host, port: Number(to), timeout: 3000 })
+  .on("connect", function () { this.destroy(); done("connected"); }).on("timeout", function () { this.destroy(); done("timeout"); })
+  .on("error", (error) => done(error.code)));
+(async () => {
+  const udp = dgram.createSocket("udp4");
+  const sent = await new Promise((done) => udp.send("x", 3478, address, (error) => { udp.close(); done(error ? error.code : "sent"); }));
+  console.log(JSON.stringify({ direct: await tcp(address, 8443), machine: await tcp(gateway, port), udp: sent }));
+})();
+"""
+# The site's server first opens a TCP connection to TARGET_ADDRESS:TARGET_PORT and records how that went.
+SERVER_CONNECTS = SERVER.replace('appendFileSync("started.log", "started\\n");', """import net from "node:net";
+const tried = await new Promise((done) => net.connect({ host: process.env.TARGET_ADDRESS, port: Number(process.env.TARGET_PORT), timeout: 3000 })
+  .on("connect", function () { this.destroy(); done("reached"); }).on("timeout", function () { this.destroy(); done("timeout"); })
+  .on("error", (error) => done(error.code)));
+appendFileSync("started.log", "outside: " + tried + "\\n");""")
+# A stand-in for the job's stack: answers on 8080 whether it could reach the listener itself, through this machine.
+STACK = r"""const net = require("net");
+require("http").createServer((request, response) => net.connect({ host: process.env.TARGET_ADDRESS, port: Number(process.env.TARGET_PORT), timeout: 3000 })
+  .on("connect", function () { this.destroy(); response.end("stack-ok reached"); })
+  .on("timeout", function () { this.destroy(); response.end("stack-ok timeout"); })
+  .on("error", (error) => response.end("stack-ok " + error.code))).listen(8080, "0.0.0.0");
+"""
+# The site renders what the stack answered, read at its loopback port as a site in CI would read it.
+SERVER_STACK = SERVER.replace("response.end(`<h1 id=\"total\">${discount(200, true)}</h1>`);",
+                              "fetch(process.env.STACK_URL).then((answer) => answer.text(), (error) => 'unreachable').then((stack) =>\n"
+                              "    response.end(`<p id=\"stack\">${stack}</p><h1 id=\"total\">${discount(200, true)}</h1>`));")
+REFUSED = "failed in a run whose sealed network refused 1 attempt(s) to reach an address off the network"
+
+
+def docker(*args):
+    return subprocess.run(["docker", *args], capture_output=True, text=True, check=True).stdout.strip()
+
+
+def address_of(container, network):
+    return json.loads(docker("inspect", container))[0]["NetworkSettings"]["Networks"][network]["IPAddress"]
 
 
 class Network(Browser):
-    """What a run may reach: this machine only, whatever opens the connection."""
+    """The listener, the ways out, and the stack, in the image the fixture's Playwright runs in."""
 
-    def test_a_link_local_address_goes_to_the_proxy_too(self):
-        # Chromium goes direct to 169.254/16 (where a cloud metadata service answers) unless told otherwise.
-        repo = self.project()
-        spec = SPEC + 'test("reads the metadata", async ({ page }) => {\n  await page.goto("http://169.254.1.1:8081/", { timeout: 3000 });\n' \
-                      '  await expect(page.locator("body")).toHaveText("credentials", { timeout: 1000 });\n});\n'
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/metadata.spec.mjs": spec}, "--soak")
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("e2e/metadata.spec.mjs: reads the metadata failed in a run that reached for 169.254.1.1:8081", result.stderr)
-        tree_is_head(self, repo)
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        version = json.loads((cls.toolchain / "playwright-core" / "package.json").read_text())["version"]
+        cls.image, cls.outside = "mcr.microsoft.com/playwright:v%s-noble" % version, "vv-outside-" + secrets.token_hex(3)
+        cls.record, cls.user = tempfile.mkdtemp(prefix="vv-outside-"), "%d:%d" % (os.getuid(), os.getgid())
+        cls.addClassCleanup(shutil.rmtree, cls.record, True)
+        docker("network", "create", cls.outside)
+        cls.addClassCleanup(subprocess.run, ["docker", "network", "rm", cls.outside], capture_output=True)
+        cls.published = free_port()
+        cls.addClassCleanup(subprocess.run, ["docker", "rm", "-f", cls.outside], capture_output=True)
+        docker("run", "-d", "--name", cls.outside, "--network", cls.outside, "--user", cls.user, "-p", "%d:8443" % cls.published,
+               "-v", "%s:/record" % cls.record, cls.image, "node", "-e", LISTENER)
+        cls.address = address_of(cls.outside, cls.outside)
+        cls.gateway = json.loads(docker("network", "inspect", cls.outside))[0]["IPAM"]["Config"][0]["Gateway"]
+        for _ in range(60):
+            if os.path.exists(os.path.join(cls.record, "heard.log")):
+                break
+            time.sleep(0.5)
 
-    def test_a_node_connection_of_any_kind_to_another_host_is_refused_and_recorded(self):
+    def heard(self):
+        time.sleep(0.5)
+        with open(os.path.join(self.record, "heard.log"), encoding="utf-8") as handle:
+            return [line.strip() for line in handle if line.strip() != "ready"]
+
+    def target(self, address, port, extra=None):
+        return self.env(dict({"TARGET_ADDRESS": address, "TARGET_PORT": str(port)}, **(extra or {})))
+
+    def test_the_listener_hears_a_container_that_is_not_sealed(self):
+        # The control: without the seal, a container reaches the listener directly, over UDP, and through this machine.
+        before = self.heard()
+        said = json.loads(docker("run", "--rm", "--network", self.outside, self.image, "node", "-e", TRY, self.address,
+                                 self.gateway, str(self.published)))
+        self.assertEqual(said, {"direct": "connected", "machine": "connected", "udp": "sent"})
+        self.assertEqual(len(self.heard()), len(before) + 3)
+
+    def test_a_raw_node_socket_from_the_site_is_refused_and_counted(self):
+        before = self.heard()
         repo = self.project({"server.mjs": SERVER_CONNECTS})
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, env=self.target(self.address, 8443))
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertEqual(Path(repo, "started.log").read_text(), "agent: blocked, raw: blocked\n" * 2)
-        self.assertIn("failed in a run that reached for db.example.com:5432, rates.example.com:80, which this gate blocks",
-                      result.stderr)
+        self.assertEqual(Path(repo, "started.log").read_text(), "outside: ENETUNREACH\n" * 2)
+        self.assertIn("e2e/price.spec.mjs: members get 10% off over 100 " + REFUSED, result.stderr)
+        self.assertEqual(self.heard(), before)
         tree_is_head(self, repo)
 
-    def test_a_webserver_env_that_sets_node_options_keeps_the_guard(self):
+    def test_a_node_started_by_its_own_path_with_an_empty_environment_is_refused(self):
+        # No NODE_OPTIONS, no PATH, no proxy settings: nothing the run sets up is left, and the kernel refuses it all the same.
+        before = self.heard()
         repo = self.project({"server.mjs": SERVER_CONNECTS})
         config = Path(repo, "playwright.config.mjs")
-        config.write_text(config.read_text().replace('env: { PORT:', 'env: { NODE_OPTIONS: "--max-old-space-size=512", PORT:'))
+        config.write_text(config.read_text().replace('command: "node server.mjs"', 'command: "env -i PORT=$PORT TARGET_ADDRESS='
+                                                     '$TARGET_ADDRESS TARGET_PORT=$TARGET_PORT $(command -v node) server.mjs"'))
         subprocess.run(["git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
-                        "commit", "-qam", "options"], check=True)
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
+                        "commit", "-qam", "own node"], check=True)
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, env=self.target(self.address, 8443))
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertEqual(Path(repo, "started.log").read_text(), "agent: blocked, raw: blocked\n" * 2)
-        self.assertIn("failed in a run that reached for db.example.com:5432, rates.example.com:80", result.stderr)
+        self.assertEqual(Path(repo, "started.log").read_text(), "outside: ENETUNREACH\n" * 2)
+        self.assertEqual(self.heard(), before)
         tree_is_head(self, repo)
 
-    def test_a_webserver_command_that_sets_node_options_keeps_the_guard(self):
+    def test_this_machine_is_off_the_network_too(self):
+        # This machine's published port, at the address its containers reach it on: no route from the seal.
+        before = self.heard()
         repo = self.project({"server.mjs": SERVER_CONNECTS})
-        config = Path(repo, "playwright.config.mjs")
-        config.write_text(config.read_text().replace('command: "node server.mjs"', 'command: "NODE_OPTIONS=--max-old-space-size=512 node server.mjs"'))
-        subprocess.run(["git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
-                        "commit", "-qam", "options"], check=True)
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES},
+                          env=self.target(self.gateway, self.published))
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertEqual(Path(repo, "started.log").read_text(), "agent: blocked, raw: blocked\n" * 2)
-        self.assertIn("failed in a run that reached for db.example.com:5432, rates.example.com:80", result.stderr)
+        self.assertEqual(Path(repo, "started.log").read_text(), "outside: ENETUNREACH\n" * 2)
+        self.assertEqual(self.heard(), before)
         tree_is_head(self, repo)
 
-    def test_a_site_on_ipv6_loopback_is_this_machine(self):
-        repo = self.project({"server.mjs": SERVER.replace('.listen(Number(process.env.PORT), "127.0.0.1")', '.listen(Number(process.env.PORT), "::1")')},
-                            base="http://[::1]:%d")
-        config = Path(repo, "playwright.config.mjs")
-        config.write_text(config.read_text().replace('url: "http://127.0.0.1:', 'url: "http://[::1]:').replace("[::1]:%d", "[::1]:" + str(self.port)))
-        subprocess.run(["git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
-                        "commit", "-qam", "ipv6"], check=True)
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES})
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("e2e/price.spec.mjs: members get 10% off over 100 fails on the code before the fix", result.stderr)
-        tree_is_head(self, repo)
-
-    def test_a_page_s_webrtc_sends_nothing_past_the_proxy(self):
-        # STUN goes over UDP, which no proxy sees: Chromium is told to use only what goes through the proxy. A listener on
-        # this machine's own non-loopback address stands for the host the page tries.
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-            probe.connect(("10.255.255.255", 1))  # no datagram is sent: this only picks the outgoing interface
-            address = probe.getsockname()[0]
-        if address.startswith("127."):
-            self.skipTest("this machine has no address but loopback")
-        listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        listener.bind((address, 0))
-        listener.settimeout(0.5)
-        heard, done = [], threading.Event()
-
-        def listen():
-            while not done.is_set():
-                try:
-                    heard.append(listener.recvfrom(2048)[1])
-                except OSError:
-                    pass
-        thread = threading.Thread(target=listen, daemon=True)
-        thread.start()
-        self.addCleanup(listener.close)
+    def test_a_page_s_webrtc_sends_nothing_off_the_network(self):
+        before = self.heard()
         repo = self.project()
         spec = SPEC + 'test("members get 10% off over 100", async ({ page }) => {\n  await page.goto("/");\n' \
                       '  await page.evaluate(async (stun) => {\n    const peer = new RTCPeerConnection({ iceServers: [{ urls: stun }] });\n' \
                       '    peer.createDataChannel("x");\n    await peer.setLocalDescription(await peer.createOffer());\n' \
                       '    await new Promise((resolve) => setTimeout(resolve, 2000));\n    peer.close();\n' \
                       '  }, "STUN");\n  await expect(page.locator("#total")).toHaveText("180", { timeout: 3000 });\n});\n'
-        spec = spec.replace("STUN", "stun:%s:%d" % (address, listener.getsockname()[1]))
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": spec})
-        done.set()
-        thread.join()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(heard, [])
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": spec.replace("STUN", "stun:%s:3478" % self.address)})
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertRegex(result.stderr, r"failed in a run whose sealed network refused \d+ attempt\(s\) to reach an address off")
+        self.assertEqual(self.heard(), before)
         tree_is_head(self, repo)
 
-    def test_the_webrtc_limit_keeps_the_config_s_own_launch_options_in_a_project_that_sets_none(self):
-        # Playwright merges use one level deep, so a project's launchOptions would replace the config's: a project
-        # with none keeps the config's (here a V8 flag the spec can see) beside the gate's WebRTC flag.
+    def test_a_cloud_metadata_address_is_refused(self):
         repo = self.project()
-        config = Path(repo, "playwright.config.mjs")
-        config.write_text(config.read_text().replace("  use: { baseURL:", '  projects: [{ name: "chromium", use: { browserName: "chromium" } }],\n'
-                                                     '  use: { launchOptions: { args: ["--js-flags=--expose-gc"] }, baseURL:'))
-        subprocess.run(["git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
-                        "commit", "-qam", "projects"], check=True)
+        spec = SPEC + 'test("reads the metadata", async ({ page }) => {\n' \
+                      '  await page.goto("http://169.254.169.254/latest/meta-data/", { timeout: 5000 });\n});\n'
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/metadata.spec.mjs": spec}, "--soak")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("e2e/metadata.spec.mjs: reads the metadata failed in a run whose sealed network refused", result.stderr)
+        self.assertIn("net::ERR_ADDRESS_UNREACHABLE at http://169.254.169.254/latest/meta-data/", result.stderr)
+        tree_is_head(self, repo)
+
+    def test_a_spec_s_own_proxy_is_refused(self):
+        # A spec may set any proxy it likes with test.use: there is no route to it.
+        before = self.heard()
+        repo = self.project()
+        spec = SPEC + 'test.use({ proxy: { server: "http://%s:8443" } });\n' % self.address + \
+            'test("members get 10% off over 100", async ({ page }) => {\n  await page.goto("http://example.org/");\n});\n'
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": spec}, "--soak")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("e2e/price.spec.mjs: members get 10% off over 100 failed in a run whose sealed network refused", result.stderr)
+        self.assertEqual(self.heard(), before)
+        tree_is_head(self, repo)
+
+    def test_the_job_s_stack_is_reachable_from_the_site_cannot_reach_out_and_is_put_back(self):
+        stack, port = "vv-stack-" + secrets.token_hex(3), free_port()
+        docker("network", "create", stack)
+        self.addCleanup(subprocess.run, ["docker", "network", "rm", stack], capture_output=True)
+        self.addCleanup(subprocess.run, ["docker", "rm", "-f", stack], capture_output=True)
+        # The stack reaches this machine's published port of the listener as host.docker.internal, Docker's name for it.
+        docker("run", "-d", "--init", "--name", stack, "--network", stack, "--user", self.user, "--add-host", "host.docker.internal:host-gateway",
+               "-e", "TARGET_ADDRESS=host.docker.internal", "-e", "TARGET_PORT=%d" % self.published, "-p", "127.0.0.1:%d:8080" % port,
+               self.image, "node", "-e", STACK)
+        before = self.heard()
+        repo = self.project({"server.mjs": SERVER_STACK})
         spec = SPEC + 'test("members get 10% off over 100", async ({ page }) => {\n  await page.goto("/");\n' \
-                      '  expect(await page.evaluate(() => typeof gc)).toBe("function");\n' \
+                      '  await expect(page.locator("#stack")).toHaveText("stack-ok ENETUNREACH");\n' \
                       '  await expect(page.locator("#total")).toHaveText("180", { timeout: 3000 });\n});\n'
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": spec})
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": spec}, "--stack-network", stack,
+                          env=self.env({"STACK_URL": "http://127.0.0.1:%d/" % port}))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('e2e/price.spec.mjs: chromium > members get 10% off over 100 fails on the code before the fix: Error: '
-                      'expect(locator).toHaveText(expected) failed Expected: "180" Received: "200"', result.stderr)
+        self.assertIn('fails on the code before the fix: Error: expect(locator).toHaveText(expected) failed Expected: "180" '
+                      'Received: "200"', result.stderr)
+        self.assertEqual(self.heard(), before)
+        # What each part cost, from the gate's own lines, for the CI log (docs/features/regression-test.md quotes it).
+        sys.stderr.write("".join("\n  " + line for line in result.stderr.splitlines() if re.search(r": \d+\.\ds$", line)) + "\n")
+        # Back on its own network, published on this machine again, and able to reach the listener through it again.
+        self.assertEqual(list(json.loads(docker("inspect", stack))[0]["NetworkSettings"]["Networks"]), [stack])
+        answer = None
+        for _ in range(20):
+            try:
+                answer = urllib.request.urlopen("http://127.0.0.1:%d/" % port, timeout=5).read().decode()
+                break
+            except OSError:
+                time.sleep(0.5)
+        self.assertEqual(answer, "stack-ok reached")
         tree_is_head(self, repo)
 
 

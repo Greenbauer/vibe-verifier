@@ -1,11 +1,10 @@
-"""gates/_local_only.py's rules on the variable names and value shapes subscribed repositories use,
-gates/_local_network.py's Node guard, and gates/_regression_playwright.py's text handling: the file filter it hands Playwright and an error as one line. The
+"""gates/_local_only.py's rules on the variable names and value shapes subscribed repositories use, and
+gates/_regression_playwright.py's text handling: the file filter it hands Playwright and an error as one line. The
 gate run end to end is tests/test_regression_playwright.py."""
 import base64
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,8 +13,7 @@ from pathlib import Path
 from helpers import ROOT
 
 sys.path.insert(0, str(ROOT / "gates"))
-import _local_network  # noqa: E402  (gates/ is not a package)
-import _local_only  # noqa: E402
+import _local_only  # noqa: E402  (gates/ is not a package)
 import _regression_playwright  # noqa: E402
 from _regression_runners import missing  # noqa: E402
 
@@ -109,74 +107,6 @@ class LocalOnly(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("node"), "the guard is a Node preload")
-class Guard(unittest.TestCase):
-    """_local_network.GUARD in a Node process, as every Node process of a browser run preloads it."""
-
-    def test_a_node_process_reaches_only_this_machine_however_it_connects(self):
-        script = """const dgram = require("dgram"), dns = require("dns"), http = require("http"), net = require("net");
-const out = (label) => (error) => console.log(label, error ? error.code : "connected");
-const tcp = (label, ...args) => net.connect(...args, () => { console.log(label, "connected"); process.exit(9); }).on("error", out(label));
-http.get("http://rates.example.com/", { agent: new http.Agent() }, () => process.exit(9)).on("error", out("agent"));
-tcp("raw", 5432, "10.255.255.1");
-tcp("name", 80, "127.foo.example.com");
-tcp("lookup", { port: 80, host: "localhost", lookup: (host, options, done) => options.all ? done(null, [{ address: "10.255.255.1", family: 4 }]) : done(null, "10.255.255.1", 4) });
-tcp("loopback", 9, "127.0.0.1");
-tcp("ipv6", 9, "::1");
-const udp = dgram.createSocket("udp4");
-udp.send("x", 53, "10.255.255.1", (error) => { out("udp")(error); udp.close(); });
-"""
-        scratch = tempfile.mkdtemp(prefix="vv-guard-")
-        self.addCleanup(shutil.rmtree, scratch, True)
-        env, record, _ = _local_network.node_guard(scratch)
-        result = subprocess.run(["node", "-e", script], env=dict(os.environ, **env), capture_output=True, text=True, timeout=60)
-        said = dict(line.split(" ", 1) for line in result.stdout.splitlines())
-        # Nothing connects. An address elsewhere is refused before it leaves, a name by what it resolves to (one that does
-        # not resolve fails as it would anyway); each is recorded. Loopback goes through, unrecorded: nothing listens there.
-        self.assertEqual(set(said), {"agent", "raw", "name", "lookup", "loopback", "ipv6", "udp"}, result.stdout + result.stderr)
-        self.assertNotIn("connected", said.values())
-        self.assertEqual((said["raw"], said["lookup"], said["udp"], said["loopback"]), ("ECONNREFUSED",) * 4)
-        self.assertEqual(sorted(_local_network.reached_by_node(record)), sorted([
-            "rates.example.com:80", "10.255.255.1:5432", "127.foo.example.com:80", "localhost:80", "10.255.255.1:53/udp"]))
-
-    def guarded(self, command, **env):
-        scratch = tempfile.mkdtemp(prefix="vv-guard-")
-        self.addCleanup(shutil.rmtree, scratch, True)
-        guard, record, _ = _local_network.node_guard(scratch)
-        result = subprocess.run(command, env=dict(os.environ, **guard, **env), capture_output=True, text=True, timeout=60)
-        return dict(line.split(" ", 1) for line in result.stdout.splitlines()), _local_network.reached_by_node(record), result
-
-    def test_every_way_of_connecting_to_this_machine_still_connects(self):
-        # A socket's own connect takes (port, callback), (port, host, callback) and (options, callback) as net.connect does.
-        script = """const net = require("net");
-const server = net.createServer((socket) => socket.end()).listen(0, () => {
-  const port = server.address().port, shapes = [[port], [port, "127.0.0.1"], [{ port, host: "127.0.0.1" }]];
-  let left = shapes.length;
-  shapes.forEach((shape, index) => new net.Socket().on("error", (error) => console.log(index, error.code || error.message))
-    .connect(...shape, () => { console.log(index, "connected"); if (--left === 0) server.close(); }));
-});
-"""
-        said, reached, result = self.guarded(["node", "-e", script])
-        self.assertEqual(said, {"0": "connected", "1": "connected", "2": "connected"}, result.stdout + result.stderr)
-        self.assertEqual(reached, [])
-
-    def test_a_node_given_its_own_node_options_by_its_command_is_guarded_and_so_are_its_children(self):
-        # A webServer command or a package.json script that sets NODE_OPTIONS replaces the gate's: the node first on PATH
-        # adds the guard back, and the guarded process hands it to the processes it starts.
-        script = """const net = require("net"), { spawnSync } = require("child_process");
-net.connect({ port: 5432, host: "10.255.255.1", timeout: 3000 }).on("timeout", function () { this.destroy(); console.log("own reached"); })
-  .on("error", (error) => {
-    console.log("own", error.code);
-    const child = spawnSync(process.execPath, ["-e", process.env.CHILD], { encoding: "utf8" });
-    process.stdout.write(child.stdout);
-  });
-"""
-        child = ('require("net").connect({ port: 5433, host: "10.255.255.1", timeout: 3000 }).on("timeout", function () '
-                 '{ this.destroy(); console.log("child reached"); }).on("error", (error) => console.log("child", error.code));')
-        said, reached, result = self.guarded(["sh", "-c", 'NODE_OPTIONS=--max-old-space-size=512 node -e "$SCRIPT"'], SCRIPT=script, CHILD=child)
-        self.assertEqual(said, {"own": "ECONNREFUSED", "child": "ECONNREFUSED"}, result.stdout + result.stderr)
-        self.assertEqual(sorted(reached), ["10.255.255.1:5432", "10.255.255.1:5433"])
-
-
 class Filters(unittest.TestCase):
     """gates/_regression_playwright.py's text handling: the file filter it hands Playwright, and an error as one line."""
 

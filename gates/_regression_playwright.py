@@ -1,42 +1,36 @@
 """Playwright runs for regression-test-fails-on-base: a fix's browser specs, run by a Playwright config the
-manifest names (--playwright), against the site that config's webServer starts on this machine, once at the head
-and once on the code before the fix.
+manifest names (--playwright), against the site that config's webServer starts, once at the head and once on the
+code before the fix, inside a Docker network sealed off from everything but the job's own containers
+(gates/_regression_sealed.py: the network, the stack moved onto it, what it refused).
 
 The config's own webServer serves the code under test: Playwright starts it from the working tree as the gate
 left it, so the site serves the head in the first run and the code before the fix in the second. The repository
 provides the rest: a webServer that serves from the working tree (a dev server, or a build and a start), and the
-job's own local stack (a local database started before the gate) for that site to read.
+job's own local stack (a local database started before the gate, named with --stack-network) for that site to read.
 
 The gate never runs the config as it is. For each Playwright call it writes a wrapper beside the config, a .ts
 file (Playwright 1.59 and 1.64 both load a .ts wrapper of a .ts, .mts, .js, .mjs or .cjs config, in a CommonJS or
 an ES module package; an .mjs wrapper of a .ts config fails on 1.59), which imports the config and:
-- gives every browser context the config creates a proxy on this machine (_local_network.Refuser), bypassed only
-  for loopback names, that answers every request 403 and records the host it asked for, and launches Chromium with
-  WebRTC limited to what goes through that proxy (a flag added to a project's own launchOptions, or the config's
-  when it sets none);
 - starts every webServer itself (`reuseExistingServer: false`): a server already running serves whatever code it
   was started with, so Playwright fails on one rather than test the wrong code;
 - reports through the gate's reporter (REPORTER), and writes the webServers it was given to a file, since a list
   of webServers is not in what a reporter sees.
 
-Every Node process of the run (the Playwright runner and its workers, the site's server, a global setup) preloads
-the guard of gates/_local_network.py, and HTTP_PROXY and HTTPS_PROXY point at the same proxy; what each covers, and
-what neither does, is said there.
-
 Before each run, `playwright test --list`, which loads the config and the specs and starts no server, no global
 setup and no browser, says which project collects which spec and with what baseURL. The gate refuses (exit 2)
-before any server or browser starts: a credential for somewhere else in what the run inherits (_local_only.py),
-a project that runs a changed spec, or one such a project depends on, whose baseURL is not set or not this
-machine, a webServer url that is not this machine, and a config with no webServer. A preview is refused like any
-other address: it serves the pull request's head, never the code before the fix.
+before any of that: a credential for somewhere else in what the run inherits (_local_only.py); and before any
+server or browser starts: a project that runs a changed spec, or one such a project depends on, whose baseURL is
+not set or not this machine, a webServer url that is not this machine, and a config with no webServer. A preview is
+refused like any other address: it serves the pull request's head, never the code before the fix.
 
 Each run is one attempt (--retries=0) with its output in a scratch directory. A test that reported `expected` is
 a pass, `unexpected` a failure with its error, `skipped` a skip. A file that does not load stops Playwright
-collecting any file, so a listing that fails is listed again one file at a time to find which. A test that
-reached for a blocked host, a failed test of another file (a setup project the spec depends on), and an error
-no test owns (a webServer that did not start, a global setup that threw) are exit 2, and so is a changed spec that
-failed in a run that reached for any host the proxy recorded: the run cannot say whether the bug shows. A spec is listed at all only when it could be one (gates/_regression_frameworks.py,
-maybe_playwright): a fix whose tests import another framework, or that node:test runs, never starts Playwright.
+collecting any file, so a listing that fails is listed again one file at a time to find which. A failed test of
+another file (a setup project the spec depends on) and an error no test owns (a webServer that did not start, a
+global setup that threw) are exit 2, and so is a changed spec that failed in a run whose network refused anything:
+the failure cannot be told from the refusal. A spec is listed at all only when it could be one
+(gates/_regression_frameworks.py, maybe_playwright): a fix whose tests import another framework, or that node:test
+runs, never starts Playwright.
 """
 import json
 import os
@@ -44,21 +38,17 @@ import re
 import shutil
 import tempfile
 
-import _local_network
 import _local_only
+import _regression_sealed
 from _contract import CannotRun
-from _regression_runners import ADVICE, Run, first_line, remaining
-from _tools import run_tool
+from _regression_runners import Run, first_line
 
 CLIS = (os.path.join("@playwright", "test", "cli.js"), os.path.join("playwright", "cli.js"))
-# <-loopback> ends Chromium's own bypass of loopback and link-local addresses (169.254/16, where a cloud metadata
-# service answers): only the names after it go direct.
-BYPASS = "<-loopback>,localhost,127.0.0.1,[::1],*.localhost"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 REGEX_SPECIAL = re.compile(r"([\\^$.*+?()[\]{}|/])")
-LOCAL_ONLY = ("This gate runs a spec only against a site the config's webServer starts on this machine, reading the "
-              "job's own local stack: never production, and never a preview, which serves the pull request's head and "
-              "not the code before the fix")
+LOCAL_ONLY = ("This gate runs a spec only against a site the config's webServer starts in its sealed network, reading "
+              "the job's own local stack: never production, and never a preview, which serves the pull request's head "
+              "and not the code before the fix")
 REFUSED = ("%s would run the pull request's code with a credential for somewhere other than this machine in what it "
            "inherits, so this gate does not start it: %s. Run the gate in a step whose environment holds only the "
            "job's own local stack, and declare a local secret the stack needs with --local-env NAME")
@@ -67,22 +57,11 @@ import * as loaded from "./%(config)s";
 import { writeFileSync } from "node:fs";
 
 const config = (loaded.default && loaded.default.default) || loaded.default || loaded;
-const proxy = { server: "http://127.0.0.1:%(port)d", bypass: "%(bypass)s" };
-const preload = %(guard)s;  // the gate's Node guard; a webServer env that sets NODE_OPTIONS keeps it
-// Chromium's WebRTC would send UDP past any proxy (STUN): it may use only what goes through the proxy.
-const webrtc = "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
-const browserOf = (use) => (use && use.browserName) || (config.use && config.use.browserName) || "chromium";
-// A project's launchOptions replace the config's (Playwright merges use one level deep): a project with none starts from the config's.
-const launch = (use) => (use && use.launchOptions) || (config.use && config.use.launchOptions) || {};
-const guard = (use) => Object.assign({}, use, { proxy }, browserOf(use) !== "chromium" ? {} : {
-  launchOptions: Object.assign({}, launch(use), { args: [].concat(launch(use).args || [], webrtc) }) });
 const servers = [].concat(config.webServer || []);
 writeFileSync(%(servers)s, JSON.stringify(servers.map((server) => ({
   url: server.url || null, port: server.port || null, cwd: server.cwd || null, env: server.env || {} }))));
-const wrapped = Object.assign({}, config, { use: guard(config.use), reporter: [[%(reporter)s, { outputFile: %(report)s }]] });
-if (config.projects) wrapped.projects = config.projects.map((project) => Object.assign({}, project, { use: guard(project.use) }));
-if (servers.length) wrapped.webServer = servers.map((server) => Object.assign({}, server, { reuseExistingServer: false },
-  server.env && "NODE_OPTIONS" in server.env ? { env: Object.assign({}, server.env, { NODE_OPTIONS: (server.env.NODE_OPTIONS || "") + " " + preload }) } : {}));
+const wrapped = Object.assign({}, config, { reporter: [[%(reporter)s, { outputFile: %(report)s }]] });
+if (servers.length) wrapped.webServer = servers.map((server) => Object.assign({}, server, { reuseExistingServer: false }));
 export default wrapped;
 """
 # Written beside the wrapper for each call, so the reporter and the wrapper that names it are always one pair.
@@ -152,41 +131,37 @@ def read_json(path):
 
 
 def call(repo, config, files, listing, local_names, deadline, timeout):
-    """One `playwright test` of `files` (repository-relative) under `config`, through the wrapper: (the reporter's
-    report, the webServers the config gave, the hosts the run reached for: its browser contexts and the `request`
-    fixture through the proxy, its Node processes through the guard). The environment is checked first, every call."""
+    """One `playwright test` of `files` (repository-relative) under `config`, through the wrapper, in the sealed
+    network: (the reporter's report, the webServers the config gave, what the network refused: the outside names
+    looked up and how many packets had no route). The environment is checked first, every call."""
     root = os.path.realpath(repo)
     directory = os.path.dirname(os.path.join(root, config))
     if not os.path.isfile(os.path.join(root, config)):
         raise CannotRun("--playwright %s is not a file in the repository" % config)
     refuse_credentials("--playwright " + config, dict(os.environ), _local_only.env_files_under(root), local_names)
     entry = cli(directory)
-    if entry is None or not shutil.which("node"):
-        raise CannotRun("no Playwright is installed for %s: install the project's dependencies, its browsers and its local "
-                        "stack before this gate, which runs the project's own Playwright" % config)
-    scratch = tempfile.mkdtemp(prefix="vv-regression-")
+    if entry is None:
+        raise CannotRun("no Playwright is installed for %s: install the project's dependencies and start its local stack "
+                        "before this gate, which runs the project's own Playwright" % config)
+    scratch = os.path.realpath(tempfile.mkdtemp(prefix="vv-regression-"))
     wrapper = os.path.join(directory, ".vv-regression-%d.config.ts" % os.getpid())
-    refuser = _local_network.Refuser()
-    port = refuser.port
     try:
         report, servers, reporter = (os.path.join(scratch, name) for name in ("report.json", "servers.json", "reporter.cjs"))
         with open(reporter, "w", encoding="utf-8") as handle:
             handle.write(REPORTER)
-        guard, record, require = _local_network.node_guard(scratch)
         with open(wrapper, "w", encoding="utf-8") as handle:
-            handle.write(WRAPPER % {"config": os.path.basename(config), "port": port, "bypass": BYPASS, "servers": json.dumps(servers),
-                                    "reporter": json.dumps(reporter), "report": json.dumps(report), "guard": json.dumps(require)})
+            handle.write(WRAPPER % {"config": os.path.basename(config), "servers": json.dumps(servers),
+                                    "reporter": json.dumps(reporter), "report": json.dumps(report)})
         command = ["node", entry, "test", "--config", wrapper, "--output", os.path.join(scratch, "results"), "--retries=0"]
         command += ["--list", "--pass-with-no-tests"] if listing else []
-        code, output = run_tool(command + [pattern(os.path.join(root, path)) for path in files], directory,
-                                remaining(deadline, timeout), "Playwright", env=dict(os.environ, **_local_network.proxy_env(port), **guard),
-                                budget=timeout, advice=ADVICE)
+        with _regression_sealed.session(deadline, timeout) as seal:
+            code, output, refused = seal.run(command + [pattern(os.path.join(root, path)) for path in files], directory,
+                                             root, scratch, _regression_sealed.image_for(directory, seal.image), deadline, timeout)
         found = read_json(report)
         if not isinstance(found, dict):
             raise CannotRun("Playwright wrote no report for %s (exit %d): %s" % (config, code, output.strip()[-2000:]))
-        return found, read_json(servers) or [], sorted(set(refuser.close()) | set(_local_network.reached_by_node(record)))
+        return found, read_json(servers) or [], refused
     finally:
-        refuser.close()
         if os.path.lexists(wrapper):
             os.remove(wrapper)
         shutil.rmtree(scratch, ignore_errors=True)
@@ -262,10 +237,10 @@ def refuse_targets(config, files, tests, projects, servers, directory, local_nam
         os.path.normpath(os.path.join(directory, server.get("cwd") or ".")))], local_names, servers)
 
 
-def read_run(report, wanted, config, reached, repo):
-    """{path: Run} of the wanted {real path: path} in one run's report; `reached` is the hosts the run asked the proxy
-    for. A changed spec that failed in a run that reached for any is exit 2: its failure cannot be told from the
-    block (a request made only before the fix would otherwise read as the bug showing)."""
+def read_run(report, wanted, config, refused, repo):
+    """{path: Run} of the wanted {real path: path} in one run's report; `refused` is what the run's network refused.
+    A changed spec that failed in a run whose network refused anything is exit 2: its failure cannot be told from the
+    refusal (a request made only before the fix would otherwise read as the bug showing)."""
     if report["errors"]:
         raise CannotRun("the Playwright run of %s stopped before its tests could show anything: %s"
                         % (config, described(report["errors"][0])))
@@ -281,9 +256,9 @@ def read_run(report, wanted, config, reached, repo):
                 raise CannotRun("%s failed in the run, and a changed spec depends on it (a setup project, say), so the "
                                 "run cannot show whether the bug shows: %s" % (where, error))
             continue
-        if status == "failed" and reached:
-            raise CannotRun("%s failed in a run that reached for %s, which this gate blocks, so the failure cannot be told "
-                            "from the block: %s. %s" % (where, ", ".join(reached), error, LOCAL_ONLY))
+        if status == "failed" and refused:
+            raise CannotRun("%s failed in a run whose sealed network refused %s, so the failure cannot be told from the "
+                            "refusal: %s. %s" % (where, ", ".join(refused), error, LOCAL_ONLY))
         runs[path].tests[name] = (status, error if status == "failed" else "")
     return runs
 
@@ -297,15 +272,15 @@ def run_config(repo, config, files, local_names, deadline, timeout):
     loadable = [path for path in files if path in tests]
     if loadable:
         refuse_targets(config, loadable, tests, projects, servers, os.path.dirname(os.path.join(root, config)), local_names)
-        report, _, reached = call(repo, config, loadable, False, local_names, deadline, timeout)
+        report, _, refused = call(repo, config, loadable, False, local_names, deadline, timeout)
         runs.update(read_run(report, {os.path.realpath(os.path.join(root, path)): path for path in loadable}, config,
-                             reached, root))
+                             refused, root))
     return runs
 
 
 def run_playwright(repo, plans, local_names, deadline, timeout):
-    """Each file in `plans` ({path: config}) under its config, against the site the config's webServer starts on this
-    machine."""
+    """Each file in `plans` ({path: config}) under its config, against the site the config's webServer starts in the
+    sealed network."""
     runs = {}
     for config in sorted(set(plans.values())):
         runs.update(run_config(repo, config, sorted(path for path, which in plans.items() if which == config),
