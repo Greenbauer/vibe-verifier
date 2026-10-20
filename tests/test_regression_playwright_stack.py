@@ -17,9 +17,13 @@ import time
 import unittest
 import urllib.request
 
+from helpers import ROOT
 from test_regression_playwright import DOES_NOT_REPRODUCE, PRICE_FIX, REPRODUCES, SERVER, SPEC, free_port
 from test_regression_playwright_network import Outside, docker
 from test_regression_test import tree_is_head
+
+sys.path.insert(0, str(ROOT / "gates"))
+import _regression_sealed  # noqa: E402  (gates/ is not a package)
 
 # A stand-in for the job's stack: answers on 8080 whether it could reach the listener itself, through this machine.
 STACK = r"""const net = require("net");
@@ -124,6 +128,22 @@ class Stack(Outside):
         self.assertRegex(result.stderr, r"tests/test_stack\.py: .*fails on the code before the fix: .*1\.0 != 0\.9")
         self.put_back(stack, port, left)
         tree_is_head(self, repo)
+
+    def test_the_relay_forwards_no_packet_and_holds_no_privilege(self):
+        # It sits on the sealed network and an ordinary one, and a container forwards IP packets by default: it must not.
+        stack, port = self.stack()
+        left = seal_left()
+        seal, deadline = _regression_sealed.Seal([stack], None), time.monotonic() + 120
+        seal.open(deadline, 120)
+        try:
+            seal.enter(self.image, deadline, 120)
+            self.assertEqual(docker("exec", seal.relay, "cat", "/proc/sys/net/ipv4/ip_forward"), "0")
+            self.assertEqual(json.loads(docker("inspect", seal.relay))[0]["HostConfig"]["CapDrop"], ["ALL"])
+            self.assertEqual(sorted(json.loads(docker("inspect", seal.relay))[0]["NetworkSettings"]["Networks"]),
+                             sorted([seal.network, seal.relay]))
+        finally:
+            seal.close(deadline, 120)
+        self.put_back(stack, port, left)
 
     def test_a_run_that_cannot_be_judged_still_puts_the_stack_back(self):
         stack, port = self.stack()

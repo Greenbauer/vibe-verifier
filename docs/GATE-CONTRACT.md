@@ -507,7 +507,8 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   nothing keeps an address from before (Supabase's API gateway caches its services' addresses); after the
   runs each is moved back and restarted, also when a run could not be judged. A container on an internal
   network publishes no port, so while the stack is sealed a relay (a container of the gate's own on an
-  ordinary network, running only a forwarder to the stack) publishes its ports on this machine again, and
+  ordinary network, running only a forwarder to the stack, with IP forwarding off and no capability, as the
+  run's container has none either) publishes its ports on this machine again, and
   the gate's own runs of the same fix on this machine still reach it (tested with node:test and Python). In the run's container each TCP port the stack publishes on this machine is forwarded from
   the same loopback address, so the site's settings for the stack work unchanged. What the network
   refused is recorded: each outside name a process looked up (Docker's DNS hands a name it does not know

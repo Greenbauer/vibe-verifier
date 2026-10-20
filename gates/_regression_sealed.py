@@ -16,7 +16,9 @@ relay (RELAY_JS, a container of its own on an ordinary network, joined to the se
 on this machine again and forwards each to its container: the gate's own runs on this machine (its node:test and
 Python runs are tested) reach the stack as before. The relay runs only this code and connects only to the stack. After the
 runs the relay goes, and each container is moved back and restarted again, so the job's later steps find the stack
-as they left it.
+as they left it. The relay forwards no IP packet (net.ipv4.ip_forward=0), so a process on the sealed network that
+sends one to it, raw, gets nowhere; it and the run's container hold no capability (--cap-drop ALL), so no process in
+them opens a raw socket or changes a route, even when the gate runs as root.
 
 Inside the run's container the gate's entry (SEAL_JS) forwards each port the stack publishes on this machine
 (127.0.0.1:<host port>) to its container on the network, so the site's settings for the stack work unchanged, and
@@ -203,8 +205,10 @@ class Seal:
         docker("network", "create", self.relay)
         ports = [arg for port, (_, _, address) in sorted(self.published.items()) for arg in ("-p", bound(address, port))]
         targets = [[port, name, target] for port, (name, target, _) in sorted(self.published.items())]
+        # A container forwards IP packets by default, and this one sits on the sealed network and an ordinary one: it
+        # forwards none, and holds no capability with which a process could change that.
         docker("run", "-d", "--init", "--name", self.relay, "--network", self.relay, "--user", "%d:%d" % (os.getuid(), os.getgid()),
-               *ports, image, "node", "-e", RELAY_JS, json.dumps(targets))
+               "--cap-drop", "ALL", "--sysctl", "net.ipv4.ip_forward=0", *ports, image, "node", "-e", RELAY_JS, json.dumps(targets))
         docker("network", "connect", self.network, self.relay)
         while "ready" not in docker("logs", self.relay):
             if remaining(deadline, timeout) < 1:
@@ -266,7 +270,7 @@ class Seal:
         try:
             code, output = run_tool(
                 ["docker", "run", "--rm", "--init", "--name", name, "--network", self.network, "--dns", "127.0.0.1", "--dns-search", ".",
-                 "--user", "%d:%d" % (os.getuid(), os.getgid()), "--shm-size", "1g", "-e", "HOME=/tmp",
+                 "--user", "%d:%d" % (os.getuid(), os.getgid()), "--cap-drop", "ALL", "--shm-size", "1g", "-e", "HOME=/tmp",
                  "-e", "VV_SEAL_RECORD=" + record, *passed, "-v", "%s:%s" % (root, root), "-v", "%s:%s" % (scratch, scratch),
                  "-w", directory, image, "node", entry, json.dumps(self.forwards), *command],
                 directory, remaining(deadline, timeout), "Playwright", budget=timeout, advice=ADVICE)
