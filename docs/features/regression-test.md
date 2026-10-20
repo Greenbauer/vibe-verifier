@@ -68,8 +68,8 @@ What it costs each fix pull request whose changed tests include a spec, measured
 
 | Part | Measured |
 | --- | --- |
-| Pulling Playwright's image, once per machine that keeps it | 2.5 GB (amd64): 34 to 37 s on a GitHub-hosted Ubuntu runner (Docker 28.0.4); 960 MB (arm64): 44 s on Docker Desktop, Apple M4 Pro |
-| Moving the stack in and restarting it, then out and restarting it | a Supabase stack of five containers (database, auth, REST, API gateway, mail catcher): 30 s in, 22 s out (Docker Desktop, Apple M4 Pro); a one-container stand-in: 0.3 to 0.4 s each way on the GitHub-hosted runner, before the relay was added (it starts one more container) |
+| Pulling Playwright's image, once per machine that keeps it | 2.5 GB (amd64): 25 to 37 s on a GitHub-hosted Ubuntu runner (Docker 28.0.4, four runs); 960 MB (arm64): 44 s on Docker Desktop, Apple M4 Pro |
+| Moving the stack in and restarting it, then out and restarting it | a Supabase stack of five containers (database, auth, REST, API gateway, mail catcher): 30 s in, 22 s out (Docker Desktop, Apple M4 Pro); a one-container stand-in, with the relay: 0.6 s in and 0.7 s out on the GitHub-hosted runner |
 | Each Playwright call in the seal (container start plus the work) | on the catalog's fixture (a node server, one spec), GitHub-hosted runner: a listing 0.6 to 1.4 s, a run 1.0 to 2.2 s passing and 4.1 to 4.5 s failing on a 3 s timeout; the whole gate 2 to 14 s |
 | What the job already pays for this gate's runs: the stack's start, the site's start or build twice, the specs twice | `supabase start` 36 to 41 s and `supabase db reset` 33 to 35 s on a subscriber's self-hosted lane (12 runs, 4 repositories); a Next.js build 71 to 86 s each |
 
