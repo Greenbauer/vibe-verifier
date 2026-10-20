@@ -117,6 +117,10 @@ class PlantedEvidence(unittest.TestCase):
         os.symlink(Path(self.repo, "planted", "qae", "AC1-step-1.png"), Path(outside, "qae", "AC1-step-1.png"))
         self.evidence = outside
         self.assert_refused("qae/AC1-step-1.png is a symbolic link")
+        # Judged from saved files with no repository at --repo: nothing is tracked, and a link is still refused.
+        for result, code in ((gate("qae-artifacts", self.work, "--artifacts", str(outside)), 1),
+                             (gate("qae-artifacts", self.work, "--artifacts", str(Path(self.repo, "planted"))), 0)):
+            self.assertEqual(result.returncode, code, result.stdout + result.stderr)
 
 
 class MergeStep(unittest.TestCase):

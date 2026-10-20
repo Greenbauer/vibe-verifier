@@ -223,6 +223,13 @@ def _print_lines(gate, findings, blocking, fmt, soak):
         print("%s: %d advisory finding(s), not blocking" % (gate, len(findings) - len(blocking)))
 
 
+def in_repository(repo):
+    try:
+        return subprocess.run(["git", "-C", repo, "rev-parse", "--is-inside-work-tree"], capture_output=True).returncode == 0
+    except FileNotFoundError:
+        raise CannotRun("git is not installed")
+
+
 def planted(repo, artifacts):
     """One finding per thing in the evidence directory `artifacts` that the checkout `repo` supplied rather than the
     run: each path the branch tracks at, under or on the way to it (a tracked parent is a link or a submodule, since
@@ -239,8 +246,9 @@ def planted(repo, artifacts):
     spellings = {os.path.relpath(os.path.abspath(artifacts), os.path.abspath(repo)),
                  os.path.relpath(os.path.join(os.path.realpath(parent), name), os.path.realpath(repo))}
     inside = [rel.replace(os.sep, "/") for rel in spellings if rel != ".." and not rel.startswith(".." + os.sep)]
-    found += ["the pull request tracks %s" % path for path in sorted(tracked_files(repo)) if inside and
-              any(path == rel or path.startswith(rel + "/") or rel.startswith(path + "/") for rel in inside)]
+    if inside and in_repository(repo):  # no repository (saved files on a laptop): nothing is tracked
+        found += ["the pull request tracks %s" % path for path in sorted(tracked_files(repo))
+                  if any(path == rel or path.startswith(rel + "/") or rel.startswith(path + "/") for rel in inside)]
     if os.path.islink(artifacts):
         found.append("%s is a symbolic link" % artifacts)
     else:
