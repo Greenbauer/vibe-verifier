@@ -194,12 +194,11 @@ class Refusals(Fixture):
             self.assertEqual(_regression_sealed.bound(address, 54321), said, address)
 
     def test_a_fix_with_no_spec_never_starts_playwright(self):
-        # A node:test file a package.json script runs is no spec: it is not listed, so a credential in the step, or a
-        # broken Playwright, says nothing about it.
+        # A node:test file a package.json script runs is no spec: it is not listed, so a broken Playwright says nothing
+        # about it. (A credential in the step is refused before its own run starts: tests/test_local_guard_gates.py.)
         repo = self.project({"package.json": json.dumps({"type": "module", "scripts": {"test": "node --test src/*.test.mjs"}}) + "\n"})
         shutil.rmtree(Path(repo, "node_modules", "playwright-core"))  # a Playwright that cannot start
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "src/price.test.mjs": NODE_REPRODUCES},
-                          env=self.env({"RESEND_API_KEY": "re_live_value"}))
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "src/price.test.mjs": NODE_REPRODUCES})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("src/price.test.mjs: gives members 10% off over 100 fails on the code before the fix", result.stderr)
 

@@ -14,6 +14,9 @@ for Python, which tests ran each line.
   with each test function recorded as the context of the lines it ran. Every Python process the suite starts
   is measured too, by coverage.py's own subprocess support (`[run] patch = subprocess`): each process writes a
   data file of its own, and the run's files are combined before the report is read.
+
+Every run of the suite is guarded (gates/_local_guard.py): a credential for anywhere else in what it inherits is exit
+2, a connection to anything but this machine is refused, and a suite that fails in a run that refused one is exit 2.
 """
 import json
 import os
@@ -25,6 +28,7 @@ import tempfile
 import time
 
 from _contract import PY_TESTS, CannotRun, matches
+from _local_guard import HIDDEN, Guard
 from _tools import NODE_TOOLS, ensure_node_tool, ensure_python_tool, run_tool
 
 NODE_TOOL = "coverage-not-lost"
@@ -58,10 +62,11 @@ ENV = dict(os.environ, NO_COLOR="1", FORCE_COLOR="0")
 COVERAGE_ENV = ("COVERAGE_FILE", "COVERAGE_PROCESS_CONFIG", "COVERAGE_PROCESS_START")
 # `patch = subprocess` hands its settings to each child in COVERAGE_PROCESS_CONFIG, and coverage.py starts in
 # a child from the .pth file it installs in its own site-packages, which is not the project's interpreter's.
-# So this file, first on the suite's PYTHONPATH, is the sitecustomize every Python process imports at start:
-# it appends coverage.py's package the way BOOT does and starts coverage.py the way that .pth file does, then
-# runs the sitecustomize it hides (Homebrew's Python and Ubuntu's ship one), if there is one. A
-# child records no test function: no test is on its stack, so a function of its own named test* would be.
+# So this file, on the suite's PYTHONPATH right after the guard's (gates/_local_guard.py, which runs it), is a
+# sitecustomize every Python process runs at start: it appends coverage.py's package the way BOOT does and
+# starts coverage.py the way that .pth file does, then runs the sitecustomize it hides (Homebrew's Python and
+# Ubuntu's ship one), if there is one. A child records no test function: no test is on its stack, so a
+# function of its own named test* would be.
 SITECUSTOMIZE = '''import os
 import sys
 
@@ -79,22 +84,10 @@ def _measure():
     coverage.process_startup()
 
 
-def _hidden():
-    import importlib.machinery
-    import importlib.util
-    here = os.path.dirname(os.path.abspath(__file__))
-    entries = [os.path.abspath(entry or os.curdir) for entry in sys.path]
-    after = sys.path[entries.index(here) + 1:] if here in entries else []
-    spec = importlib.machinery.PathFinder.find_spec("sitecustomize", after)
-    if spec is not None and spec.loader is not None:
-        spec.loader.exec_module(importlib.util.module_from_spec(spec))
-
-
 try:
     _measure()
 except Exception:  # an interpreter this coverage.py cannot load in (a Python before 3.10) runs unmeasured
     pass
-_hidden()
 '''
 
 
@@ -179,6 +172,7 @@ class Vitest:
 
     def __init__(self, args, repo, scratch):
         self.args, self.repo, self.scratch, self.prepared = shlex.split(args.args), repo, scratch, {}
+        self.local = args.local_env
 
     def prepare(self, project):
         """(the Vitest CLI, the provider wrapper) for `project`, resolved in the working copy."""
@@ -231,9 +225,14 @@ class Vitest:
                    "--coverage.customProviderModule=" + wrapper, "--coverage.reporter=json",
                    "--coverage.reportsDirectory=" + os.path.join(out, "coverage"), "--reporter=json",
                    "--outputFile.json=" + results] + self.args + list(files)
-        code, output = run_tool(command, cwd, time_left(deadline), "vitest", env=ENV, budget=budget, advice=ADVICE)
-        summary = read_json(results) or {}
-        if code != 0 or not summary.get("success"):
+        what = "the vitest run in the %s checkout" % os.path.basename(tree)
+        with Guard("coverage-not-lost", self.repo, self.local) as guard:
+            code, output = run_tool(command, cwd, time_left(deadline), "vitest", env=guard.env(what, base=ENV), budget=budget,
+                                    advice=ADVICE)
+            summary = read_json(results) or {}
+            red = code != 0 or not summary.get("success")
+            guard.judge((vitest_failures(summary, cwd) or ["the suite (vitest exited %d)" % code])[0] if red else None, what)
+        if red:
             raise Red("vitest exited %d" % code, "\n".join(vitest_failures(summary, cwd)[:20]) or output[-3000:])
         tested = int(summary.get("numTotalTests", 0)) > 0
         report = read_json(os.path.join(out, "coverage", "coverage-final.json"))
@@ -261,7 +260,7 @@ class Python:
 
     def __init__(self, args, repo, scratch):
         self.module, self.args, self.repo, self.scratch = args.runner, shlex.split(args.args), repo, scratch
-        self.python, self.site, self.env = interpreter(args.python, repo, args.runner), None, None
+        self.python, self.site, self.env, self.local = interpreter(args.python, repo, args.runner), None, None, args.local_env
 
     def boot(self):
         """The command that runs coverage.py; first, the environment its runs share (self.env)."""
@@ -271,7 +270,7 @@ class Python:
                                  None, 60, "python")[1].strip().splitlines()[-1]
             hook = tempfile.mkdtemp(prefix="site-", dir=self.scratch)
             with open(os.path.join(hook, "sitecustomize.py"), "w", encoding="utf-8") as handle:
-                handle.write(SITECUSTOMIZE % self.site)
+                handle.write(SITECUSTOMIZE % self.site + HIDDEN)
             self.env = {key: value for key, value in ENV.items() if key not in COVERAGE_ENV}
             self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [hook, ENV.get("PYTHONPATH")]))
         return [self.python, "-c", BOOT % self.site]
@@ -288,9 +287,13 @@ class Python:
             handle.write("[run]\ndata_file = %s\ndynamic_context = test_function\nparallel = true\npatch = subprocess\n"
                          "[report]\ninclude =\n    %s\n    %s\n" % (os.path.join(out, "data"), os.path.join(tree, "*"),
                                                                    os.path.join(self.repo, "*")))
-        code, output = run_tool(boot + ["run", "--rcfile=" + settings, "-m", self.module] + self.args, cwd,
-                                time_left(deadline), self.module, env=self.env, budget=budget, advice=ADVICE)
-        if code == 5 or re.search(r"^Ran 0 tests", output, re.MULTILINE):  # pytest's and unittest's "no test ran"
+        what = "the %s run in the %s checkout" % (self.module, os.path.basename(tree))
+        with Guard("coverage-not-lost", self.repo, self.local) as guard:
+            code, output = run_tool(boot + ["run", "--rcfile=" + settings, "-m", self.module] + self.args, cwd,
+                                    time_left(deadline), self.module, env=guard.env(what, base=self.env), budget=budget, advice=ADVICE)
+            empty = code == 5 or re.search(r"^Ran 0 tests", output, re.MULTILINE)  # pytest's and unittest's "no test ran"
+            guard.judge("the suite (%s exited %d)" % (self.module, code) if code and not empty else None, what, output[-3000:])
+        if empty:
             return Coverage({}, False)
         if code != 0:
             raise Red("%s exited %d" % (self.module, code), output[-3000:])

@@ -179,3 +179,13 @@ def classify(args, tests, listed):
             not_judged.append((path, why))
             unsupported.update({path: what} if what else {})
     return judged, not_judged, unsupported
+
+
+def runners(args, tests, deadline):
+    """classify()'s three answers, and `plans`: how the repository runs each node:test file, and the config that runs
+    each Playwright spec, read at HEAD."""
+    listed = listed_specs(args, tests, deadline)
+    judged, not_judged, unsupported = classify(args, tests, listed)
+    plans = {path: node_test(args, path) if what == "node" else listed[0][path]
+             for path, what in judged.items() if what in ("node", "playwright")}
+    return judged, not_judged, unsupported, plans

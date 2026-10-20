@@ -12,7 +12,7 @@ import time
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, commit, gate, git, install_fixture, make_repo
+from helpers import ROOT, clean_env, commit, gate, git, install_fixture, make_repo
 
 FIXTURE = ROOT / "tests" / "fixtures" / "changed-code-mutation"
 TOOL = ROOT / "tools" / "changed-code-mutation"
@@ -242,9 +242,9 @@ class StandInStryker(unittest.TestCase):
         self.assertEqual([p for p in os.listdir(repo) if p.startswith(".vibe-verifier-mutation-")], [])
 
     def test_a_cancelled_run_kills_stryker_and_cannot_run(self):
-        # Stryker runs in its own session, so a job's SIGTERM to the gate's group never reaches it on its own.
+        # Stryker runs in a session of its own: a SIGTERM to the gate's group never reaches it.
         repo = self.repo({"README.md": "x\n"}, {"src/a.ts": "export const a = 1;\n"})
-        env = dict(os.environ, VIBE_VERIFIER_TOOLS=self.cache, VV_CAPTURE=self.capture, VV_MODE="hang")
+        env = clean_env({"VIBE_VERIFIER_TOOLS": self.cache, "VV_CAPTURE": self.capture, "VV_MODE": "hang"})
         gate_process = subprocess.Popen([sys.executable, str(ROOT / "gates" / "changed_code_mutation.py"), "--repo", repo,
                                          "--base-ref", "HEAD~1"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         deadline = time.time() + 30

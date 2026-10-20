@@ -477,6 +477,13 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   2: the gate ran and has a verdict on the test, the author can act on it (test the bug through code that
   exists before the fix, or declare the reason line, as for a fix that is itself a new migration), and
   exit 2, which `--soak` never masks, would turn a soak red on every such pull request.
+- **Guarded runs.** Each Vitest run, node:test file and Python run starts under `gates/_local_guard.py`
+  ([Test runs reach only this machine](#test-runs-reach-only-this-machine)): a credential for anywhere
+  else in what it would inherit, a package.json script's `NAME=value` assignments included, is exit 2
+  before it starts (`--local-env NAME` declares a secret of the job's own stack), and a connection to
+  anything but this machine is refused and recorded. A changed test that failed, or a file that did not
+  load, in a run that refused anything is exit 2, at the head or before the fix: a request made only
+  before the fix would otherwise read as the bug showing.
 - **Browser specs (`--playwright CONFIG`).** A changed JS or TS test file that a config the manifest names
   collects (`playwright test --list`) runs under that config, even when `--tests` also names it, so
   `--tests 'e2e/**'` keeps a spec's helpers at the head while the spec runs. The site under test is the
@@ -579,6 +586,60 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   raised (a mock lacking a method the old code calls counts as a failure), and a flaky test that fails
   before the fix passes the gate. The tests and the code they run are the pull request's own, as in the
   project's CI, so it belongs in a job that holds no secrets.
+
+## Test runs reach only this machine
+
+`changed-code-mutation`, `coverage-not-lost` and `regression-test-fails-on-base` run the pull request's own
+tests, so no test process they start may reach a production database, a production credential, a
+production address or a person. Each process (Vitest, a node:test file, the Python test run, coverage.py
+around pytest or unittest, StrykerJS, mutmut and the pytest run it falls back to) starts under
+`gates/_local_guard.py`. A browser run of `regression-test-fails-on-base --playwright` is sealed by Docker
+instead ([the seal](#regression-test-fails-on-base)).
+
+- **Before it starts: no credential for anywhere else.** What the process would inherit is read with the
+  rules `--playwright` uses (`gates/_local_only.py`, listed under
+  [Regression test fails on base](#regression-test-fails-on-base)): the environment it gets (for a
+  node:test file, with its package.json script's `NAME=value` assignments) and every `.env` file a
+  framework would load anywhere in the repository but `node_modules` and hidden directories. A variable
+  named like a credential that `--local-env NAME` does not declare, a JWT not issued by a local stack, a
+  connection string or password-bearing URL for another host, a database host that is not this machine,
+  a hosted Supabase address, a webhook, or a token whose shape names its service is exit 2 before the
+  process starts, naming the variable, where it was read and the host, issuer or project, never the value.
+  All three gates take `--local-env NAME` (repeatable) for a secret of the job's own local stack.
+- **While it runs: a connection to anything but this machine is refused.** This machine is loopback:
+  127.0.0.0/8, ::1 and an IPv4 loopback address mapped into IPv6, and the names `localhost` and
+  `*.localhost`, every address of which must be loopback when it is looked up. Node: a preload on
+  `NODE_OPTIONS` (`--require`), which every Node process and worker thread that inherits the variable
+  loads, replaces `net.Socket.prototype.connect`, which every TCP connection made through Node's `net`
+  module goes through (`net`, `tls`, `http`, `https`, `http2`, `fetch`): an address that is not loopback
+  is refused before the connection is made, and a name that is not localhost before it is looked up.
+  Python: a `sitecustomize.py` first on `PYTHONPATH`, which every Python process that inherits the
+  variable imports at start, replaces `socket.socket`'s `connect` and `connect_ex`: an IPv4 or IPv6
+  address that is not loopback is refused, TCP or UDP; it then runs the `sitecustomize` it hides
+  (coverage-not-lost's, then the interpreter's own). A child process a test starts inherits both
+  variables, so it is guarded too. A refusal fails in the test as `ECONNREFUSED` and is written to the
+  run's record (`VV_LOCAL_ONLY_RECORD`, one JSON line per refusal naming where it went).
+- **A failure in a run that refused anything cannot be judged.** A run is one guarded process and its
+  children: Vitest in one project, one node:test file, the Python test run, one side's coverage run, the
+  StrykerJS run, the mutmut run. A test that failed in a run whose record holds a refusal is exit 2,
+  because its failure cannot be told from the refusal: for `regression-test-fails-on-base` a failing test
+  or a file that did not load, at the head or before the fix; for `coverage-not-lost` a suite that failed
+  at either side; for `changed-code-mutation` a killed mutant or a failing initial run (StrykerJS and
+  mutmut run many mutants in shared processes, so the record cannot say whose tests met the refusal). A
+  run that refused something and passed all the same says what it refused and is judged as usual.
+- **Not refused.** A process that is neither Node nor Python (curl, psql, the Supabase CLI, bun); a
+  socket opened in native code (a database driver such as libpq under psycopg, or Prisma's query engine);
+  a process started with an environment that drops `NODE_OPTIONS` or `PYTHONPATH`, or with `python -I`,
+  `-E` or `-S`; code that replaces the guarded `connect` with its own; UDP sent without connecting
+  (Node's `dgram`, the DNS queries of `dns.resolve`, Python's `sendto`); and the lookup of a name Python
+  makes before it connects (`socket.create_connection` and urllib3 resolve a name first, so the query goes
+  to the resolver before the connection is refused). For those the step's environment is what keeps
+  production out, and the first rule refuses a credential there.
+- **What a test installs must already be here.** The gate installs its own tools (StrykerJS, mutmut,
+  coverage.py, a coverage provider) before any guard starts. A test that installs something itself, an
+  `npm ci` or a `pip install` inside a test, is refused like any other connection: give it npm's cache,
+  or a directory of wheels with `PIP_NO_INDEX=1` and `PIP_FIND_LINKS`, as this repository's own `ci.yml`
+  and `nightly.yml` do for its suite.
 
 ## Wired gates: pinned tools
 
@@ -806,6 +867,13 @@ changed-code-mutation --project apps/web --break 70 --soak
   there are printed as left out and never scored. Like Stryker's `perTest` coverage, a test reaches
   a function only in its own process: code a test runs as a separate process (a CLI it calls) is not
   covered.
+- **Guarded runs.** StrykerJS and mutmut (and the pytest run the gate makes when mutmut writes no
+  coverage) start under `gates/_local_guard.py` ([Test runs reach only this
+  machine](#test-runs-reach-only-this-machine)): a credential for anywhere else in what they would inherit
+  is exit 2 before they start (`--local-env NAME` declares a secret of the job's own stack), and every
+  Node and Python process they start, Stryker's and mutmut's workers included, refuses a connection to
+  anything but this machine. A run that refused anything and killed a mutant, or whose initial run
+  failed, is exit 2: a mutant's tests and the refusal share the run, so the kill cannot be told from it.
 - **What it does not catch.** CSS and markup; behavior only an end-to-end or browser test reaches
   (the [QAE harness](../harnesses/qae/README.md) covers that); code no unit test can load; and
   equivalent mutants, which survive whatever the tests do. A flaky test can kill a mutant by
@@ -885,10 +953,10 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   file sets `[run] patch = subprocess`, which hands those settings to each child in
   `COVERAGE_PROCESS_CONFIG`, and `parallel`, so each process writes a data file of its own, which
   `coverage combine` merges before the report is read. A child starts coverage.py with
-  `coverage.process_startup()` from a `sitecustomize.py` the gate puts first on the suite's
-  `PYTHONPATH`, because the `.pth` file coverage.py installs to do that is in the pinned venv, not in
-  the project's interpreter; it then runs the `sitecustomize` it hides (Homebrew's Python and
-  Ubuntu's ship one). A child records no test function, since none is on its stack, so a line only a
+  `coverage.process_startup()` from a `sitecustomize.py` the gate puts on the suite's `PYTHONPATH`
+  right after the guard's (which runs it; see the next bullet), because the `.pth` file coverage.py
+  installs to do that is in the pinned venv, not in the project's interpreter; it then runs the
+  `sitecustomize` it hides (Homebrew's Python and Ubuntu's ship one). A child records no test function, since none is on its stack, so a line only a
   child ran names none. `COVERAGE_FILE`, `COVERAGE_PROCESS_CONFIG` and `COVERAGE_PROCESS_START` are
   dropped from the suite's environment, so every process's data goes where the gate's settings say.
   The report reads only files in the checkout and in the working copy (so an editable install is still
@@ -898,6 +966,13 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   .venv/bin/python`) would be measured and refused as the working copy's. Not measured: a child given
   an environment of its own instead of a copy of the test's, one started with `python -I`, `-E` or `-S`, and
   one of a Python the pinned coverage.py cannot load in.
+- **Guarded runs.** Every run of the suite, at either side, starts under `gates/_local_guard.py`
+  ([Test runs reach only this machine](#test-runs-reach-only-this-machine)): a credential for anywhere
+  else in what it would inherit is exit 2 before it starts (`--local-env NAME` declares a secret of the
+  job's own stack), and every Node and Python process of the suite refuses a connection to anything but
+  this machine. A suite that fails in a run that refused anything is exit 2 naming its first failure
+  and what was refused. One that passed says what it refused and is compared as usual, so code that
+  ran because a connection was refused (an error branch) counts as run.
 - **What ran it.** A Python finding names the test functions that ran the line at the merge base (none
   for a line only a child process ran). A
   Vitest finding says whether the test files the pull request deleted, changed or moved ran it there,
@@ -947,17 +1022,22 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   longer run. A loss is a warning on that night's run, and its log names the commits merged since. The
   gate's line is the workflow's own `entries:`, which the runner never judges from a base, so a change to
   it applies from the next run. The job holds no credential in a step that runs tests: its read-only token
-  goes only to the step that looks up the last nightly. On the whole suite each side took 784 to 1,030
+  goes only to the step that looks up the last nightly. The suite runs guarded ([Test runs reach only this
+  machine](#test-runs-reach-only-this-machine)), which refuses the tests' own downloads, so a step before
+  the gate fills npm's cache (an `npm ci` of each test fixture), the catalog's tool cache (every pinned
+  node toolchain and binary) and a directory of the wheels of every requirements file the tests and tools
+  install, which the gate step points pip at (`PIP_NO_INDEX=1`, `PIP_FIND_LINKS`); `ci.yml` does the same
+  for its pilots, where the suite step has already filled the rest. On the whole suite each side took 784 to 1,030
   seconds on ubuntu-latest and ran about 11,500 lines, 4,690 of them in `gates/` (pull request #220's
   three runs; the fastest took 784 to 847 seconds a side), against 982 seconds for both sides when only
   the test process was measured. Much of the 300 to 540 seconds each side gained is starting coverage.py
   in each of the about 3,000 Python processes the suite starts: 85 ms more each, 98 against 13 for the
   process alone, measured on 2026-10-16 in a `python:3.12-bookworm` container, about 260 seconds at that
-  container's speed. And the second pair runs every time here: the first side installs the catalog's tools
-  into the runner's empty tool cache, so the install lines of `gates/_tools.py` run only at the base, the
-  first pair finds them (14 lines), and the second, with the cache full, dismisses them. So a whole-suite
-  run takes 54 to 66 minutes, which is why it is nightly; its `--timeout` is 4800 and its job's limit 90
-  minutes.
+  container's speed. And until the step above filled the tool cache, the second pair ran every time here:
+  the first side installed the catalog's tools into the runner's empty tool cache, so the install lines of
+  `gates/_tools.py` ran only at the base, the first pair found them (14 lines), and the second, with the
+  cache full, dismissed them. So a whole-suite run took 54 to 66 minutes, which is why it is nightly; its
+  `--timeout` is 4800 and its job's limit 90 minutes.
 - **What it does not catch.** Browser and end-to-end tests: only the unit suite the runner starts is
   measured, so a loss only a Playwright test would show passes (the [QAE harness](../harnesses/qae/README.md)
   re-walks features in a browser). A line that still runs but that no test asserts on any more: a test

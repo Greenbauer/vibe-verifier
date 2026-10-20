@@ -22,6 +22,10 @@ The project's own test runner and dependencies must be installed before the gate
 with failing tests, past --max-files or past --timeout, it cannot run (exit 2): never a pass, and
 never a verdict on part of the change.
 
+StrykerJS and mutmut run under gates/_local_guard.py: a credential for anywhere else in what they
+inherit is exit 2, a connection to anything but this machine is refused, and a run that refused one
+in which a mutant was killed (a test failed) is exit 2, since the kill cannot be told from the refusal.
+
     --project DIR       directory with the Vitest config and package.json, or the pytest project (default: the repository root)
     --python PATH       the project's interpreter, with pytest installed (default: python3 on PATH; a relative path is the repository's)
     --break N           lowest passing score, 0-100 (default 60)
@@ -29,6 +33,7 @@ never a verdict on part of the change.
     --timeout SECONDS   wall-clock limit for the whole run, both languages (default 900)
     --source GLOB       what counts as source (repeatable; default: JS, TS and Python files)
     --exclude GLOB      extra paths to ignore (repeatable; tests, *.d.ts, config, stories and node_modules always are)
+    --local-env NAME    a variable named like a credential that holds the job's own local stack's secret (repeatable)
 """
 import json
 import os
@@ -40,6 +45,7 @@ import tempfile
 import time
 
 from _contract import PY_TESTS, CannotRun, Finding, changed_files, git, matches, renamed, resolve_base, run_gate, tracked_files
+from _local_guard import Guard, add_local_env
 from _mutation_python import clip, mutate
 from _tools import ensure_node_tool, run_tool
 
@@ -98,8 +104,8 @@ def project_vitest(directory):
         directory = parent
 
 
-def stryker(tool, project_dir, ranges, timeout):
-    """Run Stryker in project_dir on {path relative to it: [(first, last)]}; its JSON report."""
+def stryker(tool, project_dir, ranges, timeout, guard):
+    """Run Stryker in project_dir on {path relative to it: [(first, last)]}, under `guard`; its JSON report."""
     with tempfile.TemporaryDirectory(prefix="vv-mutation-") as scratch:
         report_path = os.path.join(scratch, "mutation.json")
         config_path = os.path.join(scratch, "stryker.config.json")
@@ -125,11 +131,12 @@ def stryker(tool, project_dir, ranges, timeout):
             json.dump(config, handle)
         command = ["node", os.path.join(tool, "node_modules", "@stryker-mutator", "core", "bin", "stryker.js"), "run", config_path]
         try:
-            returncode, output = run_tool(command, project_dir, timeout, "StrykerJS")
+            returncode, output = run_tool(command, project_dir, timeout, "StrykerJS", env=guard.env("StrykerJS"))
         finally:
             shutil.rmtree(sandbox, ignore_errors=True)
         if returncode != 0:
             print(output, file=sys.stderr)
+            guard.judge("the project's tests (StrykerJS exited %d)" % returncode, "the StrykerJS run")
             raise CannotRun("StrykerJS exited %d (its output is above)" % returncode)
         found = FOUND.search(output)
         if not found or int(found.group(1)) != len(ranges):
@@ -232,7 +239,10 @@ def stryker_run(args, project, project_dir, prefix, script):
     if not major or int(major.group(1)) not in VITEST_MAJORS:
         raise CannotRun("vitest %s is not 2.x to 4.x, the versions the pinned StrykerJS kills mutants under" % version)
     tool = ensure_node_tool(GATE)
-    return stryker_results(stryker(tool, project_dir, script, args.timeout), prefix)
+    with Guard(GATE, args.repo, args.local_env) as guard:
+        killed, undetected, excluded = stryker_results(stryker(tool, project_dir, script, args.timeout, guard), prefix)
+        guard.judge("the tests that killed %d mutant(s)" % killed if killed else None, "the StrykerJS run")
+    return killed, undetected, excluded
 
 
 def check(args):
@@ -253,7 +263,7 @@ def check(args):
     if script:
         killed, undetected, excluded = stryker_run(args, project, project_dir, prefix, script)
     if python:
-        more = mutate(args.repo, prefix, python, args.python, max(deadline - time.monotonic(), 1))
+        more = mutate(args.repo, prefix, python, args.python, max(deadline - time.monotonic(), 1), args.local_env)
         killed, undetected, excluded = killed + more[0], undetected + more[1], excluded + more[2]
     return verdict(killed, undetected, excluded, args.break_score)
 
@@ -267,6 +277,7 @@ def add_arguments(parser):
     parser.add_argument("--timeout", type=int, default=900, help="seconds the whole run may take, both languages (default 900)")
     parser.add_argument("--source", action="append", metavar="GLOB")
     parser.add_argument("--exclude", action="append", metavar="GLOB")
+    add_local_env(parser)
 
 
 if __name__ == "__main__":

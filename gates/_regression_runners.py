@@ -4,7 +4,8 @@ structured reports, and the one judgement on a failure the gate makes from its t
 Each run returns {repository-relative path: Run}, or None for a file the runner did not collect. A
 Run is what one test file did: `load_error`, the first line of the error that stopped it before any
 test ran (None when it loaded), and `tests`, {test id: (status, error)} with status "passed",
-"failed" or "skipped" and the failed test's error as `Type: first line`.
+"failed" or "skipped" and the failed test's error as `Type: first line`. Every test process runs under
+gates/_local_guard.py, so a run that refused a connection and has a failure cannot be judged (exit 2).
 """
 import json
 import os
@@ -15,6 +16,7 @@ import time
 from collections import namedtuple
 
 from _contract import CannotRun
+from _local_guard import Guard
 from _tools import run_tool
 
 Run = namedtuple("Run", "load_error tests")
@@ -59,6 +61,17 @@ def first_line(text):
     """The first line of an error, without the absolute path of the file Vite says imported it."""
     lines = (text or "").strip().splitlines()
     return re.sub(r" imported from .*$", "", lines[0].strip()) if lines else ""
+
+
+def first_failure(runs):
+    """`path: test (error)` of the first test of `runs` ({path: Run}) that failed, or of a file that did not load; None."""
+    for path, run in sorted(runs.items()):
+        failed = [(name, error) for name, (status, error) in (run.tests.items() if run else ()) if status == "failed"]
+        if run and run.load_error:
+            return "%s (it did not load: %s)" % (path, run.load_error)
+        if failed:
+            return "%s: %s (%s)" % (path, failed[0][0], failed[0][1])
+    return None
 
 
 def remaining(deadline, timeout):
@@ -116,8 +129,8 @@ def vitest_report(report, wanted):
     return runs
 
 
-def run_vitest(repo, paths, deadline, timeout):
-    """Each file under its project's own Vitest, one run per project. A file the run did not collect
+def run_vitest(repo, paths, deadline, timeout, local_names):
+    """Each file under its project's own Vitest, one guarded run per project. A file the run did not collect
     (outside the project's include globs) is None."""
     projects = {}
     for path in paths:
@@ -129,22 +142,26 @@ def run_vitest(repo, paths, deadline, timeout):
         if entry is None or not shutil.which("node"):
             raise CannotRun("no vitest is installed for %s (for %s): install the project's dependencies before this gate, "
                             "which runs the project's own Vitest" % (project or "the repository root", files[0]))
-        scratch = tempfile.mkdtemp(prefix="vv-regression-")
+        scratch, where = tempfile.mkdtemp(prefix="vv-regression-"), "Vitest in %s" % (project or "the repository root")
         try:
             out = os.path.join(scratch, "vitest.json")
             relative = [os.path.relpath(os.path.join(repo, path), directory) for path in files]
             command = ["node", entry, "run", *relative, "--reporter=json", "--outputFile=" + out,
                        "--coverage.enabled=false", "--passWithNoTests"]
-            code, output = run_tool(command, directory, remaining(deadline, timeout), "Vitest", budget=timeout, advice=ADVICE)
-            try:
-                with open(out, encoding="utf-8") as handle:
-                    report = json.load(handle)
-            except (OSError, ValueError):
-                raise CannotRun("Vitest wrote no JSON report in %s (exit %d): %s"
-                                % (project or "the repository root", code, output.strip()[-2000:]))
+            with Guard("regression-test-fails-on-base", repo, local_names) as guard:
+                code, output = run_tool(command, directory, remaining(deadline, timeout), "Vitest", env=guard.env(where),
+                                        budget=timeout, advice=ADVICE)
+                try:
+                    with open(out, encoding="utf-8") as handle:
+                        report = json.load(handle)
+                except (OSError, ValueError):
+                    raise CannotRun("Vitest wrote no JSON report in %s (exit %d): %s"
+                                    % (project or "the repository root", code, output.strip()[-2000:]))
+                found = vitest_report(report, {os.path.realpath(os.path.join(repo, path)): path for path in files})
+                guard.judge(first_failure(found), "the run of " + where)
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
-        runs.update(vitest_report(report, {os.path.realpath(os.path.join(repo, path)): path for path in files}))
+        runs.update(found)
     return runs
 
 
@@ -158,26 +175,28 @@ def interpreter(python, repo):
     return os.path.abspath(found)
 
 
-def run_python(repo, python, paths, deadline, timeout):
-    """The files under the project's interpreter: its pytest when installed, else unittest."""
+def run_python(repo, python, paths, deadline, timeout, local_names):
+    """The files under the project's interpreter, guarded: its pytest when installed, else unittest."""
     with open(PYTHON_RUNNER, encoding="utf-8") as handle:
         source = handle.read()
-    scratch = tempfile.mkdtemp(prefix="vv-regression-")
+    scratch, runs = tempfile.mkdtemp(prefix="vv-regression-"), {}
     try:
         out = os.path.join(scratch, "python.json")
         files = [os.path.join(os.path.realpath(repo), path) for path in paths]
-        env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")  # a .pyc written for one tree is never read for the other
-        code, output = run_tool([interpreter(python, repo), "-c", source, out, *files], repo,
-                                remaining(deadline, timeout), "the Python tests", env=env, budget=timeout, advice=ADVICE)
-        try:
-            with open(out, encoding="utf-8") as handle:
-                report = json.load(handle)
-        except (OSError, ValueError):
-            raise CannotRun("the Python test run wrote no report (exit %d): %s" % (code, output.strip()[-2000:]))
+        with Guard("regression-test-fails-on-base", repo, local_names) as guard:
+            # A .pyc written for one tree is never read for the other.
+            env = guard.env("the Python tests", extra={"PYTHONDONTWRITEBYTECODE": "1"})
+            code, output = run_tool([interpreter(python, repo), "-c", source, out, *files], repo,
+                                    remaining(deadline, timeout), "the Python tests", env=env, budget=timeout, advice=ADVICE)
+            try:
+                with open(out, encoding="utf-8") as handle:
+                    report = json.load(handle)
+            except (OSError, ValueError):
+                raise CannotRun("the Python test run wrote no report (exit %d): %s" % (code, output.strip()[-2000:]))
+            for path, full in zip(paths, files):
+                found = report["files"][os.path.realpath(full)]
+                runs[path] = Run(found["load_error"], {name: (status, error) for name, status, error in found["tests"]})
+            guard.judge(first_failure(runs), "the Python test run")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
-    runs = {}
-    for path, full in zip(paths, files):
-        found = report["files"][os.path.realpath(full)]
-        runs[path] = Run(found["load_error"], {name: (status, error) for name, status, error in found["tests"]})
     return runs

@@ -1,7 +1,9 @@
-"""What a browser run of regression-test-fails-on-base may inherit: no credential for anywhere else. The run
-starts the pull request's own code (a site, its global setup, the specs), so the gate refuses (exit 2) before
-Playwright starts when anything that code inherits is a credential for a production database, production
-credentials or a production address. What the run may reach, its sealed network, is gates/_regression_sealed.py.
+"""What a run of the pull request's own code may inherit: no credential for anywhere else. A browser run of
+regression-test-fails-on-base starts a site, its global setup and the specs, and every test process of
+changed-code-mutation, coverage-not-lost and regression-test-fails-on-base runs the project's tests, so the gate refuses
+(exit 2) before any of them starts when anything that code inherits is a credential for a production database,
+production credentials or a production address. What a browser run may reach, its sealed network, is
+gates/_regression_sealed.py; what a test process may reach is gates/_local_guard.py.
 
 A target is local when its host is loopback: localhost, a *.localhost name, 127.0.0.0/8 or ::1.
 
@@ -37,6 +39,11 @@ import os
 import re
 import urllib.parse
 
+from _contract import CannotRun
+
+REFUSED = ("%s would run the pull request's code with a credential for somewhere other than this machine in what it "
+           "inherits, so this gate does not start it: %s. Run the gate in a step whose environment holds only the "
+           "job's own local stack, and declare a local secret the stack needs with --local-env NAME")
 DATABASE_PARTS = {"DB", "DATABASE", "POSTGRES", "POSTGRESQL", "PG", "MYSQL", "MARIADB", "MONGO", "MONGODB", "REDIS", "SUPABASE"}
 # libpq's keyword form of a connection string: `host=db.example.com user=app password=secret dbname=app`.
 LIBPQ_HOSTS = re.compile(r"(?:^|\s)(?:host|hostaddr)\s*=\s*'?([^\s']+)")
@@ -250,3 +257,10 @@ def refusals(environment, paths, local_names, servers=()):
         found += [("webServer %d's env" % (index + 1), name, str(value)) for name, value in sorted((server.get("env") or {}).items())]
     return ["%s: %s %s" % (where, name, reason) for where, name, value in found
             for reason in [why(name, value, local_names)] if reason]
+
+
+def refuse(what, environment, paths, local_names, servers=()):
+    """Exit 2 before `what` starts when refusals() finds anything in what it would inherit."""
+    refused = refusals(environment, paths, local_names, servers)
+    if refused:
+        raise CannotRun(REFUSED % (what, "; ".join(refused)))

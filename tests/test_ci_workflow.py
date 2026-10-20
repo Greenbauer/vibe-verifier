@@ -197,6 +197,27 @@ class NightlyCoverage(unittest.TestCase):
         self.assertNotIn("write", re.search(r"\n    permissions:\n((?:      [^\n]*\n)+)", text).group(1))
 
 
+class GuardedSuiteInstalls(unittest.TestCase):
+    def test_each_gate_step_that_runs_the_suite_installs_from_this_machine(self):
+        # The gates run this suite under gates/_local_guard.py, which refuses the tests' own downloads: each step that
+        # runs them comes after one that puts every requirements file's wheels on the runner, and points pip there.
+        requirements = "tests/requirements-pytest.txt tests/fixtures/*/requirements.txt tools/*/requirements.txt"
+        for workflow, fill, step in ((CI, "Download the wheels the tests install", "Gates that run this repository's tests"),
+                                     (NIGHTLY, "Fill the caches the tests install from", "coverage-not-lost on the whole suite")):
+            with self.subTest(workflow=workflow.name):
+                text = workflow.read_text()
+                self.assertLess(text.index("      - name: " + fill + "\n"), text.index("      - name: " + step + "\n"))
+                gate_step = re.search(r"\n      - name: %s\n((?:        [^\n]*\n)+)" % re.escape(step), text).group(1)
+                self.assertIn('          PIP_NO_INDEX: "1"\n          PIP_FIND_LINKS: ${{ runner.temp }}/wheels\n', gate_step)
+                script = step_script(fill, workflow)
+                self.assertIn("for requirements in %s; do" % requirements, script)
+                self.assertIn('--require-hashes --only-binary :all: --no-deps \\\n    -d "$RUNNER_TEMP/wheels" -r "$requirements"', script)
+        nightly = step_script("Fill the caches the tests install from", NIGHTLY)
+        self.assertIn("npm ci --ignore-scripts", nightly)  # npm's cache, for the fixtures the tests npm ci
+        self.assertIn("bin/vibe-verifier tool", nightly)  # the pinned node toolchains
+        self.assertIn("_tools.ensure(name) for name in sorted(_tools.TOOLS)", nightly)  # the pinned binaries
+
+
 class NightlyBase(unittest.TestCase):
     """The step that picks the commit to compare from, run under bash the way the runner runs it, with a stub gh."""
 

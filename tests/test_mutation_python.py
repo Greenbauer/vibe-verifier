@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 
-from helpers import ROOT, commit, gate, make_repo
+from helpers import ROOT, clean_env, commit, gate, make_repo
 
 FIXTURE = ROOT / "tests" / "fixtures" / "changed-code-mutation-python" / "requirements.txt"
 
@@ -146,7 +146,7 @@ class RealMutmut(unittest.TestCase):
         os.symlink(self.env, os.path.join(repo, ".venv-tests"))
         result = subprocess.run([sys.executable, str(ROOT / "gates" / "changed_code_mutation.py"), "--repo", ".",
                                  "--base-ref", "HEAD~1", "--python", ".venv-tests/bin/python"],
-                                cwd=repo, capture_output=True, text=True)
+                                cwd=repo, capture_output=True, text=True, env=clean_env())
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("score 100%", result.stderr)
 
