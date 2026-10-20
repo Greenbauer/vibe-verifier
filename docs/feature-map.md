@@ -268,6 +268,28 @@ against its own description. Only the selection reads the base (the Surfaces, ab
 walked step contradicts the file because the pull request means the new behaviour, the fix is to
 update the file in that pull request, and the gate's FAIL finding says so.
 
+**A Verify section the pull request changed is shown, never blocked.** Because the steps come from
+the pull request's own copy, a pull request can rewrite the steps that judge it. Replayed on the 15
+re-walk FAILs of 2026-10-12 to 10-15, 7 of the 10 pull requests that failed and later passed passed
+because they edited the map: most edits were honest corrections, and some narrowed a check to match
+a broken preview. Reading the steps from the base instead would fail every pull request that changes
+behaviour on purpose, so the edit is made visible instead (gates/_verify_edits.py). For each
+selected feature whose Verify section differs from the merge base of the base and the head, the
+`features` and `acceptance-verdict` logs add it to the feature's line, and the
+[QA review comment](../harnesses/qae/README.md#the-qa-review-comment) adds it to the feature's row:
+
+```
+acceptance-verdict: re-walk: sign-in (2 changed files); this pull request changed its Verify section: 1 line added, 1 removed
+- Feature `sign-in` re-walked, explorer says PASS. Note: this pull request changed its Verify section: 1 line added, 1 removed
+```
+
+A feature the pull request adds says `this pull request added this feature, so its Verify section (N
+lines) is its own`. The comparison is structural: the non-blank lines of the Verify section, counted
+as a multiset, so a reworded step is one line added and one removed, and a moved line or a blank line
+is no change. Against the merge base, a step the base branch reworded after the branch left it is not
+the pull request's edit. When the review step cannot read the base (no history in its checkout), the
+comment says so on a line of its own; it never guesses.
+
 **What the gate requires.** The verify job's `acceptance-verdict` makes the selection again itself,
 from its own arguments and the map, and never takes the explorer's word for which features were
 selected. For each selected feature it requires:
