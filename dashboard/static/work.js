@@ -68,7 +68,7 @@
 
   function render(content, snapshot, { heading, empty, sourceBanner }) {
     const work = snapshot.work || { configured: false, sources: [] };
-    content.replaceChildren(heading("Work", "Plans and requests: what is to do, in progress, waiting on you, and done."));
+    content.replaceChildren(heading("Work"));
     if (!work.configured) { content.append(empty("No work sources", "This dashboard has no work_sources configured.")); return; }
     const now = Date.now();
     work.sources.forEach(source => {

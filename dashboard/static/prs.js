@@ -18,15 +18,17 @@
       "aria-label": "Search pull requests", oninput: event => { state.query = event.target.value; renderPrRows(); } });
     const select = el("select", { id: "repo-filter", "aria-label": "Repository filter", onchange: event => {
       state.repository = event.target.value; renderPrRows();
-    } }, el("option", { value: "all" }, "All selected repositories"));
+    } }, el("option", { value: "all" }, "All repositories"));
     repositories.forEach(repository => select.append(el("option", { value: repository, selected: state.repository === repository }, repository.split("/")[1])));
     const check = (label, key) => el("label", { class: "check-filter" },
       el("input", { type: "checkbox", checked: state[key], onchange: event => { state[key] = event.target.checked; renderPrRows(); } }), label);
     const scale = el("select", { id: "time-scale", "aria-label": "CI timeline scale", onchange: event => {
       state.timeScale = event.target.value; renderPrRows();
-    } }, el("option", { value: "shared", selected: state.timeScale === "shared" }, "Same time scale for every row"),
-      el("option", { value: "row", selected: state.timeScale === "row" }, "Fit each row's timeline"));
-    return el("div", { class: "toolbar" }, search, select, scale, check("Subscribed only", "subscribed"), check("Needs attention", "attention"));
+    } }, el("option", { value: "shared", selected: state.timeScale === "shared" }, "Same time scale"),
+      el("option", { value: "row", selected: state.timeScale === "row" }, "Fit each row"));
+    // Grouped so a phone shows the search beside the title, then the two menus, then the two checkboxes.
+    return el("div", { class: "toolbar" }, search, el("div", { class: "toolbar-group" }, select, scale),
+      el("div", { class: "toolbar-group" }, check("Subscribed only", "subscribed"), check("Needs attention", "attention")));
   }
 
   function messageIcon() {
@@ -201,7 +203,7 @@
 
   function renderPulls() {
     const pulls = flattenPulls(snapshot);
-    content.replaceChildren(heading("Pull requests", null, coverageWarning(snapshot.github.coverage, snapshot.github), prFilters(pulls)),
+    content.replaceChildren(heading("Pull requests", coverageWarning(snapshot.github.coverage, snapshot.github), prFilters(pulls)),
       el("div", { class: "list-heading" }, el("span", { id: "pr-count" }),
         el("span", {}, "Current work"), el("span", {}, "Checks"), el("span", {}, "CI")),
       el("div", { id: "pr-rows", class: "pr-groups" }));
