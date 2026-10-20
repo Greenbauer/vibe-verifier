@@ -502,10 +502,13 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   answers it no outside name, so the kernel refuses every other destination whatever tries it: a browser
   of any engine (WebRTC included), the site's server, a spec, a global setup, any process they start, a
   spec's own proxy. The job's stack (`--stack-network NAME`, the Docker network its containers run on) is
-  moved onto that network for the gate's runs: each container leaves every network it was on, joins the
-  sealed one under the same names and aliases, and is restarted so that nothing keeps an address from
-  before (Supabase's API gateway caches its services' addresses); after the runs each is moved back and
-  restarted. In the run's container each TCP port the stack publishes on this machine is forwarded from
+  moved onto that network at the first run (a listing starts no site): each container leaves every
+  network it was on, joins the sealed one under the same names and aliases, and is restarted so that
+  nothing keeps an address from before (Supabase's API gateway caches its services' addresses); after the
+  runs each is moved back and restarted, also when a run could not be judged. A container on an internal
+  network publishes no port, so while the stack is sealed a relay (a container of the gate's own on an
+  ordinary network, running only a forwarder to the stack) publishes its ports on this machine again, and
+  the gate's own Vitest, node:test and Python runs of the same fix still reach it. In the run's container each TCP port the stack publishes on this machine is forwarded from
   the same loopback address, so the site's settings for the stack work unchanged. What the network
   refused is recorded: each outside name a process looked up (Docker's DNS hands a name it does not know
   to a recorder in the run's container, set with `--dns`) and the kernel's count of IPv4 packets with no

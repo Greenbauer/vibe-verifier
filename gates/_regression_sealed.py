@@ -8,10 +8,15 @@ cloud metadata service, and Docker's DNS answers it no outside name. Whatever ru
 browser, a spec, a global setup, any process they start, over TCP or UDP) can reach only the network.
 
 The job's local stack (--stack-network NAME, the Docker network its containers run on, such as Supabase's
-`supabase_network_<project>`) is moved onto that network for the gate's runs: each container leaves every network it
-was on, joins the sealed one under the same names and aliases, and is restarted so that nothing in it keeps an
-address from before (an API gateway caches the addresses of the services behind it). After the runs each is moved
-back and restarted again, so the job's later steps find the stack as they left it.
+`supabase_network_<project>`) is moved onto that network at the first run (a listing starts no site, so it does not
+wait for that): each container leaves every network it was on, joins the sealed one under the same names and
+aliases, and is restarted so that nothing in it keeps an address from before (an API gateway caches the addresses
+of the services behind it). A container on an internal network publishes no port, so while the stack is sealed a
+relay (RELAY_JS, a container of its own on an ordinary network, joined to the sealed one) publishes the same ports
+on this machine again and forwards each to its container: the gate's own Vitest, node:test and Python runs, on
+this machine, reach the stack as before. The relay runs only this code and connects only to the stack. After the
+runs the relay goes, and each container is moved back and restarted again, so the job's later steps find the stack
+as they left it.
 
 Inside the run's container the gate's entry (SEAL_JS) forwards each port the stack publishes on this machine
 (127.0.0.1:<host port>) to its container on the network, so the site's settings for the stack work unchanged, and
@@ -21,6 +26,7 @@ OutNoRoutes in the container's own /proc/net/snmp, for an address given as numbe
 address given as numbers is refused the same way but not counted: Chromium's own check of whether IPv6 reaches the
 internet counts there on every run. The project's own files are mounted at the same path, and the run's user is this process's.
 """
+import ipaddress
 import json
 import os
 import secrets
@@ -80,6 +86,17 @@ Promise.all(listening).then(() => {
   });
 }, (error) => { console.error("regression-test-fails-on-base: the sealed run could not start: " + error.message); process.exit(70); });
 """
+RELAY_JS = r"""// Written by regression-test-fails-on-base: the sealed stack's ports, published on this machine again.
+const net = require("net"), os = require("os");
+// Its own network's address only: the sealed network, joined after this starts, gets no listener.
+const own = Object.values(os.networkInterfaces()).flat().find((entry) => entry.family === "IPv4" && !entry.internal).address;
+const servers = JSON.parse(process.argv[1]).map(([port, host, target]) => new Promise((resolve) => net.createServer((client) => {
+  const upstream = net.connect(target, host);
+  const close = () => { client.destroy(); upstream.destroy(); };
+  client.on("error", close).pipe(upstream).on("error", close).pipe(client);
+}).listen(port, own, resolve)));
+Promise.all(servers).then(() => console.log("ready"));
+"""
 
 
 def took(started, what):
@@ -116,15 +133,22 @@ def image_for(directory, given):
         directory = parent
 
 
+def bound(address, port):
+    """docker run's -p for `port` on `address`, as the stack published it: "" or an unspecified address is every interface."""
+    if not address or ipaddress.ip_address(address).is_unspecified:
+        return "%d:%d" % (port, port)
+    return ("[%s]:%d:%d" if ":" in address else "%s:%d:%d") % (address, port, port)
+
+
 def members(network):
-    """{container: {network: aliases}} of every container on `network`, and {container: [[host port, port]]} of
-    the TCP ports each publishes on this machine."""
+    """{container: {network: aliases}} of every container on `network`, and {container: [[host address, host port,
+    port]]} of the TCP ports each publishes on this machine."""
     found = json.loads(docker("network", "inspect", network))[0].get("Containers") or {}
     joined, ports = {}, {}
     for name in sorted(member["Name"] for member in found.values()):
         info = json.loads(docker("inspect", name))[0]
         joined[name] = {net: sorted(set(conf.get("Aliases") or [])) for net, conf in info["NetworkSettings"]["Networks"].items()}
-        ports[name] = [[int(binding["HostPort"]), int(port.split("/")[0])]
+        ports[name] = [[binding.get("HostIp") or "", int(binding["HostPort"]), int(port.split("/")[0])]
                        for port, bindings in (info["HostConfig"].get("PortBindings") or {}).items() if port.endswith("/tcp")
                        for binding in bindings or [] if binding.get("HostPort")]
     return joined, ports
@@ -134,7 +158,8 @@ class Seal:
     """The sealed network, the stack moved onto it, and the runs in it. Opened at the first run, closed once."""
 
     def __init__(self, stacks, image):
-        self.stacks, self.image, self.network, self.joined, self.forwards, self.pulled = stacks, image, None, {}, [], set()
+        self.stacks, self.image, self.network, self.relay, self.pulled = stacks, image, None, None, set()
+        self.entered, self.joined, self.forwards, self.published = False, {}, [], {}
 
     def open(self, deadline, timeout):
         started = time.monotonic()
@@ -142,20 +167,49 @@ class Seal:
         network = "vv-regression-%d-%s" % (os.getpid(), secrets.token_hex(3))
         docker("network", "create", "--internal", "-o", "com.docker.network.bridge.inhibit_ipv4=true", network)
         self.network = network
+        took(started, "the sealed network is ready")
+
+    def enter(self, image, deadline, timeout):
+        """Move the stack onto the sealed network, restart it, and publish its ports again through the relay."""
+        started, self.entered = time.monotonic(), True
         for stack in self.stacks:
-            joined, ports = members(stack)
-            if not joined:
-                raise CannotRun("--stack-network %s has no containers: start the job's local stack before this gate" % stack)
-            self.joined.update(joined)
-            self.forwards += [[host, name, port] for name, published in ports.items() for host, port in published]
+            self.gather(stack)
         for name, networks in self.joined.items():
             aliases = sorted({alias for values in networks.values() for alias in values} | {name})
             docker("network", "connect", *[arg for alias in aliases for arg in ("--alias", alias)], self.network, name)
             for network in networks:
                 docker("network", "disconnect", network, name)
         self.restart(deadline, timeout)
-        took(started, "the sealed network is ready%s" % (", with %d stack container(s) moved onto it and restarted"
-                                                        % len(self.joined) if self.joined else ""))
+        if self.published:
+            self.publish(image, deadline, timeout)
+        took(started, "%d stack container(s) moved onto it and restarted%s" % (len(self.joined), ", its %d port(s) published "
+                                                                             "again through a relay" % len(self.published) if self.published else ""))
+
+    def gather(self, stack):
+        """Read the containers of `stack`, their networks and names, and the ports they publish on this machine."""
+        joined, ports = members(stack)
+        if not joined:
+            raise CannotRun("--stack-network %s has no containers: start the job's local stack before this gate" % stack)
+        self.joined.update(joined)
+        for name, published in ports.items():
+            for address, port, target in published:  # one relay listener a port; one on every interface wins
+                self.forwards.append([port, name, target])
+                known = self.published.get(port)
+                self.published[port] = [name, target, "" if known and known[2] != address else address]
+
+    def publish(self, image, deadline, timeout):
+        """The relay: on an ordinary network of its own, with the stack's ports, then joined to the sealed network."""
+        self.relay = self.network + "-relay"
+        docker("network", "create", self.relay)
+        ports = [arg for port, (_, _, address) in sorted(self.published.items()) for arg in ("-p", bound(address, port))]
+        targets = [[port, name, target] for port, (name, target, _) in sorted(self.published.items())]
+        docker("run", "-d", "--init", "--name", self.relay, "--network", self.relay, "--user", "%d:%d" % (os.getuid(), os.getgid()),
+               *ports, image, "node", "-e", RELAY_JS, json.dumps(targets))
+        docker("network", "connect", self.network, self.relay)
+        while "ready" not in docker("logs", self.relay):
+            if remaining(deadline, timeout) < 1:
+                raise CannotRun("the relay for the sealed stack's ports did not start. %s" % ADVICE)
+            time.sleep(0.2)
 
     def restart(self, deadline, timeout):
         """Restart the stack's containers and wait until each is running and, where it has a health check, healthy."""
@@ -175,6 +229,9 @@ class Seal:
         reads where a container is first, so a seal that stopped halfway is undone as far as it went."""
         started = time.monotonic()
         try:
+            if self.relay:  # first, so the ports are free for the stack again
+                subprocess.run(["docker", "rm", "-f", self.relay], capture_output=True)
+                subprocess.run(["docker", "network", "rm", self.relay], capture_output=True)
             for name, networks in self.joined.items():
                 now = json.loads(docker("inspect", name))[0]["NetworkSettings"]["Networks"]
                 for network, aliases in networks.items():
@@ -198,6 +255,8 @@ class Seal:
                 docker("pull", "--quiet", image, timeout=max(int(remaining(deadline, timeout)), 1))
                 took(started, "pulled " + image)
             self.pulled.add(image)
+        if "--list" not in command and not self.entered:
+            self.enter(image, deadline, timeout)
         record, entry = os.path.join(scratch, "sealed.json"), os.path.join(scratch, "seal.cjs")
         with open(entry, "w", encoding="utf-8") as handle:
             handle.write(SEAL_JS)

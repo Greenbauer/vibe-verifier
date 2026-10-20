@@ -161,6 +161,12 @@ class Refusals(Fixture):
         with self.assertRaisesRegex(CannotRun, "no playwright-core is installed above .*name one with --browser-image"):
             _regression_sealed.image_for(str(nested), None)
 
+    def test_the_relay_publishes_each_port_where_the_stack_did(self):
+        # Every interface stays every interface; an address stays that address (in brackets for IPv6, as docker reads it).
+        for address, said in (('', '54321:54321'), ('0.0.0.0', '54321:54321'), ('::', '54321:54321'),
+                              ('127.0.0.1', '127.0.0.1:54321:54321'), ('::1', '[::1]:54321:54321')):
+            self.assertEqual(_regression_sealed.bound(address, 54321), said, address)
+
     def test_a_fix_with_no_spec_never_starts_playwright(self):
         # A node:test file a package.json script runs is no spec: it is not listed, so a credential in the step, or a
         # broken Playwright, says nothing about it.

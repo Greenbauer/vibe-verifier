@@ -106,7 +106,6 @@ class LocalOnly(unittest.TestCase):
                          [".env", ".env.local", ".env.production", "apps/web/.env.local"])
 
 
-@unittest.skipUnless(shutil.which("node"), "the guard is a Node preload")
 class Filters(unittest.TestCase):
     """gates/_regression_playwright.py's text handling: the file filter it hands Playwright, and an error as one line."""
 
