@@ -1,8 +1,10 @@
 """coverage-not-lost and changed-code-mutation under gates/_local_guard.py, both ways, for each runner each starts:
-coverage-not-lost's Vitest (with its coverage provider) and unittest under coverage.py, and changed-code-mutation's
+coverage-not-lost's Vitest (with its coverage provider), node:test (Node's own coverage) and unittest under coverage.py, and
+changed-code-mutation's
 StrykerJS (the fixture's Vitest 4.1.11) and mutmut (a venv with the fixture's pytest). The fixtures are
 tests/test_local_guard_gates.py's: each test reaches a server of its own on this machine, and the guarded ones also try
 an outside address and start a child that tries another, and expect both refused."""
+import json
 import os
 import shutil
 import subprocess
@@ -12,8 +14,8 @@ import unittest
 from pathlib import Path
 
 from helpers import ROOT, commit, gate, git, install_fixture, make_repo
-from test_local_guard_gates import (FIXTURE, IN_DOTENV, IN_ENV, JS_GUARDED, JS_OUTSIDE, JS_PRICE_FIX, OUTSIDE, PY_GUARDED,
-                                    PY_OUTSIDE, PY_PRICE_FIX, UNITTEST, VITEST, marker)
+from test_local_guard_gates import (FIXTURE, IN_DOTENV, IN_ENV, JS_GUARDED, JS_OUTSIDE, JS_PRICE_FIX, NODE_OUTSIDE, NODE_TEST,
+                                    OUTSIDE, PY_GUARDED, PY_OUTSIDE, PY_PRICE_FIX, UNITTEST, VITEST, marker)
 
 PYTEST = ROOT / "tests" / "fixtures" / "changed-code-mutation-python" / "requirements.txt"
 JS_PRICE_BEFORE = "export function discount(total, member) {\n  return total;\n}\n"
@@ -66,7 +68,12 @@ def project(test, kind, outside, mutation):
     calls = {"": "", "tolerated": JS_OUTSIDE if js else (PYTEST_OUTSIDE if kind == "mutmut" else PY_OUTSIDE),
              "needed": '  expect(await outside()).toBe("reached");\n' if js else
              ('    assert outside() == "reached"\n' if kind == "mutmut" else '        self.assertEqual(outside(), "reached")\n')}[outside]
-    if js:
+    if kind == "node":  # coverage-not-lost's node:test run: a package.json script runs the file, nothing is installed
+        calls = {"": "", "tolerated": NODE_OUTSIDE, "needed": '  assert.equal(await outside(), "reached");\n'}[outside]
+        files = {".gitignore": ".env.local\n", "src/guarded.mjs": JS_GUARDED, "src/price.mjs": JS_PRICE_FIX,
+                 "package.json": json.dumps({"type": "module", "scripts": {"test": "node --test src/*.test.mjs"}}) + "\n",
+                 "src/price.test.mjs": NODE_TEST.replace("OUTSIDE", calls)}
+    elif js:
         files = {".gitignore": "node_modules\n.env.local\n", "package.json": '{"type": "module"}\n', "src/guarded.mjs": JS_GUARDED,
                  "src/price.mjs": before or JS_PRICE_FIX, "src/price.test.mjs": VITEST.replace("OUTSIDE", calls) + JS_MORE}
     else:
@@ -80,15 +87,16 @@ def project(test, kind, outside, mutation):
 
 
 def run(kind, repo, *args, env=None):
-    if kind in ("vitest", "unittest"):
-        runner = ["--runner", "unittest", "--args", "discover -s tests", "--python", sys.executable] if kind == "unittest" else []
+    if kind in ("vitest", "unittest", "node"):
+        runner = {"unittest": ["--runner", "unittest", "--args", "discover -s tests", "--python", sys.executable],
+                  "node": ["--runner", "node-test"]}.get(kind, [])
         return gate("coverage-not-lost", repo, "--base-ref", "HEAD~1", *runner, *args, env=env)
     python = ["--python", os.path.join(VENV, "bin", "python")] if kind == "mutmut" else []
     return gate("changed-code-mutation", repo, "--base-ref", "HEAD~1", *python, *args, env=env)
 
 
 class GuardedRuns(unittest.TestCase):
-    KINDS = (("vitest", False), ("unittest", False), ("stryker", True), ("mutmut", True))
+    KINDS = (("vitest", False), ("unittest", False), ("node", False), ("stryker", True), ("mutmut", True))
 
     def test_a_run_that_reaches_only_this_machine_is_judged_as_before(self):
         for kind, mutation in self.KINDS:
@@ -102,13 +110,14 @@ class GuardedRuns(unittest.TestCase):
                 self.assertNotIn("refused", result.stderr)
 
     def test_a_coverage_run_that_passed_with_its_connections_refused_says_so(self):
-        for kind in ("vitest", "unittest"):
+        for kind, name in (("vitest", "vitest run"), ("unittest", "unittest run"),
+                           ("node", "node --test run of package.json script `test`")):
             with self.subTest(runner=kind):
                 result = run(kind, project(self, kind, "tolerated", False))
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 for side in ("base", "head"):
-                    self.assertIn("coverage-not-lost: the %s run in the %s checkout tried to reach %s, which the gate refused; "
-                                  "its tests passed all the same" % (kind, side, OUTSIDE), result.stderr)
+                    self.assertIn("coverage-not-lost: the %s in the %s checkout tried to reach %s, which the gate refused; "
+                                  "its tests passed all the same" % (name, side, OUTSIDE), result.stderr)
 
     def test_a_failure_in_a_run_that_reached_out_cannot_be_judged(self):
         # coverage-not-lost: a suite that fails after a refusal. changed-code-mutation: mutants killed in a run that
@@ -116,6 +125,8 @@ class GuardedRuns(unittest.TestCase):
         for kind, mutation, outside, said in (
                 ("vitest", False, "needed", r"price.test.mjs > gives members 10% off over 100: .* failed in the vitest run in the base checkout, which tried to reach 192.0.2.1:80"),
                 ("unittest", False, "needed", r"the suite \(unittest exited 1\) failed in the unittest run in the base checkout, which tried to reach 192.0.2.1:80"),
+                ("node", False, "needed", r"src/price.test.mjs > gives members 10% off over 100: .* failed in the node --test run of "
+                                          r"package\.json script `test` in the base checkout, which tried to reach 192.0.2.1:80"),
                 ("stryker", True, "tolerated", r"the tests that killed \d+ mutant\(s\) failed in the StrykerJS run, which tried to reach " + OUTSIDE),
                 ("mutmut", True, "tolerated", r"the tests that killed \d+ mutant\(s\) failed in the mutmut run, which tried to reach " + OUTSIDE)):
             with self.subTest(runner=kind):

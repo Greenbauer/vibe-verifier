@@ -250,8 +250,8 @@ class Vitest:
         return Coverage(lines, tested)
 
     @staticmethod
-    def test_files(paths):
-        """The test files among `paths`: run again at the base to say which covered a lost line."""
+    def test_files(paths, tree):
+        """The test files among `paths`: run again at the base (`tree`) to say which covered a lost line."""
         return [path for path in paths if matches(path, JS_TESTS) and not path.endswith(".py")]
 
 
@@ -320,7 +320,7 @@ class Python:
         return Coverage(lines, True, contexts)
 
     @staticmethod
-    def test_files(paths):
+    def test_files(paths, tree):
         return []  # each line's tests come from its contexts, so nothing is run again
 
 
