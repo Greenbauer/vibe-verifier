@@ -521,7 +521,8 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   spec depends on) and an error no test owns (a `webServer` that did not start, a global setup that
   threw): the run cannot say whether the bug shows. Refused but not counted: an IPv6 address given as
   numbers (Chromium's own check of whether IPv6 reaches the internet counts there on every run), and
-  whatever the stack's own containers try. No Docker, a daemon that does not answer, an image that does
+  whatever the stack's own containers try off the network (not their raw traffic to this machine: see
+  the limit below). No Docker, a daemon that does not answer, an image that does
   not pull, or a stack that is not healthy again after a move is exit 2.
 - **The seal's one limit.** The gate's containers hold no capability, but the stack's keep Docker's
   defaults, and this machine still has an interface on the sealed network (with no IPv4 address). So a

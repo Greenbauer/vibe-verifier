@@ -78,6 +78,16 @@ class SealedRefusals(Browser):
                                 "commit.gpgsign=false", "commit", "-qm", name], check=True)
                 refused(self, repo, said)
 
+    def test_a_project_with_no_baseurl_is_refused(self):
+        # Where its specs go cannot be checked, so it is refused like one pointed elsewhere.
+        repo = self.project()
+        config = Path(repo, "playwright.config.mjs")
+        config.write_text(config.read_text().replace('  use: { baseURL: "http://127.0.0.1:%d" },\n' % self.port, ""))
+        subprocess.run(["git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c",
+                        "commit.gpgsign=false", "commit", "-qam", "no baseURL"], check=True)
+        refused(self, repo, "--playwright playwright.config.mjs: its project sets no baseURL, so where its specs go "
+                            "cannot be checked")
+
     def test_a_config_that_starts_no_site_here_is_refused(self):
         repo = self.project({"playwright.config.mjs": "import { defineConfig } from \"@playwright/test\";\n"
                                                       "export default defineConfig({ testDir: \"e2e\", use: { baseURL: "
