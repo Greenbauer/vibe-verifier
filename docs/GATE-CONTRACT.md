@@ -498,10 +498,11 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   `--browser-image` names another), with the repository mounted at its own path and the job's own user, on
   a Docker network the gate creates `--internal` with no address on its bridge
   (`com.docker.network.bridge.inhibit_ipv4`). A container there has a route to the network's other
-  containers and to nothing else, this machine and a cloud metadata address included, and Docker's DNS
+  containers and to nothing else (not the internet, not a cloud metadata address, and, for a container with
+  no capability such as the run's, not this machine), and Docker's DNS
   answers it no outside name, so the kernel refuses every other destination whatever tries it: a browser
   of any engine (WebRTC included), the site's server, a spec, a global setup, any process they start, a
-  spec's own proxy. The job's stack (`--stack-network NAME`, the Docker network its containers run on) is
+  spec's own proxy (the limit is below). The job's stack (`--stack-network NAME`, the Docker network its containers run on) is
   moved onto that network at the first run (a listing starts no site): each container leaves every
   network it was on, joins the sealed one under the same names and aliases, and is restarted so that
   nothing keeps an address from before (Supabase's API gateway caches its services' addresses); after the
@@ -522,6 +523,10 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   numbers (Chromium's own check of whether IPv6 reaches the internet counts there on every run), and
   whatever the stack's own containers try. No Docker, a daemon that does not answer, an image that does
   not pull, or a stack that is not healthy again after a move is exit 2.
+- **The seal's one limit.** The gate's containers hold no capability, but the stack's keep Docker's
+  defaults, and this machine still has an interface on the sealed network (with no IPv4 address). So a
+  root process in a stack container could send raw traffic to this machine itself, and what this
+  machine then does with it is not tested here.
 - **Production is refused before anything starts.** The sealed listing loads the config and the specs
   and starts no server, global setup or browser; from it, before each run, the gate refuses (exit 2): a
   project that runs a changed spec, or one such a project depends on, whose `baseURL` is unset or not
