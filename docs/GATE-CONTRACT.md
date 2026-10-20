@@ -567,8 +567,9 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   only calls `test()` or `describe()` with no import could be either (a Vitest or Jest file with globals,
   or a spec that imports its `test` from a fixtures module): when no changed test imports
   `@playwright/test` and the listing cannot run (a credential in the step, no Playwright), none is taken
-  for a spec and they are classified as before, with a note; a credential beside a test that imports
-  `@playwright/test` is still exit 2. A refusal names the variable,
+  for a spec and they are classified as before, with a note (a credential in the step then stops the
+  unit run of a Vitest file the same way, exit 2; a Jest file is not run); a credential beside a test that
+  imports `@playwright/test` is still exit 2. A refusal names the variable,
   where it was read, and the host, issuer or project, never the value.
 - **Exit 2 also when** no changed test is one it can run (only Playwright specs no `--playwright` config
   collects, shell or SQL tests, or node:test files the repository does not run with `node --test`, say:
@@ -632,7 +633,9 @@ instead ([the seal](#regression-test-fails-on-base)).
   at either side; for `changed-code-mutation` a killed mutant or a failing initial run (StrykerJS and
   mutmut run many mutants in shared processes, so the record cannot say whose tests met the refusal). A
   run that refused something and passed all the same says what it refused and is judged as usual.
-- **Not refused.** A process that is neither Node nor Python (curl, psql, the Supabase CLI, bun); a
+- **Not refused.** A Unix socket or named pipe (a path on this machine; a proxy listening on one, such as a
+  cloud database's, can forward it anywhere); a process that is neither Node nor Python (curl, psql, the
+  Supabase CLI, bun); a
   socket opened in native code (a database driver such as libpq under psycopg, or Prisma's query engine)
   or through Python's `_socket` module directly; a process, or a Node worker thread, started with an
   environment that drops `NODE_OPTIONS` or `PYTHONPATH`, or a Python started with `-I`, `-E` or `-S`;
@@ -1047,10 +1050,11 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   the first side installed the catalog's tools into the runner's empty tool cache, so the install lines of
   `gates/_tools.py` ran only at the base, the first pair found them (14 lines), and the second, with the
   cache full, dismissed them, so a whole-suite run took 54 to 66 minutes. With the caches filled first
-  (16 seconds), the first pair finds no such line: a dispatched run of the guarded suite on 2026-10-20 took
-  715 and 727 seconds a side (11,767 and 12,130 lines), the guard refused nothing at either side, and the
-  job took 24 minutes. It stays nightly, with `--timeout` 4800 and a job limit of 90 minutes, room for
-  the second pair on a night that finds a line.
+  (16 and 32 seconds), the first pair finds no such line: two dispatched runs of the guarded suite on
+  2026-10-20, at two heads of the change that added the guard, took 715 and 727, then 957 and 995, seconds
+  a side (11,767 lines at the base; 12,130 and 12,136 at those heads), the guard refused nothing at either
+  side, and the jobs took 24 and 33 minutes. It stays nightly, with `--timeout` 4800 and a job limit of 90
+  minutes, room for the second pair on a night that finds a line.
 - **What it does not catch.** Browser and end-to-end tests: only the unit suite the runner starts is
   measured, so a loss only a Playwright test would show passes (the [QAE harness](../harnesses/qae/README.md)
   re-walks features in a browser). A line that still runs but that no test asserts on any more: a test

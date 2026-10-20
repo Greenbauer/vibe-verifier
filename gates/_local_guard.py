@@ -21,7 +21,8 @@ went, in a file whose path is written into the guard itself, so a process that k
 its environment drops. After each run the gate reads the record: a run in which a test failed and anything was refused
 cannot be judged (exit 2), since the failure cannot be told from the refusal; a run that passed says what it refused.
 
-Not covered: a process that is neither Node nor Python (curl, psql, the Supabase CLI, bun), a socket opened in native
+Not covered: a Unix socket or named pipe (a path on this machine, which a proxy can forward to anywhere), a process
+that is neither Node nor Python (curl, psql, the Supabase CLI, bun), a socket opened in native
 code (a driver such as libpq under psycopg, or Prisma's query engine) or through Python's _socket directly, a process or
 a Node worker thread started with an environment that drops NODE_OPTIONS or PYTHONPATH, a Python started with -I, -E or
 -S, code that replaces the guarded connect with its own, UDP from Node's dgram and UDP Python sends without connecting,
@@ -95,6 +96,7 @@ if (!connect[MARK]) {
       const to = where.host + ":" + where.port, local = loopback(where.host);
       if (local === false || (local === null && where.host !== "localhost" && !where.host.endsWith(".localhost"))) {
         const error = refusal(to);
+        this.connecting = true;  // as a real connect leaves it, so a caller waits for the outcome
         process.nextTick(() => this.destroy(error));
         return this;
       }
@@ -121,7 +123,7 @@ def _vv_local_only():
     if getattr(socket.socket.connect, "_vv_local_only", False):
         return
     record = __RECORD__
-    connect, connect_ex, lookup = socket.socket.connect, socket.socket.connect_ex, socket.getaddrinfo
+    connect, connect_ex = socket.socket.connect, socket.socket.connect_ex
     opened, write, close = os.open, os.write, os.close
 
     def loopback(host):
@@ -145,8 +147,8 @@ def _vv_local_only():
             return None if local else to
         if host != "localhost" and not host.endswith(".localhost"):
             return to
-        try:
-            found = [info[4][0] for info in lookup(host, address[1], sock.family, sock.type)]
+        try:  # looked up as the process looks names up now, so a resolver a test installs is checked too
+            found = [info[4][0] for info in socket.getaddrinfo(host, address[1], sock.family, sock.type)]
         except OSError:
             return to + " (which does not resolve)"
         outside = [each for each in found if not loopback(each)]

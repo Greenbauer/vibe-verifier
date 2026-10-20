@@ -30,7 +30,7 @@ List `changed-code-mutation` in a manifest of its own, run by a job that install
 ## Gotchas
 
 - A run that refused a connection and killed a mutant is exit 2, even when the test that met the refusal expected it: StrykerJS and mutmut run many mutants in shared processes, so the record cannot say whose kill it was. Stub the call in the test.
-- The guard refuses what Node's `net` module and Python's `socket` module connect to, in every process that keeps `NODE_OPTIONS` and `PYTHONPATH`; not curl, psql, another program, a driver's native socket, a process with an environment of its own, UDP from Node's `dgram` or a Python `sendto`, or a name lookup, whose query reaches the resolver ([the list](../GATE-CONTRACT.md#test-runs-reach-only-this-machine)).
+- The guard refuses what Node's `net` module and Python's `socket` module connect to, in every process that keeps `NODE_OPTIONS` and `PYTHONPATH`; not a Unix socket or named pipe (which a proxy can forward anywhere), curl, psql, another program, a driver's native socket, a process with an environment of its own, UDP from Node's `dgram` or a Python `sendto`, or a name lookup, whose query reaches the resolver ([the list](../GATE-CONTRACT.md#test-runs-reach-only-this-machine)).
 - It runs the project's own Vitest or pytest; a red suite at the head is exit 2.
 - A Vitest that is installed but does not load is exit 2 with the reason. `npm ci` exits 0 when an optional package's download fails, which leaves Vite without its native binding.
 - It never mutates a test. A Python test is `conftest.py` or a file named `test_*.py`, `*_test.py`, `test-*.py`, `*-test.py` or `*.test.py`, the same list `new-source-has-test` reads (`gates/_contract.py`).

@@ -3,7 +3,6 @@ coverage-not-lost's Vitest (with its coverage provider) and unittest under cover
 StrykerJS (the fixture's Vitest 4.1.11) and mutmut (a venv with the fixture's pytest). The fixtures are
 tests/test_local_guard_gates.py's: each test reaches a server of its own on this machine, and the guarded ones also try
 an outside address and start a child that tries another, and expect both refused."""
-import json
 import os
 import shutil
 import subprocess
@@ -14,7 +13,7 @@ from pathlib import Path
 
 from helpers import ROOT, commit, gate, git, install_fixture, make_repo
 from test_local_guard_gates import (FIXTURE, IN_DOTENV, IN_ENV, JS_GUARDED, JS_OUTSIDE, JS_PRICE_FIX, OUTSIDE, PY_GUARDED,
-                                    PY_OUTSIDE, PY_PRICE_FIX, UNITTEST, VITEST)
+                                    PY_OUTSIDE, PY_PRICE_FIX, UNITTEST, VITEST, marker)
 
 PYTEST = ROOT / "tests" / "fixtures" / "changed-code-mutation-python" / "requirements.txt"
 JS_PRICE_BEFORE = "export function discount(total, member) {\n  return total;\n}\n"
@@ -94,7 +93,10 @@ class GuardedRuns(unittest.TestCase):
     def test_a_run_that_reaches_only_this_machine_is_judged_as_before(self):
         for kind, mutation in self.KINDS:
             with self.subTest(runner=kind):
-                result = run(kind, project(self, kind, "", mutation), "--local-env", "SESSION_SECRET", env={"SESSION_SECRET": "local-only"})
+                ran = marker(self)
+                result = run(kind, project(self, kind, "", mutation), "--local-env", "SESSION_SECRET",
+                             env={"SESSION_SECRET": "local-only", "VV_RAN": ran})
+                self.assertTrue(Path(ran).exists())  # the marker works: a test process loaded the module
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("mutant(s) on the changed lines killed: score" if mutation else "still runs at the head", result.stderr)
                 self.assertNotIn("refused", result.stderr)
@@ -143,8 +145,10 @@ class GuardedRuns(unittest.TestCase):
                     if where == "a .env file":
                         Path(repo, IN_DOTENV[0]).parent.mkdir(parents=True)
                         Path(repo, IN_DOTENV[0]).write_text(IN_DOTENV[1])
-                    result = run(kind, repo, "--soak", env=IN_ENV if where == "the environment" else None)
+                    ran = marker(self)
+                    result = run(kind, repo, "--soak", env=dict(IN_ENV if where == "the environment" else {}, VV_RAN=ran))
                     self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertFalse(Path(ran).exists())  # no test process started
                     self.assertIn("would run the pull request's code with a credential for somewhere other than this machine "
                                   "in what it inherits, so this gate does not start it", result.stderr)
                     self.assertIn("the environment: RESEND_API_KEY is named as a credential" if where == "the environment" else

@@ -16,9 +16,12 @@ from test_regression_test import fix, tree_is_head
 FIXTURE = ROOT / "tests" / "fixtures" / "coverage-not-lost"
 TITLE = "fix(price): members get their discount"
 OUTSIDE = "192.0.2.1:80, 192.0.2.2:80"
-# A server on this machine read by localhost, an outside address, and a child that tries another: src/guarded.mjs.
+# A server on this machine read by localhost, an outside address, and a child that tries another: src/guarded.mjs. When
+# loaded with VV_RAN set it appends a line to that file, so a test can tell whether any test process started.
 JS_GUARDED = r"""import { createServer, connect } from "node:net";
 import { execFileSync } from "node:child_process";
+import { appendFileSync } from "node:fs";
+if (process.env.VV_RAN) appendFileSync(process.env.VV_RAN, "ran\n");
 export const here = () => new Promise((resolve, reject) => {
   const server = createServer((socket) => socket.end("ok")).listen(0, "127.0.0.1", () => {
     let said = "";
@@ -30,11 +33,15 @@ export const outside = () => fetch("http://192.0.2.1/").then(() => "reached", (e
 export const child = () => execFileSync(process.execPath, ["-e",
   "require('net').connect(80, '192.0.2.2').on('error', (error) => console.log(error.code))"]).toString().trim();
 """
-PY_GUARDED = r"""import socket
+PY_GUARDED = r"""import os
+import socket
 import subprocess
 import sys
 import threading
 
+if os.environ.get("VV_RAN"):
+    with open(os.environ["VV_RAN"], "a") as ran:
+        ran.write("ran\n")
 CHILD = "import socket\ntry:\n    socket.create_connection(('192.0.2.2', 80), timeout=5)\nexcept ConnectionRefusedError:\n    print('refused')"
 
 
@@ -128,6 +135,13 @@ def runner_repo(test, kind):
     return repo, path, lambda outside=False: dict(fixed, **{path: text.replace("OUTSIDE", calls if outside else "")})
 
 
+def marker(test):
+    """A path the fixture's guarded module appends to when a test process loads it (VV_RAN), not there yet."""
+    directory = tempfile.mkdtemp(prefix="vv-guard-ran-")
+    test.addCleanup(shutil.rmtree, directory, True)
+    return str(Path(directory, "ran"))
+
+
 class RegressionRunners(unittest.TestCase):
     """Each runner regression-test-fails-on-base starts: Vitest, node:test and Python."""
 
@@ -138,11 +152,13 @@ class RegressionRunners(unittest.TestCase):
         for kind in self.RUNNERS:
             with self.subTest(runner=kind):
                 repo, test, files = runner_repo(self, kind)
-                result = fix(repo, files(), TITLE, "", "--local-env", "SESSION_SECRET", env={"SESSION_SECRET": "local-only"})
+                ran = marker(self)
+                result = fix(repo, files(), TITLE, "", "--local-env", "SESSION_SECRET", env={"SESSION_SECRET": "local-only", "VV_RAN": ran})
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("%s: " % test, result.stderr)
                 self.assertIn("fails on the code before the fix", result.stderr)
                 self.assertNotIn("refused", result.stderr)
+                self.assertTrue(Path(ran).exists())  # the marker works: a test process loaded the module
                 tree_is_head(self, repo)
 
     def test_a_failure_in_a_run_that_reached_out_cannot_be_judged(self):
@@ -167,8 +183,10 @@ class RegressionRunners(unittest.TestCase):
                     if where == "a .env file":
                         Path(repo, IN_DOTENV[0]).parent.mkdir(parents=True)
                         Path(repo, IN_DOTENV[0]).write_text(IN_DOTENV[1])
-                    result = fix(repo, files(), TITLE, "", "--soak", env=IN_ENV if where == "the environment" else None)
+                    ran = marker(self)
+                    result = fix(repo, files(), TITLE, "", "--soak", env=dict(IN_ENV if where == "the environment" else {}, VV_RAN=ran))
                     self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertFalse(Path(ran).exists())  # no test process started
                     self.assertIn("would run the pull request's code with a credential for somewhere other than this machine "
                                   "in what it inherits, so this gate does not start it", result.stderr)
                     self.assertIn("the environment: RESEND_API_KEY is named as a credential" if where == "the environment" else
@@ -178,18 +196,23 @@ class RegressionRunners(unittest.TestCase):
                     self.assertNotIn("fails on the code before the fix", result.stderr)
                     tree_is_head(self, repo)
 
-    def test_a_file_a_node_test_script_loads_with_env_file_is_checked_too(self):
-        # config/test.env is no .env name: only the script's own --env-file says the test process loads it.
-        for value, code in (("postgresql://app:pw-in-env-file@db.example.com:5432/app", 2),
-                            ("postgresql://postgres:postgres@127.0.0.1:54322/postgres", 0)):
-            with self.subTest(value=value.split("@")[1]):
-                script = {"type": "module", "scripts": {"test": "node --env-file config/test.env --test src/*.test.mjs"}}
+    def test_a_file_or_an_assignment_a_node_test_script_gives_its_process_is_checked_too(self):
+        # config/test.env is no .env name: only the script's own --env-file says the test process loads it. A leading
+        # NAME=value is in the process's environment.
+        remote, local = "postgresql://app:pw-in-script@db.example.com:5432/app", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+        for command, value, said in (("node --env-file config/test.env --test src/*.test.mjs", remote, "config/test.env: DATABASE_URL"),
+                                     ("node --env-file=config/test.env --test src/*.test.mjs", remote, "config/test.env: DATABASE_URL"),
+                                     ("node --env-file config/test.env --test src/*.test.mjs", local, None),
+                                     ("DATABASE_URL=%s node --test src/*.test.mjs" % remote, local, "the environment: DATABASE_URL")):
+            with self.subTest(command=command.split(" node")[0][:30], value=value.split("@")[1]):
+                script = {"type": "module", "scripts": {"test": command}}
                 repo = make_repo(self, {"package.json": json.dumps(script) + "\n", "config/test.env": "DATABASE_URL=%s\n" % value,
                                         "src/price.mjs": JS_PRICE_BUG, "src/guarded.mjs": JS_GUARDED})
                 result = fix(repo, {"src/price.mjs": JS_PRICE_FIX, "src/price.test.mjs": NODE_TEST.replace("OUTSIDE", "")}, TITLE, "")
-                self.assertEqual(result.returncode, code, result.stdout + result.stderr)
-                self.assertEqual("config/test.env: DATABASE_URL holds a connection string for db.example.com" in result.stderr, code == 2)
-                self.assertNotIn("pw-in-env-file", result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 2 if said else 0, result.stdout + result.stderr)
+                if said:
+                    self.assertIn(said + " holds a connection string for db.example.com", result.stderr)
+                self.assertNotIn("pw-in-script", result.stdout + result.stderr)
                 tree_is_head(self, repo)
 
 

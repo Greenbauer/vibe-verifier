@@ -98,7 +98,7 @@ jobs:
         # `entries:` is never judged from a base, and main's workflow is reviewed. --timeout: each side took 784 to
         # 1030 seconds on ubuntu-latest (pull request #220), and a night that finds a line runs the second pair:
         # four sides, at most 3961 seconds, plus room. (With the caches filled above, a night that finds none ran
-        # two sides of 715 and 727 seconds on 2026-10-20.)
+        # two sides, of 715 and 727 seconds and of 957 and 995 seconds, in two dispatches on 2026-10-20.)
         with:
           entries: coverage-not-lost --soak --runner unittest --args "discover -s tests" --timeout 4800
           base-ref: ${{ steps.base.outputs.base }}

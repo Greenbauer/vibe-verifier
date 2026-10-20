@@ -39,6 +39,12 @@ const lookup = (host, options, callback) => { console.log("looked up " + host); 
                                      { env: { NODE_OPTIONS: process.env.NODE_OPTIONS } }).toString().trim());
   await new Promise((resolve) => new Worker("require('net').connect(80, '192.0.2.4').on('error', (e) => console.log('worker: ' + e.code))", { eval: true }).on("exit", resolve));
   console.log("localhost elsewhere:", await attempt({ host: "db.localhost", port: 5432, lookup: (host, options, callback) => callback(null, [{ address: "192.0.2.6", family: 4 }]) }));
+  console.log("mapped:", await attempt({ host: "::ffff:192.0.2.10", port: 80 }));
+  console.log("http2:", await new Promise((resolve) => {
+    let connected = false;
+    require("http2").connect("http://192.0.2.11").on("connect", () => { connected = true; })
+      .on("error", (error) => resolve(error.code + (connected ? " after a connect event" : "")));
+  }));
 })();
 """
 NODE_HERE = r"""
@@ -67,6 +73,18 @@ child = "import socket\ntry:\n    socket.create_connection(('192.0.2.4', 80), ti
 # A child given an environment of its own that keeps only the guard: refused, and still in the run's record.
 print("child:", subprocess.run([sys.executable, "-c", child], capture_output=True, text=True,
                                env={"PYTHONPATH": os.environ["PYTHONPATH"]}).stdout.strip())
+# UDP connect, a name (refused before it is looked up), and a *.localhost name a resolver sends elsewhere.
+for label, kind, address in (("udp", socket.SOCK_DGRAM, ("192.0.2.5", 53)), ("name", socket.SOCK_STREAM, ("db.example.com", 80))):
+    try:
+        socket.socket(socket.AF_INET, kind).connect(address)
+        print(label, "reached")
+    except ConnectionRefusedError as error:
+        print(label + ":", error.strerror)
+socket.getaddrinfo = lambda *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.6", 80))]
+try:
+    socket.socket().connect(("db.localhost", 80))
+except ConnectionRefusedError as error:
+    print("localhost elsewhere:", error.strerror)
 """
 PY_HERE = r"""
 import os, socket, sys, tempfile
@@ -126,8 +144,12 @@ class Guarded(unittest.TestCase):
         self.assertIn("child: ECONNREFUSED", lines)
         self.assertIn("worker: ECONNREFUSED", lines)
         self.assertIn("localhost elsewhere: ECONNREFUSED: connect ECONNREFUSED db.localhost:5432 (192.0.2.6): " + SAID, lines)
+        self.assertIn("mapped: ECONNREFUSED: connect ECONNREFUSED ::ffff:192.0.2.10:80: " + SAID, lines)
+        # http2 wraps a socket with no native handle in a stream of its own, so its session reports a connect event
+        # first; the refusal follows, and nothing was sent.
+        self.assertTrue(any(line.startswith("http2: ECONNREFUSED") for line in lines), lines)
         self.assertEqual(self.guard.refused(), ["192.0.2.1:80", "example.com:443", "192.0.2.2:80", "192.0.2.3:80", "192.0.2.4:80",
-                                                "db.localhost:5432 (192.0.2.6)"])
+                                                "db.localhost:5432 (192.0.2.6)", "::ffff:192.0.2.10:80", "192.0.2.11:80"])
         records = [json.loads(line) for line in Path(self.guard.record).read_text().splitlines()]
         self.assertEqual({record["by"] for record in records}, {"node"})
         self.assertEqual(len({record["pid"] for record in records}), 2)  # the child is a process of its own
@@ -142,8 +164,11 @@ class Guarded(unittest.TestCase):
         result = self.run_with([sys.executable, "-c", PY_OUTSIDE])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines(), ["192.0.2.1 " + SAID + ": 192.0.2.1:80", "::ffff:192.0.2.2 " + SAID + ": ::ffff:192.0.2.2:80",
-                                                      "connect_ex: True", "child: " + SAID + ": 192.0.2.4:80"])
-        self.assertEqual(self.guard.refused(), ["192.0.2.1:80", "::ffff:192.0.2.2:80", "192.0.2.3:80", "192.0.2.4:80"])
+                                                      "connect_ex: True", "child: " + SAID + ": 192.0.2.4:80",
+                                                      "udp: " + SAID + ": 192.0.2.5:53", "name: " + SAID + ": db.example.com:80",
+                                                      "localhost elsewhere: " + SAID + ": db.localhost:80 (192.0.2.6)"])
+        self.assertEqual(self.guard.refused(), ["192.0.2.1:80", "::ffff:192.0.2.2:80", "192.0.2.3:80", "192.0.2.4:80", "192.0.2.5:53",
+                                                "db.example.com:80", "db.localhost:80 (192.0.2.6)"])
         self.assertEqual({json.loads(line)["by"] for line in Path(self.guard.record).read_text().splitlines()}, {"python"})
 
     def test_python_reaches_this_machine_and_the_interpreters_own_sitecustomize_still_runs(self):

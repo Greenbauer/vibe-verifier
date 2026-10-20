@@ -143,7 +143,8 @@ def listed_specs(args, tests, deadline):
     test that imports @playwright/test is a spec, so a listing that cannot run (a credential in the step, no
     Playwright) is exit 2. When every candidate only might be one (it calls test() and imports no framework, as a
     Vitest or Jest file with globals does), such a listing means none is taken for a spec, and they are classified
-    as before, so a fix with no spec never depends on a browser run."""
+    as before, so a fix with no spec never depends on a browser run (a credential in the step still stops the unit
+    run of a Vitest file, gates/_local_guard.py)."""
     if not args.playwright:
         return {}, {}
     candidates = [path for path in tests if maybe_playwright(args, path)]
