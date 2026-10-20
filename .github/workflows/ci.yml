@@ -190,27 +190,6 @@ jobs:
         env:
           VV_REGRESSION_SEALED: required
         run: python3 -m unittest discover -s tests -p 'test_regression_playwright*.py' -v --durations 0
-      - name: Measure moving a real Supabase stack into the seal and back (temporary, for the docs' cost table)
-        run: |
-          set -euo pipefail
-          work="$RUNNER_TEMP/vv-measure"
-          mkdir -p "$work"
-          cd "$work"
-          npx --yes supabase@2.24.3 init --force > /dev/null
-          sed -i 's/^project_id = .*/project_id = "vvmeasure"/' supabase/config.toml
-          start=$(date +%s)
-          npx --yes supabase@2.24.3 start -x studio,imgproxy,logflare,vector,supavisor,edge-runtime,realtime,storage-api,postgres-meta > /dev/null
-          echo "supabase start: $(( $(date +%s) - start ))s"
-          cd "$GITHUB_WORKSPACE/gates"
-          python3 -c '
-          import time, _regression_sealed as sealed
-          seal, deadline = sealed.Seal(["supabase_network_vvmeasure"], None), time.monotonic() + 600
-          seal.open(deadline, 600)
-          seal.enter("mcr.microsoft.com/playwright:v1.64.1-noble", deadline, 600)
-          seal.close(deadline, 600)
-          '
-          cd "$work"
-          npx --yes supabase@2.24.3 stop --no-backup > /dev/null
 
   # The runner-lane kit (lanes/README.md) is Linux-only and has tests of its own, which stub every
   # system tool on PATH: nothing is installed, mounted or started on the runner. Ubuntu 24.04, not
