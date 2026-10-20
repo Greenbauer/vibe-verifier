@@ -44,7 +44,7 @@ const timed = pull(2, { checks: [{ id: 1, name: "test", category: "failed", stat
 const untimed = pull(1, { checks: [{ id: 3, name: "lint", category: "pending", status: "queued" }], behind_by: 2 });
 const snapshot = { owner: "octocat", github: { coverage: { selected: 1 }, sampled_at: at(59),
   repositories: [{ repository: "octocat/example", pulls: [timed, untimed] }] } };
-const state = { query: "", repository: "all", subscribed: false, attention: false, timeScale: "shared" };
+const state = { query: "", repository: "all", subscribed: false, attention: false };
 const page = { heading: (title, warning, controls) => VV.element("div", { class: "heading" }, title, controls),
   empty: title => VV.element("p", {}, title), rememberView() {} };
 const rows = () => content.find("pr-list")[0].children;
@@ -61,13 +61,13 @@ test("a row with a timeline puts the bars in Checks and the words in CI; a meter
   assert.strictEqual(row(1).find("check-meter").length, 1);
 });
 
-test("the filters come as the search, then the two menus together, then the two checkboxes together", () => {
+test("the filters come as the search, then the repository menu, then the two checkboxes together", () => {
   prs.render(content, snapshot, state, page);
   const toolbar = content.find("toolbar")[0];
   assert.deepStrictEqual(toolbar.children.map(node => [node.tag, node.className]),
     [["input", ""], ["div", "toolbar-group"], ["div", "toolbar-group"]]);
   const [, menus, checks] = toolbar.children;
-  assert.deepStrictEqual(menus.children.map(node => node.attrs.id), ["repo-filter", "time-scale"]);
+  assert.deepStrictEqual(menus.children.map(node => node.attrs.id), ["repo-filter"]);
   assert.strictEqual(menus.children[0].children[0].text, "All repositories");
   assert.deepStrictEqual(checks.children.map(node => node.text), ["Subscribed only", "Needs attention"]);
 });
