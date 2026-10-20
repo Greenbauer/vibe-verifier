@@ -13,8 +13,8 @@ wait for that): each container leaves every network it was on, joins the sealed 
 aliases, and is restarted so that nothing in it keeps an address from before (an API gateway caches the addresses
 of the services behind it). A container on an internal network publishes no port, so while the stack is sealed a
 relay (RELAY_JS, a container of its own on an ordinary network, joined to the sealed one) publishes the same ports
-on this machine again and forwards each to its container: the gate's own Vitest, node:test and Python runs, on
-this machine, reach the stack as before. The relay runs only this code and connects only to the stack. After the
+on this machine again and forwards each to its container: the gate's own runs on this machine (its node:test and
+Python runs are tested) reach the stack as before. The relay runs only this code and connects only to the stack. After the
 runs the relay goes, and each container is moved back and restarted again, so the job's later steps find the stack
 as they left it.
 
