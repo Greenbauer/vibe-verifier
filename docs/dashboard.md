@@ -240,13 +240,14 @@ each commit status. It makes no extra GitHub call.
   never keeps the timeline open or widens a row's scale.
 - One row's timeline is open at a time: opening a row closes any other. The open row and open steps
   last until the page reloads. The page's refresh every 30 seconds keeps
-  them open, and keeps focus on the scale menu, a row's arrow or a job's step toggle when one of
-  them had it.
+  them open, and keeps focus on the search, the repository menu, a row's arrow or a job's step
+  toggle when one of them had it.
 - A job's line is empty while it is still within its first 30 seconds of waiting, and another
   app's queued check draws nothing until it starts; the counts in the CI column include both.
 
 `tests/test_dashboard_timeline.py` runs `dashboard/static/timeline.test.js` and `dashboard/static/prs.test.js` and checks the row's
-swap from the meter, the scale menu, and the bar colors and box.
+swap from the meter, that there is no scale menu and each row is fit to its own timeline, and the bar
+colors and box.
 
 ## Work view
 
