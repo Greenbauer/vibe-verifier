@@ -1,7 +1,7 @@
 """Playwright runs for regression-test-fails-on-base: a fix's browser specs, run by a Playwright config the
 manifest names (--playwright), against the site that config's webServer starts, once at the head and once on the
-code before the fix, inside a Docker network sealed off from everything but the job's own containers
-(gates/_regression_sealed.py: the network, the stack moved onto it, what it refused).
+code before the fix, inside a sealed Docker network with the job's own stack (gates/_regression_sealed.py: the
+network, the stack moved onto it, what it refused, and its one limit).
 
 The config's own webServer serves the code under test: Playwright starts it from the working tree as the gate
 left it, so the site serves the head in the first run and the code before the fix in the second. The repository

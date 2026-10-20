@@ -162,8 +162,8 @@ class Refusals(Fixture):
         os.symlink(os.path.realpath(os.path.join(real, "git")), os.path.join(tools, "git"))  # git itself, not a wrapper
         path = os.pathsep.join([tools] + [entry for entry in os.environ["PATH"].split(os.pathsep)
                                           if not os.path.exists(os.path.join(entry, "docker"))])
-        refused(self, self.project(), "no docker command: this gate runs browser specs in a Docker network sealed off from "
-                                      "everything but the job's own containers, so the runner needs Docker",
+        refused(self, self.project(), "no docker command: this gate runs browser specs in a sealed Docker network, "
+                                      "so the runner needs Docker",
                 env=self.env({"PATH": path}))
 
     def test_the_run_s_image_is_playwright_s_own_for_the_project_s_version(self):

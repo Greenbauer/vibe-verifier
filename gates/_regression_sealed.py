@@ -113,8 +113,8 @@ def docker(*args, timeout=300):
     try:
         result = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError:
-        raise CannotRun("no docker command: this gate runs browser specs in a Docker network sealed off from everything "
-                        "but the job's own containers, so the runner needs Docker")
+        raise CannotRun("no docker command: this gate runs browser specs in a sealed Docker network, "
+                        "so the runner needs Docker")
     except subprocess.TimeoutExpired:
         raise CannotRun("docker %s did not finish within %ds" % (args[0], timeout))
     if result.returncode:

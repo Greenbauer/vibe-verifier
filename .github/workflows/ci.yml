@@ -165,7 +165,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_qae_secret_names.py' -v
 
   # regression-test-fails-on-base's sealed browser runs (gates/_regression_sealed.py): synthetic repositories whose
-  # Playwright config starts a site, run in Playwright's own image on a Docker network with no route off it, both ways
+  # Playwright config starts a site, run in Playwright's own image on the gate's sealed Docker network, both ways
   # (tests/test_regression_playwright*.py). Not a required check, as a consumer's job for this gate is not one either:
   # the image alone is most of a minute to pull. The test job runs only their refusals that need no Docker and skips
   # the rest (no VV_REGRESSION_SEALED); here
