@@ -150,7 +150,8 @@ features of that feature map the changed paths touch: the same selection the gat
 `regression-check:` line for (gates/_features.py). Its first line is `features: <n>`; with `--out` it
 copies each selected feature file, as the working tree has it (the pull request's own copy, so one that
 updates a feature is re-walked against its updated Reach and Verify), to `<DIR>/<id>.md` for a QAE
-explorer to read, and with `--listing` writes the list the explorer reads beside them: the most states to
+explorer to read (a feature's `re-walk:` line notes it when the pull request changed its Verify section
+since the merge base, gates/_verify_edits.py), and with `--listing` writes the list the explorer reads beside them: the most states to
 walk of each feature (the line's `--max-states`, default 3) and the changed paths that selected each. A
 line without `--features` prints `features: 0` and the reason, and so does a branch that predates the
 map (no feature file at the head or at its merge base with the base, and some at the base): it has no
@@ -167,8 +168,9 @@ pull request whose block differs from what this renders for its HEAD.
 `qa-review` posts the QAE's one review comment on a pull request, or edits it in place when it is
 already there: passed, changes needed, not required, or could not run (with its own body when every
 failed explorer hit a model usage limit, read from the explore jobs' failure annotations), with the head it judged,
-each criterion's verdict from the explorer (and each re-walked feature's), and a link to the run. The state comes from what the
-workflow's jobs and gates concluded, never from the explorer's prose.
+each criterion's verdict from the explorer (and each re-walked feature's, noting a feature whose Verify section the
+pull request changed, read from the map `--manifest` names in `--checkout`), and a link to the run. The state comes
+from what the workflow's jobs and gates concluded, never from the explorer's prose.
 
 `proof-audit --body FILE [--model M] [--reasoning-effort E] [--max-ids N] [--grades DIR]` grades, with a model
 on the Codex CLI (tools/codex) under a ChatGPT-managed login ($CODEX_HOME, default ~/.codex), whether the
@@ -206,7 +208,8 @@ from _acceptance import (REFERENCE_KEY, annotations, baseline_problems, body_cri
                          carried, check_lines, declares_none, NO_CRITERIA, no_criteria_message, not_required, png_size, said,
                          split_ticket, ticket_items, ticket_proofs, PROOF_TOKEN, verdict)
 from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
-from _features import add_selection_arguments, describe, selection  # noqa: E402
+from _features import add_selection_arguments, describe, map_directory, selection  # noqa: E402
+from _verify_edits import verify_edits  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
 import _affected_tests  # noqa: E402
 import _proof_audit  # noqa: E402
@@ -1453,7 +1456,7 @@ def job_limit(repo, job_id):
     return reset.group("when").strip() if reset else ""
 
 
-def review_criteria(criteria_text, verdict_text, ticket_text=""):
+def review_criteria(criteria_text, verdict_text, ticket_text="", edits=None):
     ticket, problem = ticket_items(ticket_text)
     wanted = ([] if declares_none(criteria_text) and (ticket or problem) else read_criteria(criteria_text)) + ticket
     rows = ["The ticket's criteria could not be read: %s." % problem] if problem else []
@@ -1472,14 +1475,43 @@ def review_criteria(criteria_text, verdict_text, ticket_text=""):
     # the gate's to decide, so this lists what the explorer wrote and the gate's log names any missing.
     # A re-walk is partial by design, so the states the explorer says it left unwalked are listed too, and so is
     # what it found on the base branch's site for a state that failed (whether that counts is the gate's to say).
+    # The steps that judged a re-walk are the pull request's own copy, so a row says when it changed them (`edits`,
+    # {id: note} from feature_edits); a str is why that could not be read.
     skipped, known = check_lines(verdict_text, "regression-skip"), check_lines(verdict_text, "regression-known")
     for fid, carried in check_lines(verdict_text, "regression-check").items():
         unwalked = "; ".join(said(line, "regression-skip") for line in skipped.get(fid, []))
         on_main = "; ".join(said(line, "regression-known") for line in known.get(fid, []))
-        rows.append("- Feature `%s` re-walked, %s%s%s" % (fid, explorer_said(carried),
-                                                         on_main and ", and says the base branch fails the same way: %s" % on_main,
-                                                         unwalked and " (not walked: %s)" % unwalked))
+        edited = edits.get(fid) if isinstance(edits, dict) else None
+        rows.append("- Feature `%s` re-walked, %s%s%s%s" % (fid, explorer_said(carried),
+                                                           on_main and ", and says the base branch fails the same way: %s" % on_main,
+                                                           unwalked and " (not walked: %s)" % unwalked,
+                                                           ". Note: %s" % edited if edited else ""))
+    if isinstance(edits, str):
+        rows.append("- Whether this pull request changed the Verify section of a re-walked feature could not be read: %s."
+                    % edits.rstrip("."))
     return rows
+
+
+def feature_edits(args, fids):
+    """{id: note} for the re-walked features `fids` (case-folded, as the verdict names them) whose Verify section the
+    pull request changed (gates/_verify_edits.py), from the map the QAE manifest's acceptance-verdict line names and
+    the base, as the gate reads them in the checkout; why, as a str, when that cannot be read; {} when the manifest
+    turns no re-walk on."""
+    if not fids or not os.path.isfile(args.manifest):
+        return {}
+    try:
+        options = selection_options(argparse.Namespace(manifest=args.manifest, repo=args.checkout, base_ref=None))
+        if not options or not options.features:
+            return {}
+        names = {name[:-3].casefold(): name[:-3] for name in
+                 os.listdir(os.path.join(args.checkout, map_directory(options.features))) if name.endswith(".md")}
+        notes = verify_edits(args.checkout, options.features, [names[fid] for fid in fids if fid in names],
+                             resolve_base(args.checkout))
+    except SystemExit:
+        return "the acceptance-verdict line in %s cannot be read" % args.manifest
+    except (CannotRun, OSError, ValueError) as error:
+        return str(error)
+    return {fid.casefold(): note for fid, note in notes.items()}
 
 
 def explorer_said(carried):
@@ -1524,7 +1556,8 @@ def review_body(state, args, limits=None):
         lines.append("")
         verdict = read_text(args.verdict) if args.verdict and os.path.isfile(args.verdict) else ""
         ticket = read_text(args.ticket) if args.ticket and os.path.isfile(args.ticket) else ""
-        lines += review_criteria(read_text(args.criteria), verdict, ticket)
+        edits = feature_edits(args, list(check_lines(verdict, "regression-check")))
+        lines += review_criteria(read_text(args.criteria), verdict, ticket, edits)
     lines += ["", "[The run and its evidence](%s)" % args.run_url]
     return "\n".join(lines) + "\n"
 
@@ -1683,6 +1716,9 @@ def main():
     review.add_argument("--not-required", default="", metavar="REASON", help="why no browser check is needed; empty when one is")
     review.add_argument("--carried-from", default="", metavar="SHA", help="with --not-required, the head whose passing "
                         "walk this head carries (the criteria action's carried-from output)")
+    review.add_argument("--manifest", default=".vibe-verifier-qae", help="the QAE manifest: its acceptance-verdict line's "
+                        "--features names the map whose Verify sections a re-walked feature's row compares with the base")
+    review.add_argument("--checkout", default=".", metavar="DIR", help="the pull request's checkout, with the base's history")
     review.add_argument("--run-id", default="", metavar="ID", help="the workflow run's id: when its explore job failed, "
                         "its failure annotations are read to tell a model usage limit from any other failure")
     args = parser.parse_args()

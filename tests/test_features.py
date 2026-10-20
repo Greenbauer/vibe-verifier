@@ -1,15 +1,14 @@
 """The feature re-walk: `vibe-verifier features` (what the explore job hands the explorer), the
 acceptance-verdict gate's regression-check requirement (what the verify job enforces), and
-actions/features. All three apply one selection rule (gates/_features.py), driven here through their
+actions/features (tests/test_features_action.py). All three apply one selection rule (gates/_features.py), driven here through their
 command lines against a temp repository with a base branch and a pull request branch."""
 import os
-import re
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, clean_env, commit, gate, git, make_repo, png, runner, write
+from helpers import commit, gate, git, make_repo, png, runner, write
 
 
 def feature(title, *globs, verify="- `test/app.test.ts::the app starts and answers`"):
@@ -87,7 +86,8 @@ class Selection(unittest.TestCase):
         })
         result = self.features(repo, "docs/features/auth.md", "app/auth/login.ts", "docs/features/search.md",
                                "app/search/box.ts", "docs/features/billing.md", "app/billing/plan.ts")
-        self.assertEqual(result.stdout, "features: 2\nre-walk: auth (1 changed file)\nre-walk: search (1 changed file)\n")
+        self.assertEqual(result.stdout, "features: 2\nre-walk: auth (1 changed file)\nre-walk: search (1 changed file); this pull "
+                                        "request added this feature, so its Verify section (1 line) is its own\n")
 
     def test_a_feature_its_base_file_declares_no_browser_can_walk_is_set_aside_before_the_cap(self):
         # A consumer's server-only feature (2026-10-12): every Verify state needed a cron secret, an operator
@@ -117,8 +117,8 @@ class Selection(unittest.TestCase):
             "app/jobs/run.ts": "1\n",
         })
         result = self.features(repo, "app/shell/nav.ts", "app/jobs/run.ts")
-        self.assertEqual(result.stdout, "features: 1\nre-walk: shell (1 changed file)\n"
-                                        "no browser can walk it, not re-walked: jobs (1 changed file): cron only\n")
+        self.assertEqual(result.stdout, "features: 1\nre-walk: shell (1 changed file); this pull request changed its Verify "
+                                        "section: 1 line added, 1 removed\nno browser can walk it, not re-walked: jobs (1 changed file): cron only\n")
 
     def test_out_holds_the_head_version_of_each_selected_file_and_nothing_else(self):
         head = feature("Sign-in", "app/auth/**", "app/styles.css", "app/router.ts", verify="1. Sign in as the test user.")
@@ -139,7 +139,8 @@ class Selection(unittest.TestCase):
         repo = self.branch({"docs/features/auth.md": head, "app/auth/login.ts": "2\n"})
         out = os.path.join(repo, ".git", "qae-inputs", "features")
         result = self.features(repo, "docs/features/auth.md", "app/auth/login.ts", out=out)
-        self.assertEqual(result.stdout, "features: 1\nre-walk: auth (1 changed file)\n")
+        self.assertEqual(result.stdout, "features: 1\nre-walk: auth (1 changed file); this pull request changed its Verify "
+                                        "section: 1 line added, 1 removed\n")
         self.assertEqual(Path(out, "auth.md").read_text(), head)
 
     def test_the_listing_tells_the_explorer_how_many_states_to_walk_and_which_files_selected_each_feature(self):
@@ -411,44 +412,6 @@ class NoMapAtTheHead(unittest.TestCase):
         self.assertEqual((listed.returncode, judged.returncode, note), (2, 2, ""), listed.stderr + judged.stderr)
         self.assertRegex(listed.stderr, "vibe-verifier: features: " + why)
         self.assertRegex(judged.stderr, "^acceptance-verdict could not run: " + why)
-
-
-class Action(unittest.TestCase):
-    """actions/features runs the command and hands the explore job its count."""
-
-    def run_action(self, repo, changed, entries=""):
-        text = (ROOT / "actions" / "features" / "action.yml").read_text()
-        script = re.search(r"^      run: \|\n((?:        .*\n|\n)+)", text, re.MULTILINE).group(1)
-        script = "".join(line[8:] if line.strip() else "\n" for line in script.splitlines(True))
-        output = os.path.join(repo, ".git", "github-output")
-        Path(output).write_text("")
-        env = clean_env({"GITHUB_ACTION_PATH": str(ROOT / "actions" / "features"), "GITHUB_OUTPUT": output,
-                         "RUNNER_TEMP": os.path.join(repo, ".git"), "VV_MANIFEST": ".vibe-verifier-qae",
-                         "VV_ENTRIES": entries, "VV_CHANGED": changed, "VV_OUT": "qae-inputs/features"})
-        result = subprocess.run(["bash", "-e", "-c", script], cwd=repo, capture_output=True, text=True, env=env)
-        return result, Path(output).read_text()
-
-    def test_the_count_and_the_copies(self):
-        repo = make_repo(self, BASE)
-        write(repo, {"changed": "app/auth/login.ts\n"})
-        result, output = self.run_action(repo, "changed")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(output, "count=1\n")
-        self.assertTrue(os.path.isfile(os.path.join(repo, "qae-inputs", "features", "auth.md")))
-        self.assertIn("- auth: app/auth/login.ts\n", Path(repo, "qae-inputs", "features.md").read_text())
-
-    def test_off_is_a_count_of_zero_and_a_wrapper_passes_its_list(self):
-        repo = make_repo(self, dict(BASE, **{".vibe-verifier-qae": "acceptance-verdict --criteria a --verdict b\n"}))
-        write(repo, {"changed": "app/auth/login.ts\n"})
-        self.assertEqual(self.run_action(repo, "changed")[1], "count=0\n")
-        result, output = self.run_action(repo, "changed", entries=QAE)
-        self.assertEqual((result.returncode, output), (0, "count=1\n"), result.stdout + result.stderr)
-
-    def test_a_command_that_cannot_run_fails_the_step(self):
-        repo = make_repo(self, BASE)
-        result, output = self.run_action(repo, "missing-file")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(output, "")
 
 
 if __name__ == "__main__":
