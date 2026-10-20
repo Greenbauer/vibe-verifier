@@ -487,7 +487,9 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   The gate never runs the config as it is: it writes a `.ts` wrapper beside it for each call that imports
   it, routes every browser context and the `request` fixture through a proxy the gate runs on the
   runner, bypassed only for loopback names (`<-loopback>` first, so Chromium's own bypass of link-local
-  addresses such as a cloud metadata service's is off), sets every `webServer`'s
+  addresses such as a cloud metadata service's is off), launches Chromium with WebRTC limited to what
+  goes through that proxy (`--force-webrtc-ip-handling-policy=disable_non_proxied_udp`, since STUN's UDP
+  passes any proxy by), sets every `webServer`'s
   `reuseExistingServer` to false, and reports through a reporter of its own. Each run is one attempt
   (`--retries=0`) with its output in a scratch directory; `expected` is a pass, `unexpected` a failure
   with its error (`Expected` and `Received` kept), `skipped` a skip. A file that does not load stops
@@ -513,13 +515,13 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   user or password, for a host that is not this machine; the address of a hosted Supabase project; a
   database's bare host or a libpq keyword connection string (`host=... password=...`) that is not this machine (libpq's `PGHOST`, `DB_HOST`; a Unix socket path is this
   machine's); or when its name has a KEY,
-  SECRET, TOKEN, PASSWORD, PASSWD, PASS, PWD, CREDENTIALS, APIKEY or AUTHTOKEN part (the shell's own
+  SECRET, TOKEN, PASSWORD, PASSWD, PASS, PWD, CREDENTIALS, APIKEY, AUTHTOKEN, PAT or COOKIE part (the shell's own
   `PWD` aside), a part ending in PASSWORD, PASSWD, SECRET or TOKEN, or is libpq's `PGPASSFILE`,
   `PGSERVICE` or `PGSERVICEFILE`, or a WEBHOOK or HOOK part (SUPABASE_SERVICE_ROLE_KEY,
   SUPABASE_ACCESS_TOKEN, RESEND_API_KEY, VERCEL_TOKEN, DB_PASSWORD, PGPASSWORD, MYSQL_PWD,
-  SLACK_WEBHOOK_URL, ACTIONS_ID_TOKEN_REQUEST_TOKEN) and `--local-env NAME` does not declare it the local
-  stack's; a value that is a webhook address (a `hooks.` host, a `/webhooks/` path, a deploy hook) is
-  refused under any name, and any address on loopback is local under any name. A declared name still has
+  SLACK_WEBHOOK_URL, ACTIONS_ID_TOKEN_REQUEST_TOKEN, GITHUB_PAT, SESSION_COOKIE) and `--local-env NAME` does
+  not declare it the local stack's; a value that is a webhook address (a `hooks.` host, a `/webhooks/` path,
+  a deploy hook) or a token whose shape names its service (a GitHub, Slack, npm or Supabase access token, a Stripe live key or an AWS access key id) is refused under any name, and any address on loopback is local under any name. A declared name still has
   its value checked by the value rules.
   Only a changed test that could be a spec is listed at all (it imports no other framework, and no
   package.json script runs it with `node --test`), so a fix with none never starts Playwright. A test that
@@ -529,14 +531,14 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   for a spec and they are classified as before, with a note; a credential beside a test that imports
   `@playwright/test` is still exit 2. A refusal names the variable,
   where it was read, and the host, issuer or project, never the value. During a run, the proxy is one the
-  gate runs on the runner (`gates/_local_only.py`, `Refuser`): it answers every request 403 and records the
+  gate runs on the runner (`gates/_local_network.py`, `Refuser`): it answers every request 403 and records the
   host it asked for. A changed spec that failed in a run that reached for any host is exit 2, whatever made
   the request (the spec, a page's script, an in-page fetch, the site's server): the failure cannot be told
   from the block, and a request made only before the fix would otherwise read as the bug showing. So are a
   failed test of another file (a setup project a spec depends on) and an error no test owns (a `webServer` that did not start, one already answering
   at its address, a global setup that threw): the run cannot say whether the bug shows. Every Node
   process of the run (the Playwright runner and its workers, the site's server, a global setup) preloads
-  a guard through `NODE_OPTIONS` (`gates/_local_only.py`, `GUARD`; added to a `webServer`'s own
+  a guard through `NODE_OPTIONS` (`gates/_local_network.py`, `GUARD`; added to a `webServer`'s own
   `NODE_OPTIONS` when its `env` sets one) that refuses any TCP connection to an address that is not
   loopback as `ECONNREFUSED` and records the host, whatever opens it (`fetch`, `http` with its own
   `Agent`, a database driver, `net.connect`); a name is judged by every address it resolves to, through

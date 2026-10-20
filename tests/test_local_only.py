@@ -1,5 +1,5 @@
-"""gates/_local_only.py's rules on the variable names and value shapes subscribed repositories use, and
-gates/_regression_playwright.py's text handling: the file filter it hands Playwright and an error as one line. The
+"""gates/_local_only.py's rules on the variable names and value shapes subscribed repositories use,
+gates/_local_network.py's Node guard, and gates/_regression_playwright.py's text handling: the file filter it hands Playwright and an error as one line. The
 gate run end to end is tests/test_regression_playwright.py."""
 import base64
 import json
@@ -14,7 +14,8 @@ from pathlib import Path
 from helpers import ROOT
 
 sys.path.insert(0, str(ROOT / "gates"))
-import _local_only  # noqa: E402  (gates/ is not a package)
+import _local_network  # noqa: E402  (gates/ is not a package)
+import _local_only  # noqa: E402
 import _regression_playwright  # noqa: E402
 from _regression_runners import missing  # noqa: E402
 
@@ -71,8 +72,19 @@ class LocalOnly(unittest.TestCase):
             self.assertIn(said, _local_only.why(name, value, {name}) or "", name)
         for name in ("SUPABASE_ACCESS_TOKEN", "VERCEL_TOKEN", "RESEND_API_KEY", "NETSUITE_CONSUMER_KEY", "CRON_SECRET",
                      "SUPABASE_DB_PASSWORD", "AWS_SECRET_ACCESS_KEY", "GH_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "DB_PASS",
-                     "npm_config__authtoken", "PGPASSWORD", "MYSQLPASSWORD", "STRIPESECRET", "MYSQL_PWD", "PGPASSFILE", "PGSERVICE"):
+                     "npm_config__authtoken", "PGPASSWORD", "MYSQLPASSWORD", "STRIPESECRET", "MYSQL_PWD", "PGPASSFILE", "PGSERVICE",
+                     "ORG_AGENT_GITHUB_PAT", "CARRIER_SESSION_COOKIE"):
             self.assertIn("is named as a credential", _local_only.why(name, "a-value", set()) or "", name)
+
+    def test_a_token_that_says_what_it_is_is_refused_under_any_name_and_never_printed(self):
+        # Written in parts: a secret scanner on a committing machine would stop these shapes whole.
+        for kind, value in (("a GitHub token", "github" + "_pat_" + "1" * 30), ("a GitHub token", "gh" + "p_" + "a" * 36),
+                            ("a Slack token", "xo" + "xb-" + "1" * 20), ("a Stripe live key", "sk" + "_live_" + "a" * 24),
+                            ("an AWS access key id", "AK" + "IA" + "ABCDEFGHIJKLMNOP"), ("an npm token", "np" + "m_" + "a" * 36),
+                            ("a Supabase access token", "sb" + "p_" + "a" * 40)):
+            said = _local_only.why("DECLARED", value, {"DECLARED"})
+            self.assertEqual(said, "holds " + kind, value[:4])
+            self.assertNotIn(value, _local_only.refusals({"DECLARED": value}, [], {"DECLARED"})[0])
 
     def test_only_loopback_is_this_machine(self):
         for host in ("localhost", "app.localhost", "127.0.0.1", "127.8.0.1", "::1", "[::1]", "LOCALHOST."):
@@ -98,7 +110,7 @@ class LocalOnly(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("node"), "the guard is a Node preload")
 class Guard(unittest.TestCase):
-    """_local_only.GUARD in a Node process, as every Node process of a browser run preloads it."""
+    """_local_network.GUARD in a Node process, as every Node process of a browser run preloads it."""
 
     def test_a_node_process_reaches_only_this_machine_however_it_connects(self):
         script = """const dgram = require("dgram"), dns = require("dns"), http = require("http"), net = require("net");
@@ -115,7 +127,7 @@ udp.send("x", 53, "10.255.255.1", (error) => { out("udp")(error); udp.close(); }
 """
         scratch = tempfile.mkdtemp(prefix="vv-guard-")
         self.addCleanup(shutil.rmtree, scratch, True)
-        env, record, _ = _local_only.node_guard(scratch)
+        env, record, _ = _local_network.node_guard(scratch)
         result = subprocess.run(["node", "-e", script], env=dict(os.environ, **env), capture_output=True, text=True, timeout=60)
         said = dict(line.split(" ", 1) for line in result.stdout.splitlines())
         # Nothing connects. An address elsewhere is refused before it leaves, a name by what it resolves to (one that does
@@ -123,7 +135,7 @@ udp.send("x", 53, "10.255.255.1", (error) => { out("udp")(error); udp.close(); }
         self.assertEqual(set(said), {"agent", "raw", "name", "lookup", "loopback", "ipv6", "udp"}, result.stdout + result.stderr)
         self.assertNotIn("connected", said.values())
         self.assertEqual((said["raw"], said["lookup"], said["udp"], said["loopback"]), ("ECONNREFUSED",) * 4)
-        self.assertEqual(sorted(_local_only.reached_by_node(record)), sorted([
+        self.assertEqual(sorted(_local_network.reached_by_node(record)), sorted([
             "rates.example.com:80", "10.255.255.1:5432", "127.foo.example.com:80", "localhost:80", "10.255.255.1:53/udp"]))
 
 

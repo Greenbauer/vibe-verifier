@@ -36,7 +36,8 @@ pytest when it is installed there and unittest when not or when the file's name 
 (a test run by path, which pytest cannot import). A Playwright spec that a --playwright config collects runs
 under that config against the site its webServer starts on this machine, each run refused (exit 2) first when a
 target is not this machine or what the run inherits holds a credential for anywhere else
-(gates/_regression_playwright.py, gates/_local_only.py). Another Playwright test, a Jest test (it imports
+(gates/_regression_playwright.py, gates/_local_only.py), and kept from reaching anywhere else during it
+(gates/_local_network.py). Another Playwright test, a Jest test (it imports
 @jest/globals, or its package has a Jest config, a jest dependency or a `jest` key), a bun test (it
 imports bun:test, or its package's scripts run `bun test`), a node:test file the repository does not
 run with `node --test`, a shell or other test, and a --tests path no --playwright config collects are

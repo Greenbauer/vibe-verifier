@@ -166,11 +166,14 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_qae_secret_names.py' -v
       - name: Run a fix's browser spec at the head and before the fix, with the Playwright and chromium it installed
         # regression-test-fails-on-base --playwright on synthetic repositories whose config starts a site on the runner
-        # (tests/test_regression_playwright.py). Its browser class skips where chromium is not installed, as in the test
-        # job; VV_REGRESSION_BROWSER=required makes a missing browser fail here instead, so a skip never reads as a pass.
+        # (tests/test_regression_playwright.py, and what a run may reach in tests/test_regression_playwright_network.py).
+        # Their browser classes skip where chromium is not installed, as in the test job; VV_REGRESSION_BROWSER=required
+        # makes a missing browser fail here instead, so a skip never reads as a pass.
         env:
           VV_REGRESSION_BROWSER: required
-        run: python3 -m unittest discover -s tests -p 'test_regression_playwright.py' -v
+        run: |
+          python3 -m unittest discover -s tests -p 'test_regression_playwright.py' -v
+          python3 -m unittest discover -s tests -p 'test_regression_playwright_network.py' -v
 
   # The runner-lane kit (lanes/README.md) is Linux-only and has tests of its own, which stub every
   # system tool on PATH: nothing is installed, mounted or started on the runner. Ubuntu 24.04, not

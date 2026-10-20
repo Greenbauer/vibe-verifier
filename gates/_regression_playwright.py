@@ -10,18 +10,19 @@ job's own local stack (a local database started before the gate) for that site t
 The gate never runs the config as it is. For each Playwright call it writes a wrapper beside the config, a .ts
 file (Playwright 1.59 and 1.64 both load a .ts wrapper of a .ts, .mts, .js, .mjs or .cjs config, in a CommonJS or
 an ES module package; an .mjs wrapper of a .ts config fails on 1.59), which imports the config and:
-- gives every browser context a proxy on this machine (_local_only.Refuser), bypassed only for loopback names,
-  that answers every request 403 and records the host it asked for;
+- gives every browser context a proxy on this machine (_local_network.Refuser), bypassed only for loopback names,
+  that answers every request 403 and records the host it asked for, and launches Chromium with WebRTC limited to
+  what goes through that proxy;
 - starts every webServer itself (`reuseExistingServer: false`): a server already running serves whatever code it
   was started with, so Playwright fails on one rather than test the wrong code;
 - reports through the gate's reporter (REPORTER), and writes the webServers it was given to a file, since a list
   of webServers is not in what a reporter sees.
 
 Every Node process of the run (the Playwright runner and its workers, the site's server, a global setup) preloads
-a guard (_local_only.GUARD, through NODE_OPTIONS, kept when a webServer env sets its own) that refuses any TCP
+a guard (_local_network.GUARD, through NODE_OPTIONS, kept when a webServer env sets its own) that refuses any TCP
 connection or UDP datagram to an address that is not loopback and records the host, whatever opens it: fetch, http
 with its own Agent, a database driver; a name is judged by every address it resolves to. HTTP_PROXY and
-HTTPS_PROXY point at the same proxy (_local_only.proxy_env), for Node's global agents and for a Chromium on Linux
+HTTPS_PROXY point at the same proxy (_local_network.proxy_env), for Node's global agents and for a Chromium on Linux
 that a global setup launches itself. Not covered: a process that clears NODE_OPTIONS, a non-Node process the site,
 a spec or a global setup starts (curl, say) that does not follow HTTP_PROXY, and on macOS, or for a link-local address on Linux, a browser the global setup launches itself.
 
@@ -46,6 +47,7 @@ import re
 import shutil
 import tempfile
 
+import _local_network
 import _local_only
 from _contract import CannotRun
 from _regression_runners import ADVICE, Run, first_line, remaining
@@ -70,7 +72,11 @@ import { writeFileSync } from "node:fs";
 const config = (loaded.default && loaded.default.default) || loaded.default || loaded;
 const proxy = { server: "http://127.0.0.1:%(port)d", bypass: "%(bypass)s" };
 const preload = %(guard)s;  // the gate's Node guard; a webServer env that sets NODE_OPTIONS keeps it
-const guard = (use) => Object.assign({}, use, { proxy });
+// Chromium's WebRTC would send UDP past any proxy (STUN): it may use only what goes through the proxy.
+const webrtc = "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
+const browserOf = (use) => (use && use.browserName) || (config.use && config.use.browserName) || "chromium";
+const guard = (use) => Object.assign({}, use, { proxy }, browserOf(use) !== "chromium" ? {} : { launchOptions: Object.assign({},
+  use && use.launchOptions, { args: [].concat((use && use.launchOptions && use.launchOptions.args) || [], webrtc) }) });
 const servers = [].concat(config.webServer || []);
 writeFileSync(%(servers)s, JSON.stringify(servers.map((server) => ({
   url: server.url || null, port: server.port || null, cwd: server.cwd || null, env: server.env || {} }))));
@@ -161,25 +167,25 @@ def call(repo, config, files, listing, local_names, deadline, timeout):
                         "stack before this gate, which runs the project's own Playwright" % config)
     scratch = tempfile.mkdtemp(prefix="vv-regression-")
     wrapper = os.path.join(directory, ".vv-regression-%d.config.ts" % os.getpid())
-    refuser = _local_only.Refuser()
+    refuser = _local_network.Refuser()
     port = refuser.port
     try:
         report, servers, reporter = (os.path.join(scratch, name) for name in ("report.json", "servers.json", "reporter.cjs"))
         with open(reporter, "w", encoding="utf-8") as handle:
             handle.write(REPORTER)
-        guard, record, require = _local_only.node_guard(scratch)
+        guard, record, require = _local_network.node_guard(scratch)
         with open(wrapper, "w", encoding="utf-8") as handle:
             handle.write(WRAPPER % {"config": os.path.basename(config), "port": port, "bypass": BYPASS, "servers": json.dumps(servers),
                                     "reporter": json.dumps(reporter), "report": json.dumps(report), "guard": json.dumps(require)})
         command = ["node", entry, "test", "--config", wrapper, "--output", os.path.join(scratch, "results"), "--retries=0"]
         command += ["--list", "--pass-with-no-tests"] if listing else []
         code, output = run_tool(command + [pattern(os.path.join(root, path)) for path in files], directory,
-                                remaining(deadline, timeout), "Playwright", env=dict(os.environ, **_local_only.proxy_env(port), **guard),
+                                remaining(deadline, timeout), "Playwright", env=dict(os.environ, **_local_network.proxy_env(port), **guard),
                                 budget=timeout, advice=ADVICE)
         found = read_json(report)
         if not isinstance(found, dict):
             raise CannotRun("Playwright wrote no report for %s (exit %d): %s" % (config, code, output.strip()[-2000:]))
-        return found, read_json(servers) or [], sorted(set(refuser.close()) | set(_local_only.reached_by_node(record)))
+        return found, read_json(servers) or [], sorted(set(refuser.close()) | set(_local_network.reached_by_node(record)))
     finally:
         refuser.close()
         if os.path.lexists(wrapper):
