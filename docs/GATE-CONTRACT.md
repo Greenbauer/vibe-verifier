@@ -543,8 +543,8 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   whatever lookup the caller gave, and one that does not resolve is recorded too; a UDP datagram to an
   address that is not loopback is dropped and recorded. Those hosts count as reached like the proxy's.
   `HTTP_PROXY`/`HTTPS_PROXY` point Node's global agents, and on Linux a browser a global setup launches
-  itself, at the proxy too. Not covered: a process that clears `NODE_OPTIONS`, a process the site starts
-  that is not Node, and a browser a global setup launches itself on macOS (or, on Linux, for a
+  itself, at the proxy too. Not covered: a process that clears `NODE_OPTIONS`, a process the site, a
+  spec or a global setup starts that is not Node and does not follow `HTTP_PROXY` (`curl`, say), and a browser a global setup launches itself on macOS (or, on Linux, for a
   link-local address); the refusal of credentials and database hosts for anywhere else is what keeps
   those from authenticating outside the job.
 - **Exit 2 also when** no changed test is one it can run (only Playwright specs no `--playwright` config

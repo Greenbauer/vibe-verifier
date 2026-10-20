@@ -22,8 +22,8 @@ a guard (_local_only.GUARD, through NODE_OPTIONS, kept when a webServer env sets
 connection or UDP datagram to an address that is not loopback and records the host, whatever opens it: fetch, http
 with its own Agent, a database driver; a name is judged by every address it resolves to. HTTP_PROXY and
 HTTPS_PROXY point at the same proxy (_local_only.proxy_env), for Node's global agents and for a Chromium on Linux
-that a global setup launches itself. Not covered: a process that clears NODE_OPTIONS, a non-Node process the site
-starts, and on macOS, or for a link-local address on Linux, a browser the global setup launches itself.
+that a global setup launches itself. Not covered: a process that clears NODE_OPTIONS, a non-Node process the site,
+a spec or a global setup starts (curl, say) that does not follow HTTP_PROXY, and on macOS, or for a link-local address on Linux, a browser the global setup launches itself.
 
 Before each run, `playwright test --list`, which loads the config and the specs and starts no server, no global
 setup and no browser, says which project collects which spec and with what baseURL. The gate refuses (exit 2)
