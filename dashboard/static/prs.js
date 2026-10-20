@@ -22,12 +22,8 @@
     repositories.forEach(repository => select.append(el("option", { value: repository, selected: state.repository === repository }, repository.split("/")[1])));
     const check = (label, key) => el("label", { class: "check-filter" },
       el("input", { type: "checkbox", checked: state[key], onchange: event => { state[key] = event.target.checked; renderPrRows(); } }), label);
-    const scale = el("select", { id: "time-scale", "aria-label": "CI timeline scale", onchange: event => {
-      state.timeScale = event.target.value; renderPrRows();
-    } }, el("option", { value: "shared", selected: state.timeScale === "shared" }, "Same time scale"),
-      el("option", { value: "row", selected: state.timeScale === "row" }, "Fit each row"));
-    // Grouped so a phone shows the search beside the title, then the two menus, then the two checkboxes.
-    return el("div", { class: "toolbar" }, search, el("div", { class: "toolbar-group" }, select, scale),
+    // Grouped so a phone shows the search beside the title, then the repository menu, then the two checkboxes.
+    return el("div", { class: "toolbar" }, search, el("div", { class: "toolbar-group" }, select),
       el("div", { class: "toolbar-group" }, check("Subscribed only", "subscribed"), check("Needs attention", "attention")));
   }
 
@@ -102,11 +98,10 @@
       return;
     }
     const now = Date.now();
-    const scale = state.timeScale === "row" ? null : VVTimeline.sharedScale(pulls, now);
     groupPulls(pulls).forEach(group => {
       const list = el("div", { class: "pr-list" });
       group.pulls.forEach(pull => {
-        const view = rowView(pull, scale, now);
+        const view = rowView(pull, now);
         list.append(prRow(pull, view));
         if (view.open) list.append(view.detail());
       });
@@ -157,12 +152,12 @@
 
   // A row's title opens the pull request on GitHub; the rest of the row, and the toggle at its end,
   // opens its CI timeline under it.
-  // What the list gives a row about its CI timeline: the row's timeline on the list's scale (null to
-  // fit the row), whether it is open, the toggle that opens or closes it, and the opened view.
-  function rowView(pull, scale, now) {
+  // What the list gives a row about its CI timeline: the row's timeline, fit to the row, whether it
+  // is open, the toggle that opens or closes it, and the opened view.
+  function rowView(pull, now) {
     const key = `${pull.repository}#${pull.number}`;
     const id = `timeline-${pull.repository.replace(/[^\w-]/g, "-")}-${pull.number}`;
-    return { key, id, open: expanded.has(key), timeline: VVTimeline.mini(pull, now, scale),
+    return { key, id, open: expanded.has(key), timeline: VVTimeline.mini(pull, now),
       toggle: () => {
         const opening = !expanded.has(key);
         expanded.clear();

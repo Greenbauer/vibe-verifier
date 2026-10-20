@@ -187,8 +187,8 @@ with no open pull request has no group and is not in the filter. The Pull reques
 about the repository set while it reads well: a problem shows as a yellow dot and a short message
 on the line under the title. No page has a sentence under its title describing the page. The search
 and filters follow the title on its row, left-aligned, and wrap below it when the window is too
-narrow. On a phone the search stays beside the title, the repository and time-scale menus share
-the next row, and the two checkboxes the row after. If the owner-wide read for `all` fails and there is no earlier set, it says
+narrow. On a phone the search stays beside the title, the repository menu takes the next row, and
+the two checkboxes the row after. If the owner-wide read for `all` fails and there is no earlier set, it says
 `Repository list is unavailable.` and does not claim the owner has zero repositories.
 
 With `all`, an installation token reads `GET /installation/repositories`. A person's `gh` login is
@@ -218,11 +218,11 @@ each commit status. It makes no extra GitHub call.
   started again on the same commit hours later. The timeline draws the latest round, from the last
   Actions job created after no job had run or waited for 15 minutes (another app's check or a status
   posted late does not start a round), so an old round never stretches a
-  row or the shared scale. The opened view says how many checks of earlier rounds it left out; the
+  row. The opened view says how many checks of earlier rounds it left out; the
   counts in the CI column still include them. The row's CI time times the same round.
-- **The time scale** is the same for every row by default: the longest timeline on screen spans the
-  column, so a 12-minute run looks short beside a 77-minute one. The toolbar's scale menu can fit
-  each row to its own width instead, which shows each run's shape at the cost of comparing rows.
+- **The time scale** is each row's own: a row's timeline spans the whole column from the round's
+  first job to its last finish, or to now while it runs, so a running round's bars narrow as it
+  grows. A 12-minute run and a 77-minute one both fill the column; the CI column gives their times.
 - **A wait for a runner** is the time from GitHub creating a job to a runner starting it. GitHub
   creates a job when its run starts, or, for a job that needs another, when that one finishes, so
   waits start at those moments. A wait of 30 seconds or less is GitHub's normal pickup and is not
@@ -240,13 +240,14 @@ each commit status. It makes no extra GitHub call.
   never keeps the timeline open or widens a row's scale.
 - One row's timeline is open at a time: opening a row closes any other. The open row and open steps
   last until the page reloads. The page's refresh every 30 seconds keeps
-  them open, and keeps focus on the scale menu, a row's arrow or a job's step toggle when one of
-  them had it.
+  them open, and keeps focus on the search, the repository menu, a row's arrow or a job's step
+  toggle when one of them had it.
 - A job's line is empty while it is still within its first 30 seconds of waiting, and another
   app's queued check draws nothing until it starts; the counts in the CI column include both.
 
 `tests/test_dashboard_timeline.py` runs `dashboard/static/timeline.test.js` and `dashboard/static/prs.test.js` and checks the row's
-swap from the meter, the scale menu, and the bar colors and box.
+swap from the meter, that there is no scale menu and each row is fit to its own timeline, and the bar
+colors and box.
 
 ## Work view
 
