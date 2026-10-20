@@ -3,9 +3,12 @@
 Every Playwright call of the gate (the listing, the run at the head, the run on the code before the fix) runs in a
 container of the project's Playwright image (mcr.microsoft.com/playwright:v<its version>-noble, or --browser-image)
 on one Docker network created `--internal` with no address on its bridge (com.docker.network.bridge.inhibit_ipv4):
-a container there has a route to the network's other containers and to nothing else, not this machine and not a
-cloud metadata service, and Docker's DNS answers it no outside name. Whatever runs there (the site's server, the
-browser, a spec, a global setup, any process they start, over TCP or UDP) can reach only the network.
+a container there has a route to the network's other containers and to nothing else, not a cloud metadata service
+and, for a container with no capability such as the run's, not this machine, and Docker's DNS answers it no outside
+name. Whatever runs in the run's container (the site's server, the browser, a spec, a global setup, any process they
+start, over TCP or UDP) can reach only the network. The limit: the stack's own containers keep Docker's default
+capabilities and this machine keeps an interface on the network (with no IPv4 address), so a root process in one
+of them could send raw traffic to this machine itself.
 
 The job's local stack (--stack-network NAME, the Docker network its containers run on, such as Supabase's
 `supabase_network_<project>`) is moved onto that network at the first run (a listing starts no site, so it does not
