@@ -7,25 +7,20 @@ machine's published port, so the listener does hear a way out (the control). The
 found is tried from a sealed run, and the listener hears none of them: a raw Node socket from the site's server, a
 different node first on PATH that starts the real one with an empty environment, a page's WebRTC, a cloud metadata address, a spec's own
 proxy, and this machine itself. Each was counted as refused, so a changed spec that failed in that run is exit 2.
-And the job's stack, moved into the seal, is reachable from the site at its usual loopback port and from the gate's
-own tests on this machine (through the relay), cannot reach the listener itself, and is back on its own network,
-reachable from this machine, afterwards, also after a run that cannot be judged; nothing of the seal is left.
+The job's stack in the seal is tests/test_regression_playwright_stack.py.
 
 Skips without Docker, as tests/test_regression_playwright.py does (VV_REGRESSION_SEALED)."""
 import json
 import os
-import re
 import secrets
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from pathlib import Path
 
-from test_regression_playwright import DOES_NOT_REPRODUCE, PRICE_FIX, REPRODUCES, SERVER, SPEC, Browser, free_port
+from test_regression_playwright import PRICE_FIX, REPRODUCES, SERVER, SPEC, Browser, free_port
 from test_regression_test import tree_is_head
 
 LISTENER = r"""const fs = require("fs"), net = require("net"), dgram = require("dgram");
@@ -50,17 +45,6 @@ const tried = await new Promise((done) => net.connect({ host: process.env.TARGET
   .on("connect", function () { this.destroy(); done("reached"); }).on("timeout", function () { this.destroy(); done("timeout"); })
   .on("error", (error) => done(error.code)));
 appendFileSync("started.log", "outside: " + tried + "\\n");""")
-# A stand-in for the job's stack: answers on 8080 whether it could reach the listener itself, through this machine.
-STACK = r"""const net = require("net");
-require("http").createServer((request, response) => net.connect({ host: process.env.TARGET_ADDRESS, port: Number(process.env.TARGET_PORT), timeout: 3000 })
-  .on("connect", function () { this.destroy(); response.end("stack-ok reached"); })
-  .on("timeout", function () { this.destroy(); response.end("stack-ok timeout"); })
-  .on("error", (error) => response.end("stack-ok " + error.code))).listen(8080, "0.0.0.0");
-"""
-# The site renders what the stack answered, read at its loopback port as a site in CI would read it.
-SERVER_STACK = SERVER.replace("response.end(`<h1 id=\"total\">${discount(200, true)}</h1>`);",
-                              "fetch(process.env.STACK_URL).then((answer) => answer.text(), (error) => 'unreachable').then((stack) =>\n"
-                              "    response.end(`<p id=\"stack\">${stack}</p><h1 id=\"total\">${discount(200, true)}</h1>`));")
 REFUSED = "failed in a run whose sealed network refused 1 attempt(s) to reach an address off the network"
 
 
@@ -68,18 +52,13 @@ def docker(*args):
     return subprocess.run(["docker", *args], capture_output=True, text=True, check=True).stdout.strip()
 
 
-def seal_left():
-    """The gate's own containers and networks (vv-regression-*) on this Docker: none once a gate has finished."""
-    return (docker("ps", "-a", "--filter", "name=vv-regression-", "--format", "{{.Names}}"),
-            docker("network", "ls", "--filter", "name=vv-regression-", "--format", "{{.Name}}"))
-
-
 def address_of(container, network):
     return json.loads(docker("inspect", container))[0]["NetworkSettings"]["Networks"][network]["IPAddress"]
 
 
-class Network(Browser):
-    """The listener, the ways out, and the stack, in the image the fixture's Playwright runs in."""
+class Outside(Browser):
+    """The outside listener, in the image the fixture's Playwright runs in (tests/test_regression_playwright_stack.py
+    shares it)."""
 
     @classmethod
     def setUpClass(cls):
@@ -108,6 +87,10 @@ class Network(Browser):
 
     def target(self, address, port, extra=None):
         return self.env(dict({"TARGET_ADDRESS": address, "TARGET_PORT": str(port)}, **(extra or {})))
+
+
+class Network(Outside):
+    """The control, and each way out, refused."""
 
     def test_the_listener_hears_a_container_that_is_not_sealed(self):
         # The control: without the seal, a container reaches the listener directly, over UDP, and through this machine.
@@ -197,80 +180,6 @@ class Network(Browser):
         self.assertEqual(self.heard(), before)
         tree_is_head(self, repo)
 
-    def stack(self):
-        """A stand-in for the job's stack on a network of its own, its port published on this machine: (network, port)."""
-        stack, port = "vv-stack-" + secrets.token_hex(3), free_port()
-        docker("network", "create", stack)
-        self.addCleanup(subprocess.run, ["docker", "network", "rm", stack], capture_output=True)
-        self.addCleanup(subprocess.run, ["docker", "rm", "-f", stack], capture_output=True)
-        # The stack reaches this machine's published port of the listener as host.docker.internal, Docker's name for it.
-        docker("run", "-d", "--init", "--name", stack, "--network", stack, "--user", self.user, "--add-host", "host.docker.internal:host-gateway",
-               "-e", "TARGET_ADDRESS=host.docker.internal", "-e", "TARGET_PORT=%d" % self.published, "-p", "127.0.0.1:%d:8080" % port,
-               self.image, "node", "-e", STACK)
-        return stack, port
-
-    def put_back(self, stack, port, before):
-        """The stack is on its own network alone again, published on this machine, able to reach out; the seal left nothing."""
-        self.assertEqual(list(json.loads(docker("inspect", stack))[0]["NetworkSettings"]["Networks"]), [stack])
-        answer = None
-        for _ in range(20):
-            try:
-                answer = urllib.request.urlopen("http://127.0.0.1:%d/" % port, timeout=5).read().decode()
-                break
-            except OSError:
-                time.sleep(0.5)
-        self.assertEqual(answer, "stack-ok reached")
-        self.assertEqual(seal_left(), before)
-
-    def test_the_job_s_stack_is_reachable_from_the_site_cannot_reach_out_and_is_put_back(self):
-        stack, port = self.stack()
-        before, left = self.heard(), seal_left()
-        repo = self.project({"server.mjs": SERVER_STACK})
-        spec = SPEC + 'test("members get 10% off over 100", async ({ page }) => {\n  await page.goto("/");\n' \
-                      '  await expect(page.locator("#stack")).toHaveText("stack-ok ENETUNREACH");\n' \
-                      '  await expect(page.locator("#total")).toHaveText("180", { timeout: 3000 });\n});\n'
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": spec}, "--stack-network", stack,
-                          env=self.env({"STACK_URL": "http://127.0.0.1:%d/" % port}))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('fails on the code before the fix: Error: expect(locator).toHaveText(expected) failed Expected: "180" '
-                      'Received: "200"', result.stderr)
-        self.assertEqual(self.heard(), before)
-        # What each part cost, from the gate's own lines, for the CI log (docs/features/regression-test.md quotes it).
-        sys.stderr.write("".join("\n  " + line for line in result.stderr.splitlines() if re.search(r": \d+\.\ds$", line)) + "\n")
-        self.put_back(stack, port, left)
-        tree_is_head(self, repo)
-
-    def test_the_gate_s_other_tests_reach_the_stack_while_it_is_sealed(self):
-        # A node:test file of the same fix runs on this machine. Before the fix it runs after the browser run at the head
-        # moved the stack into the seal; the relay publishes its port again, so it reads the stack and fails on the
-        # discount, as the bug shows, and not on a stack it cannot reach. The spec does not reproduce, so it decides.
-        stack, port = self.stack()
-        left = seal_left()
-        repo = self.project({"package.json": json.dumps({"type": "module", "scripts": {"test": "node --test tests/*.test.mjs"}}) + "\n"})
-        reads = 'import { test } from "node:test";\nimport assert from "node:assert";\nimport { discount } from "../src/price.mjs";\n' \
-                'test("members get 10% off, by the stack", async () => {\n' \
-                '  assert.match(await (await fetch(process.env.STACK_URL)).text(), /^stack-ok/);\n' \
-                '  assert.strictEqual(discount(200, true), 180);\n});\n'
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": DOES_NOT_REPRODUCE, "tests/stack.test.mjs": reads},
-                          "--stack-network", stack, env=self.env({"STACK_URL": "http://127.0.0.1:%d/" % port}))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("published again through a relay", result.stderr)
-        self.assertRegex(result.stderr, r"tests/stack\.test\.mjs: members get 10% off, by the stack fails on the code before the "
-                                        r"fix: .*200 !== 180")
-        self.put_back(stack, port, left)
-        tree_is_head(self, repo)
-
-    def test_a_run_that_cannot_be_judged_still_puts_the_stack_back(self):
-        stack, port = self.stack()
-        left = seal_left()
-        server = SERVER.replace('appendFileSync("started.log", "started\\n");', 'process.exit(1);')
-        repo = self.project({"server.mjs": server})
-        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--stack-network", stack, "--soak",
-                          env=self.env({"STACK_URL": "http://127.0.0.1:%d/" % port}))
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("Process from config.webServer was not able to start", result.stderr)
-        self.put_back(stack, port, left)
-        tree_is_head(self, repo)
 
 if __name__ == "__main__":
     unittest.main()
