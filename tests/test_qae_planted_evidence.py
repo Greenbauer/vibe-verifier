@@ -92,6 +92,23 @@ class PlantedEvidence(unittest.TestCase):
                 git(self.repo, "commit", "-q", "-m", "links")
                 self.assert_refused("the pull request tracks %s" % tracked)
 
+    def test_a_tracked_path_is_found_under_any_spelling_of_the_evidence_directory(self):
+        # The checkout named through a link to it, and the evidence given under a tracked link on the way to it.
+        self.walk(self.evidence)
+        git(self.repo, "add", "-f", "qae-artifacts")
+        git(self.repo, "commit", "-q", "-m", "evidence")
+        alias = Path(self.work, "alias")
+        os.symlink(self.repo, alias)
+        for result in (gate("qae-artifacts", alias, "--artifacts", str(self.evidence)),
+                       gate("qae-artifacts", self.repo, "--artifacts", str(Path(alias, "qae-artifacts")))):
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("the pull request tracks qae-artifacts/qae/AC1-step-1.png", result.stdout)
+        os.symlink("qae-artifacts", Path(self.repo, "via"))
+        commit(self.repo, {}, "a tracked link on the way")
+        result = gate("qae-artifacts", self.repo, "--artifacts", str(Path(self.repo, "via", "qae")))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("the pull request tracks via", result.stdout)
+
     def test_a_link_in_evidence_outside_the_checkout_is_refused_too(self):
         # The gates take --artifacts anywhere: a link is refused wherever the directory is, tracked or not.
         outside = Path(self.work, "evidence")
