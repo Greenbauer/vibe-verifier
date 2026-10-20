@@ -35,8 +35,8 @@ dgram.createSocket("udp4").on("message", (message, from) => log("udp " + from.ad
 TRY = r"""const net = require("net"), dgram = require("dgram");
 const [address, gateway, port] = process.argv.slice(1);
 const tcp = (host, to) => new Promise((done) => net.connect({ host, port: Number(to), timeout: 3000 })
-  .on("connect", function () { this.destroy(); done("connected"); }).on("timeout", function () { this.destroy(); done("timeout"); })
-  .on("error", (error) => done(error.code)));
+  .on("data", function (answer) { this.destroy(); done(String(answer).trim()); })
+  .on("timeout", function () { this.destroy(); done("timeout"); }).on("error", (error) => done(error.code)));
 (async () => {
   const udp = dgram.createSocket("udp4");
   const sent = await new Promise((done) => udp.send("x", 3478, address, (error) => { udp.close(); done(error ? error.code : "sent"); }));
@@ -107,7 +107,7 @@ class Network(Browser):
         before = self.heard()
         said = json.loads(docker("run", "--rm", "--network", self.outside, self.image, "node", "-e", TRY, self.address,
                                  self.gateway, str(self.published)))
-        self.assertEqual(said, {"direct": "connected", "machine": "connected", "udp": "sent"})
+        self.assertEqual(said, {"direct": "answered", "machine": "answered", "udp": "sent"})  # the listener's own answer
         heard = [line.split()[0] for line in self.heard()[len(before):]]
         self.assertGreaterEqual(heard.count("tcp"), 2, heard)  # directly, and through this machine's published port
         self.assertGreaterEqual(heard.count("udp"), 1, heard)
