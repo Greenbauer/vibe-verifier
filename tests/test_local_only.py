@@ -138,6 +138,44 @@ udp.send("x", 53, "10.255.255.1", (error) => { out("udp")(error); udp.close(); }
         self.assertEqual(sorted(_local_network.reached_by_node(record)), sorted([
             "rates.example.com:80", "10.255.255.1:5432", "127.foo.example.com:80", "localhost:80", "10.255.255.1:53/udp"]))
 
+    def guarded(self, command, **env):
+        scratch = tempfile.mkdtemp(prefix="vv-guard-")
+        self.addCleanup(shutil.rmtree, scratch, True)
+        guard, record, _ = _local_network.node_guard(scratch)
+        result = subprocess.run(command, env=dict(os.environ, **guard, **env), capture_output=True, text=True, timeout=60)
+        return dict(line.split(" ", 1) for line in result.stdout.splitlines()), _local_network.reached_by_node(record), result
+
+    def test_every_way_of_connecting_to_this_machine_still_connects(self):
+        # A socket's own connect takes (port, callback), (port, host, callback) and (options, callback) as net.connect does.
+        script = """const net = require("net");
+const server = net.createServer((socket) => socket.end()).listen(0, () => {
+  const port = server.address().port, shapes = [[port], [port, "127.0.0.1"], [{ port, host: "127.0.0.1" }]];
+  let left = shapes.length;
+  shapes.forEach((shape, index) => new net.Socket().on("error", (error) => console.log(index, error.code || error.message))
+    .connect(...shape, () => { console.log(index, "connected"); if (--left === 0) server.close(); }));
+});
+"""
+        said, reached, result = self.guarded(["node", "-e", script])
+        self.assertEqual(said, {"0": "connected", "1": "connected", "2": "connected"}, result.stdout + result.stderr)
+        self.assertEqual(reached, [])
+
+    def test_a_node_given_its_own_node_options_by_its_command_is_guarded_and_so_are_its_children(self):
+        # A webServer command or a package.json script that sets NODE_OPTIONS replaces the gate's: the node first on PATH
+        # adds the guard back, and the guarded process hands it to the processes it starts.
+        script = """const net = require("net"), { spawnSync } = require("child_process");
+net.connect({ port: 5432, host: "10.255.255.1", timeout: 3000 }).on("timeout", function () { this.destroy(); console.log("own reached"); })
+  .on("error", (error) => {
+    console.log("own", error.code);
+    const child = spawnSync(process.execPath, ["-e", process.env.CHILD], { encoding: "utf8" });
+    process.stdout.write(child.stdout);
+  });
+"""
+        child = ('require("net").connect({ port: 5433, host: "10.255.255.1", timeout: 3000 }).on("timeout", function () '
+                 '{ this.destroy(); console.log("child reached"); }).on("error", (error) => console.log("child", error.code));')
+        said, reached, result = self.guarded(["sh", "-c", 'NODE_OPTIONS=--max-old-space-size=512 node -e "$SCRIPT"'], SCRIPT=script, CHILD=child)
+        self.assertEqual(said, {"own": "ECONNREFUSED", "child": "ECONNREFUSED"}, result.stdout + result.stderr)
+        self.assertEqual(sorted(reached), ["10.255.255.1:5432", "10.255.255.1:5433"])
+
 
 class Filters(unittest.TestCase):
     """gates/_regression_playwright.py's text handling: the file filter it hands Playwright, and an error as one line."""

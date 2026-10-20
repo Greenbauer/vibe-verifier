@@ -2,7 +2,7 @@
 tests/test_regression_playwright.py: a link-local address goes to the gate's proxy, a Node process's own
 connections of any kind are refused and recorded by the guard (gates/_local_network.py), also when a webServer's env
 sets its own NODE_OPTIONS, a site on IPv6 loopback is this machine, and a page's WebRTC sends nothing past the
-proxy. Skips without the browser, as tests/test_regression_playwright.py does."""
+proxy, the flag that limits it keeping a config's own launch options. Skips without the browser, as tests/test_regression_playwright.py does."""
 import socket
 import subprocess
 import threading
@@ -48,6 +48,18 @@ class Network(Browser):
         repo = self.project({"server.mjs": SERVER_CONNECTS})
         config = Path(repo, "playwright.config.mjs")
         config.write_text(config.read_text().replace('env: { PORT:', 'env: { NODE_OPTIONS: "--max-old-space-size=512", PORT:'))
+        subprocess.run(["git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+                        "commit", "-qam", "options"], check=True)
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(Path(repo, "started.log").read_text(), "agent: blocked, raw: blocked\n" * 2)
+        self.assertIn("failed in a run that reached for db.example.com:5432, rates.example.com:80", result.stderr)
+        tree_is_head(self, repo)
+
+    def test_a_webserver_command_that_sets_node_options_keeps_the_guard(self):
+        repo = self.project({"server.mjs": SERVER_CONNECTS})
+        config = Path(repo, "playwright.config.mjs")
+        config.write_text(config.read_text().replace('command: "node server.mjs"', 'command: "NODE_OPTIONS=--max-old-space-size=512 node server.mjs"'))
         subprocess.run(["git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
                         "commit", "-qam", "options"], check=True)
         result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
@@ -102,6 +114,24 @@ class Network(Browser):
         thread.join()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(heard, [])
+        tree_is_head(self, repo)
+
+    def test_the_webrtc_limit_keeps_the_config_s_own_launch_options_in_a_project_that_sets_none(self):
+        # Playwright merges use one level deep, so a project's launchOptions would replace the config's: a project
+        # with none keeps the config's (here a V8 flag the spec can see) beside the gate's WebRTC flag.
+        repo = self.project()
+        config = Path(repo, "playwright.config.mjs")
+        config.write_text(config.read_text().replace("  use: { baseURL:", '  projects: [{ name: "chromium", use: { browserName: "chromium" } }],\n'
+                                                     '  use: { launchOptions: { args: ["--js-flags=--expose-gc"] }, baseURL:'))
+        subprocess.run(["git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+                        "commit", "-qam", "projects"], check=True)
+        spec = SPEC + 'test("members get 10% off over 100", async ({ page }) => {\n  await page.goto("/");\n' \
+                      '  expect(await page.evaluate(() => typeof gc)).toBe("function");\n' \
+                      '  await expect(page.locator("#total")).toHaveText("180", { timeout: 3000 });\n});\n'
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": spec})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('e2e/price.spec.mjs: chromium > members get 10% off over 100 fails on the code before the fix: Error: '
+                      'expect(locator).toHaveText(expected) failed Expected: "180" Received: "200"', result.stderr)
         tree_is_head(self, repo)
 
 

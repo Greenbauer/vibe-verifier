@@ -4,13 +4,26 @@ for somewhere else even when no test's own error says so:
 
 - Refuser, a proxy on this machine that every browser context the config creates, the request fixture and Node's
   global agents (proxy_env) send every host but loopback to; it answers each request 403.
-- GUARD, preloaded into every Node process of the run through NODE_OPTIONS (node_guard): the Playwright runner and
-  its workers, the site's server, a global setup. It refuses any TCP connection or UDP datagram to an address that
-  is not loopback, whatever opens it, judging a name by every address it resolves to.
+- GUARD, preloaded into every Node process of the run (node_guard): through NODE_OPTIONS (kept when a webServer env
+  sets its own, and passed on by a guarded process to its children), and through a `node` first on the run's PATH
+  that adds it whatever NODE_OPTIONS a command sets (`NODE_OPTIONS=--max-old-space-size=4096 next start`, a
+  package.json script's shape): the Playwright runner and its workers, the site's server, a global setup. It
+  refuses any TCP connection or UDP datagram to an address that is not loopback, whatever opens it (fetch, http
+  with its own Agent, a database driver), judging a name by every address it resolves to, through whatever lookup
+  the caller gave.
+
+HTTP_PROXY and HTTPS_PROXY (proxy_env) point Node's global agents, and a Chromium on Linux that a global setup
+launches itself, at the proxy. Not covered: a Node process started by its own path rather than `node` on PATH
+whose NODE_OPTIONS was cleared or replaced, a non-Node process the site, a spec or a global setup starts (curl,
+say) that does not follow HTTP_PROXY, a spec that sets its own `proxy` or `launchOptions` with `test.use` (they
+replace the gate's), WebRTC from Firefox or WebKit, and on macOS, or for a link-local address on Linux, a browser
+the global setup launches itself.
 
 What the credentials a run inherits may hold is gates/_local_only.py.
 """
 import os
+import shlex
+import shutil
 import socket
 import threading
 import urllib.parse
@@ -73,6 +86,9 @@ def proxy_env(port):
 # site's server, a global setup. A TCP connection to a host that is not this machine fails as ECONNREFUSED and its
 # host is recorded, whatever opens it: fetch, http with its own Agent, a database driver, a raw net.connect.
 GUARD = r"""// Written by regression-test-fails-on-base: this process may reach only this machine.
+// A process given the guard by the gate's node, with NODE_OPTIONS of its own, passes it on to its children.
+if (!(process.env.NODE_OPTIONS || "").includes(__filename))
+  process.env.NODE_OPTIONS = ((process.env.NODE_OPTIONS || "") + ' --require "' + __filename + '"').trim();
 const dgram = require("dgram");
 const dns = require("dns");
 const fs = require("fs");
@@ -97,10 +113,8 @@ const checked = (own, port) => function (hostname, options, callback) {
 const connect = net.Socket.prototype.connect;
 net.Socket.prototype.connect = function (...args) {
   const options = Array.isArray(args[0]) ? args[0][0] : args[0];
-  if (options === null || typeof options !== "object") {  // (port, host, callback) or (path, callback)
-    const given = typeof options === "string" && !/^\d+$/.test(options) ? { path: options } : { port: options, host: args[1] };
-    return net.Socket.prototype.connect.call(this, given, ...args.filter((value) => typeof value === "function"));
-  }
+  // (port[, host][, callback]) or (path[, callback]): read as Node reads them, into the array its connect takes as read.
+  if (options === null || typeof options !== "object") return net.Socket.prototype.connect.call(this, net._normalizeArgs(args));
   if (options.path) return connect.apply(this, args);
   const host = bare(typeof options.host === "string" && options.host ? options.host : "localhost");
   if (net.isIP(host) ? loopback(host) : named(host) && !options.lookup) return connect.apply(this, args);
@@ -133,15 +147,27 @@ dgram.Socket.prototype.connect = function (port, address, callback) {
 """
 
 
+# `node` first on a run's PATH: the real node with the guard, whatever NODE_OPTIONS the command that runs it sets.
+SHIM = """#!/bin/sh
+# Written by regression-test-fails-on-base: node, with the gate's guard whatever NODE_OPTIONS says.
+exec %s --require %s "$@"
+"""
+
+
 def node_guard(scratch):
-    """({NODE_OPTIONS, VV_REGRESSION_REACHED} that preload GUARD into a run's Node processes, the file it records each
-    blocked connection's host in, the `--require` option itself, for a webServer env that sets NODE_OPTIONS)."""
-    guard, reached = os.path.join(scratch, "local-only.cjs"), os.path.join(scratch, "reached.txt")
+    """({NODE_OPTIONS, PATH, VV_REGRESSION_REACHED} that preload GUARD into a run's Node processes, the file it records
+    each blocked connection's host in, the `--require` option itself, for a webServer env that sets NODE_OPTIONS).
+    PATH starts with a directory holding SHIM as `node`, in front of the node this environment runs."""
+    guard, reached, shim = (os.path.join(scratch, name) for name in ("local-only.cjs", "reached.txt", "bin"))
     with open(guard, "w", encoding="utf-8") as handle:
         handle.write(GUARD)
+    os.makedirs(shim, exist_ok=True)
+    with open(os.path.join(shim, "node"), "w", encoding="utf-8") as handle:
+        handle.write(SHIM % (shlex.quote(shutil.which("node")), shlex.quote(guard)))
+    os.chmod(os.path.join(shim, "node"), 0o700)
     require = '--require "%s"' % guard
-    return {"NODE_OPTIONS": (os.environ.get("NODE_OPTIONS", "") + " " + require).strip(), "VV_REGRESSION_REACHED": reached}, \
-        reached, require
+    return {"NODE_OPTIONS": (os.environ.get("NODE_OPTIONS", "") + " " + require).strip(), "VV_REGRESSION_REACHED": reached,
+            "PATH": shim + os.pathsep + os.environ.get("PATH", "")}, reached, require
 
 
 def reached_by_node(path):

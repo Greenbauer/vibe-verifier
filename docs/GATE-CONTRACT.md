@@ -485,11 +485,12 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   `webServer` (one that serves the working tree, not an earlier build), the job's own local stack, and
   its browsers ([what each repository provides, and the cost](features/regression-test.md#browser-specs---playwright)).
   The gate never runs the config as it is: it writes a `.ts` wrapper beside it for each call that imports
-  it, routes every browser context and the `request` fixture through a proxy the gate runs on the
+  it, routes every browser context the config creates and the `request` fixture through a proxy the gate runs on the
   runner, bypassed only for loopback names (`<-loopback>` first, so Chromium's own bypass of link-local
   addresses such as a cloud metadata service's is off), launches Chromium with WebRTC limited to what
   goes through that proxy (`--force-webrtc-ip-handling-policy=disable_non_proxied_udp`, since STUN's UDP
-  passes any proxy by), sets every `webServer`'s
+  passes any proxy by; added to a project's own `launchOptions`, or to the config's for a project that sets
+  none, since a project's replace the config's), sets every `webServer`'s
   `reuseExistingServer` to false, and reports through a reporter of its own. Each run is one attempt
   (`--retries=0`) with its output in a scratch directory; `expected` is a pass, `unexpected` a failure
   with its error (`Expected` and `Received` kept), `skipped` a skip. A file that does not load stops
@@ -539,13 +540,15 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   at its address, a global setup that threw): the run cannot say whether the bug shows. Every Node
   process of the run (the Playwright runner and its workers, the site's server, a global setup) preloads
   a guard through `NODE_OPTIONS` (`gates/_local_network.py`, `GUARD`; added to a `webServer`'s own
-  `NODE_OPTIONS` when its `env` sets one) that refuses any TCP connection to an address that is not
+  `NODE_OPTIONS` when its `env` sets one, and passed on by a guarded process to the processes it starts)
+  and through a `node` first on the run's `PATH` that adds it whatever `NODE_OPTIONS` a command sets
+  (`NODE_OPTIONS=--max-old-space-size=4096 next start`, a `package.json` script's shape), which refuses any TCP connection to an address that is not
   loopback as `ECONNREFUSED` and records the host, whatever opens it (`fetch`, `http` with its own
   `Agent`, a database driver, `net.connect`); a name is judged by every address it resolves to, through
   whatever lookup the caller gave, and one that does not resolve is recorded too; a UDP datagram to an
   address that is not loopback is dropped and recorded. Those hosts count as reached like the proxy's.
   `HTTP_PROXY`/`HTTPS_PROXY` point Node's global agents, and on Linux a browser a global setup launches
-  itself, at the proxy too. Not covered: a process that clears `NODE_OPTIONS`, a process the site, a
+  itself, at the proxy too. Not covered: a Node process started by its own path rather than `node` on `PATH` whose `NODE_OPTIONS` was cleared or replaced, a spec that sets its own `proxy` or `launchOptions` with `test.use` (they replace the gate's), a process the site, a
   spec or a global setup starts that is not Node and does not follow `HTTP_PROXY` (`curl`, say), and a browser a global setup launches itself on macOS (or, on Linux, for a
   link-local address); the refusal of credentials and database hosts for anywhere else is what keeps
   those from authenticating outside the job.

@@ -10,21 +10,18 @@ job's own local stack (a local database started before the gate) for that site t
 The gate never runs the config as it is. For each Playwright call it writes a wrapper beside the config, a .ts
 file (Playwright 1.59 and 1.64 both load a .ts wrapper of a .ts, .mts, .js, .mjs or .cjs config, in a CommonJS or
 an ES module package; an .mjs wrapper of a .ts config fails on 1.59), which imports the config and:
-- gives every browser context a proxy on this machine (_local_network.Refuser), bypassed only for loopback names,
-  that answers every request 403 and records the host it asked for, and launches Chromium with WebRTC limited to
-  what goes through that proxy;
+- gives every browser context the config creates a proxy on this machine (_local_network.Refuser), bypassed only
+  for loopback names, that answers every request 403 and records the host it asked for, and launches Chromium with
+  WebRTC limited to what goes through that proxy (a flag added to a project's own launchOptions, or the config's
+  when it sets none);
 - starts every webServer itself (`reuseExistingServer: false`): a server already running serves whatever code it
   was started with, so Playwright fails on one rather than test the wrong code;
 - reports through the gate's reporter (REPORTER), and writes the webServers it was given to a file, since a list
   of webServers is not in what a reporter sees.
 
 Every Node process of the run (the Playwright runner and its workers, the site's server, a global setup) preloads
-a guard (_local_network.GUARD, through NODE_OPTIONS, kept when a webServer env sets its own) that refuses any TCP
-connection or UDP datagram to an address that is not loopback and records the host, whatever opens it: fetch, http
-with its own Agent, a database driver; a name is judged by every address it resolves to. HTTP_PROXY and
-HTTPS_PROXY point at the same proxy (_local_network.proxy_env), for Node's global agents and for a Chromium on Linux
-that a global setup launches itself. Not covered: a process that clears NODE_OPTIONS, a non-Node process the site,
-a spec or a global setup starts (curl, say) that does not follow HTTP_PROXY, and on macOS, or for a link-local address on Linux, a browser the global setup launches itself.
+the guard of gates/_local_network.py, and HTTP_PROXY and HTTPS_PROXY point at the same proxy; what each covers, and
+what neither does, is said there.
 
 Before each run, `playwright test --list`, which loads the config and the specs and starts no server, no global
 setup and no browser, says which project collects which spec and with what baseURL. The gate refuses (exit 2)
@@ -75,8 +72,10 @@ const preload = %(guard)s;  // the gate's Node guard; a webServer env that sets 
 // Chromium's WebRTC would send UDP past any proxy (STUN): it may use only what goes through the proxy.
 const webrtc = "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
 const browserOf = (use) => (use && use.browserName) || (config.use && config.use.browserName) || "chromium";
-const guard = (use) => Object.assign({}, use, { proxy }, browserOf(use) !== "chromium" ? {} : { launchOptions: Object.assign({},
-  use && use.launchOptions, { args: [].concat((use && use.launchOptions && use.launchOptions.args) || [], webrtc) }) });
+// A project's launchOptions replace the config's (Playwright merges use one level deep): a project with none starts from the config's.
+const launch = (use) => (use && use.launchOptions) || (config.use && config.use.launchOptions) || {};
+const guard = (use) => Object.assign({}, use, { proxy }, browserOf(use) !== "chromium" ? {} : {
+  launchOptions: Object.assign({}, launch(use), { args: [].concat(launch(use).args || [], webrtc) }) });
 const servers = [].concat(config.webServer || []);
 writeFileSync(%(servers)s, JSON.stringify(servers.map((server) => ({
   url: server.url || null, port: server.port || null, cwd: server.cwd || null, env: server.env || {} }))));
