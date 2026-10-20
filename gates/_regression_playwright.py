@@ -18,8 +18,9 @@ an ES module package; an .mjs wrapper of a .ts config fails on 1.59), which impo
   of webServers is not in what a reporter sees.
 
 Every Node process of the run (the Playwright runner and its workers, the site's server, a global setup) preloads
-a guard (_local_only.GUARD, through NODE_OPTIONS) that refuses any TCP connection to a host that is not this machine
-and records the host, whatever opens it: fetch, http with its own Agent, a database driver. HTTP_PROXY and
+a guard (_local_only.GUARD, through NODE_OPTIONS, kept when a webServer env sets its own) that refuses any TCP
+connection or UDP datagram to an address that is not loopback and records the host, whatever opens it: fetch, http
+with its own Agent, a database driver; a name is judged by every address it resolves to. HTTP_PROXY and
 HTTPS_PROXY point at the same proxy (_local_only.proxy_env), for Node's global agents and for a Chromium on Linux
 that a global setup launches itself. Not covered: a process that clears NODE_OPTIONS, a non-Node process the site
 starts, and on macOS, or for a link-local address on Linux, a browser the global setup launches itself.
@@ -68,13 +69,15 @@ import { writeFileSync } from "node:fs";
 
 const config = (loaded.default && loaded.default.default) || loaded.default || loaded;
 const proxy = { server: "http://127.0.0.1:%(port)d", bypass: "%(bypass)s" };
+const preload = %(guard)s;  // the gate's Node guard; a webServer env that sets NODE_OPTIONS keeps it
 const guard = (use) => Object.assign({}, use, { proxy });
 const servers = [].concat(config.webServer || []);
 writeFileSync(%(servers)s, JSON.stringify(servers.map((server) => ({
   url: server.url || null, port: server.port || null, cwd: server.cwd || null, env: server.env || {} }))));
 const wrapped = Object.assign({}, config, { use: guard(config.use), reporter: [[%(reporter)s, { outputFile: %(report)s }]] });
 if (config.projects) wrapped.projects = config.projects.map((project) => Object.assign({}, project, { use: guard(project.use) }));
-if (servers.length) wrapped.webServer = servers.map((server) => Object.assign({}, server, { reuseExistingServer: false }));
+if (servers.length) wrapped.webServer = servers.map((server) => Object.assign({}, server, { reuseExistingServer: false },
+  server.env && "NODE_OPTIONS" in server.env ? { env: Object.assign({}, server.env, { NODE_OPTIONS: (server.env.NODE_OPTIONS || "") + " " + preload }) } : {}));
 export default wrapped;
 """
 # Written beside the wrapper for each call, so the reporter and the wrapper that names it are always one pair.
@@ -164,10 +167,10 @@ def call(repo, config, files, listing, local_names, deadline, timeout):
         report, servers, reporter = (os.path.join(scratch, name) for name in ("report.json", "servers.json", "reporter.cjs"))
         with open(reporter, "w", encoding="utf-8") as handle:
             handle.write(REPORTER)
+        guard, record, require = _local_only.node_guard(scratch)
         with open(wrapper, "w", encoding="utf-8") as handle:
             handle.write(WRAPPER % {"config": os.path.basename(config), "port": port, "bypass": BYPASS, "servers": json.dumps(servers),
-                                    "reporter": json.dumps(reporter), "report": json.dumps(report)})
-        guard, record = _local_only.node_guard(scratch)
+                                    "reporter": json.dumps(reporter), "report": json.dumps(report), "guard": json.dumps(require)})
         command = ["node", entry, "test", "--config", wrapper, "--output", os.path.join(scratch, "results"), "--retries=0"]
         command += ["--list", "--pass-with-no-tests"] if listing else []
         code, output = run_tool(command + [pattern(os.path.join(root, path)) for path in files], directory,

@@ -3,7 +3,9 @@ gates/_regression_playwright.py's text handling: the file filter it hands Playwr
 gate run end to end is tests/test_regression_playwright.py."""
 import base64
 import json
+import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -39,7 +41,7 @@ class LocalOnly(unittest.TestCase):
                             ("PGHOST", "127.0.0.1:54322"), ("PGHOST", "/var/run/postgresql"), ("DB_HOST", "localhost"),
                             ("POSTGRES_HOST", "::1"), ("DATABASE_URL", "host=127.0.0.1 port=54322 user=postgres"),
                             ("DATABASE_URL", "postgresql:///app"), ("DATABASE_URL", "postgres://u:p@[::1]:5432,localhost:5433/app"),
-                            ("NOTES", "a host=b thing"),
+                            ("NOTES", "a host=b thing"), ("SLACK_WEBHOOK_URL", "http://localhost:3000/api/webhooks/slack"),
                             ("SITE_HOST", "app.example.com")):
             self.assertIsNone(_local_only.why(name, value, set()), name)
         self.assertIsNone(_local_only.why("SESSION_SECRET", "a-local-secret", {"SESSION_SECRET"}))
@@ -62,7 +64,10 @@ class LocalOnly(unittest.TestCase):
                 ("DATABASE_URL", "host=localhost,db.example.com user=app password=pw", "holds a connection string for db.example.com"),
                 ("DATABASE_URL", "host=127.0.0.1 hostaddr=10.0.0.5 user=app password=pw", "holds a connection string for 10.0.0.5"),
                 ("DATABASE_URL", "postgresql:///app?host=db.example.com&password=pw", "holds a connection string for db.example.com"),
-                ("DATABASE_URL", "postgres://u:p@db.example.com:5432,127.0.0.1:5432/app", "holds a connection string for db.example.com")):
+                ("DATABASE_URL", "postgres://u:p@db.example.com:5432,127.0.0.1:5432/app", "holds a connection string for db.example.com"),
+                ("REVALIDATION_SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/T0/B0/x", "holds a webhook address for hooks.slack.com"),
+                ("ALERTS", "https://discord.com/api/webhooks/1/abc", "holds a webhook address for discord.com"),
+                ("REBUILD", "https://api.vercel.com/v1/integrations/deploy/prj_1/abc", "holds a webhook address for api.vercel.com")):
             self.assertIn(said, _local_only.why(name, value, {name}) or "", name)
         for name in ("SUPABASE_ACCESS_TOKEN", "VERCEL_TOKEN", "RESEND_API_KEY", "NETSUITE_CONSUMER_KEY", "CRON_SECRET",
                      "SUPABASE_DB_PASSWORD", "AWS_SECRET_ACCESS_KEY", "GH_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "DB_PASS",
@@ -89,6 +94,37 @@ class LocalOnly(unittest.TestCase):
             (directory / path).write_text("A=b\n")
         self.assertEqual([str(Path(path).relative_to(directory)) for path in _local_only.env_files_under(str(directory))],
                          [".env", ".env.local", ".env.production", "apps/web/.env.local"])
+
+
+@unittest.skipUnless(shutil.which("node"), "the guard is a Node preload")
+class Guard(unittest.TestCase):
+    """_local_only.GUARD in a Node process, as every Node process of a browser run preloads it."""
+
+    def test_a_node_process_reaches_only_this_machine_however_it_connects(self):
+        script = """const dgram = require("dgram"), dns = require("dns"), http = require("http"), net = require("net");
+const out = (label) => (error) => console.log(label, error ? error.code : "connected");
+const tcp = (label, ...args) => net.connect(...args, () => { console.log(label, "connected"); process.exit(9); }).on("error", out(label));
+http.get("http://rates.example.com/", { agent: new http.Agent() }, () => process.exit(9)).on("error", out("agent"));
+tcp("raw", 5432, "10.255.255.1");
+tcp("name", 80, "127.foo.example.com");
+tcp("lookup", { port: 80, host: "localhost", lookup: (host, options, done) => options.all ? done(null, [{ address: "10.255.255.1", family: 4 }]) : done(null, "10.255.255.1", 4) });
+tcp("loopback", 9, "127.0.0.1");
+tcp("ipv6", 9, "::1");
+const udp = dgram.createSocket("udp4");
+udp.send("x", 53, "10.255.255.1", (error) => { out("udp")(error); udp.close(); });
+"""
+        scratch = tempfile.mkdtemp(prefix="vv-guard-")
+        self.addCleanup(shutil.rmtree, scratch, True)
+        env, record, _ = _local_only.node_guard(scratch)
+        result = subprocess.run(["node", "-e", script], env=dict(os.environ, **env), capture_output=True, text=True, timeout=60)
+        said = dict(line.split(" ", 1) for line in result.stdout.splitlines())
+        # Nothing connects. An address elsewhere is refused before it leaves, a name by what it resolves to (one that does
+        # not resolve fails as it would anyway); each is recorded. Loopback goes through, unrecorded: nothing listens there.
+        self.assertEqual(set(said), {"agent", "raw", "name", "lookup", "loopback", "ipv6", "udp"}, result.stdout + result.stderr)
+        self.assertNotIn("connected", said.values())
+        self.assertEqual((said["raw"], said["lookup"], said["udp"], said["loopback"]), ("ECONNREFUSED",) * 4)
+        self.assertEqual(sorted(_local_only.reached_by_node(record)), sorted([
+            "rates.example.com:80", "10.255.255.1:5432", "127.foo.example.com:80", "localhost:80", "10.255.255.1:53/udp"]))
 
 
 class Filters(unittest.TestCase):

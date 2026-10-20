@@ -15,15 +15,16 @@ since a site started from one package of a monorepo loads that package's) is ref
 - its value is a database connection string (postgres, mysql, mongodb, redis, amqp, or libpq's keyword form)
   naming any host that is not loopback or a Unix socket path (every host of a list, and a `host` or `hostaddr`
   parameter), or any URL carrying a user or password for a host that is not loopback;
-- its value is the address of a hosted Supabase project (*.supabase.co, *.supabase.com, *.supabase.in);
+- its value is the address of a hosted Supabase project (*.supabase.co, *.supabase.com, *.supabase.in), or a
+  webhook, a URL that is a credential in itself (a `hooks.` host, a `/webhooks/` path, a deploy hook);
 - it holds a database's bare host that is not loopback or a Unix socket path (libpq's PGHOST and PGHOSTADDR,
   DB_HOST, POSTGRES_HOST);
 - or its name says it is a credential (a KEY, SECRET, TOKEN, PASSWORD, PASSWD, PASS, PWD or CREDENTIALS part,
   the shell's own PWD aside, a part ending in PASSWORD, PASSWD, SECRET or TOKEN, or libpq's PGPASSFILE,
-  PGSERVICE or PGSERVICEFILE, as in SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN, RESEND_API_KEY,
-  VERCEL_TOKEN, DB_PASSWORD, PGPASSWORD, MYSQL_PWD) and
+  PGSERVICE or PGSERVICEFILE, or a WEBHOOK or HOOK part, as in SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN,
+  RESEND_API_KEY, VERCEL_TOKEN, DB_PASSWORD, PGPASSWORD, MYSQL_PWD, SLACK_WEBHOOK_URL) and
   the manifest does not declare it the local stack's with --local-env NAME. A declared name still has its
-  value checked by the four rules above.
+  value checked by the four rules above. Any address on loopback is local under any name.
 
 Values are never printed: a refusal names the variable, where it was read, and the host, issuer or project.
 """
@@ -44,7 +45,9 @@ LIBPQ_KEYS = re.compile(r"(?:^|\s)(?:user|password|dbname|port|sslmode)\s*=")
 # Variables that point a database client at a password file or a service entry, wherever it is.
 CREDENTIAL_NAMES = {"PGPASSFILE", "PGSERVICE", "PGSERVICEFILE"}
 CREDENTIAL_PARTS = {"KEY", "KEYS", "SECRET", "SECRETS", "TOKEN", "TOKENS", "PASSWORD", "PASSWORDS", "PASSWD", "PASS",
-                    "CREDENTIAL", "CREDENTIALS", "APIKEY", "AUTHTOKEN"}
+                    "CREDENTIAL", "CREDENTIALS", "APIKEY", "AUTHTOKEN", "WEBHOOK", "WEBHOOKS", "HOOK", "HOOKS"}
+# A URL that is a credential in itself: a chat or deploy webhook (hooks.<service>, .../webhooks/..., a deploy hook).
+WEBHOOK = re.compile(r"^hooks\.|/(?:api/)?webhooks?/|/integrations/deploy/")
 DATABASE_SCHEMES = {"postgres", "postgresql", "mysql", "mariadb", "mongodb", "mongodb+srv", "redis", "rediss", "amqp", "amqps"}
 HOSTED_SUPABASE = (".supabase.co", ".supabase.com", ".supabase.in")
 LOCAL_ISSUER = "supabase-demo"
@@ -87,7 +90,7 @@ def token(value):
 
 
 def address(value):
-    """(scheme, host, whether it carries a user or password) of a URL-shaped value, or None."""
+    """(scheme, host, whether it carries a user or password, the host and path) of a URL-shaped value, or None."""
     if "://" not in value:
         return None
     try:
@@ -97,7 +100,7 @@ def address(value):
         return None
     if not parsed.scheme or not parsed.netloc:
         return None
-    return parsed.scheme.lower(), host, bool(parsed.username or parsed.password)
+    return parsed.scheme.lower(), host, bool(parsed.username or parsed.password), host.lower() + parsed.path
 
 
 def credential_name(name):
@@ -168,10 +171,13 @@ def value_reason(value):
     found = address(value)
     if not found:
         return None
-    scheme, host, userinfo = found
+    scheme, host, userinfo, where = found
+    if local_host(host):
+        return ""
     if userinfo:
-        return "" if local_host(host) else "holds an address with a password in it for %s, which is not this machine" % (
-            host or "no host")
+        return "holds an address with a password in it for %s, which is not this machine" % (host or "no host")
+    if WEBHOOK.search(where):
+        return "holds a webhook address for %s, a credential in itself" % host
     if host.lower().endswith(HOSTED_SUPABASE):
         return "holds the address of a hosted Supabase project (%s)" % host
     return None
@@ -233,7 +239,7 @@ class Refuser:
 
 
 # What the Node side of a run is told, so its fetch and http go to the gate's proxy for every host but this machine.
-NO_PROXY = "localhost,127.0.0.1,::1,.localhost"
+NO_PROXY = "localhost,127.0.0.1,::1,[::1],.localhost"
 
 
 def proxy_env(port):
@@ -248,36 +254,76 @@ def proxy_env(port):
 # Preloaded into every Node process of a run (NODE_OPTIONS --require): the Playwright runner and its workers, the
 # site's server, a global setup. A TCP connection to a host that is not this machine fails as ECONNREFUSED and its
 # host is recorded, whatever opens it: fetch, http with its own Agent, a database driver, a raw net.connect.
-GUARD = r"""// Written by regression-test-fails-on-base: this process may open a TCP connection only to this machine.
+GUARD = r"""// Written by regression-test-fails-on-base: this process may reach only this machine.
+const dgram = require("dgram");
+const dns = require("dns");
 const fs = require("fs");
 const net = require("net");
-const local = (host) => host === "localhost" || /\.localhost\.?$/.test(host) || /^127\./.test(host) || host === "::1"
-  || host === "[::1]" || /^::ffff:127\./.test(host);
+const loopback = (address) => /^127(\.\d{1,3}){3}$/.test(address) || address === "::1" || /^::ffff:127(\.\d{1,3}){3}$/i.test(address);
+const named = (host) => host === "localhost" || /\.localhost\.?$/.test(host);
+const record = (where) => { try { fs.appendFileSync(process.env.VV_REGRESSION_REACHED, where + "\n"); } catch (error) {} };
+const refused = (where) => Object.assign(new Error("connect ECONNREFUSED " + where + " (regression-test-fails-on-base allows "
+  + "only this machine)"), { code: "ECONNREFUSED", syscall: "connect" });
+const bare = (host) => String(host).toLowerCase().replace(/^\[|\]$/g, "");
+// A name is checked by what it resolves to, through whatever lookup the caller gave: every address must be loopback.
+// One that does not resolve is recorded too: the process reached for it, and its answer shaped what happened.
+const checked = (own, port) => function (hostname, options, callback) {
+  if (typeof options === "function") [callback, options] = [options, {}];
+  (own || dns.lookup)(hostname, options, (error, address, family) => {
+    const addresses = Array.isArray(address) ? address.map((entry) => entry.address) : [address];
+    if (!error && addresses.every((one) => loopback(bare(one)))) return callback(error, address, family);
+    record(hostname + ":" + port);
+    callback(error || refused(hostname + ":" + port));
+  });
+};
 const connect = net.Socket.prototype.connect;
 net.Socket.prototype.connect = function (...args) {
-  const first = Array.isArray(args[0]) ? args[0][0] : args[0];
-  const options = first !== null && typeof first === "object" ? first
-    : typeof first === "string" && !/^\d+$/.test(first) ? { path: first } : { port: first, host: args[1] };
-  const host = String(typeof options.host === "string" ? options.host : "localhost").toLowerCase();
-  if (options.path || local(host)) return connect.apply(this, args);
-  const where = host.includes(":") ? "[" + host + "]:" + options.port : host + ":" + options.port;
-  try { fs.appendFileSync(process.env.VV_REGRESSION_REACHED, where + "\n"); } catch (error) {}
-  const refused = Object.assign(new Error("connect ECONNREFUSED " + where + " (regression-test-fails-on-base allows only this "
-    + "machine)"), { code: "ECONNREFUSED", syscall: "connect" });
-  process.nextTick(() => this.destroy(refused));
+  const options = Array.isArray(args[0]) ? args[0][0] : args[0];
+  if (options === null || typeof options !== "object") {  // (port, host, callback) or (path, callback)
+    const given = typeof options === "string" && !/^\d+$/.test(options) ? { path: options } : { port: options, host: args[1] };
+    return net.Socket.prototype.connect.call(this, given, ...args.filter((value) => typeof value === "function"));
+  }
+  if (options.path) return connect.apply(this, args);
+  const host = bare(typeof options.host === "string" && options.host ? options.host : "localhost");
+  if (net.isIP(host) ? loopback(host) : named(host) && !options.lookup) return connect.apply(this, args);
+  if (!net.isIP(host)) {
+    options.lookup = checked(options.lookup, options.port);
+    return connect.apply(this, args);
+  }
+  const where = (host.includes(":") ? "[" + host + "]" : host) + ":" + options.port;
+  record(where);
+  process.nextTick(() => this.destroy(refused(where)));
   return this;
+};
+// UDP: a datagram to an address that is not this machine is dropped and recorded.
+const allowed = (address) => address === undefined || named(bare(address)) || loopback(bare(address));
+const send = dgram.Socket.prototype.send;
+dgram.Socket.prototype.send = function (...args) {
+  const address = args.find((value, index) => index > 0 && typeof value === "string");
+  if (allowed(address)) return send.apply(this, args);
+  const ports = args.filter((value, index) => index > 0 && typeof value === "number");
+  record(bare(address) + ":" + ports[ports.length - 1] + "/udp");
+  const callback = args.find((value) => typeof value === "function");
+  if (callback) process.nextTick(callback, refused(address));
+};
+const udpConnect = dgram.Socket.prototype.connect;
+dgram.Socket.prototype.connect = function (port, address, callback) {
+  if (allowed(typeof address === "string" ? address : undefined)) return udpConnect.apply(this, arguments);
+  record(bare(address) + ":" + port + "/udp");
+  process.nextTick(() => this.emit("error", refused(address)));
 };
 """
 
 
 def node_guard(scratch):
     """({NODE_OPTIONS, VV_REGRESSION_REACHED} that preload GUARD into a run's Node processes, the file it records each
-    blocked connection's host in)."""
+    blocked connection's host in, the `--require` option itself, for a webServer env that sets NODE_OPTIONS)."""
     guard, reached = os.path.join(scratch, "local-only.cjs"), os.path.join(scratch, "reached.txt")
     with open(guard, "w", encoding="utf-8") as handle:
         handle.write(GUARD)
-    options = (os.environ.get("NODE_OPTIONS", "") + ' --require "%s"' % guard).strip()
-    return {"NODE_OPTIONS": options, "VV_REGRESSION_REACHED": reached}, reached
+    require = '--require "%s"' % guard
+    return {"NODE_OPTIONS": (os.environ.get("NODE_OPTIONS", "") + " " + require).strip(), "VV_REGRESSION_REACHED": reached}, \
+        reached, require
 
 
 def reached_by_node(path):

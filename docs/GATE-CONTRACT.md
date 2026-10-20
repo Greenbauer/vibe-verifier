@@ -515,9 +515,12 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   machine's); or when its name has a KEY,
   SECRET, TOKEN, PASSWORD, PASSWD, PASS, PWD, CREDENTIALS, APIKEY or AUTHTOKEN part (the shell's own
   `PWD` aside), a part ending in PASSWORD, PASSWD, SECRET or TOKEN, or is libpq's `PGPASSFILE`,
-  `PGSERVICE` or `PGSERVICEFILE` (SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ACCESS_TOKEN, RESEND_API_KEY,
-  VERCEL_TOKEN, DB_PASSWORD, PGPASSWORD, MYSQL_PWD, ACTIONS_ID_TOKEN_REQUEST_TOKEN) and `--local-env NAME` does not
-  declare it the local stack's. A declared name still has its value checked by the first four rules.
+  `PGSERVICE` or `PGSERVICEFILE`, or a WEBHOOK or HOOK part (SUPABASE_SERVICE_ROLE_KEY,
+  SUPABASE_ACCESS_TOKEN, RESEND_API_KEY, VERCEL_TOKEN, DB_PASSWORD, PGPASSWORD, MYSQL_PWD,
+  SLACK_WEBHOOK_URL, ACTIONS_ID_TOKEN_REQUEST_TOKEN) and `--local-env NAME` does not declare it the local
+  stack's; a value that is a webhook address (a `hooks.` host, a `/webhooks/` path, a deploy hook) is
+  refused under any name, and any address on loopback is local under any name. A declared name still has
+  its value checked by the value rules.
   Only a changed test that could be a spec is listed at all (it imports no other framework, and no
   package.json script runs it with `node --test`), so a fix with none never starts Playwright. A test that
   only calls `test()` or `describe()` with no import could be either (a Vitest or Jest file with globals,
@@ -533,9 +536,12 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   failed test of another file (a setup project a spec depends on) and an error no test owns (a `webServer` that did not start, one already answering
   at its address, a global setup that threw): the run cannot say whether the bug shows. Every Node
   process of the run (the Playwright runner and its workers, the site's server, a global setup) preloads
-  a guard through `NODE_OPTIONS` (`gates/_local_only.py`, `GUARD`) that refuses any TCP connection to a
-  host that is not this machine as `ECONNREFUSED` and records the host, whatever opens it (`fetch`, `http`
-  with its own `Agent`, a database driver, `net.connect`); those hosts count as reached like the proxy's.
+  a guard through `NODE_OPTIONS` (`gates/_local_only.py`, `GUARD`; added to a `webServer`'s own
+  `NODE_OPTIONS` when its `env` sets one) that refuses any TCP connection to an address that is not
+  loopback as `ECONNREFUSED` and records the host, whatever opens it (`fetch`, `http` with its own
+  `Agent`, a database driver, `net.connect`); a name is judged by every address it resolves to, through
+  whatever lookup the caller gave, and one that does not resolve is recorded too; a UDP datagram to an
+  address that is not loopback is dropped and recorded. Those hosts count as reached like the proxy's.
   `HTTP_PROXY`/`HTTPS_PROXY` point Node's global agents, and on Linux a browser a global setup launches
   itself, at the proxy too. Not covered: a process that clears `NODE_OPTIONS`, a process the site starts
   that is not Node, and a browser a global setup launches itself on macOS (or, on Linux, for a

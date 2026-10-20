@@ -50,8 +50,8 @@ appendFileSync("started.log", "outside: " + outside + "\\n");""")
 SERVER_CONNECTS = SERVER.replace('appendFileSync("started.log", "started\\n");', """import http from "node:http";
 import net from "node:net";
 const agent = await new Promise((done) => http.get("http://rates.example.com/", { agent: new http.Agent() }, () => done("reached"))
-  .on("error", (error) => done(error.code)));
-const raw = await new Promise((done) => net.connect(5432, "db.example.com", () => done("reached")).on("error", (error) => done(error.code)));
+  .on("error", () => done("blocked")));
+const raw = await new Promise((done) => net.connect(5432, "db.example.com", () => done("reached")).on("error", () => done("blocked")));
 appendFileSync("started.log", "agent: " + agent + ", raw: " + raw + "\\n");""")
 # Before the fix the page's total comes from another host's script, which the run blocks; the fix renders it itself.
 SERVER_SCRIPT = SERVER.replace("response.end(`<h1 id=\"total\">${discount(200, true)}</h1>`);",
@@ -241,9 +241,34 @@ class RealBrowser(Fixture):
         repo = self.project({"server.mjs": SERVER_CONNECTS})
         result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertEqual(Path(repo, "started.log").read_text(), "agent: ECONNREFUSED, raw: ECONNREFUSED\n" * 2)
+        self.assertEqual(Path(repo, "started.log").read_text(), "agent: blocked, raw: blocked\n" * 2)
         self.assertIn("failed in a run that reached for db.example.com:5432, rates.example.com:80, which this gate blocks",
                       result.stderr)
+        tree_is_head(self, repo)
+
+
+    def test_a_webserver_env_that_sets_node_options_keeps_the_guard(self):
+        repo = self.project({"server.mjs": SERVER_CONNECTS})
+        config = Path(repo, "playwright.config.mjs")
+        config.write_text(config.read_text().replace('env: { PORT:', 'env: { NODE_OPTIONS: "--max-old-space-size=512", PORT:'))
+        subprocess.run(["git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+                        "commit", "-qam", "options"], check=True)
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES}, "--soak")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(Path(repo, "started.log").read_text(), "agent: blocked, raw: blocked\n" * 2)
+        self.assertIn("failed in a run that reached for db.example.com:5432, rates.example.com:80", result.stderr)
+        tree_is_head(self, repo)
+
+    def test_a_site_on_ipv6_loopback_is_this_machine(self):
+        repo = self.project({"server.mjs": SERVER.replace('.listen(Number(process.env.PORT), "127.0.0.1")', '.listen(Number(process.env.PORT), "::1")')},
+                            base="http://[::1]:%d")
+        config = Path(repo, "playwright.config.mjs")
+        config.write_text(config.read_text().replace('url: "http://127.0.0.1:', 'url: "http://[::1]:').replace("[::1]:%d", "[::1]:" + str(self.port)))
+        subprocess.run(["git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+                        "commit", "-qam", "ipv6"], check=True)
+        result = self.fix(repo, {"src/price.mjs": PRICE_FIX, "e2e/price.spec.mjs": REPRODUCES})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("e2e/price.spec.mjs: members get 10% off over 100 fails on the code before the fix", result.stderr)
         tree_is_head(self, repo)
 
 
