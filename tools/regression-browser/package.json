@@ -1,0 +1,13 @@
+{
+  "name": "vibe-verifier-regression-browser",
+  "private": true,
+  "description": "The Playwright that tests/test_regression_playwright*.py give their synthetic repositories, pinned to a release whose official image (mcr.microsoft.com/playwright:v<version>-noble) holds its browsers, as regression-test-fails-on-base's sealed run needs. Installed with npm ci from the lockfile.",
+  "dependencies": {
+    "@playwright/test": "1.64.1"
+  },
+  "vibeVerifier": {
+    "allowInDependencies": {
+      "@playwright/test": "this package is the regression gate tests' pinned browser test runner: running it is its only job, installed by npm ci"
+    }
+  }
+}

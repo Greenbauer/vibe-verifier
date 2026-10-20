@@ -114,8 +114,8 @@ jobs:
 
   # The QAE browser action against a real apt and the pinned Playwright, which its tests stub: it reads
   # the missing system packages from that Playwright's own report, so a pin bump that changes the
-  # report shows here before a consumer pins it. Then the chromium it installed has to start, and
-  # the harness's two page hooks have to work in the playwright-mcp it installed.
+  # report shows here before a consumer pins it. Then the chromium it installed has to start, and the
+  # harness's two page hooks have to work in the playwright-mcp it installed.
   qae-browser:
     name: qae-browser
     runs-on: ubuntu-latest
@@ -163,6 +163,34 @@ jobs:
         run: |
           test -f "$QAE_MCP"
           python3 -m unittest discover -s tests -p 'test_qae_secret_names.py' -v
+
+  # regression-test-fails-on-base's sealed browser runs (gates/_regression_sealed.py): synthetic repositories whose
+  # Playwright config starts a site, run in Playwright's own image on the gate's sealed Docker network, both ways
+  # (tests/test_regression_playwright*.py). Not a required check, as a consumer's job for this gate is not one either:
+  # the image alone is most of a minute to pull. The test job runs only their refusals that need no Docker and skips
+  # the rest (no VV_REGRESSION_SEALED); here
+  # `required` makes a runner with no Docker a failure, so a skip never reads as a pass. The pull step and the tests'
+  # durations, with the gate's own timing lines in the stack test's output, are what the docs quote as the cost.
+  regression-browser:
+    name: regression-browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pull the Playwright image of the pinned version
+        run: |
+          version=$(node -p 'require("./tools/regression-browser/package-lock.json").packages["node_modules/playwright-core"].version')
+          image="mcr.microsoft.com/playwright:v${version}-noble"
+          start=$(date +%s)
+          docker pull --quiet "$image"
+          echo "pulled $image in $(( $(date +%s) - start ))s, $(docker image inspect "$image" --format '{{.Size}}') bytes"
+          docker version --format 'Docker {{.Server.Version}}'
+      - name: Run a fix's browser spec in the sealed network, both ways
+        env:
+          VV_REGRESSION_SEALED: required
+        run: python3 -m unittest discover -s tests -p 'test_regression_playwright*.py' -v --durations 0
 
   # The runner-lane kit (lanes/README.md) is Linux-only and has tests of its own, which stub every
   # system tool on PATH: nothing is installed, mounted or started on the runner. Ubuntu 24.04, not
