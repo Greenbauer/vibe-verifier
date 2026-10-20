@@ -63,7 +63,7 @@ console.log(JSON.stringify({timed:classes(timed), timedCells:cells(timed), timed
         self.assertIn("progress-lead", got["none"])
         self.assertNotIn("timeline-mini", got["none"])
 
-    def test_the_scale_menu_sets_the_scale_every_row_is_drawn_with(self):
+    def test_there_is_no_scale_menu_and_every_row_fits_its_own_timeline(self):
         result = subprocess.run(["node", "-e", r"""
 const fs=require('fs');
 const helpers=require('./dashboard/static/helpers.js');
@@ -76,31 +76,27 @@ function el(tag, attrs={}, ...children) {
   node.replaceChildren=()=>{ node.children=[]; };
   return node;
 }
-const state={query:'', repository:'all', subscribed:false, attention:false, timeScale:'shared'};
+const state={query:'', repository:'all', subscribed:false, attention:false};
 const drawn=[];
 const target={append(){}, replaceChildren(){}, textContent:''};
 global.document={querySelector:()=>target};
-global.VVTimeline={sharedScale:()=>3600000};
 const pulls=[{repository:'octocat/a', number:1, title:'x', created_at:'2026-10-01T00:00:00Z'}];
 const renderPrRows=new Function('el','state','snapshot','rememberView','flattenPulls','filterPulls','groupPulls','rowView','prRow','empty','duration',
   rowsSource+'return renderPrRows;')(el, state, {github:{}}, ()=>{}, ()=>pulls, list=>list, helpers.groupPulls,
-  (pull, scale)=>{ drawn.push(scale); return {open:false}; }, ()=>el('div'), ()=>el('p'), helpers.duration);
+  (...args)=>{ drawn.push(args.length); return {open:false}; }, ()=>el('div'), ()=>el('p'), helpers.duration);
 const prFilters=new Function('el','state','repositoriesWithPulls','renderPrRows', filters+'return prFilters;')(
   el, state, helpers.repositoriesWithPulls, renderPrRows);
 const toolbar=prFilters(pulls);
-const menu=toolbar.children.flatMap(node=>node.attrs.class==='toolbar-group'?node.children:[node]).find(node=>node.attrs.id==='time-scale');
+const ids=toolbar.children.flatMap(node=>node.attrs.class==='toolbar-group'?node.children:[node]).map(node=>node.attrs.id);
 renderPrRows();
-menu.attrs.onchange({target:{value:'row'}});
-console.log(JSON.stringify({options:menu.children.map(option=>[option.attrs.value, option.attrs.selected, option.children[0]]),
-  label:menu.attrs['aria-label'], state:state.timeScale, drawn}));
+console.log(JSON.stringify({ids, drawn}));
 """], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         got = json.loads(result.stdout)
-        self.assertEqual(got["options"], [["shared", True, "Same time scale"],
-                                          ["row", False, "Fit each row"]])
-        self.assertEqual(got["label"], "CI timeline scale")
-        # The menu saves the choice and redraws: the shared scale first, then null, which fits each row.
-        self.assertEqual((got["state"], got["drawn"]), ("row", [3600000, None]))
+        # No scale menu: each row's timeline is fit to the row, so a row is drawn from the pull and now.
+        self.assertNotIn("time-scale", got["ids"])
+        self.assertIn("repo-filter", got["ids"])
+        self.assertEqual(got["drawn"], [2])
 
     def test_the_bars_use_the_dashboards_colors_and_stay_inside_their_box(self):
         css = (ROOT / "dashboard/static/styles.css").read_text()

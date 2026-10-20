@@ -138,12 +138,6 @@
       earlier: every.filter(lane => lane.kind !== "status" && lane.queued < from).length };
   }
 
-  // The longest row timeline on screen, so every row is drawn on the same scale.
-  function sharedScale(pulls, now) {
-    const spans = pulls.map(pull => timeline(pull, now)?.row).filter(Boolean).map(row => row.span);
-    return spans.length ? Math.max(...spans) : null;
-  }
-
   const percent = (ms, width) => `${(Math.min(1, Math.max(0, ms / width)) * 100).toFixed(3)}%`;
 
   function bar(from, to, state, start, width, title, dim = false) {
@@ -201,15 +195,14 @@
       failed ? `${failed} failed` : null].filter(Boolean).join(", ");
   }
 
-  // The row's small timeline: one line per workflow, every job of it drawn on that line.
-  // scale is the shared width in milliseconds, or null to fit this row.
-  function mini(pull, now, scale) {
+  // The row's small timeline: one line per workflow, every job of it drawn on that line, fit to the
+  // row's own span, so it fills the column and narrows as a running round grows.
+  function mini(pull, now) {
     const line = timeline(pull, now);
     if (!line) return null;
     const groups = line.groups.filter(group => group.key !== "statuses");
     if (!line.row) return null;
-    const { start, span } = line.row;
-    const width = Math.max(scale || 0, span);
+    const { start, span: width } = line.row;
     // The lines share the Checks cell's height (styles.css): none has a height of its own, and past 16
     // they lose their gap too, so a busy head gets thinner lines and never a taller row.
     const box = el("div", { class: groups.length > 16 ? "timeline-mini dense" : "timeline-mini", role: "img", "aria-label": summary(line, now) });
@@ -315,7 +308,7 @@
     return box;
   }
 
-  const api = { lanes, timeline, ciTiming, sharedScale, mini, detail, ticks };
+  const api = { lanes, timeline, ciTiming, mini, detail, ticks };
   if (typeof module === "object" && module.exports) module.exports = api;
   else window.VVTimeline = api;
 })();

@@ -83,7 +83,7 @@ test("the critical path follows each job back to the finish that created it", ()
 });
 
 test("the row draws one line per workflow, real runner waits, failures and now", () => {
-  const box = timeline.mini(pull, NOW, null);
+  const box = timeline.mini(pull, NOW);
   assert.strictEqual(box.find("timeline-line").length, 3);
   assert.strictEqual(box.attrs["aria-label"], "CI timeline: 7 checks over 50m 0s, longest runner wait 38m 0s, 1 failed");
   const waits = box.find("tl-dim");
@@ -96,22 +96,26 @@ test("the row draws one line per workflow, real runner waits, failures and now",
   assert.deepStrictEqual(qae, ["timeline-bar tl-success tl-dim", "timeline-bar tl-success", "timeline-bar tl-running"]);
 });
 
-test("rows share one time scale unless each row is fit", () => {
-  assert.strictEqual(timeline.sharedScale([pull, short], NOW), 50 * 60 * 1000);
-  const shared = timeline.mini(short, NOW, timeline.sharedScale([pull, short], NOW));
-  const fitted = timeline.mini(short, NOW, null);
-  assert.strictEqual(Math.max(...shared.find("timeline-bar").map(edge)), 20);
-  assert.strictEqual(Math.max(...fitted.find("timeline-bar").map(edge)), 100);
-  assert.strictEqual(timeline.sharedScale([{ checks: [], statuses: [], runs: [] }], NOW), null);
+test("each row fills the column with its own timeline, and a running round narrows as it grows", () => {
+  // A finished 10-minute round and a running 50-minute one both reach the right edge.
+  assert.strictEqual(Math.max(...timeline.mini(short, NOW).find("timeline-bar").map(edge)), 100);
+  assert.strictEqual(timeline.mini(pull, NOW).find("timeline-now")[0].style.get("left"), "100.000%");
+  // Ten minutes later the running round spans 60 minutes, so lint (done at 2 minutes) is squeezed
+  // from 2/50 to 2/60 of the width, and now is still the right edge.
+  const lint = box => edge(box.find("timeline-bar").find(bar => bar.attrs.title.startsWith("lint")));
+  const later = timeline.mini(pull, NOW + 10 * 60 * 1000);
+  assert.strictEqual(lint(timeline.mini(pull, NOW)).toFixed(3), "4.000");
+  assert.strictEqual(lint(later).toFixed(3), "3.333");
+  assert.strictEqual(later.find("timeline-now")[0].style.get("left"), "100.000%");
 });
 
 test("a dense head draws every workflow as a line, sized by the stylesheet", () => {
   const runs = Array.from({ length: 20 }, (_, index) => ({ id: index, name: `wf-${index}`, jobs: [job(index, `job-${index}`, at(0), at(0), at(1))] }));
-  const box = timeline.mini({ checks: runs.map(run => check(run.id, run.name, "success")), statuses: [], runs }, NOW, null);
+  const box = timeline.mini({ checks: runs.map(run => check(run.id, run.name, "success")), statuses: [], runs }, NOW);
   const lines = box.find("timeline-line");
   assert.strictEqual(lines.length, 20);
   assert.ok(lines.every(line => line.style.get("height") === undefined));
-  assert.deepStrictEqual([box.className, timeline.mini(pull, NOW, null).className], ["timeline-mini dense", "timeline-mini"]);
+  assert.deepStrictEqual([box.className, timeline.mini(pull, NOW).className], ["timeline-mini dense", "timeline-mini"]);
 });
 
 test("the expanded view lists every job with its time, bold on the critical path, links only to the owner's GitHub", () => {
@@ -148,7 +152,7 @@ test("the expanded view lists every job with its time, bold on the critical path
 
 test("a head with no timed check has no row timeline and says so when opened", () => {
   const bare = { checks: [check(1, "lint", "pending", "queued")], statuses: [], runs: [], expected: [] };
-  assert.strictEqual(timeline.mini(bare, NOW, null), null);
+  assert.strictEqual(timeline.mini(bare, NOW), null);
   assert.strictEqual(timeline.detail(bare, NOW, { id: "x", key: "k", owner: "octocat", rerender() {} }).text,
     "No check on this head has a start time yet.");
 });
@@ -166,9 +170,8 @@ test("a commit status is a point at its last update: never a runner wait, never 
   const line = timeline.timeline(pending, NOW);
   const status = line.lanes.find(lane => lane.kind === "status");
   assert.deepStrictEqual([status.name, status.started, status.ended, line.running], ["deploy", status.queued, status.queued, false]);
-  // A status from three hours before the round is not part of it, so it widens neither the row nor the scale.
-  assert.strictEqual(timeline.sharedScale([pending], NOW), 10 * 60 * 1000);
-  assert.strictEqual(Math.max(...timeline.mini(pending, NOW, null).find("timeline-bar").map(edge)), 100);
+  // A status from three hours before the round is not part of it, so it does not widen the row.
+  assert.strictEqual(Math.max(...timeline.mini(pending, NOW).find("timeline-bar").map(edge)), 100);
   const opened = timeline.detail(pending, NOW, { id: "x", key: "k", owner: "octocat", rerender() {} });
   const row = opened.find("timeline-row").find(item => item.find("timeline-name")[0]?.text === "deploy");
   assert.deepStrictEqual([row.find("tl-waiting").length, row.find("timeline-time")[0].text,
@@ -185,7 +188,7 @@ test("another app's check run is never on the critical path", () => {
 test("a wait of exactly 30 seconds is GitHub's normal pickup; one second more is drawn", () => {
   const waits = { statuses: [], checks: [check(1, "a", "success"), check(2, "b", "success")],
     runs: [{ id: 1, name: "CI", jobs: [job(1, "a", at(0), at(0, 30), at(5)), job(2, "b", at(0), at(0, 31), at(5))] }] };
-  const bars = timeline.mini(waits, NOW, null).find("tl-dim");
+  const bars = timeline.mini(waits, NOW).find("tl-dim");
   assert.deepStrictEqual(bars.map(bar => bar.attrs.title), ["b: waited 31s for a runner, ran 4m 29s"]);
 });
 
@@ -193,7 +196,7 @@ test("another app's queued check says queued, never a runner wait", () => {
   const external = { statuses: [], runs: [], checks: [{ id: 40, name: "ext-ci", category: "pending", status: "queued", started_at: at(40) }] };
   const lane = timeline.timeline(external, NOW).lanes[0];
   assert.deepStrictEqual([lane.kind, lane.state], ["check", "waiting"]);
-  assert.strictEqual(timeline.mini(external, NOW, null).find("tl-waiting").length, 0);
+  assert.strictEqual(timeline.mini(external, NOW).find("tl-waiting").length, 0);
   const row = timeline.detail(external, NOW, { id: "x", key: "k", owner: "octocat", rerender() {} }).find("timeline-row")[1];
   assert.deepStrictEqual([row.find("tl-waiting").length, row.find("timeline-time")[0].text, row.find("timeline-time")[0].attrs.title],
     [0, "queued 10m 0s", "ext-ci: queued 10m 0s"]);
@@ -224,7 +227,7 @@ test("a head with an earlier round of CI draws only the latest round and says ho
 test("a job still waiting is dim yellow; a started job's wait is a dim version of its own color", () => {
   const queue = { statuses: [], checks: [check(1, "build", "success"), check(2, "deploy", "pending", "queued")],
     runs: [{ id: 1, name: "CI", jobs: [job(1, "build", at(0), at(10), at(20)), job(2, "deploy", at(30), at(30), null)] }] };
-  const box = timeline.mini(queue, NOW, null);
+  const box = timeline.mini(queue, NOW);
   assert.deepStrictEqual([box.find("tl-dim").map(bar => [bar.className, bar.attrs.title]), box.find("tl-waiting").map(bar => bar.attrs.title)],
     [[["timeline-bar tl-success tl-dim", "build: waited 10m 0s for a runner, ran 10m 0s"]], ["deploy: waiting 20m 0s for a runner"]]);
   const legend = timeline.detail(queue, NOW, { id: "x", key: "k", owner: "octocat", rerender() {} }).find("timeline-legend")[0];
@@ -236,7 +239,7 @@ test("a failed or running job's wait is a dim version of its color, drawn under 
   const mixed = { statuses: [], checks: [check(1, "a", "success"), check(2, "b", "failed"), check(3, "c", "pending", "in_progress")],
     runs: [{ id: 1, name: "CI", jobs: [job(1, "a", at(20), at(20), at(40)), job(2, "b", at(20), at(35), at(40)),
       job(3, "c", at(20), at(41), null)] }] };
-  const line = timeline.mini(mixed, NOW, null).find("timeline-line")[0];
+  const line = timeline.mini(mixed, NOW).find("timeline-line")[0];
   assert.deepStrictEqual(line.children.map(bar => bar.className), ["timeline-bar tl-running tl-dim", "timeline-bar tl-failed tl-dim",
     "timeline-bar tl-success", "timeline-bar tl-running", "timeline-bar tl-failed"]);
 });
@@ -244,7 +247,7 @@ test("a failed or running job's wait is a dim version of its color, drawn under 
 test("a cancelled job or one with an unknown result is gray, says so in its tooltip, and is in the legend", () => {
   const stopped = { statuses: [], checks: [check(1, "lint", "cancelled"), check(2, "audit", "unknown")],
     runs: [{ id: 1, name: "CI", jobs: [job(1, "lint", at(0), at(0), at(30)), job(2, "audit", at(0), at(0), at(10))] }] };
-  const bars = timeline.mini(stopped, NOW, null).find("timeline-bar");
+  const bars = timeline.mini(stopped, NOW).find("timeline-bar");
   assert.deepStrictEqual(bars.map(bar => [bar.className, bar.attrs.title]), [
     ["timeline-bar tl-cancelled", "lint: ran 30m 0s, cancelled"], ["timeline-bar tl-unknown", "audit: ran 10m 0s, result unknown"]]);
   const legend = timeline.detail(stopped, NOW, { id: "x", key: "k", owner: "octocat", rerender() {} }).find("timeline-legend")[0];

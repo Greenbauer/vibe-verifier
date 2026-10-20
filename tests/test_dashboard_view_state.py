@@ -18,15 +18,16 @@ class ViewState(unittest.TestCase):
         result = self.node(r'''
 const app=require('fs').readFileSync('./dashboard/static/app.js','utf8');
 const restore=new Function(app.slice(app.indexOf('  function restoreViewState('),app.indexOf('  function rememberView('))+'return restoreViewState;')();
-const saved={query:'fix',repository:'Greenbauer/vibe-verifier',subscribed:true,attention:true,failureBot:'qae-1',timeScale:'row'};
+const saved={query:'fix',repository:'Greenbauer/vibe-verifier',subscribed:true,attention:true,failureBot:'qae-1'};
 console.log(JSON.stringify({saved,restored:restore(JSON.stringify(saved)),
-  legacy:restore(JSON.stringify({...saved,usageRange:'7d',view:'usage',selected:'Greenbauer/vibe-verifier#12'})),
+  legacy:restore(JSON.stringify({...saved,usageRange:'7d',view:'usage',selected:'Greenbauer/vibe-verifier#12',timeScale:'shared'})),
   invalid:[null,'broken','null','42',JSON.stringify({view:'other',selected:42,query:[],repository:false,
     subscribed:'yes',attention:1,usageRange:'forever',failureBot:{},timeScale:'wide'})].map(restore),defaults:restore(null)}));
 ''')
         self.assertEqual(result['restored'], result['saved'])
         # A tab saved by an older dashboard still restores its filters; its view and usage period
-        # are ignored, because the URL now says where you are.
+        # are ignored, because the URL now says where you are, and so is the timeline scale it saved,
+        # since every row now fits its own timeline.
         self.assertEqual(result['legacy'], result['saved'])
         self.assertTrue(all(row == result['defaults'] for row in result['invalid']))
 

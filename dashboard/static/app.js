@@ -15,9 +15,9 @@
     catch (_) { /* Storage can be disabled by the browser. */ }
   }
 
-  // Filters, the timeline scale and the selected bot, saved in this browser for every tab. Where you are lives in the URL instead.
+  // Filters and the selected bot, saved in this browser for every tab. Where you are lives in the URL instead.
   function restoreViewState(raw) {
-    const state = { query: "", repository: "all", subscribed: false, attention: false, failureBot: null, timeScale: "shared" };
+    const state = { query: "", repository: "all", subscribed: false, attention: false, failureBot: null };
     let saved;
     try { saved = JSON.parse(raw); } catch (_) { return state; }
     if (!saved || typeof saved !== "object") return state;
@@ -27,7 +27,6 @@
     for (const key of ["subscribed", "attention"]) {
       if (typeof saved[key] === "boolean") state[key] = saved[key];
     }
-    if (["shared", "row"].includes(saved.timeScale)) state.timeScale = saved.timeScale;
     return state;
   }
 
@@ -273,7 +272,7 @@
       refreshFailed = false;
       snapshot = next;
       const focused = document.activeElement;
-      const filterId = ["pr-search", "repo-filter", "time-scale"].includes(focused?.id) ? focused.id : null;
+      const filterId = ["pr-search", "repo-filter"].includes(focused?.id) ? focused.id : null;
       const selection = filterId === "pr-search" ? [focused.selectionStart, focused.selectionEnd] : null;
       const focusKey = focused?.dataset?.focusKey;
       render();
