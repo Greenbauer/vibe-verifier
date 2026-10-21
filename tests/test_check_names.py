@@ -7,7 +7,7 @@ from test_ci_workflow import CI, NIGHTLY, ROOT, job
 class CheckNames(unittest.TestCase):
     def test_each_workflow_is_its_stage_and_each_job_says_what_it_proves(self):
         # A branch rule requires a check by its job's name, so a rename here changes what can merge.
-        for workflow, stage, names in ((CI, "Code", {"test": "Unit tests", "qae-browser": "QA browser tests",
+        for workflow, stage, names in ((CI, "Code", {"test": "Tests and gates", "qae-browser": "QA browser tests",
                                                      "regression-browser": "Regression browser tests",
                                                      "lanes": "Lane kit tests", "lanes-listener": "Lane listener tests"}),
                                        (NIGHTLY, "Maintenance", {"coverage-not-lost": "Coverage kept"})):

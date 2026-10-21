@@ -61,6 +61,9 @@ import time
 
 CONTEXT = "preview"
 DATABASE_CONTEXT = "preview-database"
+# The names docs/check-names.md gives them, read beside the old so the record step can move to them later.
+ADDRESS_CONTEXTS = (CONTEXT, "Preview / Address")
+DATABASE_CONTEXTS = (DATABASE_CONTEXT, "Preview / Database address")
 # A Supabase project ref: 20 lower-case letters. Its API address is https://<ref>.supabase.co.
 DATABASE_REF = re.compile(r"^[a-z]{20}$")
 DATABASE_URL = re.compile(r"^https://([a-z]{20})\.supabase\.co$")
@@ -110,17 +113,17 @@ def newest_run(lines):
     return "only skipped" if runs else "none"
 
 
-def newest_link(lines, context):
-    """The link of the newest status of `context`, from one `context<TAB>created_at<TAB>target_url`
+def newest_link(lines, contexts):
+    """The link of the newest status named any of `contexts`, from one `context<TAB>created_at<TAB>target_url`
     line each, or ""."""
     rows = [line.split("\t") for line in lines.splitlines() if line.strip()]
-    rows = [row[1:] for row in rows if len(row) == 3 and row[0] == context and row[2]]
+    rows = [row[1:] for row in rows if len(row) == 3 and row[0] in contexts and row[2]]
     return max(rows)[1] if rows else ""
 
 
 def newest_database(lines):
     """The project ref of the newest `preview-database` status, or "" when none was recorded."""
-    match = DATABASE_URL.match(newest_link(lines, DATABASE_CONTEXT))
+    match = DATABASE_URL.match(newest_link(lines, DATABASE_CONTEXTS))
     return match.group(1) if match else ""
 
 
@@ -209,14 +212,14 @@ def find(args):
         lines = None
         while lines is None:
             lines = reader.read(["repos/%s/commits/%s/statuses" % (args.repo, args.sha), "--paginate",
-                                 "--jq", '.[] | select(.context == "%s" or .context == "%s") | "\\(.context)\\t\\(.created_at)\\t\\(.target_url // "")"'
-                                 % (CONTEXT, DATABASE_CONTEXT)])
+                                 "--jq", '.[] | select(.context | IN(%s)) | "\\(.context)\\t\\(.created_at)\\t\\(.target_url // "")"'
+                                 % ", ".join(json.dumps(name) for name in ADDRESS_CONTEXTS + DATABASE_CONTEXTS)])
             if lines is None:
                 time.sleep(args.interval)
     except Unreadable as error:
         fail("gh api %s failed %d times in a row (gh's own error is above each), so the preview of %s "
              "was not found. Re-run this job." % (error, FAILED_READS_ALLOWED, args.sha), code=2)
-    address = newest_link(lines, CONTEXT)
+    address = newest_link(lines, ADDRESS_CONTEXTS)
     if not address:
         fail('%s passed on %s but recorded no `%s` status: its job needs the catalog\'s preview record '
              "step (actions/preview/README.md). Re-running this job will not help." % (args.named, args.sha, CONTEXT))

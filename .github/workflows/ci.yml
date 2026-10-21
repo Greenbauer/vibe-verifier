@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   test:
-    name: Unit tests
+    name: Tests and gates
     runs-on: ubuntu-latest
     # Above everything that can run here: the suite (about 9 minutes) and the limits of the gates that run it
     # again (changed-code-mutation 900 seconds, regression-test-fails-on-base 600, coverage-not-lost 300), so a

@@ -54,9 +54,12 @@ if endpoint.endswith("/check-runs"):
     for run in state.get("runs_of", {}).get(name) or state["runs"][min(n, len(state["runs"]) - 1)]:
         print("\\t".join(run))
 elif endpoint.endswith("/statuses"):
-    for status in state.get("statuses", []):
-        if status["context"] in ("preview", "preview-database"):
-            print("%s\\t%s\\t%s" % (status["context"], status["created_at"], status.get("target_url") or ""))
+    # The engine's own --jq filter runs on the statuses, as gh would run it.
+    import subprocess
+    jq = subprocess.run(["jq", "-r", argv[argv.index("--jq") + 1]], input=json.dumps(state.get("statuses", [])),
+                        capture_output=True, text=True)
+    sys.stdout.write(jq.stdout)
+    sys.exit(jq.returncode)
 '''
 
 PASSED = [["2026-10-12T15:00:00Z", "completed", "success"]]

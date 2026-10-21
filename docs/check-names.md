@@ -28,6 +28,9 @@ mapping goes in the pull request that applies it.
    share a name: they never sit in a pull request's check list.
 7. **A commit status names its stage itself**, because it has no workflow: the context is `Stage / Name`
    (`Merge / Safe to merge`), and that whole context is what a branch rule requires and a reader compares.
+   A status never shows the same text as a job: when a status carries a check's verdict, the job that
+   produces it is that check's helper (`E2E tests: run` beside the status `Preview / E2E tests`), and two
+   statuses never share a context.
 8. **Matrix copies keep one name.** GitHub adds ` (2)`, ` (3)` to the copies; the job that judges them all
    is the one that is required.
 
@@ -71,13 +74,14 @@ name is its whole context.
 | `sync-preview-branch`, `Preview reads its own branch database` | `Preview / Database` |
 | `preview-env-sanity`, `Preview NetSuite is the sandbox`, `Preview Supabase is not production` | `Preview / Safe settings` |
 | `catalog-data-gate` | `Preview / Catalog data` |
-| `preview-e2e`, `browser-suite` | `Preview / E2E tests` (helpers `E2E tests: <step>`) |
+| `preview-e2e`, `browser-suite` | `Preview / E2E tests` (helpers `E2E tests: <step>`); `E2E tests: run` where a status carries the verdict |
 | `browser-regressions` | `Preview / E2E regressions` |
-| `ui-geometry-observe` | `Preview / Layout` |
+| `ui-geometry-observe` | `Preview / Layout`; `Layout: run` where a status carries the verdict |
 | `deploy-pr`, `teardown-pr`, `decide`, `sweep` | `Preview / Deploy`, `Deploy: tear down`, `Deploy: decide`, `Deploy: sweep` |
 | status `preview` | `Preview / Address` (posted by `actions/preview`, which keeps `preview` until every reader accepts both) |
 | status `preview-database` | `Preview / Database address` (the same) |
-| status `preview-e2e-verdict`, `preview-e2e-run`, `preview-e2e-observe` | `Preview / E2E tests`, `Preview / E2E tests: running`, `Preview / E2E tests` |
+| status `preview-e2e-verdict`, `preview-e2e`, `preview-e2e-run` | `Preview / E2E tests`, `Preview / E2E tests`, `Preview / E2E tests: running` |
+| status `preview-e2e-observe` (report only) | `Preview / E2E tests: report` |
 | status `ui-geometry-observe` | `Preview / Layout` |
 | `proof-anchors` | `Review / PR claims` |
 | `Merge safety` / `judge merge safety` | `Merge / Safe to merge: judge` |
@@ -86,7 +90,7 @@ name is its whole context.
 | `Keep the Codex login fresh` / `codex-keepalive` | `Maintenance / Explorer login` |
 
 The catalog's own checks: `CI` / `test`, `qae-browser`, `regression-browser`, `lanes`, `lanes-listener` became
-`Code` / `Unit tests`, `QA browser tests`, `Regression browser tests`, `Lane kit tests`, `Lane listener tests`;
+`Code` / `Tests and gates`, `QA browser tests`, `Regression browser tests`, `Lane kit tests`, `Lane listener tests`;
 `Nightly` became `Maintenance`.
 
 `Standards` is its own stage because the catalog's gates (secrets, workflow lint, complexity, file size, repository

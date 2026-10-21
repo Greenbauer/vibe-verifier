@@ -55,6 +55,18 @@ class Checks(Harness, unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(output, "url=https://p.vercel.app\ndatabase=\n")
 
+    def test_find_reads_the_statuses_under_their_new_names_too(self):
+        # docs/check-names.md renames them; a record step that posts the new names must still be found.
+        self.serve(runs=[PASSED], statuses=[
+            {"context": "preview", "created_at": "2026-10-12T15:01:00Z", "target_url": "https://old.vercel.app"},
+            {"context": "Preview / Address", "created_at": "2026-10-12T16:00:00Z", "target_url": "https://new.vercel.app"},
+            {"context": "Preview / Database address", "created_at": "2026-10-12T16:00:00Z",
+             "target_url": "https://%s.supabase.co" % ("b" * 20)},
+            {"context": "view", "created_at": "2026-10-12T17:00:00Z", "target_url": "https://substring.example"}])
+        result = self.run_engine("find", "--check", "sync-preview-branch")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "https://new.vercel.app\n%s\n" % ("b" * 20))
+
     def test_the_action_refuses_a_check_of_blank_lines_at_once(self):
         result, _ = self.action_step(CHECK="\n  \n")
         self.assertEqual(result.returncode, 1)
