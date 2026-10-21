@@ -273,7 +273,7 @@ class FeatureRewalk(unittest.TestCase):
         prompt = PROMPT.read_text()
         for phrase in ("If the directory qae-inputs/features/ exists", "qae-artifacts/qae/features/<id>.md",
                        "qae-artifacts/qae/features/<id>-step-k.png",
-                       "regression-check: <id> -- PASS -- <one sentence> (qae/features/<id>.md::<the step line text>)"):
+                       "regression-check: <id> -- PASS -- <one sentence> (qae/features/<id>.md::<the step line text"):
             self.assertIn(phrase, prompt)
 
     def test_the_prompt_bounds_the_re_walk_and_keeps_a_fail_for_a_step_that_was_walked(self):
