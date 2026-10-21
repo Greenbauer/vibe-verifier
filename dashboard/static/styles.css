@@ -357,10 +357,20 @@ button.timeline-name { min-height: 0; padding: 0; border: 0; background: transpa
   .section-heading .toolbar-group { flex: 1 1 100%; min-width: 0; flex-wrap: nowrap; }
   .toolbar-group select { flex: 1 1 0; min-width: 0; }
   .list-heading { display: none; }
-  .pr-row { grid-template-columns: minmax(0, 1fr) auto; padding: 13px 11px; }
+  /* A phone stacks the row's cells, so each one packs its lines side by side where they fit: the arrow
+     beside the title, the number, author, head, age and behind pill on one wrapping line, the badge
+     left of the check names, and the CI counts, time and idle line wrapping as one line. */
+  .pr-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 6px; padding: 10px 11px; }
   .pr-work, .progress-copy, .pr-row > .progress-copy:not(.ci-copy), .timeline-cell { grid-column: 1 / 3; }
   .timeline-cell { min-height: 40px; }
-  .timeline-toggle { grid-column: 1 / 3; justify-self: end; min-height: 22px; }
+  .timeline-toggle { grid-column: 2; grid-row: 1; align-self: start; min-height: 22px; }
+  .pr-identity { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+  .pr-identity > b { flex: 1 1 100%; }
+  .pr-work { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 2px 8px; }
+  .pr-work > .badge { grid-row: 1 / span 3; align-self: start; }
+  .pr-work > :not(.badge) { grid-column: 2; }
+  .ci-copy, .ci-copy .progress-caption { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+  .ci-copy .comment-mark { align-self: center; }
   .timeline-detail { padding: 6px 11px 12px; }
   .timeline-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) 52px 24px; gap: 6px; }
   .timeline-tick:nth-child(even) { visibility: hidden; }

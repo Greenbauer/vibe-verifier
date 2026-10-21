@@ -134,6 +134,24 @@ console.log(JSON.stringify({ids, drawn}));
         # The toggle stays on screen at every width, so a keyboard can always open a timeline.
         self.assertNotIn(".timeline-toggle { display: none", css)
 
+    def test_a_phone_row_packs_its_lines_side_by_side(self):
+        css = (ROOT / "dashboard/static/styles.css").read_text()
+        phone = css[css.index("@media (max-width: 650px)"):]
+        phone = phone[:phone.index("\n}\n")]
+        def rule(selector):
+            start = phone.index("\n  " + selector + " {")
+            return phone[start:phone.index("}", start)]
+        # The arrow sits beside the title instead of taking a row of its own at the bottom.
+        self.assertIn("grid-column: 2; grid-row: 1", rule(".timeline-toggle"))
+        # Number, author, head, age and behind pill share one wrapping line under the full-width title.
+        self.assertIn("flex-direction: row; flex-wrap: wrap", rule(".pr-identity"))
+        self.assertIn("flex: 1 1 100%", rule(".pr-identity > b"))
+        # The status badge sits left of the check names, not on a line above them.
+        self.assertIn("grid-template-columns: auto minmax(0, 1fr)", rule(".pr-work"))
+        self.assertIn("grid-column: 2", rule(".pr-work > :not(.badge)"))
+        # The CI counts and CI time share a line when they fit.
+        self.assertIn("display: flex; flex-direction: row; flex-wrap: wrap", rule(".ci-copy, .ci-copy .progress-caption"))
+
 
     def test_a_rows_title_opens_github_and_the_row_opens_its_ci_timeline(self):
         result = self.node(r"""
