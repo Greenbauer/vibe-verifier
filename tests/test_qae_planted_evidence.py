@@ -145,13 +145,13 @@ class MergeStep(unittest.TestCase):
         return results
 
     def test_a_checkout_that_already_has_qae_artifacts_stops_before_anything_is_written(self):
-        for shape in ("file", "link"):
+        for shape in ("file", "link", "dangling link"):
             with self.subTest(shape=shape):
                 checkout = make_repo(self, {"README.md": "x\n"})
                 if shape == "file":
                     commit(checkout, {"qae-artifacts/qae/AC1-step-1.png": "png"})
-                else:
-                    os.symlink(".", Path(checkout, "qae-artifacts"))  # the copies would land in the checkout itself
+                else:  # the copies would land in the checkout itself, or in a directory the link names
+                    os.symlink("." if shape == "link" else "nowhere", Path(checkout, "qae-artifacts"))
                 evidence = tempfile.mkdtemp(prefix="vv-evidence-")
                 self.addCleanup(subprocess.run, ["rm", "-rf", evidence])
                 write(evidence, {"qae-artifacts-1/qae/AC1.md": "- %s\n" % STEP})
