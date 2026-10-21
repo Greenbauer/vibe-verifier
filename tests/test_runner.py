@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import tempfile
 import unittest
 
@@ -120,6 +121,57 @@ class ManifestFromBase(unittest.TestCase):
         result = self.judged(repo)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("judged by the manifest at", result.stdout)
+
+
+class TwoLinesOfOneGate(unittest.TestCase):
+    """A manifest may name a gate twice (one coverage-not-lost line per test suite): each line runs with its
+    own arguments, and each is judged from the base line it started from. The branch is `main`, 4 characters,
+    so `--max 60` passes and `--max 2` fails."""
+    TWO = "branch-name-length --max 60\nbranch-name-length --max 2\n"
+
+    def judged(self, repo):
+        return runner("run", "--repo", repo, "--manifest", os.path.join(repo, ".vibe-verifier"), "--base-ref", "HEAD~1")
+
+    def statuses(self, result):
+        return re.findall(r"^  branch-name-length\s+(\S+)", result.stdout, re.MULTILINE)
+
+    def test_each_line_runs_with_its_own_arguments(self):
+        repo = make_repo(self, {".vibe-verifier": self.TWO})
+        commit(repo, {"README.md": "x\n"})
+        result = self.judged(repo)
+        self.assertEqual(self.statuses(result), ["PASS", "FAIL"], result.stdout + result.stderr)
+        self.assertNotIn("judged by the manifest at", result.stdout)
+
+    def test_each_line_runs_with_its_own_arguments_with_no_base_manifest(self):
+        repo = make_repo(self, {"a.txt": "x"})
+        commit(repo, {".vibe-verifier": self.TWO})
+        self.assertEqual(self.statuses(self.judged(repo)), ["PASS", "FAIL"])
+
+    def test_a_branch_cannot_loosen_one_of_two_lines(self):
+        repo = make_repo(self, {".vibe-verifier": self.TWO})
+        commit(repo, {".vibe-verifier": "branch-name-length --max 60\nbranch-name-length --max 60\n"})
+        result = self.judged(repo)
+        self.assertEqual(self.statuses(result), ["PASS", "FAIL"], result.stdout + result.stderr)
+        self.assertIn("judged by the manifest at", result.stdout)
+
+    def test_a_removed_second_line_still_runs(self):
+        repo = make_repo(self, {".vibe-verifier": self.TWO})
+        commit(repo, {".vibe-verifier": "branch-name-length --max 60\n"})
+        self.assertEqual(self.statuses(self.judged(repo)), ["PASS", "FAIL"])
+
+    def test_a_branch_that_puts_its_line_of_a_gate_first_is_told_the_base_judges(self):
+        repo = make_repo(self, {".vibe-verifier": self.TWO})
+        commit(repo, {".vibe-verifier": "branch-name-length --max 2\nbranch-name-length --max 60\n"})
+        result = self.judged(repo)
+        self.assertEqual(self.statuses(result), ["PASS", "FAIL"], result.stdout + result.stderr)
+        self.assertIn("judged by the manifest at", result.stdout)
+
+    def test_a_second_line_the_branch_adds_runs_with_its_own_arguments(self):
+        repo = make_repo(self, {".vibe-verifier": "branch-name-length --max 60\n"})
+        commit(repo, {".vibe-verifier": "branch-name-length --max 2\nbranch-name-length --max 60\n"})
+        result = self.judged(repo)
+        # The base's line runs first, then the line the branch added.
+        self.assertEqual(self.statuses(result), ["PASS", "FAIL"], result.stdout + result.stderr)
 
 
 class Tool(unittest.TestCase):
