@@ -9,6 +9,7 @@ import re
 import sys
 
 from _contract import PY_TESTS, CannotRun, matches
+from _js_imports import imports_at_runtime
 from _regression_node import plan as node_plan
 from _regression_playwright import collected
 
@@ -114,13 +115,23 @@ def kind(args, path, listed):
         return None, "a %s test; %s" % (os.path.splitext(path)[1] or "file", RUNNERS)
     with open(os.path.join(args.repo, path), encoding="utf-8", errors="replace") as handle:
         text = handle.read()
-    if PLAYWRIGHT.search(text):
+    if PLAYWRIGHT.search(text) and not playwright_types_only(args, path, text):
         return None, playwright_why(args, path, listed[1])
     if node_test(args, path):
         return "node", None
     if NODE_TEST.search(text):
         return None, "a node:test file that no package.json script runs with `node --test` and no --node-test declares"
     return framework(args.repo, path, text)
+
+
+def playwright_types_only(args, path, text):
+    """Whether a file that names @playwright/test is a node:test file that only takes Playwright's types for its helpers
+    (`import type { Page } from "@playwright/test"`): its code loads node:test, the repository runs it with `node --test`
+    (a package.json script or --node-test), and no import of @playwright/test loads that module when it runs
+    (gates/_js_imports.py). Such a file is not a Playwright spec and is judged by node:test. A spec, which loads
+    Playwright's `test` or `expect`, still is one, whatever else selects it."""
+    return bool(node_test(args, path) and imports_at_runtime(text, "node:test")
+                and not imports_at_runtime(text, "@playwright/test"))
 
 
 def maybe_playwright(args, path):

@@ -10,6 +10,7 @@
 - source: `gates/_regression_python.py`
 - source: `gates/_regression_node.py`
 - source: `gates/_regression_frameworks.py`
+- source: `gates/_js_imports.py`
 - source: `gates/_regression_playwright.py`
 - source: `gates/_local_only.py`
 - source: `gates/_local_guard.py`
@@ -102,6 +103,12 @@ So the gate adds about a minute of its own (66 s of stack moves for Supabase on 
 - `tests/test_regression_node.py::test_a_file_whose_top_level_assertion_fails_on_the_code_before_the_fix_shows_the_bug`
 - `tests/test_regression_node.py::test_a_node_test_in_a_folder_named_like_a_glob_runs_as_that_file`
 - `tests/test_regression_node.py::test_a_path_is_given_to_node_test_as_a_glob_that_selects_only_that_file`
+- `tests/test_regression_node_types.py::test_a_node_test_file_that_only_names_playwright_types_is_judged_by_node_test`
+- `tests/test_regression_node_types.py::test_a_typescript_node_test_file_with_a_type_only_playwright_import_is_judged_by_node_test`
+- `tests/test_regression_node_types.py::test_a_playwright_spec_the_node_script_also_selects_still_needs_playwright`
+- `tests/test_regression_node_types.py::test_which_files_are_node_tests_and_which_are_playwright_specs`
+- `tests/test_regression_node_types.py::test_an_import_that_binds_a_value_loads_the_module`
+- `tests/test_regression_node_types.py::test_an_import_that_names_only_types_or_a_mention_outside_code_does_not`
 - `tests/test_regression_playwright.py::test_a_browser_spec_that_fails_on_the_code_before_the_fix_passes`
 - `tests/test_regression_playwright.py::test_a_browser_spec_that_passes_on_the_code_before_the_fix_does_not_reproduce_the_bug`
 - `tests/test_regression_playwright.py::test_a_browser_spec_that_fails_there_only_because_what_it_imports_is_missing_does_not_show_the_bug`
@@ -155,7 +162,7 @@ So the gate adds about a minute of its own (66 s of stack moves for Supabase on 
 
 - A fix is a title whose conventional-commit type is `fix`. A fix that cannot carry a test says why on a body line `regression-test: none -- <reason>`; the reason is printed as a warning and the pass is qualified.
 - A test that fails before the fix only because a module, export, file or script it needs does not exist yet is a finding (exit 1), not exit 2: the gate ran, and the author can act on it (test through code that exists before the fix, or write the reason line). As exit 2 it would also break every soak, which never masks exit 2.
-- It runs Vitest, node:test, pytest and unittest. A test that calls `describe`, `it` or `test` without importing a framework is Vitest's only when its package runs Vitest (the nearest Vitest config, Jest config or `package.json` naming its runner says which); a Jest or bun test is not judged, naming the runner and the file that says so, and a fix whose only tests are Jest or bun tests passes qualified with each file as an advisory, never exit 2. A Playwright spec runs only under a config `--playwright` names. Any other Playwright, shell or SQL test, a node:test file the repository does not run with `node --test` (no package.json script selects it and no `--node-test` declares it), and a script judged only by its exit code, is reported as not judged; a fix whose only tests are such files is exit 2.
+- It runs Vitest, node:test, pytest and unittest. A test that calls `describe`, `it` or `test` without importing a framework is Vitest's only when its package runs Vitest (the nearest Vitest config, Jest config or `package.json` naming its runner says which); a Jest or bun test is not judged, naming the runner and the file that says so, and a fix whose only tests are Jest or bun tests passes qualified with each file as an advisory, never exit 2. A Playwright spec runs only under a config `--playwright` names. A node:test file the repository runs with `node --test` whose only Playwright import is for types (`import type { Page } from "@playwright/test"`, used by an end-to-end directory's helpers) is a node:test file, judged under node:test; one that loads Playwright's `test` or `expect`, or imports node:test nowhere, is still a spec. Any other Playwright, shell or SQL test, a node:test file the repository does not run with `node --test` (no package.json script selects it and no `--node-test` declares it), and a script judged only by its exit code, is reported as not judged; a fix whose only tests are such files is exit 2.
 - A node:test file runs alone, under Node's TAP reporter, with the script's own options less the reporter, `--watch`, sharding, coverage and isolation, which the gate sets. A file that does not load is reported by Node only as its process's stderr, which TAP keeps and JUnit drops: the gate reads the error from there. Node 21 and later read the path as a glob, so the gate gives each `[`, `]`, `*`, `?` and `(` as a class that holds only it (a Next.js `app/[id]/page.test.ts` otherwise runs no test, and `app/+(shop)/page.test.ts` runs `app/shop/page.test.ts`), and a `{` as `?`, which a sibling differing only there would match too (Node expands braces before it reads a class); Node 20 is given the path as it is. Tested on Node 20, 22 and 24.
 - Shell tests stay not judged: neither a plain `*.test.sh` script nor bats reports anything but wording that separates a failed check from a file or command that does not exist yet ([why](../GATE-CONTRACT.md#regression-test-fails-on-base)).
 - It swaps the files the fix changed back to the merge base in the working tree for the second run and always puts them back, so they must not differ from HEAD when it starts.

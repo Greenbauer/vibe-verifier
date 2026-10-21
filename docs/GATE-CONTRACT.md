@@ -458,7 +458,14 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   dependency or `jest` key; a script that runs `bun test`) says which; a `package.json` that names none,
   a workspace package that runs its tests with the root's Vitest, passes the question up. Before this
   rule a Jest or bun file was run under Vitest, and with no Vitest installed the gate stopped (exit 2)
-  on every such fix. One that imports `@playwright/test` that no `--playwright` config collects, a Jest
+  on every such fix. A node:test file the repository runs with `node --test` (its code loads `node:test`)
+  that only takes Playwright's types for its helpers (`import type { Page } from "@playwright/test"`, a
+  `{ ... }` of capitalized names, which Playwright exports only as types, a JSDoc `import("...")` type,
+  or the module's name inside a string) is judged by node:test, not taken for a spec: imports are read
+  with comments dropped and string literals masked (`gates/_js_imports.py`). A file that loads
+  Playwright's `test`, `expect` or another value is a spec whatever else selects it, and so is one that
+  imports node:test nowhere (a spec taking `test` from a fixtures module and Playwright's types).
+  One that imports `@playwright/test` that no `--playwright` config collects, a Jest
   test (it imports `@jest/globals`, or its package says Jest), a bun test (it imports `bun:test`, or its
   package's scripts run `bun test`),
   a file whose calls no package claims, one that imports `node:test` that the repository does not run
