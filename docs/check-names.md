@@ -8,7 +8,8 @@ mapping goes in the pull request that applies it.
 
 1. **A check shows as `Workflow / Job`. The workflow name is the stage, the job name is what it proves.**
    Stages, in the order they run: `Code`, `UI parity`, `Tests`, `Security`, `Preview`, `Sign-in`, `QA`,
-   `Review`, `Standards`, `Merge`. Workflows that never run on a pull request use `Deploy` or `Maintenance`.
+   `Review`, `Standards`, `Merge`. Workflows that do not judge pull requests use `Deploy` or `Maintenance`; one that runs on a pull request
+only to test a change to itself (pull sync's dry run) keeps its `Maintenance` name there.
    A check's own name, the one a branch rule requires, the API's `check_name` matches and every reader
    compares, is the job part only: `Database`, not `Preview / Database`. The workflow part only groups
    the list.
@@ -24,7 +25,7 @@ mapping goes in the pull request that applies it.
 6. **The names of workflows that run on pull requests are unique in a repository.** Two such workflow
    files in one stage are folded into one file where that is a move of independent jobs; where it is not
    (an organization-required workflow, a `pull_request_target` workflow), the second takes a narrower
-   stage name from the table below. Workflows that never run on a pull request (`Maintenance`, `Deploy`) may
+   stage name from the table below. Workflows that do not judge pull requests (`Maintenance`, `Deploy`) may
    share a name: they never sit in a pull request's check list.
 7. **A commit status names its stage itself**, because it has no workflow: the context is `Stage / Name`
    (`Merge / Safe to merge`), and that whole context is what a branch rule requires and a reader compares.
