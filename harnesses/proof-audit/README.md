@@ -123,6 +123,7 @@ A job of its own, on the runner with the Codex login:
           mode: grade
           plan: ${{ needs.criteria.outputs.proof-plan }}
           shard: ${{ matrix.shard }}
+          grades: ${{ runner.temp }}/proof-audit-grades   # outside the checkout: see below
           model: ""              # CONSUMER: the Codex model; empty is the runner's
           reasoning-effort: ""   # CONSUMER
       - name: Keep the grades
@@ -130,7 +131,7 @@ A job of its own, on the runner with the Codex login:
         uses: actions/upload-artifact@<sha>
         with:
           name: proof-audit-grades-${{ matrix.shard }}
-          path: proof-audit-grades/
+          path: ${{ runner.temp }}/proof-audit-grades/
           if-no-files-found: error
           overwrite: true
 ```
@@ -142,14 +143,14 @@ In the verify job, add `proof-audit` to its `needs`, and after the QA gates:
         if: ${{ !cancelled() && needs.criteria.outputs.proof-count != '0' }}
         with:
           pattern: proof-audit-grades-*
-          path: proof-audit-grades
+          path: ${{ runner.temp }}/proof-audit-grades
       - name: Run the proof audit
         if: ${{ !cancelled() && steps.inputs.outcome == 'success' }}   # the step that wrote qae-inputs/pr-body.md
         uses: Greenbauer/vibe-verifier/actions/proof-audit@<sha>
         with:
           mode: verify
           body: qae-inputs/pr-body.md
-          grades: proof-audit-grades
+          grades: ${{ runner.temp }}/proof-audit-grades
           require-ticket: |     # CONSUMER: paths a pull request changes only with a Ticket line or `No ticket: <why>`
             src/**
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -157,6 +158,21 @@ In the verify job, add `proof-audit` to its `needs`, and after the QA gates:
 
 The verify job is already a required check, so nothing in branch protection changes. A grade job
 does not wait for the preview, so it normally finishes long before the explorers do.
+
+### Grades the pull request supplies
+
+Both jobs check out the pull request being judged, so the grades stay in the runner's temporary
+directory, outside the checkout, from the grader's write to the gate's read. A grades directory inside the
+checkout is one the pull request can commit to: a file it commits there (a `<K>.json` in a folder of its
+own, or a `<K>.json` directory that makes the grader's own write fail) is uploaded beside or instead of the
+grader's, and a link it commits sends the grader's write, the upload or the download anywhere on the
+runner. The gate refuses such grades too: a path the branch tracks at, under or on the way to `grades`, or a
+symbolic link in it, is a finding, and nothing else is judged (`planted` in
+[gates/_contract.py](../../gates/_contract.py), the rule the QAE gates hold their evidence to). That
+refusal sees only what the verify job's own checkout holds, so it catches a copy that keeps both jobs'
+grades in the checkout, but not grades the grade job uploaded from there into a download outside it. A
+consumer copy made before this keeps them in the checkout (`path: proof-audit-grades/` and
+`grades: proof-audit-grades`): refresh the copy, not only its pins.
 
 ## Run it before pushing
 

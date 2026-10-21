@@ -263,18 +263,20 @@ def _links_in(artifacts):
             for entry in sorted(folders + files) if os.path.islink(os.path.join(folder, entry))]
 
 
-def planted(repo, artifacts):
+def planted(repo, artifacts, writer="the explorers"):
     """One finding per thing in the evidence directory `artifacts` that the checkout `repo` supplied rather than the
     run: each path the branch tracks at, under or on the way to it (a tracked parent is a link or a submodule, since
-    Git lists no plain directory), and each symbolic link in it, the directory itself included.
+    Git lists no plain directory), and each symbolic link in it, the directory itself included. `writer` names who
+    writes the evidence, for the finding.
 
     The QAE jobs keep the evidence in qae-artifacts/ inside the checkout of the pull request being judged
     (harnesses/qae/). A file the pull request commits there that no explorer writes survives into the evidence,
     and a link it commits (a file, a directory, or the directory itself) points the gate at whatever it names.
-    So run_gate judges nothing until this is empty. A run's own evidence is regular files the workflow wrote."""
+    So run_gate judges nothing until this is empty. A run's own evidence is regular files the workflow wrote.
+    The proof-audit gate holds its --grades directory to the same rule (gates/proof_audit.py)."""
     found = _tracked_at(repo, artifacts) + _links_in(artifacts)
     return [Finding("the evidence in %s is not only the run's own, so none of it is judged: %s. It holds what "
-                    "the explorers wrote and nothing else: remove that from the pull request" % (artifacts, why))
+                    "%s wrote and nothing else: remove that from the pull request" % (artifacts, why, writer))
             for why in found]
 
 
