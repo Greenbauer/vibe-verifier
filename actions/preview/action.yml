@@ -8,7 +8,7 @@ inputs:
     description: To record, the Supabase project ref of the database the preview reads (its branch database), as the job that pointed the preview at it knows it. Empty (the default) records the address alone.
     default: ""
   check:
-    description: To find, the name of the check whose job records the address. The step waits for it to pass on the commit.
+    description: To find, the name of the check whose job records the address. The step waits for it to pass on the commit. While the check is being renamed, its names one per line; their runs are judged together as one check's.
     default: ""
   sha:
     description: The commit whose preview it is. Defaults to the pull request's head.

@@ -879,7 +879,7 @@ records the address it proved and the site step reads it with the
         id: preview
         uses: Greenbauer/vibe-verifier/actions/preview@0000000000000000000000000000000000000000 # CONSUMER: pin
         with:
-          check: Database   # CONSUMER: the check whose job records the address (Preview / Database)
+          check: Database   # CONSUMER: the job name of the check that records (shown as Preview / Database)
       - name: Declare the preview under test   # CONSUMER
         id: site
         env:

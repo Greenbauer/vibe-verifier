@@ -67,8 +67,19 @@ once took the integration's branch, which the preview never read, and every call
       - id: preview
         uses: Greenbauer/vibe-verifier/actions/preview@0000000000000000000000000000000000000000 # CONSUMER
         with:
-          check: Database   # CONSUMER: the name of the check whose job records (Preview / Database)
+          check: Database   # CONSUMER: the job name of the check that records (shown as Preview / Database)
       - run: curl -fsS "${{ steps.preview.outputs.url }}/login"
+```
+
+`check` is the job's own name, the one GitHub's check runs carry, without its workflow's name. While
+the check is being renamed ([check names](../../docs/check-names.md)), give both names, one per line;
+the runs under every name are judged as one check's, the newest deciding, and every message names
+each of them:
+
+```yaml
+          check: |
+            sync-preview-branch
+            Database
 ```
 
 It waits up to `wait-minutes` (40) for the named check to pass on the head, then outputs the newest
