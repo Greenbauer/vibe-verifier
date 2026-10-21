@@ -54,7 +54,7 @@ name is its whole context.
 | `Claude Review` / `claude-review`, `Claude Code Review` | `Review / Code review` |
 | `QAE explore` or `QAE` / `qae-criteria` | `QA / Acceptance criteria: read` |
 | `qae-preview`, `qae-preview-readiness` | `QA / Acceptance criteria: wait for preview` |
-| `qae-settle`, `qae-settle (2)` | `QA / Acceptance criteria: wait for checks` (`(2)` kept) |
+| `qae-settle`, `qae-settle (2)` (a second job that takes over the wait) | `QA / Acceptance criteria: wait for checks`, `... keep waiting` |
 | `qae-explore`, `qae-explore (N)` | `QA / Acceptance criteria: walk`, `... walk (N)` |
 | `qae-proof-audit` | `QA / Acceptance criteria: proof audit` |
 | `qae-base-site`, `qae-base-walk` | `QA / Acceptance criteria: main site`, `... main walk` |
