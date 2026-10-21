@@ -87,10 +87,21 @@ runs is another matter: the default site step serves it on the explore job's run
 write untracked files into `qae-artifacts/` that are uploaded as the explorer's. A site served apart
 from the workspace (a container, or a hosted preview) keeps it out.
 
+The workflow's own inputs sit in `qae-inputs/` in the same checkout, and each job writes them there
+(the criteria job, each explore job, the verify job). So the first step of each job that writes them
+stops before writing when the checkout already has a `qae-inputs` file, directory or link, which only
+the pull request can have put there (Git makes no empty directory). A link would send the writes
+anywhere on the runner, which on a self-hosted runner is a machine other jobs share, and a file
+such as `qae-inputs/site.md` would read to the explorer as one the workflow wrote. The gates' own
+inputs are rewritten by the verify job whatever the branch has, so this is about where the writes
+land, not what is judged. The fix is to remove `qae-inputs` from the branch.
+
 The gates refuse at any pin from this change on. A consumer's copy of the verify job made before it
 also downloads into the checkout (`path: qae-evidence`), where a committed
 `qae-evidence/qae-artifacts-9/` would be taken as the newest attempt: copy the download step and the
-merge step again, as well as moving the pins.
+merge step again, as well as moving the pins. The `qae-inputs` refusal is in the template's steps, not a gate: a copy
+made before it reaches it only by copying the three steps that write `qae-inputs/` first (`Write the
+criteria inputs`, `Write the explorer's input`, `Write the declared inputs`).
 
 ## Re-walking the features a pull request touches
 
