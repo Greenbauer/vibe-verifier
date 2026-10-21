@@ -151,6 +151,8 @@ console.log(JSON.stringify({ids, drawn}));
         self.assertIn("grid-column: 2", rule(".pr-work > :not(.badge)"))
         # The CI counts and CI time share a line when they fit.
         self.assertIn("display: flex; flex-direction: row; flex-wrap: wrap", rule(".ci-copy, .ci-copy .progress-caption"))
+        # The unresolved-comment count shares the caption's line instead of taking one of its own.
+        self.assertIn("flex: 1 1 0; min-width: 0", rule(".ci-copy .progress-caption"))
 
 
     def test_a_rows_title_opens_github_and_the_row_opens_its_ci_timeline(self):

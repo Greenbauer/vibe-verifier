@@ -371,6 +371,7 @@ button.timeline-name { min-height: 0; padding: 0; border: 0; background: transpa
   .pr-work > :not(.badge) { grid-column: 2; }
   .ci-copy, .ci-copy .progress-caption { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
   .ci-copy .comment-mark { align-self: center; }
+  .ci-copy .progress-caption { flex: 1 1 0; min-width: 0; }
   .timeline-detail { padding: 6px 11px 12px; }
   .timeline-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) 52px 24px; gap: 6px; }
   .timeline-tick:nth-child(even) { visibility: hidden; }
