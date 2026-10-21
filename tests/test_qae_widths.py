@@ -109,6 +109,14 @@ class QaeInputs(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.widths(repo), "1280\n375\n")
 
+    def test_a_line_the_branch_adds_above_the_bases_does_not_change_the_widths(self):
+        repo = make_repo(self, {".vibe-verifier-qae": QAE})
+        git(repo, "checkout", "-q", "-b", "feat")
+        commit(repo, {".vibe-verifier-qae": "qae-artifacts --widths 1440\n" + QAE})
+        result, _ = self.run_action(repo)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.widths(repo), "1280\n375\n")
+
     def test_a_wrapper_passes_its_gate_list(self):
         repo = make_repo(self, {"README.md": "x\n"})
         result, _ = self.run_action(repo, entries=QAE.replace("1280,375", "1440"))
