@@ -1425,7 +1425,8 @@ def review_state(args, limits=None):
 # limit ("not your usage limit") does not match: that one is retried, not walked by hand.
 USAGE_LIMIT = re.compile(r"You(?:'|\u2019)ve (?:hit|reached) your (?:[\w-]+ ){0,3}limit\b(?P<rest>.*)", re.I | re.S)
 LIMIT_RESET = re.compile(r"\b(?:resets|try again (?:at|in))\s+(?P<when>[^\u00b7\n]+?)\s*\.?\s*$", re.I)
-EXPLORE_JOB = re.compile(r"qae-explore(?: \([0-9]+\))?")
+# Its name, or the one docs/check-names.md replaced, which a copy made before it still carries.
+EXPLORE_JOB = re.compile(r"(?:Acceptance criteria: walk|qae-explore)(?: \([0-9]+\))?")
 
 
 def explorer_limits(repo, run_id):
@@ -1433,7 +1434,7 @@ def explorer_limits(repo, run_id):
     latest attempt failed on a model usage limit; None when any failed for another reason, when none
     failed, or when the jobs or their annotations cannot be read (the workflow then lacks `actions: read`
     and `checks: read`, and the plain could-not-run body is posted). A job of a reusable workflow is
-    named `<caller> / qae-explore`."""
+    named `<caller> / Acceptance criteria: walk`."""
     try:
         jobs = gh_json("repos/%s/actions/runs/%s/jobs?filter=latest&per_page=100" % (repo, run_id)).get("jobs", [])
         failed = [job for job in jobs if EXPLORE_JOB.fullmatch(job.get("name", "").split(" / ")[-1])
