@@ -1,6 +1,6 @@
-"""coverage-not-lost on node:test files (gates/_coverage_node.py): the Node on PATH (CI's 22, and locally 22 and 24) with
-its own coverage, `--experimental-test-coverage`, on synthetic repositories that run their tests with `node --test`
-from a package.json script or a --node-test glob. Nothing is installed: node:test is Node's own."""
+"""coverage-not-lost on node:test files (gates/_coverage_node.py): the Node on PATH (CI's 22, locally 22 and 24) with its
+own coverage, on synthetic repositories that run their tests with `node --test` from a package.json script or a
+--node-test glob. Nothing is installed: node:test is Node's own."""
 import json
 import os
 import re
@@ -210,16 +210,17 @@ class NodeTestCoverage(unittest.TestCase):
                               "strictly equal: 50 !== 51", result.stderr)
                 self.assertEqual(worktrees(repo), 1)
 
-    def test_a_node_before_22_cannot_run(self):
+    def test_a_node_before_22_5_cannot_run(self):
         fake = tempfile.mkdtemp(prefix="vv-old-node-")
         self.addCleanup(shutil.rmtree, fake, True)
-        Path(fake, "node").write_text("#!/bin/sh\necho v20.18.0\n")
-        os.chmod(os.path.join(fake, "node"), 0o755)
         repo = project(self, {"src/price.mjs": PRICE, "test/plain.test.mjs": PLAIN_TEST}, {"test/plain.test.mjs": None})
-        result = run_gate(repo, "--soak", env={"PATH": fake + os.pathsep + os.environ["PATH"]})
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("the node on PATH is v20.18.0, and coverage of node:test files needs Node 22 or later", result.stderr)
-        self.assertEqual(worktrees(repo), 1)
+        for version in ("v20.18.0", "v22.4.1"):
+            Path(fake, "node").write_text("#!/bin/sh\necho %s\n" % version)
+            os.chmod(os.path.join(fake, "node"), 0o755)
+            result = run_gate(repo, "--soak", env={"PATH": fake + os.pathsep + os.environ["PATH"]})
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("the node on PATH is %s, and coverage of node:test files needs Node 22.5 or later" % version, result.stderr)
+            self.assertEqual(worktrees(repo), 1)
 
     def test_a_line_only_a_child_process_or_a_worker_ran_is_measured(self):
         repo = project(self, {"src/price.mjs": PRICE, "src/app.mjs": APP, "src/work.mjs": WORK, "src/daemon.mjs": DAEMON,

@@ -20,11 +20,11 @@ loss as intended: the findings are printed with the reason and do not fail the g
 
 Runners (gates/_coverage_runs.py): the project's own Vitest 2 to 5, with @vitest/coverage-v8 at exactly its
 version; or coverage.py 7.16.2 around the project's own pytest or unittest, measuring every Python process the
-suite starts too; or Node's own coverage around the files the repository runs with `node --test`, Node 22 or later
+suite starts too; or Node's own coverage around the files the repository runs with `node --test`, Node 22.5 or later
 (gates/_coverage_node.py), measuring the Node processes and worker threads a test starts too. Each run is guarded
 (gates/_local_guard.py): a credential for anywhere else in what it inherits is exit 2, and a connection to anything
 but this machine is refused. Install the project's dependencies first. A suite that fails at either side (or in a
-run that refused a connection), no runner or provider, a Node before 22, no test run at either side, or a run past
+run that refused a connection), no runner or provider, a Node before 22.5, no test run at either side, or a run past
 --timeout cannot run (exit 2). Each run says how many lines ran, and how long it took.
 
     --runner NAME       vitest, node-test, pytest or unittest (default vitest)

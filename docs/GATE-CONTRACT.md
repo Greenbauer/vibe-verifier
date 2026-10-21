@@ -987,10 +987,14 @@ coverage-not-lost --runner node-test --soak                    # the files packa
   under a `--project` that a package.json script's `node ... --test ...` command selects runs from that
   script's package with the command's options and its `NAME=value` assignments, and one a `--node-test
   GLOB` (repeatable) declares runs from the repository root. At each side the files that run the same
-  way run as one command, under the Node on PATH, which must be Node 22 or later (an earlier one is exit
-  2): `node <the script's options> <--args> --enable-source-maps --test --experimental-test-coverage
+  way run as one command, under the Node on PATH, which must be Node 22.5 or later, the first with
+  `--test-coverage-exclude` (an earlier one is exit 2): `node <the script's options> <--args>
+  --enable-source-maps --test --experimental-test-coverage --test-coverage-exclude=**/node_modules/**
   --test-reporter=<the gate's> --test-reporter-destination=<a file> <the files>`, with the script's own
-  coverage, reporter, isolation, sharding and watch options dropped. Node 22 and 24 read a `--test` path
+  coverage, reporter, isolation, sharding and watch options dropped. The exclude replaces Node 24's
+  default, which also leaves out every file named like a default test file (`test-*`, `*-test.*`,
+  `*_test.*`, `test.*`): on 24.21 a source helper `src/test-money.mjs` went unmeasured without it, and on
+  22.23 it was measured either way. Node 22 and 24 read a `--test` path
   holding `[` or `]` as a glob, so `app/[id]/page.test.ts`, a Next.js route, given as it is ran no test:
   each `[`, `]`, `*` and `?` is given as a class that holds only it. The reporter is a module the gate
   writes, which records each test that passed or failed and Node's coverage report (the `test:coverage`
@@ -1009,8 +1013,8 @@ coverage-not-lost --runner node-test --soak                    # the files packa
   not lines, so a line at the edge of code that stopped running can be found with it: a stand-in
   compiler's file lost the closing brace of the function above the one that stopped running too. Each
   `--runner` is a comparison of its own, so code that moves from a Vitest test to a node:test file is a
-  loss to the Vitest line. Measured on Node 22.23 (macOS and Debian) and 24.21 (Debian); the 22 releases
-  before 22.23 are accepted but were not run here. ubuntu-latest, where the catalog's CI runs, has 22.23.
+  loss to the Vitest line. Measured on Node 22.23 (macOS and Debian) and 24.21 (Debian); the releases from
+  22.5 to 22.22 are accepted but were not run here. ubuntu-latest, where the catalog's CI runs, has 22.23.
 - **Guarded runs.** Every run of the suite, at either side, starts under `gates/_local_guard.py`
   ([Test runs reach only this machine](#test-runs-reach-only-this-machine)): a credential for anywhere
   else in what it would inherit is exit 2 before it starts (`--local-env NAME` declares a secret of the
@@ -1054,7 +1058,7 @@ coverage-not-lost --runner node-test --soak                    # the files packa
   run (above) and 16 passed.
 - **Exit 2 also when** the suite fails at either side (its failing tests are printed), no test ran at
   either side, a `--project` is outside the repository or not a directory, the project has no Vitest,
-  `node` is missing, the `node` on PATH is before Node 22 (`--runner node-test`), the interpreter has no
+  `node` is missing, the `node` on PATH is before Node 22.5 (`--runner node-test`), the interpreter has no
   pytest, or Vitest or `node --test` wrote no coverage report.
 - **Subscribing.** As with `changed-code-mutation`, in a manifest of its own, such as
   `.vibe-verifier-tests`, run by a job that installs the project's dependencies and writes the body file

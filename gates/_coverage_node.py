@@ -7,7 +7,8 @@ The files that run the same way run as one command, in the checkout of the side,
 after the project's (the project's own coverage, reporter, isolation, sharding and watch options are dropped):
 
     node <the script's options> <--args> --enable-source-maps --test --experimental-test-coverage
-         --test-reporter=<the gate's reporter> --test-reporter-destination=<a file> <the files>
+         --test-coverage-exclude=**/node_modules/** --test-reporter=<the gate's reporter>
+         --test-reporter-destination=<a file> <the files>
 
 The reporter is a module of the gate's (REPORTER) that writes, as JSON lines, each test that passed or failed and the
 coverage report Node sends it when the tests are done (the `test:coverage` event): every line of every file the run
@@ -19,8 +20,11 @@ coverage file written there, so a Node process a test starts and a worker thread
 child_process copies the variable into the child's environment, even into one the test gives it of its own. A child
 killed by a signal writes nothing, and one still running when Node reads the files has written nothing yet, so neither
 is measured. `--enable-source-maps` makes Node map a file a loader compiled (ts-node, say) back to the file's own lines
-through the source map the loader wrote. Node leaves out node_modules and its own modules. Measured on Node 22.23 and
-24.21; a Node before 22 is refused (exit 2), and the 22 releases before 22.23 are accepted without having been run here.
+through the source map the loader wrote. Node leaves out its own modules, and the exclude leaves out node_modules: it
+replaces Node 24's default, which also leaves out every file named like a default test file (src/test-money.mjs), a
+source file the gate must measure. Measured on Node 22.23 and 24.21; a Node before 22.5, the first with
+--test-coverage-exclude, is refused (exit 2), and the releases from 22.5 to 22.22 are accepted without having been run
+here.
 
 Every command is guarded (gates/_local_guard.py), as the other runners' runs are: a credential for anywhere else in
 what it inherits (with the script's assignments and the files an --env-file option of the script or of --args loads)
@@ -43,7 +47,10 @@ from _regression_frameworks import JS
 from _regression_node import env_files, plan
 from _tools import run_tool
 
-MINIMUM = 22
+# The first Node with --test-coverage-exclude, which the gate sets so that Node 24's default (leaving out every file named
+# like a default test file, test-*.mjs say) cannot hide a source file; node_modules stays out as before.
+MINIMUM = (22, 5)
+EXCLUDE = "--test-coverage-exclude=**/node_modules/**"
 # Node 22 and later read a --test path with a glob character as a glob, so a Next.js route such as `app/[id]/a.test.ts`
 # matched nothing: each such character is given as a class that holds only it, which matches the file.
 GLOB = re.compile(r"[][*?]")
@@ -85,12 +92,12 @@ def node_version():
     if not shutil.which("node"):
         raise CannotRun("the node-test runner needs node on PATH")
     code, output = run_tool(["node", "--version"], None, 60, "node --version")
-    found = re.match(r"v(\d+)\.", output.strip())
+    found = re.match(r"v(\d+)\.(\d+)\.", output.strip())
     if code != 0 or not found:
         raise CannotRun("`node --version` printed no version: %s" % output.strip()[-200:])
-    if int(found.group(1)) < MINIMUM:
-        raise CannotRun("the node on PATH is %s, and coverage of node:test files needs Node %d or later: run the gate "
-                        "with the project's Node %d or later first on PATH" % (output.strip(), MINIMUM, MINIMUM))
+    if (int(found.group(1)), int(found.group(2))) < MINIMUM:
+        raise CannotRun("the node on PATH is %s, and coverage of node:test files needs Node %d.%d or later: run the gate "
+                        "with the project's Node %d.%d or later first on PATH" % (output.strip(), *MINIMUM, *MINIMUM))
 
 
 def events(path):
@@ -151,7 +158,7 @@ class NodeTest:
         """({path: {line: ran}}, whether any test ran) of one guarded `node --test` command over `paths`, run as `how` says."""
         report = os.path.join(tempfile.mkdtemp(prefix="run-", dir=self.scratch), "report.jsonl")
         given = [literal(os.path.relpath(os.path.join(os.path.realpath(tree), path), how.cwd)) for path in paths]
-        command = ["node", *how.flags, *self.args, "--enable-source-maps", "--test", "--experimental-test-coverage",
+        command = ["node", *how.flags, *self.args, "--enable-source-maps", "--test", "--experimental-test-coverage", EXCLUDE,
                    "--test-reporter=" + self.reporter, "--test-reporter-destination=" + report, *given]
         code, output = run_tool(command, how.cwd, time_left(deadline), "node --test", env=env, budget=budget, advice=ADVICE)
         said = events(report)
