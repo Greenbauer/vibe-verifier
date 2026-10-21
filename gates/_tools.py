@@ -108,6 +108,21 @@ TOOLS = {
         },
         "version_args": ["--version"],
     },
+    "vale": {
+        "version": "3.22.0",
+        "url": "https://github.com/errata-ai/vale/releases/download/v{version}/{asset}",
+        # from vale_3.22.0_checksums.txt on the release, read 2026-10-21, and matched by hashing each
+        # downloaded asset. 3.22.0 (2026-09-17), not 3.24.0: the newest release over a month old.
+        "assets": {
+            ("Linux", "x86_64"): ("vale_{version}_Linux_64-bit.tar.gz",
+                                  "52f5cd0314a1b7384cac6aa102a68193977312f6ba9c9f3ae001b5deec8e3a10"),
+            ("Darwin", "arm64"): ("vale_{version}_macOS_arm64.tar.gz",
+                                  "7dea014d6586101f6f695105f2e8825b7297236df0af9e68e193bcb4e4d25f7e"),
+            ("Darwin", "x86_64"): ("vale_{version}_macOS_64-bit.tar.gz",
+                                   "e54a94b86d45f8bdd751f31ad3d06d6ae04da1154e720a006ed0f2e03a675fff"),
+        },
+        "version_args": ["--version"],
+    },
 }
 
 
