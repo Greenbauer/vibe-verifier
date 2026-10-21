@@ -274,30 +274,14 @@ def base_manifest(args):
 
 def judged_entries(args, notice=None):
     """The entries the run judges: the head manifest, unioned with the base's on a pull request. Where they
-    differ it says so on `notice` (default stdout). A gate may have several lines, each with its own arguments.
-    Every base line runs as the base has it, first and in the base's order, so a reader of a gate's first line
-    reads the base's; then each head line no base line accounts for. A head line identical to a base line is
-    that line, and the other head lines of a gate stand, in order, for its base lines left over (a line the
-    branch changed); only a head line beyond those runs as written."""
+    differ it says so on `notice` (default stdout)."""
     head = parse_manifest(args.manifest)
     base, at_base = base_manifest(args)
     if not at_base:
         return head
-    left = list(at_base)  # base lines no head line has claimed yet
-    fresh = []
-    for line in head:
-        if line in left:
-            left.remove(line)
-        else:
-            fresh.append(line)
-    added = []
-    for line in fresh:
-        changed = next((taken for taken in left if taken[0] == line[0]), None)
-        if changed:
-            left.remove(changed)
-        else:
-            added.append(line)
-    merged = at_base + added
+    base_args = dict(at_base)
+    merged = [(gate, base_args.get(gate, gate_args)) for gate, gate_args in head]
+    merged += [(gate, gate_args) for gate, gate_args in at_base if gate not in dict(head)]
     if merged != head:
         print("vibe-verifier: judged by the manifest at %s where it differs from the head's "
               "(a gate this branch removed or weakened still runs as it was; a gate it added runs too)" % base,
