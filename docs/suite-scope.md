@@ -149,7 +149,9 @@ runs only when the decision was `true`:
 Each context is written on `sha` as `success`, with the reason as its description (cut at the 140
 characters a status takes) and a link to the run: `Not applicable: every changed path (3) is on the
 inert list (.github/suite-inert on main)`. A status GitHub refuses three times fails the step, since
-a head with no status waits on a suite that never runs.
+a head with no status waits on a suite that never runs. The list is split on spaces, so a context
+that holds one, such as `Preview / E2E tests`, the name the [check names](check-names.md) give the
+suite's status, cannot be posted this way yet; the example keeps the name the status has today.
 
 Posting is a separate step, not part of the decision, because *when* is the repository's to say:
 one consumer posts only after the preview's deploy succeeded, since a status on the suite's context

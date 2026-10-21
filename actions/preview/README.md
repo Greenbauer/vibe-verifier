@@ -34,6 +34,10 @@ test. Record the immutable address of the build (Vercel's `<project>-<hash>.verc
 branch alias, which a later push moves. A re-sync of the same commit records again, and the newest
 record wins. A record GitHub refuses three times fails the step, so the job cannot pass without one.
 
+The [check names](../../docs/check-names.md) call this status `Preview / Address`, and the
+database's below `Preview / Database address`. Both keep their present contexts until every
+consumer's readers of them (a workflow that waits on the status, a branch rule) accept the new ones.
+
 ### The database the preview reads
 
 A preview pointed at a database of its own (a Supabase branch) passes that database's project ref
@@ -63,7 +67,7 @@ once took the integration's branch, which the preview never read, and every call
       - id: preview
         uses: Greenbauer/vibe-verifier/actions/preview@0000000000000000000000000000000000000000 # CONSUMER
         with:
-          check: sync-preview-branch   # CONSUMER: the name of the check whose job records
+          check: Database   # CONSUMER: the name of the check whose job records (Preview / Database)
       - run: curl -fsS "${{ steps.preview.outputs.url }}/login"
 ```
 
@@ -97,7 +101,7 @@ again without it.
     steps:
       - uses: Greenbauer/vibe-verifier/actions/preview@0000000000000000000000000000000000000000 # CONSUMER
         with:
-          check: sync-preview-branch   # CONSUMER
+          check: Database   # CONSUMER
           handover: "true"
   test:
     needs: wait
@@ -105,7 +109,7 @@ again without it.
       - id: preview
         uses: Greenbauer/vibe-verifier/actions/preview@0000000000000000000000000000000000000000 # CONSUMER
         with:
-          check: sync-preview-branch   # CONSUMER
+          check: Database   # CONSUMER
 ```
 
 With `handover`, exit 3 alone passes the step, with a notice and an empty `url`: the check's run is

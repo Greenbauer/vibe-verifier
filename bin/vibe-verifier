@@ -224,6 +224,10 @@ PIN_LINE = re.compile(r"(vibe-verifier/actions/[A-Za-z0-9_-]+@)([^\s#]+)([^\n]*)
 # The value of a job's `runs-on:` line (a label or a flow list) is the consumer's choice of runner.
 # It stops at any character YAML reads as a line break, so nothing after it hides on the same line.
 RUNS_ON = re.compile("^([ \t]*runs-on:)[^\n\r\x85\u2028\u2029]*", re.MULTILINE)
+# The stub's and the review harness's name lines before docs/check-names.md, and each one's name now.
+RENAMED = {"name: Vibe Verifier": "name: Standards", "    name: vibe-verifier-ok": "    name: Gates",
+           "    name: review": '    name: "Code review: model run"', "    name: review-verify": "    name: Code review"}
+OLD_NAME = re.compile("^(?:%s)$" % "|".join(map(re.escape, RENAMED)), re.MULTILINE)
 RELEASE_PATHS = ["gates", "bin", "actions", "consumer", "tools", "rules"]  # a commit under these makes every older pin stale
 
 
@@ -403,7 +407,9 @@ def jobs_of(text):
 def comparable(text):
     """A copy of a catalog workflow with what its consumer owns blanked: each catalog pin and each
     `runs-on:` value. The `runs-on:` lines themselves still count, so a copy with more or fewer of
-    them differs; `apply-down` rewrites only pin lines, so a bump keeps every runner."""
+    them differs; `apply-down` rewrites only pin lines, so a bump keeps every runner. A name line
+    docs/check-names.md renamed reads as its new name, so a copy made before it is not drift."""
+    text = OLD_NAME.sub(lambda match: RENAMED[match.group(0)], text)
     return RUNS_ON.sub(r"\1 RUNNER", PIN_LINE.sub(r"\1SHA", text))
 
 
@@ -860,7 +866,8 @@ def open_bump(repo, changes, target, branch, default_branch, wrapper=None):
             "content": base64.b64encode(text.encode()).decode()})
     moved = "\n".join("- `%s`: %s -> `%s`" % (path, ", ".join("`%s`" % s[:10] for s in shas), target[:10]) for path, shas, _ in changes)
     proof = ("This PR's own run of the called workflow is the proof that it works here." if wrapper
-             else "This PR's own `vibe-verifier-ok` run is the proof that the new catalog passes here.")
+             else "This PR's own run of the gate job (`Gates`, or `vibe-verifier-ok` in an older stub) is the proof "
+                  "that the new catalog passes here.")
     result = subprocess.run(["gh", "pr", "create", "--repo", repo, "--base", default_branch, "--head", branch,
                              "--title", "ci: bump %s pin to %s" % (what, target[:10]),
                              "--body", "Moves %s pins to `%s`, and changes nothing else:\n\n%s\n\n%s %s\n\n"
@@ -1553,7 +1560,7 @@ def review_body(state, args, limits=None):
     else:
         lines.append("Every criterion on %s has a PASS anchored to a step the explorer logged, and the "
                      "evidence gate found nothing." % head if state == "passed" else
-                     "The QA gates refused %s. Their findings are in the qae-verify job's log." % head)
+                     "The QA gates refused %s. Their findings are in the log of the job that posted this." % head)
         lines.append("")
         verdict = read_text(args.verdict) if args.verdict and os.path.isfile(args.verdict) else ""
         ticket = read_text(args.ticket) if args.ticket and os.path.isfile(args.ticket) else ""

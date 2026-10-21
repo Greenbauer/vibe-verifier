@@ -25,7 +25,7 @@ LEGACY = ".github/workflows/claude-review.yml"
 
 
 def gate_workflow(sha):
-    return ("name: Vibe Verifier\non:\n  pull_request:\njobs:\n  vibe-verifier-ok:\n    runs-on: ubuntu-latest\n"
+    return ("name: Standards\non:\n  pull_request:\njobs:\n  vibe-verifier-ok:\n    name: Gates\n    runs-on: ubuntu-latest\n"
             "    steps:\n      - uses: Greenbauer/vibe-verifier/actions/gates@%s # main 2026-09-23\n" % sha)
 
 

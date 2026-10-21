@@ -1,7 +1,8 @@
 """This repository's own workflows: ci.yml's step that lists the tests the full unittest run failed, for the
 affected-test selection report, run under bash the way CI runs it, on a real unittest log; this suite run
 inside a gate, as regression-test-fails-on-base and coverage-not-lost run it; and nightly.yml, which runs
-coverage-not-lost on the whole suite once a night: its shape, and the step that picks the commit to compare from."""
+coverage-not-lost on the whole suite once a night: its shape, and the step that picks the commit to compare from;
+and the names their checks show (docs/check-names.md)."""
 import os
 import re
 import shlex
@@ -195,6 +196,18 @@ class NightlyCoverage(unittest.TestCase):
         self.assertEqual(re.findall(r"^      ([a-z-]+):", re.search(r"\n    permissions:\n((?:      [^\n]*\n)+)", text).group(1),
                                     re.MULTILINE), ["contents", "actions"])
         self.assertNotIn("write", re.search(r"\n    permissions:\n((?:      [^\n]*\n)+)", text).group(1))
+
+
+class CheckNames(unittest.TestCase):
+    def test_each_workflow_is_its_stage_and_each_job_says_what_it_proves(self):
+        # A branch rule requires a check by its job's name, so a rename here changes what can merge.
+        for workflow, stage, names in ((CI, "Code", {"test": "Unit tests", "qae-browser": "QA browser tests",
+                                                     "regression-browser": "Regression browser tests",
+                                                     "lanes": "Lane kit tests", "lanes-listener": "Lane listener tests"}),
+                                       (NIGHTLY, "Tests", {"coverage-not-lost": "Coverage kept"})):
+            self.assertTrue(workflow.read_text().startswith("name: %s\n" % stage), workflow.name)
+            for job_id, name in names.items():
+                self.assertTrue(job(job_id, workflow).startswith("    name: %s\n" % name), job_id)
 
 
 class GuardedSuiteInstalls(unittest.TestCase):

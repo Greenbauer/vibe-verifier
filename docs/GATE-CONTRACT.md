@@ -112,7 +112,9 @@ runs on whatever runner the repository chooses. The canonical stub is
 SHA of this repository to pin. That line and each job's `runs-on:` value are the only lines a
 consumer edits: the runner (a label or a flow list, such as `[self-hosted, example-lane]`) is the
 consumer's choice, so `consumers` does not count it as drift and `apply-down` keeps it through every
-pin bump.
+pin bump. A stub or review harness copy made before the [check names](check-names.md) still carries the
+old names (`Vibe Verifier` / `vibe-verifier-ok`, and `review` / `review-verify`): `consumers` reads them
+as the template's new ones, so a pin bump never waits on a repository's rename.
 
 Keep that job free of `if:` conditions. GitHub reports an `if`-false job as `skipped`, and counts a
 skipped required check as satisfied.
@@ -218,15 +220,16 @@ An organization can subscribe its repositories through one CI repository of its 
 **wrapper**, instead of a stub in each (first done 2026-09-23).
 
 - The wrapper's workflows trigger on `pull_request` and pin the catalog's actions by commit, like a
-  stub: a gate workflow whose job is named `vibe-verifier-ok` and runs `actions/gates`, and
+  stub: a gate workflow whose job is named `Gates` (`vibe-verifier-ok` before the
+  [check names](check-names.md)) and runs `actions/gates`, and
   optionally a copy of the review harness whose `jobs:` are the catalog's, byte for byte, apart
-  from the pin, the `runs-on:` values, the name of its token secret and the one line its verify
-  step takes its gate list from.
+  from the pin, the `runs-on:` values, the name of its token secret, the one line its verify
+  step takes its gate list from, and the job names from before the check names.
 - An **organization ruleset** with the rule "Require workflows to pass before merging"
   (`workflows`) requires them, each pinned by `sha`, on the default branch of the repositories it
   targets. GitHub runs the pinned file in each targeted repository on each pull request, so the
-  check name stays `vibe-verifier-ok` (a reusable workflow would report
-  `<caller job> / vibe-verifier-ok`) and a pull request cannot edit or remove its own gate, which
+  check name stays the job's own, `Gates` (a reusable workflow would report
+  `<caller job> / Gates`), and a pull request cannot edit or remove its own gate, which
   closes the gap above. GitHub documents the rule for Enterprise Cloud only, but an organization on
   the Team plan accepted and enforced it: probed on 2026-09-23, a pull request read `BLOCKED` while
   the required run was queued and `CLEAN` once it passed, although its own tree did not contain the

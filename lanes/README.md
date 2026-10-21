@@ -721,7 +721,7 @@ docker run --rm --platform linux/amd64 -v "$PWD":/w -w /w ubuntu:24.04 bash -c \
 
 The tests stub every system tool on PATH; nothing real is installed, mounted, started or called.
 They are Linux-only, like the kit: on a Mac run them in the container above. The catalog's CI
-(`.github/workflows/ci.yml`) runs both beside the catalog's own gates: the `lanes` job on
-`ubuntu-24.04`, the release the machines run, and the `lanes-listener` job. The main scripts stay
+(`.github/workflows/ci.yml`) runs both beside the catalog's own gates: `Lane kit tests` (job `lanes`)
+on `ubuntu-24.04`, the release the machines run, and `Lane listener tests` (job `lanes-listener`). The main scripts stay
 shellcheck-clean:
 `shellcheck -x lanes/bin/*.sh lanes/lib/provision.sh lanes/image/entrypoint.sh lanes/listener/build.sh`.

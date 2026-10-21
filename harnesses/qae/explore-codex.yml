@@ -1,4 +1,4 @@
-name: QAE explore
+name: QA
 
 # Vibe Verifier QAE harness, explorer on Codex: copy to .github/workflows/qae-explore.yml, with
 # harnesses/qae/manifest copied to .vibe-verifier-qae. The same harness as explore.yml with one
@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   criteria:
-    name: qae-criteria
+    name: "Acceptance criteria: read"
     runs-on: ubuntu-latest   # CONSUMER: any runner. It holds no model login and builds nothing.
     timeout-minutes: 5
     permissions:
@@ -103,15 +103,15 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}   # carries a passing walk's verdict across an update no browser can see
 
   explore:
-    name: qae-explore
+    name: "Acceptance criteria: walk"
     needs: criteria
     if: needs.criteria.outputs.count != '0'
     # One job per explorer. A pull request whose criteria are more walks than one explorer is sized
     # for is split across several, when the criteria job's max-shards allows it: each walks its own
     # share in parallel, on a runner of its own, and with fewer runners free they queue. The matrix's
-    # first value is blank and stands for 1, so that job keeps the name qae-explore (GitHub leaves a
-    # blank value out of a job's name; measured 2026-10-08) and the others are qae-explore (2),
-    # qae-explore (3), ... A step reads its explorer's number as `matrix.shard || 1`.
+    # first value is blank and stands for 1, so that job keeps the plain name (GitHub leaves a blank
+    # value out of a job's name; measured 2026-10-08) and the others add (2), (3), ... to it. A step
+    # reads its explorer's number as `matrix.shard || 1`.
     strategy:
       fail-fast: false
       matrix:
@@ -540,7 +540,7 @@ jobs:
           if-no-files-found: warn
 
   verify:
-    name: qae-verify
+    name: Acceptance criteria
     needs: [criteria, explore]
     if: always()
     runs-on: ubuntu-latest
@@ -689,10 +689,10 @@ jobs:
         with:
           manifest: .vibe-verifier-qae
       - name: Require every explorer of a split run
-        # The first explorer's job is named qae-explore whatever the split, so a branch rule can require
-        # it. The others (qae-explore (2), ...) exist only on a large pull request, and no rule can
-        # name them. So on a split run this job fails unless every explorer's job succeeded, after the
-        # gates have said what they found. A run with one explorer is not touched.
+        # The first explorer's job has the explore job's plain name whatever the split, so a branch rule
+        # can require it. The others, that name with (2), (3), ..., exist only on a large pull request,
+        # and no rule can name them. So on a split run this job fails unless every explorer's job
+        # succeeded, after the gates have said what they found. A run with one explorer is not touched.
         if: ${{ !cancelled() && needs.criteria.outputs.shards != '[""]' && needs.explore.result != 'success' && needs.explore.result != 'skipped' }}
         env:
           EXPLORE_RESULT: ${{ needs.explore.result }}

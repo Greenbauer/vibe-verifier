@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   review:
-    name: review
+    name: "Code review: model run"
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -420,7 +420,7 @@ jobs:
           retention-days: 7
 
   verify:
-    name: review-verify
+    name: Code review
     needs: review
     if: always()
     runs-on: ubuntu-latest

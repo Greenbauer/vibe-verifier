@@ -167,7 +167,7 @@ class CriteriaAction(unittest.TestCase):
         return result.stdout, outputs(os.path.join(work, "github-output"))
 
     def test_one_explorer_is_a_matrix_of_one_blank_value_so_the_job_keeps_its_name(self):
-        # GitHub names a matrix job "<name> (<value>)" and leaves a blank value out (measured, 2026-10-08).
+        # GitHub names a matrix job "<name> (<value>)" and leaves a blank value out (measured 2026-10-08).
         stdout, declared = self.run_action(body("a", "b"))
         self.assertEqual((declared["count"], declared["shards"]), ("2", '[""]'))
         self.assertNotIn("::warning", stdout)
@@ -284,8 +284,8 @@ class Templates(unittest.TestCase):
             self.assertIn("          manifest: qae-inputs/manifest\n          max-shards: 1   # CONSUMER", criteria)
             self.assertIn("    strategy:\n      fail-fast: false\n      matrix:\n"
                           "        shard: ${{ fromJSON(needs.criteria.outputs.shards) }}\n", explore)
-            # A fixed name: an expression there shows unevaluated on a skipped job (measured, 2026-10-08).
-            self.assertIn("\n  explore:\n    name: qae-explore\n", explore)
+            # A fixed name: an expression shows unevaluated on a skipped job (measured 2026-10-08).
+            self.assertIn('\n  explore:\n    name: "Acceptance criteria: walk"\n', explore)
 
     def test_each_explorer_is_given_its_number_and_counts_the_features_before_its_share(self):
         # Every explore job runs the selection, so all of them start the first explorer at the same
@@ -336,7 +336,7 @@ class Templates(unittest.TestCase):
             self.assertEqual(Path(work, "qae-inputs", "manifest").read_text(), expected)
 
     def test_a_split_run_fails_its_verify_job_unless_every_explorers_job_succeeded(self):
-        # No branch rule can name qae-explore (2): it exists only on a large pull request. The verify job
+        # No branch rule can name walk (2): it exists only on a large pull request. The verify job
         # stands in for it, after the gates and before the review, and only when the run was split.
         required = "- name: Require every explorer of a split run"
         for template in TEMPLATES:
@@ -469,7 +469,7 @@ class Evidence(unittest.TestCase):
         self.assertEqual(os.listdir(os.path.join(work, "qae-artifacts", "verdicts")), ["1.md"])
 
     def test_each_explorer_is_judged_on_the_newest_attempt_it_ran_in(self):
-        # A re-run of one failed explorer (measured, 2026-10-08): the verify job sees every attempt's
+        # A re-run of one failed explorer (measured 2026-10-08): the verify job sees every attempt's
         # artifacts, the explore job reports the attempt of the explorer that ran again, and the others'
         # evidence is still the first attempt's.
         self.explore("AC1", 1)

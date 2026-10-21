@@ -83,7 +83,7 @@ const pull={checks:[check('success','completed'),check('success','completed'),ch
   check('pending','queued'),check('failed','completed'),check('skipped','completed'),check('cancelled','completed'),
   check('odd','completed')],
  statuses:[{name:'deploy',category:'pending',status:'pending'},{name:'legacy',category:'success',status:'success'}],
- expected:[{name:'qae-verify',category:'pending',status:'expected'}]};
+ expected:[{name:'Acceptance criteria',category:'pending',status:'expected'}]};
 console.log(JSON.stringify(h.checkTotals(pull)));
 ''')
         self.assertEqual(result, {"known": True, "completed": 6, "total": 11, "remaining": 5,
@@ -104,7 +104,7 @@ console.log(JSON.stringify([totals.known,totals.completed,totals.total,totals.co
     def test_an_expected_required_check_keeps_the_pr_pending_and_takes_one_share(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
-const pr={checks:[{category:'success'}],expected:[{name:'qae-verify',category:'pending',status:'expected'}]};
+const pr={checks:[{category:'success'}],expected:[{name:'Acceptance criteria',category:'pending',status:'expected'}]};
 const none=h.checkTotals({runs:[],expected:[],checks:[]});
 const totals=h.checkTotals(pr);
 console.log(JSON.stringify([h.combinedCategory(pr),totals.known,totals.completed,totals.total,totals.remaining,totals.counts.waiting,none.known]));

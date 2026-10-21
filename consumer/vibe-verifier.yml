@@ -1,4 +1,4 @@
-name: Vibe Verifier
+name: Standards
 
 # Runs the gates this repository subscribes to in .vibe-verifier.
 # The gates ship with the pinned action, so nothing is installed.
@@ -17,7 +17,7 @@ jobs:
   # Keep this job free of `if:` conditions. GitHub reports an if-false job as
   # skipped, and counts a skipped required check as satisfied.
   vibe-verifier-ok:
-    name: vibe-verifier-ok
+    name: Gates
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

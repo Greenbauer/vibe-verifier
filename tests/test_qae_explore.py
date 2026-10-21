@@ -190,7 +190,7 @@ class SiteUrl(unittest.TestCase):
 class Steps(unittest.TestCase):
     def test_the_explorer_runs_only_when_there_is_a_criterion(self):
         text = TEMPLATE.read_text()
-        self.assertIn("  explore:\n    name: qae-explore\n    needs: criteria\n"
+        self.assertIn('  explore:\n    name: "Acceptance criteria: walk"\n    needs: criteria\n'
                       "    if: needs.criteria.outputs.count != '0'\n", text)
         self.assertIn("    outputs:\n      count: ${{ steps.criteria.outputs.count }}\n", text[:text.index("\n  explore:\n")])
 
@@ -211,7 +211,7 @@ class Steps(unittest.TestCase):
             "${{ vars.PULL_SYNC_BOT && format('dependabot[bot],{0}', vars.PULL_SYNC_BOT) || 'dependabot[bot]' }}"])
 
     def test_a_consumer_can_tell_the_explorer_how_to_sign_in(self):
-        # The file is written by the consumer's build step, which runs before the model, and the
+        # The consumer's build step writes site.md before the model runs; the
         # explorer may read qae-inputs/ and nothing else outside its artifacts.
         text = TEMPLATE.read_text()
         self.assertIn("If qae-inputs/site.md exists, read it before anything else.", text)

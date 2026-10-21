@@ -56,7 +56,8 @@ files every change depends on (lockfiles, migrations, CI). That check's failure 
 needs an update", which is this action's job. Without help, though, a failure is a failure here: the
 pull request reads as red, and a red one is updated only once its head is a day old.
 
-Name the check's commit status in `needs-update` (`needs-update: merge-safety`). A pull request whose
+Name the check's commit status in `needs-update` (`needs-update: Merge / Safe to merge`, the name
+[check names](../../docs/check-names.md) gives the status once called `merge-safety`). A pull request whose
 only failed check is that status is then treated as ready (or, with checks still running, as not yet
 red), and is updated like any green one. A pull request with any other failure is still red. The
 status is read per head (`status.context(name:)`), so it must be a commit status, not a check run.
@@ -64,7 +65,7 @@ status is read per head (`status.context(name:)`), so it must be a commit status
 ## Running it
 
 ```yaml
-name: Pull sync
+name: Maintenance
 
 on:
   push:
@@ -82,6 +83,7 @@ concurrency:
 
 jobs:
   pull-sync:
+    name: Update open PRs
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

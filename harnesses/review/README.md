@@ -13,7 +13,8 @@ Two jobs on every pull request, in the consumer's own workflow. [`review.yml`](r
 template; the consumer owns `runs-on`, the token secret, and the two catalog pins, which
 `consumers` and `apply-down` keep current like the stub's.
 
-1. **review** checks out the head with `persist-credentials: false`, pins every `CLAUDE.md` and
+1. **review** (the check `Code review: model run`) checks out the head with
+   `persist-credentials: false`, pins every `CLAUDE.md` and
    `.claude/**` to the base ref (a hostile head could add one as an injection foothold), computes
    the scope, runs `claude-code-action` with [`prompt.md`](prompt.md) when there is something new
    to review, reads how the run ended from the action's execution log, runs it again on a second
@@ -27,7 +28,8 @@ template; the consumer owns `runs-on`, the token secret, and the two catalog pin
    is `limited` (see the rules below). Usage collection and upload run under `always()` so a failed
    review can retain partial statistics without making the review green. These steps follow the receipt:
    a capture failure does not suppress evidence of a completed review, but still fails the review job.
-2. **verify** writes the declared inputs (the head SHA, the newest receipt for that head posted by
+2. **verify** (the check `Code review`, the one a branch rule requires) writes the declared
+   inputs (the head SHA, the newest receipt for that head posted by
    the workflow's own identity, the count of unresolved review threads) and runs the
    [`review-receipt`](../../gates/review_receipt.py) gate through the composite action with the
    manifest [`manifest`](manifest) (`.vibe-verifier-review` in the consumer).
@@ -135,4 +137,5 @@ repository variable to its bot's login (`<app>[bot]`): an update makes that bot 
 
 A change to `review.yml` reaches a copy only when the copy is edited: `apply-down` moves the pins,
 and `consumers` reports a copy that differs from this file outside the lines the consumer owns as
-drift until it is copied again.
+drift until it is copied again. The job names a copy had before the [check names](../../docs/check-names.md)
+(`review`, `review-verify`) count as this file's.

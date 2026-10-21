@@ -163,9 +163,9 @@ roster shows no invented agents. See
   "owner": "octocat",
   "repositories": ["octocat/example"],
   "bots": {
-    "reviewer": {"workflow": "review.yml", "jobs": ["review"]},
-    "explorer": {"workflow": "explore.yml", "jobs": ["explore"]},
-    "verifier": {"workflow": "verify.yml", "jobs": ["verify"]}
+    "reviewer": {"workflow": "review.yml", "jobs": ["Code review: model run", "review"]},
+    "explorer": {"workflow": "qae-explore.yml", "jobs": ["Acceptance criteria: walk", "qae-explore"]},
+    "verifier": {"workflow": "qae-explore.yml", "jobs": ["Acceptance criteria", "qae-verify"]}
   },
   "agents": [
     {"id": "ci-qae", "name": "QAE", "role": "qae", "workflow_role": "explorer"}
@@ -177,7 +177,10 @@ roster shows no invented agents. See
 
 A bot's `jobs` are exact job names. A QAE workflow that splits a large pull request across
 explorers runs the extra ones as `<job> (2)`, `<job> (3)`, ..., so list those too
-(`"jobs": ["explore", "explore (2)", "explore (3)"]`), or their runs are not shown.
+(`"jobs": ["Acceptance criteria: walk", "Acceptance criteria: walk (2)"]`), or their runs are not
+shown. While a job is being renamed ([check names](check-names.md)), list both names, as the example
+does: the catalog's harnesses now name their jobs as above, and a repository's copy made before the
+rename still runs under the old name (`review`, `qae-explore`, `qae-verify`) until it takes the new one.
 
 `telemetry_file` is optional and must be absolute. Deleting it makes telemetry unavailable without
 affecting GitHub data. `proxy_origin` is optional; omit it for local-only mode. It must be one exact

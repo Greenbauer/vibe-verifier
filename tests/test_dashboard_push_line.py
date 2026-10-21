@@ -142,7 +142,7 @@ const rows={
   required:summarize(prRow({...base, attention_reason:'2 required checks not run on this head',
     push:{pushed_at:'2026-10-05T00:00:00Z', kind:'chore'},
     checks:[{name:'unit', category:'success', status:'completed'}],
-    expected:[{name:'qae-verify', category:'pending', status:'expected'},
+    expected:[{name:'Acceptance criteria', category:'pending', status:'expected'},
       {name:'preview', category:'pending', status:'expected'}]})),
   queued:summarize(prRow({...base, attention_reason:'Current-head work is still running',
     checks:[{name:'lint', category:'pending', status:'queued'}]})),
@@ -205,7 +205,7 @@ console.log(JSON.stringify(rows));
         self.assertEqual(result["failed"]["workLines"], ["lint", "unit", "+1 more"])
         self.assertEqual(result["failed"]["reason"], "A current-head check failed")
         self.assertNotIn("e2e", result["failed"]["workLines"])
-        self.assertEqual(result["required"]["workLines"], ["qae-verify", "preview"])
+        self.assertEqual(result["required"]["workLines"], ["Acceptance criteria", "preview"])
         self.assertEqual(result["required"]["reason"], "2 required checks not run on this head")
         self.assertEqual(result["queued"]["workLines"], ["1 check queued"])
         self.assertEqual(result["fallback"]["workLines"], ["A current-head check was cancelled"])
