@@ -27,8 +27,9 @@ inputs:
   post:
     description: >-
       Posts instead of deciding: the commit status contexts to write on `sha` as success, with `reason`
-      as their description, separated by spaces or new lines. In a job that runs only when the deciding
-      step's `not-applicable` is true.
+      as their description. A value with a new line in it (a `|` block) is one context per line, so a
+      name with spaces such as `Preview / E2E tests` is one context; a value on one line is split on
+      spaces, as before. In a job that runs only when the deciding step's `not-applicable` is true.
     default: ""
   reason:
     description: To post, the deciding step's `reason` output.
@@ -76,7 +77,17 @@ runs:
         engine="$GITHUB_ACTION_PATH/suite_scope.py"
         if [ -n "$POST" ]; then
           [ -n "$SHA" ] || { echo "::error::no commit to post on: pass sha outside a pull request event"; exit 1; }
-          read -r -d '' -a contexts <<<"$POST" || true
+          if [[ "$POST" == *$'\n'* ]]; then
+            # One context per line, trimmed, blank lines skipped: a status name may hold spaces.
+            contexts=()
+            while IFS= read -r line; do
+              line="${line#"${line%%[![:space:]]*}"}"
+              line="${line%"${line##*[![:space:]]}"}"
+              [ -z "$line" ] || contexts+=("$line")
+            done <<<"$POST"
+          else
+            read -r -d '' -a contexts <<<"$POST" || true
+          fi
           python3 "$engine" post --repo="$REPO" --sha="$SHA" --reason="$REASON" --url="$RUN_URL" -- "${contexts[@]}"
         else
           [ -n "$LIST" ] || { echo "::error::name the inert list (list:)"; exit 1; }

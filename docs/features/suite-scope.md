@@ -32,6 +32,7 @@ From a workflow, `uses: Greenbauer/vibe-verifier/actions/suite-scope@<sha>` with
 - `tests/test_suite_scope.py::test_a_reason_of_the_callers_own_runs_the_suite_and_reads_nothing`
 - `tests/test_suite_scope.py::test_a_path_with_a_line_break_cannot_write_an_output_of_its_own`
 - `tests/test_suite_scope.py::test_post_writes_each_context_as_a_success_status_with_the_reason`
+- `tests/test_suite_scope_post.py::test_a_block_of_one_line_posts_a_name_with_spaces_as_one_context`
 - `tests/test_suite_scope_list.py::test_check_fails_when_the_list_calls_a_path_the_suite_reads_inert`
 - `tests/test_suite_scope.py::test_each_output_is_the_steps_output_under_its_own_name`
 - `tests/test_suite_scope.py::test_the_action_decides_for_the_events_pull_request`
@@ -44,3 +45,4 @@ From a workflow, `uses: Greenbauer/vibe-verifier/actions/suite-scope@<sha>` with
 - A `!` line wins wherever it is written, and covers everything under the path it names. A leading or trailing `/`, a `[`, `]`, `{`, `}` or backslash, or whitespace other than a quoted space, makes a line malformed. `*` stays inside one path segment, so `*.md` is only the Markdown at the root.
 - A path with a segment named `e2e`, at any depth, is never inert whatever the list says (Playwright matches `testMatch` at any depth), and so is a changed path named `e2e` itself, which may be a submodule or a link. The rule is the engine's, not a line a list must remember.
 - When to post is the consumer's: a status on the suite's context can release whatever waits for the suite.
+- A `post` value with a new line in it is one context per line, so a status name may hold spaces (`Preview / E2E tests`); only a value on one line is split on spaces. A `|` block that lists several names on one line therefore now posts them as one context: put each on its own line.

@@ -142,16 +142,19 @@ runs only when the decision was `true`:
     steps:
       - uses: Greenbauer/vibe-verifier/actions/suite-scope@0000000000000000000000000000000000000000 # CONSUMER
         with:
-          post: browser-suite   # CONSUMER: the status contexts your suite posts, separated by spaces or new lines
+          post: |   # CONSUMER: the status contexts your suite posts, one per line
+            Preview / E2E tests
           reason: ${{ needs.scope.outputs.reason }}
 ```
 
 Each context is written on `sha` as `success`, with the reason as its description (cut at the 140
 characters a status takes) and a link to the run: `Not applicable: every changed path (3) is on the
 inert list (.github/suite-inert on main)`. A status GitHub refuses three times fails the step, since
-a head with no status waits on a suite that never runs. The list is split on spaces, so a context
-that holds one, such as `Preview / E2E tests`, the name the [check names](check-names.md) give the
-suite's status, cannot be posted this way yet; the example keeps the name the status has today.
+a head with no status waits on a suite that never runs. A `post` value with a new line in it (a `|`
+block, as above) is one context per line, trimmed, so a name with spaces, as the
+[check names](check-names.md) give the suite's status (`Preview / E2E tests`), is one context; a
+value on one line is split on spaces, as it always was. While a status is being renamed, post it
+under both names, one per line, so whatever waits for either still sees it.
 
 Posting is a separate step, not part of the decision, because *when* is the repository's to say:
 one consumer posts only after the preview's deploy succeeded, since a status on the suite's context
