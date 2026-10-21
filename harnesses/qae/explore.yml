@@ -50,6 +50,8 @@ jobs:
         # takes it off the site. And the QAE manifest as the base has it, or as this pull request has it
         # where the base has none (a first subscription): the widths on its qae-artifacts line count
         # toward the walks the explorers are sized to.
+        # A qae-inputs/ the checkout already has came from the pull request (Git makes no empty directory),
+        # so the step stops before it puts anything there: a link could send these files anywhere on the runner.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -58,6 +60,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          if [ -e qae-inputs ] || [ -L qae-inputs ]; then echo "::error::the pull request commits qae-inputs/, where this job puts its inputs: remove it from the branch"; exit 1; fi
           mkdir -p qae-inputs
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
           gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --paginate \
@@ -141,6 +144,8 @@ jobs:
         # The PR body the prompt points the explorer at (the criteria job already found a criterion in
         # it, or in its ticket), the ticket's criteria as the criteria job read them, and the changed
         # paths the feature selection reads.
+        # It stops on a qae-inputs/ the checkout already has, as the criteria job does: a file there
+        # would read as one this workflow wrote (site.md, features/), and a link would move the writes.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -148,6 +153,7 @@ jobs:
           TICKET: ${{ needs.criteria.outputs.ticket }}
         run: |
           set -euo pipefail
+          if [ -e qae-inputs ] || [ -L qae-inputs ]; then echo "::error::the pull request commits qae-inputs/, where this job puts its inputs: remove it from the branch"; exit 1; fi
           mkdir -p qae-artifacts/qae qae-inputs
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
           printf '%s' "$TICKET" > qae-inputs/ticket.md
@@ -556,6 +562,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Write the declared inputs
+        # These files are the gates' inputs, rewritten here whatever the branch has. A qae-inputs/ the checkout
+        # already has came from the pull request (Git makes no empty directory), so the step stops before
+        # writing: a link there could send them anywhere on the runner.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -567,6 +576,7 @@ jobs:
           CARRY: ${{ needs.criteria.outputs.carry }}
         run: |
           set -euo pipefail
+          if [ -e qae-inputs ] || [ -L qae-inputs ]; then echo "::error::the pull request commits qae-inputs/, where this job puts its inputs: remove it from the branch"; exit 1; fi
           mkdir -p qae-inputs
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
           gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --paginate \
