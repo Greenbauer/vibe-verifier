@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import unittest
+from unittest import mock
 
 from helpers import ROOT, make_repo
 from test_regression_test import findings, fix, tree_is_head
@@ -111,6 +112,21 @@ class RealNode(unittest.TestCase):
         self.assertIn("packages/shop/src/price-test.mjs: members in EUR get 10% off fails on the code before the fix: "
                       "AssertionError: Expected values to be strictly equal: 200 !== 180", result.stderr)
         tree_is_head(self, repo)
+
+    def test_a_node_test_in_a_folder_named_like_a_glob_runs_as_that_file(self):
+        # Node 21 and later read a --test path as a glob: app/items/[id]/price.test.mjs given as it is matched no file
+        # and ran no test, and app/+(sale)/price.test.mjs given as it is ran app/sale/price.test.mjs in its place.
+        for folder in ("app/items/[id]", "app/+(sale)", "app/@(modal)"):
+            with self.subTest(folder):
+                repo = make_repo(self, {"package.json": package({"scripts": {"test": "node --test 'app/**/*.test.mjs'"}}),
+                                        folder + "/price.mjs": PRICE_BUG, "app/sale/price.mjs": PRICE_BUG,
+                                        "app/sale/price.test.mjs": DOES_NOT_REPRODUCE, "app/modal/price.mjs": PRICE_BUG,
+                                        "app/modal/price.test.mjs": DOES_NOT_REPRODUCE})
+                result = fix(repo, {folder + "/price.mjs": PRICE_FIX, folder + "/price.test.mjs": REPRODUCES})
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(folder + "/price.test.mjs: gives members 10% off over 100 fails on the code before the fix",
+                              result.stderr)
+                tree_is_head(self, repo)
 
     def test_a_node_test_the_repository_does_not_run_with_node_test_is_not_judged_unless_declared(self):
         unrun = make_repo(self, {"package.json": package({"scripts": {"test": "vitest run"}}), "scripts/price.mjs": PRICE_BUG})
@@ -225,6 +241,18 @@ class TapAndScripts(unittest.TestCase):
                          ({"NODE_ENV": "test"}, ["--require", "ts-node/register"], ["tests/**/*.test.ts"]))
         for script in ("node scripts/run.mjs --test", "vitest run", "node --test \"$RUNNER_TEMP/x.test.mjs\""):
             self.assertEqual([_regression_node.node_test(words) for words in _regression_node.commands(script)], [None], script)
+
+    def test_a_path_is_given_to_node_test_as_a_glob_that_selects_only_that_file(self):
+        literal = _regression_node.literal
+        with mock.patch.object(_regression_node, "globs", return_value=True):  # Node 21 and later
+            self.assertEqual(literal("app/[id]/page.test.ts"), "app/[[]id[]]/page.test.ts")
+            self.assertEqual(literal("app/[...slug]/a*b?.test.ts"), "app/[[]...slug[]]/a[*]b[?].test.ts")
+            for extglob, given in (("+", "+"), ("@", "@"), ("!", "!"), ("*", "[*]"), ("?", "[?]")):  # ( as a class ends each
+                self.assertEqual(literal("app/%s(shop)/a.test.ts" % extglob), "app/%s[(]shop)/a.test.ts" % given)
+            self.assertEqual(literal("app/(group)/a.test.ts"), "app/[(]group)/a.test.ts")
+            self.assertEqual(literal("app/{a,b}/a.test.ts"), "app/?a,b}/a.test.ts")  # no class stops brace expansion
+        with mock.patch.object(_regression_node, "globs", return_value=False):  # Node 20 takes a path as it is
+            self.assertEqual(literal("app/[id]/+(a)/page.test.ts"), "app/[id]/+(a)/page.test.ts")
 
     def test_which_files_a_commands_paths_select(self):
         selects = _regression_node.selects
