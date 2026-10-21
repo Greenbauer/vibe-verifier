@@ -605,7 +605,14 @@ counted from the push; when a later round has queued but not started, it counts 
 first job being queued. The time turns yellow after an hour and red after three hours; exactly an
 hour or exactly three hours keeps the younger color. A head with no checks, and a row whose checks
 are still from the previous push, show "pushed <age> ago" instead, which turns yellow after three
-hours and red after a day. Its right edge lines up with the meter, not
+hours and red after a day. Once every check of that round has finished, a line under it says how
+long the head has sat since: a dot, the time since the round's last check finished, and how CI
+ended ("2h 14m idle since CI failed"). A failed check makes it "failed" (red dot), else a
+cancelled one "was cancelled" (grey), else a passed one "passed" (green); a round of only skipped
+checks "finished" (grey). The time is in the same units as the age, takes the CI time's colors (yellow after an hour, red
+after three), and counts on each time the page reads the dashboard again. It is not shown while any check is open or
+waiting, before any check has started, or while the checks are still from the previous push, so a
+new push or re-run hides it until that round stops. Its right edge lines up with the meter, not
 with the comment mark beside the meter; in a row with a CI timeline the line is in the CI column,
 left-aligned under the counts, and the comment mark sits above them. The kind of push follows the time on that same line, and
 the tooltip adds how long ago the push was:
