@@ -92,10 +92,11 @@ except Exception:  # an interpreter this coverage.py cannot load in (a Python be
 
 
 class Coverage:
-    """One run: {repository path: {line: ran}}, whether any test ran, and (Python) {path: {line: [test names]}}."""
+    """One run: {repository path: {line: ran}}, whether any test ran, (Python) {path: {line: [test names]}}, and
+    (node:test) the files it ran as tests, which never count at the other side either."""
 
-    def __init__(self, lines, tested, contexts=None):
-        self.lines, self.tested, self.contexts = lines, tested, contexts or {}
+    def __init__(self, lines, tested, contexts=None, tests=()):
+        self.lines, self.tested, self.contexts, self.tests = lines, tested, contexts or {}, set(tests)
 
 
 class Red(Exception):
@@ -250,8 +251,8 @@ class Vitest:
         return Coverage(lines, tested)
 
     @staticmethod
-    def test_files(paths):
-        """The test files among `paths`: run again at the base to say which covered a lost line."""
+    def test_files(paths, tree):
+        """The test files among `paths`: run again at the base (`tree`) to say which covered a lost line."""
         return [path for path in paths if matches(path, JS_TESTS) and not path.endswith(".py")]
 
 
@@ -320,7 +321,7 @@ class Python:
         return Coverage(lines, True, contexts)
 
     @staticmethod
-    def test_files(paths):
+    def test_files(paths, tree):
         return []  # each line's tests come from its contexts, so nothing is run again
 
 

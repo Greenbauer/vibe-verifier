@@ -11,7 +11,7 @@ runs at each side agree, because coverage can change from run to run: the second
 first finds a line. Lines in files the pull request deletes, and lines it changes or deletes, never count.
 Each finding is reported at its line at HEAD, with what ran it at the merge base: the test functions
 (pytest, unittest; none for a line only a child process ran), or whether the test files the pull request deleted or
-changed did (Vitest). When lines were lost, the gate also lists the commits between the merge base and HEAD
+changed did (Vitest, node:test). When lines were lost, the gate also lists the commits between the merge base and HEAD
 (first parent, so a merged pull request is one, its number in its subject): run nightly with --base-ref set to the
 last night's commit, that names the pull requests the loss came in with.
 
@@ -20,21 +20,25 @@ loss as intended: the findings are printed with the reason and do not fail the g
 
 Runners (gates/_coverage_runs.py): the project's own Vitest 2 to 5, with @vitest/coverage-v8 at exactly its
 version; or coverage.py 7.16.2 around the project's own pytest or unittest, measuring every Python process the
-suite starts too. Each run is guarded (gates/_local_guard.py): a credential for anywhere else in what it inherits
-is exit 2, and a connection to anything but this machine is refused. Install the project's dependencies first. A
-suite that fails at either side (or in a run that refused a connection), no runner or provider, no test run at
-either side, or a run past --timeout cannot run (exit 2). Each run says how many lines ran, and how long it took.
+suite starts too; or Node's own coverage around the files the repository runs with `node --test`, Node 22.5 or later
+(gates/_coverage_node.py), measuring the Node processes and worker threads a test starts too. Each run is guarded
+(gates/_local_guard.py): a credential for anywhere else in what it inherits is exit 2, and a connection to anything
+but this machine is refused. Install the project's dependencies first. A suite that fails at either side (or in a
+run that refused a connection), no runner or provider, a Node before 22.5, no test run at either side, or a run past
+--timeout cannot run (exit 2). Each run says how many lines ran, and how long it took.
 
-    --runner NAME       vitest, pytest or unittest (default vitest)
+    --runner NAME       vitest, node-test, pytest or unittest (default vitest)
     --project DIR       where the suite runs, relative to the repository (repeatable; default its root)
     --args TEXT         more arguments for the runner, split like a shell (after `vitest run`, `-m pytest` or
-                        `-m unittest`; such as --args 'discover -s tests')
+                        `-m unittest`, or before node's `--test`; such as --args 'discover -s tests')
+    --node-test GLOB    node:test files the repository runs as `node --test <file>` some way no package.json script
+                        says, run that way (repeatable)
     --python PATH       the project's interpreter (default python3; a relative path is the repository's)
     --body FILE         the pull request body, read for a `coverage-lost: <reason>` line
     --local-env NAME    a variable named like a credential that holds the job's own local stack's secret (repeatable)
     --timeout SECONDS   wall-clock limit for every run together (default 900)
-    --max-files N       Vitest: run again at most this many deleted or changed test files to say which ran a
-                        lost line (default 20); more are not run, and the findings stand without it
+    --max-files N       Vitest, node:test: run again at most this many deleted or changed test files to say which
+                        ran a lost line (default 20); more are not run, and the findings stand without it
 """
 import os
 import posixpath
@@ -44,10 +48,12 @@ import time
 
 from _contract import CannotRun, Finding, git, renamed, resolve_base, run_gate
 from _coverage_checkouts import checkouts
+from _coverage_node import NodeTest
 from _coverage_runs import RUNNERS, Coverage, Red
 from _local_guard import add_local_env
 
 GATE = "coverage-not-lost"
+RUNNERS = dict(RUNNERS, **{"node-test": NodeTest})
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 REASON = re.compile(r"^[ \t]*(?:[-*+][ \t]+)?coverage-lost:[ \t]*(\S.*?)[ \t]*$", re.MULTILINE)
 
@@ -116,11 +122,12 @@ class Diff:
 
 def lost_lines(base, head, diff):
     """{(path at HEAD, line at HEAD): (path, line) at the merge base} for each line that ran at the merge base, that
-    the pull request did not change, and that does not run at HEAD. A file HEAD's run did not measure ran none."""
+    the pull request did not change, and that does not run at HEAD. A file HEAD's run did not measure ran none,
+    unless HEAD ran it as a test (a node:test file a widened script selects)."""
     found = {}
     for path, lines in base.lines.items():
         target = diff.head_path(path)
-        if target is None:
+        if target is None or target in head.tests:
             continue
         at_head = head.lines.get(target)
         for number, ran in lines.items():
@@ -141,7 +148,7 @@ def union(runs):
         for path, names in run.contexts.items():
             for number, tests in names.items():
                 contexts.setdefault(path, {}).setdefault(number, set()).update(tests)
-    return Coverage(lines, any(run.tested for run in runs), contexts)
+    return Coverage(lines, any(run.tested for run in runs), contexts, set().union(*(run.tests for run in runs)))
 
 
 def project_of(repo, project):
@@ -219,13 +226,14 @@ def tests_that_ran(confirmed, bases):
 
 def changed_test_files(suite, diff):
     """{project: {test file at the merge base: what the pull request did to it}}."""
-    return {project: {p: what for p, what in diff.changed_tests(project).items() if suite.runner.test_files([p])}
+    base = suite.trees["base"]
+    return {project: {p: what for p, what in diff.changed_tests(project).items() if suite.runner.test_files([p], base)}
             for project in suite.projects}
 
 
 def test_files_that_ran(suite, diff, confirmed):
-    """Vitest: whether the test files the pull request deleted or changed ran each lost line at the merge base,
-    from one more run of just those files there."""
+    """Vitest, node:test: whether the test files the pull request deleted or changed ran each lost line at the merge
+    base, from one more run of just those files there."""
     changed = changed_test_files(suite, diff)
     every = dict(item for files in changed.values() for item in files.items())
     if not every:
@@ -266,7 +274,7 @@ def losses(suite, diff):
              % listed(["%s:%d" % key for key in dismissed], 20))
     if not confirmed:
         return {}
-    if suite.args.runner == "vitest":
+    if suite.args.runner in ("vitest", "node-test"):
         said = test_files_that_ran(suite, diff, confirmed)
     else:
         said = tests_that_ran(confirmed, [first[0], second[0]])
@@ -328,11 +336,14 @@ def add_arguments(parser):
     parser.add_argument("--project", action="append", metavar="DIR", help="where the suite runs (repeatable; default the repository root)")
     parser.add_argument("--args", default="", metavar="TEXT", help="more arguments for the runner, split like a shell")
     parser.add_argument("--python", default="python3", help="the project's interpreter (default python3)")
+    parser.add_argument("--node-test", action="append", metavar="GLOB",
+                        help="node:test files run as `node --test <file>` some way no package.json script says (repeatable)")
     parser.add_argument("--body", metavar="FILE", help="the pull request body, read for a `coverage-lost: <reason>` line")
     add_local_env(parser)
     parser.add_argument("--timeout", type=int, default=900, help="seconds every run together may take (default 900)")
     parser.add_argument("--max-files", type=int, default=20,
-                        help="Vitest: the most deleted or changed test files run again to say which ran a lost line (default 20)")
+                        help="Vitest, node:test: the most deleted or changed test files run again to say which ran a lost "
+                             "line (default 20)")
 
 
 if __name__ == "__main__":

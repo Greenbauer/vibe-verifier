@@ -5,6 +5,7 @@ How a file is run comes from the repository, never from its name alone: a packag
 the file's package or a directory above it, whose `node ... --test ...` command selects it (by path,
 glob, directory or, with no paths, Node's default test names), run again from that package with the
 command's own options; else a --node-test glob, run as `node --test <file>` from the repository root.
+coverage-not-lost reads which files run, and how, from here too (gates/_coverage_node.py).
 
 Each file runs alone (TAP names a passing test but not its file), with
 `--test-reporter=tap --test-reporter-destination=<file>`, under Node 20, 22 and 24 alike. TAP is the

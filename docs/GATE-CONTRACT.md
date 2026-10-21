@@ -592,19 +592,20 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
 
 `changed-code-mutation`, `coverage-not-lost` and `regression-test-fails-on-base` run the pull request's own
 tests, so no test process they start may reach a production database, a production credential, a
-production address or a person. Each process (Vitest, a node:test file, the Python test run, coverage.py
-around pytest or unittest, StrykerJS, mutmut and the pytest run it falls back to) starts under
+production address or a person. Each process (Vitest, a node:test file, coverage-not-lost's `node --test`
+commands, the Python test run, coverage.py around pytest or unittest, StrykerJS, mutmut and the pytest run it
+falls back to) starts under
 `gates/_local_guard.py`. A browser run of `regression-test-fails-on-base --playwright` is sealed by Docker
 instead ([the seal](#regression-test-fails-on-base)).
 
 - **Before it starts: no credential for anywhere else.** What the process would inherit is read with the
   rules `--playwright` uses (`gates/_local_only.py`, listed under
   [Regression test fails on base](#regression-test-fails-on-base)): the environment it gets (for a
-  node:test file, with its package.json script's `NAME=value` assignments), every `.env` file a
+  node:test file or command, with its package.json script's `NAME=value` assignments), every `.env` file a
   framework would load anywhere in the repository but `node_modules` and hidden directories (for
   `coverage-not-lost`, in the checkout of the side it runs too, so a committed `.env` file the pull
   request deletes is read at the merge base), and a file a node:test script's `--env-file` or
-  `--env-file-if-exists` loads. A variable
+  `--env-file-if-exists` loads (for coverage-not-lost's node:test commands, one its `--args` names too). A variable
   named like a credential that `--local-env NAME` does not declare, a JWT not issued by a local stack, a
   connection string or password-bearing URL for another host, a database host that is not this machine,
   a hosted Supabase address, a webhook, or a token whose shape names its service is exit 2 before the
@@ -627,7 +628,7 @@ instead ([the seal](#regression-test-fails-on-base)).
   and recorded.
 - **A failure in a run that refused anything cannot be judged.** A run is one guarded process and its
   children: Vitest in one project, one node:test file, the Python test run, each `--project`'s coverage
-  run at each side, the StrykerJS run, the mutmut run. A test that failed in a run whose record holds a refusal is exit 2,
+  run at each side (for node:test, each `node --test` command), the StrykerJS run, the mutmut run. A test that failed in a run whose record holds a refusal is exit 2,
   because its failure cannot be told from the refusal: for `regression-test-fails-on-base` a failing test
   or a file that did not load, at the head or before the fix; for `coverage-not-lost` a suite that failed
   at either side; for `changed-code-mutation` a killed mutant or a failing initial run (StrykerJS and
@@ -906,18 +907,20 @@ the head and compares the two.
 coverage-not-lost --soak                                       # Vitest at the repository root
 coverage-not-lost --project packages/web --project packages/db --body vv-inputs/pr-body.md --soak
 coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bin/python --soak
+coverage-not-lost --runner node-test --soak                    # the files package.json scripts run with node --test
 ```
 
 - **The rule.** A finding is a source line the pull request did not change that the suite ran at the
   merge base and does not run at the head. Each line of the merge base is mapped to the head through
   the diff (`git diff -U0 -M`), so a line that only moved, in its file or with its file, is compared
   where it now is; a line the pull request changed or deleted, and every line of a file it deleted,
-  never counts, and neither does a line that is not a statement at the head. A file the head's run did
+  never counts, and neither does a line that is not a statement at the head (node:test counts every
+  line but a blank one, below). A file the head's run did
   not measure at all ran none of its lines. Test code never counts, as `regression-test-fails-on-base`
   reads it (test and spec files, the Python test names, `conftest.py`, and anything under a `test`,
-  `tests`, `__tests__`, `__mocks__`, `__snapshots__` or `__fixtures__` directory), and neither do
-  `*.d.ts`, `*.config.*`, `*.stories.*` and `node_modules`. Each finding is reported at its line at the
-  head, consecutive lines as one.
+  `tests`, `__tests__`, `__mocks__`, `__snapshots__` or `__fixtures__` directory, and for node:test every
+  file either side runs with `node --test`), and neither do `*.d.ts`, `*.config.*`, `*.stories.*` and
+  `node_modules`. Each finding is reported at its line at the head, consecutive lines as one.
 - **Two runs agree.** Coverage can change from run to run (a test whose path depends on timing or on
   order), and on a 277-pull-request history of a private TypeScript monorepo single runs flagged
   different lines of the same pull request. So the gate runs each side once, and only when that pair
@@ -979,16 +982,54 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   .venv/bin/python`) would be measured and refused as the working copy's. Not measured: a child given
   an environment of its own instead of a copy of the test's, one started with `python -I`, `-E` or `-S`, and
   one of a Python the pinned coverage.py cannot load in.
+- **node:test.** `--runner node-test` runs the files the repository runs with `node --test`, found the
+  way `regression-test-fails-on-base` finds them (`gates/_regression_node.py`): a tracked JS or TS file
+  under a `--project` that a package.json script's `node ... --test ...` command selects runs from that
+  script's package with the command's options and its `NAME=value` assignments, and one a `--node-test
+  GLOB` (repeatable) declares runs from the repository root. At each side the files that run the same
+  way run as one command, under the Node on PATH, which must be Node 22.5 or later, the first with
+  `--test-coverage-exclude` (an earlier one is exit 2): `node <the script's options> <--args>
+  --enable-source-maps --test --experimental-test-coverage --test-coverage-exclude=**/node_modules/**
+  --test-reporter=<the gate's> --test-reporter-destination=<a file> <the files>`, with the script's own
+  coverage, reporter, isolation, sharding and watch options dropped. The exclude replaces Node 24's
+  default, which also leaves out every file named like a default test file (`test-*`, `*-test.*`,
+  `*_test.*`, `test.*`): on 24.21 a source helper `src/test-money.mjs` went unmeasured without it, and on
+  22.23 it was measured either way. Node 22 and 24 read a `--test` path
+  holding `[` or `]` as a glob, so `app/[id]/page.test.ts`, a Next.js route, given as it is ran no test:
+  each `[`, `]`, `*` and `?` is given as a class that holds only it. The reporter is a module the gate
+  writes, which records each test that passed or failed and Node's coverage report (the `test:coverage`
+  event): every line of every file the run loaded, outside `node_modules` and Node's own modules, with
+  how many times it ran. A line ran when its count is above 0. Node counts lines, not statements, so a
+  comment inside code that stopped running is found with it; a blank line never counts. Node's test
+  runner points `NODE_V8_COVERAGE` at a directory of its own and merges every coverage file written
+  there, so a Node process a test starts is measured too, through a shell or `fork` as well (Node's
+  `child_process` copies the variable into the child's environment, even into one the test gives it of
+  its own), and so is a worker thread. Not measured: a child killed by a signal, which writes no
+  coverage file (a child stopped with SIGTERM, on 2026-10-20), a child still running when Node reads the
+  coverage files (a process writes its file when it exits), a process that is not Node, and a file no
+  process loaded. `--enable-source-maps` makes Node map a file a loader compiles (`--require
+  ts-node/register`, say) back to the file's own lines through the loader's source map: without it, under
+  ts-node 10.9.2 on Node 22.23, every line of a `.ts` file read as run. Node maps the ranges it measured,
+  not lines, so a line at the edge of code that stopped running can be found with it: a stand-in
+  compiler's file lost the closing brace of the function above the one that stopped running too. Each
+  `--runner` is a comparison of its own, so code that moves from a Vitest test to a node:test file is a
+  loss to the Vitest line. Measured on Node 22.23 (macOS and Debian) and 24.21 (Debian); the releases from
+  22.5 to 22.22 are accepted but were not run here. ubuntu-latest, where the catalog's CI runs, has 22.23.
 - **Guarded runs.** Every run of the suite, at either side, starts under `gates/_local_guard.py`
   ([Test runs reach only this machine](#test-runs-reach-only-this-machine)): a credential for anywhere
   else in what it would inherit is exit 2 before it starts (`--local-env NAME` declares a secret of the
   job's own stack), and every Node and Python process of the suite refuses a connection to anything but
   this machine. A suite that fails in a run that refused anything is exit 2 naming its first failure
   and what was refused. One that passed says what it refused and is compared as usual, so code that
-  ran because a connection was refused (an error branch) counts as run.
+  ran because a connection was refused (an error branch) counts as run. For node:test, each command at a
+  side is a run of its own, and the environment of every command of a `--project` (with its script's
+  assignments and the files an `--env-file` option of the script or of `--args` loads) is checked before
+  the first of them starts, so a credential in any of a project's scripts stops that project before its
+  first test at that side. Projects and sides run in turn, as with the other runners, so one checked later
+  can be refused after an earlier one's tests ran; none of those had the credential.
 - **What ran it.** A Python finding names the test functions that ran the line at the merge base (none
-  for a line only a child process ran). A
-  Vitest finding says whether the test files the pull request deleted, changed or moved ran it there,
+  for a line only a child process ran). A Vitest or node:test finding says whether the test files the
+  pull request deleted, changed or moved ran it there,
   from one more run at the merge base of just those files, and lists them; a pull request that touched
   no test file says the code that reached the line changed. More such files than `--max-files`
   (default 20) are not run again, and the findings stand without the sentence. `--max-files` bounds that
@@ -1007,7 +1048,7 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   `--body` that cannot be read is exit 2.
 - **Bounded.** `--timeout` seconds (default 900) for every run together; past it the run's whole process
   group is killed and the gate cannot run. The cost is one run of the suite at each side, two more when
-  the first pair found a line, and for Vitest one partial run when there is a finding. Measured on
+  the first pair found a line, and for Vitest and node:test one partial run when there is a finding. Measured on
   2026-10-15 by replaying 23 pull requests of the private monorepo above in a Linux arm64 container
   (a web package of about 18,000 lines that its suite runs): 82 seconds median (51 to 171) when nothing
   was lost, 169 to 255 seconds when the first pair found a line, on top of the job's own install.
@@ -1017,7 +1058,8 @@ coverage-not-lost --runner unittest --args 'discover -s tests' --python .venv/bi
   run (above) and 16 passed.
 - **Exit 2 also when** the suite fails at either side (its failing tests are printed), no test ran at
   either side, a `--project` is outside the repository or not a directory, the project has no Vitest,
-  `node` is missing, the interpreter has no pytest, or Vitest wrote no coverage report.
+  `node` is missing, the `node` on PATH is before Node 22.5 (`--runner node-test`), the interpreter has no
+  pytest, or Vitest or `node --test` wrote no coverage report.
 - **Subscribing.** As with `changed-code-mutation`, in a manifest of its own, such as
   `.vibe-verifier-tests`, run by a job that installs the project's dependencies and writes the body file
   first, under a job timeout above `--timeout`, in a job that holds no secrets: the gate runs the pull
