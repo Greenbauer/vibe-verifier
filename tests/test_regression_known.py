@@ -19,7 +19,11 @@ class KnownOnMain(RegressionWalk):
                        "never a state that passed here, and never a criterion",
                        "log those steps in qae-artifacts/qae/features/base/<id>.md with screenshots "
                        "qae-artifacts/qae/features/base/<id>-step-k.png",
-                       "regression-known: <id> -- <what the base branch's site shows> (qae/features/base/<id>.md::<the step line text>)"):
+                       # the anchor is the step line after its "- ": a consumer's trial run wrote "::- step 4: ...",
+                       # which known_on_main refuses
+                       "regression-known: <id> -- <what the base branch's site shows> (qae/features/base/<id>.md::<the step line text, exactly as written after \"- \">)",
+                       "regression-check: <id> -- FAIL -- <what broke> (qae/features/<id>.md::<the step line text, exactly as written after \"- \">)",
+                       'The text after :: starts with "step k:" and must be copied verbatim from the step log line'):
             self.assertIn(phrase, prompt)
 
     def walk_on_main(self, fid="auth", line="- step 1: signed in as the test user -> an error page"):
