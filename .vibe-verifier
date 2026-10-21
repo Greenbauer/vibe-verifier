@@ -15,3 +15,6 @@ feature-map --surface gate 'gates/*.py' '^GATE = "([a-z0-9-]+)"$' --surface comm
 # repo-rules: the catalog's own typescript pack on its JavaScript (dashboard/static, actions/*, tools/*), the
 # same rules every subscribed repository runs. No finding today (--all, 2026-10-19), and it ratchets per rule and file.
 repo-rules --pack typescript
+# prose: an em dash, or an en dash used as an aside, on an added Markdown line blocks; a curly quote and
+# the pull request description are advisory. The same rule every subscribed repository runs.
+prose

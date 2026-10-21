@@ -1,0 +1,10 @@
+# Blocking. An en dash with a space on each side is an em dash in disguise. A range (4-9 written with
+# an en dash, no spaces) is the en dash's own job and is not matched.
+extends: existence
+message: "This en dash sets off an aside. End the sentence, or use a comma or parentheses."
+level: error
+nonword: true
+tokens:
+  - '\s\x{2013}\s'
+scope:
+  - ~table.cell & ~table.header & ~blockquote

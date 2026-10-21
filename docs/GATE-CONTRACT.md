@@ -710,6 +710,17 @@ asked to resolve anything, so the verdict does not move with what an index serve
 network; offline, or with a file it cannot read, it is exit 2. A vulnerability judged not to apply
 is listed with its reason in an `osv-scanner.toml` beside the file, the scanner's own ignore file.
 
+`prose` runs Vale with the catalog's own rules (`gates/_prose_styles/VibeVerifier/`, a
+`--no-global` config the gate writes, so a repository's `.vale.ini` plays no part) on the Markdown a
+pull request changed, and keeps only alerts on lines the diff from the base adds (renames followed;
+`--all` keeps every line). An em dash, or an en dash with a space on each side, blocks; a curly
+quote is advisory. Vale's Markdown scoping leaves out code, HTML comments and link targets, the two dash
+rules leave out table cells, all three leave out blockquotes, and the gate leaves out the generated rules block. Vale reads a
+copy of each file with its in-document switches (`<!-- vale off -->` and the like) defused and MDX
+comments blanked, so a document cannot turn the rules off; a binary file or a symbolic link is skipped. The pull
+request description, from `--body` or the `pull_request` event file, is judged advisory only, since
+an edit to it does not run the gate again.
+
 `actionlint` and `zizmor` lint and audit the workflows under `.github/workflows/`. Both judge only
 the workflows the pull request added or changed since the base (`--all` judges every tracked one,
 for an audit or a first subscription), because a finding in a workflow nobody touched is never this
