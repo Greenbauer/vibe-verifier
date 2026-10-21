@@ -121,6 +121,10 @@ class PlantedEvidence(unittest.TestCase):
         for result, code in ((gate("qae-artifacts", self.work, "--artifacts", str(outside)), 1),
                              (gate("qae-artifacts", self.work, "--artifacts", str(Path(self.repo, "planted"))), 0)):
             self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+        # A repository Git cannot read is not "no repository": what it tracks is unknown, so the gate cannot run.
+        Path(self.repo, ".git", "HEAD").write_text("garbage\n")
+        result = gate("qae-artifacts", self.repo, "--artifacts", str(Path(self.repo, "planted")))
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
 
 
 class MergeStep(unittest.TestCase):

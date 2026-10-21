@@ -224,10 +224,20 @@ def _print_lines(gate, findings, blocking, fmt, soak):
 
 
 def in_repository(repo):
+    """Whether `repo` is in a Git work tree. No only when neither it nor a directory above it holds a .git: one Git
+    cannot read (a corrupt HEAD, a refused owner) cannot say what is tracked, so the gate cannot run."""
     try:
-        return subprocess.run(["git", "-C", repo, "rev-parse", "--is-inside-work-tree"], capture_output=True).returncode == 0
+        out = subprocess.run(["git", "-C", repo, "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True)
     except FileNotFoundError:
         raise CannotRun("git is not installed")
+    folder = os.path.realpath(repo)
+    while out.returncode != 0:
+        if os.path.lexists(os.path.join(folder, ".git")):
+            raise CannotRun("git cannot read the repository at %s: %s" % (folder, out.stderr.strip()))
+        if os.path.dirname(folder) == folder:
+            return False
+        folder = os.path.dirname(folder)
+    return True
 
 
 def _tracked_at(repo, artifacts):
