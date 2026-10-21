@@ -7,13 +7,13 @@ mapping goes in the pull request that applies it.
 ## The rules
 
 1. **A check shows as `Workflow / Job`. The workflow name is the stage, the job name is what it proves.**
-   Stages, in the order they run: `Code`, `Tests`, `Security`, `Preview`, `Sign-in`, `QA`, `Review`,
-   `Standards`, `Merge`. Workflows that never run on a pull request use `Deploy` or `Maintenance`.
+   Stages, in the order they run: `Code`, `UI parity`, `Tests`, `Security`, `Preview`, `Sign-in`, `QA`,
+   `Review`, `Standards`, `Merge`. Workflows that never run on a pull request use `Deploy` or `Maintenance`.
    A check's own name, the one a branch rule requires, the API's `check_name` matches and every reader
    compares, is the job part only: `Database`, not `Preview / Database`. The workflow part only groups
    the list.
 2. **Industry terms where one exists, plain English otherwise.** No internal words (QAE, settle, probe,
-   anchors, observe, guards, sanity, verdict) and no tool names (semgrep, stryker, playwright) in a name.
+   anchors, observe, guards, sanity, verdict, ok) and no tool names (semgrep, stryker, playwright) in a name.
 3. **Short nouns in sentence case, about three words**: `Unit tests`, not `run-unit-tests`.
 4. **The name never changes; the detail goes in the status line.** "6 of 6 criteria passed", "Skipped:
    docs-only change", "Report only: 3 findings". A report-only check says so in its status line, never in its
@@ -75,8 +75,8 @@ name is its whole context.
 | `browser-regressions` | `Preview / E2E regressions` |
 | `ui-geometry-observe` | `Preview / Layout` |
 | `deploy-pr`, `teardown-pr`, `decide`, `sweep` | `Preview / Deploy`, `Deploy: tear down`, `Deploy: decide`, `Deploy: sweep` |
-| status `preview` | `Preview / Address` |
-| status `preview-database` | `Preview / Database address` |
+| status `preview` | `Preview / Address` (posted by `actions/preview`, which keeps `preview` until every reader accepts both) |
+| status `preview-database` | `Preview / Database address` (the same) |
 | status `preview-e2e-verdict`, `preview-e2e-run`, `preview-e2e-observe` | `Preview / E2E tests`, `Preview / E2E tests: running`, `Preview / E2E tests` |
 | status `ui-geometry-observe` | `Preview / Layout` |
 | `proof-anchors` | `Review / PR claims` |
@@ -85,7 +85,12 @@ name is its whole context.
 | `Pull sync` / `pull-sync` | `Maintenance / Update open PRs` |
 | `Keep the Codex login fresh` / `codex-keepalive` | `Maintenance / Explorer login` |
 
-`Sign-in` and `UI parity` are separate stages because their workflows cannot fold into `Preview` and `Code`:
+The catalog's own checks: `CI` / `test`, `qae-browser`, `regression-browser`, `lanes`, `lanes-listener` became
+`Code` / `Unit tests`, `QA browser tests`, `Regression browser tests`, `Lane kit tests`, `Lane listener tests`;
+`Nightly` became `Maintenance`.
+
+`Standards` is its own stage because the catalog's gates (secrets, workflow lint, complexity, file size, repository
+rules) judge the whole change at once rather than one stage of it. `Sign-in` and `UI parity` are separate stages because their workflows cannot fold into `Preview` and `Code`:
 the sign-in workflow is required by organization rulesets, and the UI contract runs on `pull_request_target`.
 
 ## Renaming a repository's checks without blocking a merge

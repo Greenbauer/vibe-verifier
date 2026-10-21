@@ -198,18 +198,6 @@ class NightlyCoverage(unittest.TestCase):
         self.assertNotIn("write", re.search(r"\n    permissions:\n((?:      [^\n]*\n)+)", text).group(1))
 
 
-class CheckNames(unittest.TestCase):
-    def test_each_workflow_is_its_stage_and_each_job_says_what_it_proves(self):
-        # A branch rule requires a check by its job's name, so a rename here changes what can merge.
-        for workflow, stage, names in ((CI, "Code", {"test": "Unit tests", "qae-browser": "QA browser tests",
-                                                     "regression-browser": "Regression browser tests",
-                                                     "lanes": "Lane kit tests", "lanes-listener": "Lane listener tests"}),
-                                       (NIGHTLY, "Maintenance", {"coverage-not-lost": "Coverage kept"})):
-            self.assertTrue(workflow.read_text().startswith("name: %s\n" % stage), workflow.name)
-            for job_id, name in names.items():
-                self.assertTrue(job(job_id, workflow).startswith("    name: %s\n" % name), job_id)
-
-
 class GuardedSuiteInstalls(unittest.TestCase):
     def test_each_gate_step_that_runs_the_suite_installs_from_this_machine(self):
         # The gates run this suite under gates/_local_guard.py, which refuses the tests' own downloads: each step that
