@@ -22,12 +22,13 @@ runners can take:
     no free slot: it replaces checks already running instead of adding some. Where the setting is
     off, or this token cannot read it, a running check is never interrupted.
   - ready: not a draft, and every check on its head passed. Updated first, oldest first.
-  - needs update: with --needs-update NAME, a commit status NAME that fails exactly when the pull
-    request has to be updated before it may merge (a check that compares the pull request with the
-    default branch, used in place of "require branches to be up to date"). Its failure is not held
-    against the pull request: one whose only failed check is NAME counts as ready, and as not yet
-    red while its other checks run, because the update this engine makes is what turns NAME green.
-    Without the option, that failure makes the pull request red, and a red one waits a day.
+  - needs update: with --needs-update NAMES, commit statuses, one per line (a status being renamed
+    has two), that fail exactly when the pull request has to be updated before it may merge (a check
+    that compares the pull request with the default branch, used in place of "require branches to be
+    up to date"). Their failure is not held against the pull request: one whose only failed checks are
+    those named counts as ready, and as not yet red while its other checks run, because the update
+    this engine makes is what turns them green. Without the option, a failure there makes the pull
+    request red, and a red one waits a day.
   - stale: any other pull request, once its head commit is older than --stale-hours. An update is
     itself a head commit, so a pull request that is not ready is updated at most that often.
   - slots: at most --max-in-flight updates of a repository may be in flight at once. A pull request
@@ -54,12 +55,12 @@ Exit 2: a repository could not be read, so it has no plan. With several --repo, 
 whatever happened to the others, and the worst of their outcomes is the exit code.
 """
 import argparse
-import json
-import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
+
+from pull_sync_reads import CannotRead, gh, read, requires_up_to_date
 
 OPT_OUT_LABEL = "no-auto-sync"
 CONFLICT_LABEL = "sync-conflict"
@@ -70,32 +71,6 @@ PASSED = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 UNFINISHED = {"IN_PROGRESS", "PENDING", "QUEUED", "WAITING", "EXPECTED"}
 # How many more times a repository is read while GitHub has not said whether a pull request merges.
 SETTLE_READS = 3
-
-DEFAULT_BRANCH = "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){defaultBranchRef{name}}}"
-# The classic protection rule's "require branches to be up to date"; a ruleset's is read over REST.
-STRICT = ("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){"
-          "defaultBranchRef{branchProtectionRule{requiresStrictStatusChecks}}}}")
-# `headRef.compare(headRef: $base).aheadBy` is how many commits the base has that the head lacks.
-# With --needs-update the head's commit status of that name is read too (NEEDS_UPDATE below); a token
-# needs statuses read for it, so the field is asked for only then.
-PULLS = """query($owner:String!,$name:String!,$base:String!%(variables)s){
-  repository(owner:$owner,name:$name){
-    pullRequests(states:OPEN,first:100,orderBy:{field:CREATED_AT,direction:ASC}){
-      pageInfo{hasNextPage}
-      nodes{
-        number isDraft isCrossRepository mergeable updatedAt baseRefName headRefOid
-        labels(first:100){nodes{name}}
-        headRef{compare(headRef:$base){aheadBy}}
-        commits(last:1){nodes{commit{committedDate committedViaWeb parents{totalCount} statusCheckRollup{state contexts(first:1){
-          checkRunCountsByState{state count} statusContextCountsByState{state count}}}%(status)s}}}
-      }
-    }
-  }
-}"""
-
-
-class CannotRead(Exception):
-    """GitHub did not give an answer a plan can be built on."""
 
 
 class Line(NamedTuple):
@@ -109,76 +84,10 @@ class Line(NamedTuple):
     replaces: bool = False   # replaces checks running on a head that cannot merge: needs no slot
 
 
-def gh(*args):
-    return subprocess.run(["gh", "api", *args], capture_output=True, text=True)
-
-
-def graphql(query, **variables):
-    args = ["graphql", "-f", "query=" + query]
-    for name, value in variables.items():
-        args += ["-f", "%s=%s" % (name, value)]
-    result = gh(*args)
-    if result.returncode != 0:
-        raise CannotRead((result.stderr or result.stdout).strip().split("\n")[0] or "gh failed")
-    try:
-        answer = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        raise CannotRead("GitHub's answer was not JSON") from None
-    if answer.get("errors") or not (answer.get("data") or {}).get("repository"):
-        raise CannotRead("GitHub answered with errors or without the repository")
-    return answer["data"]
-
-
-NEEDS_UPDATE = {"variables": ",$context:String!", "status": "\n          status{context(name:$context){state}}"}
-WITHOUT = {"variables": "", "status": ""}
-
-
-def read(repo, context=""):
-    """The default branch and every open pull request, each head with the state of the commit status
-    `context` when one is named. Without one the query does not ask for statuses at all: GitHub
-    answers "Resource not accessible by integration" to a token that cannot read them, even for an
-    empty name (2026-10-14)."""
-    owner, _, name = repo.partition("/")
-    default = graphql(DEFAULT_BRANCH, owner=owner, name=name)["repository"]["defaultBranchRef"]
-    if not default:
-        raise CannotRead("%s has no default branch" % repo)
-    if context:
-        data = graphql(PULLS % NEEDS_UPDATE, owner=owner, name=name, base=default["name"], context=context)
-    else:
-        data = graphql(PULLS % WITHOUT, owner=owner, name=name, base=default["name"])
-    pulls = data["repository"]["pullRequests"]
-    if pulls["pageInfo"]["hasNextPage"]:
-        raise CannotRead("%s has more than 100 open pull requests" % repo)
-    return default["name"], pulls["nodes"]
-
-
-def requires_up_to_date(repo, base):
-    """Whether the base merges only a head that is up to date with it, from a classic protection rule
-    or an active ruleset: True, False, or None when this token could read neither. None is treated as
-    False by the plan, which keeps every running check: the side that wastes time, not work."""
-    owner, _, name = repo.partition("/")
-    answers = []
-    try:
-        rule = graphql(STRICT, owner=owner, name=name)["repository"]["defaultBranchRef"]["branchProtectionRule"]
-        answers.append(bool(rule and rule["requiresStrictStatusChecks"]))
-    except (CannotRead, TypeError, KeyError):
-        pass
-    result = gh("repos/%s/rules/branches/%s?per_page=100" % (repo, base))
-    try:
-        rules = json.loads(result.stdout) if result.returncode == 0 else None
-        if isinstance(rules, list):
-            answers.append(any(rule.get("type") == "required_status_checks"
-                               and (rule.get("parameters") or {}).get("strict_required_status_checks_policy")
-                               for rule in rules))
-    except json.JSONDecodeError:
-        pass
-    return any(answers) if answers else None
-
-
-def read_settled(repo, settle_seconds, context=""):
+def read_settled(repo, settle_seconds, contexts=()):
     """`read`, again while GitHub has not said whether a pull request this run would judge merges."""
     for reads_left in range(SETTLE_READS, -1, -1):
-        base, pulls = read(repo, context)
+        base, pulls = read(repo, contexts)
         unknown = any(pull["mergeable"] == "UNKNOWN" and not out_of_scope(pull, base) for pull in pulls)
         if not unknown or not reads_left:
             return base, pulls
@@ -194,23 +103,23 @@ def head_commit(pull):
 
 
 def needs_update_failed(pull):
-    """Whether the head's --needs-update status failed."""
-    context = (head_commit(pull).get("status") or {}).get("context") or {}
-    return context.get("state") in ("FAILURE", "ERROR")
+    """How many of the head's --needs-update statuses failed."""
+    statuses = (head_commit(pull).get("status") or {}).values()
+    return sum((context or {}).get("state") in ("FAILURE", "ERROR") for context in statuses)
 
 
 def checks(pull, needs_update=""):
-    """The rollup state of the head's checks. With `needs_update` (a commit status that fails exactly
-    when the pull request needs an update), a failure of that status alone does not count: the state
-    is then SUCCESS, or PENDING while another check runs."""
+    """The rollup state of the head's checks. With `needs_update` (commit statuses that fail exactly
+    when the pull request needs an update), a failure of those alone does not count: the state is
+    then SUCCESS, or PENDING while another check runs."""
     rollup = head_commit(pull)["statusCheckRollup"] or {}
-    state = rollup.get("state", "")
-    if not needs_update or state not in ("FAILURE", "ERROR") or not needs_update_failed(pull):
+    state, named_failed = rollup.get("state", ""), needs_update and needs_update_failed(pull)
+    if state not in ("FAILURE", "ERROR") or not named_failed:
         return state
     counts = rollup["contexts"]
     failed = sum(row["count"] for row in counts["checkRunCountsByState"] if row["state"] not in PASSED | UNFINISHED)
     failed += sum(row["count"] for row in counts["statusContextCountsByState"] if row["state"] in ("FAILURE", "ERROR"))
-    if failed > 1:
+    if failed > named_failed:
         return state
     return "PENDING" if running(pull) else "SUCCESS"
 
@@ -361,7 +270,7 @@ def sync(repo, args):
     mode = "acting" if args.act else "dry run, nothing written"
     rule = {True: "merges only up-to-date heads", False: "merges heads that are behind",
             None: "could not read whether it merges heads that are behind"}[strict]
-    needs = "; a failed %s asks for an update" % args.needs_update if args.needs_update else ""
+    needs = "; a failed %s asks for an update" % " or ".join(args.needs_update) if args.needs_update else ""
     print("%s: %d open, %d holding a slot, %d free slot(s) (%s; %s %s%s)"
           % (repo, len(pulls), in_flight, free, mode, base, rule, needs))
     failures = []
@@ -385,13 +294,14 @@ def main():
                         help="leave alone a pull request that changed this recently (default 30)")
     parser.add_argument("--stale-hours", type=int, default=24,
                         help="update a pull request that is not ready once its head is this old (default 24)")
-    parser.add_argument("--needs-update", default="", metavar="NAME",
-                        help="a commit status that fails exactly when a pull request needs an update; its "
-                             "failure alone does not make the pull request red")
+    parser.add_argument("--needs-update", default="", metavar="NAMES",
+                        help="commit statuses, one per line, that fail exactly when a pull request needs an "
+                             "update; their failure alone does not make the pull request red")
     parser.add_argument("--settle-seconds", type=int, default=10,
                         help="wait this long before reading again while GitHub has not said whether a "
                              "pull request merges cleanly (default 10)")
     args = parser.parse_args()
+    args.needs_update = tuple(line.strip() for line in args.needs_update.splitlines() if line.strip())
     # Every repository is planned even when one cannot be read; the worst outcome is the exit code.
     return max(sync(repo, args) for repo in args.repo)
 

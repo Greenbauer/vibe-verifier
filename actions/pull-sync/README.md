@@ -14,7 +14,7 @@ in [`pull_sync.py`](pull_sync.py), which is the whole engine; this page is how t
 | Checks running on a head that is behind, where the default branch merges only up-to-date heads; not a draft, nothing failed yet, pushed more than 30 minutes ago | Updated now, without waiting for a slot (see below) |
 | Any other with a check on its head unfinished, or changed in the last 30 minutes | Nothing this run |
 | Ready: not a draft, every check on its head passed | Updated, oldest first |
-| With `needs-update`: its only failed check is that status (below) | The same as ready, or as on its way to green while other checks run |
+| With `needs-update`: its only failed checks are those statuses (below) | The same as ready, or as on its way to green while other checks run |
 | Anything else (red, draft, no checks) | Updated once its head commit is 24 hours old. An update is a head commit, so that is at most once a day unless the author pushes an older commit back |
 
 At most two updates may be in flight at once (`max-in-flight`). A pull request holds a slot when its
@@ -56,11 +56,20 @@ files every change depends on (lockfiles, migrations, CI). That check's failure 
 needs an update", which is this action's job. Without help, though, a failure is a failure here: the
 pull request reads as red, and a red one is updated only once its head is a day old.
 
-Name the check's commit status in `needs-update` (`needs-update: Merge / Safe to merge`, the name
-[check names](../../docs/check-names.md) gives the status once called `merge-safety`). A pull request whose
-only failed check is that status is then treated as ready (or, with checks still running, as not yet
-red), and is updated like any green one. A pull request with any other failure is still red. The
+Name the check's commit status in `needs-update`, one name per line. A pull request whose only
+failed checks are those statuses is then treated as ready (or, with checks still running, as not yet
+red), and is updated like any green one. A pull request with any other failure is still red. Each
 status is read per head (`status.context(name:)`), so it must be a commit status, not a check run.
+One line is one name, spaces included, so a single name reads as it always did.
+
+While the status is being renamed ([check names](../../docs/check-names.md)), name it both ways, the
+old name and the new one, so a head that posts either counts:
+
+```yaml
+          needs-update: |
+            merge-safety
+            Merge / Safe to merge
+```
 
 ## Running it
 
@@ -106,8 +115,8 @@ jobs:
   on the pull request's branch, and the conflict label is a write to the pull request. It must also
   read checks: the plan reads whether each head's checks are still running, and without it GitHub
   answers "Resource not accessible by integration" (seen on a consumer's first run, 2026-10-12).
-- With `needs-update`, it must also read commit statuses (`statuses: read`): the query then reads that
-  status on every head, and GitHub answers "Resource not accessible by integration" to a token that
+- With `needs-update`, it must also read commit statuses (`statuses: read`): the query then reads those
+  statuses on every head, and GitHub answers "Resource not accessible by integration" to a token that
   cannot (a consumer's first run with the input, 2026-10-14). Without the input statuses are not read.
 - Measured on 2026-10-08: an update that brings in changed files under `.github/workflows/` goes
   through with contents and pull requests write; no workflows permission was needed.

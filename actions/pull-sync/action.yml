@@ -21,11 +21,12 @@ inputs:
     default: "24"
   needs-update:
     description: >-
-      The name of a commit status that fails exactly when a pull request has to be updated before it
-      may merge (a check comparing it with the default branch, in place of "require branches to be up
-      to date"). Its failure alone does not make a pull request red here, so one that only needs the
-      update gets it as soon as a ready one would. The token must then read commit statuses. Empty:
-      every failed check counts.
+      The names of commit statuses, one per line, that fail exactly when a pull request has to be
+      updated before it may merge (a check comparing it with the default branch, in place of "require
+      branches to be up to date"); a status being renamed is listed under both names. Their failure
+      alone does not make a pull request red here, so one that only needs the update gets it as soon
+      as a ready one would. One line is one name, spaces included. The token must then read commit
+      statuses. Empty: every failed check counts.
     default: ""
 runs:
   using: composite

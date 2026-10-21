@@ -5,6 +5,7 @@ Updates a repository's open pull requests with its default branch after it moves
 ## Surfaces
 
 - source: `actions/pull-sync/pull_sync.py`
+- source: `actions/pull-sync/pull_sync_reads.py`
 - source: `actions/pull-sync/action.yml`
 
 ## Reach
@@ -27,6 +28,7 @@ From a workflow, `uses: Greenbauer/vibe-verifier/actions/pull-sync@<sha>` with a
 - `tests/test_pull_sync.py::test_a_repository_that_cannot_be_read_has_no_plan`
 - `tests/test_pull_sync.py::test_the_run_reads_again_while_github_has_not_said_what_merges`
 - `tests/test_pull_sync.py::test_the_action_is_a_dry_run_unless_act_is_true`
+- `tests/test_pull_sync_reads.py::test_with_two_names_either_failing_is_the_update_and_any_other_failure_is_still_red`
 
 ## Gotchas
 
