@@ -75,7 +75,7 @@ that verified nothing must not look like a pass.
 On a pull request the manifest is judged from the base. The runner resolves the base the way the
 gates do (`--base-ref`, then `$VIBE_VERIFIER_BASE_REF`, `$GITHUB_BASE_REF`, `main`, `master`,
 `HEAD~1`) and, when a manifest exists there, runs the union of the base's and the head's gates,
-with a gate in both taking the base's arguments. Line by line: every base line runs as the base has it,
+with every line the base has keeping the base's arguments. Line by line: every base line runs as the base has it,
 first and in the base's order (so the QAE inputs, which read a gate's first line, read the base's);
 a head line identical to a base line is that line, the other head lines of a gate stand, in order,
 for its base lines left over (a line the branch changed), and only a head line beyond those runs, as
