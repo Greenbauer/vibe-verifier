@@ -61,14 +61,15 @@
       el("span", { class: tone }, when), known ? el("span", { class: "push-kind" }, `· ${push.kind}`) : null);
   }
 
-  // How long the head has sat since its latest round of CI stopped, and how it ended. Null while any
-  // check is open, before any has run, and while the checks are still from the previous push.
+  // How long the head has sat since its latest round of CI stopped, and how that round ended (an
+  // earlier round's result is not this one's). Null while any check is open, before any has run, and
+  // while the checks are still from the previous push.
   function idleLine(pull, now) {
     const ci = pull.head_changed ? null : ciTiming(pull, now);
     if (!ci || ci.ended == null) return null;
-    const { counts } = checkTotals(pull);
-    const [state, ended] = counts.failed ? ["failed", "failed"] : counts.cancelled ? ["cancelled", "was cancelled"]
-      : counts.success ? ["success", "passed"] : ["cancelled", "finished"];
+    const has = category => ci.rows.some(row => row.category === category);
+    const [state, ended] = has("failed") ? ["failed", "failed"] : has("cancelled") ? ["cancelled", "was cancelled"]
+      : has("success") ? ["success", "passed"] : ["cancelled", "finished"];
     const seconds = Math.max(0, (now - ci.ended) / 1000);
     return el("span", { class: "idle-line", title: `Nothing has run on this head since CI ${ended} ${ageLabel(seconds)} ago` },
       el("i", { class: `idle-dot tl-${state}`, "aria-hidden": "true" }),

@@ -100,7 +100,7 @@
   // start in it to now while any check is still open, to the last finish once every check is done.
   // Before any check has started it is the wait since the push, and before a later round's first
   // start the wait since that round's first job was queued. Null when the head has no checks. A
-  // finished round also gives ended, the time its last check finished.
+  // finished round also gives ended, the time its last check finished, and rows, its checks.
   function ciTiming(pull, now) {
     const rows = [...(pull.checks || []), ...(pull.statuses || [])];
     if (!rows.length && !(pull.expected || []).length) return null;
@@ -117,7 +117,7 @@
     const ends = round.map(row => at(row.completed_at)).filter(time => time != null);
     if (checkTotals(pull).remaining > 0 || !ends.length) return { label: "CI running", seconds: Math.max(0, (now - start) / 1000) };
     const ended = Math.max(...ends);
-    return { label: "CI took", seconds: Math.max(0, (ended - start) / 1000), ended };
+    return { label: "CI took", seconds: Math.max(0, (ended - start) / 1000), ended, rows: round };
   }
 
   // The head's latest round, grouped by workflow in the order first queued; earlier counts the checks

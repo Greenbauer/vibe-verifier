@@ -175,7 +175,8 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 .ci-copy .comment-mark { align-self: flex-start; }
 .ci-copy .progress-caption { flex-direction: column; align-items: flex-start; }
 .ci-copy .push-line { margin-left: 0; justify-content: flex-start; text-align: left; }
-.idle-line { width: 100%; display: flex; justify-content: flex-end; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.idle-line { width: 100%; min-width: 0; display: flex; justify-content: flex-end; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.idle-line > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .idle-line b { color: var(--ink); font-size: 11px; }
 .idle-line .age-yellow { color: var(--yellow); }
 .idle-line .age-red { color: var(--red); }
