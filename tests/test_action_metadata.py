@@ -11,7 +11,21 @@ from helpers import ROOT
 ALLOWED = {("inputs", "default"): {"github", "strategy", "matrix", "job", "runner", "hashFiles"},
            ("outputs", "value"): {"github", "strategy", "matrix", "steps", "inputs", "job", "runner", "env"}}
 KEY = re.compile(r"^( *)([A-Za-z0-9_-]+):(.*)$")
-NAMES = re.compile(r"\$\{\{\s*([A-Za-z_]+)")
+# A value that goes on past its line: a block scalar (`>`, `|-`, `>2-`, a comment after it) or an open quote.
+CONTINUES = re.compile(r"""^\s*([>|][0-9+-]*\s*(#.*)?|"([^"\\]|\\.)*|'([^']|'')*)$""")
+EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}")
+# A context name: an identifier not after a dot (a property) and not inside a string literal. A call is a
+# built-in function, allowed anywhere, except hashFiles, which the schema allows only in some places.
+NAME = re.compile(r"(?<![.\w-])([A-Za-z_][A-Za-z0-9_-]*)(\s*\()?")
+
+
+def names(line):
+    """Every context or function an expression on the line names, each expression and operand counted."""
+    found = set()
+    for body in EXPRESSION.findall(line):
+        found |= {name for name, call in NAME.findall(re.sub(r"'([^']|'')*'", "''", body))
+                  if not call or name == "hashFiles"} - {"true", "false", "null"}
+    return found
 
 
 def expressions(text):
@@ -33,10 +47,10 @@ def expressions(text):
                 depth = len(match.group(1)) // 2
                 path = path[:depth] + [match.group(2)]
                 key = match.group(2)
-                if match.group(3).strip() in (">", ">-", "|", "|-", ">+", "|+"):
+                if match.group(3).strip() and CONTINUES.match(match.group(3)):
                     block = len(match.group(1))
         if "${{" in line:
-            found.append((path[0], key if len(path) >= 3 else "", set(NAMES.findall(line))))
+            found.append((path[0], key if len(path) >= 3 else "", names(line)))
     return found
 
 
@@ -59,6 +73,13 @@ class ActionMetadata(unittest.TestCase):
                          [("inputs", "default", {"steps"})])
         self.assertEqual(expressions("outputs:\n  o:\n    value: ${{ steps.s.outputs.o }}\n# ${{ runner.temp }}\n"),
                          [("outputs", "value", {"steps"})])
+        for opening in ('>2-', '>- # note', '"starts'):
+            text = "inputs:\n  a:\n    description: %s\n      default: ${{ runner.temp }}\n" % opening
+            self.assertEqual(expressions(text), [("inputs", "description", {"runner"})], opening)
+        self.assertEqual(expressions("inputs:\n  a:\n    default: ${{ github.x || steps.s.outputs.o == 'a.b' }}\n"),
+                         [("inputs", "default", {"github", "steps"})])
+        self.assertEqual(expressions("inputs:\n  a:\n    default: ${{ format('{0}', github.x) }} ${{ hashFiles('a') }}\n"),
+                         [("inputs", "default", {"github", "hashFiles"})])
 
 
 if __name__ == "__main__":
