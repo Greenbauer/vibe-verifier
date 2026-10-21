@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   keep-fresh:
-    name: Codex login
+    name: Explorer login
     runs-on: [self-hosted, qae-codex]   # CONSUMER: the same runner the explorer uses
     timeout-minutes: 10
     steps:

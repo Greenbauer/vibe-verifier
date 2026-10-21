@@ -58,7 +58,7 @@ runs:
           python3 "$GITHUB_ACTION_PATH/preview.py" record --repo "$REPO" --sha "$SHA" --url "$RECORD" --database "${DATABASE:-}"
           printf 'url=\ndatabase=\n' >> "$GITHUB_OUTPUT"
         else
-          [ -n "$CHECK" ] || { echo "::error::to find a preview, name the check that records it (check:)"; exit 1; }
+          [ -n "${CHECK//[[:space:]]/}" ] || { echo "::error::to find a preview, name the check that records it (check:)"; exit 1; }
           # The finder prints the address (and on a second line the database, when one was recorded) on
           # success and its ::error:: line on failure, both on stdout; a failure's line is printed again
           # here so the workflow shows it.

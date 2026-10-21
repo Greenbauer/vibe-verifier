@@ -55,6 +55,11 @@ class Checks(Harness, unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(output, "url=https://p.vercel.app\ndatabase=\n")
 
+    def test_the_action_refuses_a_check_of_blank_lines_at_once(self):
+        result, _ = self.action_step(CHECK="\n  \n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("::error::to find a preview, name the check that records it (check:)", result.stdout)
+
     def test_the_action_outputs_the_address_it_found(self):
         self.serve(runs=[PASSED], statuses=[{"context": "preview", "created_at": "2026-10-12T15:01:00Z", "target_url": "https://p.vercel.app"}])
         result, output = self.action_step(CHECK="sync-preview-branch")

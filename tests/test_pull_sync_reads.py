@@ -69,6 +69,12 @@ class NeedsUpdate(Harness, unittest.TestCase):
             "#2 skip": "checks running, and it is already red",
         })
 
+    def test_a_name_given_twice_is_read_once_so_another_failure_stays_red(self):
+        # GitHub counts the failed status once; read twice, it would cancel the check run's failure too.
+        failed = [pull(1, checks="FAILURE", needs_update="FAILURE", failed_runs=1, committed=ago(hours=2))]
+        result = self.run_engine(failed, "--needs-update", "merge-safety\nmerge-safety")
+        self.assertEqual(self.rows(result), {"#1 skip": "not ready, and its head is newer than 24 hours"})
+
     def test_statuses_are_read_only_when_a_needs_update_status_is_named_one_alias_each(self):
         # GitHub refuses the field to a token without statuses read, even for an empty name.
         for args, aliases in (((), []), (("--needs-update", "merge-safety"), ["c0"]),

@@ -1,4 +1,4 @@
-name: Tests
+name: Maintenance
 
 # coverage-not-lost on this repository's whole suite, report-only, once a night on main. It compares the main commit
 # the last successful nightly ran on with today's: a line lost in between is a warning on that night's run, and its

@@ -301,7 +301,8 @@ def main():
                         help="wait this long before reading again while GitHub has not said whether a "
                              "pull request merges cleanly (default 10)")
     args = parser.parse_args()
-    args.needs_update = tuple(line.strip() for line in args.needs_update.splitlines() if line.strip())
+    # A name given twice is read once: GitHub counts a failed status once however often it is named.
+    args.needs_update = tuple(dict.fromkeys(line.strip() for line in args.needs_update.splitlines() if line.strip()))
     # Every repository is planned even when one cannot be read; the worst outcome is the exit code.
     return max(sync(repo, args) for repo in args.repo)
 

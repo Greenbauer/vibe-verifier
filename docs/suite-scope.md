@@ -76,6 +76,7 @@ the suite cannot see never enters the suite's queue:
 ```yaml
 jobs:
   scope:
+    name: "E2E tests: scope"   # docs/check-names.md
     runs-on: ubuntu-latest   # CONSUMER: any runner with python3 and gh; nothing is checked out
     timeout-minutes: 5
     permissions:
@@ -91,6 +92,7 @@ jobs:
           list: .github/suite-inert   # CONSUMER: your list
 
   browser-suite:
+    name: E2E tests
     needs: scope
     # Runs unless the decision is exactly `true`. `!cancelled()` keeps a deciding job that failed
     # from skipping the suite: without a status function GitHub skips a job whose needed job failed.
@@ -133,6 +135,7 @@ runs only when the decision was `true`:
 
 ```yaml
   browser-suite-not-applicable:
+    name: "E2E tests: not applicable"
     needs: scope   # CONSUMER: and whatever must have happened first, such as the preview's deploy
     if: needs.scope.outputs.not-applicable == 'true'
     runs-on: ubuntu-latest   # CONSUMER

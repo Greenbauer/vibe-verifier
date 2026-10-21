@@ -14,7 +14,7 @@ mapping goes in the pull request that applies it.
    the list.
 2. **Industry terms where one exists, plain English otherwise.** No internal words (QAE, settle, probe,
    anchors, observe, guards, sanity, verdict) and no tool names (semgrep, stryker, playwright) in a name.
-3. **Short nouns in sentence case, at most three words**: `Unit tests`, not `run-unit-tests`.
+3. **Short nouns in sentence case, about three words**: `Unit tests`, not `run-unit-tests`.
 4. **The name never changes; the detail goes in the status line.** "6 of 6 criteria passed", "Skipped:
    docs-only change", "Report only: 3 findings". A report-only check says so in its status line, never in its
    name.
@@ -66,7 +66,7 @@ name is its whole context.
 | `ui-contract` | `UI parity / Legacy UI` |
 | `mutation-diff` | `Tests / Mutation testing` |
 | `test-gates` | `Tests / Regressions and coverage` |
-| `coverage-not-lost` (nightly) | `Tests / Coverage kept` |
+| `coverage-not-lost` (nightly) | `Maintenance / Coverage kept` |
 | `semgrep-observe` | `Security / Code scan` |
 | `sync-preview-branch`, `Preview reads its own branch database` | `Preview / Database` |
 | `preview-env-sanity`, `Preview NetSuite is the sandbox`, `Preview Supabase is not production` | `Preview / Safe settings` |
@@ -83,7 +83,7 @@ name is its whole context.
 | `Merge safety` / `judge merge safety` | `Merge / Safe to merge: judge` |
 | status `merge-safety` | `Merge / Safe to merge` |
 | `Pull sync` / `pull-sync` | `Maintenance / Update open PRs` |
-| `Keep the Codex login fresh` / `codex-keepalive` | `Maintenance / Codex login` |
+| `Keep the Codex login fresh` / `codex-keepalive` | `Maintenance / Explorer login` |
 
 `Sign-in` and `UI parity` are separate stages because their workflows cannot fold into `Preview` and `Code`:
 the sign-in workflow is required by organization rulesets, and the UI contract runs on `pull_request_target`.

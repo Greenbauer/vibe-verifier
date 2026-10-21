@@ -204,7 +204,7 @@ class CheckNames(unittest.TestCase):
         for workflow, stage, names in ((CI, "Code", {"test": "Unit tests", "qae-browser": "QA browser tests",
                                                      "regression-browser": "Regression browser tests",
                                                      "lanes": "Lane kit tests", "lanes-listener": "Lane listener tests"}),
-                                       (NIGHTLY, "Tests", {"coverage-not-lost": "Coverage kept"})):
+                                       (NIGHTLY, "Maintenance", {"coverage-not-lost": "Coverage kept"})):
             self.assertTrue(workflow.read_text().startswith("name: %s\n" % stage), workflow.name)
             for job_id, name in names.items():
                 self.assertTrue(job(job_id, workflow).startswith("    name: %s\n" % name), job_id)
