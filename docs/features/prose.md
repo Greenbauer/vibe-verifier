@@ -29,3 +29,4 @@ Add `prose` to `.vibe-verifier`. `--files GLOB` (repeatable, default `**/*.md` a
 - The description finding is advisory because the gate runs on a push. Editing the description does not run it again, so a blocking finding there could not be cleared by the fix.
 - Vale does not judge code spans, fenced code, HTML comments, link targets, table cells (where a lone dash means "not applicable") or blockquotes (quoted text is someone else's), and the generated rules block is skipped.
 - A repository's own `.vale.ini` plays no part: the gate passes its own config and `--no-global`.
+An aside — here.
