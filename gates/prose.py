@@ -4,7 +4,8 @@
 A wired gate: it runs the pinned Vale (gates/_tools.py) with the catalog's own rules in
 gates/_prose_styles/VibeVerifier/, so every repository is judged by the same rules and none brings
 its own Vale config into the verdict. Vale reads the Markdown, so code spans, fenced code, HTML
-comments, link targets, table cells and blockquotes are never judged.
+comments and link targets are never judged; the dash rules also skip table cells, and all three
+skip blockquotes.
 
     EmDash        blocking   an em dash
     EnDashAside   blocking   an en dash with a space on each side (a range such as 4-9 is fine)
