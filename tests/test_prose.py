@@ -109,6 +109,11 @@ class Prose(unittest.TestCase):
         code, report = judge(self, {".vale.ini": config}, {"a.md": "One %s here.\n" % EM})
         self.assertEqual((code, rules(report)), (1, [("a.md", 1, "EmDash")]))
 
+    def test_a_rule_opening_the_file_is_not_read_as_front_matter(self):
+        text = "---\n\nA heading line.\n\n| a | b |\n---\n\nAn aside %s here.\n" % EM
+        code, report = judge(self, {}, {"a.md": text, "b.md": "---\ntitle: fine\n---\n\nText.\n"})
+        self.assertEqual((code, rules(report)), (1, [("a.md", 8, "EmDash")]))
+
     def test_all_judges_lines_the_base_already_had(self):
         repo = make_repo(self, {"a.md": "Old %s line.\n" % EM})
         result = gate("prose", repo, "--all", "--format", "json")

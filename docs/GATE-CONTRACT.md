@@ -717,7 +717,8 @@ pull request changed, and keeps only alerts on lines the diff from the base adds
 quote is advisory. Vale's Markdown scoping leaves out code, HTML comments and link targets, the two dash
 rules leave out table cells, all three leave out blockquotes, and the gate leaves out the generated rules block. Vale reads a
 copy of each file with its in-document switches (`<!-- vale off -->` and the like) defused and MDX
-comments blanked, so a document cannot turn the rules off; a binary file or a symbolic link is skipped. The pull
+comments blanked, so a document cannot turn the rules off; a binary file or a symbolic link is skipped. An opening `---` that
+is not followed by YAML front matter is read as a plain rule, so one such document does not stop the run. The pull
 request description, from `--body` or the `pull_request` event file, is judged advisory only, since
 an edit to it does not run the gate again.
 

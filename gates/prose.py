@@ -102,26 +102,65 @@ def defused(text, path):
 
 
 def vale(binary, documents):
-    """{path: [alert]} for {path: text}, from Vale's JSON output on defused copies of the texts."""
-    with tempfile.TemporaryDirectory() as scratch:
-        for path, text in documents.items():
-            copy = os.path.join(scratch, "docs", path)
-            os.makedirs(os.path.dirname(copy), exist_ok=True)
-            with open(copy, "w", encoding="utf-8") as handle:
-                handle.write(defused(text, path))
-        config = os.path.join(scratch, ".vale.ini")
-        with open(config, "w") as handle:
-            handle.write(CONFIG.format(styles=STYLES))
-        result = subprocess.run([binary, "--no-global", "--config", config, "--output", "JSON",
-                                 *(os.path.join("docs", path) for path in documents)],
-                                cwd=scratch, capture_output=True, text=True)
+    """{path: [alert]} for {path: text}, from Vale's JSON output on defused copies of the texts.
+
+    A document that opens with a `---` line is front matter to Vale, which stops the whole run (E201) when
+    what follows is not YAML. Such a `---` is a plain rule, so it is blanked in that copy and Vale runs
+    again; the line count stays the same."""
+    texts = {path: defused(text, path) for path, text in documents.items()}
+    for _ in range(len(texts) + 1):
+        result = run_vale(binary, texts)
+        broken = front_matter_error(result, texts)
+        if broken is None:
+            break
+        texts[broken] = texts[broken].replace("---", "", 1)
     if result.returncode not in (0, 1):
-        raise CannotRun("vale exited %d: %s" % (result.returncode, (result.stderr.strip() or result.stdout.strip() or "no output").splitlines()[-1]))
+        raise CannotRun("vale exited %d: %s" % (result.returncode, vale_error(result)))
     try:
         report = json.loads(result.stdout or "{}")
     except ValueError as error:
         raise CannotRun("vale's JSON report could not be read: %s" % error)
     return {os.path.relpath(path, "docs"): alerts for path, alerts in report.items()}
+
+
+def vale_error(result):
+    """Vale's reason for stopping, in one line: its JSON error (code, file, text) when it wrote one."""
+    try:
+        error = json.loads(result.stderr)
+    except ValueError:
+        error = None
+    if isinstance(error, dict) and error.get("Text"):
+        return "%s %s: %s" % (error.get("Code", ""), os.path.relpath(str(error.get("Path", "")), "docs"), error["Text"])
+    return (result.stderr.strip() or result.stdout.strip() or "no output").splitlines()[-1]
+
+
+def run_vale(binary, texts):
+    with tempfile.TemporaryDirectory() as scratch:
+        for path, text in texts.items():
+            copy = os.path.join(scratch, "docs", path)
+            os.makedirs(os.path.dirname(copy), exist_ok=True)
+            with open(copy, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        config = os.path.join(scratch, ".vale.ini")
+        with open(config, "w") as handle:
+            handle.write(CONFIG.format(styles=STYLES))
+        return subprocess.run([binary, "--no-global", "--config", config, "--output", "JSON",
+                               *(os.path.join("docs", path) for path in texts)],
+                              cwd=scratch, capture_output=True, text=True)
+
+
+def front_matter_error(result, texts):
+    """The path of the document whose front matter stopped Vale (E201), if that is why it stopped."""
+    if result.returncode != 2:
+        return None
+    try:
+        error = json.loads(result.stderr)
+    except ValueError:
+        return None
+    path = os.path.relpath(str(error.get("Path", "")), "docs") if isinstance(error, dict) else None
+    if error.get("Code") == "E201" and path in texts and texts[path].startswith("---"):
+        return path
+    return None
 
 
 def read_text(repo, path):
