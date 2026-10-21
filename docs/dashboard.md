@@ -237,7 +237,9 @@ each commit status. It makes no extra GitHub call.
   wait, and a commit status never waits.
 - **Opened**, the timeline lists every job under its workflow's name on an axis with round-time
   ticks, with its run time (or "so far", or how long it has waited) and a Log link to the job on
-  GitHub when the job's page is under the configured owner. A job's name opens its steps, drawn on
+  GitHub when the job's page is under the configured owner. On a phone the time column is narrow,
+  so a long time such as "1h 2m so far" wraps to two lines in it rather than running into the Log
+  link. A job's name opens its steps, drawn on
   that job's own scale (a note says so) because a one-minute job's steps on an hour's axis would be
   dots. Bold names are the critical path: from the last job to finish, back through each job whose
   finish created it (a finish within five seconds of a job's creation). Only Actions jobs are
@@ -252,8 +254,9 @@ each commit status. It makes no extra GitHub call.
   app's queued check draws nothing until it starts; the counts in the CI column include both.
 
 `tests/test_dashboard_timeline.py` runs `dashboard/static/timeline.test.js` and `dashboard/static/prs.test.js` and checks the row's
-swap from the meter, that there is no scale menu and each row is fit to its own timeline, and the bar
-colors and box.
+swap from the meter, that there is no scale menu and each row is fit to its own timeline, the bar
+colors and box. `tests/test_dashboard_timeline_phone.py` checks that a phone wraps a long job time in
+its column.
 
 ## Work view
 
@@ -751,6 +754,7 @@ published history's reader, and the collector-to-page path.
 points, runner waits (jobs only, over 30 seconds), the critical path, the shared and fitted scales
 and the menu that picks them, the opened rows and steps, the bar colors and box, the row's swap
 from the check meter, and the row's title link to GitHub and its timeline toggle.
+`tests/test_dashboard_timeline_phone.py` covers a phone wrapping a job's time inside its column.
 `tests/test_dashboard_behind.py` covers how far a head is behind the default branch and that both
 the full pass and the head beat put it on the row.
 `tests/test_dashboard_push_kind.py` covers the latest push's label and time, and
