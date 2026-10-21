@@ -109,6 +109,16 @@ class Prose(unittest.TestCase):
         code, report = judge(self, {".vale.ini": config}, {"a.md": "One %s here.\n" % EM})
         self.assertEqual((code, rules(report)), (1, [("a.md", 1, "EmDash")]))
 
+    def test_a_rule_opening_the_file_is_not_read_as_front_matter(self):
+        # The closing table keeps its |---| row: a gate that blanked every --- line, not only the opening one,
+        # would break it and judge the em dash in its cell.
+        text = ("---\n\nA heading line.\n\n| a | b |\n---\n\nAn aside %s here.\n\n| a | b |\n|---|---|\n| x %s y | z |\n"
+                % (EM, EM))
+        # b.md's front matter is valid, so it stays front matter: Vale skips a YAML comment there, and would judge
+        # the comment's em dash only if the opening --- had been blanked.
+        code, report = judge(self, {}, {"a.md": text, "b.md": "---\n# note %s x\ntitle: fine\n---\n\nText.\n" % EM})
+        self.assertEqual((code, rules(report)), (1, [("a.md", 8, "EmDash")]))
+
     def test_all_judges_lines_the_base_already_had(self):
         repo = make_repo(self, {"a.md": "Old %s line.\n" % EM})
         result = gate("prose", repo, "--all", "--format", "json")
@@ -131,20 +141,40 @@ class Prose(unittest.TestCase):
 class StandInVale(unittest.TestCase):
     """A fake vale first on PATH that reports the pinned version, so the resolver takes it."""
 
-    def setUp(self):
-        self.bin = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.bin, True)
-        fake = Path(self.bin, "vale")
+    def run_with(self, stderr):
+        """The gate on a one-file change, with a stand-in vale that writes stderr and exits 2."""
+        bin_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, bin_dir, True)
+        fake = Path(bin_dir, "vale")
         fake.write_text("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'vale version 3.22.0'; exit 0; fi\n"
-                        "echo 'E100 [vale] Runtime error' >&2\nexit 2\n")
+                        "printf '%%s\\n' '%s' >&2\nexit 2\n" % stderr)
         fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
-
-    def test_a_vale_that_fails_is_could_not_run_even_under_soak(self):
         repo = make_repo(self, {"README.md": "x\n"})
         commit(repo, {"a.md": "text\n"})
-        result = gate("prose", repo, "--base-ref", "HEAD~1", "--soak", env={"PATH": "%s:%s" % (self.bin, os.environ["PATH"])})
+        return gate("prose", repo, "--base-ref", "HEAD~1", "--soak", env={"PATH": "%s:%s" % (bin_dir, os.environ["PATH"])})
+
+    def test_a_vale_that_fails_is_could_not_run_even_under_soak(self):
+        result = self.run_with("E100 [vale] Runtime error")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("vale exited 2: E100 [vale] Runtime error", result.stderr)
+
+    def test_a_vale_json_error_names_its_code_file_and_text(self):
+        cases = {'{"Code": "E100", "Path": "docs/a.md", "Text": "boom"}': "vale exited 2: E100 a.md: boom",
+                 '{"Code": "E100", "Path": "", "Text": "boom"}': "vale exited 2: E100: boom"}
+        for stderr, message in cases.items():
+            with self.subTest(stderr=stderr):
+                result = self.run_with(stderr)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertNotIn("crashed", result.stderr)
+
+    def test_a_vale_error_that_is_json_but_not_an_object_is_could_not_run(self):
+        for stderr in ("null", "[]", '"text"'):
+            with self.subTest(stderr=stderr):
+                result = self.run_with(stderr)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("vale exited 2: %s" % stderr, result.stderr)
+                self.assertNotIn("crashed", result.stderr)
 
 
 if __name__ == "__main__":
