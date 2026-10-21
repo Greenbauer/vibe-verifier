@@ -111,9 +111,10 @@ class Prose(unittest.TestCase):
 
     def test_a_rule_opening_the_file_is_not_read_as_front_matter(self):
         text = "---\n\nA heading line.\n\n| a | b |\n---\n\nAn aside %s here.\n" % EM
-        # b.md's front matter is valid, so it stays front matter (Vale judges its values) and is not blanked.
-        code, report = judge(self, {}, {"a.md": text, "b.md": "---\ntitle: a %s b\n---\n\nText.\n" % EM})
-        self.assertEqual((code, rules(report)), (1, [("a.md", 8, "EmDash"), ("b.md", 2, "EmDash")]))
+        # b.md's front matter is valid, so it stays front matter: Vale skips a YAML comment there, and would judge
+        # the comment's em dash only if the opening --- had been blanked.
+        code, report = judge(self, {}, {"a.md": text, "b.md": "---\n# note %s x\ntitle: fine\n---\n\nText.\n" % EM})
+        self.assertEqual((code, rules(report)), (1, [("a.md", 8, "EmDash")]))
 
     def test_all_judges_lines_the_base_already_had(self):
         repo = make_repo(self, {"a.md": "Old %s line.\n" % EM})
