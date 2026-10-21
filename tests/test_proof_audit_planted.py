@@ -73,6 +73,14 @@ class PlantedGrades(unittest.TestCase):
         Path(self.grades, "proof-audit-grades-1").mkdir(parents=True)
         os.symlink("../../elsewhere/1.json", Path(self.grades, "proof-audit-grades-1", "1.json"))
         self.assert_refused("proof-audit-grades-1/1.json is a symbolic link")
+        # A tracked link on the way to the grades directory: the grades under it are the branch's choice of place.
+        self.setUp()
+        write(Path(self.repo, "store"), {"proof-audit-grades/proof-audit-grades-1/1.json": GRADES})
+        os.symlink("store", Path(self.repo, "via"))
+        git(self.repo, "add", "via")
+        git(self.repo, "commit", "-q", "-m", "a tracked link on the way")
+        self.grades = Path(self.repo, "via", "proof-audit-grades")
+        self.assert_refused("the pull request tracks via")
 
     def test_the_recipe_keeps_the_grades_outside_the_checkout(self):
         # From the grader's write through the upload and the download to the gate's read, every grades path in the
