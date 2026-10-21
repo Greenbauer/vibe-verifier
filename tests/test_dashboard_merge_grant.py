@@ -75,6 +75,12 @@ class Grants(unittest.TestCase):
         self.assertEqual(api.calls[1:], ["repos/%s/contents/package.json?ref=b1" % REPO,
                                          "repos/%s/contents/package.json?ref=h1" % REPO])
 
+    def test_past_github_3000_file_listing_the_no_lasts(self):
+        grants, api = MergeGrants(DEFAULT), API([{"status": "modified", "filename": "docs/%d.md" % n} for n in range(3000)])
+        self.assertIsNone(grants.grant(api, REPO, current(count=3001)))
+        grants.grant(api, REPO, current(count=3001))
+        self.assertEqual(len(api.calls), 1)
+
     def test_a_short_listing_or_a_failed_read_asks_again(self):
         grants, short = MergeGrants(DEFAULT), API([{"status": "modified", "filename": "docs/a.md"}])
         self.assertIsNone(grants.grant(short, REPO, current(count=2)))

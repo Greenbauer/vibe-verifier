@@ -35,6 +35,7 @@ or a file that cannot be read is a no, with the reason. Reading a pull request t
 command's output, are in _merge_grant_cli.py; this module decides and reads nothing itself.
 """
 import base64
+import copy
 import difflib
 import fnmatch
 import json
@@ -181,7 +182,7 @@ def _json(text, path):
         return {}
     try:
         value = json.loads(text)
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):        # not JSON, an integer past Python's digit limit, or too deep
         value = None
     if not isinstance(value, dict):
         raise _No("%s is not a JSON object" % path)
@@ -200,7 +201,7 @@ def _parent(value, parts, key):
 
 def _without(value, keys):
     """`value` with each (dotted) key removed, and a parent the removal left empty removed too."""
-    value = json.loads(json.dumps(value))
+    value = copy.deepcopy(value)
     for key in keys:
         parts = key.split(".")
         parent = _parent(value, parts[:-1], key)
@@ -224,6 +225,13 @@ def _holds(entry, row, read):
         return None
     _, old, new = row
     base, head = _json(read(old, "base"), old), _json(read(new, "head"), new)
+    try:
+        return _compared(entry, base, head, new)
+    except RecursionError:
+        return "%s is nested too deep to compare" % new
+
+
+def _compared(entry, base, head, new):
     if entry["changes_only"] and _without(base, entry["changes_only"]) != _without(head, entry["changes_only"]):
         return "%s changes more than %s" % (new, ", ".join(entry["changes_only"]))
     for key in entry["unchanged"] or ():
@@ -321,6 +329,9 @@ def _judge(grant, policy, files, read):
     if grant["categories"] is None and not grant["exclusions"]:
         return None
     rows = files()
+    odd = [path for path in _paths(rows) if any(ord(char) < 32 or ord(char) == 127 for char in path)]
+    if odd:
+        raise _No("a changed path has a control character (%r)" % odd[0])
     if grant["categories"] is not None:
         _categorized(grant, policy, rows, read)
     _excluded(grant, policy, rows, read)

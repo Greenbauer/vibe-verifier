@@ -56,8 +56,12 @@ class PullRequest:
     def files(self):
         count = self.view()["changedFiles"]
         listing = _gh_ok(self.gh, "its changed files", "api", "repos/%s/pulls/%s/files" % (self.repo, self.number),
-                         "--paginate", "--jq", '.[] | "\\(.status)\\t\\(.previous_filename // .filename)\\t\\(.filename)"')
-        rows = [tuple(parts) for parts in (line.split("\t") for line in listing.splitlines()) if len(parts) == 3]
+                         "--paginate", "--jq", '.[] | [.status, (.previous_filename // .filename), .filename] | @json')
+        try:
+            # One JSON array a line: a newline or tab inside a file name stays inside its string.
+            rows = [tuple(json.loads(line)) for line in listing.splitlines() if line]
+        except ValueError:
+            raise Unreadable("GitHub's file listing could not be read") from None
         if not rows or len(rows) != count:
             raise Unreadable("GitHub listed %d of its %s changed files" % (len(rows), count))
         return rows

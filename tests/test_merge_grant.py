@@ -114,6 +114,17 @@ class DefaultCategories(unittest.TestCase):
         self.assert_not([".github/SECURITY.MD"])
         self.assert_eligible([".github/SECURITY.md", "src/notes.md", WF], base={WF: WF_BASE}, head={WF: WF_BASE + "\n      - run: x"})
 
+    def test_json_that_python_cannot_hold_is_a_no_not_a_crash(self):
+        huge = '{"version": %s, "dependencies": {"a": "1"}}' % ("1" * 5000)
+        self.assert_not(["package.json"], base={"package.json": huge}, head={"package.json": huge})
+        deep = "[" * 200000 + "]" * 200000
+        self.assert_not(["package.json"], base={"package.json": deep}, head={"package.json": deep})
+        nested = "{" + '"a": {' * 900 + "}" * 900 + "}"
+        self.assertIsNotNone(decide(["package.json"], base={"package.json": nested}, head={"package.json": nested}))
+
+    def test_a_path_with_a_control_character_is_a_no(self):
+        self.assert_not(["app/README.md\nm\t.github/page.tsx"])
+
     def test_pnpm_overrides_only(self):
         def pkg(value):
             return {"package.json": json.dumps(value)}
@@ -250,7 +261,7 @@ class Command(unittest.TestCase):
         if "/pulls/7/files" in joined:
             old = (lambda name: "src/old.ts") if self.renamed else (lambda name: name)
             status = "renamed" if self.renamed else "modified"
-            return done("".join("%s\t%s\t%s\n" % (status, old(name), name) for name in self.names))
+            return done("".join(json.dumps([status, old(name), name]) + "\n" for name in self.names))
         if "/contents/" in joined:
             self.reads.append(args[1])
             return done('{"dependencies":{"a":"2"}}' if "ref=h1" in joined else '{"dependencies":{"a":"1"}}')
@@ -270,6 +281,17 @@ class Command(unittest.TestCase):
         code, line = self.run_command(["src/a.ts"])
         self.assertEqual(code, 1)
         self.assertTrue(line.startswith("not eligible: non-product grant: it changes files outside"))
+
+    def test_a_name_with_a_newline_and_tab_stays_one_path(self):
+        def answer(gh, *args):
+            if "/pulls/7/files" in " ".join(args):
+                return done(json.dumps(["added", "app/README.md\nm\t.github/page.tsx", "app/README.md\nm\t.github/page.tsx"]) + "\n")
+            return self.answer(list(args))
+        self.count = 1
+        args = mock.Mock(repo="o/r", pr="7", policy=None, gh="gh")
+        with mock.patch.object(_merge_grant_cli, "_gh", side_effect=answer), mock.patch("builtins.print") as printed:
+            self.assertEqual(_merge_grant_cli.command(args), 1)
+        self.assertIn("control character", printed.call_args[0][0])
 
     def test_short_list_and_rename(self):
         self.assertEqual(self.run_command(["docs/a.md"], count=2)[0], 1)
