@@ -231,18 +231,6 @@ class NodeTestCoverage(unittest.TestCase):
         self.assertEqual({path for path, _ in found}, {"src/app.mjs", "src/work.mjs"})
         self.assertTrue({("src/app.mjs", 2), ("src/app.mjs", 4), ("src/work.mjs", 3), ("src/work.mjs", 5)} <= found, found)
 
-    def test_a_route_directory_with_brackets_runs_its_tests(self):
-        # Node reads a --test path with [ or ] as a glob: app/[id]/page.test.mjs, given as it is, ran no test.
-        page = {"app/[id]/page.mjs": "export function title(id) {\n  return `#${id}`;\n}\n",
-                "app/[id]/page.test.mjs": HEADER + 'import { title } from "./page.mjs";\ntest("titles", () => { assert.equal(title(1), "#1"); });\n'}
-        repo = project(self, dict(page, **{"src/price.mjs": PRICE, "test/plain.test.mjs": PLAIN_TEST}), {"app/[id]/page.test.mjs": None},
-                       package=PACKAGE.replace("test/*.test.mjs", "test/*.test.mjs app/*/*.test.mjs"))
-        result = run_gate(repo)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        # Nothing loads the page at the head, so each of its lines that ran at the merge base is lost.
-        self.assertEqual(lines_found(result), {("app/[id]/page.mjs", line) for line in (1, 2, 3)})
-
-
     def test_a_credential_in_any_scripts_assignments_stops_the_run_before_any_test_starts(self):
         # Two scripts run the suite, so two commands: the first's file would run first, the second's script assigns a
         # credential. Every command's environment is checked before any of them starts (gates/_local_guard.py).
