@@ -61,6 +61,24 @@
       el("span", { class: tone }, when), known ? el("span", { class: "push-kind" }, `· ${push.kind}`) : null);
   }
 
+  // How long the head has sat since its CI stopped: from the last check to finish once the latest
+  // round is done, and how the head's current checks ended (the badge's checks: the collector keeps
+  // each check's newest run, so a re-run replaces its earlier result). Null while any check is open,
+  // before any has run, and while the checks are still from the previous push.
+  function idleLine(pull, now) {
+    const ci = pull.head_changed ? null : ciTiming(pull, now);
+    if (!ci || ci.ended == null) return null;
+    const { counts } = checkTotals(pull);
+    const [state, ended] = counts.failed ? ["failed", "failed"] : counts.cancelled ? ["cancelled", "was cancelled"]
+      : counts.success ? ["success", "passed"] : ["cancelled", "finished"];
+    const last = Math.max(ci.ended, ...[...(pull.checks || []), ...(pull.statuses || [])]
+      .map(row => Date.parse(row.completed_at)).filter(Number.isFinite));
+    const seconds = Math.max(0, (now - last) / 1000);
+    return el("span", { class: "idle-line", title: `Nothing has run on this head since CI ${ended} ${ageLabel(seconds)} ago` },
+      el("i", { class: `idle-dot tl-${state}`, "aria-hidden": "true" }),
+      el("b", { class: secondsClass(seconds, "ci") }, ageLabel(seconds)), " ", el("span", {}, `idle since CI ${ended}`));
+  }
+
   // The row's checks. With a CI timeline (from rowView) the bars get the Checks cell to themselves and
   // the counts, CI time and push kind move to the CI column: two cells. Otherwise the check meter with
   // that caption under it, in one cell across both columns.
@@ -72,7 +90,7 @@
       .map(segment => `${segment.count} ${segment.label.toLowerCase()}`);
     const caption = el("div", { class: "progress-caption" },
       el("span", { class: "progress-counts" }, totals.known ? (open.join(" · ") || "All passed") : "Progress is not shown as complete"),
-      pushLine(pull, now));
+      pushLine(pull, now), idleLine(pull, now));
     if (totals.known && timeline) return [el("div", { class: "timeline-cell" }, timeline), el("div", { class: "progress-copy ci-copy" }, mark, caption)];
     const meter = !totals.known ? el("b", { class: "progress-lead" }, "No checks reported")
       : el("div", { class: "check-meter", role: "img", "aria-label": meterLabel(totals) });
