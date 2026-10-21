@@ -15,7 +15,7 @@ if str(ROOT / "gates") not in sys.path:
     sys.path.append(str(ROOT / "gates"))  # appended: a gate module never shadows an installed package here
 import _local_only  # noqa: E402  (gates/ is not a package)
 
-CI_VARIABLES = ("GITHUB_BASE_REF", "GITHUB_HEAD_REF", "GITHUB_REF_NAME", "GITHUB_REF_TYPE",
+CI_VARIABLES = ("GITHUB_BASE_REF", "GITHUB_HEAD_REF", "GITHUB_REF_NAME", "GITHUB_REF_TYPE", "GITHUB_EVENT_PATH",
                 "VIBE_VERIFIER_BASE_REF", "GITHUB_STEP_SUMMARY", "VIBE_VERIFIER_MANIFEST", "VIBE_VERIFIER_QUALIFIER")
 
 

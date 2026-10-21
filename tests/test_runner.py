@@ -68,7 +68,7 @@ class Runner(unittest.TestCase):
         self.assertEqual(runner("list").stdout.split(),
                          ["acceptance-verdict", "actionlint", "bandit", "branch-name-length", "build-tools-in-devdependencies", "changed-code-mutation",
                           "cognitive-complexity", "coverage-not-lost", "feature-map", "gitleaks", "max-file-lines", "new-source-has-test",
-                          "no-duplicate-package-json-keys", "osv-scanner", "proof-audit", "qae-artifacts", "regression-test-fails-on-base", "repo-rules",
+                          "no-duplicate-package-json-keys", "osv-scanner", "proof-audit", "prose", "qae-artifacts", "regression-test-fails-on-base", "repo-rules",
                           "review-receipt", "ticket-coverage", "universal-checks", "zizmor"])
 
 

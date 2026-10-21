@@ -1,0 +1,10 @@
+# Advisory. A curly quote in Markdown source is usually a paste from a word processor or a chat; the
+# source is plain text, so a straight quote reads the same and diffs and searches cleanly.
+extends: existence
+message: "This is a curly quote. Use a straight quote."
+level: warning
+nonword: true
+tokens:
+  - '[\x{201C}\x{201D}\x{2018}\x{2019}]'
+scope:
+  - ~blockquote
