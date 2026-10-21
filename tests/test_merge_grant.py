@@ -12,6 +12,7 @@ from helpers import ROOT
 
 sys.path.insert(0, str(ROOT / "gates"))
 import _merge_grant  # noqa: E402
+import _merge_grant_cli  # noqa: E402
 
 DEFAULT = _merge_grant.load_policy()
 WF = ".github/workflows/ci.yml"
@@ -123,6 +124,8 @@ class DefaultCategories(unittest.TestCase):
                              head=pkg({"name": "app", "pnpm": {"overrides": {"a": "2"}}}))
         self.assert_not(["package.json"], base=pkg({"pnpm": {"onlyBuiltDependencies": built}}),
                         head=pkg({"pnpm": {"onlyBuiltDependencies": built + ["sharp"]}}))
+        self.assert_not(["package.json"], base=pkg({"pnpm": "x", "dependencies": {"a": "1"}}),
+                        head=pkg({"pnpm": "x", "dependencies": {"a": "2"}}))
 
     def test_unreadable_is_a_no(self):
         deps = {"package.json": '{"dependencies":{"next":"15.0.0"}}'}
@@ -170,6 +173,8 @@ class Grants(unittest.TestCase):
         self.assertIsNone(self.run_grant(["apps/api/src/a.ts"], "acme/other", "fix(api): x"))
         self.assertIsNone(self.run_grant(["apps/api/src/trips.ts", "supabase/migrations/0042_trips.sql"], "acme/app", "fix(db): trips"))
         self.assertIsNone(self.run_grant(["apps/api/src/auth/session.ts"], "acme/app", "fix(api): session"))
+        for owners in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"):
+            self.assertIsNone(self.run_grant([owners], "acme/app", "chore: owners"))
         self.assertEqual(self.run_grant(["package.json", "apps/api/src/a.ts"], "acme/app", "fix(api): scripts",
                                         base={"package.json": '{"scripts":{"a":"x"}}'}, head={"package.json": '{"scripts":{"a":"y"}}'}),
                          "title grant")
@@ -254,9 +259,9 @@ class Command(unittest.TestCase):
     def run_command(self, names, count=None, renamed=False):
         self.names, self.count, self.renamed, self.reads = names, len(names) if count is None else count, renamed, []
         args = mock.Mock(repo="o/r", pr="7", policy=None, gh="gh")
-        with mock.patch.object(_merge_grant, "_gh", side_effect=lambda gh, *a: self.answer(list(a))), \
+        with mock.patch.object(_merge_grant_cli, "_gh", side_effect=lambda gh, *a: self.answer(list(a))), \
                 mock.patch("builtins.print") as printed:
-            code = _merge_grant.command(args)
+            code = _merge_grant_cli.command(args)
         return code, printed.call_args[0][0]
 
     def test_eligible_and_not(self):
@@ -271,6 +276,20 @@ class Command(unittest.TestCase):
         code, line = self.run_command(["docs/new.md"], renamed=True)
         self.assertEqual(code, 1)
         self.assertIn("src/old.ts", line)
+
+    def test_a_binary_file_is_read_not_a_crash(self):
+        def answer(gh, *args):
+            if "/contents/" in " ".join(args):
+                return subprocess.CompletedProcess([], 0, b"\x89PNG\xff\xfe".decode("utf-8", "replace"), "")
+            return self.answer(list(args))
+        self.names, self.count, self.renamed, self.reads = [".github/logo.png"], 1, False, []
+        with mock.patch.object(_merge_grant_cli.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 0, b"\x89PNG\xff", b"")):
+            self.assertEqual(_merge_grant_cli._gh("gh", "api", "x").stdout, "\ufffdPNG\ufffd")
+        args = mock.Mock(repo="o/r", pr="7", policy=None, gh="gh")
+        with mock.patch.object(_merge_grant_cli, "_gh", side_effect=answer), mock.patch("builtins.print") as printed:
+            self.assertEqual(_merge_grant_cli.command(args), 0)
+        self.assertEqual(printed.call_args[0][0], "eligible: non-product grant")
 
     def test_cli_rejects_a_bad_policy(self):
         with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:

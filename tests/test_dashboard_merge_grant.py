@@ -86,12 +86,14 @@ class Grants(unittest.TestCase):
 
 
 class ClearCache(unittest.TestCase):
-    def test_clearing_the_private_cache_keeps_the_policy(self):
+    def test_clearing_the_private_cache_drops_answers_and_keeps_the_policy(self):
         api = joined_api()
         api.clear_cache = lambda: None
         collector = GitHubCollector(replace(config(), merge_policy=DEFAULT), api, clock=lambda: NOW)
+        collector._grants._known[(REPO, 3)] = (("h", "b", "t"), "non-product grant")
         collector.clear_private_cache()
         self.assertIs(collector._grants.policy, DEFAULT)
+        self.assertEqual(collector._grants._known, {})
 
 
 class PolicyConfig(unittest.TestCase):

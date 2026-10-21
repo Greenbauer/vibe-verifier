@@ -31,8 +31,8 @@ a security-named file or a workflow security line. A policy:
 name, and `grants`, when given, replaces the default's list. Regular expressions are Python's, searched.
 
 Fails closed: an unreadable file list, a list shorter than the pull request's count of changed files,
-a file that cannot be read, or gh not running is a no, with the reason. Exit 0 prints `eligible:
-<grant>`, exit 1 `not eligible: <reason>`, exit 2 `cannot run: <reason>` (a malformed policy).
+or a file that cannot be read is a no, with the reason. Reading a pull request through gh, and the
+command's output, are in _merge_grant_cli.py; this module decides and reads nothing itself.
 """
 import base64
 import difflib
@@ -40,8 +40,6 @@ import fnmatch
 import json
 import os
 import re
-import subprocess  # nosec B404: runs gh, the caller's own GitHub CLI, with fixed arguments
-from urllib.parse import quote
 
 DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_merge_grant.default.json")
 ENTRY_KEYS = {"path", "ignore_case", "json_changes_only", "json_unchanged"}
@@ -190,14 +188,22 @@ def _json(text, path):
     return value
 
 
+def _parent(value, parts, key):
+    """The object holding the last of `parts`, None when a part is missing; a part that is there but is not
+    an object is a no, since the key cannot be told apart from the rest."""
+    for part in parts:
+        value = value.get(part) if isinstance(value, dict) else None
+        if value is not None and not isinstance(value, dict):
+            raise _No("%s is not an object, so %s cannot be told apart" % (part, key))
+    return value
+
+
 def _without(value, keys):
     """`value` with each (dotted) key removed, and a parent the removal left empty removed too."""
     value = json.loads(json.dumps(value))
     for key in keys:
         parts = key.split(".")
-        parent = value
-        for part in parts[:-1]:
-            parent = parent.get(part) if isinstance(parent, dict) else None
+        parent = _parent(value, parts[:-1], key)
         if isinstance(parent, dict):
             parent.pop(parts[-1], None)
             if len(parts) > 1 and value.get(parts[0]) == {}:
@@ -346,97 +352,11 @@ def decide(policy, repo, *, files, title, read):
     return None, "; ".join(reasons) or "no grant covers %s" % repo
 
 
-# ---- reading a pull request from GitHub with gh, for the command ----
-
-def _gh(gh, *args):
-    try:
-        result = subprocess.run([gh, *args], capture_output=True, text=True, timeout=60)  # nosec B603
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise Unreadable("gh did not run: %s" % error) from None
-    return result
-
-
-def _gh_ok(gh, what, *args):
-    result = _gh(gh, *args)
-    if result.returncode != 0:
-        raise Unreadable("%s could not be read from GitHub" % what)
-    return result.stdout
-
-
-class PullRequest:
-    """One pull request read through gh, each answer read once and only when asked for. The files come from
-    the files API (paginated, as the dashboard reads them), never `gh pr diff`, which GitHub refuses for a
-    large diff."""
-
-    def __init__(self, gh, repo, number):
-        self.gh, self.repo, self.number, self._view, self._title = gh, repo, str(number), None, None
-
-    def view(self):
-        if self._view is None:
-            text = _gh_ok(self.gh, "it", "pr", "view", self.number, "--repo", self.repo,
-                          "--json", "baseRefOid,headRefOid,changedFiles")
-            try:
-                view = json.loads(text)
-            except json.JSONDecodeError:
-                view = {}
-            if not all(view.get(key) not in (None, "") for key in ("baseRefOid", "headRefOid", "changedFiles")):
-                raise Unreadable("GitHub did not give its base, head and file count")
-            self._view = view
-        return self._view
-
-    def title(self):
-        if self._title is None:
-            self._title = _gh_ok(self.gh, "its title", "pr", "view", self.number, "--repo", self.repo,
-                                 "--json", "title", "--jq", ".title").strip()
-        return self._title
-
-    def files(self):
-        count = self.view()["changedFiles"]
-        listing = _gh_ok(self.gh, "its changed files", "api", "repos/%s/pulls/%s/files" % (self.repo, self.number),
-                         "--paginate", "--jq", '.[] | "\\(.status)\\t\\(.previous_filename // .filename)\\t\\(.filename)"')
-        rows = [tuple(parts) for parts in (line.split("\t") for line in listing.splitlines()) if len(parts) == 3]
-        if not rows or len(rows) != count:
-            raise Unreadable("GitHub listed %d of its %s changed files" % (len(rows), count))
-        return rows
-
-    def read(self, path, side):
-        ref = self.view()["baseRefOid" if side == "base" else "headRefOid"]
-        result = _gh(self.gh, "api", "repos/%s/contents/%s?ref=%s" % (self.repo, quote(path), ref),
-                     "-H", "Accept: application/vnd.github.raw")
-        if result.returncode == 0:
-            return result.stdout
-        if "HTTP 404" in result.stderr:
-            return None
-        raise Unreadable("%s could not be read at the %s" % (path, side))
-
-
 def contents_text(value):
     """The text of a contents-API answer (base64 JSON), for a caller with its own reader."""
     if not isinstance(value, dict) or value.get("encoding") != "base64" or not isinstance(value.get("content"), str):
         raise Unreadable("GitHub did not give the file's content")
     try:
-        return base64.b64decode(value["content"]).decode("utf-8")
-    except (ValueError, UnicodeError):
-        raise Unreadable("the file is not UTF-8 text") from None
-
-
-def add_arguments(parser):
-    parser.add_argument("--repo", required=True, metavar="OWNER/NAME")
-    parser.add_argument("--pr", required=True, metavar="N")
-    parser.add_argument("--policy", metavar="FILE", help="the merge policy (default: gates/_merge_grant.default.json)")
-    parser.add_argument("--gh", default="gh", help="the gh to read GitHub with (default: gh on PATH)")
-
-
-def command(args):
-    try:
-        policy = load_policy(args.policy)
-    except PolicyError as error:
-        print("cannot run: %s" % error)
-        return 2
-    pull = PullRequest(args.gh, args.repo, args.pr)
-    grant, why = decide(policy, args.repo, files=pull.files, title=pull.title, read=pull.read)
-    if grant:
-        print("eligible: %s" % grant)
-        return 0
-    print("not eligible: %s" % why)
-    return 1
+        return base64.b64decode(value["content"]).decode("utf-8", "replace")
+    except ValueError:
+        raise Unreadable("GitHub's content is not base64") from None

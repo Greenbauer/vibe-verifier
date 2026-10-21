@@ -6,6 +6,7 @@
 
 - command: `merge-grant`
 - source: `gates/_merge_grant.py`
+- source: `gates/_merge_grant_cli.py`
 - source: `gates/_merge_grant.default.json`
 - source: `dashboard/merge_grant.py`
 

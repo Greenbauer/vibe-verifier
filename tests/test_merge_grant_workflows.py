@@ -52,6 +52,7 @@ class WorkflowLines(unittest.TestCase):
         self.assertIsNone(self.verdict(WF_BASE + "\n      - run: echo ${{ secrets.GITHUB_TOKEN-secrets.NPM }}"))
         self.assertIsNone(self.verdict(WF_BASE + "\n      - run: echo ${{ secrets.GITHUB_TOKEN$secrets.NPM }}"))
         self.assertIsNone(self.verdict(WF_BASE.replace("contents: read", "contents:\fwrite")))
+        self.assertIsNone(decide([".github/scripts/x.txt"], head={".github/scripts/x.txt": "{secrets.NPM}"})[0])
 
     def test_removed_permission_lines(self):
         two = WF_BASE.replace("contents: read", "contents: read\n  pull-requests: read")
