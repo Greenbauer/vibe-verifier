@@ -1018,9 +1018,11 @@ coverage-not-lost --runner node-test --soak                    # the files packa
   this machine. A suite that fails in a run that refused anything is exit 2 naming its first failure
   and what was refused. One that passed says what it refused and is compared as usual, so code that
   ran because a connection was refused (an error branch) counts as run. For node:test, each command at a
-  side is a run of its own, and every command's environment (with its script's assignments and the files
-  an `--env-file` option of the script or of `--args` loads) is checked before the first one starts, so a
-  credential in any of a side's scripts stops that side before its first test.
+  side is a run of its own, and the environment of every command of a `--project` (with its script's
+  assignments and the files an `--env-file` option of the script or of `--args` loads) is checked before
+  the first of them starts, so a credential in any of a project's scripts stops that project before its
+  first test at that side. Projects and sides run in turn, as with the other runners, so one checked later
+  can be refused after an earlier one's tests ran; none of those had the credential.
 - **What ran it.** A Python finding names the test functions that ran the line at the merge base (none
   for a line only a child process ran). A Vitest or node:test finding says whether the test files the
   pull request deleted, changed or moved ran it there,
