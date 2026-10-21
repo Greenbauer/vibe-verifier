@@ -137,6 +137,12 @@ step selects nothing and nothing changes.
   base, takes it out of the selection
   ([feature map](../../docs/feature-map.md#a-feature-no-browser-can-walk)). `qae-artifacts` checks the feature step logs' screenshots like the criteria's; the
   review comment lists each re-walked feature and the states left unwalked.
+- The explorer reads the steps from the pull request's own copy, so a pull request can rewrite the
+  steps that judge it. That is shown, never blocked: for a selected feature whose Verify section
+  differs from the merge base, the `features` and `acceptance-verdict` logs and the feature's row in
+  the review comment say `this pull request changed its Verify section: N lines added, M removed` (or
+  that the pull request added the feature), read from the files, never from the explorer
+  ([feature map](../../docs/feature-map.md)).
 - A Verify step that is a refusal by design (a wrong password answered 400) declares it on its own
   line, `expected-refusal: <status> <path-or-URL>` (`{id}` for one path segment the walk mints,
   such as a link it just made private), when the `qae-artifacts` line carries the same
@@ -794,7 +800,12 @@ qa-review`) keeps one comment on the pull request, edited in place on every run,
 
 Earlier rows win. The state comes from the jobs' and the gates' outcomes, never from the explorer's
 prose: under it the comment lists each criterion with the word the explorer wrote for it (PASS, FAIL,
-or no verdict), names the head commit it judged, and links the run. It edits only a comment posted by
+or no verdict), names the head commit it judged, and links the run. A re-walked feature's row adds
+`Note: this pull request changed its Verify section: N lines added, M removed` when the pull request
+edited the steps that judged it (or that it added the feature), comparing the map the QAE manifest's
+`acceptance-verdict` line names in the job's checkout with the merge base; the action's `manifest`
+input names that manifest (default `.vibe-verifier-qae`). A checkout with no base history gets a line
+saying the edit could not be read. It edits only a comment posted by
 `github-actions[bot]` that starts with the marker. The explorer's own verdict comment is still posted
 on every run the explorer makes, for people to read: the gate's input is the verdict file in the run's
 evidence, never a comment. On a pull request from a fork the workflow token is
