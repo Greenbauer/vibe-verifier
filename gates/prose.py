@@ -130,7 +130,8 @@ def vale_error(result):
     except ValueError:
         error = None
     if isinstance(error, dict) and error.get("Text"):
-        return "%s %s: %s" % (error.get("Code", ""), os.path.relpath(str(error.get("Path", "")), "docs"), error["Text"])
+        named = " ".join(filter(None, (str(error.get("Code") or ""), doc_path(error))))
+        return "%s: %s" % (named, error["Text"]) if named else str(error["Text"])
     return (result.stderr.strip() or result.stdout.strip() or "no output").splitlines()[-1]
 
 
@@ -157,10 +158,16 @@ def front_matter_error(result, texts):
         error = json.loads(result.stderr)
     except ValueError:
         return None
-    path = os.path.relpath(str(error.get("Path", "")), "docs") if isinstance(error, dict) else None
-    if error.get("Code") == "E201" and path in texts and texts[path].startswith("---"):
-        return path
-    return None
+    if not isinstance(error, dict) or error.get("Code") != "E201":
+        return None
+    path = doc_path(error)
+    return path if path in texts and texts[path].startswith("---") else None
+
+
+def doc_path(error):
+    """The document a Vale JSON error names, relative to the copies' directory, or "" when it names none."""
+    path = error.get("Path")
+    return os.path.relpath(str(path), "docs") if path else ""
 
 
 def read_text(repo, path):

@@ -30,6 +30,8 @@ Add `prose` to `.vibe-verifier`. `--files GLOB` (repeatable, default `**/*.md` a
 - `tests/test_prose.py::test_a_rule_opening_the_file_is_not_read_as_front_matter`
 - `tests/test_prose.py::test_the_description_is_judged_advisory_from_body_or_the_pull_request_event`
 - `tests/test_prose.py::test_a_vale_that_fails_is_could_not_run_even_under_soak`
+- `tests/test_prose.py::test_a_vale_error_that_is_json_but_not_an_object_is_could_not_run`
+- `tests/test_prose.py::test_a_vale_json_error_names_its_code_file_and_text`
 
 ## Gotchas
 
