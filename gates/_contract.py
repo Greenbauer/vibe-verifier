@@ -230,6 +230,29 @@ def in_repository(repo):
         raise CannotRun("git is not installed")
 
 
+def _tracked_at(repo, artifacts):
+    """Each path the branch tracks at, under or on the way to `artifacts`. Read as written, which names a tracked
+    link on the way, and resolved up to the directory itself (a link there is found by _links_in), which finds the
+    repository under another spelling of the same place. No repository (saved files on a laptop) tracks nothing."""
+    parent, name = os.path.split(os.path.abspath(artifacts))
+    spellings = {os.path.relpath(os.path.abspath(artifacts), os.path.abspath(repo)),
+                 os.path.relpath(os.path.join(os.path.realpath(parent), name), os.path.realpath(repo))}
+    inside = [rel.replace(os.sep, "/") for rel in spellings if rel != ".." and not rel.startswith(".." + os.sep)]
+    if not inside or not in_repository(repo):
+        return []
+    return ["the pull request tracks %s" % path for path in sorted(tracked_files(repo))
+            if any(path == rel or path.startswith(rel + "/") or rel.startswith(path + "/") for rel in inside)]
+
+
+def _links_in(artifacts):
+    """Each symbolic link in `artifacts`, the directory itself included."""
+    if os.path.islink(artifacts):
+        return ["%s is a symbolic link" % artifacts]
+    return ["%s is a symbolic link" % os.path.relpath(os.path.join(folder, entry), artifacts)
+            for folder, folders, files in os.walk(artifacts)
+            for entry in sorted(folders + files) if os.path.islink(os.path.join(folder, entry))]
+
+
 def planted(repo, artifacts):
     """One finding per thing in the evidence directory `artifacts` that the checkout `repo` supplied rather than the
     run: each path the branch tracks at, under or on the way to it (a tracked parent is a link or a submodule, since
@@ -239,22 +262,7 @@ def planted(repo, artifacts):
     (harnesses/qae/). A file the pull request commits there that no explorer writes survives into the evidence,
     and a link it commits (a file, a directory, or the directory itself) points the gate at whatever it names.
     So run_gate judges nothing until this is empty. A run's own evidence is regular files the workflow wrote."""
-    found = []
-    # As written, which names a tracked link on the way, and resolved up to the directory itself (a link there is a
-    # finding of its own), which finds the repository under another spelling of the same place.
-    parent, name = os.path.split(os.path.abspath(artifacts))
-    spellings = {os.path.relpath(os.path.abspath(artifacts), os.path.abspath(repo)),
-                 os.path.relpath(os.path.join(os.path.realpath(parent), name), os.path.realpath(repo))}
-    inside = [rel.replace(os.sep, "/") for rel in spellings if rel != ".." and not rel.startswith(".." + os.sep)]
-    if inside and in_repository(repo):  # no repository (saved files on a laptop): nothing is tracked
-        found += ["the pull request tracks %s" % path for path in sorted(tracked_files(repo))
-                  if any(path == rel or path.startswith(rel + "/") or rel.startswith(path + "/") for rel in inside)]
-    if os.path.islink(artifacts):
-        found.append("%s is a symbolic link" % artifacts)
-    else:
-        for folder, folders, files in os.walk(artifacts):
-            found += ["%s is a symbolic link" % os.path.relpath(os.path.join(folder, name), artifacts)
-                      for name in sorted(folders + files) if os.path.islink(os.path.join(folder, name))]
+    found = _tracked_at(repo, artifacts) + _links_in(artifacts)
     return [Finding("the evidence in %s is not only the run's own, so none of it is judged: %s. It holds what "
                     "the explorers wrote and nothing else: remove that from the pull request" % (artifacts, why))
             for why in found]
