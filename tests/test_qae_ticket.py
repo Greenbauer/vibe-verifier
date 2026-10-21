@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, clean_env, commit, gate, make_repo, runner, write
+from helpers import ROOT, VERIFY_ENV, clean_env, commit, gate, make_repo, runner, write
 from test_qae_annotations import action_script
 from test_qae_artifacts import CLEAN_REQUESTS, session_with
 
@@ -428,9 +428,7 @@ class TicketLink(unittest.TestCase):
                                        % Path(work, "body.md"))
         os.chmod(os.path.join(bin_dir, "gh"), 0o755)
         Path(work, "body.md").write_text(NONE)
-        env = clean_env({"PATH": bin_dir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x", "PR_NUMBER": "7", "REPO": "o/r",
-                         "SITE_URL": "http://localhost:3000", "SITE_ORIGINS": "", "REFERENCES": "", "TICKET": TICKET + "\n",
-                         "SHARDS": '[""]', "EXPLORE_ATTEMPT": "1", "CARRY": ""})
+        env = clean_env({**VERIFY_ENV, "PATH": bin_dir + os.pathsep + os.environ["PATH"], "REFERENCES": "", "TICKET": TICKET + "\n"})
         explore = workdir(self)
         ran = subprocess.run(["bash", "-e", "-c", step_script("- name: Write the explorer's input", "- name: Select the features")],
                              cwd=explore, capture_output=True, text=True, env=env)

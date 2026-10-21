@@ -12,6 +12,10 @@ it blocks anything. It never masks exit 2. A gate that cannot run has produced
 no signal, and a soak that is silently broken looks exactly like a soak that is
 clean: a mutation soak in a sibling project produced no score for five days
 before anyone noticed.
+
+--artifacts DIR, on a gate that takes it, is a run's evidence (a QAE explorer's step logs,
+screenshots and browser records), and the contract judges none that the checkout supplied:
+see planted.
 """
 import argparse
 import json
@@ -219,6 +223,61 @@ def _print_lines(gate, findings, blocking, fmt, soak):
         print("%s: %d advisory finding(s), not blocking" % (gate, len(findings) - len(blocking)))
 
 
+def in_repository(repo):
+    """Whether `repo` is in a Git work tree. No only when neither it nor a directory above it holds a .git: one Git
+    cannot read (a corrupt HEAD, a refused owner) cannot say what is tracked, so the gate cannot run."""
+    try:
+        out = subprocess.run(["git", "-C", repo, "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True)
+    except FileNotFoundError:
+        raise CannotRun("git is not installed")
+    folder = os.path.realpath(repo)
+    while out.returncode != 0:
+        if os.path.lexists(os.path.join(folder, ".git")):
+            raise CannotRun("git cannot read the repository at %s: %s" % (folder, out.stderr.strip()))
+        if os.path.dirname(folder) == folder:
+            return False
+        folder = os.path.dirname(folder)
+    return True
+
+
+def _tracked_at(repo, artifacts):
+    """Each path the branch tracks at, under or on the way to `artifacts`. Read as written, which names a tracked
+    link on the way, and resolved up to the directory itself (a link there is found by _links_in), which finds the
+    repository under another spelling of the same place. No repository (saved files on a laptop) tracks nothing."""
+    parent, name = os.path.split(os.path.abspath(artifacts))
+    spellings = {os.path.relpath(os.path.abspath(artifacts), os.path.abspath(repo)),
+                 os.path.relpath(os.path.join(os.path.realpath(parent), name), os.path.realpath(repo))}
+    inside = [rel.replace(os.sep, "/") for rel in spellings if rel != ".." and not rel.startswith(".." + os.sep)]
+    if not inside or not in_repository(repo):
+        return []
+    return ["the pull request tracks %s" % path for path in sorted(tracked_files(repo))
+            if any(path == rel or path.startswith(rel + "/") or rel.startswith(path + "/") for rel in inside)]
+
+
+def _links_in(artifacts):
+    """Each symbolic link in `artifacts`, the directory itself included."""
+    if os.path.islink(artifacts):
+        return ["%s is a symbolic link" % artifacts]
+    return ["%s is a symbolic link" % os.path.relpath(os.path.join(folder, entry), artifacts)
+            for folder, folders, files in os.walk(artifacts)
+            for entry in sorted(folders + files) if os.path.islink(os.path.join(folder, entry))]
+
+
+def planted(repo, artifacts):
+    """One finding per thing in the evidence directory `artifacts` that the checkout `repo` supplied rather than the
+    run: each path the branch tracks at, under or on the way to it (a tracked parent is a link or a submodule, since
+    Git lists no plain directory), and each symbolic link in it, the directory itself included.
+
+    The QAE jobs keep the evidence in qae-artifacts/ inside the checkout of the pull request being judged
+    (harnesses/qae/). A file the pull request commits there that no explorer writes survives into the evidence,
+    and a link it commits (a file, a directory, or the directory itself) points the gate at whatever it names.
+    So run_gate judges nothing until this is empty. A run's own evidence is regular files the workflow wrote."""
+    found = _tracked_at(repo, artifacts) + _links_in(artifacts)
+    return [Finding("the evidence in %s is not only the run's own, so none of it is judged: %s. It holds what "
+                    "the explorers wrote and nothing else: remove that from the pull request" % (artifacts, why))
+            for why in found]
+
+
 def run_gate(gate, description, check, add_arguments=None):
     """Parse the common flags, run check(args) -> [Finding], exit per the contract.
 
@@ -233,7 +292,8 @@ def run_gate(gate, description, check, add_arguments=None):
         add_arguments(parser)
     args = parser.parse_args()
     try:
-        findings = check(args)
+        evidence = getattr(args, "artifacts", None)
+        findings = (planted(args.repo, evidence) if evidence else []) or check(args)
     except CannotRun as reason:
         message = "%s could not run: %s" % (gate, reason)
     except Exception:

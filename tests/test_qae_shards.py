@@ -66,7 +66,7 @@ def hand_over(explore, verify, attempt=1, shard=1):
 def merge_evidence(verify, shards='[""]', attempt="1", template=TEMPLATES[0]):
     """The verify job's merge step, run in a workspace that holds qae-evidence/."""
     os.makedirs(os.path.join(verify, "qae-inputs"), exist_ok=True)
-    return run_step(step_script(template.read_text(), *MERGE), verify, {"SHARDS": shards, "EXPLORE_ATTEMPT": attempt})
+    return run_step(step_script(template.read_text(), *MERGE), verify, {"SHARDS": shards, "EXPLORE_ATTEMPT": attempt, "EVIDENCE": "qae-evidence"})
 
 
 def explorer_leaves(work, criterion, requests=CLEAN_REQUESTS, verdict="PASS"):
@@ -356,7 +356,6 @@ class Templates(unittest.TestCase):
             for gone in ("/comments", "jq -r", "github-actions[bot]"):
                 self.assertNotIn(gone, verify)
             self.assertIn("          : > qae-inputs/verdict.md\n", verify)
-            self.assertIn("          pattern: qae-artifacts-*\n          path: qae-evidence\n", verify)
             self.assertLess(verify.index("- uses: actions/download-artifact@"), verify.index(MERGE[0]))
             self.assertLess(verify.index(MERGE[0]), verify.index(MERGE[1]))
 

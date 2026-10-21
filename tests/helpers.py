@@ -30,6 +30,13 @@ def clean_env(extra=None):
     return env
 
 
+# The QAE verify job's environment for its steps before the gates (harnesses/qae/explore.yml), for a test that
+# runs them in a workspace: one explorer, attempt 1, a local site, and the evidence downloaded to qae-evidence/
+# in that workspace (the job's own goes to the runner's temporary directory, outside the checkout).
+VERIFY_ENV = {"GH_TOKEN": "x", "PR_NUMBER": "7", "REPO": "o/r", "SITE_URL": "http://localhost:3000", "SITE_ORIGINS": "",
+              "SHARDS": '[""]', "EXPLORE_ATTEMPT": "1", "CARRY": "", "EVIDENCE": "qae-evidence"}
+
+
 def git(repo, *args):
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=clean_env())
 
