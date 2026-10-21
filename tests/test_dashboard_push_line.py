@@ -167,6 +167,10 @@ const rows={
     {id:22, name:'unit', category:'success', status:'completed', started_at:'2026-10-05T23:50:00Z', completed_at:'2026-10-05T23:58:00Z'}],
     runs:[{id:1, name:'CI', jobs:[{id:21, steps:[], created_at:'2026-10-05T16:59:30Z', started_at:'2026-10-05T17:00:00Z', completed_at:'2026-10-05T17:20:00Z'},
       {id:22, steps:[], created_at:'2026-10-05T23:49:30Z', started_at:'2026-10-05T23:50:00Z', completed_at:'2026-10-05T23:58:00Z'}]}]})),
+  // Every started check finished, but a required check has not reported: CI is not done, so no line.
+  idleExpected:summarize(prRow({...base, checks:[
+    {name:'unit', category:'success', status:'completed', started_at:'2026-10-05T22:00:00Z', completed_at:'2026-10-05T22:20:00Z'}],
+    expected:[{name:'qae-verify', category:'pending', status:'expected'}]})),
   idleSkipped:summarize(prRow({...base, checks:[
     {name:'preview', category:'skipped', status:'completed', started_at:'2026-10-05T23:59:00Z', completed_at:'2026-10-05T23:59:30Z'}]})),
   idleMoved:summarize(prRow({...base, head_changed:true, push:{pushed_at:'2026-10-05T23:59:00Z', kind:'feature'}, checks:[
@@ -176,17 +180,17 @@ console.log(JSON.stringify(rows));
 ''')
         self.assertEqual(result["mixed"]["age"], ["5d", "old", "age-yellow", 1])
         # The idle line: in the caption after the CI time, counted from the round's last finish.
-        self.assertEqual(result["passed"]["idle"], ["23h 17midle since CI passed", "age-red", "idle-dot tl-success",
+        self.assertEqual(result["passed"]["idle"], ["23h 17m idle since CI passed", "age-red", "idle-dot tl-success",
                                                     "Nothing has run on this head since CI passed 23h 17m ago", 1])
-        self.assertEqual(result["rerunDone"]["idle"][:3], ["2m 0sidle since CI passed", None, "idle-dot tl-success"])
+        self.assertEqual(result["rerunDone"]["idle"][:3], ["2m 0s idle since CI passed", None, "idle-dot tl-success"])
         # A failure outranks a cancel and a pass; a cancel outranks a pass; skipped alone is "finished".
-        self.assertEqual(result["idleFailed"]["idle"][:3], ["1h 30midle since CI failed", "age-yellow", "idle-dot tl-failed"])
-        self.assertEqual(result["idleCancelled"]["idle"][:3], ["4h 30midle since CI was cancelled", "age-red", "idle-dot tl-cancelled"])
+        self.assertEqual(result["idleFailed"]["idle"][:3], ["1h 30m idle since CI failed", "age-yellow", "idle-dot tl-failed"])
+        self.assertEqual(result["idleCancelled"]["idle"][:3], ["4h 30m idle since CI was cancelled", "age-red", "idle-dot tl-cancelled"])
         self.assertEqual(result["idleCancelled"]["idle"][3], "Nothing has run on this head since CI was cancelled 4h 30m ago")
-        self.assertEqual(result["idleRerun"]["idle"][:3], ["2m 0sidle since CI passed", None, "idle-dot tl-success"])
-        self.assertEqual(result["idleSkipped"]["idle"][:3], ["30sidle since CI finished", None, "idle-dot tl-cancelled"])
+        self.assertEqual(result["idleRerun"]["idle"][:3], ["2m 0s idle since CI passed", None, "idle-dot tl-success"])
+        self.assertEqual(result["idleSkipped"]["idle"][:3], ["30s idle since CI finished", None, "idle-dot tl-cancelled"])
         # Nothing while any check is open or waiting, before CI has times, or while the checks are the previous push's.
-        for name in ("mixed", "rerunRunning", "rerunQueued", "waiting", "slow", "running", "required", "failed", "unchecked", "none", "idleMoved"):
+        for name in ("mixed", "rerunRunning", "rerunQueued", "waiting", "slow", "running", "required", "failed", "unchecked", "none", "idleMoved", "idleExpected"):
             self.assertIsNone(result[name]["idle"], name)
         self.assertEqual(result["mixed"]["counts"], "2 waiting · 2 skipped")
         # A queued check keeps CI running from the first start, not from the push three weeks ago.

@@ -73,7 +73,7 @@
     const seconds = Math.max(0, (now - ci.ended) / 1000);
     return el("span", { class: "idle-line", title: `Nothing has run on this head since CI ${ended} ${ageLabel(seconds)} ago` },
       el("i", { class: `idle-dot tl-${state}`, "aria-hidden": "true" }),
-      el("b", { class: secondsClass(seconds, "ci") }, ageLabel(seconds)), el("span", {}, `idle since CI ${ended}`));
+      el("b", { class: secondsClass(seconds, "ci") }, ageLabel(seconds)), " ", el("span", {}, `idle since CI ${ended}`));
   }
 
   // The row's checks. With a CI timeline (from rowView) the bars get the Checks cell to themselves and
