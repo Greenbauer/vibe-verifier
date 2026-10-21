@@ -1358,6 +1358,8 @@ the directory itself included, is one finding each and nothing else is judged
 ([evidence the pull request supplies](../harnesses/qae/README.md#evidence-the-pull-request-supplies)). Saved
 files judged outside any repository (no `.git` at `--repo` or above it) track nothing, and a `.git`
 Git cannot read there is exit 2: what it tracks is unknown.
+The `proof-audit` gate holds its `--grades` directory to the same rule, with the same finding, before it reads
+any grade ([grades the pull request supplies](../harnesses/proof-audit/README.md#grades-the-pull-request-supplies)).
 
 The harness's second gate, `qae-artifacts`, is the adjudicator: it reads the run's artifact
 directory (`--artifacts`) and refuses on structural facts, never on the model's prose: a step
