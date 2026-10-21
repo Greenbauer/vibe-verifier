@@ -14,61 +14,62 @@ import re
 
 # The last significant character or word before a `/` that starts a regex literal rather than a division.
 REGEX_AFTER = re.compile(r"(?:^|[(,=:\[!&|?{};+\-*%<>~^]|\b(?:return|typeof|case|do|else|in|of|void|yield|await|delete|throw|new))\s*$")
+COMMENT = re.compile(r"//[^\n]*|/\*.*?(?:\*/|\Z)", re.S)
+# A quoted string to its closing quote, or to the end of its line when it has none.
+STRING = re.compile(r"""'(?:\\.|[^'\\\n])*'?|"(?:\\.|[^"\\\n])*"?""")
+# A regex literal: escapes and `[...]` classes, which may hold a `/`, then its flags.
+REGEX = re.compile(r"/(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n\[])+/\w*")
 # A clause of names between `import` or `export` and `from`: identifiers, braces, commas, `*`, `as`, `type`.
 STATIC = re.compile(r'\b(import|export)\s+([\w$\s{},*]*?)\s*\bfrom\s*"#(\d+)"')
 BARE = re.compile(r'\bimport\s*"#(\d+)"')
 CALL = re.compile(r'(\btypeof\s+)?\b(import|require)\s*\(\s*"#(\d+)"\s*\)(\s*\.\s*[A-Z])?')
 
 
-def literal_end(text, start):
-    """The index after the string, template or regex literal that starts at `start`, or None when it does not end on
-    its line (a `/` that is a division after all)."""
-    quote, index, depth, in_class = text[start], start + 1, 0, False
+def template_end(text, start):
+    """The index after the template literal that starts at `start`, its `${...}` expressions skipped by brace depth."""
+    index, depth = start + 1, 0
     while index < len(text):
         char = text[index]
         if char == "\\":
-            index += 2
-            continue
-        if char == "\n" and quote != "`":
-            return None if quote == "/" else index
-        if quote == "/":
-            in_class = (in_class or char == "[") and char != "]"
-            if char == "/" and not in_class:
-                return re.match(r"\w*", text[index + 1:]).end() + index + 1
-        elif quote == "`" and text.startswith("${", index):
-            depth, index = depth + 1, index + 2
-            continue
-        elif quote == "`" and depth and char == "}":
+            index += 1
+        elif text.startswith("${", index):
+            depth, index = depth + 1, index + 1
+        elif char == "}" and depth:
             depth -= 1
-        elif char == quote and not depth:
+        elif char == "`" and not depth:
             return index + 1
         index += 1
     return len(text)
+
+
+def literal_end(text, start):
+    """The index after the string, template or regex literal that starts at `start`, or None when a `/` starts none
+    (a division after all)."""
+    if text[start] == "`":
+        return template_end(text, start)
+    found = (REGEX if text[start] == "/" else STRING).match(text, start)
+    return found.end() if found else None
 
 
 def masked(text):
     """(the text with each comment blanked and each literal replaced by "#<n>", [each literal's contents])."""
     out, literals, index = [], [], 0
     while index < len(text):
-        char, end = text[index], None
-        if text.startswith("//", index):
-            end = text.find("\n", index)
-            index = len(text) if end < 0 else end
-            continue
-        if text.startswith("/*", index):
-            end = text.find("*/", index + 2)
+        comment = COMMENT.match(text, index)
+        if comment:
             out.append(" ")
-            index = len(text) if end < 0 else end + 2
+            index = comment.end()
             continue
-        if char in "'\"`" or (char == "/" and REGEX_AFTER.search("".join(out[-40:]))):
-            end = literal_end(text, index)
+        char = text[index]
+        starts = char in "'\"`" or (char == "/" and REGEX_AFTER.search("".join(out[-40:])))
+        end = literal_end(text, index) if starts else None
         if end:
             literals.append(text[index + 1:end - 1])
             out.append('"#%d"' % (len(literals) - 1))
             index = end
-            continue
-        out.append(char)
-        index += 1
+        else:
+            out.append(char)
+            index += 1
     return "".join(out), literals
 
 
