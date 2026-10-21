@@ -236,7 +236,7 @@ global.document={createElementNS:(_,tag)=>make(tag),createElement:make};
 const samples=rows.flatMap(row=>[31,30,3,2].map(h=>({account:'a',bot:row.id,timestamp:at(h),input_tokens:40,output_tokens:0})));
 const usage={sampled_at:at(0),accounts:[],samples,pace_points:-4};
 const src=app.match(/\n(  function usageCharts\([\s\S]*?)\n  function renderUsage\(/)[1];
-const cards=new Function('el','BOT_META','VVCharts','snapshot','paceHeader',src+'\nreturn usageCharts;')(el,BOT_META,VVCharts,snapshot,paceHeader)(usage).children[2].children;
+const cards=new Function('el','BOT_META','VVCharts','snapshot','paceHeader',src+'\nreturn usageCharts;')(el,BOT_META,VVCharts,snapshot,paceHeader)(usage).children[1].children;
 const names=n=>walk(n).filter(i=>i.attrs&&i.attrs.class==='bot-name').map(text);
 console.log(JSON.stringify({strip:names(strip),cards:cards.map(c=>text(c.children[0].children[0].children[0]).split(' · ')[0]),usual:cards.map(c=>walk(c).some(n=>n.attrs&&n.attrs.class==='burn-usual'))}));
 """)

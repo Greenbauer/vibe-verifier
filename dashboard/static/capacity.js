@@ -7,9 +7,9 @@
   const STATE_TEXT = { busy: "Running", allocated: "Idle, no job", warm: "Kept warm", unknown: "Unknown", offline: "Offline", ready: "Ready" };
   // The machine's three kinds of runner slot, in the words the page uses for them.
   const KINDS = {
-    ci: { title: "Build and test", short: "Build", note: "Runs the repositories' CI jobs." },
-    qae: { title: "AI QA", short: "QA", note: "Runs the QA explorer against a preview. Each slot has its own Codex login." },
-    wait: { title: "Waiting jobs", short: "Wait", note: "Holds jobs that only wait, such as for a preview to deploy. Cheap, and not one of the runner slots." }
+    ci: { title: "Build and test", short: "Build" },
+    qae: { title: "AI QA", short: "QA" },
+    wait: { title: "Waiting jobs", short: "Wait" }
   };
   let chosenRange = "24h";
 
@@ -161,7 +161,7 @@
     const meta = KINDS[kind];
     const rows = lanes.map(lane => runnerRow(lane, stateOf.get(lane), owner, now));
     return el("div", { class: "runner-group", role: "rowgroup", "aria-label": meta.title },
-      el("div", { class: "runner-group-title" }, el("b", {}, meta.title), el("span", { class: "muted" }, meta.note)),
+      el("div", { class: "runner-group-title" }, el("b", {}, meta.title)),
       ...(rows.length ? rows : [el("p", { class: "muted runner-none" }, "None right now.")]), extra || null);
   }
 

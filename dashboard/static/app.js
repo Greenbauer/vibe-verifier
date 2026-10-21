@@ -168,8 +168,7 @@
   function failurePanel() {
     const agents = snapshot.agents?.rows || [];
     const roles = Object.fromEntries(agents.map(agent => [agent.id, agent]));
-    const panel = el("section", { class: "panel failures" }, el("h2", {}, "Recent bot failures"),
-      el("p", { class: "muted" }, "Last five completed runs per bot in seven days. Select a bot for detail."));
+    const panel = el("section", { class: "panel failures" }, el("h2", {}, "Recent bot failures"));
     const buttons = el("div", { class: "failure-buttons" });
     agents.forEach(agent => {
       const role = agent.id;
@@ -207,7 +206,6 @@
       paceLineTitle: plan ? `Even pace to the reset: ${VVCharts.percentText(plan.percent_per_hour)} of the plan an hour spends the rest exactly when it resets.` : null, ...paceHeader(usage.pace_points ?? null) };
     const shared = VVCharts.ceiling(observed);
     return el("section", { class: "panel usage-charts" }, el("h2", {}, "Token burn pattern"),
-      el("p", { class: "muted" }, "Tokens each bot used, hour by hour. Solid: last 24 hours. Dashed: a usual day. All bots: percent of the plan an hour; flat: the pace that lasts until the plan resets."),
       el("div", { class: "burn-cards" }, bots.map(bot => burnCard(bot, shared, now)),
         burnCard(all, VVCharts.ceiling(all.burn ? [all.burn] : [], all.paceLine), now)),
       plan ? el("p", { class: "muted pace-note", title: `Weighted the way the plan counts tokens (a cached input token a tenth of a fresh one, an output token five times), the bots' tokens since the window began made its ${plan.used_percent}% used; each hour is its share of that. This reads the bots' tokens as standing for all of the plan's use, which holds while they keep their share.${plan.partial ? " Token history is incomplete, so the bots' share may read high." : ""}` },

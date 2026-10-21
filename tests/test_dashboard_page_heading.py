@@ -64,6 +64,20 @@ console.log(JSON.stringify({quiet:heading('Pull requests',null,controls),
         self.assertIn("flex: 1 1 0", rule('  .section-heading .toolbar input[type="search"]', phone))
         self.assertIn("flex: 1 1 100%", rule("  .section-heading .toolbar-group", phone))
         self.assertIn("flex: 1 1 0; min-width: 0", rule("  .toolbar-group select", phone))
+    def test_the_recent_bot_failures_panel_has_no_sentence_describing_it(self):
+        source = r'''
+const app=require('fs').readFileSync('./dashboard/static/app.js','utf8');
+const el=(tag,attrs={},...c)=>{const node={tag,attrs,children:c.flat().filter(v=>v!=null&&v!==false&&v!=='')};node.append=(...k)=>node.children.push(...k);return node;};
+const src=app.slice(app.indexOf('  function failurePanel('),app.indexOf('  function usageCharts('));
+const snapshot={owner:'o',agents:{rows:[{id:'q1',name:'QAE 1',role:'qae',recent_7d:[],coverage:{history:'complete'}}]}};
+const panel=new Function('el','snapshot','state','BOT_META','badge','formatTime','duration','link','render',src+'\nreturn failurePanel;')(
+  el,snapshot,{failureBot:'q1'},{qae:{color:'#fff'}},()=>null,v=>v,v=>v,()=>null,()=>{})();
+console.log(JSON.stringify(panel.children.map(child=>[child.tag,child.attrs.class||null])));
+'''
+        result = subprocess.run(["node", "-e", source], cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # The title, then the bot buttons, then the selected bot's result: no sentence describing the panel.
+        self.assertEqual(json.loads(result.stdout), [["h2", None], ["div", "failure-buttons"], ["p", "muted"]])
 
 if __name__ == "__main__":
     unittest.main()

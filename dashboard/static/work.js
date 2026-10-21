@@ -59,10 +59,10 @@
   }
 
   // One card per column, its items as rows inside it, like the pull-request groups.
-  function workColumn(key, title, subtitle, items, now, collapsed = false) {
+  function workColumn(key, title, items, now, collapsed = false) {
     const rows = items.length ? items.map(item => workCard(item, now)) : [el("p", { class: "work-empty muted" }, "None.")];
     return el("section", { class: `work-column work-${key}`, "aria-label": title },
-      el("h2", { class: "work-column-title" }, `${title} (${items.length})`, el("small", {}, subtitle)),
+      el("h2", { class: "work-column-title" }, `${title} (${items.length})`),
       el("div", { class: "work-list" }, collapsed && items.length ? el("details", {}, el("summary", {}, "Show"), rows) : rows));
   }
 
@@ -82,10 +82,10 @@
     content.append(el("p", { class: "muted work-summary" },
       `${groups.todo.length} to do · ${groups.progress.length} in progress · ${groups.waiting.length} waiting on you · ${groups.stale} open items not updated in over two weeks`));
     content.append(el("div", { class: "work-board" },
-      workColumn("todo", "To do", "Not picked up yet, oldest first", groups.todo, now),
-      workColumn("progress", "In progress", "Claimed or being built", groups.progress, now),
-      workColumn("waiting", "Waiting on you", "Blocked, an Ask without a ruling, a PR to merge, or a to-do marked waiting", groups.waiting, now),
-      workColumn("done", "Done", "Merged, closed, or a to-do done", groups.done, now, true)));
+      workColumn("todo", "To do", groups.todo, now),
+      workColumn("progress", "In progress", groups.progress, now),
+      workColumn("waiting", "Waiting on you", groups.waiting, now),
+      workColumn("done", "Done", groups.done, now, true)));
   }
 
   window.VVWork = { render };
