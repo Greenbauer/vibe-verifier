@@ -94,6 +94,21 @@ test("the first column reads title, then number, author and head, then the age a
   assert.strictEqual(bottom.children[1].text, "2 behind main");
 });
 
+test("an Agent mergeable pill sits beside the behind pill, names the grant, and leaves for a moved head", () => {
+  const shown = extra => {
+    prs.render(content, { ...snapshot, github: { ...snapshot.github, repositories: [{ repository: "octocat/example",
+      pulls: [pull(3, { behind_by: 1, ...extra })] }] } }, state, page);
+    return row(3).find("pr-meta")[0].children.map(node => node.className);
+  };
+  assert.deepStrictEqual(shown({ merge_grant: "non-product grant" }), ["pr-age", "behind-mark", "grant-mark"]);
+  const pill = row(3).find("grant-mark")[0];
+  assert.strictEqual(pill.text, "Agent mergeable");
+  assert.match(pill.attrs.title, /under the non-product grant\. Not the same as merge-ready\.$/);
+  assert.deepStrictEqual(shown({ merge_grant: null }), ["pr-age", "behind-mark"]);
+  assert.deepStrictEqual(shown({}), ["pr-age", "behind-mark"]);
+  assert.deepStrictEqual(shown({ merge_grant: "non-product grant", head_changed: true }), ["pr-age", "behind-mark"]);
+});
+
 test("opening one row's timeline closes any other", () => {
   prs.render(content, snapshot, state, page);
   row(2).handlers.click({ target: { closest: () => null } });

@@ -212,6 +212,7 @@ from _features import add_selection_arguments, describe, map_directory, selectio
 from _verify_edits import verify_edits  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
 import _affected_tests  # noqa: E402
+import _merge_grant  # noqa: E402
 import _proof_audit  # noqa: E402
 import qae_artifacts  # noqa: E402
 import repo_rules  # noqa: E402
@@ -1726,6 +1727,9 @@ def main():
     audit = commands.add_parser("proof-audit", help="grade, with a model on the Codex CLI, whether the tests prove each "
                                 "requirement a pull request's Ticket sections define, then run the proof-audit gate on it")
     _proof_audit.add_arguments(audit)
+    grant = commands.add_parser("merge-grant", help="whether a merge policy lets an agent merge a pull request without a "
+                                "human review: prints `eligible: <grant>` or `not eligible: <reason>` (via gh)")
+    _merge_grant.add_arguments(grant)
     review = commands.add_parser("qa-review", help="post or edit the QAE's one review comment on a pull request (via gh)")
     review.add_argument("--repo", required=True, metavar="OWNER/NAME")
     review.add_argument("--pr", required=True, metavar="N")
@@ -1769,6 +1773,8 @@ def main():
         return _affected_tests.command(args)
     if args.command == "proof-audit":
         return _proof_audit.command(args)
+    if args.command == "merge-grant":
+        return _merge_grant.command(args)
     return run(args)
 
 
