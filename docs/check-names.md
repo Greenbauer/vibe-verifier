@@ -8,8 +8,8 @@ mapping goes in the pull request that applies it.
 
 1. **A check shows as `Workflow / Job`. The workflow name is the stage, the job name is what it proves.**
    Stages, in the order they run: `Code`, `UI parity`, `Tests`, `Security`, `Preview`, `Sign-in`, `QA`,
-   `Review`, `Standards`, `Merge`. Workflows that do not judge pull requests use `Deploy` or `Maintenance`; one that runs on a pull request
-only to test a change to itself (pull sync's dry run) keeps its `Maintenance` name there.
+   `Review`, `Standards`, `Merge`. Workflows that do not judge pull requests use `Deploy` or `Maintenance`,
+   including one that also runs on a pull request that changes it (a repository's dry run of its pull sync).
    A check's own name, the one a branch rule requires, the API's `check_name` matches and every reader
    compares, is the job part only: `Database`, not `Preview / Database`. The workflow part only groups
    the list.
@@ -22,11 +22,11 @@ only to test a change to itself (pull sync's dry run) keeps its `Maintenance` na
 5. **A helper job is named after the check it serves**: `<Check>: <step>`, so it sorts next to it
    (`E2E tests: find preview`, `E2E tests: post result`). The job that decides pass or fail carries the plain
    name, and that plain name is the one a branch rule requires.
-6. **The names of workflows that run on pull requests are unique in a repository.** Two such workflow
+6. **The names of workflows that judge pull requests are unique in a repository.** Two such workflow
    files in one stage are folded into one file where that is a move of independent jobs; where it is not
    (an organization-required workflow, a `pull_request_target` workflow), the second takes a narrower
    stage name from the table below. Workflows that do not judge pull requests (`Maintenance`, `Deploy`) may
-   share a name: they never sit in a pull request's check list.
+   share a name: a pull request's check list shows one only when the pull request changes it.
 7. **A commit status names its stage itself**, because it has no workflow: the context is `Stage / Name`
    (`Merge / Safe to merge`), and that whole context is what a branch rule requires and a reader compares.
    A status never shows the same text as a job: when a status carries a check's verdict, the job that
