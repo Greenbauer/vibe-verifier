@@ -15,7 +15,7 @@ Only the lines the pull request added count (git diff base...HEAD, renames follo
 file already had never blocks; --all judges every line, for an audit. The generated rules block
 (bin/vibe-verifier rules-doc) is skipped: it is written by a command, not a person. Vale reads a copy of
 each file in which its own on-off switches are defused, so a document cannot turn the gate off; a binary
-file is skipped, and bytes that are not UTF-8 are replaced.
+file or a symbolic link is skipped, and bytes that are not UTF-8 are replaced.
 
 The pull request description is judged too, advisory only: a workflow runs this gate on a push,
 not on an edit of the description, so a blocking finding there could not be cleared by fixing it.
@@ -125,8 +125,11 @@ def vale(binary, documents):
 
 
 def read_text(repo, path):
-    """The file's text, or None for a binary file. Bytes that are not UTF-8 are replaced, so one badly
-    encoded document cannot stop the gate from judging the rest."""
+    """The file's text, or None for a binary file or a symbolic link (a link has no prose of its own: its
+    target, when the pull request changes it, is judged under its own path). Bytes that are not UTF-8 are
+    replaced, so one badly encoded document cannot stop the gate from judging the rest."""
+    if os.path.islink(os.path.join(repo, path)):
+        return None
     with open(os.path.join(repo, path), "rb") as handle:
         data = handle.read()
     return None if b"\0" in data else data.decode("utf-8", errors="replace")

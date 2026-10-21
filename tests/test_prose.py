@@ -85,6 +85,20 @@ class Prose(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(rules(json.loads(result.stdout)), [("-x.md", 1, "EmDash")])
 
+    def test_a_symbolic_link_is_not_judged_and_does_not_stop_the_gate(self):
+        repo = make_repo(self, {"AGENTS.md": "Old %s line.\n" % EM})
+        os.symlink("AGENTS.md", os.path.join(repo, "CLAUDE.md"))
+        os.symlink("missing.md", os.path.join(repo, "gone.md"))
+        commit(repo, {"new.md": "New %s line.\n" % EM})
+        result = gate("prose", repo, "--base-ref", "HEAD~1", "--format", "json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(rules(json.loads(result.stdout)), [("new.md", 1, "EmDash")])
+
+    def test_a_repository_vale_config_does_not_change_the_verdict(self):
+        config = "StylesPath = styles\nMinAlertLevel = suggestion\n[*.md]\nBasedOnStyles =\nVibeVerifier.EmDash = NO\n"
+        code, report = judge(self, {".vale.ini": config}, {"a.md": "One %s here.\n" % EM})
+        self.assertEqual((code, rules(report)), (1, [("a.md", 1, "EmDash")]))
+
     def test_all_judges_lines_the_base_already_had(self):
         repo = make_repo(self, {"a.md": "Old %s line.\n" % EM})
         result = gate("prose", repo, "--all", "--format", "json")
