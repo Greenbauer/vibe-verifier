@@ -163,7 +163,8 @@ class TwoLinesOfOneGate(unittest.TestCase):
         repo = make_repo(self, {".vibe-verifier": "branch-name-length --max 60\n"})
         commit(repo, {".vibe-verifier": "branch-name-length --max 2\nbranch-name-length --max 60\n"})
         result = self.judged(repo)
-        self.assertEqual(self.statuses(result), ["FAIL", "PASS"], result.stdout + result.stderr)
+        # The base's line runs first, then the line the branch added.
+        self.assertEqual(self.statuses(result), ["PASS", "FAIL"], result.stdout + result.stderr)
 
 
 class Tool(unittest.TestCase):

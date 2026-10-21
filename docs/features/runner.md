@@ -29,4 +29,4 @@ Write `.vibe-verifier` with one gate per line and run `bin/vibe-verifier run --r
 
 - A branch that weakens a gate's line is still judged by the base's line; a test of the runner needs a base branch to show it.
 - A gate that cannot run is exit 2 even under `--soak`.
-- A gate may have several lines (one `coverage-not-lost` line per test suite); each runs with its own arguments and is judged from the base line it started from. Add a line in a change of its own: one that edits a line of a gate and adds another may see the edited text run in place of the added line.
+- A gate may have several lines (one `coverage-not-lost` line per test suite); each runs with its own arguments and is judged from the base line it started from, and the base's lines run first, so a reader of a gate's first line (the QAE inputs) reads the base's. Add a line in a change of its own: one that edits a line of a gate and adds another may see the edited text run in place of the added line.
