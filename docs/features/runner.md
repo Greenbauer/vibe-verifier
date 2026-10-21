@@ -20,6 +20,8 @@ Write `.vibe-verifier` with one gate per line and run `bin/vibe-verifier run --r
 - `tests/test_runner.py::test_one_failing_gate_fails_the_run_and_every_gate_still_runs`
 - `tests/test_runner.py::test_verifying_nothing_is_not_a_pass`
 - `tests/test_runner.py::test_soak_appended_on_the_branch_does_not_soften_the_gate`
+- `tests/test_runner.py::test_each_line_runs_with_its_own_arguments`
+- `tests/test_runner.py::test_a_branch_cannot_loosen_one_of_two_lines`
 - `tests/test_gates_action.py::test_entries_are_never_judged_from_the_base`
 - `tests/test_gates.py::test_soak_never_masks_could_not_run`
 
@@ -27,3 +29,4 @@ Write `.vibe-verifier` with one gate per line and run `bin/vibe-verifier run --r
 
 - A branch that weakens a gate's line is still judged by the base's line; a test of the runner needs a base branch to show it.
 - A gate that cannot run is exit 2 even under `--soak`.
+- A gate may have several lines (one `coverage-not-lost` line per test suite); each runs with its own arguments and is judged from the base line it started from. Add a line in a change of its own: one that edits a line of a gate and adds another may see the edited text run in place of the added line.
