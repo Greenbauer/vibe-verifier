@@ -103,3 +103,14 @@ test("opening one row's timeline closes any other", () => {
   row(1).handlers.click({ target: { closest: () => null } });
   assert.deepStrictEqual(rows().map(node => node.className), ["pr-row", "pr-row"]);
 });
+
+test("a row whose CI round has finished says, under the CI time in the CI column, how long it has sat since", () => {
+  const done = pull(3, { checks: [{ id: 5, name: "test", category: "failed", status: "completed", started_at: at(1), completed_at: at(20) }],
+    runs: [{ id: 8, name: "CI", jobs: [{ id: 5, name: "test", created_at: at(0), started_at: at(1), completed_at: at(20), steps: [] }] }] });
+  prs.render(content, { ...snapshot, github: { ...snapshot.github, repositories: [{ repository: "octocat/example", pulls: [done, untimed] }] } }, state, page);
+  const caption = row(3).find("ci-copy")[0].find("progress-caption")[0];
+  assert.deepStrictEqual(caption.children.map(node => node.className), ["progress-counts", "push-line", "idle-line"]);
+  assert.match(caption.children[1].text, /^CI took 19m 0s/);
+  assert.match(caption.children[2].text, /^40m \d+s idle since CI failed$/);
+  assert.strictEqual(row(1).find("idle-line").length, 0);
+});
