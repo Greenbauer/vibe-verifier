@@ -159,6 +159,13 @@ class TwoLinesOfOneGate(unittest.TestCase):
         commit(repo, {".vibe-verifier": "branch-name-length --max 60\n"})
         self.assertEqual(self.statuses(self.judged(repo)), ["PASS", "FAIL"])
 
+    def test_a_branch_that_puts_its_line_of_a_gate_first_is_told_the_base_judges(self):
+        repo = make_repo(self, {".vibe-verifier": self.TWO})
+        commit(repo, {".vibe-verifier": "branch-name-length --max 2\nbranch-name-length --max 60\n"})
+        result = self.judged(repo)
+        self.assertEqual(self.statuses(result), ["PASS", "FAIL"], result.stdout + result.stderr)
+        self.assertIn("judged by the manifest at", result.stdout)
+
     def test_a_second_line_the_branch_adds_runs_with_its_own_arguments(self):
         repo = make_repo(self, {".vibe-verifier": "branch-name-length --max 60\n"})
         commit(repo, {".vibe-verifier": "branch-name-length --max 2\nbranch-name-length --max 60\n"})

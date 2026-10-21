@@ -298,7 +298,7 @@ def judged_entries(args, notice=None):
         else:
             added.append(line)
     merged = at_base + added
-    if sorted(merged) != sorted(head):
+    if merged != head:
         print("vibe-verifier: judged by the manifest at %s where it differs from the head's "
               "(a gate this branch removed or weakened still runs as it was; a gate it added runs too)" % base,
               file=notice or sys.stdout, flush=True)
