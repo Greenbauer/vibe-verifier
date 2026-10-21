@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import commit, gate, make_repo
+from helpers import commit, gate, git, make_repo
 
 EM, EN, LQ, RQ = "—", "–", "“", "”"
 
@@ -56,6 +56,34 @@ class Prose(unittest.TestCase):
     def test_other_files_and_excluded_globs_are_not_judged(self):
         code, _ = judge(self, {}, {"notes.txt": "a %s b\n" % EM, "vendor/x.md": "a %s b\n" % EM}, "--exclude", "vendor/**")
         self.assertEqual(code, 0)
+
+    def test_a_renamed_file_blocks_only_on_the_lines_it_gains(self):
+        repo = make_repo(self, {"a.md": "Old %s line.\n" % EM + "".join("Line %d.\n" % n for n in range(20))})
+        git(repo, "mv", "a.md", "b.md")
+        commit(repo, {"b.md": Path(repo, "b.md").read_text() + "New %s line.\n" % EM})
+        result = gate("prose", repo, "--base-ref", "HEAD~1", "--format", "json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(rules(json.loads(result.stdout)), [("b.md", 22, "EmDash")])
+
+    def test_a_document_cannot_switch_the_rules_off(self):
+        text = ("<!-- vale off -->\nOne %s here.\n<!-- vale on -->\n\n<!-- vale VibeVerifier.EmDash = NO -->\nTwo %s here.\n"
+                % (EM, EM))
+        code, report = judge(self, {}, {"a.md": text, "b.mdx": "{/* vale off */}\nThree %s here.\n" % EM})
+        self.assertEqual(code, 1)
+        self.assertEqual(rules(report), [("a.md", 2, "EmDash"), ("a.md", 6, "EmDash"), ("b.mdx", 2, "EmDash")])
+
+    def test_an_mdx_comment_is_not_judged(self):
+        self.assertEqual(judge(self, {}, {"a.mdx": "{/* draft %s note */}\nText.\n" % EM})[0], 0)
+
+    def test_an_odd_file_name_encoding_or_binary_file_does_not_stop_the_gate(self):
+        repo = make_repo(self, {"README.md": "x\n"})
+        Path(repo, "-x.md").write_text("Dash %s here.\n" % EM)
+        Path(repo, "latin.md").write_bytes("café %s ok\n".encode("latin-1", errors="replace").replace(b"?", b"-"))
+        Path(repo, "image.md").write_bytes(b"\x89PNG\0\0\0")
+        commit(repo, {})
+        result = gate("prose", repo, "--base-ref", "HEAD~1", "--format", "json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(rules(json.loads(result.stdout)), [("-x.md", 1, "EmDash")])
 
     def test_all_judges_lines_the_base_already_had(self):
         repo = make_repo(self, {"a.md": "Old %s line.\n" % EM})

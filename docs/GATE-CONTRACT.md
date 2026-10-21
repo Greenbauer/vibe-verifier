@@ -703,7 +703,9 @@ is listed with its reason in an `osv-scanner.toml` beside the file, the scanner'
 pull request changed, and keeps only alerts on lines the diff from the base adds (renames followed;
 `--all` keeps every line). An em dash, or an en dash with a space on each side, blocks; a curly
 quote is advisory. Vale's Markdown scoping leaves out code, HTML comments and link targets, the rules
-leave out table cells and blockquotes, and the gate leaves out the generated rules block. The pull
+leave out table cells and blockquotes, and the gate leaves out the generated rules block. Vale reads a
+copy of each file with its in-document switches (`<!-- vale off -->` and the like) defused and MDX
+comments blanked, so a document cannot turn the rules off; a binary file is skipped. The pull
 request description, from `--body` or the `pull_request` event file, is judged advisory only, since
 an edit to it does not run the gate again.
 
