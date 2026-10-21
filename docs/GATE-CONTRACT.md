@@ -323,7 +323,8 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
   explorer left unwalked, and the gate prints it and never judges it. A FAIL is a finding that says a
   walked step no longer matches the feature file, and how to clear it: fix the regression, or update
   the file in the pull request when it means the new behaviour. It is a warning instead when one
-  `regression-known: <id> -- <what it shows>` line is anchored to a step of `qae/features/base/<id>.md`,
+  `regression-known: <id> -- <what it shows>` line is anchored to a step of `qae/features/base/<id>.md`
+  (`::step k: <text>`, the step line without its leading `- `, which the gate refuses),
   the same state walked on a site built from the base branch, whose screenshot
   `qae/features/base/<id>-step-k.png` is there: the base branch fails the same way. A feature whose file (the base's copy
   when the base has it) declares `re-walk: none -- <why>` in its Verify section is never selected:
@@ -1349,6 +1350,8 @@ the directory itself included, is one finding each and nothing else is judged
 ([evidence the pull request supplies](../harnesses/qae/README.md#evidence-the-pull-request-supplies)). Saved
 files judged outside any repository (no `.git` at `--repo` or above it) track nothing, and a `.git`
 Git cannot read there is exit 2: what it tracks is unknown.
+The `proof-audit` gate holds its `--grades` directory to the same rule, with the same finding, before it reads
+any grade ([grades the pull request supplies](../harnesses/proof-audit/README.md#grades-the-pull-request-supplies)).
 
 The harness's second gate, `qae-artifacts`, is the adjudicator: it reads the run's artifact
 directory (`--artifacts`) and refuses on structural facts, never on the model's prose: a step

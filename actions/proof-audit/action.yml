@@ -21,8 +21,11 @@ inputs:
     default: ""
   grades:
     description: >-
-      grade: the directory the shard's `<K>.json` is written to, relative to the workspace. verify: the directory
-      the grade jobs' artifacts were downloaded to (each artifact in a folder of its own).
+      grade: the directory the shard's `<K>.json` is written to, absolute or relative to the workspace. verify: the
+      directory the grade jobs' artifacts were downloaded to (each artifact in a folder of its own). Pass
+      `${{ runner.temp }}/proof-audit-grades` to both, outside the checkout of the pull request being judged
+      (harnesses/proof-audit/README.md, "Grades the pull request supplies"): the gate judges no grades the checkout
+      tracks or links. The default, inside the workspace, is kept for workflows written before that.
     default: proof-audit-grades
   max-ids:
     description: plan, the most requirements one model run grades; more are split into shards graded in parallel.

@@ -50,6 +50,8 @@ jobs:
         # takes it off the site. And the QAE manifest as the base has it, or as this pull request has it
         # where the base has none (a first subscription): the widths on its qae-artifacts line count
         # toward the walks the explorers are sized to.
+        # A qae-inputs/ the checkout already has came from the pull request (Git makes no empty directory),
+        # so the step stops before it puts anything there: a link could send these files anywhere on the runner.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -58,6 +60,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          if [ -e qae-inputs ] || [ -L qae-inputs ]; then echo "::error::the pull request commits qae-inputs/, where this job puts its inputs: remove it from the branch"; exit 1; fi
           mkdir -p qae-inputs
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
           gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --paginate \
@@ -141,6 +144,8 @@ jobs:
         # The PR body the prompt points the explorer at (the criteria job already found a criterion in
         # it, or in its ticket), the ticket's criteria as the criteria job read them, and the changed
         # paths the feature selection reads.
+        # It stops on a qae-inputs/ the checkout already has, as the criteria job does: a file there
+        # would read as one this workflow wrote (site.md, features/), and a link would move the writes.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -148,6 +153,7 @@ jobs:
           TICKET: ${{ needs.criteria.outputs.ticket }}
         run: |
           set -euo pipefail
+          if [ -e qae-inputs ] || [ -L qae-inputs ]; then echo "::error::the pull request commits qae-inputs/, where this job puts its inputs: remove it from the branch"; exit 1; fi
           mkdir -p qae-artifacts/qae qae-inputs
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
           printf '%s' "$TICKET" > qae-inputs/ticket.md
@@ -335,17 +341,18 @@ jobs:
                and for each feature of which you walked a state, one line. FAIL only when a step you walked
                showed that the feature no longer works the way its file describes, never because states were
                left unwalked or time ran out; otherwise PASS:
-                 regression-check: <id> -- PASS -- <one sentence> (qae/features/<id>.md::<the step line text>)
-                 regression-check: <id> -- FAIL -- <what broke> (qae/features/<id>.md::<the step line text>)
+                 regression-check: <id> -- PASS -- <one sentence> (qae/features/<id>.md::<the step line text, exactly as written after "- ">)
+                 regression-check: <id> -- FAIL -- <what broke> (qae/features/<id>.md::<the step line text, exactly as written after "- ">)
                then, for each feature with a state you did not walk, one line naming those states by their
                numbers in its Verify section (or by test title):
                  regression-skip: <id> -- <the states not walked, for example 4, 5, 7>
                and, for a FAIL whose state fails the same way on the base branch's site, keep the FAIL line and add
                one line; when that site shows the state working, add none:
-                 regression-known: <id> -- <what the base branch's site shows> (qae/features/base/<id>.md::<the step line text>)
+                 regression-known: <id> -- <what the base branch's site shows> (qae/features/base/<id>.md::<the step line text, exactly as written after "- ">)
                A feature of which you walked no state gets its regression-skip line and no regression-check
-               line. Never write PASS for anything you did not see in the browser. The text after :: must be
-               copied verbatim from the step log line, because a gate checks that it is there.
+               line. Never write PASS for anything you did not see in the browser.
+               The text after :: starts with "step k:" and must be copied verbatim from the step log line,
+               because a gate checks that it is there.
                A criterion that asks for something no browser can show (that a test exists or passes, that an
                email reached an inbox, a log line, a stored value the site never displays) is one you could not
                check: FAIL it, saying "not checkable in a browser" and what it asks for, and never PASS it on
@@ -556,6 +563,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Write the declared inputs
+        # These files are the gates' inputs, rewritten here whatever the branch has. A qae-inputs/ the checkout
+        # already has came from the pull request (Git makes no empty directory), so the step stops before
+        # writing: a link there could send them anywhere on the runner.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -567,6 +577,7 @@ jobs:
           CARRY: ${{ needs.criteria.outputs.carry }}
         run: |
           set -euo pipefail
+          if [ -e qae-inputs ] || [ -L qae-inputs ]; then echo "::error::the pull request commits qae-inputs/, where this job puts its inputs: remove it from the branch"; exit 1; fi
           mkdir -p qae-inputs
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body > qae-inputs/pr-body.md
           gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --paginate \
