@@ -1,0 +1,10 @@
+# Blocking. An em dash between clauses: house style is a period, a comma or parentheses. Text in a
+# table cell (where a lone dash marks "not applicable") and quoted text in a blockquote are left alone.
+extends: existence
+message: "This is an em dash. End the sentence, or use a comma or parentheses."
+level: error
+nonword: true
+tokens:
+  - '\x{2014}'
+scope:
+  - ~table.cell & ~table.header & ~blockquote

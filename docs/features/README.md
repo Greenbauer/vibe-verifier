@@ -17,6 +17,7 @@ One file per feature of this catalog: its gates, its harnesses, its command-line
 | [Affected-test selection](affected-tests.md) | `affected-tests` (not a gate: it lists the tests a pull request's test job runs) |
 | [Complexity and file-length ratchets](ratchets.md) | `cognitive-complexity`, `max-file-lines` |
 | [Repository rules and the generated rules block](repo-rules.md) | `repo-rules`, `rules-doc` |
+| [Prose punctuation](prose.md) | `prose` |
 | [Universal checks](universal-checks.md) | `universal-checks` |
 | [package.json hygiene](package-json.md) | `no-duplicate-package-json-keys`, `build-tools-in-devdependencies` |
 | [Branch name length](branch-name.md) | `branch-name-length` |
