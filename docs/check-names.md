@@ -9,6 +9,9 @@ mapping goes in the pull request that applies it.
 1. **A check shows as `Workflow / Job`. The workflow name is the stage, the job name is what it proves.**
    Stages, in the order they run: `Code`, `Tests`, `Security`, `Preview`, `Sign-in`, `QA`, `Review`,
    `Standards`, `Merge`. Workflows that never run on a pull request use `Deploy` or `Maintenance`.
+   A check's own name, the one a branch rule requires, the API's `check_name` matches and every reader
+   compares, is the job part only: `Database`, not `Preview / Database`. The workflow part only groups
+   the list.
 2. **Industry terms where one exists, plain English otherwise.** No internal words (QAE, settle, probe,
    anchors, observe, guards, sanity, verdict) and no tool names (semgrep, stryker, playwright) in a name.
 3. **Short nouns in sentence case, at most three words**: `Unit tests`, not `run-unit-tests`.
@@ -18,11 +21,13 @@ mapping goes in the pull request that applies it.
 5. **A helper job is named after the check it serves**: `<Check>: <step>`, so it sorts next to it
    (`E2E tests: find preview`, `E2E tests: post result`). The job that decides pass or fail carries the plain
    name, and that plain name is the one a branch rule requires.
-6. **Workflow names are unique in a repository.** Two workflow files in one stage are folded into one file
-   where that is a move of independent jobs; where it is not (an organization-required workflow, a
-   `pull_request_target` workflow), the second takes a narrower stage name from the table below.
+6. **The names of workflows that run on pull requests are unique in a repository.** Two such workflow
+   files in one stage are folded into one file where that is a move of independent jobs; where it is not
+   (an organization-required workflow, a `pull_request_target` workflow), the second takes a narrower
+   stage name from the table below. Workflows that never run on a pull request (`Maintenance`, `Deploy`) may
+   share a name: they never sit in a pull request's check list.
 7. **A commit status names its stage itself**, because it has no workflow: the context is `Stage / Name`
-   (`Merge / Safe to merge`).
+   (`Merge / Safe to merge`), and that whole context is what a branch rule requires and a reader compares.
 8. **Matrix copies keep one name.** GitHub adds ` (2)`, ` (3)` to the copies; the job that judges them all
    is the one that is required.
 
@@ -32,7 +37,9 @@ Checks posted by an app keep the app's name and are out of scope: `Vercel`, `Ver
 ## Names
 
 Old names are the job name or status context as it was. A repository job that matches none of these rows is
-named by the rules above and listed in the applying pull request.
+named by the rules above and listed in the applying pull request. A job's new name is shown as the list
+shows it, `Workflow / Job`; its check's own name (rule 1) is the part after `Workflow / `. A status's new
+name is its whole context.
 
 | Old | New (`Workflow / Job`, or a status context) |
 |---|---|
@@ -89,9 +96,13 @@ another, the dashboard. The order:
 1. **Readers first.** Every reader of a name the change renames accepts the old and the new name, and lands
    before the rename. Readers include workflow steps that wait on a check or status, the QAE and sign-in
    workflows' preview check, the `needs-update` input of `actions/pull-sync`, the `check` input of
-   `actions/preview`, and the dashboard's `bots.*.jobs` lists in each lane host file.
+   `actions/preview`, and the dashboard's `bots.*.jobs` lists in each lane host file. A reader given both
+   names lists them one per line: a check by its job name (`sync-preview-branch` and `Database`), a
+   status by its whole context (`merge-safety` and `Merge / Safe to merge`). A step that posts a status
+   being renamed (the `post` input of `actions/suite-scope`) posts it under both names, one per line.
 2. **A required name in one repository's branch rule**: open the rename pull request, swap the required
-   context to the new name once its checks are green, and merge it straight away. Other open pull requests
+   context to the new name (a check's job name, a status's whole context) once its checks are green, and
+   merge it straight away. Other open pull requests
    show the new check as expected until they take main (pull sync updates them).
 3. **A required name in an organization ruleset that covers several repositories**: each repository's rename
    keeps the old name as well (a one-step job that `needs` the new one, or a second status) until every
