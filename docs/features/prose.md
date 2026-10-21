@@ -15,13 +15,13 @@ Add `prose` to `.vibe-verifier`. `--files GLOB` (repeatable, default `**/*.md` a
 
 ## Verify
 
-- `tests/test_prose.py::Prose::test_a_new_em_dash_blocks_and_one_the_file_already_had_does_not`
-- `tests/test_prose.py::Prose::test_an_en_dash_aside_blocks_and_a_range_passes`
-- `tests/test_prose.py::Prose::test_code_tables_blockquotes_and_link_targets_are_not_judged`
-- `tests/test_prose.py::Prose::test_a_curly_quote_is_reported_but_does_not_block`
-- `tests/test_prose.py::Prose::test_the_generated_rules_block_is_skipped`
-- `tests/test_prose.py::Prose::test_the_description_is_judged_advisory_from_body_or_the_pull_request_event`
-- `tests/test_prose.py::StandInVale::test_a_vale_that_fails_is_could_not_run_even_under_soak`
+- `tests/test_prose.py::test_a_new_em_dash_blocks_and_one_the_file_already_had_does_not`
+- `tests/test_prose.py::test_an_en_dash_aside_blocks_and_a_range_passes`
+- `tests/test_prose.py::test_code_tables_blockquotes_and_link_targets_are_not_judged`
+- `tests/test_prose.py::test_a_curly_quote_is_reported_but_does_not_block`
+- `tests/test_prose.py::test_the_generated_rules_block_is_skipped`
+- `tests/test_prose.py::test_the_description_is_judged_advisory_from_body_or_the_pull_request_event`
+- `tests/test_prose.py::test_a_vale_that_fails_is_could_not_run_even_under_soak`
 
 ## Gotchas
 

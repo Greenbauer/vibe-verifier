@@ -103,33 +103,36 @@ def findings_for(alerts, path, judged, all_advisory=False):
             for alert in alerts if judged(alert["Line"])]
 
 
+def file_findings(binary, repo, base, paths):
+    """Findings on the judged lines of paths: those the diff from base adds (every line when base is None),
+    less the generated rules block."""
+    report, found = vale(binary, repo, paths), []
+    for path in paths:
+        with open(os.path.join(repo, path)) as handle:
+            skip = generated_lines(handle.read())
+        added = None if base is None else added_lines(repo, base, path)
+        found += findings_for(report.get(path, []), path, lambda line: line not in skip and (added is None or line in added))
+    return found
+
+
+def body_findings(binary, body):
+    with tempfile.TemporaryDirectory() as scratch:
+        with open(os.path.join(scratch, BODY_NAME), "w") as handle:
+            handle.write(body)
+        report = vale(binary, scratch, [BODY_NAME])
+    return findings_for(report.get(BODY_NAME, []), "pull request description", lambda line: True, all_advisory=True)
+
+
 def check(args):
     files = args.files or DEFAULT_FILES
-    if args.all:
-        base, paths = None, [p for p in tracked_files(args.repo) if matches(p, files) and not matches(p, args.exclude)]
-    else:
-        base = resolve_base(args.repo, args.base_ref)
-        paths = [p for p in changed_files(args.repo, base) if matches(p, files) and not matches(p, args.exclude)]
+    base = None if args.all else resolve_base(args.repo, args.base_ref)
+    candidates = tracked_files(args.repo) if args.all else changed_files(args.repo, base)
+    paths = [p for p in candidates if matches(p, files) and not matches(p, args.exclude)]
     body = open(args.body).read() if args.body else event_body()
     if not paths and not body:
         return []
     binary = ensure("vale")
-    found = []
-    if paths:
-        report = vale(binary, args.repo, paths)
-        for path in paths:
-            with open(os.path.join(args.repo, path)) as handle:
-                skip = generated_lines(handle.read())
-            added = None if base is None else added_lines(args.repo, base, path)
-            found += findings_for(report.get(path, []), path,
-                                  lambda line: line not in skip and (added is None or line in added))
-    if body:
-        with tempfile.TemporaryDirectory() as scratch:
-            with open(os.path.join(scratch, BODY_NAME), "w") as handle:
-                handle.write(body)
-            report = vale(binary, scratch, [BODY_NAME])
-        found += findings_for(report.get(BODY_NAME, []), "pull request description", lambda line: True, all_advisory=True)
-    return found
+    return (file_findings(binary, args.repo, base, paths) if paths else []) + (body_findings(binary, body) if body else [])
 
 
 def add_arguments(parser):
