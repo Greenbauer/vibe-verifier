@@ -261,7 +261,8 @@ def _in_context(lines):
 
 def _changed_lines(lines, base, head):
     """The removed and added lines, each diffed in its context as written, then folded and stripped."""
-    a, b = (base or "").splitlines(), (head or "").splitlines()
+    # split("\n"), not splitlines(): a form feed or other Unicode break must not cut a line in two.
+    a, b = (base or "").split("\n"), (head or "").split("\n")
     removed, added = [], []
     matcher = difflib.SequenceMatcher(None, _in_context(a), _in_context(b), autojunk=False)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():

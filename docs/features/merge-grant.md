@@ -52,6 +52,7 @@ From a shell with `gh` signed in: `bin/vibe-verifier merge-grant --repo acme/app
 - `tests/test_merge_grant.py::test_unreadable_is_a_no`
 - `tests/test_merge_grant_workflows.py::test_lines_that_stay_a_persons`
 - `tests/test_merge_grant_workflows.py::test_removed_permission_lines`
+- `tests/test_merge_grant_workflows.py::test_the_token_carve_out_and_line_breaks_cannot_hide_a_line`
 - `tests/test_merge_grant_workflows.py::test_a_permissions_block_moved_to_another_job_is_removed_there`
 - `tests/test_merge_grant_workflows.py::test_a_case_only_change_of_a_scope_line_is_still_a_change`
 - `tests/test_merge_grant.py::test_whitelist_reads_nothing_and_matches_patterns_case_blind`

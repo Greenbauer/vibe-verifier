@@ -44,7 +44,7 @@
       "except": "\\.mdx?$",
       "lines": {
         "ignore_case": true,
-        "strip": "secrets\\.github_token(?![a-z0-9_])",
+        "strip": "secrets\\.github_token([^a-z0-9_]|$)",
         "changed": ":\\s*[\"']?write[\"']?\\s*([,}#]|$)|write-all|(^|[^a-z0-9_${-]|[^$]\\{)secrets([^a-z0-9_:-]|$)|secrets\\s*:\\s*[\"']?inherit|pull_request_target|id-token",
         "removed": "permissions\\s*:|:\\s*[\"']?(read|write|none)[\"']?\\s*([,}#]|$)"
       }

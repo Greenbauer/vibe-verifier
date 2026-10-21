@@ -48,6 +48,11 @@ class WorkflowLines(unittest.TestCase):
         self.assertIsNone(self.verdict(head, base=base))
         self.assertEqual(self.verdict(base + "\n    timeout-minutes: 5", base=base), "non-product grant")
 
+    def test_the_token_carve_out_and_line_breaks_cannot_hide_a_line(self):
+        self.assertIsNone(self.verdict(WF_BASE + "\n      - run: echo ${{ secrets.GITHUB_TOKEN-secrets.NPM }}"))
+        self.assertIsNone(self.verdict(WF_BASE + "\n      - run: echo ${{ secrets.GITHUB_TOKEN$secrets.NPM }}"))
+        self.assertIsNone(self.verdict(WF_BASE.replace("contents: read", "contents:\fwrite")))
+
     def test_removed_permission_lines(self):
         two = WF_BASE.replace("contents: read", "contents: read\n  pull-requests: read")
         self.assertIsNone(self.verdict(WF_BASE, base=two))

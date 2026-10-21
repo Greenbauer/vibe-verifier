@@ -65,6 +65,8 @@ class Grants(unittest.TestCase):
         grants.grant(api, REPO, current(head="h2"))
         grants.grant(api, REPO, current(head="h2", base="b2"))
         self.assertEqual(len(api.calls), 3)
+        grants.grant(api, REPO, current(head="h2", base="b2", title="feat: x"))   # a title grant reads the title
+        self.assertEqual(len(api.calls), 4)
 
     def test_contents_are_read_at_the_base_and_the_head_and_a_missing_file_is_absent(self):
         api = API([{"status": "added", "filename": "package.json"}],
