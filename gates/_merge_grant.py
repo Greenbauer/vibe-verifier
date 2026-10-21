@@ -205,6 +205,13 @@ def _without(value, keys):
     return value
 
 
+def _at(value, key):
+    """The value at a (dotted) key, or None where any part is missing."""
+    for part in key.split("."):
+        value = value.get(part) if isinstance(value, dict) else None
+    return value
+
+
 def _holds(entry, row, read):
     """None when the entry's content condition holds for this file, else why not."""
     if not (entry["changes_only"] or entry["unchanged"]):
@@ -214,7 +221,7 @@ def _holds(entry, row, read):
     if entry["changes_only"] and _without(base, entry["changes_only"]) != _without(head, entry["changes_only"]):
         return "%s changes more than %s" % (new, ", ".join(entry["changes_only"]))
     for key in entry["unchanged"] or ():
-        if base.get(key) != head.get(key):
+        if _at(base, key) != _at(head, key):
             return "%s changes its %s" % (new, key)
     return None
 

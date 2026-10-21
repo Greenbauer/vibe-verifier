@@ -199,6 +199,18 @@ class Grants(unittest.TestCase):
         self.assertIsNone(decide(["README.md"], policy=custom)[0])
 
 
+class NestedKeys(unittest.TestCase):
+    def test_json_unchanged_reads_a_dotted_key_as_nested(self):
+        frozen = policy(extends="default", categories={"deps": [{"path": "(^|/)package\\.json$", "json_unchanged": ["pnpm.overrides"]}]},
+                        grants=[{"name": "deps", "categories": ["deps"]}])
+        def pkg(value):
+            return {"package.json": json.dumps(value)}
+        self.assertIsNone(decide(["package.json"], policy=frozen, base=pkg({"pnpm": {"overrides": {"a": "1"}}}),
+                                 head=pkg({"pnpm": {"overrides": {"a": "2"}}}))[0])
+        self.assertEqual(decide(["package.json"], policy=frozen, base=pkg({"pnpm": {"overrides": {"a": "1"}}, "x": 1}),
+                                head=pkg({"pnpm": {"overrides": {"a": "1"}}, "x": 2}))[0], "deps")
+
+
 class PolicyValidation(unittest.TestCase):
     def test_rejects(self):
         for raw in ({"version": 2, "grants": [{"name": "a"}]},
