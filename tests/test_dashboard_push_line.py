@@ -76,9 +76,7 @@ function summarize(row) {
     lineTitles:work.children.filter(child=>child.attrs&&String(child.attrs.class||'').split(' ').includes('work-line')).map(child=>child.attrs.title),
     reason:text(byClass(work,'sr-only')[0]||''),
     checks:text(byClass(row,'progress-copy')[0]),
-    behind:(byClass(row,'behind-mark')[0]||null)&&[text(byClass(row,'behind-mark')[0]), byClass(row,'behind-mark')[0].attrs.title],
-    idle:(byClass(row,'idle-line')[0]||null)&&(line=>[text(line), line.children[1].attrs.class, line.children[0].attrs.class,
-      line.attrs.title, byClass(caption,'idle-line').length])(byClass(row,'idle-line')[0])
+    behind:(byClass(row,'behind-mark')[0]||null)&&[text(byClass(row,'behind-mark')[0]), byClass(row,'behind-mark')[0].attrs.title]
   };
 }
 const base={repository:'octocat/example', number:7, title:'Fix the gate', author:'octocat',
@@ -152,46 +150,11 @@ const rows={
   behindMany:summarize(prRow({...base, behind_by:12, default_branch:'trunk'})),
   current:summarize(prRow({...base, behind_by:0, default_branch:'main'})),
   fallback:summarize(prRow({...base, attention_reason:'A current-head check was cancelled',
-    checks:[{name:'unit', category:'cancelled', status:'completed'}]})),
-  // A finished round: how long the head has sat since its last check finished, and how it ended.
-  idleFailed:summarize(prRow({...base, checks:[
-    {name:'unit', category:'success', status:'completed', started_at:'2026-10-05T22:00:00Z', completed_at:'2026-10-05T22:20:00Z'},
-    {name:'e2e', category:'failed', status:'completed', started_at:'2026-10-05T22:00:00Z', completed_at:'2026-10-05T22:30:00Z'},
-    {name:'cleanup', category:'cancelled', status:'completed', started_at:'2026-10-05T22:00:00Z', completed_at:'2026-10-05T22:05:00Z'}]})),
-  idleCancelled:summarize(prRow({...base, checks:[
-    {name:'unit', category:'success', status:'completed', started_at:'2026-10-05T19:00:00Z', completed_at:'2026-10-05T19:10:00Z'},
-    {name:'e2e', category:'cancelled', status:'completed', started_at:'2026-10-05T19:00:00Z', completed_at:'2026-10-05T19:30:00Z'}]})),
-  // A failed first round, then a passing re-run on the same commit: the line tells the re-run's result.
-  idleRerun:summarize(prRow({...base, checks:[
-    {id:21, name:'unit', category:'failed', status:'completed', started_at:'2026-10-05T17:00:00Z', completed_at:'2026-10-05T17:20:00Z'},
-    {id:22, name:'unit', category:'success', status:'completed', started_at:'2026-10-05T23:50:00Z', completed_at:'2026-10-05T23:58:00Z'}],
-    runs:[{id:1, name:'CI', jobs:[{id:21, steps:[], created_at:'2026-10-05T16:59:30Z', started_at:'2026-10-05T17:00:00Z', completed_at:'2026-10-05T17:20:00Z'},
-      {id:22, steps:[], created_at:'2026-10-05T23:49:30Z', started_at:'2026-10-05T23:50:00Z', completed_at:'2026-10-05T23:58:00Z'}]}]})),
-  // Every started check finished, but a required check has not reported: CI is not done, so no line.
-  idleExpected:summarize(prRow({...base, checks:[
-    {name:'unit', category:'success', status:'completed', started_at:'2026-10-05T22:00:00Z', completed_at:'2026-10-05T22:20:00Z'}],
-    expected:[{name:'qae-verify', category:'pending', status:'expected'}]})),
-  idleSkipped:summarize(prRow({...base, checks:[
-    {name:'preview', category:'skipped', status:'completed', started_at:'2026-10-05T23:59:00Z', completed_at:'2026-10-05T23:59:30Z'}]})),
-  idleMoved:summarize(prRow({...base, head_changed:true, push:{pushed_at:'2026-10-05T23:59:00Z', kind:'feature'}, checks:[
-    {name:'unit', category:'success', status:'completed', started_at:'2026-10-05T22:00:00Z', completed_at:'2026-10-05T22:20:00Z'}]}))
+    checks:[{name:'unit', category:'cancelled', status:'completed'}]}))
 };
 console.log(JSON.stringify(rows));
 ''')
         self.assertEqual(result["mixed"]["age"], ["5d", "old", "age-yellow", 1])
-        # The idle line: in the caption after the CI time, counted from the round's last finish.
-        self.assertEqual(result["passed"]["idle"], ["23h 17m idle since CI passed", "age-red", "idle-dot tl-success",
-                                                    "Nothing has run on this head since CI passed 23h 17m ago", 1])
-        self.assertEqual(result["rerunDone"]["idle"][:3], ["2m 0s idle since CI passed", None, "idle-dot tl-success"])
-        # A failure outranks a cancel and a pass; a cancel outranks a pass; skipped alone is "finished".
-        self.assertEqual(result["idleFailed"]["idle"][:3], ["1h 30m idle since CI failed", "age-yellow", "idle-dot tl-failed"])
-        self.assertEqual(result["idleCancelled"]["idle"][:3], ["4h 30m idle since CI was cancelled", "age-red", "idle-dot tl-cancelled"])
-        self.assertEqual(result["idleCancelled"]["idle"][3], "Nothing has run on this head since CI was cancelled 4h 30m ago")
-        self.assertEqual(result["idleRerun"]["idle"][:3], ["2m 0s idle since CI passed", None, "idle-dot tl-success"])
-        self.assertEqual(result["idleSkipped"]["idle"][:3], ["30s idle since CI finished", None, "idle-dot tl-cancelled"])
-        # Nothing while any check is open or waiting, before CI has times, or while the checks are the previous push's.
-        for name in ("mixed", "rerunRunning", "rerunQueued", "waiting", "slow", "running", "required", "failed", "unchecked", "none", "idleMoved", "idleExpected"):
-            self.assertIsNone(result[name]["idle"], name)
         self.assertEqual(result["mixed"]["counts"], "2 waiting · 2 skipped")
         # A queued check keeps CI running from the first start, not from the push three weeks ago.
         self.assertEqual(result["mixed"]["pushWhen"], "CI running 2h 0m")

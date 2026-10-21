@@ -114,3 +114,49 @@ test("a row whose CI round has finished says, under the CI time in the CI column
   assert.match(caption.children[2].text, /^40m \d+s idle since CI failed$/);
   assert.strictEqual(row(1).find("idle-line").length, 0);
 });
+
+// The idle line of pull request 9 built from extra, at a fixed now: [text, time class, dot class, tooltip,
+// where it sits], or null without one. at(60) is now, at(0) an hour ago.
+const idle = extra => {
+  const realNow = Date.now, now = realNow();
+  Date.now = () => now;
+  try {
+    prs.render(content, { ...snapshot, github: { ...snapshot.github, repositories: [{ repository: "octocat/example", pulls: [pull(9, extra(at))] }] } }, state, page);
+    const line = row(9).find("idle-line")[0];
+    return line ? [line.text, line.children[1].className, line.children[0].className, line.attrs.title,
+      row(9).find("ci-copy").length ? "ci-copy" : "meter"] : null;
+  } finally { Date.now = realNow; }
+};
+const done = (name, category, from, to) => ({ name, category, status: "completed", started_at: from, completed_at: to });
+const job = (id, from, to) => ({ id, name: `job ${id}`, created_at: from, started_at: from, completed_at: to, steps: [] });
+
+test("the idle line counts from the last finish, says how the head's checks ended, and colors by age", () => {
+  assert.deepStrictEqual(idle(at => ({ checks: [done("unit", "success", at(0), at(18)), done("lint", "success", at(0), at(5))] })),
+    ["42m 0s idle since CI passed", "", "idle-dot tl-success", "Nothing has run on this head since CI passed 42m 0s ago", "ci-copy"]);
+  assert.deepStrictEqual(idle(at => ({ checks: [done("unit", "success", at(-60), at(-50)), done("e2e", "failed", at(-60), at(-30)),
+    done("cleanup", "cancelled", at(-60), at(-55))] })).slice(0, 3), ["1h 30m idle since CI failed", "age-yellow", "idle-dot tl-failed"]);
+  assert.deepStrictEqual(idle(at => ({ checks: [done("unit", "success", at(-240), at(-230)), done("e2e", "cancelled", at(-240), at(-210))] })).slice(0, 3),
+    ["4h 30m idle since CI was cancelled", "age-red", "idle-dot tl-cancelled"]);
+  assert.deepStrictEqual(idle(at => ({ checks: [done("preview", "skipped", at(59), at(59.5))] })).slice(0, 3),
+    ["30s idle since CI finished", "", "idle-dot tl-cancelled"]);
+});
+
+test("a pass in a later, separate workflow does not hide a failure, and a status that finished last sets the time", () => {
+  assert.deepStrictEqual(idle(at => ({ checks: [done("unit", "failed", at(-400), at(-380)), done("qae", "success", at(50), at(58))],
+    runs: [{ id: 1, name: "CI", jobs: [job(1, at(-400), at(-380))] }, { id: 2, name: "QAE", jobs: [job(2, at(50), at(58))] }] })).slice(0, 3),
+  ["2m 0s idle since CI failed", "", "idle-dot tl-failed"]);
+  assert.deepStrictEqual(idle(at => ({ checks: [done("unit", "success", at(0), at(10))], statuses: [done("deploy", "success", at(-60), at(30))],
+    runs: [{ id: 1, name: "CI", jobs: [job(1, at(0), at(10))] }] })).slice(0, 3), ["30m 0s idle since CI passed", "", "idle-dot tl-success"]);
+  // Statuses alone draw no timeline: the line sits under the check meter.
+  assert.strictEqual(idle(at => ({ statuses: [done("deploy", "success", at(0), at(30))] }))[4], "meter");
+});
+
+test("no idle line while a check is open or required and unreported, before any check started, or on the previous push's checks", () => {
+  const finished = at => [done("unit", "success", at(0), at(10))];
+  assert.strictEqual(idle(at => ({ checks: [...finished(at), { name: "e2e", category: "pending", status: "in_progress", started_at: at(5) }] })), null);
+  assert.strictEqual(idle(at => ({ checks: [...finished(at), { name: "lint", category: "pending", status: "queued" }] })), null);
+  assert.strictEqual(idle(at => ({ checks: finished(at), expected: [{ name: "qae-verify", category: "pending", status: "expected" }] })), null);
+  assert.strictEqual(idle(() => ({ checks: [{ name: "unit", category: "failed", status: "completed" }] })), null);
+  assert.strictEqual(idle(at => ({ checks: finished(at), head_changed: true })), null);
+  assert.notStrictEqual(idle(at => ({ checks: finished(at) })), null);
+});

@@ -606,9 +606,10 @@ first job being queued. The time turns yellow after an hour and red after three 
 hour or exactly three hours keeps the younger color. A head with no checks, and a row whose checks
 are still from the previous push, show "pushed <age> ago" instead, which turns yellow after three
 hours and red after a day. Once every check of that round has finished, a line under it says how
-long the head has sat since: a dot, the time since the round's last check finished, and how CI
-ended ("2h 14m idle since CI failed"). Only that round's checks count, so a passing re-run reads
-"passed" even when an earlier round on the commit failed. A failed check makes it "failed" (red dot), else a
+long the head has sat since: a dot, the time since the last check finished, and how CI
+ended ("2h 14m idle since CI failed"). It reads the head's current checks, the same ones the row's badge
+reads: a re-run of a check replaces that check's earlier result, but a pass in another workflow
+does not hide a failure. A failed check makes it "failed" (red dot), else a
 cancelled one "was cancelled" (grey), else a passed one "passed" (green); a round of only skipped
 checks "finished" (grey). When the column is narrow the words end in an ellipsis; the tooltip
 keeps them whole. The time is in the same units as the age, takes the CI time's colors (yellow after an hour, red
