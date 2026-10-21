@@ -428,7 +428,11 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   value is read from `node --help`), less the ones the gate sets (the reporter, `--watch`, sharding,
   coverage, isolation); a `--node-test` file runs as `node --test <file>` from the root, and a `--tests`
   match wins over both (but not over `--playwright`, below). Each file runs alone under the TAP reporter
-  (`--test-reporter=tap --test-reporter-destination=<file>`; tested on Node 20, 22 and 24). A Vitest
+  (`--test-reporter=tap --test-reporter-destination=<file>`; tested on Node 20, 22 and 24). Node 21 and
+  later read the path as a glob, so it is given with each `[`, `]`, `*`, `?` and `(` as a class that
+  holds only it (`app/[id]/page.test.ts` as it is runs no test, and `app/+(shop)/page.test.ts` runs
+  `app/shop/page.test.ts`), and each `{` as `?`, which a sibling differing only there would match too
+  (Node expands braces before it reads a class); Node 20 is given the path as it is. A Vitest
   test (below) runs under Vitest (read through its JSON reporter; tested on 4.x), from the nearest directory
   holding a Vitest or Vite config, else a `package.json`, else the root, so each package of a monorepo
   runs with its own config. Python tests run under `--python` (default `python3`): its pytest when
@@ -995,8 +999,9 @@ coverage-not-lost --runner node-test --soak                    # the files packa
   default, which also leaves out every file named like a default test file (`test-*`, `*-test.*`,
   `*_test.*`, `test.*`): on 24.21 a source helper `src/test-money.mjs` went unmeasured without it, and on
   22.23 it was measured either way. Node 22 and 24 read a `--test` path
-  holding `[` or `]` as a glob, so `app/[id]/page.test.ts`, a Next.js route, given as it is ran no test:
-  each `[`, `]`, `*` and `?` is given as a class that holds only it. The reporter is a module the gate
+  as a glob, so `app/[id]/page.test.ts`, a Next.js route, given as it is ran no test, and
+  `app/+(shop)/page.test.ts` ran `app/shop/page.test.ts`: each path is escaped as regression-test-fails-on-base
+  escapes it (each `[`, `]`, `*`, `?` and `(` as a class that holds only it, each `{` as `?`). The reporter is a module the gate
   writes, which records each test that passed or failed and Node's coverage report (the `test:coverage`
   event): every line of every file the run loaded, outside `node_modules` and Node's own modules, with
   how many times it ran. A line ran when its count is above 0. Node counts lines, not statements, so a

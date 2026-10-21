@@ -46,6 +46,29 @@ KEY = re.compile(r"^([\w$]+):(?: (.*))?$")
 
 
 @functools.lru_cache(maxsize=None)
+def globs():
+    """Whether the Node on PATH reads a --test path as a glob: Node 21 and later do, Node 20 takes it as it is."""
+    try:
+        found = re.match(r"v(\d+)\.", subprocess.run(["node", "--version"], capture_output=True, text=True, timeout=60).stdout)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise CannotRun("`node --version` could not be read: %s" % error)
+    if not found:
+        raise CannotRun("`node --version` printed no version")
+    return int(found.group(1)) >= 21
+
+
+def literal(path):
+    """`path` as a --test argument that selects exactly that file. Node 21 and later read it as a glob, so a Next.js
+    route such as `app/[id]/a.test.ts` matched no file and `app/+(shop)/a.test.ts` matched `app/shop/a.test.ts`: each
+    `[`, `]`, `*`, `?` and `(` is given as a class that holds only it, which also ends the extglobs `+(`, `@(` and
+    `!(`. Node expands `{a,b}` before it reads a class, so a `{` is given as `?`, which matches it (and a sibling whose
+    name differs from it only there)."""
+    if not globs():
+        return path
+    return re.sub(r"[][*?(]|\{", lambda found: "?" if found.group(0) == "{" else "[%s]" % found.group(0), path)
+
+
+@functools.lru_cache(maxsize=None)
 def value_options():
     """The options the Node on PATH reads a separate value for: `node --help` prints each as `--name=...`."""
     try:
@@ -277,7 +300,7 @@ def run_node(repo, plans, deadline, timeout, local_names):
         scratch = tempfile.mkdtemp(prefix="vv-regression-")
         try:
             out = os.path.join(scratch, "report.tap")
-            command = ["node", *how.flags, "--test", "--test-reporter=tap", "--test-reporter-destination=" + out, given]
+            command = ["node", *how.flags, "--test", "--test-reporter=tap", "--test-reporter-destination=" + out, literal(given)]
             with Guard("regression-test-fails-on-base", repo, local_names) as guard:
                 code, output = run_tool(command, how.cwd, remaining(deadline, timeout), "node --test",
                                         env=guard.env("node --test of " + path, extra=how.env, files=env_files(how)),
