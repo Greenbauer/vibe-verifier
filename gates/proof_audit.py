@@ -3,7 +3,7 @@
 PROVEN by quotes that are really there, EXCLUDED to an owner that took it, or a finding.
 
     # the QAE verify job, after the proof-audit jobs graded the requirements (harnesses/proof-audit)
-    proof-audit --body qae-inputs/pr-body.md --grades proof-audit-grades
+    proof-audit --body qae-inputs/pr-body.md --grades "$RUNNER_TEMP/proof-audit-grades"
 
 The requirements are the `[req: ID]` items of each section a `Ticket: <plan>#<anchor>` line of the body
 links, read at the merge base as ticket-coverage reads them. --grades is a directory of the grader's
@@ -28,6 +28,10 @@ Ticket line, or linked sections with no IDs, is a qualified pass, with two excep
 that claims `[req: ID]` items without the Ticket line that would define them, and, with --require-ticket GLOB, a
 pull request that changes a matching file and neither links a section nor says why on a `No ticket: <why>`
 line. --table FILE gets the per-ID table.
+
+Grades the checkout supplied are never judged: a path the branch tracks at, under or on the way to --grades, or a
+symbolic link in it, is a finding and nothing else is read (gates/_contract.py, planted). The workflow keeps the
+grades in the runner's temporary directory, outside the checkout (harnesses/proof-audit/README.md).
 """
 import json
 import os
@@ -38,8 +42,9 @@ import subprocess
 from _acceptance import HTML_COMMENT
 from _affected_graph import JS_EXTENSIONS
 from _affected_tests import JS_TESTS, NODE_TEST
-from _contract import PY_TESTS, CannotRun, Finding, git, matches, qualify, run_gate
+from _contract import PY_TESTS, CannotRun, Finding, git, matches, planted, qualify, run_gate
 from _proof_audit import SCHEMA, merge_base, requirements
+from _schema_subset import schema_problem
 from _ticket import LINK, links, unfenced
 import ticket_coverage
 
@@ -70,43 +75,6 @@ TITLE = re.compile(r"""\(\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1""")
 USAGE_LIMIT = re.compile(r"You(?:'|’)ve (?:hit|reached) your (?:[\w-]+ ){0,3}limit\b", re.I)
 # A body's declared reason for linking no plan section, as `- None: <why>` declares no criteria.
 NO_TICKET = re.compile(r"^\s*No ticket:\s*\w", re.I)  # a word, so a template's `No ticket: <why>` is no reason
-
-
-KINDS = {"object": dict, "array": list, "string": str, "null": type(None)}
-
-
-def kind_matches(value, kind):
-    if kind == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    return isinstance(value, KINDS[kind])
-
-
-def schema_problem(value, schema, where="grades"):
-    """The first way `value` breaks the subset of JSON Schema schema.json uses, or None."""
-    kinds = schema.get("type")
-    kinds = [kinds] if isinstance(kinds, str) else kinds or []
-    if kinds and not any(kind_matches(value, kind) for kind in kinds):
-        return "%s is not %s" % (where, " or ".join(kinds))
-    if "enum" in schema and value not in schema["enum"]:
-        return "%s is %r, not one of %s" % (where, value, ", ".join(schema["enum"]))
-    if isinstance(value, dict):
-        return object_problem(value, schema, where)
-    if isinstance(value, list):
-        problems = (schema_problem(item, schema.get("items", {}), "%s[%d]" % (where, index)) for index, item in enumerate(value))
-        return next((problem for problem in problems if problem), None)
-    return None
-
-
-def object_problem(value, schema, where):
-    properties = schema.get("properties", {})
-    missing = [key for key in schema.get("required", []) if key not in value]
-    if missing:
-        return "%s lacks %s" % (where, ", ".join(missing))
-    extra = [key for key in value if key not in properties] if schema.get("additionalProperties") is False else []
-    if extra:
-        return "%s has %s" % (where, ", ".join(extra))
-    problems = (schema_problem(value[key], sub, "%s.%s" % (where, key)) for key, sub in properties.items() if key in value)
-    return next((problem for problem in problems if problem), None)
 
 
 ENVELOPE = {"type": "object", "required": ["shard", "ids", "error", "output", "seconds"],
@@ -444,6 +412,10 @@ def check(args):
             body = handle.read()
     except OSError as error:
         raise CannotRun("--body cannot be read: %s" % error)
+    supplied = planted(args.repo, args.grades, "the grade jobs")
+    if supplied:
+        write_table(args.table, table([], "nothing judged: the pull request supplies grades of its own"))
+        return supplied
     items, notes = requirements(args.repo, args.base_ref, body)
     unaudited = [] if items else unlinked(args, body)
     if unaudited:
