@@ -1001,7 +1001,8 @@ coverage-not-lost --runner node-test --soak                    # the files packa
   there, so a Node process a test starts is measured too, through a shell or `fork` as well (Node's
   `child_process` copies the variable into the child's environment, even into one the test gives it of
   its own), and so is a worker thread. Not measured: a child killed by a signal, which writes no
-  coverage file (a child stopped with SIGTERM, on 2026-10-20), a process that is not Node, and a file no
+  coverage file (a child stopped with SIGTERM, on 2026-10-20), a child still running when Node reads the
+  coverage files (a process writes its file when it exits), a process that is not Node, and a file no
   process loaded. `--enable-source-maps` makes Node map a file a loader compiles (`--require
   ts-node/register`, say) back to the file's own lines through the loader's source map: without it, under
   ts-node 10.9.2 on Node 22.23, every line of a `.ts` file read as run. Node maps the ranges it measured,
@@ -1019,7 +1020,7 @@ coverage-not-lost --runner node-test --soak                    # the files packa
   ran because a connection was refused (an error branch) counts as run. For node:test, each command at a
   side is a run of its own, and every command's environment (with its script's assignments and the files
   an `--env-file` option of the script or of `--args` loads) is checked before the first one starts, so a
-  credential in any script runs no test.
+  credential in any of a side's scripts stops that side before its first test.
 - **What ran it.** A Python finding names the test functions that ran the line at the merge base (none
   for a line only a child process ran). A Vitest or node:test finding says whether the test files the
   pull request deleted, changed or moved ran it there,

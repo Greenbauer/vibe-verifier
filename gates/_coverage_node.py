@@ -17,9 +17,9 @@ file the side runs with `node --test` (test code, as regression-test-fails-on-ba
 Node's test runner points NODE_V8_COVERAGE at a directory of its own before it starts the test files, and merges every
 coverage file written there, so a Node process a test starts and a worker thread are measured too: Node's
 child_process copies the variable into the child's environment, even into one the test gives it of its own. A child
-killed by a signal writes nothing, so its lines are not measured. `--enable-source-maps` makes Node map a file a loader
-compiled (ts-node, say) back to the file's own lines through the source map the loader wrote. Node leaves out
-node_modules and its own modules. Measured on Node 22.23 and 24.21; a Node before 22 is refused (exit 2), and the 22
+killed by a signal writes nothing, and one still running when Node reads the files has written nothing yet, so neither
+is measured. `--enable-source-maps` makes Node map a file a loader compiled (ts-node, say) back to the file's own lines
+through the source map the loader wrote. Node leaves out node_modules and its own modules. Measured on Node 22.23 and 24.21; a Node before 22 is refused (exit 2), and the 22
 releases before 22.23 are accepted without having been run here.
 
 Every command is guarded (gates/_local_guard.py), as the other runners' runs are: a credential for anywhere else in
