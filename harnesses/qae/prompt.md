@@ -108,7 +108,7 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
    email reached an inbox, a log line, a stored value the site never displays) is one you could not
    check: FAIL it, saying "not checkable in a browser" and what it asks for, and never PASS it on
    the strength of a nearby screen.
-4. Post the verdict as a pull request comment, with exactly this command (no other form is allowed):
-     gh pr comment PR_NUMBER --body-file qae-artifacts/verdict.md
+4. Do not post anything: the workflow turns qae-artifacts/verdict.md into the pull request's one
+   QA review comment after you finish.
 
 Write only under qae-artifacts/. Do not change any other file.

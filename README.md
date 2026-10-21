@@ -280,6 +280,7 @@ For multiple projects, see [subscribing in CI](docs/GATE-CONTRACT.md#subscribing
 - [Gate contract](docs/GATE-CONTRACT.md): gate interface, manifests, base-policy behavior, CI subscription, wrappers, and extension rules.
 - [Feature maps](docs/feature-map.md): one file per user-facing feature, kept true by the `feature-map` gate.
 - [Check names](docs/check-names.md): how every check is named (`Stage / What it proves`), and how to rename a repository's checks without blocking a merge.
+- [Comments](docs/comments.md): the rules every comment the catalog leaves on a pull request follows, and the hidden markers other jobs read.
 - [Suite scope](docs/suite-scope.md): skipping a slow suite for a pull request whose diff it cannot see, from one inert list, with every doubt running it.
 - [Review harness](harnesses/review/README.md): revision-bound AI review and workflow receipts.
 - [QAE harness](harnesses/qae/README.md): browser exploration, artifacts, and deterministic acceptance verdicts.

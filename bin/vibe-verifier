@@ -1560,7 +1560,8 @@ def usage_limit_lines(head, limits):
 
 
 def review_body(state, args, limits=None):
-    head = "`%s`" % args.head[:8]
+    # A link that says what it is, never a hash in the text (docs/comments.md).
+    head = "[this commit](%s/commit/%s)" % (args.run_url.split("/actions/runs/")[0], args.head)
     lines = [REVIEW_MARKER, REVIEW_HEADINGS[state], ""]
     if state == "not-required":
         lines.append("No browser check on %s: %s." % (head, args.not_required.rstrip(".")))

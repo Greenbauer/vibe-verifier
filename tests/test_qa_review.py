@@ -9,6 +9,8 @@ from pathlib import Path
 from helpers import ROOT, clean_env
 from qa_review_fixture import BOT, HEAD, MARKER, RUN, VERDICT, GhFixture
 
+COMMIT = "[this commit](https://github.com/acme/site/commit/%s)" % HEAD
+
 ACTION = ROOT / "actions" / "qa-review" / "action.yml"
 
 
@@ -19,7 +21,7 @@ class QaReview(GhFixture):
     def test_passed(self):
         body = self.posted()
         self.assertEqual(body.splitlines()[:2], [MARKER, "## QA review: passed ✅"])
-        self.assertIn("`01234567`", body)
+        self.assertIn(COMMIT, body)
         self.assertIn("- AC1, explorer says PASS: The home page loads\n", body)
         self.assertIn("[The run and its evidence](%s)" % RUN, body)
 
@@ -76,7 +78,7 @@ class QaReview(GhFixture):
     def test_changes_needed_lists_each_criterion_as_the_explorer_judged_it(self):
         body = self.posted(gates="failure")
         self.assertEqual(body.splitlines()[1], "## QA review: changes needed ❌")
-        self.assertIn("The QA gates refused `01234567`.", body)
+        self.assertIn("The QA gates refused " + COMMIT + ".", body)
         self.assertIn("- AC1, explorer says PASS: The home page loads\n", body)
         self.assertIn("- AC2, explorer says FAIL: The menu opens\n", body)
 
@@ -96,20 +98,19 @@ class QaReview(GhFixture):
         reason = "every changed file (3) is CI configuration or documentation no site renders"
         body = self.posted(gates="skipped", not_required=reason, verdict=False)
         self.assertEqual(body.splitlines()[1], "## QA review: not required ✅")
-        self.assertIn("No browser check on `01234567`: %s." % reason, body)
+        self.assertIn("No browser check on " + COMMIT + ": %s." % reason, body)
         self.assertNotIn("AC1", body)
 
     def test_a_carried_walk_says_which_head_passed(self):
-        reason = ("QA passed on `aaaaaaaa` (https://github.com/acme/site/actions/runs/5), and every file changed since (2) "
-                  "is CI configuration or documentation no site renders")
+        reason = "QA passed in [an earlier run](https://github.com/acme/site/actions/runs/5)"
         body = self.posted(explore="skipped", gates="skipped", not_required=reason, verdict=False, carried="a" * 40)
         self.assertEqual(body.splitlines()[1], "## QA review: passed on an earlier head ✅")
-        self.assertIn("No new browser check on `01234567`: %s. The criteria were not edited since." % reason, body)
+        self.assertIn("No new browser check on " + COMMIT + ": %s. The criteria were not edited since." % reason, body)
 
     def test_could_not_run_when_the_explore_job_did_not_finish(self):
         body = self.posted(explore="failure", gates="failure")
         self.assertEqual(body.splitlines()[1], "## QA review: could not run ⚠️")
-        self.assertIn("The explore job ended `failure` on `01234567`", body)
+        self.assertIn("The explore job ended `failure` on " + COMMIT, body)
 
     # A model usage limit: the explore job's failure annotations say so, and the comment tells the agent
     # driving the pull request to walk the criteria by hand until the reset. Messages as the lanes print them.
@@ -136,7 +137,7 @@ class QaReview(GhFixture):
         self.explorers(("qae-explore", "failure", [self.CLAUDE_LIMIT]))
         body = self.posted(explore="failure", gates="", verdict=False)
         self.assertEqual(body.splitlines()[1], "## QA review: could not run, model usage limit \u26a0\ufe0f")
-        self.assertIn("The explorer hit its model usage limit on `01234567` (it resets 9am (UTC)), so nothing was "
+        self.assertIn("The explorer hit its model usage limit on " + COMMIT + " (it resets 9am (UTC)), so nothing was "
                       "checked and these checks stay red.", body)
         for step in ("walk every bullet under `## Acceptance criteria`", "`--widths` of the `qae-artifacts` line",
                      "Post the evidence as a pull request comment: one line per criterion, PASS or FAIL",
@@ -175,7 +176,7 @@ class QaReview(GhFixture):
             self.explorers(*jobs)
             body = self.posted(explore="failure", gates="", verdict=False)
             self.assertEqual(body.splitlines()[1], "## QA review: could not run \u26a0\ufe0f", why)
-            self.assertIn("The explore job ended `failure` on `01234567`, so nothing was checked. Its log has the cause", body, why)
+            self.assertIn("The explore job ended `failure` on " + COMMIT + ", so nothing was checked. Its log has the cause", body, why)
 
     def test_a_cancelled_explore_or_a_missing_run_id_reads_nothing(self):
         self.explorers(("qae-explore", "failure", [self.CLAUDE_LIMIT]))
@@ -210,7 +211,7 @@ class QaReview(GhFixture):
         for outcome in ("skipped", ""):
             body = self.posted(gates=outcome)
             self.assertEqual(body.splitlines()[1], "## QA review: could not run \u26a0\ufe0f", outcome)
-            self.assertIn("The verify job stopped before its gates ran on `01234567`", body)
+            self.assertIn("The verify job stopped before its gates ran on " + COMMIT, body)
             self.assertNotIn("refused", body)
 
     def test_a_skipped_explore_whose_criteria_job_failed_could_not_run(self):
@@ -218,7 +219,7 @@ class QaReview(GhFixture):
         # comment blames that, never the skipped explore job.
         body = self.posted(explore="skipped", gates="", verdict=False)
         self.assertEqual(body.splitlines()[1], "## QA review: could not run \u26a0\ufe0f")
-        self.assertIn("The verify job stopped before its gates ran on `01234567`", body)
+        self.assertIn("The verify job stopped before its gates ran on " + COMMIT, body)
         self.assertNotIn("explore job ended", body)
 
     def test_a_missing_verdict_file_reads_as_no_verdict(self):

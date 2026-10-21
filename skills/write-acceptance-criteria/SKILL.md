@@ -68,7 +68,7 @@ python3 <catalog>/bin/vibe-verifier criteria /tmp/body.md
 
 ## After the check fails
 
-1. Read the verdict comment and the failing criterion's steps in the run's `qae-artifacts` artifact.
+1. Read the QA review comment and the failing criterion's steps in the run's `qae-artifacts` artifact.
 2. A FAIL means the code is wrong or the criterion is. Fix that one. Never delete or soften a criterion
    to turn the check green.
 3. Edited only the description? Re-run the QAE workflow; do not push an empty commit. It reads the

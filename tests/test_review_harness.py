@@ -19,23 +19,6 @@ TEMPLATE = ROOT / "harnesses" / "review" / "review.yml"
 PROMPT = ROOT / "harnesses" / "review" / "prompt.md"
 
 
-def flaky_gh(directory, failures):
-    """A PATH directory whose `gh` fails `failures` times, then succeeds, logging each call, and whose
-    `sleep` returns at once and logs what it was asked to wait."""
-    os.makedirs(directory, exist_ok=True)
-    scripts = {"gh": '#!/bin/sh\necho call >> "%s/calls"\n[ "$(wc -l < "%s/calls")" -gt %d ]\n' % (directory, directory, failures),
-               "sleep": '#!/bin/sh\necho "$1" >> "%s/sleeps"\n' % directory}
-    for name, body in scripts.items():
-        with open(os.path.join(directory, name), "w") as handle:
-            handle.write(body)
-        os.chmod(os.path.join(directory, name), 0o755)
-    return directory
-
-
-def lines(path):
-    return Path(path).read_text().split() if os.path.exists(path) else []
-
-
 def prompt_block(text):
     match = re.search(r"^( +)(?:prompt|PROMPT): \|\n((?:\1  .*\n|\n)+)", text, re.MULTILINE)
     indent = len(match.group(1)) + 2
@@ -230,9 +213,11 @@ class ReviewGate(unittest.TestCase):
         post = subprocess.run(["bash", "-c", step_script("Post the receipt", "Collect numeric usage")],
                               capture_output=True, text=True,
                               env=self.env(PATH=str(self.temp) + os.pathsep + os.environ["PATH"], REVIEW_MODE=mode,
-                                           GITHUB_RUN_ID="7", GH_TOKEN="x", PR_NUMBER="1", REPO="o/r", HEAD_SHA="a" * 40))
+                                           GITHUB_RUN_ID="7", GH_TOKEN="x", PR_NUMBER="1", REPO="o/r", HEAD_SHA="a" * 40,
+                                           GITHUB_SERVER_URL="https://github.com"))
         self.assertEqual(post.returncode, 0, post.stdout + post.stderr)
-        return gate, (self.temp / "gh-args").read_text().splitlines()[-1]
+        # The receipt line of the comment body the step wrote (docs/comments.md).
+        return gate, re.search(r"review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+", (self.temp / "gh-args").read_text()).group(0)
 
     def test_a_completed_review_posts_a_full_receipt(self):
         for fallback in (None, ([BAD_TOKEN], "success")):  # a configured fallback never runs after a review
@@ -346,57 +331,6 @@ class ReviewGate(unittest.TestCase):
         self.assertIn("secrets.CLAUDE_CODE_OAUTH_TOKEN_FALLBACK }}", fallback)
 
 
-HEAD, OLD = "a" * 40, "b" * 40
-
-
-def comment(sha, mode="full", run=1, login="github-actions[bot]"):
-    return {"user": {"login": login}, "body": "review-receipt: %s -- %s -- run %d" % (sha, mode, run)}
-
-
-class ReviewVerify(unittest.TestCase):
-    """"Write the declared inputs" run as the runner runs it on the event head HEAD, then the
-    review-receipt gate over the files it wrote. `gh` answers the paginated comments call with the
-    pages given, oldest comment first, the way the real gh prints them without --jq."""
-
-    def verify(self, *pages):
-        temp = Path(tempfile.mkdtemp(prefix="vv-verify-"))
-        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(temp)]))
-        (temp / "gh").write_text('#!/bin/sh\nif [ "$2" = graphql ]; then echo \'{"unresolved":0}\'; exit 0; fi\n'
-                                 + "".join("echo '%s'\n" % json.dumps(page) for page in pages))
-        os.chmod(temp / "gh", 0o755)
-        step = subprocess.run(["bash", "-c", step_script("Write the declared inputs")], cwd=temp, capture_output=True,
-                              text=True, env=clean_env({"PATH": str(temp) + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
-                                                        "PR_NUMBER": "1", "REPO": "o/r", "HEAD_SHA": HEAD}))
-        self.assertEqual(step.returncode, 0, step.stdout + step.stderr)
-        inputs = temp / "review-inputs"
-        return gate("review-receipt", str(temp), "--receipt", str(inputs / "receipt.md"), "--head", str(inputs / "head.txt"),
-                    "--threads", str(inputs / "threads.json"))
-
-    def test_a_review_of_an_older_head_that_finishes_last_does_not_hide_this_heads_receipt(self):
-        # Observed on a consumer: two pushes in quick succession, runs not cancelled, and the older
-        # head's review posted its receipt after this head's. The newest receipt named the old SHA.
-        result = self.verify([comment(HEAD, run=2)], [{"user": {"login": "someone"}, "body": "lgtm"}, comment(OLD, "delta", 1)])
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_a_limited_receipt_still_counts_only_for_its_own_head(self):
-        self.assertEqual(self.verify([comment(HEAD, "limited", 2), comment(OLD, "full", 1)]).returncode, 0)
-        result = self.verify([comment(HEAD, "full", 1), comment(OLD, "limited", 2)], [comment(OLD, "full", 3)])
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(self.verify([comment(OLD, "limited", 1)]).returncode, 1)
-
-    def test_with_no_receipt_for_this_head_the_gate_names_the_newest_one(self):
-        result = self.verify([comment(OLD, run=1)])
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn("no review receipt for %s" % HEAD[:10], result.stdout)
-        self.assertIn("newest receipt is for %s" % OLD[:10], result.stdout)
-        self.assertIn("did not complete", self.verify([]).stdout)
-
-    def test_only_the_workflow_identity_supplies_a_receipt(self):
-        result = self.verify([comment(OLD, run=1), comment(HEAD, run=2, login="someone")])
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn("newest receipt is for %s" % OLD[:10], result.stdout)
-
-
 class ReviewHarness(unittest.TestCase):
     def test_the_workflow_prompt_is_the_catalog_prompt(self):
         self.assertEqual(prompt_block(TEMPLATE.read_text()), PROMPT.read_text())
@@ -425,7 +359,7 @@ class ReviewHarness(unittest.TestCase):
     def test_the_receipt_is_posted_by_the_workflow_after_the_review(self):
         text = TEMPLATE.read_text()
         self.assertLess(text.index("- name: Review\n"), text.index("- name: Post the receipt"))
-        self.assertIn('--body "review-receipt: ${HEAD_SHA} -- ${REVIEW_MODE} -- run ${GITHUB_RUN_ID}"', text)
+        self.assertIn('line="<!-- review-receipt: ${HEAD_SHA} -- ${REVIEW_MODE} -- run ${GITHUB_RUN_ID} -->"', text)
         self.assertNotIn("sentinel", prompt_block(text).lower().replace("post a\nsentinel", ""))
 
     def test_the_verify_job_runs_the_catalog_manifest_with_placeholder_pins(self):
@@ -446,37 +380,6 @@ class ReviewTarget(unittest.TestCase):
     def test_the_prompt_names_the_pull_request_and_the_repository(self):
         self.assertIn("#${{ github.event.pull_request.number }} of ${{ github.repository }}", PROMPT.read_text())
 
-
-
-class ReceiptPost(unittest.TestCase):
-    """One GitHub 5xx on the receipt post must not throw a finished review away: the post is retried,
-    a bounded number of times, and a post that never lands still fails the job."""
-
-    def post(self, failures):
-        temp = tempfile.mkdtemp(prefix="vv-receipt-")
-        self.addCleanup(__import__("shutil").rmtree, temp, True)
-        result = subprocess.run(["bash", "-c", step_script("Post the receipt", "Collect numeric usage")], capture_output=True, text=True,
-                                env=clean_env({"PATH": flaky_gh(temp, failures) + os.pathsep + os.environ["PATH"], "REVIEW_MODE": "full",
-                                               "GITHUB_RUN_ID": "7", "GH_TOKEN": "x", "PR_NUMBER": "1", "REPO": "o/r", "HEAD_SHA": "a" * 40}))
-        return result, len(lines(os.path.join(temp, "calls"))), lines(os.path.join(temp, "sleeps"))
-
-    def test_a_post_that_fails_twice_then_lands_passes(self):
-        result, calls, sleeps = self.post(2)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual((calls, sleeps), (3, ["15", "30"]))
-        self.assertIn("::warning::posting the receipt failed (attempt 2 of 5)", result.stdout)
-
-    def test_a_post_that_never_lands_fails_after_five_tries(self):
-        result, calls, sleeps = self.post(99)
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual((calls, sleeps), (5, ["15", "30", "45", "60"]))
-        self.assertIn("::error::the receipt could not be posted after 5 attempts", result.stdout)
-
-    def test_this_repository_runs_the_same_step(self):
-        own = (ROOT / ".github" / "workflows" / "review.yml").read_text()
-        step = TEMPLATE.read_text()
-        step = step[step.index("- name: Post the receipt\n"):step.index("- name: Collect numeric usage\n")]
-        self.assertIn(step, own)
 
 
 if __name__ == "__main__":

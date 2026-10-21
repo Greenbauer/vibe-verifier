@@ -1,5 +1,5 @@
 name: Vibe Verifier QAE explorer on Codex
-description: Run the QAE explorer prompt with the Codex CLI from the catalog's lockfile, on a runner that holds a ChatGPT-managed Codex login. The model holds no GitHub token; the workflow posts the verdict it writes. An optional storage state starts the browser with cookies the workflow obtained, such as a preview host's protection-bypass cookie.
+description: Run the QAE explorer prompt with the Codex CLI from the catalog's lockfile, on a runner that holds a ChatGPT-managed Codex login. The model holds no GitHub token and nothing it writes is posted: the verify job's QA review is the one comment. An optional storage state starts the browser with cookies the workflow obtained, such as a preview host's protection-bypass cookie.
 inputs:
   prompt-file:
     description: The prompt to run, written by the workflow (the harness prompt with this pull request's numbers filled in).
@@ -231,7 +231,7 @@ runs:
       # written; its session log keeps every result, and the model could write a value anywhere
       # under the artifacts directory. So this step is where a value is kept out of what leaves the
       # runner: every non-image file there gets each value replaced with <secret>NAME</secret>
-      # before the workflow posts the verdict or uploads the evidence, and the value files are
+      # before the workflow uploads the evidence, and the value files are
       # removed. A value is also found percent-encoded, and inside JSON strings nested up to four
       # deep. Nesting is what the session log does to it: a tool result is written there inside a
       # JSON block, and the result of browser_run_code_unsafe is JSON already, so a value a snippet

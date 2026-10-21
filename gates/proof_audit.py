@@ -93,9 +93,9 @@ def envelopes(directory):
                     with open(path, encoding="utf-8") as handle:
                         found.append((path, json.load(handle)))
                 except (OSError, ValueError) as error:
-                    raise CannotRun("%s cannot be read: %s" % (path, error))
+                    raise CannotRun("grade %s cannot be read: %s" % (os.path.relpath(path, directory), error))
     if not found:
-        raise CannotRun("no grades in %s: the proof-audit job graded nothing (did it run?)" % directory)
+        raise CannotRun("no grades: the proof-audit job graded nothing (did it run?)")
     return found
 
 
@@ -393,7 +393,7 @@ def unlinked(args, body):
     if claimed:
         return [Finding("the body claims %d requirement ID(s) (%s) but no `Ticket: <plan>#<anchor>` line links the "
                         "section that defines them, so none of them is audited: add that line"
-                        % (len(claimed), ", ".join(claimed[:8]) + (", ..." if len(claimed) > 8 else "")))]
+                        % (len(claimed), ", ".join(claimed)))]
     if not args.require_ticket or any(NO_TICKET.match(line) for line in lines):
         return []
     base = merge_base(args.repo, args.base_ref)
@@ -403,7 +403,7 @@ def unlinked(args, body):
         return []
     return [Finding("the pull request changes %d file(s) under --require-ticket (%s) and links no plan section: add "
                     "`Ticket: <plan>#<anchor>` for the section it implements, or a line `No ticket: <why>` saying why "
-                    "none applies" % (len(changed), ", ".join(changed[:5]) + (", ..." if len(changed) > 5 else "")))]
+                    "none applies" % (len(changed), ", ".join(changed)))]
 
 
 def check(args):
