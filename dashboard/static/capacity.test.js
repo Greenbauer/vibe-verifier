@@ -114,9 +114,8 @@ test("runners are grouped by kind in plain words, named by kind and slot, with f
   assert.deepStrictEqual(content.find("runner-pool").map(pool => pool.children[0].text.trim()),
     ["Runner slots: 3 of 4 in use", "Waiting-job slots: 1 of 2 in use"]);
   const titles = content.find("runner-group-title").map(title => title.text.replace(/\s+/g, " ").trim());
-  assert.match(titles[0], /^Build and test Runs the repositories' CI jobs\./);
-  assert.match(titles[1], /^AI QA Runs the QA explorer against a preview/);
-  assert.match(titles[2], /^Waiting jobs Holds jobs that only wait/);
+  // Each group is its title alone, with no sentence describing it.
+  assert.deepStrictEqual(titles, ["Build and test", "AI QA", "Waiting jobs"]);
   assert.match(content.find("runner-group")[1].text, /None right now\..*At most 2 at once\./s);
   const rows = content.find("runner-row").slice(1).map(row => row.text.replace(/\s+/g, " ").trim());
   assert.deepStrictEqual(rows.length, 6);

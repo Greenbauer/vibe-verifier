@@ -207,11 +207,11 @@ const usage={sampled_at:new Date().toISOString(),accounts:[],pace_points:-11.6,
 const build=new Function('el','BOT_META','VVCharts','snapshot','paceHeader','formatTime',SOURCE+'\nreturn usageCharts;');
 const charts=build(el,BOT_META,VVCharts,snapshot,paceHeader,()=>'RESET');
 const section=charts(usage);
-const cards=section.children[2].children;
-const head=section=>section.children[2].children[3].children[0].children[0];
+const cards=section.children[1].children;
+const head=section=>section.children[1].children[3].children[0].children[0];
 const header=delta=>text(head(charts({...usage,pace_points:delta})));
 console.log(JSON.stringify({drawn,names:cards.map(card=>card.children[0].children[0].children[0]),
-  qae2:text(cards[2]),allClass:cards[3].attrs.class,parts:section.children.map(child=>child.tag),caption:text(section.children[1]),
+  qae2:text(cards[2]),allClass:cards[3].attrs.class,parts:section.children.map(child=>child.tag),
   header:text(head(section)),headerTitle:head(section).attrs.title,missingHeader:header(null),noPace:header(undefined),
   ahead:header(21.2),even:header(0.6),swe:text(cards[0].children[0].children[0])}));
 """.replace("SOURCE", json.dumps(source)))
@@ -223,8 +223,8 @@ console.log(JSON.stringify({drawn,names:cards.map(card=>card.children[0].childre
         # With no plan line, All bots stays in tokens, scaled to its own busiest hour, and no card has a pace.
         self.assertEqual(everyone["maximum"], 1050)
         self.assertTrue(all(row["pace"] is None for row in result["drawn"]))
-        self.assertEqual(result["parts"], ["h2", "p", "div"])
-        self.assertIn("All bots: percent of the plan an hour", result["caption"])
+        # The title, then the cards: no sentence describing the panel.
+        self.assertEqual(result["parts"], ["h2", "div"])
         self.assertEqual(result["header"], "All bots · 12% under pace")
         self.assertEqual(result["headerTitle"], "12 points behind an even burn: headroom.")
         self.assertEqual(result["ahead"], "All bots · 21% ahead of pace")
@@ -257,7 +257,7 @@ for (const bot of ['ci-qae-1','ci-qae-2','ci-qae-3']) {
 }
 const usage={sampled_at:new Date().toISOString(),accounts:[],pace_points:-11.6,samples};
 const build=new Function('el','BOT_META','VVCharts','snapshot','paceHeader',SOURCE+'\nreturn usageCharts;');
-const cards=build(el,BOT_META,VVCharts,snapshot,paceHeader)(usage).children[2].children;
+const cards=build(el,BOT_META,VVCharts,snapshot,paceHeader)(usage).children[1].children;
 const usual=card=>walk(card).some(node=>node.attrs&&node.attrs.class==='burn-usual');
 console.log(JSON.stringify({
   names:cards.map(card=>text(card.children[0].children[0].children[0]).split(' · ')[0]),
@@ -291,7 +291,7 @@ const usage={available:true,sampled_at:at(0),samples:[
   {account:'a',bot:'explorer',timestamp:at(48),input_tokens:9000,output_tokens:0}],
   pace_points:null};
 const build=new Function('el','BOT_META','VVCharts','snapshot','paceHeader',SOURCE+'\nreturn usageCharts;');
-const cards=build(el,BOT_META,VVCharts,snapshot,paceHeader)(usage).children[2].children;
+const cards=build(el,BOT_META,VVCharts,snapshot,paceHeader)(usage).children[1].children;
 const all=cards[3];
 const totals=all.children.find(child=>child.attrs&&child.attrs.class==='burn-totals');
 console.log(JSON.stringify({names:cards.map(card=>text(card.children[0].children[0].children[0]).split(' · ')[0]),
@@ -327,9 +327,9 @@ const usage={sampled_at:new Date().toISOString(),accounts:[],pace_points:-2.9,pl
 const build=new Function('el','BOT_META','VVCharts','snapshot','paceHeader','formatTime',SOURCE+'\nreturn usageCharts;');
 const charts=build(el,BOT_META,VVCharts,snapshot,paceHeader,()=>'RESET');
 const section=charts(usage), unsized=charts({...usage,plan_line:{...plan,sized:false}});
-const all=section.children[2].children[1];
-console.log(JSON.stringify({drawn,note:text(section.children[3]),title:section.children[3].attrs.title,
-  peak:text(all.children[0].children[1]),totals:text(all.children[2]),unsizedNote:text(unsized.children[3])}));
+const all=section.children[1].children[1];
+console.log(JSON.stringify({drawn,note:text(section.children[2]),title:section.children[2].attrs.title,
+  peak:text(all.children[0].children[1]),totals:text(all.children[2]),unsizedNote:text(unsized.children[2])}));
 """.replace("SOURCE", json.dumps(source)))
         bot, everyone = result["drawn"][0], result["drawn"][1]
         # The bot card stays in tokens with no pace; All bots plots only plan-billed samples, in percent.
