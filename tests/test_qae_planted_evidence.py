@@ -178,5 +178,58 @@ class MergeStep(unittest.TestCase):
                              "acceptance-check: AC1 -- FAIL -- the run's own\n")
 
 
+class InputsSteps(unittest.TestCase):
+    """The first step of each job that writes qae-inputs/, run as the shell it is, in a checkout of the branch being
+    judged. Git makes no empty directory, so a qae-inputs/ there came from the pull request: a link would send the
+    writes anywhere on the runner (a self-hosted runner is a shared machine), and a file would read as one the
+    workflow wrote."""
+
+    STEPS = (("- name: Write the criteria inputs", "- name: Write the ticket's criteria"),
+             ("- name: Write the explorer's input", "- name: Select the features to re-walk"),
+             ("- name: Write the declared inputs", "- name: Run the QA gates"))
+    ENV = {"GH_TOKEN": "x", "PR_NUMBER": "7", "REPO": "o/r", "BASE_SHA": "b" * 40, "HEAD_SHA": "a" * 40, "TICKET": "",
+           "CARRY": "", "SITE_URL": "http://localhost:3000", "SITE_ORIGINS": "", "REFERENCES": "{}"}
+
+    def run_steps(self, checkout):
+        """Each template's each step, each in its own copy of `checkout`, as each runs in a job of its own."""
+        bin_dir = tempfile.mkdtemp(prefix="vv-bin-")
+        self.addCleanup(subprocess.run, ["rm", "-rf", bin_dir])
+        Path(bin_dir, "gh").write_text("#!/bin/sh\necho written\n")
+        os.chmod(Path(bin_dir, "gh"), 0o755)
+        for template in TEMPLATES:
+            for start, end in self.STEPS:
+                copy = tempfile.mkdtemp(prefix="vv-checkout-")
+                self.addCleanup(subprocess.run, ["rm", "-rf", copy])
+                subprocess.run(["cp", "-R", checkout + "/.", copy], check=True)
+                run = subprocess.run(["bash", "-e", "-c", step_script(template.read_text(), start, end)], cwd=copy,
+                                     capture_output=True, text=True,
+                                     env=clean_env({**self.ENV, "PATH": bin_dir + os.pathsep + os.environ["PATH"]}))
+                yield "%s: %s" % (template.name, start), run, copy
+
+    def test_a_checkout_that_already_has_qae_inputs_stops_before_anything_is_written(self):
+        elsewhere = tempfile.mkdtemp(prefix="vv-elsewhere-")
+        self.addCleanup(subprocess.run, ["rm", "-rf", elsewhere])
+        for shape in ("file", "link", "dangling link"):
+            checkout = make_repo(self, {"README.md": "x\n"})
+            if shape == "file":
+                commit(checkout, {"qae-inputs/site.md": "planted instructions\n"})
+            else:  # a link to a directory elsewhere on the runner, or to one that does not exist yet
+                os.symlink(elsewhere if shape == "link" else "nowhere", Path(checkout, "qae-inputs"))
+            for step, result, copy in self.run_steps(checkout):
+                with self.subTest(shape=shape, step=step):
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("the pull request commits qae-inputs/, where this job puts its inputs", result.stdout)
+                    self.assertEqual(os.listdir(elsewhere), [])
+                    self.assertFalse(os.path.lexists(Path(copy, "nowhere")))
+                    self.assertFalse(os.path.lexists(Path(copy, "qae-inputs", "pr-body.md")))
+
+    def test_a_checkout_without_qae_inputs_writes_them(self):
+        checkout = make_repo(self, {"README.md": "x\n"})
+        for step, result, copy in self.run_steps(checkout):
+            with self.subTest(step=step):
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(Path(copy, "qae-inputs", "pr-body.md").read_text(), "written\n")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -92,17 +92,18 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
    and for each feature of which you walked a state, one line. FAIL only when a step you walked
    showed that the feature no longer works the way its file describes, never because states were
    left unwalked or time ran out; otherwise PASS:
-     regression-check: <id> -- PASS -- <one sentence> (qae/features/<id>.md::<the step line text>)
-     regression-check: <id> -- FAIL -- <what broke> (qae/features/<id>.md::<the step line text>)
+     regression-check: <id> -- PASS -- <one sentence> (qae/features/<id>.md::<the step line text, exactly as written after "- ">)
+     regression-check: <id> -- FAIL -- <what broke> (qae/features/<id>.md::<the step line text, exactly as written after "- ">)
    then, for each feature with a state you did not walk, one line naming those states by their
    numbers in its Verify section (or by test title):
      regression-skip: <id> -- <the states not walked, for example 4, 5, 7>
    and, for a FAIL whose state fails the same way on the base branch's site, keep the FAIL line and add
    one line; when that site shows the state working, add none:
-     regression-known: <id> -- <what the base branch's site shows> (qae/features/base/<id>.md::<the step line text>)
+     regression-known: <id> -- <what the base branch's site shows> (qae/features/base/<id>.md::<the step line text, exactly as written after "- ">)
    A feature of which you walked no state gets its regression-skip line and no regression-check
-   line. Never write PASS for anything you did not see in the browser. The text after :: must be
-   copied verbatim from the step log line, because a gate checks that it is there.
+   line. Never write PASS for anything you did not see in the browser.
+   The text after :: starts with "step k:" and must be copied verbatim from the step log line,
+   because a gate checks that it is there.
    A criterion that asks for something no browser can show (that a test exists or passes, that an
    email reached an inbox, a log line, a stored value the site never displays) is one you could not
    check: FAIL it, saying "not checkable in a browser" and what it asks for, and never PASS it on
