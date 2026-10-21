@@ -1301,7 +1301,9 @@ Both QAE gates read the run's evidence through `--artifacts`, and the contract j
 the checkout supplied any (`planted` in `gates/_contract.py`, run by `run_gate` before the gate's own
 check): a path the branch tracks at, under or on the way to that directory, or a symbolic link in it,
 the directory itself included, is one finding each and nothing else is judged
-([evidence the pull request supplies](../harnesses/qae/README.md#evidence-the-pull-request-supplies)).
+([evidence the pull request supplies](../harnesses/qae/README.md#evidence-the-pull-request-supplies)). Saved
+files judged outside any repository (no `.git` at `--repo` or above it) track nothing, and a `.git`
+Git cannot read there is exit 2: what it tracks is unknown.
 
 The harness's second gate, `qae-artifacts`, is the adjudicator: it reads the run's artifact
 directory (`--artifacts`) and refuses on structural facts, never on the model's prose: a step
