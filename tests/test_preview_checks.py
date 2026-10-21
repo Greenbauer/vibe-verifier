@@ -55,6 +55,12 @@ class Checks(Harness, unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(output, "url=https://p.vercel.app\ndatabase=\n")
 
+    def test_a_name_whose_read_keeps_failing_ends_the_run_though_the_other_reads(self):
+        # Each poll reads both names, the second failing every time: six polls in a row with no answer.
+        self.serve(runs=[PASSED], checks=BOTH.splitlines(), statuses=[ADDRESS], fail_calls=[1, 3, 5, 7, 9, 11])
+        result = self.run_engine("find", "--check", BOTH)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+
     def test_find_reads_the_statuses_under_their_new_names_too(self):
         # docs/check-names.md renames them; a record step that posts the new names must still be found.
         self.serve(runs=[PASSED], statuses=[

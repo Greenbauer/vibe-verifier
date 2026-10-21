@@ -95,6 +95,10 @@ The catalog's own checks: `CI` / `test`, `qae-browser`, `regression-browser`, `l
 `Code` / `Tests and gates`, `QA browser tests`, `Regression browser tests`, `Lane kit tests`, `Lane listener tests`;
 `Nightly` became `Maintenance`.
 
+The catalog's templates use the catalog's own words where they name what the check does: an explorer *walks*
+the acceptance criteria in a browser (`Acceptance criteria: walk`, `Explorer login`), `Gates` are the catalog
+gates a repository's manifest lists, and the lane kit is the catalog's runner kit (`Lane kit tests`).
+
 `Standards` is its own stage because the catalog's gates (secrets, workflow lint, complexity, file size, repository
 rules) judge the whole change at once rather than one stage of it. `Sign-in` and `UI parity` are separate stages because their workflows cannot fold into `Preview` and `Code`:
 the sign-in workflow is required by organization rulesets, and the UI contract runs on `pull_request_target`.

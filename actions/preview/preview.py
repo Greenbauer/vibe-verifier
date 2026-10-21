@@ -90,10 +90,13 @@ class Reader:
     def __init__(self):
         self.failed = 0
 
-    def read(self, args):
+    def read(self, args, settles=True):
+        """The answer, or None for a failed read. A read that `settles` resets the count when it
+        answers; one poll of several reads resets it itself, once every read of the poll answered."""
         result = subprocess.run(["gh", "api", *args], capture_output=True, text=True)
         if result.returncode == 0:
-            self.failed = 0
+            if settles:
+                self.failed = 0
             return result.stdout
         self.failed += 1
         sys.stderr.write("gh api %s failed (%d in a row): %s\n" % (args[0], self.failed, result.stderr.strip()))
@@ -158,10 +161,13 @@ def read_verdict(args, reader, answered):
     and the last verdict GitHub did answer, which a failed read leaves as it was."""
     lines = [reader.read(["repos/%s/commits/%s/check-runs" % (args.repo, args.sha), "--paginate",
                           "--method", "GET", "-f", "check_name=" + name, "-f", "per_page=100",
-                          "--jq", '.check_runs[] | "\\(.started_at // "")\\t\\(.status)\\t\\(.conclusion)"'])
+                          "--jq", '.check_runs[] | "\\(.started_at // "")\\t\\(.status)\\t\\(.conclusion)"'],
+                         settles=False)
              for name in args.checks]
     if None in lines:
         return "unread", answered
+    # A poll with one name always unreadable never reads as an answer, so its failures add up.
+    reader.failed = 0
     verdict = newest_run("\n".join(lines))
     return verdict, verdict
 

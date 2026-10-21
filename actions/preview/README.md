@@ -109,12 +109,14 @@ again without it.
 
 ```yaml
   wait:
+    name: "E2E tests: wait for preview"   # CONSUMER: docs/check-names.md
     steps:
       - uses: Greenbauer/vibe-verifier/actions/preview@0000000000000000000000000000000000000000 # CONSUMER
         with:
           check: Database   # CONSUMER
           handover: "true"
   test:
+    name: E2E tests   # CONSUMER
     needs: wait
     steps:
       - id: preview
