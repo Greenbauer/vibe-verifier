@@ -28,7 +28,7 @@ import re
 import subprocess
 import tempfile
 
-from _contract import CannotRun, Finding, changed_files, matches, renamed, resolve_base, run_gate, tracked_files
+from _contract import CannotRun, Finding, _paths, matches, renamed, resolve_base, run_gate, tracked_files
 from _tools import ensure
 
 GATE = "prose"
@@ -164,7 +164,9 @@ def body_findings(binary, body):
 def check(args):
     files = args.files or DEFAULT_FILES
     base = None if args.all else resolve_base(args.repo, args.base_ref)
-    candidates = tracked_files(args.repo) if args.all else changed_files(args.repo, base)
+    # T as well as ACMR: a symbolic link the pull request turns into a regular file is a type change, and every
+    # line of the new file is its own.
+    candidates = tracked_files(args.repo) if args.all else _paths(args.repo, "--name-only", "--diff-filter=ACMRT", base + "...HEAD")
     paths = [p for p in candidates if matches(p, files) and not matches(p, args.exclude)]
     body = open(args.body).read() if args.body else event_body()
     if not paths and not body:

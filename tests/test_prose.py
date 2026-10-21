@@ -94,6 +94,16 @@ class Prose(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(rules(json.loads(result.stdout)), [("new.md", 1, "EmDash")])
 
+    def test_a_link_turned_into_a_file_is_judged(self):
+        repo = make_repo(self, {"AGENTS.md": "Shared.\n"})
+        os.symlink("AGENTS.md", os.path.join(repo, "CLAUDE.md"))
+        commit(repo, {})
+        os.remove(os.path.join(repo, "CLAUDE.md"))
+        commit(repo, {"CLAUDE.md": "Own file %s new.\n" % EM})
+        result = gate("prose", repo, "--base-ref", "HEAD~1", "--format", "json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(rules(json.loads(result.stdout)), [("CLAUDE.md", 1, "EmDash")])
+
     def test_a_repository_vale_config_does_not_change_the_verdict(self):
         config = "StylesPath = styles\nMinAlertLevel = suggestion\n[*.md]\nBasedOnStyles =\nVibeVerifier.EmDash = NO\n"
         code, report = judge(self, {".vale.ini": config}, {"a.md": "One %s here.\n" % EM})

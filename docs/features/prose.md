@@ -25,6 +25,7 @@ Add `prose` to `.vibe-verifier`. `--files GLOB` (repeatable, default `**/*.md` a
 - `tests/test_prose.py::test_an_mdx_comment_is_not_judged`
 - `tests/test_prose.py::test_an_odd_file_name_encoding_or_binary_file_does_not_stop_the_gate`
 - `tests/test_prose.py::test_a_symbolic_link_is_not_judged_and_does_not_stop_the_gate`
+- `tests/test_prose.py::test_a_link_turned_into_a_file_is_judged`
 - `tests/test_prose.py::test_a_repository_vale_config_does_not_change_the_verdict`
 - `tests/test_prose.py::test_the_description_is_judged_advisory_from_body_or_the_pull_request_event`
 - `tests/test_prose.py::test_a_vale_that_fails_is_could_not_run_even_under_soak`
