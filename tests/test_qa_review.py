@@ -1,71 +1,18 @@
 """`vibe-verifier qa-review` and actions/qa-review: the QAE's one review comment on a pull request,
 driven through the command line (and the action's own script) against a fake `gh` that records writes."""
 import json
-import os
 import re
-import shutil
-import stat
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, clean_env, runner
+from helpers import ROOT, clean_env
+from qa_review_fixture import BOT, HEAD, MARKER, RUN, VERDICT, GhFixture
 
-MARKER = "<!-- vibe-verifier:qa-review -->"
-BOT = "github-actions[bot]"
-HEAD = "0123456789abcdef0123456789abcdef01234567"
-RUN = "https://github.com/acme/site/actions/runs/42"
-BODY = "## Why\n\nx\n\n## Acceptance criteria\n\n- The home page loads\n- The menu opens\n"
-VERDICT = ("acceptance-check: AC1 -- PASS -- loaded (qae/AC1.md::step 1: opened / -> the home page)\n"
-           "acceptance-check: AC2 -- FAIL -- the menu stayed shut (qae/AC2.md::step 1: clicked Menu -> nothing)\n")
 ACTION = ROOT / "actions" / "qa-review" / "action.yml"
 
 
-class QaReview(unittest.TestCase):
-    def setUp(self):
-        self.fixtures = tempfile.mkdtemp(prefix="vv-gh-")
-        self.addCleanup(shutil.rmtree, self.fixtures, True)
-        bin_dir = Path(self.fixtures) / "bin"
-        bin_dir.mkdir()
-        gh = bin_dir / "gh"
-        gh.write_text("#!/bin/sh\nexec %s %s \"$@\"\n" % (os.environ.get("PYTHON", "python3"), ROOT / "tests" / "fake_gh.py"))
-        gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
-        self.env = {"PATH": "%s:%s" % (bin_dir, os.environ["PATH"]), "FAKE_GH_ROOT": self.fixtures}
-        (Path(self.fixtures) / "acme" / "site").mkdir(parents=True)
-        self.criteria = self.file("pr-body.md", BODY)
-        self.verdict = self.file("verdict.md", VERDICT)
-
-    def file(self, name, text):
-        path = Path(self.fixtures) / name
-        path.write_text(text)
-        return str(path)
-
-    def comments(self, comments):
-        (Path(self.fixtures) / "acme" / "site" / ".comments.json").write_text(json.dumps(comments))
-
-    def calls(self):
-        log = Path(self.fixtures) / "calls.log"
-        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-
-    def writes(self):
-        return [c for c in self.calls() if c["method"] != "GET"]
-
-    def review(self, explore="success", gates="success", not_required="", verdict=True, ticket=None, carried="", run_id="42"):
-        args = ["qa-review", "--repo", "acme/site", "--pr", "7", "--head", HEAD, "--run-url", RUN,
-                "--criteria", self.criteria, "--explore-result", explore, "--gates-outcome", gates,
-                "--not-required", not_required, "--carried-from", carried, "--run-id", run_id]
-        args += ["--ticket", ticket] if ticket else []
-        return runner(*args, *(["--verdict", self.verdict] if verdict else []), env=self.env)
-
-    def posted(self, **kwargs):
-        (Path(self.fixtures) / "calls.log").unlink(missing_ok=True)
-        result = self.review(**kwargs)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        writes = self.writes()
-        self.assertEqual(len(writes), 1, writes)
-        return writes[0]["body"]["body"]
-
+class QaReview(GhFixture):
     # What the comment says, per state. The first line is the marker and the second the heading,
     # always: that is how a reader and the next run find it.
 
@@ -323,7 +270,7 @@ class QaReview(unittest.TestCase):
         env = clean_env(dict(self.env, GITHUB_ACTION_PATH=str(action_path), GH_TOKEN="x", VV_REPO="acme/site",
                              VV_PR="7", VV_HEAD=HEAD, VV_RUN=RUN, VV_CRITERIA=self.criteria, VV_VERDICT=self.verdict,
                              VV_TICKET="", VV_EXPLORE="success", VV_GATES="failure", VV_NOT_REQUIRED="", VV_CARRIED="",
-                             VV_RUN_ID="42"))
+                             VV_RUN_ID="42", VV_MANIFEST=".vibe-verifier-qae"))
         result = subprocess.run(["bash", "-e", "-c", script], capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         body = self.writes()[0]["body"]["body"]
@@ -331,7 +278,8 @@ class QaReview(unittest.TestCase):
         self.assertIn("- AC2, explorer says FAIL: The menu opens\n", body)
         for wired in ("${{ github.event.pull_request.head.sha }}", "${{ inputs.not-required }}", "${{ inputs.gates-outcome }}",
                       "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-                      "VV_RUN_ID: ${{ github.run_id }}", '--run-id "$VV_RUN_ID"'):
+                      "VV_RUN_ID: ${{ github.run_id }}", '--run-id "$VV_RUN_ID"',
+                      "VV_MANIFEST: ${{ inputs.manifest }}", '--manifest "$VV_MANIFEST"'):
             self.assertIn(wired, text)
 
 

@@ -23,6 +23,7 @@ The QAE harness: an explorer walks a pull request's acceptance criteria (and, op
 - source: `gates/qae_artifacts.py`
 - source: `gates/_acceptance.py`
 - source: `gates/_features.py`
+- source: `gates/_verify_edits.py`
 - source: `tools/qae-browser/**`
 - source: `tools/codex/**`
 
@@ -63,6 +64,9 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_qa_review.py::test_changes_needed_lists_each_criterion_as_the_explorer_judged_it`
 - `tests/test_qa_review.py::test_a_usage_limit_tells_the_driver_to_walk_by_hand`
 - `tests/test_qa_review.py::test_any_other_explore_failure_keeps_the_plain_body`
+- `tests/test_verify_edits.py::test_unchanged_edited_and_added_features_in_the_features_and_gate_logs`
+- `tests/test_verify_edits.py::test_each_re_walked_row_says_whether_the_pull_request_changed_its_verify_section`
+- `tests/test_verify_edits.py::test_a_walk_that_passes_passes_whatever_the_pull_request_did_to_the_steps`
 - `tests/test_usage.py::test_a_failed_run_annotates_its_last_error_for_the_qa_review`
 - `tests/test_qae_annotations.py::test_a_reference_the_workflow_did_not_supply_is_the_operators_to_supply`
 - `tests/test_qae_annotations.py::test_a_pass_missing_a_role_is_refused`

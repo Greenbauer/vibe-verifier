@@ -29,6 +29,8 @@ history, no outcomes), and a feature file the base has selects by its base Surfa
 request cannot narrow its own re-walk by editing the map. A feature whose file declares
 `re-walk: none -- <why>` is never selected, and takes no place under the cap; that declaration too is
 read from the base's copy when the base has the feature.
+The steps that judge a re-walk are the pull request's own, so a selected feature whose Verify section it
+changed carries a note saying so (gates/_verify_edits.py), which `describe` prints.
 
 `missing_map` judges a head with no feature file, for the drift gate and the re-walk alike, from the
 commits alone: the branch predates a map the base has since gained, which is no fault of the branch,
@@ -65,6 +67,7 @@ class Feature:
         self.anchors = []    # (Anchor, line)
         self.steps = []      # (step number as written, line): numbered browser steps under Verify
         self.no_rewalk = None  # why no browser can walk it, when Verify declares `re-walk: none -- <why>`
+        self.verify = []     # every non-blank line of Verify as written, for gates/_verify_edits.py
         self.malformed = []  # (line, message)
 
 
@@ -95,6 +98,8 @@ def read_surface(feature, number, line):
 
 
 def read_verify(feature, number, line):
+    if line.strip():
+        feature.verify.append(line.rstrip())
     step = STEP.match(line)
     if step:
         feature.steps.append((step.group("n"), line))
@@ -224,6 +229,7 @@ class Selection(NamedTuple):
     shared: list    # [(changed path, [ids of the features whose globs match it])], not counted
     predates: Predates = None  # set when the branch predates the map: it has no feature to select
     unwalkable: tuple = ()  # [(feature id, why, [changed paths it owns])]: touched, but declared `re-walk: none`
+    edits: tuple = ()  # [(feature id, note)]: a selected feature whose Verify section the pull request changed
 
 
 def select(head, base, changed, cap, shared_over):
@@ -297,7 +303,20 @@ def selection(repo, args, base_ref=None):
             raise
         base_commit = None
     base = base_map(repo, args.features, base_commit) if base_commit else {}
-    return select(head, base, changed, args.max_features, args.shared_over), {feature.id: feature for feature in head}
+    chosen = with_edits(repo, args.features, select(head, base, changed, args.max_features, args.shared_over), base_commit)
+    return chosen, {feature.id: feature for feature in head}
+
+
+def with_edits(repo, directory, chosen, base_commit):
+    """`chosen` with the notes for its selected features whose Verify section the pull request changed; none
+    without a base to compare with. A note only informs, so git failing to read one is noted, never exit 2."""
+    from _verify_edits import verify_edits  # it imports this module, for the parser
+    try:
+        edits = verify_edits(repo, directory, [fid for fid, _ in chosen.selected], base_commit) if base_commit else {}
+    except CannotRun as error:
+        edits = {fid: "whether this pull request changed its Verify section could not be read: %s" % error
+                 for fid, _ in chosen.selected}
+    return chosen._replace(edits=tuple(sorted(edits.items())))
 
 
 def describe(chosen):
@@ -307,7 +326,9 @@ def describe(chosen):
     if chosen.predates:
         why = chosen.predates
         return ["not re-walked: %s. Features are re-walked once the branch takes %s" % (why.why(), why.base)]
-    lines = ["re-walk: %s (%s)" % (fid, owns(paths)) for fid, paths in chosen.selected]
+    edits = dict(chosen.edits)
+    lines = ["re-walk: %s (%s)%s" % (fid, owns(paths), edits.get(fid) and "; " + edits[fid] or "")
+             for fid, paths in chosen.selected]
     lines += ["shared, not counted: %s (listed by %d features)" % (path, len(ids)) for path, ids in chosen.shared]
     lines += ["over the cap, not re-walked: %s (%s)" % (fid, owns(paths)) for fid, paths in chosen.dropped]
     lines += ["no browser can walk it, not re-walked: %s (%s): %s" % (fid, owns(paths), why)
