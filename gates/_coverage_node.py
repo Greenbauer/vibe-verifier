@@ -44,16 +44,13 @@ from _contract import CannotRun, git, matches
 from _coverage_runs import ADVICE, ENV, NOT_SOURCE, Coverage, Red, repository_path, time_left
 from _local_guard import Guard
 from _regression_frameworks import JS
-from _regression_node import env_files, plan
+from _regression_node import env_files, literal, plan
 from _tools import run_tool
 
 # The first Node with --test-coverage-exclude, which the gate sets so that Node 24's default (leaving out every file named
 # like a default test file, test-*.mjs say) cannot hide a source file; node_modules stays out as before.
 MINIMUM = (22, 5)
 EXCLUDE = "--test-coverage-exclude=**/node_modules/**"
-# Node 22 and later read a --test path with a glob character as a glob, so a Next.js route such as `app/[id]/a.test.ts`
-# matched nothing: each such character is given as a class that holds only it, which matches the file.
-GLOB = re.compile(r"[][*?]")
 REPORTER = r"""// vibe-verifier's coverage-not-lost reporter (gates/_coverage_node.py): each test that passed or failed, and the
 // coverage report Node sends when the tests are done, as JSON lines.
 import { relative } from "node:path";
@@ -80,11 +77,6 @@ export default async function* report(source) {
   }
 }
 """
-
-
-def literal(path):
-    """`path` as a --test argument that selects exactly that file."""
-    return GLOB.sub(lambda found: "[%s]" % found.group(0), path)
 
 
 def node_version():
