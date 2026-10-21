@@ -356,7 +356,7 @@ kinds, the columns, failure handling, and that a redirect never carries a key to
   test** (the repositories' CI jobs) and **AI QA** (the QA explorer against a preview; each slot has
   its own Codex login, and the line under it gives the at-most count). **Waiting-job slots** hold
   jobs that only wait, such as for a preview to deploy; they are cheap and not one of the runner
-  slots. Each kind is a titled group with a one-line note. A row is one runner: `Build 3`, `QA 2` or `Wait 1`
+  slots. Each kind is a group under its title, with no description line. A row is one runner: `Build 3`, `QA 2` or `Wait 1`
   (each kind numbers its own slots; hovering says which service it is: "Service ci@3 on the runner
   machine", the lane's `<lane>-ci@3`), its state (`Running`; `Kept warm`; or `Idle, no job` with how long it
   has been up), the job (linked when the host or GitHub gave a link), the repository and, when the job

@@ -47,6 +47,9 @@ test("each item lands in one column, waiting items with their reason", () => {
     item("merged", "done", "merged")] }] });
   const columns = Object.fromEntries(content.find("work-column").map(column => [column.attrs["aria-label"], column.text]));
   assert.deepStrictEqual(Object.keys(columns), ["To do", "In progress", "Waiting on you", "Done"]);
+  // A column title is its name and count alone, with no sentence describing the column.
+  assert.deepStrictEqual(content.find("work-column-title").map(title => title.text.trim()),
+    ["To do (1)", "In progress (1)", "Waiting on you (1)", "Done (1)"]);
   assert.match(columns["To do"], /QUEUED/);
   assert.match(columns["In progress"], /BUILDING.*claimed by dev@example\.test/s);
   assert.match(columns["Waiting on you"], /BLOCKED.*Blocked: waiting on a key/s);

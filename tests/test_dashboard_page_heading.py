@@ -64,6 +64,13 @@ console.log(JSON.stringify({quiet:heading('Pull requests',null,controls),
         self.assertIn("flex: 1 1 0", rule('  .section-heading .toolbar input[type="search"]', phone))
         self.assertIn("flex: 1 1 100%", rule("  .section-heading .toolbar-group", phone))
         self.assertIn("flex: 1 1 0; min-width: 0", rule("  .toolbar-group select", phone))
+    def test_the_bot_usage_panels_have_no_sentence_describing_them(self):
+        app = (ROOT / "dashboard/static/app.js").read_text()
+        # Each panel opens with its title, then its content: no muted paragraph right after the title.
+        for title in ("Recent bot failures", "Token burn pattern"):
+            start = app.index('el("h2", {}, "%s")' % title)
+            following = app[start:app.index("\n", start)] + app[app.index("\n", start):app.index("\n", start) + 120]
+            self.assertNotRegex(following, r'el\("p", \{ class: "muted" \}, "[A-Z]', title)
 
 if __name__ == "__main__":
     unittest.main()
