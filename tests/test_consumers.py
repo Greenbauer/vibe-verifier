@@ -130,6 +130,27 @@ class Consumers(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("stub: drift", result.stdout)
 
+    def test_a_stub_and_a_review_copy_with_the_names_from_before_docs_check_names_are_not_drift(self):
+        # A consumer renames its checks on its own schedule (docs/check-names.md), and apply-down skips a drifted stub.
+        stub = stub_pinned_to(self.new)
+        review = CATALOG_PIN.sub(r"\g<1>%s # main 2026-09-22" % self.new, (ROOT / "harnesses" / "review" / "review.yml").read_text())
+        for new, old in (("name: Standards\n", "name: Vibe Verifier\n"), ("    name: Gates\n", "    name: vibe-verifier-ok\n"),
+                         ('    name: "Code review: model run"\n', "    name: review\n"),
+                         ("    name: Code review\n", "    name: review-verify\n")):
+            self.assertEqual(stub.count(new) + review.count(new), 1, new)
+            stub, review = stub.replace(new, old), review.replace(new, old)
+        self.consumer("acme/app", stub=stub, workflows={"review.yml": review})
+        result = self.check("--repo", "acme/app")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("stub: ok", result.stdout)
+        self.assertIn("review.yml current", result.stdout)
+        self.assertNotIn("drifts", result.stdout)
+        # Only those names: any other is still drift.
+        self.consumer("acme/app", stub=stub.replace("vibe-verifier-ok\n", "gates-ok\n"), workflows={})
+        result = self.check("--repo", "acme/app")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("stub: drift", result.stdout)
+
     def test_a_stub_that_differs_only_in_its_runs_on_value_is_not_drift(self):
         # Each job's runner is the consumer's choice: a label, or a flow list of labels.
         for runner in ("example-lane", "[self-hosted, example-lane]", "[self-hosted]  # the consumer's own runners"):

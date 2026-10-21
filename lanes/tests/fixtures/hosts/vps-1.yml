@@ -38,9 +38,9 @@ dashboards:
         - orbit-labs/ci
         - orbit-labs/web
       bots:
-        reviewer: {workflow: review.yml, jobs: [review]}
-        explorer: {workflow: qae.yml, jobs: [qae-explore]}
-        verifier: {workflow: qae.yml, jobs: [qae-verify]}
+        reviewer: {workflow: review.yml, jobs: ["Code review: model run", review]}
+        explorer: {workflow: qae.yml, jobs: ["Acceptance criteria: walk", qae-explore]}
+        verifier: {workflow: qae.yml, jobs: [Acceptance criteria, qae-verify]}
       proxy_origin: https://vps-1.example.ts.net:8444
       agents:
         - {id: ci-qae, name: QAE, role: qae, workflow_role: explorer}

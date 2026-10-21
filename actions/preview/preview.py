@@ -26,7 +26,7 @@ for the git branch, and a lookup by name once took the one the preview never rea
 the preview at its database knows which one it is, so --database records it beside the address: a
 second status, context `preview-database`, its link `https://<ref>.supabase.co`.
 
-    find --repo <owner/name> --sha <commit> --check <name> [--wait-minutes 40] [--running-minutes N]
+    find --repo <owner/name> --sha <commit> --check <names> [--wait-minutes 40] [--running-minutes N]
 
 waits for the check named --check (the job that records) to pass on the commit, then prints the
 newest recorded address, and on a second line the newest recorded database's project ref when one
@@ -38,7 +38,9 @@ job of a repository shares its token's hourly request budget, and several checks
 was not skipped decides: a label event can add a newer skipped run while the real one runs, and a
 commit can collect many skipped runs, so every page of runs is read. Because the check records
 before it can pass, a passed check with no address is a broken recorder, not a wait: it fails at
-once, naming the check.
+once, naming the check. --check may name the check several ways, one name per line (a check being
+renamed, docs/check-names.md): the runs of every name on the commit are judged together, as one
+check's, and every message names each of them.
 
 Exit 0: recorded, or the address printed. Exit 1: there is no preview to give (the check failed,
 was cancelled or timed out, has only skipped runs for three minutes, ran past --running-minutes,
@@ -59,6 +61,9 @@ import time
 
 CONTEXT = "preview"
 DATABASE_CONTEXT = "preview-database"
+# The names docs/check-names.md gives them, read beside the old so the record step can move to them later.
+ADDRESS_CONTEXTS = (CONTEXT, "Preview / Address")
+DATABASE_CONTEXTS = (DATABASE_CONTEXT, "Preview / Database address")
 # A Supabase project ref: 20 lower-case letters. Its API address is https://<ref>.supabase.co.
 DATABASE_REF = re.compile(r"^[a-z]{20}$")
 DATABASE_URL = re.compile(r"^https://([a-z]{20})\.supabase\.co$")
@@ -85,10 +90,13 @@ class Reader:
     def __init__(self):
         self.failed = 0
 
-    def read(self, args):
+    def read(self, args, settles=True):
+        """The answer, or None for a failed read. A read that `settles` resets the count when it
+        answers; one poll of several reads resets it itself, once every read of the poll answered."""
         result = subprocess.run(["gh", "api", *args], capture_output=True, text=True)
         if result.returncode == 0:
-            self.failed = 0
+            if settles:
+                self.failed = 0
             return result.stdout
         self.failed += 1
         sys.stderr.write("gh api %s failed (%d in a row): %s\n" % (args[0], self.failed, result.stderr.strip()))
@@ -108,17 +116,17 @@ def newest_run(lines):
     return "only skipped" if runs else "none"
 
 
-def newest_link(lines, context):
-    """The link of the newest status of `context`, from one `context<TAB>created_at<TAB>target_url`
+def newest_link(lines, contexts):
+    """The link of the newest status named any of `contexts`, from one `context<TAB>created_at<TAB>target_url`
     line each, or ""."""
     rows = [line.split("\t") for line in lines.splitlines() if line.strip()]
-    rows = [row[1:] for row in rows if len(row) == 3 and row[0] == context and row[2]]
+    rows = [row[1:] for row in rows if len(row) == 3 and row[0] in contexts and row[2]]
     return max(rows)[1] if rows else ""
 
 
 def newest_database(lines):
     """The project ref of the newest `preview-database` status, or "" when none was recorded."""
-    match = DATABASE_URL.match(newest_link(lines, DATABASE_CONTEXT))
+    match = DATABASE_URL.match(newest_link(lines, DATABASE_CONTEXTS))
     return match.group(1) if match else ""
 
 
@@ -151,12 +159,16 @@ def record(args):
 def read_verdict(args, reader, answered):
     """(verdict, answered): the check's verdict on this poll, "unread" when GitHub did not answer,
     and the last verdict GitHub did answer, which a failed read leaves as it was."""
-    lines = reader.read(["repos/%s/commits/%s/check-runs" % (args.repo, args.sha), "--paginate",
-                         "--method", "GET", "-f", "check_name=" + args.check, "-f", "per_page=100",
-                         "--jq", '.check_runs[] | "\\(.started_at // "")\\t\\(.status)\\t\\(.conclusion)"'])
-    if lines is None:
+    lines = [reader.read(["repos/%s/commits/%s/check-runs" % (args.repo, args.sha), "--paginate",
+                          "--method", "GET", "-f", "check_name=" + name, "-f", "per_page=100",
+                          "--jq", '.check_runs[] | "\\(.started_at // "")\\t\\(.status)\\t\\(.conclusion)"'],
+                         settles=False)
+             for name in args.checks]
+    if None in lines:
         return "unread", answered
-    verdict = newest_run(lines)
+    # A poll with one name always unreadable never reads as an answer, so its failures add up.
+    reader.failed = 0
+    verdict = newest_run("\n".join(lines))
     return verdict, verdict
 
 
@@ -175,9 +187,9 @@ def wait_for_check(args, reader):
     # The polls a kind of verdict may be seen before the wait fails, and what it then says.
     budgets = {
         "only skipped": (max(1, -(-SKIPPED_SECONDS // args.poll_seconds)) - 1,
-                         '"%s" has only skipped runs on %s: no preview. Re-run once the preview has synced.'),
+                         '%s has only skipped runs on %s: no preview. Re-run once the preview has synced.'),
         "in_progress": (running_minutes * 60 // args.poll_seconds,
-                        '"%%s" ran for %d minutes on %%s without passing' % running_minutes),
+                        '%%s ran for %d minutes on %%s without passing' % running_minutes),
     }
     seen = dict.fromkeys(budgets, 0)
     verdict = answered = "none"
@@ -186,16 +198,16 @@ def wait_for_check(args, reader):
         if verdict == "completed success":
             return
         if verdict in ("completed failure", "completed cancelled", "completed timed_out"):
-            fail('"%s" ended in %s, so %s has no preview' % (args.check, verdict.split()[1], args.sha))
+            fail('%s ended in %s, so %s has no preview' % (args.named, verdict.split()[1], args.sha))
         kind = verdict.split()[0] if verdict.startswith("in_progress") else verdict
         if kind in seen:
             seen[kind] += 1
             if seen[kind] > budgets[kind][0]:
-                fail(budgets[kind][1] % (args.check, args.sha))
+                fail(budgets[kind][1] % (args.named, args.sha))
         time.sleep(args.interval)
-    fail('"%s" did not pass for %s within %d minutes; it ran for about %d of them, and was queued for a '
+    fail('%s did not pass for %s within %d minutes; it ran for about %d of them, and was queued for a '
          "runner or not yet created the rest (last seen: %s)"
-         % (args.check, args.sha, args.wait_minutes, seen["in_progress"] * args.poll_seconds // 60, verdict),
+         % (args.named, args.sha, args.wait_minutes, seen["in_progress"] * args.poll_seconds // 60, verdict),
          code=wait_ended_code(answered))
 
 
@@ -206,17 +218,17 @@ def find(args):
         lines = None
         while lines is None:
             lines = reader.read(["repos/%s/commits/%s/statuses" % (args.repo, args.sha), "--paginate",
-                                 "--jq", '.[] | select(.context == "%s" or .context == "%s") | "\\(.context)\\t\\(.created_at)\\t\\(.target_url // "")"'
-                                 % (CONTEXT, DATABASE_CONTEXT)])
+                                 "--jq", '.[] | select(.context | IN(%s)) | "\\(.context)\\t\\(.created_at)\\t\\(.target_url // "")"'
+                                 % ", ".join(json.dumps(name) for name in ADDRESS_CONTEXTS + DATABASE_CONTEXTS)])
             if lines is None:
                 time.sleep(args.interval)
     except Unreadable as error:
         fail("gh api %s failed %d times in a row (gh's own error is above each), so the preview of %s "
              "was not found. Re-run this job." % (error, FAILED_READS_ALLOWED, args.sha), code=2)
-    address = newest_link(lines, CONTEXT)
+    address = newest_link(lines, ADDRESS_CONTEXTS)
     if not address:
-        fail('"%s" passed on %s but recorded no `%s` status: its job needs the catalog\'s preview record '
-             "step (actions/preview/README.md). Re-running this job will not help." % (args.check, args.sha, CONTEXT))
+        fail('%s passed on %s but recorded no `%s` status: its job needs the catalog\'s preview record '
+             "step (actions/preview/README.md). Re-running this job will not help." % (args.named, args.sha, CONTEXT))
     print(address)
     database = newest_database(lines)
     if database:
@@ -234,12 +246,15 @@ def main():
         command.add_argument("--interval", type=float, help="seconds actually slept between polls (default: --poll-seconds)")
     commands.choices["record"].add_argument("--url", required=True)
     commands.choices["record"].add_argument("--database", default="", help="the Supabase project ref the preview reads")
-    commands.choices["find"].add_argument("--check", required=True)
+    commands.choices["find"].add_argument("--check", required=True, help="the check's name; several, one per line")
     commands.choices["find"].add_argument("--wait-minutes", type=int, default=40)
     commands.choices["find"].add_argument("--running-minutes", type=int, default=0)
     args = parser.parse_args()
     if args.interval is None:
         args.interval = args.poll_seconds
+    if args.command == "find":
+        args.checks = [name.strip() for name in args.check.splitlines() if name.strip()]
+        args.named = " or ".join('"%s"' % name for name in args.checks)
     record(args) if args.command == "record" else find(args)
 
 

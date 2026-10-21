@@ -1,4 +1,4 @@
-name: Keep the Codex login fresh
+name: Maintenance
 
 # Vibe Verifier QAE harness, Codex lane: copy to .github/workflows/qae-codex-keepalive.yml and pin
 # the action to the commit you subscribe to. Codex refreshes a ChatGPT-managed login in place once
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   keep-fresh:
-    name: codex-keepalive
+    name: Explorer login
     runs-on: [self-hosted, qae-codex]   # CONSUMER: the same runner the explorer uses
     timeout-minutes: 10
     steps:

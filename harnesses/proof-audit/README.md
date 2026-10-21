@@ -39,7 +39,8 @@ It judges proof only: not code style, not naming, and nothing the plan's wording
 ## The shape
 
 Three steps, all from [`actions/proof-audit`](../../actions/proof-audit/action.yml), in the consumer's
-QAE workflow so its required `qae-verify` check carries the verdict:
+QAE workflow so its required `Acceptance criteria` check (`qae-verify` in a copy made before the
+[check names](../../docs/check-names.md)) carries the verdict:
 
 1. **plan** (`mode: plan`), in the criteria job, on any runner: reads the body's `Ticket:` lines and the
    linked sections at the merge base (ticket-coverage's grammar and parser), and cuts the requirement
@@ -99,7 +100,7 @@ A job of its own, on the runner with the Codex login:
 
 ```yaml
   proof-audit:
-    name: qae-proof-audit
+    name: "Acceptance criteria: proof audit"
     needs: criteria
     if: needs.criteria.outputs.proof-count != '0'
     strategy:

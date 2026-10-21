@@ -1,4 +1,4 @@
-name: CI
+name: Code
 
 # Tests every gate and the runner (on a pull request, also reporting any failed test that affected-test
 # selection would have left out), then runs this repository's own manifest through the composite action,
@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   test:
-    name: test
+    name: Tests and gates
     runs-on: ubuntu-latest
     # Above everything that can run here: the suite (about 9 minutes) and the limits of the gates that run it
     # again (changed-code-mutation 900 seconds, regression-test-fails-on-base 600, coverage-not-lost 300), so a
@@ -130,7 +130,7 @@ jobs:
   # report shows here before a consumer pins it. Then the chromium it installed has to start, and the
   # harness's two page hooks have to work in the playwright-mcp it installed.
   qae-browser:
-    name: qae-browser
+    name: QA browser tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -185,7 +185,7 @@ jobs:
   # `required` makes a runner with no Docker a failure, so a skip never reads as a pass. The pull step and the tests'
   # durations, with the gate's own timing lines in the stack test's output, are what the docs quote as the cost.
   regression-browser:
-    name: regression-browser
+    name: Regression browser tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -210,7 +210,7 @@ jobs:
   # ubuntu-latest: it is the release the kit's machines run, and the pinned PyYAML has wheels for
   # its python3 (none newer than CPython 3.13).
   lanes:
-    name: lanes
+    name: Lane kit tests
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -227,7 +227,7 @@ jobs:
           PATH="$RUNNER_TEMP/lanes-venv/bin:$PATH" lanes/tests/run-all.sh
 
   lanes-listener:
-    name: lanes-listener
+    name: Lane listener tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

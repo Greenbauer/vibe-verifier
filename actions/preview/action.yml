@@ -8,7 +8,7 @@ inputs:
     description: To record, the Supabase project ref of the database the preview reads (its branch database), as the job that pointed the preview at it knows it. Empty (the default) records the address alone.
     default: ""
   check:
-    description: To find, the name of the check whose job records the address. The step waits for it to pass on the commit.
+    description: To find, the name of the check whose job records the address. The step waits for it to pass on the commit. While the check is being renamed, its names one per line; their runs are judged together as one check's.
     default: ""
   sha:
     description: The commit whose preview it is. Defaults to the pull request's head.
@@ -58,7 +58,7 @@ runs:
           python3 "$GITHUB_ACTION_PATH/preview.py" record --repo "$REPO" --sha "$SHA" --url "$RECORD" --database "${DATABASE:-}"
           printf 'url=\ndatabase=\n' >> "$GITHUB_OUTPUT"
         else
-          [ -n "$CHECK" ] || { echo "::error::to find a preview, name the check that records it (check:)"; exit 1; }
+          [ -n "${CHECK//[[:space:]]/}" ] || { echo "::error::to find a preview, name the check that records it (check:)"; exit 1; }
           # The finder prints the address (and on a second line the database, when one was recorded) on
           # success and its ::error:: line on failure, both on stdout; a failure's line is printed again
           # here so the workflow shows it.

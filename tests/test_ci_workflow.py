@@ -1,7 +1,8 @@
 """This repository's own workflows: ci.yml's step that lists the tests the full unittest run failed, for the
 affected-test selection report, run under bash the way CI runs it, on a real unittest log; this suite run
 inside a gate, as regression-test-fails-on-base and coverage-not-lost run it; and nightly.yml, which runs
-coverage-not-lost on the whole suite once a night: its shape, and the step that picks the commit to compare from."""
+coverage-not-lost on the whole suite once a night: its shape, and the step that picks the commit to compare from;
+and the names their checks show (docs/check-names.md)."""
 import os
 import re
 import shlex

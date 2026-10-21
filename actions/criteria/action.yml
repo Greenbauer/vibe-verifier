@@ -74,7 +74,8 @@ outputs:
       The explore job's matrix, a JSON array with one value per explorer: `[""]` for one, `["",2,3]` for
       three (never more than `max-shards`). The first value is blank and stands for 1 (`matrix.shard || 1`):
       GitHub names a matrix job `<name> (<value>)` and leaves a blank value out, so the first explorer keeps
-      the job's own name, and a required check or a dashboard that names `qae-explore` still finds it.
+      the job's own name, and a required check or a dashboard that names it (`Acceptance criteria: walk`,
+      or `qae-explore` in a copy made before docs/check-names.md) still finds it.
     value: ${{ steps.read.outputs.shards }}
 runs:
   using: composite

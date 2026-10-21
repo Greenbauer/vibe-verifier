@@ -155,7 +155,7 @@ test("no idle line while a check is open or required and unreported, before any 
   const finished = at => [done("unit", "success", at(0), at(10))];
   assert.strictEqual(idle(at => ({ checks: [...finished(at), { name: "e2e", category: "pending", status: "in_progress", started_at: at(5) }] })), null);
   assert.strictEqual(idle(at => ({ checks: [...finished(at), { name: "lint", category: "pending", status: "queued" }] })), null);
-  assert.strictEqual(idle(at => ({ checks: finished(at), expected: [{ name: "qae-verify", category: "pending", status: "expected" }] })), null);
+  assert.strictEqual(idle(at => ({ checks: finished(at), expected: [{ name: "Acceptance criteria", category: "pending", status: "expected" }] })), null);
   assert.strictEqual(idle(() => ({ checks: [{ name: "unit", category: "failed", status: "completed" }] })), null);
   assert.strictEqual(idle(at => ({ checks: finished(at), head_changed: true })), null);
   assert.notStrictEqual(idle(at => ({ checks: finished(at) })), null);

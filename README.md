@@ -123,7 +123,7 @@ Results distinguish gates that **passed**, **found violations**, and **could not
 
 Copy [`consumer/vibe-verifier.yml`](consumer/vibe-verifier.yml) to the consumer repository as `.github/workflows/vibe-verifier.yml`. Replace the all-zero placeholder on its last line with the full commit SHA from `git rev-parse HEAD` in the Vibe Verifier clone.
 
-Commit the workflow and `.vibe-verifier` together, then make `vibe-verifier-ok` a required check when it should block merging.
+Commit the workflow and `.vibe-verifier` together, then make `Gates` a required check when it should block merging. The check shows as `Standards / Gates`; a stub copied before the catalog adopted its [check names](docs/check-names.md) names it `vibe-verifier-ok`. Every check the catalog's workflows and harnesses add is named by that standard: a stage as the workflow, what the check proves as the job.
 
 For organization-level enforcement without a mutable workflow in each consumer repository, use [wrapper workflows](docs/GATE-CONTRACT.md#wrappers).
 
@@ -279,6 +279,7 @@ For multiple projects, see [subscribing in CI](docs/GATE-CONTRACT.md#subscribing
 - [Threat model](docs/threat-model.md): untrusted inputs, mitigations, and residual risks.
 - [Gate contract](docs/GATE-CONTRACT.md): gate interface, manifests, base-policy behavior, CI subscription, wrappers, and extension rules.
 - [Feature maps](docs/feature-map.md): one file per user-facing feature, kept true by the `feature-map` gate.
+- [Check names](docs/check-names.md): how every check is named (`Stage / What it proves`), and how to rename a repository's checks without blocking a merge.
 - [Suite scope](docs/suite-scope.md): skipping a slow suite for a pull request whose diff it cannot see, from one inert list, with every doubt running it.
 - [Review harness](harnesses/review/README.md): revision-bound AI review and workflow receipts.
 - [QAE harness](harnesses/qae/README.md): browser exploration, artifacts, and deterministic acceptance verdicts.

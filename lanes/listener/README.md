@@ -233,8 +233,8 @@ listener/build.sh test   # gofmt -l, go vet ./..., go test ./...
 
 Both run in the pinned `golang:1.26.3-bookworm` image (by digest, in `build.sh` only) with
 `GOTOOLCHAIN=local` and `CGO_ENABLED=0`, so the host needs Docker and nothing else, and needs
-network access to the Go module proxy. The `lanes-listener` job in the catalog's
-`.github/workflows/ci.yml` runs `build.sh test`. With a local Go toolchain of 1.26.3 or newer (or
+network access to the Go module proxy. The `Lane listener tests` check (job `lanes-listener`) in the
+catalog's `.github/workflows/ci.yml` runs `build.sh test`. With a local Go toolchain of 1.26.3 or newer (or
 `GOTOOLCHAIN=auto`), `go test ./...` and `go vet ./...` in this directory run the same checks.
 
 The tests cover the plan's rules (`plan_test.go`), the run dir and its `jobs.json` history

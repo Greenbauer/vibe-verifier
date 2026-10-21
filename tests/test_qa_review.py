@@ -151,6 +151,10 @@ class QaReview(GhFixture):
         self.explorers(("qae-explore", "failure", [self.CODEX_LIMIT]), ("qae / qae-explore (2)", "failure", [self.CODEX_LIMIT]))
         body = self.posted(explore="failure", gates="failure", verdict=False)
         self.assertEqual(body.splitlines()[1], "## QA review: could not run, model usage limit \u26a0\ufe0f")
+        # The names docs/check-names.md gave the explore jobs read alike.
+        self.explorers(("Acceptance criteria: walk", "failure", [self.CODEX_LIMIT]),
+                       ("qa / Acceptance criteria: walk (2)", "failure", [self.CODEX_LIMIT]))
+        self.assertIn("model usage limit", self.posted(explore="failure", gates="", verdict=False).splitlines()[1])
         self.assertIn("(it resets Oct 13th, 2026 9:00 AM)", body)
         self.explorers(("qae-explore", "failure", ["You've reached your Fable limit. Switch to another model."]))
         self.assertIn("(its message names no reset time)", self.posted(explore="failure", gates="", verdict=False))
@@ -165,6 +169,7 @@ class QaReview(GhFixture):
                                                        ("qae-explore (2)", "failure", ["site did not answer"])],
             "no failed explore job in the latest attempt": [("qae-explore", "success", [self.CLAUDE_LIMIT])],
             "a limit printed by another job": [("qae-verify", "failure", [self.CLAUDE_LIMIT])],
+            "the verify job, named as now": [("Acceptance criteria", "failure", [self.CLAUDE_LIMIT])],
         }
         for why, jobs in cases.items():
             self.explorers(*jobs)

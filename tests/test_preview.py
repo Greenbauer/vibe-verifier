@@ -21,7 +21,8 @@ REPO, SHA = "acme/app", "a" * 40
 # "fail_reads" fails that many reads first, "fail_calls" the reads at those call numbers (from 0);
 # "refuse_writes" fails every write. Writes go to $FAKE/writes, one JSON line each, and every call's
 # argv to $FAKE/argv. A check-runs read that does not page through every run, or does not filter by
-# the check's name, is refused like a broken call, so no test passes on a read that would miss runs.
+# one of the check's names ("checks", default sync-preview-branch), is refused like a broken call, so
+# no test passes on a read that would miss runs. "runs_of" answers a name with one fixed list of runs.
 FAKE_GH = '''#!/usr/bin/env python3
 import json, os, sys
 root, argv = os.environ["FAKE"], sys.argv[1:]
@@ -43,18 +44,22 @@ if calls < state.get("fail_reads", 0) or calls in state.get("fail_calls", []):
     sys.exit(1)
 endpoint = argv[1]
 if endpoint.endswith("/check-runs"):
-    if "--paginate" not in argv or "check_name=sync-preview-branch" not in argv:
+    name = next((a[11:] for a in argv if a.startswith("check_name=")), None)
+    if "--paginate" not in argv or name not in state.get("checks", ["sync-preview-branch"]):
         sys.stderr.write("unpaged or unfiltered check-runs read\\n")
         sys.exit(9)
     reads = os.path.join(root, "run-reads")
     n = int(open(reads).read()) if os.path.exists(reads) else 0
     open(reads, "w").write(str(n + 1))
-    for run in state["runs"][min(n, len(state["runs"]) - 1)]:
+    for run in state.get("runs_of", {}).get(name) or state["runs"][min(n, len(state["runs"]) - 1)]:
         print("\\t".join(run))
 elif endpoint.endswith("/statuses"):
-    for status in state.get("statuses", []):
-        if status["context"] in ("preview", "preview-database"):
-            print("%s\\t%s\\t%s" % (status["context"], status["created_at"], status.get("target_url") or ""))
+    # The engine's own --jq filter runs on the statuses, as gh would run it.
+    import subprocess
+    jq = subprocess.run(["jq", "-r", argv[argv.index("--jq") + 1]], input=json.dumps(state.get("statuses", [])),
+                        capture_output=True, text=True)
+    sys.stdout.write(jq.stdout)
+    sys.exit(jq.returncode)
 '''
 
 PASSED = [["2026-10-12T15:00:00Z", "completed", "success"]]
@@ -62,7 +67,9 @@ ADDRESS = {"context": "preview", "created_at": "2026-10-12T15:01:00Z", "target_u
 DATABASE = "abcdefghijklmnopqrst"
 
 
-class Preview(unittest.TestCase):
+class Harness:
+    """The fake gh, the engine and the action's own step, for a TestCase."""
+
     def setUp(self):
         self.fake = Path(tempfile.mkdtemp())
         bin_dir = self.fake / "bin"
@@ -89,6 +96,19 @@ class Preview(unittest.TestCase):
     def run_reads(self):
         return int((self.fake / "run-reads").read_text())
 
+    def action_step(self, **inputs):
+        """Run the action's one step as GitHub would, with these inputs as its env."""
+        script = re.search(r"      run: \|\n(.*)", ACTION.read_text(), re.S).group(1)
+        script = "\n".join(line[8:] for line in script.splitlines())
+        output = self.fake / "output"
+        output.write_text("")
+        env = dict(self.env, GITHUB_ACTION_PATH=str(ACTION.parent), GITHUB_OUTPUT=str(output),
+                   SHA=SHA, REPO=REPO, WAIT_MINUTES="1", RECORD="", CHECK="", HANDOVER="false")
+        env.update(inputs)
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env), output.read_text()
+
+
+class Preview(Harness, unittest.TestCase):
     def test_record_writes_a_preview_status_on_the_commit(self):
         self.serve(runs=[[]])
         result = self.run_engine("record", "--url", "https://app-git-x.vercel.app/")
@@ -300,74 +320,6 @@ class Preview(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("check-runs failed 6 times in a row", result.stdout)
 
-    def action_step(self, **inputs):
-        """Run the action's one step as GitHub would, with these inputs as its env."""
-        script = re.search(r"      run: \|\n(.*)", ACTION.read_text(), re.S).group(1)
-        script = "\n".join(line[8:] for line in script.splitlines())
-        output = self.fake / "output"
-        output.write_text("")
-        env = dict(self.env, GITHUB_ACTION_PATH=str(ACTION.parent), GITHUB_OUTPUT=str(output),
-                   SHA=SHA, REPO=REPO, WAIT_MINUTES="1", RECORD="", CHECK="", HANDOVER="false")
-        env.update(inputs)
-        return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env), output.read_text()
-
-    def test_the_action_outputs_the_address_it_found(self):
-        self.serve(runs=[PASSED], statuses=[{"context": "preview", "created_at": "2026-10-12T15:01:00Z", "target_url": "https://p.vercel.app"}])
-        result, output = self.action_step(CHECK="sync-preview-branch")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(output, "url=https://p.vercel.app\ndatabase=\n")
-
-    def test_the_action_outputs_the_database_recorded_with_the_address(self):
-        self.serve(runs=[PASSED], statuses=[ADDRESS, {"context": "preview-database", "created_at": "2026-10-12T15:00:30Z",
-                                                      "target_url": "https://%s.supabase.co" % DATABASE}])
-        result, output = self.action_step(CHECK="sync-preview-branch")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(output, "url=https://p.vercel.app\ndatabase=%s\n" % DATABASE)
-        self.assertIn("reading database %s" % DATABASE, result.stdout)
-
-    def test_the_action_shows_why_a_find_failed(self):
-        self.serve(runs=[[["2026-10-12T15:00:00Z", "completed", "failure"]]])
-        result, output = self.action_step(CHECK="sync-preview-branch")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn('::error::"sync-preview-branch" ended in failure', result.stdout)
-        self.assertEqual(output, "")
-
-    def test_a_handover_passes_with_no_address_when_the_check_is_still_running(self):
-        self.serve(runs=[[["2026-10-12T15:00:00Z", "in_progress", "null"]]])
-        result, output = self.action_step(CHECK="sync-preview-branch", HANDOVER="true")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('::notice::"sync-preview-branch" did not pass', result.stdout)
-        self.assertNotIn("::error::", result.stdout)
-        self.assertEqual(output, "url=\ndatabase=\n")
-
-    def test_without_a_handover_a_check_still_running_fails(self):
-        self.serve(runs=[[["2026-10-12T15:00:00Z", "in_progress", "null"]]])
-        result, output = self.action_step(CHECK="sync-preview-branch")
-        self.assertEqual(result.returncode, 3)
-        self.assertIn('::error::"sync-preview-branch" did not pass', result.stdout)
-        self.assertEqual(output, "")
-
-    def test_a_handover_still_fails_a_check_that_failed_or_never_ran(self):
-        for runs, said in (([[["2026-10-12T15:00:00Z", "completed", "failure"]]], "ended in failure"), ([[]], "did not pass")):
-            with self.subTest(said):
-                self.serve(runs=runs)
-                result, output = self.action_step(CHECK="sync-preview-branch", HANDOVER="true")
-                self.assertEqual(result.returncode, 1)
-                self.assertIn("::error::", result.stdout)
-                self.assertIn(said, result.stdout)
-                self.assertEqual(output, "")
-
-    def test_the_action_records_when_given_an_address(self):
-        self.serve(runs=[[]])
-        result, _ = self.action_step(RECORD="https://p.vercel.app")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(self.writes()[0][2]["target_url"], "https://p.vercel.app")
-
-    def test_the_action_records_the_database_when_given_one(self):
-        self.serve(runs=[[]])
-        result, _ = self.action_step(RECORD="https://p.vercel.app", DATABASE=DATABASE)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual([w[2]["context"] for w in self.writes()], ["preview-database", "preview"])
 
 
 if __name__ == "__main__":

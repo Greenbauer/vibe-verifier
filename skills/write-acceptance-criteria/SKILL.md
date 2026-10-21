@@ -1,6 +1,6 @@
 ---
 name: write-acceptance-criteria
-description: Write a pull request's `## Acceptance criteria` so Vibe Verifier's QAE can check them on the preview, check them before pushing, and re-run QAE after editing them. Use when opening a pull request, editing its description, or when the QAE check (qae-verify, qae-explore, acceptance-verdict) fails.
+description: Write a pull request's `## Acceptance criteria` so Vibe Verifier's QAE can check them on the preview, check them before pushing, and re-run QAE after editing them. Use when opening a pull request, editing its description, or when the QAE check (Acceptance criteria and its walk jobs, or qae-verify and qae-explore in an older copy, acceptance-verdict) fails.
 ---
 
 # Write acceptance criteria QAE can check

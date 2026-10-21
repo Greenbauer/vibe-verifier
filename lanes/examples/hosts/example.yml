@@ -72,9 +72,11 @@ dashboards:
       owner: Greenbauer
       repositories: all
       bots:
-        reviewer: {workflow: review.yml, jobs: [review]}
-        explorer: {workflow: qae-explore.yml, jobs: [qae-explore]}
-        verifier: {workflow: qae-explore.yml, jobs: [qae-verify]}
+        # Each job's name and the one docs/check-names.md replaced: matching is exact, and copies
+        # made before the rename still run under the old one.
+        reviewer: {workflow: review.yml, jobs: ["Code review: model run", review]}
+        explorer: {workflow: qae-explore.yml, jobs: ["Acceptance criteria: walk", qae-explore]}
+        verifier: {workflow: qae-explore.yml, jobs: [Acceptance criteria, qae-verify]}
       proxy_origin: https://worker-1.example.ts.net:8443
       agents:
         - {id: ci-qae, name: QAE, role: qae, workflow_role: explorer}
@@ -89,9 +91,9 @@ dashboards:
         - acme/webapp
         - acme/docs
       bots:
-        reviewer: {workflow: review.yml, jobs: [review]}
-        explorer: {workflow: qae.yml, jobs: [qae-explore]}
-        verifier: {workflow: qae.yml, jobs: [qae-verify]}
+        reviewer: {workflow: review.yml, jobs: ["Code review: model run", review]}
+        explorer: {workflow: qae.yml, jobs: ["Acceptance criteria: walk", qae-explore]}
+        verifier: {workflow: qae.yml, jobs: [Acceptance criteria, qae-verify]}
       proxy_origin: https://worker-1.example.ts.net:8444
       agents:
         - {id: ci-qae, name: QAE, role: qae, workflow_role: explorer}

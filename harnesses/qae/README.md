@@ -11,7 +11,10 @@ and a second site rendered from a WordPress API on the runner (since 2026-09-21;
 
 ## The shape
 
-Three jobs on every pull request, in the consumer's own workflow. [`explore.yml`](explore.yml) is
+Three jobs on every pull request, in the consumer's own workflow, `QA`. Their checks are
+`Acceptance criteria: read`, `Acceptance criteria: walk` and `Acceptance criteria`, the one a branch
+rule requires ([check names](../../docs/check-names.md); a copy made before them names the jobs
+`qae-criteria`, `qae-explore` and `qae-verify`). [`explore.yml`](explore.yml) is
 the template; the consumer owns each job's `runs-on` and how the site is built and started (or which
 [reachable preview](#a-reachable-preview-instead-of-a-site-on-the-runner) is used instead), and that
 step declares the site's URL as its `url` output. For a site behind a login, it writes
@@ -387,8 +390,8 @@ step's `manifest: .vibe-verifier-qae`, as well as the manifest line. The gate gr
 
 `ticket-coverage` checks that each ID's `[proof:]` claim exists, never that the test proves the
 requirement. The [proof audit](../proof-audit/README.md) does: a model grades every ID from the code
-alone, and its gate, which checks every quote, runs in this verify job, so `qae-verify` fails on an
-unproven requirement. Its three steps go in this workflow (the criteria job plans, a job per shard
+alone, and its gate, which checks every quote, runs in this verify job, so `Acceptance criteria` fails
+on an unproven requirement. Its three steps go in this workflow (the criteria job plans, a job per shard
 grades on the Codex runner, the verify job checks).
 
 Tag each requirement list item before the ticket section's first subheading with `[req: P1-4]` or
@@ -605,11 +608,12 @@ before the run, which any explorer may open (keep a criterion that changes one i
 criterion that reads it). The chain is code, so criteria that name each other are never split,
 whatever the model does.
 
-**Names.** The first explorer's job is `qae-explore`, as it always was, and the others are
-`qae-explore (2)`, `qae-explore (3)`, ... The matrix's first value is blank for that: GitHub names a
-matrix job `<name> (<value>)` and leaves a blank value out, and shows a name that is an expression
-unevaluated when the job is skipped (both measured, 2026-10-08). So a branch rule or a dashboard
-that names `qae-explore` finds it on every pull request, split or not.
+**Names.** The first explorer's job is `Acceptance criteria: walk` (`qae-explore` in a copy made
+before the check names), and the others are `Acceptance criteria: walk (2)`, `(3)`, ... The matrix's
+first value is blank for that: GitHub names a matrix job `<name> (<value>)` and leaves a blank value
+out, and shows a name that is an expression unevaluated when the job is skipped (both measured,
+2026-10-08). So a branch rule or a dashboard that names the first explorer's job finds it on every
+pull request, split or not.
 
 **What a consumer must do.**
 
@@ -626,11 +630,13 @@ that names `qae-explore` finds it on every pull request, split or not.
   login it creates gets the explorer's number in its name (`matrix.shard || 1` is available to the
   step), or two explorers sign each other out or collide on one account. A site it starts on a
   runner that shares its machine's ports with other runners needs a port per explorer.
-- **Require `qae-verify`.** The extra explorers' checks exist only on a large pull request, so no
+- **Require `Acceptance criteria`** (`qae-verify` in an older copy). The extra explorers' checks
+  exist only on a large pull request, so no
   branch rule can name them. On a split run the verify job fails unless every explorer's job
   succeeded, after its gates have run.
 - **Tell the dashboard.** A [dashboard](../../docs/dashboard.md) that lists the explorer's job names
-  lists the extra ones too (`qae-explore (2)`, ...), or it does not see those jobs. Each explorer's
+  lists the extra ones too (`Acceptance criteria: walk (2)`, ...), or it does not see those jobs, and
+  while copies of both names run, both. Each explorer's
   usage artifact is read by its own name ([`docs/USAGE-CONTRACT.md`](../../docs/USAGE-CONTRACT.md)).
 
 A consumer's copy made before the split keeps working after a pin bump: `actions/criteria` and
@@ -838,8 +844,9 @@ until the reset, in place of waiting on it (operator directive, 2026-10-12):
 
 The checks stay red throughout: the review posts no verdict, and a hand walk is evidence for the
 reviewer, never a pass. The fact is structural, never the explorer's prose: `qa-review` lists the
-run's latest jobs, and when every failed `qae-explore` job (each explorer of a split run, and
-`<caller> / qae-explore` in a reusable workflow) carries a failure annotation with the limit message,
+run's latest jobs, and when every failed explore job (`Acceptance criteria: walk`, or `qae-explore` in
+an older copy: each explorer of a split run, and `<caller> / <name>` in a reusable workflow) carries a
+failure annotation with the limit message,
 it is a usage limit. The Claude lane's pinned action fails with "Claude Code returned an error
 result: You've hit your limit · resets 9am (UTC)" and writes no execution log in that case (measured
 on Greenbauer/zack.land run 38286901786: the explorer's usage record says `no_artifact`), so the
@@ -872,7 +879,7 @@ records the address it proved and the site step reads it with the
         id: preview
         uses: Greenbauer/vibe-verifier/actions/preview@0000000000000000000000000000000000000000 # CONSUMER: pin
         with:
-          check: sync-preview-branch   # CONSUMER: the check whose job records the address
+          check: Database   # CONSUMER: the job name of the check that records (shown as Preview / Database)
       - name: Declare the preview under test   # CONSUMER
         id: site
         env:
@@ -1036,7 +1043,8 @@ page, a frame, a locator or an element handle, and `keyboard.type` and `keyboard
 that is exactly a name becomes its value; text that only holds one is typed as written. The names
 are the `secrets` of the same `--config` file, so a name means one thing in every tool. The hook
 wraps classes of the pinned build and stops a tab from opening when one of those methods is gone,
-and the catalog's `qae-browser` CI job signs in through it in the real browser, with the hook and
+and the catalog's `QA browser tests` CI check (job `qae-browser`) signs in through it in the real
+browser, with the hook and
 without it. Three ways stay open, because none is a text-entry call: a script that sets the field
 inside the page (`browser_evaluate`), the name pressed one key at a time (`browser_press_key`), and
 text dropped onto the page (`browser_drop`).
@@ -1107,7 +1115,8 @@ criterion that expects a refusal there still declares it (`expected-refusal: 400
 - **A pull request with nothing to check says so.** The harness runs on every pull request, and the
   verify job runs whatever the jobs before it did (`if: always()`). The explore job is skipped when
   there is no criterion, and GitHub counts a skipped required check as satisfied, so never require
-  `qae-explore` without `qae-verify`: the verify job fails when the criteria job did not finish. So a change
+  `Acceptance criteria: walk` without `Acceptance criteria`: the verify job fails when the criteria
+  job did not finish. So a change
   with no rendered surface declares it, one criterion reading `- None: <why>`, or changes only paths
   no site serves ([above](#which-pull-requests-need-a-check)). The harness then builds nothing,
   starts no explorer and runs no gate (both gates pass on a `- None:` declaration anyway), and the
