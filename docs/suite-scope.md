@@ -92,7 +92,7 @@ jobs:
           list: .github/suite-inert   # CONSUMER: your list
 
   browser-suite:
-    name: E2E tests
+    name: "E2E tests: run"   # the status it posts, Preview / E2E tests, carries the verdict
     needs: scope
     # Runs unless the decision is exactly `true`. `!cancelled()` keeps a deciding job that failed
     # from skipping the suite: without a status function GitHub skips a job whose needed job failed.

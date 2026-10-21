@@ -39,7 +39,9 @@ Checks posted by an app keep the app's name and are out of scope: `Vercel`, `Ver
 
 ## Names
 
-Old names are the job name or status context as it was. A repository job that matches none of these rows is
+Old names are the job name or status context as it was. A row with several old names lists the names different
+repositories give the same check; one repository has one of them. A repository that has two is folded into one
+check, or each keeps a name of its own by the rules. A repository job that matches none of these rows is
 named by the rules above and listed in the applying pull request. A job's new name is shown as the list
 shows it, `Workflow / Job`; its check's own name (rule 1) is the part after `Workflow / `. A status's new
 name is its whole context.
