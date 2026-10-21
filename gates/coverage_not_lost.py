@@ -122,11 +122,12 @@ class Diff:
 
 def lost_lines(base, head, diff):
     """{(path at HEAD, line at HEAD): (path, line) at the merge base} for each line that ran at the merge base, that
-    the pull request did not change, and that does not run at HEAD. A file HEAD's run did not measure ran none."""
+    the pull request did not change, and that does not run at HEAD. A file HEAD's run did not measure ran none,
+    unless HEAD ran it as a test (a node:test file a widened script selects)."""
     found = {}
     for path, lines in base.lines.items():
         target = diff.head_path(path)
-        if target is None:
+        if target is None or target in head.tests:
             continue
         at_head = head.lines.get(target)
         for number, ran in lines.items():
@@ -147,7 +148,7 @@ def union(runs):
         for path, names in run.contexts.items():
             for number, tests in names.items():
                 contexts.setdefault(path, {}).setdefault(number, set()).update(tests)
-    return Coverage(lines, any(run.tested for run in runs), contexts)
+    return Coverage(lines, any(run.tested for run in runs), contexts, set().union(*(run.tests for run in runs)))
 
 
 def project_of(repo, project):

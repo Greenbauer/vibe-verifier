@@ -12,7 +12,7 @@ after the project's (the project's own coverage, reporter, isolation, sharding a
 The reporter is a module of the gate's (REPORTER) that writes, as JSON lines, each test that passed or failed and the
 coverage report Node sends it when the tests are done (the `test:coverage` event): every line of every file the run
 loaded, with how many times it ran. A line counts as run when its count is above 0; a blank line, and every line of a
-file the side runs with `node --test` (test code, as regression-test-fails-on-base reads it), never counts.
+file either side runs with `node --test` (test code, as regression-test-fails-on-base reads it), never counts.
 
 Node's test runner points NODE_V8_COVERAGE at a directory of its own before it starts the test files, and merges every
 coverage file written there, so a Node process a test starts and a worker thread are measured too: Node's
@@ -141,10 +141,10 @@ class NodeTest:
                     merged = lines.setdefault(path, {})
                     for number, hit in numbers.items():
                         merged[number] = merged.get(number, False) or hit
-        for _, chosen in groups:  # test code
-            for path in chosen:
-                lines.pop(path, None)
-        return Coverage(lines, tested)
+        tests = [path for _, chosen in groups for path in chosen]
+        for path in tests:  # test code
+            lines.pop(path, None)
+        return Coverage(lines, tested, tests=tests)
 
     def run_files(self, tree, how, paths, what, guard, env, deadline, budget):
         """({path: {line: ran}}, whether any test ran) of one guarded `node --test` command over `paths`, run as `how` says."""

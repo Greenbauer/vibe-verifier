@@ -51,6 +51,7 @@ Every run of the suite is guarded ([the rules](../GATE-CONTRACT.md#test-runs-rea
 - `tests/test_coverage_node.py::test_a_credential_in_any_scripts_assignments_stops_the_run_before_any_test_starts`
 - `tests/test_coverage_node.py::test_a_file_an_env_file_option_of_args_loads_is_checked_too`
 - `tests/test_coverage_node.py::test_a_file_a_loader_compiles_is_measured_at_its_own_lines`
+- `tests/test_coverage_node_scripts.py::test_a_helper_a_widened_script_runs_as_a_test_is_not_lost`
 - `tests/test_coverage_node.py::test_without_source_maps_a_compiled_file_is_measured_at_the_wrong_lines`
 - `tests/test_coverage_checkouts.py::test_each_side_gets_the_working_copys_ignored_files_and_dependencies_and_is_removed_after`
 - `tests/test_local_guard_runs.py::test_a_run_that_reaches_only_this_machine_is_judged_as_before`

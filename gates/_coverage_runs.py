@@ -92,10 +92,11 @@ except Exception:  # an interpreter this coverage.py cannot load in (a Python be
 
 
 class Coverage:
-    """One run: {repository path: {line: ran}}, whether any test ran, and (Python) {path: {line: [test names]}}."""
+    """One run: {repository path: {line: ran}}, whether any test ran, (Python) {path: {line: [test names]}}, and
+    (node:test) the files it ran as tests, which never count at the other side either."""
 
-    def __init__(self, lines, tested, contexts=None):
-        self.lines, self.tested, self.contexts = lines, tested, contexts or {}
+    def __init__(self, lines, tested, contexts=None, tests=()):
+        self.lines, self.tested, self.contexts, self.tests = lines, tested, contexts or {}, set(tests)
 
 
 class Red(Exception):

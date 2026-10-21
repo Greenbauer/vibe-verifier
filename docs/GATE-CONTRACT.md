@@ -919,7 +919,7 @@ coverage-not-lost --runner node-test --soak                    # the files packa
   not measure at all ran none of its lines. Test code never counts, as `regression-test-fails-on-base`
   reads it (test and spec files, the Python test names, `conftest.py`, and anything under a `test`,
   `tests`, `__tests__`, `__mocks__`, `__snapshots__` or `__fixtures__` directory, and for node:test every
-  file the side runs with `node --test`), and neither do `*.d.ts`, `*.config.*`, `*.stories.*` and
+  file either side runs with `node --test`), and neither do `*.d.ts`, `*.config.*`, `*.stories.*` and
   `node_modules`. Each finding is reported at its line at the head, consecutive lines as one.
 - **Two runs agree.** Coverage can change from run to run (a test whose path depends on timing or on
   order), and on a 277-pull-request history of a private TypeScript monorepo single runs flagged
