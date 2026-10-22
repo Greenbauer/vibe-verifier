@@ -147,7 +147,8 @@ class Dashboard:
     """One Vibe Verifier dashboard on loopback, fed by one lane of the machine (README.md, "Dashboards").
 
     config is the dashboard's own configuration (Vibe Verifier docs/dashboard.md), less telemetry_file,
-    which is always this machine's published telemetry. The dashboard validates the rest itself.
+    which is always this machine's published telemetry. An inline merge_policy in it is written to
+    merge_policy_file, which dashboard.json then names. The dashboard validates the rest itself.
     """
 
     name: str
@@ -163,6 +164,10 @@ class Dashboard:
     @property
     def telemetry_file(self) -> str:
         return f"/var/lib/vibe-dashboard/{self.name}/telemetry.json"
+
+    @property
+    def merge_policy_file(self) -> str:
+        return f"/etc/vibe-dashboard/{self.name}/merge-policy.json"
 
 
 @dataclass(frozen=True)

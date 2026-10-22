@@ -340,7 +340,7 @@ dashboards:                            # optional: the Vibe Verifier dashboards 
     lane: <lane>                       # one of this machine's lanes: its App mints the read token, its listener feeds the telemetry
     port: <int>                        # the loopback port
     bridge_account: <user>             # optional: the account whose forward carries the HTTPS route to the port
-    config: {version: 1, owner, repositories, bots, proxy_origin, agents, work_sources}   # dashboard.json, less telemetry_file; repositories is a non-empty OWNER/NAME list, or the string all
+    config: {version: 1, owner, repositories, bots, proxy_origin, agents, work_sources, merge_policy}   # dashboard.json, less telemetry_file; repositories is a non-empty OWNER/NAME list, or the string all; merge_policy (optional) is written to merge-policy.json
 ```
 
 `lib/lanes.py` refuses a file that breaks any of these rules, before any script changes anything:
@@ -633,7 +633,12 @@ engine's: the two are clones of the same catalog that move by different rules.
 Per dashboard `<name>`, as the runbook lays out: the account `vibe-dashboard-<name>` (system,
 nologin); `/etc/vibe-dashboard/<name>/` (root, 0755) with `dashboard.json` (the account's, 0600: the
 host file's `config` plus `telemetry_file`), `host.env` (root, 0644: `PORT` and the lane's App id,
-installation and login), `app.pem` (root, 0600: a copy of the lane's App key, re-copied by the next apply
+installation and login), `merge-policy.json` (the account's, 0600: the `config`'s inline `merge_policy`,
+the [merge policy](../docs/features/merge-grant.md) behind the Pull requests view's "Agent mergeable"
+pill, which `dashboard.json` then names as `merge_policy_file`; checked by the catalog's policy loader
+before it replaces the live one, written before `dashboard.json`, a change restarting that dashboard,
+and removed once the host file no longer declares it, unless the config names a `merge_policy_file` of
+its own), `app.pem` (root, 0600: a copy of the lane's App key, re-copied by the next apply
 after the key changes) and `collector.json` (root, 0600: the collector's local mode on the lane's
 `/etc/<lane>/listener.json`, with `workspace_path` the lane's state directory `/var/lib/<lane>`,
 which holds its slot and store images, and `codex_home` the lane's first Codex store, or

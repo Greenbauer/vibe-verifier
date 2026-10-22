@@ -168,6 +168,15 @@ def load_config(path, uid=None):
     if "refuse" in json.load(open(path)):
         raise ValueError("refused")
 PY
+  mkdir -p "$S/fx/vv/gates"
+  cat > "$S/fx/vv/gates/_merge_grant.py" <<'PY'
+import json, os
+def load_policy(path):
+    with open(os.environ["ST"] + "/policy-loader", "a") as log:
+        log.write("%s\n" % path)
+    if "refuse" in json.load(open(path)):
+        raise ValueError("refused")
+PY
   printf 'dashboard-forward 992\n' > "$S/st/users"
   : > "$S/st/owners"
   CALLLOG="$S/calls.log"; : > "$CALLLOG"
@@ -274,6 +283,60 @@ printf 'a rotated acme key\n' > "$S/keys/acme-ci.pem"; : > "$CALLLOG"
 out="$(run_dash --apply 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && cmp -s "$S/keys/acme-ci.pem" "$S/etc/acme/app.pem" && [ "$(owner_mode "$S/etc/acme/app.pem")" = "root 600" ] && ! grep -q "restart vibe-dashboard@acme" "$CALLLOG"
 expect $? "a rotated lane key is copied again, root-only, for the token timer's next run"
+# ---- a merge policy: written beside dashboard.json, which names it; removed when no longer declared ----
+python3 - "$S/config/hosts/example.yml" <<'PY'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+open(path, "w").write(text.replace("      owner: Greenbauer\n", "      owner: Greenbauer\n      merge_policy: {version: 1, extends: default, grants: [{name: whitelist, repos: [Greenbauer/vibe-verifier]}]}\n", 1))
+PY
+pol="$S/etc/greenbauer/merge-policy.json"; : > "$CALLLOG"
+out="$(run_dash 2>&1)"; [ ! -e "$pol" ] && grep -q "DRY-RUN: write $pol (vibe-dashboard-greenbauer:vibe-dashboard-greenbauer 0600)" <<< "$out"
+expect $? "a dry-run plans a new merge policy's write and writes nothing"
+out="$(run_dash --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(cat "$pol")" = "$(render dashboard-merge-policy greenbauer)" ] && [ "$(owner_mode "$pol")" = "vibe-dashboard-greenbauer 600" ]   && [ "$(jq -r .grants[0].repos[0] "$pol")" = Greenbauer/vibe-verifier ] && [ "$(jq -r .merge_policy_file "$cfg")" = /etc/vibe-dashboard/greenbauer/merge-policy.json ]   && [ "$(jq 'has("merge_policy")' "$cfg")" = false ] && grep -qx "systemctl restart vibe-dashboard@greenbauer.service" "$CALLLOG" && [ ! -e "$S/etc/acme/merge-policy.json" ]
+expect $? "a declared merge policy is written, the account's, 0600, before the dashboard.json that names it, and that dashboard restarts"
+grep -q "^$pol\.[A-Za-z0-9]*$" "$S/st/policy-loader" && before "wrote $pol" "wrote $cfg"
+expect $? "the catalog's policy loader checked a draft, and the policy went live before the dashboard.json that names it"
+out="$(run_dash --check 2>&1)"; grep -qx "merge_policy=$pol ok" <<< "$out"; expect $? "--check reads the merge policy against the host file"
+: > "$CALLLOG"; rm -f "$S/st/policy-loader"
+out="$(run_dash --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ! grep -q "systemctl restart" "$CALLLOG" && [ ! -e "$S/st/policy-loader" ]; expect $? "an unchanged policy writes, checks and restarts nothing"
+sed -i 's#repos: \[Greenbauer/vibe-verifier\]#repos: [Greenbauer/vibe-verifier, Greenbauer/runners]#' "$S/config/hosts/example.yml"; before_cfg="$(cat "$cfg")"; : > "$CALLLOG"
+out="$(run_dash --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(jq -r '.grants[0].repos[1]' "$pol")" = Greenbauer/runners ] && [ "$(cat "$cfg")" = "$before_cfg" ] && grep -qx "systemctl restart vibe-dashboard@greenbauer.service" "$CALLLOG"
+expect $? "a policy-only change rewrites the policy alone, and restarts that dashboard"
+sed -i 's#merge_policy: {version: 1,#merge_policy: {version: 1, refuse: true,#' "$S/config/hosts/example.yml"; before_pol="$(cat "$pol")"; : > "$CALLLOG"
+out="$(run_dash --apply 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "the dashboard's own loader refused the new $pol; the old file stays" <<< "$out" && [ "$(cat "$pol")" = "$before_pol" ] && ! grep -q "systemctl restart" "$CALLLOG"
+expect $? "a policy the catalog's loader refuses never replaces the live one, and nothing restarts"
+sed -i 's#merge_policy: {version: 1, refuse: true,#merge_policy: {version: 1,#' "$S/config/hosts/example.yml"
+out="$(run_dash --check 2>&1)"; grep -qx "merge_policy=$pol ok" <<< "$out"; expect $? "after the refusal the live policy still matches the host file"
+printf '{}\n' > "$pol"
+out="$(run_dash --check 2>&1)"; rc=$?; [ "$rc" -ne 0 ] && grep -q "merge_policy=$pol DRIFTED" <<< "$out"; expect $? "--check fails on a policy that drifted from the host file"
+render dashboard-merge-policy greenbauer > "$pol"; sed -i "\#^$pol #d" "$S/st/owners"; : > "$CALLLOG"
+out="$(run_dash 2>&1)"; [ "$(owner_mode "$pol")" = "root 600" ] && grep -q "DRY-RUN: chown vibe-dashboard-greenbauer:vibe-dashboard-greenbauer $pol" <<< "$out"
+expect $? "a dry-run plans the owner fix of a policy whose content matches but whose owner drifted, and changes nothing"
+out="$(run_dash --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(owner_mode "$pol")" = "vibe-dashboard-greenbauer 600" ] && grep -qx "systemctl restart vibe-dashboard@greenbauer.service" "$CALLLOG"
+expect $? "--apply gives that policy back to the dashboard's account, and restarts it"
+python3 - "$S/config/hosts/example.yml" <<'PY'
+import re, sys
+path = sys.argv[1]
+text = re.sub(r"      merge_policy: .*\n", "", open(path).read())
+open(path, "w").write(text)
+PY
+: > "$CALLLOG"
+out="$(run_dash --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$pol" ] && [ "$(jq 'has("merge_policy_file")' "$cfg")" = false ] && grep -qx "systemctl restart vibe-dashboard@greenbauer.service" "$CALLLOG"
+expect $? "a merge policy taken out of the host file is removed with its dashboard.json line, and that dashboard restarts"
+render dashboard-merge-policy greenbauer > "$pol" 2>/dev/null; printf '{"version": 1, "grants": [{"name": "w"}]}\n' > "$pol"
+out="$(run_dash --check 2>&1)"; rc=$?; [ "$rc" -ne 0 ] && grep -q "merge_policy=$pol is no longer declared" <<< "$out"; expect $? "--check fails on a policy the host file no longer declares"
+out="$(run_dash 2>&1)"; [ -e "$pol" ] && grep -q "DRY-RUN: rm -f $pol" <<< "$out"; expect $? "a dry-run plans that removal and removes nothing"
+sed -i "s#      owner: Greenbauer#      owner: Greenbauer\n      merge_policy_file: $pol#" "$S/config/hosts/example.yml"; : > "$CALLLOG"
+out="$(run_dash --apply 2>&1)"; rc=$?
+[ -e "$pol" ] && ! grep -q "rm -f $pol" <<< "$out"; expect $? "a policy file the config names by hand is never removed"
+sed -i "\#      merge_policy_file: #d" "$S/config/hosts/example.yml"; run_dash --apply >/dev/null 2>&1
 sed -i 's/^      version: 1$/      version: 1\n      refuse: true/' "$S/config/hosts/example.yml"
 before_cfg="$(cat "$cfg")"; : > "$CALLLOG"
 out="$(run_dash --apply 2>&1)"; rc=$?

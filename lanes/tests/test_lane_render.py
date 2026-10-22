@@ -6,7 +6,7 @@ import json
 import lane_fixtures
 from lane_fixtures import DASH, ORG, ROOT, USER, WAIT, check, host_file, without
 from lane_load import load_host
-from lane_render import collector_config, dashboard_config, dashboard_settings, listener_config
+from lane_render import collector_config, dashboard_config, dashboard_merge_policy, dashboard_settings, listener_config
 
 org, user = load_host(host_file(ORG, USER)).lanes
 short = load_host(host_file({**ORG, "warm_max_age_sec": 600})).lanes[0]
@@ -46,6 +46,16 @@ box, own = dhost.dashboards
 check(json.loads(dashboard_config(box)) == {**DASH["config"], "telemetry_file": "/var/lib/vibe-dashboard/box/telemetry.json"}, "dashboard.json is the declared config plus this machine's telemetry file")
 every = load_host(host_file(ORG, top={"dashboards": [{**DASH, "config": {**DASH["config"], "repositories": "all"}}]})).dashboards[0]
 check(json.loads(dashboard_config(every))["repositories"] == "all", "repositories: all is written through as the string")
+POLICY = {"version": 1, "extends": "default", "grants": [{"name": "whitelist", "repos": ["example/alpha"]}]}
+graced = load_host(host_file(ORG, top={"dashboards": [{**DASH, "config": {**DASH["config"], "merge_policy": POLICY}}]})).dashboards[0]
+check(json.loads(dashboard_config(graced)) == {**DASH["config"], "merge_policy_file": "/etc/vibe-dashboard/box/merge-policy.json",
+                                               "telemetry_file": "/var/lib/vibe-dashboard/box/telemetry.json"},
+      "an inline merge_policy leaves dashboard.json, which names the file it is written to instead")
+check(json.loads(dashboard_merge_policy(graced)) == POLICY and dashboard_merge_policy(box) == "",
+      "merge-policy.json is the inline policy as written, and a dashboard without one has none")
+emptied = load_host(host_file(ORG, top={"dashboards": [{**DASH, "config": {**DASH["config"], "merge_policy": None}}]})).dashboards[0]
+check(dashboard_merge_policy(emptied) == "" and "merge_policy_file" not in json.loads(dashboard_config(emptied)),
+      "an empty merge_policy key is no policy: no file is written and dashboard.json names none")
 check(json.loads(collector_config(dhost, box)) == {"version": 1, "owner": "Example", "host": {
     "label": "box-1 box-ci", "listener_config_path": "/etc/box-ci/listener.json", "lane_name": "box-ci",
     "workspace_path": "/var/lib/box-ci", "codex_home": "/var/lib/box-ci/codex"}},

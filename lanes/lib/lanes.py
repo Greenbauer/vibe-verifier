@@ -14,6 +14,8 @@ none of them parses YAML or re-checks a field.
   lanes.py dashboards <host.yml>               the Vibe Verifier dashboard names, one per line
   lanes.py dashboard-env <host.yml> <name>     one dashboard's settings, KEY=value lines
   lanes.py dashboard-config <host.yml> <name>  its dashboard.json
+  lanes.py dashboard-merge-policy <host.yml> <name>
+                                               its merge-policy.json, or nothing when its config has no merge_policy
   lanes.py dashboard-collector <host.yml> <name>
                                                its telemetry collector's local-mode collector.json
 
@@ -29,6 +31,7 @@ from lane_load import load_host
 from lane_render import (
     collector_config,
     dashboard_config,
+    dashboard_merge_policy,
     dashboard_settings,
     host_settings,
     lane_settings,
@@ -49,6 +52,7 @@ COMMANDS = {
     "dashboards": lambda host, args: "".join(f"{dashboard.name}\n" for dashboard in host.dashboards),
     "dashboard-env": lambda host, args: _settings_text(dashboard_settings(host.dashboard(args.dashboard))),
     "dashboard-config": lambda host, args: dashboard_config(host.dashboard(args.dashboard)),
+    "dashboard-merge-policy": lambda host, args: dashboard_merge_policy(host.dashboard(args.dashboard)),
     "dashboard-collector": lambda host, args: collector_config(host, host.dashboard(args.dashboard)),
     "listener-config": lambda host, args: listener_config(host.lane(args.lane), key_file=args.key_file, codex_store=args.codex_store),
 }
@@ -63,7 +67,7 @@ def _parser() -> argparse.ArgumentParser:
         p = sub.add_parser(command)
         p.add_argument("host_yml")
         p.add_argument("lane")
-    for command in ("dashboard-env", "dashboard-config", "dashboard-collector"):
+    for command in ("dashboard-env", "dashboard-config", "dashboard-merge-policy", "dashboard-collector"):
         p = sub.add_parser(command)
         p.add_argument("host_yml")
         p.add_argument("dashboard")
