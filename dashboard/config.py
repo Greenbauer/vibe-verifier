@@ -155,6 +155,8 @@ class Config:
     # True when repositories is the string "all": the set is discovered on each refresh.
     all_repositories: bool = False
     work_sources: tuple[WorkSource, ...] = ()
+    # The merge policy (gates/_merge_grant.py) the "Agent mergeable" pill reads; None shows no pill.
+    merge_policy: dict | None = None
 
 
 def _owned_regular_file(path: Path, uid: int | None, *, may_be_missing: bool = False) -> None:
@@ -253,6 +255,20 @@ def _parse_repositories(repositories: object, owner: str) -> tuple[list[str], bo
     return canonical, False
 
 
+def _parse_merge_policy(value: object, uid: int | None) -> dict | None:
+    """The merge policy named by merge_policy_file: an owned JSON file the catalog's merge-grant reads."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not Path(value).is_absolute():
+        raise ConfigError("merge_policy_file must be an absolute path")
+    from .merge_grant import PolicyError, load_policy
+    _owned_regular_file(Path(value), uid)
+    try:
+        return load_policy(Path(value))
+    except PolicyError as error:
+        raise ConfigError("merge_policy_file: %s" % error) from None
+
+
 def load_config(filename: str | os.PathLike[str], uid: int | None = None) -> Config:
     """Load once at process startup; callers retain the returned frozen value.
 
@@ -265,7 +281,7 @@ def load_config(filename: str | os.PathLike[str], uid: int | None = None) -> Con
     if not isinstance(value, dict):
         raise ConfigError("configuration must be a JSON object")
     _only_keys(value, {"version", "owner", "repositories", "bots", "telemetry_file", "proxy_origin", "agents",
-                            "work_sources"},
+                            "work_sources", "merge_policy_file"},
                "configuration")
     if value.get("version") != 1:
         raise ConfigError("configuration version must be 1")
@@ -282,4 +298,5 @@ def load_config(filename: str | os.PathLike[str], uid: int | None = None) -> Con
         _owned_regular_file(telemetry_path, uid, may_be_missing=True)
     return Config(owner, tuple(canonical), _parse_bots(value.get("bots")), telemetry_path,
                   _parse_proxy_origin(value.get("proxy_origin")), _parse_agents(value.get("agents", [])),
-                  all_repositories, _parse_work_sources(value.get("work_sources", []), owner))
+                  all_repositories, _parse_work_sources(value.get("work_sources", []), owner),
+                  _parse_merge_policy(value.get("merge_policy_file"), uid))

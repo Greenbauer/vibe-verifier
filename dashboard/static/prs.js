@@ -168,6 +168,14 @@
     return mark ? el("span", { class: "behind-mark", title: mark.title, "aria-label": mark.title }, mark.shown) : null;
   }
 
+  // Shown when a grant of the dashboard's merge policy lets an agent merge this head without a human
+  // review (dashboard/merge_grant.py). It says nothing of checks or reviews: that is the green title.
+  function grantBadge(pull) {
+    if (typeof pull.merge_grant !== "string" || !pull.merge_grant || pull.head_changed) return null;
+    const title = `An agent may merge this without a human review, under the ${pull.merge_grant}. Not the same as merge-ready.`;
+    return el("span", { class: "grant-mark", title, "aria-label": title }, "Agent mergeable");
+  }
+
   // A row's title opens the pull request on GitHub; the rest of the row, and the toggle at its end,
   // opens its CI timeline under it.
   // What the list gives a row about its CI timeline: the row's timeline, fit to the row, whether it
@@ -201,12 +209,12 @@
         href ? el("a", { class: "pr-title", href, target: "_blank", rel: "noreferrer",
           "aria-label": opened + (ready ? ". Fully merge-ready" : "") }, pull.title) : pull.title),
       el("small", {}, `#${pull.number} · ${pull.author || "unknown"} · ${pull.head_sha ? pull.head_sha.slice(0, 8) : "head changing"}`),
-      // The bottom line: the age, then how far the head is behind its base, beside it.
+      // The bottom line: the age, how far the head is behind its base, and whether an agent may merge it.
       el("span", { class: "pr-meta" },
         el("span", { class: "pr-age", title: "How long the pull request has been open" },
           el("span", { class: "age-stat" }, el("b", { class: ageClass(pull.created_at, now) }, since(pull.created_at, now)),
             el("small", {}, "old"))),
-        behindBadge(pull))),
+        behindBadge(pull), grantBadge(pull))),
     el("span", { class: "pr-work", title: reason || null }, badge(category), ...workDetail(pull)),
     progress(pull, now, view.timeline),
     el("button", { type: "button", class: "timeline-toggle", "aria-expanded": String(Boolean(view.open)), "aria-controls": view.id,
