@@ -23,6 +23,9 @@ The Pull requests view is `dashboard/static/prs.js`. A pull request row's title 
 request's `html_url` only when it is an HTTPS `github.com` link under the configured owner. Any other
 address leaves the title as text, not a link. A click anywhere else on the row, or on the arrow at
 its end, opens the row's [CI timeline](#ci-timeline) under it; the same click closes it.
+The row's columns always fit the list: below 1080 pixels wide they take smaller minimum widths, so the
+CI column and the arrow stay inside the row at any width down to the phone layout, sidebar beside the
+list or not. `tests/test_dashboard_pr_row_fit.py` adds up the minimums against the room at each width.
 On a phone the row's cells stack, and each packs its lines side by side where they fit: the arrow
 beside the title, the number, author, head, age and behind pill on one wrapping line, the status badge
 left of the check names, and the CI counts, CI time and idle line wrapping together.
