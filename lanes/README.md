@@ -635,8 +635,8 @@ nologin); `/etc/vibe-dashboard/<name>/` (root, 0755) with `dashboard.json` (the 
 host file's `config` plus `telemetry_file`), `host.env` (root, 0644: `PORT` and the lane's App id,
 installation and login), `merge-policy.json` (the account's, 0600: the `config`'s inline `merge_policy`,
 the [merge policy](../docs/features/merge-grant.md) behind the Pull requests view's "Agent mergeable"
-pill, which `dashboard.json` then names as `merge_policy_file`; checked by the catalog's policy loader
-before it replaces the live one, written before `dashboard.json`, a change restarting that dashboard,
+pill, which `dashboard.json` then names as `merge_policy_file`; checked with the new `dashboard.json` by
+the dashboard's own loader before it replaces the live one, written before `dashboard.json`, a change restarting that dashboard,
 and removed once the host file no longer declares it, unless the config names a `merge_policy_file` of
 its own), `app.pem` (root, 0600: a copy of the lane's App key, re-copied by the next apply
 after the key changes) and `collector.json` (root, 0600: the collector's local mode on the lane's
