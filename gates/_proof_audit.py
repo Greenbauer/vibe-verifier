@@ -353,7 +353,7 @@ def cell(text, limit=600):
 
 def table(rows, note=None):
     proven = sum(1 for _, status, _ in rows if status != "UNPROVEN")
-    lines = ["## Proof audit: %s" % (note or "%d of %d requirements proven or excluded" % (proven, len(rows))), ""]
+    lines = ["## Proof audit: %s" % cell(note or "%d of %d requirements proven or excluded" % (proven, len(rows))), ""]
     if rows:
         lines += ["| ID | Verdict | Proof, or what is missing |", "|---|---|---|"]
         lines += ["| %s | %s | %s |" % (rid, status, cell(detail)) for rid, status, detail in rows]

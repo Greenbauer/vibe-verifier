@@ -56,6 +56,16 @@ class TheCheck(unittest.TestCase):
         self.assertEqual(problems(body), [])
 
 
+class Prompts(unittest.TestCase):
+    def test_each_model_whose_text_reaches_a_comment_is_given_the_rules(self):
+        # The reviewer's prompt is held to them in tests/test_review_receipts.py.
+        for path, said in (("harnesses/qae/prompt.md", "your sentences in the pull request's QA review"),
+                           ("harnesses/proof-audit/prompt.md", "`missing` and each case name in the pull request's proof audit")):
+            text = " ".join((ROOT / path).read_text().split())
+            self.assertIn("A person reads %s: plain words, with no em dash, commit hash, run ID, path on this runner, or URL "
+                          "in them." % said, text)
+
+
 class QaReview(GhFixture):
     def explorer_limit(self):
         site = Path(self.fixtures) / "acme" / "site"
@@ -173,6 +183,13 @@ json.dump(comments, open(path, "w"))
             "<!-- review-receipt: %s -- full -- run 7 -->" % ("a" * 40),
             "<!-- review-receipt: %s -- limited -- run 8 -->" % ("b" * 40),
             "<!-- review-receipt: %s -- nochange -- run 9 -->" % ("c" * 40)])
+
+    def test_the_comment_keeps_the_newest_hundred_runs(self):
+        old = ["<!-- review-receipt: %040x -- full -- run %d -->" % (n, n) for n in range(1, 121)]
+        self.comments.write_text(json.dumps([{"id": 1, "user": {"login": "github-actions[bot]"},
+                                              "body": "<!-- vibe-verifier:review-receipt -->\nx\n\n" + "\n".join(old)}]))
+        hidden = [line for line in self.post("c" * 40, "full", 121)[0].splitlines() if line.startswith("<!-- review-receipt: ")]
+        self.assertEqual(hidden, old[-99:] + ["<!-- review-receipt: %s -- full -- run 121 -->" % ("c" * 40)])
 
     def test_every_mode_follows_the_rules(self):
         for mode, said in (("full", "finished on"), ("delta", "finished on"), ("limited", "was skipped on"),

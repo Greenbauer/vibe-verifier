@@ -99,6 +99,13 @@ class ReviewVerify(unittest.TestCase):
         result = self.verify([receipts((HEAD, "full", 2), (OLD, "delta", 3))])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_a_comment_that_only_starts_with_a_receipt_is_never_read(self):
+        # An older QA copy posts the explorer's verdict file as this identity, and a PR body can steer its first line.
+        first_line = dict(comment(HEAD, run=9), body=comment(HEAD, run=9)["body"] + "\n\nacceptance-check: AC1 -- PASS -- x")
+        result = self.verify([comment(OLD, run=1), first_line])
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("newest receipt is for %s" % OLD[:10], result.stdout)
+
     def test_a_receipt_quoted_by_another_comment_of_the_workflow_identity_is_never_read(self):
         # The QA review lists the criteria as the pull request wrote them, so its author can put a receipt there.
         result = self.verify([receipts((OLD, "full", 1)), quoted(HEAD)])

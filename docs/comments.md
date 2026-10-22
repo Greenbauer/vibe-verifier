@@ -24,16 +24,19 @@ coordinates.
 |---|---|---|---|
 | `<!-- vibe-verifier:qa-review -->`, line one | `actions/qa-review` | the next run, to find the comment it edits | a new comment every run |
 | `<!-- vibe-verifier:proof-audit -->`, line one | `actions/proof-audit` | the next run, the same way | a new comment every run |
-| `<!-- vibe-verifier:review-receipt -->`, line one, then one `<!-- review-receipt: <sha> -- <mode> -- run <id> -->` line per run | the review workflow's "Post the receipt" step | its scope step (the last reviewed commit, for a delta review) and its verify job (the receipt for this head, judged by the `review-receipt` gate) | no receipt is found: every head reviews in full and the verify job fails |
+| `<!-- vibe-verifier:review-receipt -->`, line one, then one `<!-- review-receipt: <sha> -- <mode> -- run <id> -->` line per run (the newest hundred) | the review workflow's "Post the receipt" step | its scope step (the last reviewed commit, for a delta review) and its verify job (the receipt for this head, judged by the `review-receipt` gate) | no receipt is found: every head reviews in full and the verify job fails |
 
 Only comments by `github-actions[bot]` that start with their marker are read. A receipt is also read
-from a comment that is one receipt line, which a copy of the review workflow made before the receipt
-comment still posts. Any other comment of that identity can quote text a pull request wrote (the QA
+from a comment that is exactly one receipt line and nothing else, which a copy of the review workflow
+made before the receipt comment still posts. Any other comment of that identity can quote text a pull request wrote (the QA
 review lists the criteria), so a receipt inside one is never read.
 
 ## Enforcement
 
-`tests/test_comments.py` renders every comment the catalog writes (each QA review state, the proof
-audit, each receipt mode) and fails on any rule above that a deterministic check can see. The
-reviewer's inline findings are the one text a model writes; the review prompt carries the rules for
-them.
+`tests/test_comments.py` renders every comment the catalog writes (each QA review state, each proof
+audit state, each receipt mode) and fails on any rule above that a deterministic check can see. Text a
+model writes reaches a pull request in three places, and each model's prompt carries the rules: the
+reviewer's inline findings ([`harnesses/review/prompt.md`](../harnesses/review/prompt.md)), the
+explorer's sentences the QA review quotes for a re-walked feature
+([`harnesses/qae/prompt.md`](../harnesses/qae/prompt.md)), and the grader's `missing` text and case
+names in the proof audit ([`harnesses/proof-audit/prompt.md`](../harnesses/proof-audit/prompt.md)).

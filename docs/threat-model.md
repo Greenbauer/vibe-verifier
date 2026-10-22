@@ -74,7 +74,7 @@ The review gate compares the receipt SHA with the pull-request event's head SHA.
 
 The default QAE checkout is GitHub's pull-request merge revision. Preview consumers choose their own URL-resolution step. The gate validates the declared URL's format and uses it as a string prefix for recorded request checks; it does not attest the deployed commit, require a request to that site, or judge whether an observation proves the criterion. The consumer must establish those connections.
 
-A workflow-issued review receipt records successful execution, a no-change refresh, or a `limited` run in which no review happened, not exhaustive semantic coverage. The review workflow currently collects only the first 100 review threads; unresolved threads beyond that page are outside its count. Comment pagination for receipts and QAE verdicts is separate and covers all returned pages.
+A workflow-issued review receipt records successful execution, a no-change refresh, or a `limited` run in which no review happened, not exhaustive semantic coverage. The review workflow currently collects only the first 100 review threads; unresolved threads beyond that page are outside its count. Comment pagination for receipts is separate and covers all returned pages.
 
 ## Direct-consumer versus wrapper trust
 

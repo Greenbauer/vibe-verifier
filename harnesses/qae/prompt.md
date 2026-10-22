@@ -102,6 +102,8 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
      regression-known: <id> -- <what the base branch's site shows> (qae/features/base/<id>.md::<the step line text, exactly as written after "- ">)
    A feature of which you walked no state gets its regression-skip line and no regression-check
    line. Never write PASS for anything you did not see in the browser.
+   A person reads your sentences in the pull request's QA review: plain words, with no em dash, commit
+   hash, run ID, path on this runner, or URL in them.
    The text after :: starts with "step k:" and must be copied verbatim from the step log line,
    because a gate checks that it is there.
    A criterion that asks for something no browser can show (that a test exists or passes, that an
