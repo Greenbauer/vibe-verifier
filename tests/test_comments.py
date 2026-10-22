@@ -121,6 +121,25 @@ class ProofAudit(unittest.TestCase):
             self.assertEqual(_proof_audit.cell("no login at /home/runner/.codex-qae/auth.json; grades in "
                                                "/home/runner/work/_temp/proof-audit-grades/1.json; see https://example.com/x"),
                              "no login at .codex-qae/auth.json; grades in proof-audit-grades/1.json; see (link in the job log)")
+        # A short root (a container job's home, a self-hosted temp) drops only a path that starts with it.
+        with unittest.mock.patch.dict(os.environ, {"HOME": "/root", "TMPDIR": "/tmp", "RUNNER_TEMP": "", "GITHUB_WORKSPACE": ""}):
+            for kept in ("packages/root/index.ts", "the /api/root/x route", "src/tmp/helper.ts", "/var/home/runner/y",
+                         "`/root2/a`"):
+                self.assertEqual(_proof_audit.cell(kept), kept)
+            self.assertEqual(_proof_audit.cell("no login at /root/.codex-qae/auth.json (`/tmp/x/1.json`)"),
+                             "no login at .codex-qae/auth.json (`x/1.json`)")
+
+    def test_the_grade_job_drops_its_own_folders_from_the_error_it_records(self):
+        # The grade job and the verify job that renders the comment run on different runners.
+        grader = test_proof_audit.Grader(methodName="run_grader")
+        grader.setUp()
+        self.addCleanup(grader.doCleanups)
+        spawned = "Error: spawn %s/.codex/bin/codex ENOENT\n    at onErrorNT (node:internal/child_process:483:16)\n" % Path.home()
+        result = grader.run_grader("--body", str(grader.work / "body.md"), "--grades", str(grader.work / "out"),
+                                   behaviour="crashed", stderr=spawned)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(json.loads((grader.work / "out" / "1.json").read_text())["error"],
+                         "Codex ended with an error: exit 1 (Error: spawn .codex/bin/codex ENOENT)")
 
     def test_every_state_follows_the_rules(self):
         unproven = test_proof_audit.valid()
