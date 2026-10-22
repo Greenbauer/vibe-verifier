@@ -75,6 +75,9 @@ class Grants(unittest.TestCase):
         self.assertEqual(api.calls[1:], ["repos/%s/contents/package.json?ref=b1" % REPO,
                                          "repos/%s/contents/package.json?ref=h1" % REPO])
 
+    def test_an_empty_pull_request_is_a_no_as_the_command_says(self):
+        self.assertIsNone(MergeGrants(DEFAULT).grant(API([]), REPO, current(count=0)))
+
     def test_past_github_3000_file_listing_the_no_lasts(self):
         grants, api = MergeGrants(DEFAULT), API([{"status": "modified", "filename": "docs/%d.md" % n} for n in range(3000)])
         self.assertIsNone(grants.grant(api, REPO, current(count=3001)))

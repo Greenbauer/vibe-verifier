@@ -1,6 +1,6 @@
 # Merge grants
 
-`bin/vibe-verifier merge-grant --repo OWNER/NAME --pr N [--policy FILE]` says whether a merge policy lets an agent merge a pull request without a human review: `eligible: <grant>` (exit 0) or `not eligible: <reason>` (exit 1); exit 2 when the policy is malformed. It judges only what the pull request changes, and for a grant that asks, its repository and title: never its checks, reviews or mergeability, which a merge guard checks on its own. It is a tool, not a gate. A merge guard calls it before letting an agent merge, and the dashboard's "Agent mergeable" pill reads the same decision (`dashboard/merge_grant.py`), so the two agree by construction.
+`bin/vibe-verifier merge-grant --repo OWNER/NAME --pr N [--policy FILE]` says whether a merge policy lets an agent merge a pull request without a human review: `eligible: <grant>` (exit 0) or `not eligible: <reason>` (exit 1); exit 2 when the policy is malformed. It judges only what the pull request changes, and for a grant that asks, its repository and title: never its checks, reviews or mergeability, which a merge guard checks on its own. It is a tool, not a gate. A merge guard calls it before letting an agent merge, and the dashboard's "Agent mergeable" pill reads the same decision (`dashboard/merge_grant.py`), so both apply the same rules (Gotchas lists the one case where the pill hides and the command still reads).
 
 ## Surfaces
 
@@ -68,5 +68,6 @@ From a shell with `gh` signed in: `bin/vibe-verifier merge-grant --repo acme/app
 ## Gotchas
 
 - The base is read at the base branch's current head (the guard's `baseRefOid`, the dashboard's `base.sha`), not at the merge base: a content condition compares the pull request's head with where the base is now.
-- Changed lines come from a line diff in which each line carries the less-indented lines above it (its YAML keys), so a block moved under another job counts as removed and added, and every line under a renamed key counts as changed: stricter than a bare `diff`, never looser.
+- Changed lines come from a line diff in which each line carries the less-indented lines above it (its YAML keys), so a block moved under another job counts as removed and added, and every line under a renamed key counts as changed. Two lines swapped within one block can still read as unchanged, as with any line diff; neither line is new there.
+- The dashboard reads file contents through the contents API, which gives no text for a file over 1 MB: a pull request that changes such a file under `.github/` shows no pill, while the command (which reads raw bytes) may still answer eligible. The pill errs toward hiding.
 - GitHub lists at most 3000 files of a pull request; a longer one is always a no, because the listing is shorter than its count of changed files.

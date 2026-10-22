@@ -50,7 +50,7 @@ class PullRequest:
     def title(self):
         if self._title is None:
             self._title = _gh_ok(self.gh, "its title", "pr", "view", self.number, "--repo", self.repo,
-                                 "--json", "title", "--jq", ".title").strip()
+                                 "--json", "title", "--jq", ".title").rstrip("\n")
         return self._title
 
     def files(self):

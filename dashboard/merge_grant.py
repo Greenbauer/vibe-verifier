@@ -1,8 +1,8 @@
 """Whether an agent may merge a pull request without a human review, by the configured merge policy.
 
 The decision is the catalog's own (gates/_merge_grant.py, the code behind `bin/vibe-verifier
-merge-grant`), the same code a merge guard runs, so the pill and the guard cannot disagree. This module
-only feeds it: the pull request's files and their text at the base and the head, read through the
+merge-grant`), the same code a merge guard runs, so the pill and the guard apply one set of rules
+(a file over 1 MB hides the pill: docs/features/merge-grant.md, Gotchas). This module only feeds it: the pull request's files and their text at the base and the head, read through the
 dashboard's budgeted API, and the answer kept per head, base and title, so a pull request is read once
 per push. Eligibility is not merge-readiness: it says nothing of checks, reviews or conflicts.
 """
@@ -66,6 +66,8 @@ class MergeGrants:
         listed = [(row.get("status"), row.get("previous_filename") or row.get("filename"), row.get("filename"))
                   for row in rows if isinstance(row.get("filename"), str)]
         count = current.get("changed_files")
+        if not listed and count == 0:
+            raise ENGINE.Unreadable("GitHub listed no changed files")      # as the command says of an empty PR
         if len(listed) != count:
             # Past GitHub's 3000-file listing the answer is a lasting no; below it, a short listing is a lag.
             if isinstance(count, int) and count > 3000:
