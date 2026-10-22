@@ -1421,8 +1421,8 @@ on its own line in the pull request's copy of the file ([feature map](feature-ma
 
 The second harness is the review harness in [`harnesses/review/`](../harnesses/review/README.md).
 Its wired gate, `review-receipt`, reads three declared files: the newest
-`review-receipt: <sha> -- <mode> -- run <id>` comment the workflow itself posted for the pull
-request's head (with none for that head, its newest receipt, so the finding names the head that
+`review-receipt: <sha> -- <mode> -- run <id>` line of the receipt comment the workflow itself posted
+([comment rules](comments.md)) for the pull request's head (with none for that head, its newest receipt, so the finding names the head that
 one was for), the pull request's head SHA, and the count of unresolved review threads. The newest
 receipt overall is not the input because a review of an older head can finish, and post, after
 the current head's. It passes only when a receipt

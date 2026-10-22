@@ -9,7 +9,7 @@ name: QA
 #   explore:  builds and starts this PR's site on the runner (or resolves its preview), then an LLM
 #            with a real browser (playwright-mcp) walks the PR's acceptance criteria, writes one step
 #            log per criterion plus screenshots into qae-artifacts/, and a verdict in the
-#            acceptance-check grammar, which it also posts as a comment for people to read.
+#            acceptance-check grammar. It posts nothing: the verify job's QA review is the one comment.
 #   verify:  deterministic. Feeds the PR body, the verdict file from the run's own evidence and the
 #            artifacts to the acceptance-verdict gate, which refuses any PASS not anchored to a step
 #            line that exists.
@@ -351,28 +351,29 @@ jobs:
                  regression-known: <id> -- <what the base branch's site shows> (qae/features/base/<id>.md::<the step line text, exactly as written after "- ">)
                A feature of which you walked no state gets its regression-skip line and no regression-check
                line. Never write PASS for anything you did not see in the browser.
+               A person reads your sentences in the pull request's QA review: plain words, with no em dash, commit
+               hash, run ID, path on this runner, URL or @-mention in them, and every item written out.
                The text after :: starts with "step k:" and must be copied verbatim from the step log line,
                because a gate checks that it is there.
                A criterion that asks for something no browser can show (that a test exists or passes, that an
                email reached an inbox, a log line, a stored value the site never displays) is one you could not
                check: FAIL it, saying "not checkable in a browser" and what it asks for, and never PASS it on
                the strength of a nearby screen.
-            4. Post the verdict as a pull request comment, with exactly this command (no other form is allowed):
-                 gh pr comment ${{ github.event.pull_request.number }} --body-file qae-artifacts/verdict.md
+            4. Do not post anything: the workflow turns qae-artifacts/verdict.md into the pull request's one
+               QA review comment after you finish.
 
             Write only under qae-artifacts/. Do not change any other file.
           claude_args: >-
             --model claude-opus-4-7
             --max-turns ${{ steps.references.outputs.max-turns }}
             --mcp-config '{"mcpServers":{"playwright":{"command":"node","args":["${{ steps.browser.outputs.mcp }}","--browser","chromium","--headless","--isolated","--output-dir","qae-artifacts","--save-session","--viewport-size","1280x800","--init-page","${{ steps.browser.outputs.console-pages }}"]}}}'
-            --allowed-tools "mcp__playwright,Read(qae-inputs/**),Read(qae-artifacts/**),Edit(qae-artifacts/**),Bash(mkdir:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --body-file qae-artifacts/verdict.md)"
+            --allowed-tools "mcp__playwright,Read(qae-inputs/**),Read(qae-artifacts/**),Edit(qae-artifacts/**),Bash(mkdir:*)"
             # Read and Edit rules are the only file rules Claude Code consults (a Write(path) rule is
             # accepted and ignored), and an allow rule anchors at the working directory, so the model
             # can read its inputs and artifacts and write artifacts, and nothing else: not the runner's
             # environment, not the checkout. The PR body it reads is untrusted; without this a body
-            # could ask it to read /proc/self/environ and post the tokens with the allowed gh pr comment.
-            # The comment rule is the exact command, not gh pr comment:*: gh opens --body-file itself, so
-            # the Read rules never see that read, and any other path would post whatever file it names.
+            # could ask it to read /proc/self/environ. It posts nothing: no gh rule at all, so nothing it
+            # reads can reach the pull request except through the verdict file the gates judge.
       - name: Collect numeric usage
         if: always()
         uses: Greenbauer/vibe-verifier/actions/usage@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to

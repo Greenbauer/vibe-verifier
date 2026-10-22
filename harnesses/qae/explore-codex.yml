@@ -11,8 +11,8 @@ name: QA
 #            walk them: one, unless the consumer lets a large pull request be split across more.
 #   explore:  builds and starts this PR's site on the runner (or resolves its preview), then Codex
 #            with a real browser (playwright-mcp) walks the PR's acceptance criteria, writes one step
-#            log per criterion plus screenshots and a verdict into qae-artifacts/, and the workflow
-#            posts that verdict as a comment for people to read.
+#            log per criterion plus screenshots and a verdict into qae-artifacts/. Nothing is posted
+#            from it: the verify job's QA review is the one comment.
 #   verify:  deterministic. Feeds the PR body, the verdict file from the run's own evidence and the
 #            artifacts to the acceptance-verdict gate, which refuses any PASS not anchored to a step
 #            line that exists.
@@ -235,8 +235,7 @@ jobs:
         id: browser
         uses: Greenbauer/vibe-verifier/actions/qae-browser@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
       - name: Write the explorer's prompt
-        # The harness prompt (harnesses/qae/prompt.md) with this pull request filled in. Step 4
-        # differs from the Claude lane: the model posts nothing, the workflow posts the verdict file.
+        # The harness prompt (harnesses/qae/prompt.md) with this pull request filled in.
         # The site's URL comes in through env and replaces SITE_URL after the quoted heredoc is
         # written, so the shell never parses it. The sentence that names this explorer's share of the
         # criteria (empty for one explorer) replaces SHARD_SHARE the same way.
@@ -349,14 +348,16 @@ jobs:
                  regression-known: <id> -- <what the base branch's site shows> (qae/features/base/<id>.md::<the step line text, exactly as written after "- ">)
                A feature of which you walked no state gets its regression-skip line and no regression-check
                line. Never write PASS for anything you did not see in the browser.
+               A person reads your sentences in the pull request's QA review: plain words, with no em dash, commit
+               hash, run ID, path on this runner, URL or @-mention in them, and every item written out.
                The text after :: starts with "step k:" and must be copied verbatim from the step log line,
                because a gate checks that it is there.
                A criterion that asks for something no browser can show (that a test exists or passes, that an
                email reached an inbox, a log line, a stored value the site never displays) is one you could not
                check: FAIL it, saying "not checkable in a browser" and what it asks for, and never PASS it on
                the strength of a nearby screen.
-            4. Do not post anything: this repository's workflow posts qae-artifacts/verdict.md as the pull
-               request comment after you finish.
+            4. Do not post anything: the workflow turns qae-artifacts/verdict.md into the pull request's one
+               QA review comment after you finish.
 
             Write only under qae-artifacts/. Do not change any other file.
           PROMPT
@@ -377,25 +378,6 @@ jobs:
           storage-state: ${{ steps.site.outputs.storage-state }}
           secrets-file: ${{ steps.site.outputs.secrets-file }}
           shard: ${{ matrix.shard }}
-      - name: Post the verdict the explorer wrote
-        # The one comment this job posts, by the workflow, from the one file, for people to read: the
-        # explorer itself never holds the token. The verify job judges the file, not the comment.
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          if [ ! -s qae-artifacts/verdict.md ]; then echo "::error::the explorer wrote no qae-artifacts/verdict.md"; exit 1; fi
-          # GitHub answers the odd request with a 5xx. One of those must not throw a finished exploration
-          # away, so the post is tried five times over about two and a half minutes. A post that landed
-          # although it reported failure leaves a second copy of the comment, and nothing reads either.
-          for attempt in 1 2 3 4 5; do
-            if gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file qae-artifacts/verdict.md; then exit 0; fi
-            echo "::warning::posting the verdict failed (attempt ${attempt} of 5)"
-            if [ "$attempt" != 5 ]; then sleep $((attempt * 15)); fi
-          done
-          echo "::error::the verdict could not be posted after 5 attempts"; exit 1
       - name: Enforce the write scope
         # The prompt says "write only under qae-artifacts/", and a prompt is a suggestion. Anything
         # else that changed on the runner, tracked or untracked, fails the job here so it can never

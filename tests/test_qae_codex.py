@@ -21,27 +21,8 @@ PROMPT = ROOT / "harnesses" / "qae" / "prompt.md"
 ACTION = ROOT / "actions" / "qae-codex" / "action.yml"
 README = ROOT / "harnesses" / "qae" / "README.md"
 
-CLAUDE_STEP_4 = ("4. Post the verdict as a pull request comment, with exactly this command (no other form is allowed):\n"
-                 "     gh pr comment PR_NUMBER --body-file qae-artifacts/verdict.md\n")
-CODEX_STEP_4 = ("4. Do not post anything: this repository's workflow posts qae-artifacts/verdict.md as the pull\n"
-                "   request comment after you finish.\n")
-
-
-def flaky_gh(directory, failures):
-    """A PATH directory whose `gh` fails `failures` times, then succeeds, logging each call, and whose
-    `sleep` returns at once and logs what it was asked to wait."""
-    os.makedirs(directory, exist_ok=True)
-    scripts = {"gh": '#!/bin/sh\necho call >> "%s/calls"\n[ "$(wc -l < "%s/calls")" -gt %d ]\n' % (directory, directory, failures),
-               "sleep": '#!/bin/sh\necho "$1" >> "%s/sleeps"\n' % directory}
-    for name, body in scripts.items():
-        with open(os.path.join(directory, name), "w") as handle:
-            handle.write(body)
-        os.chmod(os.path.join(directory, name), 0o755)
-    return directory
-
-
-def lines(path):
-    return Path(path).read_text().split() if os.path.exists(path) else []
+STEP_4 = ("4. Do not post anything: the workflow turns qae-artifacts/verdict.md into the pull request's one\n"
+          "   QA review comment after you finish.\n")
 
 
 def inlined_prompt():
@@ -74,10 +55,10 @@ def readme_site_step():
 
 
 class Prompt(unittest.TestCase):
-    def test_the_prompt_is_the_harness_prompt_with_step_4_for_a_model_that_holds_no_token(self):
+    def test_the_prompt_is_the_harness_prompt_and_the_model_posts_nothing(self):
+        # docs/comments.md: the verify job's QA review is the one comment; neither lane's model posts.
         expected = PROMPT.read_text()
-        self.assertIn(CLAUDE_STEP_4, expected)
-        expected = expected.replace(CLAUDE_STEP_4, CODEX_STEP_4)
+        self.assertIn(STEP_4, expected)
         expected = (expected.replace("#PR_NUMBER", "#${{ github.event.pull_request.number }}")
                     .replace("REPOSITORY", "${{ github.repository }}"))
         self.assertEqual(inlined_prompt(), expected)
@@ -115,38 +96,13 @@ class Template(unittest.TestCase):
                          x_head[:x_head.index("- name: Write the explorer's prompt")].replace(
                              "runs-on: [self-hosted, qae-codex]   # CONSUMER: a runner that holds the Codex login (harnesses/qae/README.md)\n", "RUNS-ON\n"))
 
-    def test_the_explorer_holds_no_secret_and_the_workflow_posts_the_verdict(self):
+    def test_the_explorer_holds_no_secret_and_nothing_posts_its_verdict(self):
         text = CODEX.read_text()
-        explore = text[text.index("- name: Explore the acceptance criteria in a real browser"):text.index("- name: Post the verdict the explorer wrote")]
+        explore = text[text.index("- name: Explore the acceptance criteria in a real browser"):text.index("- name: Enforce the write scope")]
         self.assertNotIn("secrets.", explore)
         self.assertNotIn("GH_TOKEN", explore)
         self.assertIn("uses: Greenbauer/vibe-verifier/actions/qae-codex@", explore)
-        post = text[text.index("- name: Post the verdict the explorer wrote"):text.index("- name: Enforce the write scope")]
-        self.assertIn('gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file qae-artifacts/verdict.md', post)
-
-    def post_verdict(self, failures, verdict="acceptance-check: AC1 -- PASS -- x (qae/AC1.md::step 1: x)\n"):
-        work = tempfile.mkdtemp(prefix="vv-verdict-")
-        self.addCleanup(shutil.rmtree, work, True)
-        os.makedirs(os.path.join(work, "qae-artifacts"))
-        Path(work, "qae-artifacts", "verdict.md").write_text(verdict)
-        script = run_script(CODEX.read_text(), "- name: Post the verdict the explorer wrote", "- name: Enforce the write scope")
-        result = subprocess.run(["bash", "-c", script], cwd=work, capture_output=True, text=True,
-                                env=clean_env({"PATH": flaky_gh(os.path.join(work, "bin"), failures) + os.pathsep + os.environ["PATH"],
-                                               "GH_TOKEN": "x", "PR_NUMBER": "1", "REPO": "o/r"}))
-        return result, len(lines(os.path.join(work, "bin", "calls"))), lines(os.path.join(work, "bin", "sleeps"))
-
-    def test_one_failed_post_does_not_throw_a_finished_exploration_away(self):
-        result, calls, sleeps = self.post_verdict(1)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual((calls, sleeps), (2, ["15"]))
-
-    def test_a_verdict_that_never_posts_fails_after_five_tries_and_an_empty_one_is_never_posted(self):
-        result, calls, sleeps = self.post_verdict(99)
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual((calls, sleeps), (5, ["15", "30", "45", "60"]))
-        self.assertIn("::error::the verdict could not be posted after 5 attempts", result.stdout)
-        empty, calls, _ = self.post_verdict(0, verdict="")
-        self.assertEqual((empty.returncode, calls), (1, 0))
+        self.assertNotIn("gh pr comment", text)
 
     def test_every_catalog_pin_is_the_placeholder_a_consumer_replaces(self):
         for template, count in ((CODEX, 9), (KEEPALIVE, 1)):
@@ -447,7 +403,7 @@ class StorageState(unittest.TestCase):
 
     def test_the_template_hands_the_site_steps_storage_state_to_the_explorer(self):
         text = CODEX.read_text()
-        explore = text[text.index("- name: Explore the acceptance criteria in a real browser"):text.index("- name: Post the verdict the explorer wrote")]
+        explore = text[text.index("- name: Explore the acceptance criteria in a real browser"):text.index("- name: Enforce the write scope")]
         self.assertIn("          storage-state: ${{ steps.site.outputs.storage-state }}\n", explore)
         self.assertIn("          secrets-file: ${{ steps.site.outputs.secrets-file }}\n", explore)
         self.assertIn("  storage-state:\n", ACTION.read_text())

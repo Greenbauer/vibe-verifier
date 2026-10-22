@@ -137,14 +137,16 @@ runs:
         [ -s "$table" ] || printf '## Proof audit: could not run (the gate wrote no table; its log says why)\n' > "$table"
         cat "$table" >> "$GITHUB_STEP_SUMMARY"
         if [ -n "$GH_TOKEN" ] && [ -n "$VV_PR" ]; then
-          # One comment per pull request, edited in place: the table of the latest run, with the head it judged.
+          # One comment per pull request, edited in place: the table of the latest run, with the head it judged
+          # as a link (docs/comments.md).
           marker='<!-- vibe-verifier:proof-audit -->'
           comment="$RUNNER_TEMP/proof-audit-comment.json"
-          python3 - "$table" "$marker" "${VV_HEAD:0:8}" "$VV_RUN" "$comment" <<'PY'
+          python3 - "$table" "$marker" "$VV_HEAD" "$VV_RUN" "$comment" <<'PY'
         import json, sys
         table, marker, head, run, out = sys.argv[1:]
         text = open(table, encoding="utf-8").read().rstrip("\n")
-        json.dump({"body": "%s\n%s\n\nOn `%s`, [run](%s). Each PROVEN quote was checked against the file; a grade is the model's, its quotes are not." % (marker, text, head, run)}, open(out, "w"))
+        commit = "%s/commit/%s" % (run.split("/actions/runs/")[0], head)
+        json.dump({"body": "%s\n%s\n\nOn [this commit](%s). [The run and its evidence](%s). Each PROVEN quote was checked against the file; a grade is the model's, its quotes are not." % (marker, text, commit, run)}, open(out, "w"))
         PY
           found=$(gh api --paginate "repos/$VV_REPO/issues/$VV_PR/comments?per_page=100" \
             --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -1) || found=""
