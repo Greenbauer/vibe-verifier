@@ -49,7 +49,7 @@ def check(args):
 
 
 def add_arguments(parser):
-    parser.add_argument("--receipt", metavar="FILE", required=True, help="the newest receipt comment the review workflow posted for the head (else its newest)")
+    parser.add_argument("--receipt", metavar="FILE", required=True, help="the newest receipt line the review workflow posted for the head (else its newest)")
     parser.add_argument("--head", metavar="FILE", required=True, help="a file holding the pull request's head SHA")
     parser.add_argument("--threads", metavar="FILE", default=None, help='JSON {"unresolved": N}; when given, N must be 0')
 

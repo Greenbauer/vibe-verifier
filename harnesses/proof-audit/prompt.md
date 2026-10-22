@@ -57,6 +57,8 @@ How to grade one requirement:
    requirement because it is hard to test, or because a browser check or a reviewer covers it.
 5. UNPROVEN: anything else. In `missing`, name each case with no proving assertion and the test that
    would prove it, in a sentence or two its author can act on. When in doubt, UNPROVEN.
+   A person reads `missing` and each case name in the pull request's proof audit: plain words, with no
+   em dash, commit hash, run ID, path on this runner, URL or @-mention in them, and every item written out.
 
 Grade every requirement listed, each exactly once, and no other. Use null for the exclusion of a
 requirement that is not EXCLUDED, and an empty `missing` for one that is not UNPROVEN.

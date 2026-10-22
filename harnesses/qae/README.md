@@ -46,7 +46,8 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
    `## Acceptance criteria` heading, append one line per action to `qae-artifacts/qae/ACn.md`
    (`- step k: <what you did> -> <what you saw>`), save a screenshot per step, then write
    `qae-artifacts/verdict.md` with one `acceptance-check: ACn -- PASS|FAIL -- ... (qae/ACn.md::<step line>)`
-   per criterion and post it as a PR comment, for people to read. A step after the model fails the
+   per criterion. It posts nothing: the verify job's [QA review comment](#the-qa-review-comment) is the
+   one comment a run leaves. A step after the model fails the
    job if anything outside `qae-artifacts/` and `qae-inputs/` changed on the runner; the config paths
    `claude-code-action` itself resets to the base branch before the model runs (`CLAUDE.md`,
    `.claude/`, `.mcp.json` and a few more) are excused only while they still match the base.
@@ -551,8 +552,7 @@ as `entries:` instead, as it does to `actions/gates`. Without either, one width 
   exception is the page record, one line per console error or uncaught exception, which the gate reads under
   one name: every explorer's lines are appended to it. An explorer that
   left no verdict has no `verdicts/<n>.md`, its criteria have no verdict line, and
-  `acceptance-verdict` refuses them. A copy of each verdict is still posted as a comment, one per
-  explorer, for people to read.
+  `acceptance-verdict` refuses them.
 
 ### Criteria that build on each other
 
@@ -714,7 +714,7 @@ one consumer's four security updates (2026-10-06):
 - **The run had no model token.** A run Dependabot starts reads the Dependabot secret store, never
   the Actions one (its log says `Secret source: Dependabot`), so `CLAUDE_CODE_OAUTH_TOKEN` is empty
   there until the repository adds it to that store. The workflow's `permissions:` apply to that run's
-  `GITHUB_TOKEN` as to any other, so the verdict and the review comment are still posted.
+  `GITHUB_TOKEN` as to any other, so the QA review comment is still posted.
 - **The body says nothing to check.** It has no `## Acceptance criteria` section, so it lists no
   criteria and the verdict gate refuses it. (Read as a plain list it was 105 of them, one for each
   line of a changelog; a body is read by its heading only since then.)
@@ -817,15 +817,15 @@ qa-review`) keeps one comment on the pull request, edited in place on every run,
 
 Earlier rows win. The state comes from the jobs' and the gates' outcomes, never from the explorer's
 prose: under it the comment lists each criterion with the word the explorer wrote for it (PASS, FAIL,
-or no verdict), names the head commit it judged, and links the run. A re-walked feature's row adds
+or no verdict), links the head commit it judged, and links the run. A re-walked feature's row adds
 `Note: this pull request changed its Verify section: N lines added, M removed` when the pull request
 edited the steps that judged it (or that it added the feature), comparing the map the QAE manifest's
 `acceptance-verdict` line names in the job's checkout with the merge base; the action's `manifest`
 input names that manifest (default `.vibe-verifier-qae`). A checkout with no base history gets a line
 saying the edit could not be read. It edits only a comment posted by
-`github-actions[bot]` that starts with the marker. The explorer's own verdict comment is still posted
-on every run the explorer makes, for people to read: the gate's input is the verdict file in the run's
-evidence, never a comment. On a pull request from a fork the workflow token is
+`github-actions[bot]` that starts with the marker. The explorer posts no comment of its own: the gate's
+input is the verdict file in the run's evidence, and this comment is the only one a run leaves. How
+it is worded follows the catalog's [comment rules](../../docs/comments.md). On a pull request from a fork the workflow token is
 read-only, so the review step cannot post there and fails the verify job.
 
 ### When the explorer hits a usage limit
@@ -1019,8 +1019,8 @@ read-back value is escaped a second time, and the explorer could write a value a
 `qae-artifacts/`. So after the explorer the action replaces every value in each non-image file there
 (the session log, the step logs, the verdict), in three spellings: as written, inside JSON strings
 nested up to four deep (the session log is two), and percent-encoded with every character but
-letters, digits and `-._~` encoded (a space as `%20` or `+`). Then it removes its copies. The posted
-verdict and the uploaded evidence hold no value in those spellings. Any other is not found: a URL a
+letters, digits and `-._~` encoded (a space as `%20` or `+`). Then it removes its copies. The
+uploaded evidence holds no value in those spellings. Any other is not found: a URL a
 browser wrote leaves some punctuation as it is, for one. Never
 write a value into `site.md` or the prompt: the explorer does not need it, and the action can only
 redact what the file declares. `codex exec --ephemeral` keeps the run's session rollout, which holds
@@ -1091,16 +1091,16 @@ criterion that expects a refusal there still declares it (`expected-refusal: 400
   `actions/criteria` composite action. Before it, three pin bumps and a CI-only PR each paid for a
   full explore of nothing, and one turned the job red on the account's usage cap (2026-09-21).
 - **The explorer reads its inputs and artifacts, and nothing else.** The PR body it reads is
-  untrusted, and `gh pr comment` is an allowed command, so an unrestricted `Read` would let a body
-  ask the model to read the runner's environment and post the tokens. The allowed tools are
+  untrusted, so an unrestricted `Read` would let a body ask the model to read the runner's
+  environment and write the tokens where they leave the runner. The allowed tools are
   `Read(qae-inputs/**)`, `Read(qae-artifacts/**)` and `Edit(qae-artifacts/**)` (the rule Claude
   Code consults for Write too; a `Write(path)` rule is accepted and ignored). Found by review on
   the second consumer's first pull request.
-  The comment rule is the exact command the prompt gives (`gh pr comment <n> --body-file
-  qae-artifacts/verdict.md`), not `gh pr comment:*`: `gh` opens `--body-file` itself, so the `Read`
-  rules never see that read, and `--body-file /proc/self/environ` would post the environment. Found
-  by review on corral's first pull request (2026-09-23). The browser needs no rule for this:
-  playwright-mcp blocks `file://` navigation by default.
+  The explorer posts no comment, so it has no `gh` rule at all: until it stopped posting its verdict
+  (the QA review is the one comment, [comment rules](../../docs/comments.md)), the rule had to be the
+  exact command, because `gh` opens `--body-file` itself and `--body-file /proc/self/environ` would
+  have posted the environment (found by review on a consumer's first pull request, 2026-09-23). The
+  browser needs no rule for this: playwright-mcp blocks `file://` navigation by default.
 - **Declared inputs, never operated infrastructure.** The harness needs a URL it can reach, and the
   workflow declares it, never the pull request's files and never the model: the site step's `url`
   output is named in the prompt, and the explore job passes it on as its `site-url` output to the
@@ -1168,11 +1168,8 @@ same. What differs, and why:
   go quiet copies [`codex-keepalive.yml`](codex-keepalive.yml) too: Codex refreshes a store that is
   about eight days old during any run, and the weekly exec keeps that happening.
 - **The model holds no GitHub token either.** The explorer step is given no secret and the checkout
-  has none, so the model cannot post, push, or read a credential. The workflow posts
-  `qae-artifacts/verdict.md` itself after the model finishes, which is why step 4 of the prompt
-  reads "do not post anything" in this lane. The comment is for people; the verify job reads the
-  file. The post is tried up to five times, because one GitHub 5xx would otherwise fail a finished
-  exploration's job.
+  has none, so the model cannot post, push, or read a credential. Nothing posts the verdict it writes:
+  the verify job reads the file, and its QA review is the one comment ([comment rules](../../docs/comments.md)).
 - **Caller-owned model settings.** `actions/qae-codex` accepts optional `model` and
   `reasoning-effort` inputs. Both default to empty, which preserves the runner's selection;
   the action never claims which model or effort that default chose. A model identifier starts

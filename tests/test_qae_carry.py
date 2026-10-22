@@ -46,7 +46,7 @@ class Decision(unittest.TestCase):
         result = self.criteria(facts())
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines(), [
-            "none: QA passed on `aaaaaaaa` (https://github.com/o/r/actions/runs/7), and every file changed since (2) "
+            "none: QA passed in [an earlier run](https://github.com/o/r/actions/runs/7), and every file changed since (2) "
             "is CI configuration or documentation no site renders",
             "carried: %s https://github.com/o/r/actions/runs/7" % WALKED])
 
@@ -216,7 +216,7 @@ class CriteriaAction(unittest.TestCase):
     def test_a_carried_walk_is_the_outputs_and_its_facts_are_passed_on(self):
         out = self.run_step("t", facts())
         self.assertEqual((out["count"], out["carried-from"]), ("0", WALKED))
-        self.assertTrue(out["declared-none"].startswith("QA passed on `aaaaaaaa`"))
+        self.assertTrue(out["declared-none"].startswith("QA passed in [an earlier run](https://github.com/o/r/actions/runs/7)"))
         self.assertEqual(json.loads(out["carry"]), facts())
 
     def test_a_later_job_decides_on_the_facts_it_is_given_and_reads_none(self):

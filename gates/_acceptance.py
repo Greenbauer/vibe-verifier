@@ -339,8 +339,8 @@ def not_required(text, changed, ticket="", carry=None):
         return declared
     if body_criteria(text):
         walk = carried(carry, text)
-        return walk and ("QA passed on `%s` (%s), and every file changed since (%d) is CI configuration or "
-                         "documentation no site renders" % (walk["head"][:8], walk["url"], len(carry["compare"]["files"])))
+        return walk and ("QA passed in [an earlier run](%s), and every file changed since (%d) is CI configuration or "
+                         "documentation no site renders" % (walk["url"], len(carry["compare"]["files"])))
     if not changed or not all(map(unrendered, changed)):
         return None
     return "every changed file (%d) is CI configuration or documentation no site renders" % len(changed)
