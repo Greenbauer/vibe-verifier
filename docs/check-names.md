@@ -43,8 +43,8 @@ Checks posted by an app keep the app's name and are out of scope: `Vercel`, `Ver
 Old names are the job name or status context as it was. A row with several old names lists the names different
 repositories give the same check; one repository has one of them. A repository that has two is folded into one
 check, or each keeps a name of its own by the rules. A repository job that matches none of these rows is
-named by the rules above and listed in the applying pull request. A job's new name is shown as the list
-shows it, `Workflow / Job`; its check's own name (rule 1) is the part after `Workflow / `. A status's new
+named by the rules above and listed in the applying pull request. A row is chosen by what the job runs, not
+by its old name or job id. A job's new name is shown as the list shows it, `Workflow / Job`; its check's own name (rule 1) is the part after `Workflow / `. A status's new
 name is its whole context.
 
 | Old | New (`Workflow / Job`, or a status context) |
@@ -62,7 +62,8 @@ name is its whole context.
 | `qae-verify` | `QA / Acceptance criteria` |
 | `Auth probe` / `auth-probe-preview` | `Sign-in / Every role: find preview` |
 | `Auth probe` / `auth-probe` | `Sign-in / Every role` |
-| `lint-and-test`, `Lint, typecheck, unit tests`, `Lint, build, verify` | `Code / Lint and unit tests` |
+| `lint-and-test`, `Lint, typecheck, unit tests` | `Code / Lint and unit tests` |
+| `Lint, build, verify` (lint, repository checks and build; its unit tests run in `tests`) | `Code / Lint and build` |
 | `Typecheck, test, build`, `Type-check & build`, `build` / `Build` | `Code / Types and build` (add `and unit tests` when it runs them) |
 | `lint`, `typecheck`, `test` (unit) | `Code / Lint`, `Code / Types`, `Code / Unit tests` |
 | `tests` (the job that requires every test job) | `Code / All tests` |
