@@ -75,12 +75,13 @@ jobs:
           # and the receipt below could be a stale one (found by review on a wrapper's copy, 2026-09-24).
           # A `limited` receipt (the reviewer subscription was rate-limited, nothing reviewed) is never
           # the anchor, so the next real review covers everything it let through. Receipts are read only
-          # from the receipt comment (one per pull request, a line per run) or, from a copy made before it,
-          # a comment that is one receipt: any other comment of this identity quotes text a pull request
-          # wrote (the QA review lists the criteria), so a receipt in it could be forged.
+          # from a comment of the receipt comment's exact shape (one per pull request, a line per run) or,
+          # from a copy made before it, a comment that is one receipt: any other comment of this identity
+          # can carry text a pull request wrote (the QA review lists the criteria), so a receipt in it could
+          # be forged.
           LAST=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
             | jq -r -s '[.[][] | select(.user.login == "github-actions[bot]")
-                | select(.body | startswith("<!-- vibe-verifier:review-receipt -->") or test("^review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+\\s*$")) | .body
+                | select(.body | test("\\A<!-- vibe-verifier:review-receipt -->\\n\\*\\*Code review\\*\\* [^\\n]*\\n\\n(?:<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->\\n?)+\\z") or test("\\Areview-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+\\s*\\z")) | .body
                 | scan("review-receipt: ([0-9a-f]{40}) -- ([a-z]+)") | select(.[1] != "limited") | .[0]] | last // ""')
           mode="full"
           if [ -n "$LAST" ] && git cat-file -e "${LAST}^{commit}" 2>/dev/null && git merge-base --is-ancestor "$LAST" HEAD 2>/dev/null; then
@@ -399,7 +400,8 @@ jobs:
         # from the workflow, never something the model was asked to say.
         # One comment per pull request, edited in place: a line for people saying how the latest run
         # ended, then one hidden receipt line per run, which the scope step and the verify job read
-        # (docs/comments.md). Two runs that write it at the same moment can drop one run's line; that
+        # (docs/comments.md), and only a comment of exactly that shape is read or edited. Two runs that
+        # write it at the same moment can drop one run's line; that
         # head's verify job then says it has no receipt, and a re-run posts one.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -419,7 +421,7 @@ jobs:
           # away, so the post is tried five times over about two and a half minutes.
           for attempt in 1 2 3 4 5; do
             if found=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
-                 | jq -c -s --arg marker "$marker" '[.[][] | select(.user.login == "github-actions[bot]" and (.body | startswith($marker)))] | first // {}'); then
+                 | jq -c -s --arg marker "$marker" '[.[][] | select(.user.login == "github-actions[bot]" and (.body | test("\\A<!-- vibe-verifier:review-receipt -->\\n\\*\\*Code review\\*\\* [^\\n]*\\n\\n(?:<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->\\n?)+\\z")))] | first // {}'); then
               # The receipts of the 99 latest earlier runs, as this comment holds them, and this run's once:
               # a hundred lines keep the comment far under GitHub's size limit, and older ones anchor nothing.
               earlier=$(jq -r '.body // ""' <<< "$found" | grep -E '^<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->$' | grep -vxF "$line" | tail -n 99 || true)
@@ -486,7 +488,7 @@ jobs:
           # pull request wrote that another comment of this identity quotes.
           gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
             | jq -r -s --arg head "$HEAD_SHA" '[.[][] | select(.user.login == "github-actions[bot]")
-                | select(.body | startswith("<!-- vibe-verifier:review-receipt -->") or test("^review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+\\s*$")) | .body
+                | select(.body | test("\\A<!-- vibe-verifier:review-receipt -->\\n\\*\\*Code review\\*\\* [^\\n]*\\n\\n(?:<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->\\n?)+\\z") or test("\\Areview-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+\\s*\\z")) | .body
                 | scan("review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+")]
                 | ((map(select(startswith("review-receipt: " + $head))) | last) // last) // ""' > review-inputs/receipt.md
           gh api graphql -f query="query { repository(owner: \"${REPO%/*}\", name: \"${REPO#*/}\") { pullRequest(number: ${PR_NUMBER}) { reviewThreads(first: 100) { nodes { isResolved } } } } }" \

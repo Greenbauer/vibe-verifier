@@ -26,9 +26,10 @@ coordinates.
 | `<!-- vibe-verifier:proof-audit -->`, line one | `actions/proof-audit` | the next run, the same way | a new comment every run |
 | `<!-- vibe-verifier:review-receipt -->`, line one, then one `<!-- review-receipt: <sha> -- <mode> -- run <id> -->` line per run (the newest hundred) | the review workflow's "Post the receipt" step | its scope step (the last reviewed commit, for a delta review) and its verify job (the receipt for this head, judged by the `review-receipt` gate) | no receipt is found: every head reviews in full and the verify job fails |
 
-Only comments by `github-actions[bot]` that start with their marker are read. A receipt is also read
-from a comment that is exactly one receipt line and nothing else, which a copy of the review workflow
-made before the receipt comment still posts. Any other comment of that identity can quote text a pull request wrote (the QA
+Only comments by `github-actions[bot]` that start with their marker are read. A receipt is read only
+from a comment of the receipt comment's exact shape (the marker, the line for people, then receipt lines
+and nothing else), or from a comment that is exactly one receipt line, which a copy of the review
+workflow made before the receipt comment still posts. Any other comment of that identity can quote text a pull request wrote (the QA
 review lists the criteria), so a receipt inside one is never read.
 
 ## Enforcement

@@ -62,8 +62,8 @@ class Prompts(unittest.TestCase):
         for path, said in (("harnesses/qae/prompt.md", "your sentences in the pull request's QA review"),
                            ("harnesses/proof-audit/prompt.md", "`missing` and each case name in the pull request's proof audit")):
             text = " ".join((ROOT / path).read_text().split())
-            self.assertIn("A person reads %s: plain words, with no em dash, commit hash, run ID, path on this runner, or URL "
-                          "in them." % said, text)
+            self.assertIn("A person reads %s: plain words, with no em dash, commit hash, run ID, path on this runner, URL or "
+                          "@-mention in them, and every item written out." % said, text)
 
 
 class QaReview(GhFixture):
@@ -113,10 +113,15 @@ class ProofAudit(unittest.TestCase):
         unproven = test_proof_audit.valid()
         unproven[1] = {"id": "C-8", "status": "UNPROVEN", "cases": [], "exclusion": None, "missing": "no test drops two files"}
         states = {"proven": (test_proof_audit.envelope(1, ["C-15", "C-8", "C-30"], test_proof_audit.valid()),), "unproven": (test_proof_audit.envelope(1, ["C-15", "C-8", "C-30"], unproven),),
-                  "graded nothing": (), "usage limit": (test_proof_audit.envelope(1, ["C-15", "C-8", "C-30"], error="You've hit your usage limit."),),
+                  "graded nothing": (), # A CLI's own words: the Codex usage limit as it reads, and a lane with no login (gates/_proof_audit.py).
+                  "usage limit": (test_proof_audit.envelope(1, ["C-15", "C-8", "C-30"], error=(
+                      "You've hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits "
+                      "or try again at 9:00 AM.")),),
+                  "no login": (test_proof_audit.envelope(1, ["C-15", "C-8", "C-30"], error=(
+                      "no Codex login at /home/runner/.codex-qae/auth.json (CODEX_HOME=/home/runner/.codex-qae)")),),
                   "malformed grade": ({"shard": 1},)}
         headings = {"proven": "3 of 3", "unproven": "2 of 3", "graded nothing": "could not run: no grades",
-                    "usage limit": "could not run", "malformed grade": "could not run: proof-audit-1/1.json lacks",
+                    "usage limit": "could not run", "no login": "could not run", "malformed grade": "could not run: proof-audit-1/1.json lacks",
                     "no ticket": "nothing to audit", "claims with no ticket": "nothing audited"}
         bodies = {state: self.audit(self.repo(), *envelopes)[1] for state, envelopes in states.items()}
         bodies["no ticket"] = self.audit(self.repo(), body="No ticket here.\n")[1]
@@ -187,7 +192,8 @@ json.dump(comments, open(path, "w"))
     def test_the_comment_keeps_the_newest_hundred_runs(self):
         old = ["<!-- review-receipt: %040x -- full -- run %d -->" % (n, n) for n in range(1, 121)]
         self.comments.write_text(json.dumps([{"id": 1, "user": {"login": "github-actions[bot]"},
-                                              "body": "<!-- vibe-verifier:review-receipt -->\nx\n\n" + "\n".join(old)}]))
+                                              "body": "<!-- vibe-verifier:review-receipt -->\n**Code review** finished.\n\n"
+                                                      + "\n".join(old)}]))
         hidden = [line for line in self.post("c" * 40, "full", 121)[0].splitlines() if line.startswith("<!-- review-receipt: ")]
         self.assertEqual(hidden, old[-99:] + ["<!-- review-receipt: %s -- full -- run 121 -->" % ("c" * 40)])
 

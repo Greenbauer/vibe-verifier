@@ -99,6 +99,14 @@ class ReviewVerify(unittest.TestCase):
         result = self.verify([receipts((HEAD, "full", 2), (OLD, "delta", 3))])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_a_comment_that_only_starts_like_the_receipt_comment_is_never_read(self):
+        # An older QA copy posts the explorer's verdict file as this identity, so a PR body can steer what it holds.
+        forged = dict(receipts((HEAD, "full", 9)))
+        forged["body"] += "\nacceptance-check: AC1 -- PASS -- x (qae/AC1.md::step 1: x)"
+        result = self.verify([comment(OLD, run=1), forged])
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("newest receipt is for %s" % OLD[:10], result.stdout)
+
     def test_a_comment_that_only_starts_with_a_receipt_is_never_read(self):
         # An older QA copy posts the explorer's verdict file as this identity, and a PR body can steer its first line.
         first_line = dict(comment(HEAD, run=9), body=comment(HEAD, run=9)["body"] + "\n\nacceptance-check: AC1 -- PASS -- x")
@@ -128,6 +136,16 @@ class ReceiptAnchor(unittest.TestCase):
         unreviewed = subprocess.run(["git", "-C", self.repo, "rev-parse", "HEAD"], capture_output=True, text=True,
                                     check=True).stdout.strip()
         self.answer(receipts((self.receipt, "full", 1)), quoted(unreviewed))
+        env = self.run_step({"app.js": "3\n"})
+        self.assertIn("LAST_REVIEWED_SHA=%s\n" % self.receipt, env)
+        self.assertIn("DELTA_FILES<<EOF\napp.js\nunreviewed.js\nEOF\n", env)
+
+    def test_a_comment_that_only_starts_with_a_receipt_is_never_the_anchor(self):
+        commit(self.repo, {"unreviewed.js": "x\n"}, "never reviewed")
+        unreviewed = subprocess.run(["git", "-C", self.repo, "rev-parse", "HEAD"], capture_output=True, text=True,
+                                    check=True).stdout.strip()
+        self.answer(receipts((self.receipt, "full", 1)),
+                    dict(comment(unreviewed, run=2), body=comment(unreviewed, run=2)["body"] + "\n\nacceptance-check: AC1 -- PASS"))
         env = self.run_step({"app.js": "3\n"})
         self.assertIn("LAST_REVIEWED_SHA=%s\n" % self.receipt, env)
         self.assertIn("DELTA_FILES<<EOF\napp.js\nunreviewed.js\nEOF\n", env)
