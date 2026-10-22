@@ -16,8 +16,10 @@
 # --apply converges, in order, each step skipped when already converged:
 #   A  /opt/vibe-verifier, cloned only when absent; the follower owns it afterwards (never reset here)
 #   B  per dashboard: its account vibe-dashboard-<name> (system, nologin), the runbook's directories,
-#      and /etc/vibe-dashboard/<name>/: dashboard.json (the account's, 0600; the dashboard's own loader
-#      must accept a new one first), host.env (0644), app.pem (0600, the lane key's copy), collector.json
+#      and /etc/vibe-dashboard/<name>/: merge-policy.json (the account's, 0600, when the config declares
+#      one; the loader must accept it with the new dashboard.json first), dashboard.json (the account's,
+#      0600; the dashboard's own loader must accept a new one first), host.env (0644), app.pem (0600,
+#      the lane key's copy), collector.json
 #   C  the kit's unit templates from /opt/vibe-verifier/dashboard/systemd/; a drop-in giving the
 #      follower one --unit pair per dashboard; a drop-in making every dashboard require the guard
 #   D  the loopback guard: table inet runners_dashboards lets only root, a dashboard's account and its
@@ -142,12 +144,18 @@ converge_owned() {
   echo changed
 }
 
-# The catalog's merge-policy loader, from the checkout the dashboard runs: a policy the dashboard would
-# refuse at startup never replaces the live one (a policy-only change leaves dashboard.json as it was,
-# so vv_accepts never sees it).
-policy_accepts() {
-  python3 -B -s -c 'import sys; sys.path.insert(0, sys.argv[1] + "/gates"); import _merge_grant; _merge_grant.load_policy(sys.argv[2])' \
-    "$VV" "$1"
+# The dashboard's own loader on the new dashboard.json together with a policy draft ($1), as the
+# account: the pair must load before the policy goes live. A policy-only change leaves dashboard.json
+# as it was, so its own check never sees the policy; and a policy written ahead of a dashboard.json
+# the loader then refuses would be live without the restart that loads it.
+policy_accepts() {  # uses ensure_dashboard's $name and $etc
+  local cfg rc
+  cfg="$(mktemp "$etc/dashboard.json.XXXXXX")" || return 1
+  python3 "$REPO_ROOT/lib/lanes.py" dashboard-config "$HOST_YML" "$name" | jq --arg p "$1" '.merge_policy_file = $p' > "$cfg"
+  chmod 0600 "$cfg"; chown "$ACCOUNT:$ACCOUNT" "$cfg"
+  vv_accepts "$cfg"; rc=$?
+  rm -f "$cfg"
+  return "$rc"
 }
 
 # The merge policy: its content through policy_accepts, and its owner and mode put right when only they

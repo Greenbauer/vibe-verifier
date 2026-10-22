@@ -165,17 +165,15 @@ import json, os
 def load_config(path, uid=None):
     with open(os.environ["ST"] + "/loader", "a") as log:
         log.write("%s %s\n" % (path, uid))
-    if "refuse" in json.load(open(path)):
+    config = json.load(open(path))
+    if "refuse" in config:
         raise ValueError("refused")
-PY
-  mkdir -p "$S/fx/vv/gates"
-  cat > "$S/fx/vv/gates/_merge_grant.py" <<'PY'
-import json, os
-def load_policy(path):
-    with open(os.environ["ST"] + "/policy-loader", "a") as log:
-        log.write("%s\n" % path)
-    if "refuse" in json.load(open(path)):
-        raise ValueError("refused")
+    policy = config.get("merge_policy_file")
+    if policy and os.path.exists(policy):
+        with open(os.environ["ST"] + "/policy-loader", "a") as log:
+            log.write("%s\n" % policy)
+        if "refuse" in json.load(open(policy)):
+            raise ValueError("refused")
 PY
   printf 'dashboard-forward 992\n' > "$S/st/users"
   : > "$S/st/owners"
@@ -297,7 +295,7 @@ out="$(run_dash --apply 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(cat "$pol")" = "$(render dashboard-merge-policy greenbauer)" ] && [ "$(owner_mode "$pol")" = "vibe-dashboard-greenbauer 600" ]   && [ "$(jq -r .grants[0].repos[0] "$pol")" = Greenbauer/vibe-verifier ] && [ "$(jq -r .merge_policy_file "$cfg")" = /etc/vibe-dashboard/greenbauer/merge-policy.json ]   && [ "$(jq 'has("merge_policy")' "$cfg")" = false ] && grep -qx "systemctl restart vibe-dashboard@greenbauer.service" "$CALLLOG" && [ ! -e "$S/etc/acme/merge-policy.json" ]
 expect $? "a declared merge policy is written, the account's, 0600, before the dashboard.json that names it, and that dashboard restarts"
 grep -q "^$pol\.[A-Za-z0-9]*$" "$S/st/policy-loader" && before "wrote $pol" "wrote $cfg"
-expect $? "the catalog's policy loader checked a draft, and the policy went live before the dashboard.json that names it"
+expect $? "the dashboard's loader checked a policy draft with the new dashboard.json, and the policy went live before the dashboard.json that names it"
 out="$(run_dash --check 2>&1)"; grep -qx "merge_policy=$pol ok" <<< "$out"; expect $? "--check reads the merge policy against the host file"
 : > "$CALLLOG"; rm -f "$S/st/policy-loader"
 out="$(run_dash --apply 2>&1)"; rc=$?
@@ -311,6 +309,12 @@ out="$(run_dash --apply 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && grep -q "the dashboard's own loader refused the new $pol; the old file stays" <<< "$out" && [ "$(cat "$pol")" = "$before_pol" ] && ! grep -q "systemctl restart" "$CALLLOG"
 expect $? "a policy the catalog's loader refuses never replaces the live one, and nothing restarts"
 sed -i 's#merge_policy: {version: 1, refuse: true,#merge_policy: {version: 1,#' "$S/config/hosts/example.yml"
+sed -i 's#repos: \[Greenbauer/vibe-verifier, Greenbauer/runners\]#repos: [Greenbauer/vibe-verifier]#; s/^      owner: Greenbauer$/      owner: Greenbauer\n      refuse: true/' "$S/config/hosts/example.yml"
+before_pol="$(cat "$pol")"; : > "$CALLLOG"
+out="$(run_dash --apply 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && [ "$(cat "$pol")" = "$before_pol" ] && ! grep -q "systemctl restart" "$CALLLOG"
+expect $? "a policy change beside a config the loader refuses leaves the live policy too, so no change goes live unrestarted"
+sed -i '/^      refuse: true$/d; s#repos: \[Greenbauer/vibe-verifier\]#repos: [Greenbauer/vibe-verifier, Greenbauer/runners]#' "$S/config/hosts/example.yml"
 out="$(run_dash --check 2>&1)"; grep -qx "merge_policy=$pol ok" <<< "$out"; expect $? "after the refusal the live policy still matches the host file"
 printf '{}\n' > "$pol"
 out="$(run_dash --check 2>&1)"; rc=$?; [ "$rc" -ne 0 ] && grep -q "merge_policy=$pol DRIFTED" <<< "$out"; expect $? "--check fails on a policy that drifted from the host file"
@@ -320,6 +324,10 @@ expect $? "a dry-run plans the owner fix of a policy whose content matches but w
 out="$(run_dash --apply 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(owner_mode "$pol")" = "vibe-dashboard-greenbauer 600" ] && grep -qx "systemctl restart vibe-dashboard@greenbauer.service" "$CALLLOG"
 expect $? "--apply gives that policy back to the dashboard's account, and restarts it"
+chmod 0644 "$pol"; : > "$CALLLOG"
+out="$(run_dash --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(owner_mode "$pol")" = "vibe-dashboard-greenbauer 600" ] && grep -qx "systemctl restart vibe-dashboard@greenbauer.service" "$CALLLOG"
+expect $? "a policy whose mode alone drifted is made 0600 again, and the dashboard restarts"
 python3 - "$S/config/hosts/example.yml" <<'PY'
 import re, sys
 path = sys.argv[1]
