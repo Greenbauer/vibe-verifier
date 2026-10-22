@@ -348,9 +348,9 @@ def proof_cite(proof):
 
 def cell(text, limit=600):
     """One line of the comment, for a person: a URL or a runner path in text the gate did not write (a CLI's
-    error, a grade) goes to the job log, a runner directory to its file name (docs/comments.md)."""
+    error, a grade) goes to the job log, a runner path two or more folders deep to its last part (docs/comments.md)."""
     text = re.sub(r"https?://\S+", "(link in the job log)", " ".join(str(text).split()).replace("|", "\\|"))
-    text = re.sub(r"(?<![\w.~])/(?:home|Users|tmp|var|opt|root|private|runner|github|__w)/(?:[^\s/]+/)*", "", text)
+    text = re.sub(r"(?<![\w.~])/(?:home|Users|tmp|var|opt|root|private|runner|github|__w)/(?:[^\s/`]+/)+", "", text)
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 

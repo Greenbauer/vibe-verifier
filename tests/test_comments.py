@@ -10,8 +10,9 @@ import unittest
 from pathlib import Path
 
 from helpers import ROOT, clean_env
-from qa_review_fixture import HEAD, MARKER, GhFixture
+from qa_review_fixture import HEAD, MARKER, RUN, GhFixture
 import _acceptance  # noqa: E402  (gates/, which helpers puts on the path)
+import _proof_audit  # noqa: E402
 import test_proof_audit  # its fixture only: a TestCase imported by name would run its tests here too
 import test_qae_carry
 from test_review_harness import step_script
@@ -89,6 +90,7 @@ class QaReview(GhFixture):
             body = self.posted(**kwargs)
             self.assertTrue(body.startswith(MARKER + "\n## QA review: %s " % state), (state, body))
             self.assertIn("[this commit](https://github.com/acme/site/commit/%s)" % HEAD, body, state)
+            self.assertIn("[The run and its evidence](%s)" % RUN, body, state)
             self.assertEqual(problems(body), [], (state, body))
 
 
@@ -109,6 +111,12 @@ class ProofAudit(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads((work / "out.json").read_text())["body"]
 
+    def test_a_cell_keeps_the_repositorys_paths_and_routes_and_drops_the_runners(self):
+        for kept in ("`tests/a.test.ts:4`", "the /api/orders route", "the /github/callback route", "the `/private/messages` page"):
+            self.assertEqual(_proof_audit.cell(kept), kept)
+        self.assertEqual(_proof_audit.cell("no login at /home/runner/.codex-qae/auth.json; see https://example.com/x"),
+                         "no login at auth.json; see (link in the job log)")
+
     def test_every_state_follows_the_rules(self):
         unproven = test_proof_audit.valid()
         unproven[1] = {"id": "C-8", "status": "UNPROVEN", "cases": [], "exclusion": None, "missing": "no test drops two files"}
@@ -118,7 +126,8 @@ class ProofAudit(unittest.TestCase):
                       "You've hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits "
                       "or try again at 9:00 AM.")),),
                   "no login": (test_proof_audit.envelope(1, ["C-15", "C-8", "C-30"], error=(
-                      "no Codex login at /home/runner/.codex-qae/auth.json (CODEX_HOME=/home/runner/.codex-qae)")),),
+                      "no Codex login at /home/runner/.codex-qae/auth.json: seed it once, as this user: "
+                      "CODEX_HOME=/home/runner/.codex-qae codex login --device-auth (harnesses/qae/README.md)")),),
                   "malformed grade": ({"shard": 1},)}
         headings = {"proven": "3 of 3", "unproven": "2 of 3", "graded nothing": "could not run: no grades",
                     "usage limit": "could not run", "no login": "could not run", "malformed grade": "could not run: proof-audit-1/1.json lacks",
@@ -197,11 +206,26 @@ json.dump(comments, open(path, "w"))
         hidden = [line for line in self.post("c" * 40, "full", 121)[0].splitlines() if line.startswith("<!-- review-receipt: ")]
         self.assertEqual(hidden, old[-99:] + ["<!-- review-receipt: %s -- full -- run 121 -->" % ("c" * 40)])
 
+    def test_a_later_run_finds_the_comment_however_github_ends_it_and_after_the_trim(self):
+        # GitHub may hand the body back with or without its last newline; each later run edits the same comment.
+        for ending in ("", "\n", "\n\n"):
+            body = "<!-- vibe-verifier:review-receipt -->\n**Code review** finished.\n\n" + "\n".join(
+                "<!-- review-receipt: %040x -- full -- run %d -->" % (n, n) for n in range(1, 121)) + ending
+            self.comments.write_text(json.dumps([{"id": 1, "user": {"login": "github-actions[bot]"}, "body": body}]))
+            (self.temp / "comments.json.writes").unlink(missing_ok=True)
+            self.post("c" * 40, "full", 121)
+            bodies = self.post("d" * 40, "full", 122)
+            self.assertEqual(len(bodies), 1, ending)
+            self.assertEqual((self.temp / "comments.json.writes").read_text().splitlines(), ["PATCH repos/o/r/issues/comments/1"] * 2)
+            hidden = [line for line in bodies[0].splitlines() if line.startswith("<!-- review-receipt: ")]
+            self.assertEqual((len(hidden), hidden[-1]), (100, "<!-- review-receipt: %s -- full -- run 122 -->" % ("d" * 40)))
+
     def test_every_mode_follows_the_rules(self):
         for mode, said in (("full", "finished on"), ("delta", "finished on"), ("limited", "was skipped on"),
                            ("nochange", "had nothing new to read on")):
             body = self.post(HEAD, mode, 7)[0]
             self.assertIn("**Code review** %s [this commit](https://github.com/o/r/commit/%s)" % (said, HEAD), body)
+            self.assertIn("[The run](https://github.com/o/r/actions/runs/7).", body)
             self.assertEqual(problems(body), [], (mode, body))
 
 

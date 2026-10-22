@@ -81,7 +81,7 @@ jobs:
           # be forged.
           LAST=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
             | jq -r -s '[.[][] | select(.user.login == "github-actions[bot]")
-                | select(.body | test("\\A<!-- vibe-verifier:review-receipt -->\\n\\*\\*Code review\\*\\* [^\\n]*\\n\\n(?:<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->\\n?)+\\z") or test("\\Areview-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+\\s*\\z")) | .body
+                | select(.body | test("\\A<!-- vibe-verifier:review-receipt -->\\n\\*\\*Code review\\*\\* [^\\n]*\\n\\n(?:<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->\\s*)+\\z") or test("\\Areview-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+\\s*\\z")) | .body
                 | scan("review-receipt: ([0-9a-f]{40}) -- ([a-z]+)") | select(.[1] != "limited") | .[0]] | last // ""')
           mode="full"
           if [ -n "$LAST" ] && git cat-file -e "${LAST}^{commit}" 2>/dev/null && git merge-base --is-ancestor "$LAST" HEAD 2>/dev/null; then
@@ -421,7 +421,7 @@ jobs:
           # away, so the post is tried five times over about two and a half minutes.
           for attempt in 1 2 3 4 5; do
             if found=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
-                 | jq -c -s --arg marker "$marker" '[.[][] | select(.user.login == "github-actions[bot]" and (.body | test("\\A<!-- vibe-verifier:review-receipt -->\\n\\*\\*Code review\\*\\* [^\\n]*\\n\\n(?:<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->\\n?)+\\z")))] | first // {}'); then
+                 | jq -c -s --arg marker "$marker" '[.[][] | select(.user.login == "github-actions[bot]" and (.body | test("\\A<!-- vibe-verifier:review-receipt -->\\n\\*\\*Code review\\*\\* [^\\n]*\\n\\n(?:<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->\\s*)+\\z")))] | first // {}'); then
               # The receipts of the 99 latest earlier runs, as this comment holds them, and this run's once:
               # a hundred lines keep the comment far under GitHub's size limit, and older ones anchor nothing.
               earlier=$(jq -r '.body // ""' <<< "$found" | grep -E '^<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->$' | grep -vxF "$line" | tail -n 99 || true)
@@ -488,7 +488,7 @@ jobs:
           # pull request wrote that another comment of this identity quotes.
           gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
             | jq -r -s --arg head "$HEAD_SHA" '[.[][] | select(.user.login == "github-actions[bot]")
-                | select(.body | test("\\A<!-- vibe-verifier:review-receipt -->\\n\\*\\*Code review\\*\\* [^\\n]*\\n\\n(?:<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->\\n?)+\\z") or test("\\Areview-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+\\s*\\z")) | .body
+                | select(.body | test("\\A<!-- vibe-verifier:review-receipt -->\\n\\*\\*Code review\\*\\* [^\\n]*\\n\\n(?:<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->\\s*)+\\z") or test("\\Areview-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+\\s*\\z")) | .body
                 | scan("review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+")]
                 | ((map(select(startswith("review-receipt: " + $head))) | last) // last) // ""' > review-inputs/receipt.md
           gh api graphql -f query="query { repository(owner: \"${REPO%/*}\", name: \"${REPO#*/}\") { pullRequest(number: ${PR_NUMBER}) { reviewThreads(first: 100) { nodes { isResolved } } } } }" \
