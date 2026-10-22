@@ -213,7 +213,9 @@ def grade(args, number, items):
         output, error, seconds = run_codex(args, render_prompt(items), work)
     except CannotRun as reason:
         output, error, seconds = None, str(reason), None
-    envelope = {"shard": number, "ids": [item["id"] for item in items], "error": error, "output": output, "seconds": seconds}
+    # The error reaches the pull request's comment, and this runner is not the one that renders it.
+    envelope = {"shard": number, "ids": [item["id"] for item in items], "error": error and without_runner_paths(error),
+                "output": output, "seconds": seconds}
     os.makedirs(args.grades, exist_ok=True)
     with open(os.path.join(args.grades, "%d.json" % number), "w", encoding="utf-8") as handle:
         json.dump(envelope, handle, indent=2)
@@ -346,13 +348,20 @@ def proof_cite(proof):
     return "`%s:%d` (%s%s)" % (proof["file"], proof["line"], proof["test"].strip(), moved)
 
 
-def cell(text, limit=600):
-    """One line of the comment, for a person: in text the gate did not write (a CLI's error, a grade) a URL goes to
-    the job log, and this runner's own folders are dropped from a path, never a route (docs/comments.md)."""
-    text = re.sub(r"https?://\S+", "(link in the job log)", " ".join(str(text).split()).replace("|", "\\|"))
+def without_runner_paths(text):
+    """`text` with this runner's own folders (workspace, temp, home) dropped from every path that starts with one:
+    only where a path starts, so a repository path or a route that merely contains the same name stays."""
     roots = {os.environ.get(name, "").rstrip("/") for name in ("GITHUB_WORKSPACE", "RUNNER_TEMP", "HOME", "TMPDIR")}
     for root in sorted(filter(None, roots), key=len, reverse=True):
-        text = text.replace(root + "/", "")
+        text = re.sub(r"(?<![\w./~-])" + re.escape(root) + "/", "", text)
+    return text
+
+
+def cell(text, limit=600):
+    """One line of the comment, for a person: in text the gate did not write (a CLI's error, a grade) a URL goes to
+    the job log, and the rendering runner's folders are dropped from a path (docs/comments.md)."""
+    text = re.sub(r"https?://\S+", "(link in the job log)", " ".join(str(text).split()).replace("|", "\\|"))
+    text = without_runner_paths(text)
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
