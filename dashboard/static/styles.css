@@ -337,13 +337,19 @@ button.timeline-name { min-height: 0; padding: 0; border: 0; background: transpa
 .state-unknown .runner-state, .state-free { color: var(--muted); }
 .state-offline .runner-state { color: var(--red); }
 
+/* The pull-request row's columns never add up to more than the panel. Wide minimums need about
+   1080px with the sidebar beside the list; below that, these fit down to 651px (the sidebar moves
+   above the list at 920px) with room for a 17px scrollbar. tests/test_dashboard_pr_row_fit.py holds the sums. */
+@media (max-width: 1080px) {
+  .list-heading, .pr-row { grid-template-columns: minmax(150px, 1.3fr) minmax(110px, 1fr) minmax(120px, 1.1fr) minmax(110px, .5fr) 18px; gap: 8px; }
+}
+
 @media (max-width: 920px) {
   .bot-strip-title { display: none; }
   .shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   .sidebar { position: static; z-index: 18; flex-direction: row; padding: 6px 10px; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; }
   .nav-label { display: none; }
   .sidebar button { font-size: 12px; }
-  .list-heading, .pr-row { grid-template-columns: minmax(190px, 1.3fr) minmax(140px, 1fr) minmax(140px, 1.1fr) minmax(110px, .5fr) 18px; gap: 8px; }
 }
 
 @media (max-width: 650px) {

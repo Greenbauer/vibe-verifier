@@ -128,7 +128,8 @@ jobs:
   # The QAE browser action against a real apt and the pinned Playwright, which its tests stub: it reads
   # the missing system packages from that Playwright's own report, so a pin bump that changes the
   # report shows here before a consumer pins it. Then the chromium it installed has to start, and the
-  # harness's two page hooks have to work in the playwright-mcp it installed.
+  # harness's two page hooks have to work in the playwright-mcp it installed. Its chromium also renders the
+  # dashboard's pull-request rows at every window width (tests/test_dashboard_layout_browser.py).
   qae-browser:
     name: QA browser tests
     runs-on: ubuntu-latest
@@ -176,6 +177,17 @@ jobs:
         run: |
           test -f "$QAE_MCP"
           python3 -m unittest discover -s tests -p 'test_qae_secret_names.py' -v
+      - name: Render the dashboard's pull-request rows at every window width, with the chromium it installed
+        # The dashboard's other tests use a fake DOM with no layout, so only a real browser sees a row cell
+        # end outside its row or a list scroll sideways. It skips without VV_PLAYWRIGHT_DIR, so the
+        # Playwright it names is checked first: a skip here must not read as a pass.
+        env:
+          MCP: ${{ steps.browser.outputs.mcp }}
+        run: |
+          VV_PLAYWRIGHT_DIR=$(cd "$(dirname "$MCP")/../../.." && pwd)
+          test -d "$VV_PLAYWRIGHT_DIR/node_modules/playwright"
+          export VV_PLAYWRIGHT_DIR
+          python3 -m unittest discover -s tests -p 'test_dashboard_layout_browser.py' -v
 
   # regression-test-fails-on-base's sealed browser runs (gates/_regression_sealed.py): synthetic repositories whose
   # Playwright config starts a site, run in Playwright's own image on the gate's sealed Docker network, both ways
