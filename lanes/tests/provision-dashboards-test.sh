@@ -291,6 +291,8 @@ text = open(path).read()
 open(path, "w").write(text.replace("      owner: Greenbauer\n", "      owner: Greenbauer\n      merge_policy: {version: 1, extends: default, grants: [{name: whitelist, repos: [Greenbauer/vibe-verifier]}]}\n", 1))
 PY
 pol="$S/etc/greenbauer/merge-policy.json"; : > "$CALLLOG"
+out="$(run_dash 2>&1)"; [ ! -e "$pol" ] && grep -q "DRY-RUN: write $pol (vibe-dashboard-greenbauer:vibe-dashboard-greenbauer 0600)" <<< "$out"
+expect $? "a dry-run plans a new merge policy's write and writes nothing"
 out="$(run_dash --apply 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(cat "$pol")" = "$(render dashboard-merge-policy greenbauer)" ] && [ "$(owner_mode "$pol")" = "vibe-dashboard-greenbauer 600" ]   && [ "$(jq -r .grants[0].repos[0] "$pol")" = Greenbauer/vibe-verifier ] && [ "$(jq -r .merge_policy_file "$cfg")" = /etc/vibe-dashboard/greenbauer/merge-policy.json ]   && [ "$(jq 'has("merge_policy")' "$cfg")" = false ] && grep -qx "systemctl restart vibe-dashboard@greenbauer.service" "$CALLLOG" && [ ! -e "$S/etc/acme/merge-policy.json" ]
 expect $? "a declared merge policy is written, the account's, 0600, before the dashboard.json that names it, and that dashboard restarts"

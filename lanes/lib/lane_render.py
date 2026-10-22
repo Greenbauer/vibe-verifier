@@ -137,7 +137,7 @@ def dashboard_config(dashboard: Dashboard) -> str:
     """The dashboard's dashboard.json: its declared configuration and this machine's telemetry file. An
     inline merge_policy is replaced by the file it is written to (dashboard_merge_policy)."""
     config = {key: value for key, value in dashboard.config.items() if key != "merge_policy"}
-    if "merge_policy" in dashboard.config:
+    if dashboard.config.get("merge_policy") is not None:     # an empty `merge_policy:` is no policy
         config["merge_policy_file"] = dashboard.merge_policy_file
     return json.dumps({**config, "telemetry_file": dashboard.telemetry_file}, indent=2) + "\n"
 

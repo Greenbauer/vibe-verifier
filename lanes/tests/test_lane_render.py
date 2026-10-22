@@ -53,6 +53,9 @@ check(json.loads(dashboard_config(graced)) == {**DASH["config"], "merge_policy_f
       "an inline merge_policy leaves dashboard.json, which names the file it is written to instead")
 check(json.loads(dashboard_merge_policy(graced)) == POLICY and dashboard_merge_policy(box) == "",
       "merge-policy.json is the inline policy as written, and a dashboard without one has none")
+emptied = load_host(host_file(ORG, top={"dashboards": [{**DASH, "config": {**DASH["config"], "merge_policy": None}}]})).dashboards[0]
+check(dashboard_merge_policy(emptied) == "" and "merge_policy_file" not in json.loads(dashboard_config(emptied)),
+      "an empty merge_policy key is no policy: no file is written and dashboard.json names none")
 check(json.loads(collector_config(dhost, box)) == {"version": 1, "owner": "Example", "host": {
     "label": "box-1 box-ci", "listener_config_path": "/etc/box-ci/listener.json", "lane_name": "box-ci",
     "workspace_path": "/var/lib/box-ci", "codex_home": "/var/lib/box-ci/codex"}},
