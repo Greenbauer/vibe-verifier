@@ -70,7 +70,7 @@ swap a file between root writing and renaming it, and the helpers refuse such a 
 | `/etc/vibe-dashboard/NAME/host.env` | root, 0644 | `PORT`, `APP`, `INSTALLATION`, `LOGIN` (below) |
 | `/etc/vibe-dashboard/NAME/app.pem` | root, 0600 | the GitHub App's private key |
 | `/etc/vibe-dashboard/NAME/<id>.token` | `vibe-dashboard-NAME`, 0600 | optional: a [work source](dashboard.md#work-view)'s key, one file per source, named by the source's `token_file`; placed by hand, never in a repository |
-| `/etc/vibe-dashboard/NAME/merge-policy.json` | `vibe-dashboard-NAME`, 0600 | optional: the [merge policy](features/merge-grant.md) the "Agent mergeable" pill reads, named by `merge_policy_file`; copy the one the owner's merge guard reads, so the pill and the guard agree |
+| `/etc/vibe-dashboard/NAME/merge-policy.json` | `vibe-dashboard-NAME`, 0600 | optional: the [merge policy](features/merge-grant.md) the "Agent mergeable" pill reads, named by `merge_policy_file`. Keep it the rules the owner's merge guard applies to this owner's repositories, so the pill says what the guard would; the lane kit writes it from the host file's inline `merge_policy` ([lanes/README.md](../lanes/README.md#dashboards)) |
 | `/etc/vibe-dashboard/NAME/collector.json` | root, 0600 | the collector's [local-mode configuration](dashboard-collector.md#configuration), for this host's lane |
 
 `host.env` takes one `KEY=value` per line, with comments only on their own lines:

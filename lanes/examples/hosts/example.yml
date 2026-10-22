@@ -78,6 +78,17 @@ dashboards:
         explorer: {workflow: qae-explore.yml, jobs: ["Acceptance criteria: walk", qae-explore]}
         verifier: {workflow: qae-explore.yml, jobs: [Acceptance criteria, qae-verify]}
       proxy_origin: https://worker-1.example.ts.net:8443
+      # Optional: the merge policy behind the "Agent mergeable" pill (docs/features/merge-grant.md),
+      # written to /etc/vibe-dashboard/greenbauer/merge-policy.json. Keep it the rules the owner's merge
+      # guard applies to this owner's repositories, so the pill says what the guard would, e.g.:
+      # merge_policy:
+      #   version: 1
+      #   extends: default
+      #   grants:
+      #     - {name: merge whitelist, repos: [Greenbauer/vibe-verifier], exclusions: [codeowners]}
+      #     - name: non-product grant
+      #       categories: [ci, docs, build, dependencies, tests]
+      #       exclusions: [database, codeowners, security-names, rls, workflow-security]
       agents:
         - {id: ci-qae, name: QAE, role: qae, workflow_role: explorer}
   # No bridge account: the HTTPS route's proxy runs as root on this machine.

@@ -134,8 +134,18 @@ def lane_settings(host: Host, lane: Lane) -> dict[str, object]:
 
 
 def dashboard_config(dashboard: Dashboard) -> str:
-    """The dashboard's dashboard.json: its declared configuration and this machine's telemetry file."""
-    return json.dumps({**dashboard.config, "telemetry_file": dashboard.telemetry_file}, indent=2) + "\n"
+    """The dashboard's dashboard.json: its declared configuration and this machine's telemetry file. An
+    inline merge_policy is replaced by the file it is written to (dashboard_merge_policy)."""
+    config = {key: value for key, value in dashboard.config.items() if key != "merge_policy"}
+    if "merge_policy" in dashboard.config:
+        config["merge_policy_file"] = dashboard.merge_policy_file
+    return json.dumps({**config, "telemetry_file": dashboard.telemetry_file}, indent=2) + "\n"
+
+
+def dashboard_merge_policy(dashboard: Dashboard) -> str:
+    """The dashboard's merge-policy.json (Vibe Verifier docs/features/merge-grant.md), or "" without one."""
+    policy = dashboard.config.get("merge_policy")
+    return "" if policy is None else json.dumps(policy, indent=2) + "\n"
 
 
 def collector_config(host: Host, dashboard: Dashboard) -> str:

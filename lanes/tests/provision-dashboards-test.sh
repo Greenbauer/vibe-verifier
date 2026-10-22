@@ -274,6 +274,28 @@ printf 'a rotated acme key\n' > "$S/keys/acme-ci.pem"; : > "$CALLLOG"
 out="$(run_dash --apply 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && cmp -s "$S/keys/acme-ci.pem" "$S/etc/acme/app.pem" && [ "$(owner_mode "$S/etc/acme/app.pem")" = "root 600" ] && ! grep -q "restart vibe-dashboard@acme" "$CALLLOG"
 expect $? "a rotated lane key is copied again, root-only, for the token timer's next run"
+# ---- a merge policy: written beside dashboard.json, which names it; removed when no longer declared ----
+python3 - "$S/config/hosts/example.yml" <<'PY'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+open(path, "w").write(text.replace("      owner: Greenbauer\n", "      owner: Greenbauer\n      merge_policy: {version: 1, extends: default, grants: [{name: whitelist, repos: [Greenbauer/vibe-verifier]}]}\n", 1))
+PY
+pol="$S/etc/greenbauer/merge-policy.json"; : > "$CALLLOG"
+out="$(run_dash --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(cat "$pol")" = "$(render dashboard-merge-policy greenbauer)" ] && [ "$(owner_mode "$pol")" = "vibe-dashboard-greenbauer 600" ]   && [ "$(jq -r .grants[0].repos[0] "$pol")" = Greenbauer/vibe-verifier ] && [ "$(jq -r .merge_policy_file "$cfg")" = /etc/vibe-dashboard/greenbauer/merge-policy.json ]   && [ "$(jq 'has("merge_policy")' "$cfg")" = false ] && grep -qx "systemctl restart vibe-dashboard@greenbauer.service" "$CALLLOG" && [ ! -e "$S/etc/acme/merge-policy.json" ]
+expect $? "a declared merge policy is written, the account's, 0600, before the dashboard.json that names it, and that dashboard restarts"
+out="$(run_dash --check 2>&1)"; grep -qx "merge_policy=$pol ok" <<< "$out"; expect $? "--check reads the merge policy against the host file"
+python3 - "$S/config/hosts/example.yml" <<'PY'
+import re, sys
+path = sys.argv[1]
+text = re.sub(r"      merge_policy: .*\n", "", open(path).read())
+open(path, "w").write(text)
+PY
+: > "$CALLLOG"
+out="$(run_dash --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$pol" ] && [ "$(jq 'has("merge_policy_file")' "$cfg")" = false ] && grep -qx "systemctl restart vibe-dashboard@greenbauer.service" "$CALLLOG"
+expect $? "a merge policy taken out of the host file is removed with its dashboard.json line, and that dashboard restarts"
 sed -i 's/^      version: 1$/      version: 1\n      refuse: true/' "$S/config/hosts/example.yml"
 before_cfg="$(cat "$cfg")"; : > "$CALLLOG"
 out="$(run_dash --apply 2>&1)"; rc=$?
