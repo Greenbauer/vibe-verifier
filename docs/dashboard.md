@@ -26,6 +26,11 @@ its end, opens the row's [CI timeline](#ci-timeline) under it; the same click cl
 The row's columns always fit the list: below 1080 pixels wide they take smaller minimum widths, so the
 CI column and the arrow stay inside the row at any width down to the phone layout, sidebar beside the
 list or not. `tests/test_dashboard_pr_row_fit.py` adds up the minimums against the room at each width.
+`tests/test_dashboard_layout_browser.py` renders the view in a real Chromium against a made-up payload (a long
+title, a timeline and a meter row with idle lines, a running row, a row with no checks) at every 25 pixels from
+320 to 1600 and both sides of each breakpoint, and fails if a row cell ends outside its row or the page, the view or
+a list scrolls sideways. It needs a Playwright with a browser (`VV_PLAYWRIGHT_DIR`, see its docstring) and runs in
+CI's `QA browser tests` job; the other dashboard tests use a fake DOM with no layout.
 On a phone the row's cells stack, and each packs its lines side by side where they fit: the arrow
 beside the title, the number, author, head, age and behind pill on one wrapping line, the status badge
 left of the check names, and the CI counts, CI time and idle line wrapping together.
