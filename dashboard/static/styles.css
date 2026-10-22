@@ -148,6 +148,7 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 .pr-identity b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pr-identity b.merge-ready { color: var(--green); }
 .pr-identity .behind-mark { color: var(--yellow); border: 1px solid currentColor; border-radius: 99px; padding: 1px 6px; font-size: 10px; line-height: 1.45; white-space: nowrap; }
+.pr-identity .grant-mark { color: var(--ink); border: 1px solid var(--muted); border-radius: 99px; padding: 1px 6px; font-size: 10px; line-height: 1.45; white-space: nowrap; }
 .pr-row small, .progress-copy span { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
 .pr-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
 .pr-age { font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -372,6 +373,7 @@ button.timeline-name { min-height: 0; padding: 0; border: 0; background: transpa
   .ci-copy .progress-caption { flex: 1 1 0; min-width: 0; }
   .timeline-detail { padding: 6px 11px 12px; }
   .timeline-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) 52px 24px; gap: 6px; }
+  .timeline-time { white-space: normal; text-wrap: balance; }
   .timeline-tick:nth-child(even) { visibility: hidden; }
   .host-grid { grid-template-columns: 1fr; }
   .runner-row { grid-template-columns: 64px minmax(0, 1fr) auto; }

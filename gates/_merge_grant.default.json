@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "categories": {
+    "ci": [
+      {"path": "^(\\.github/|\\.vibe-verifier|\\.gitleaks\\.toml$|\\.?zizmor\\.ya?ml$)|(^|/)osv-scanner\\.toml$"}
+    ],
+    "docs": [
+      {"path": "\\.mdx?$"}
+    ],
+    "build": [
+      {"path": "(^|/)([Dd]ockerfile[^/]*|[^/]+\\.[Dd]ockerfile|\\.dockerignore|(docker-)?compose[^/]*\\.ya?ml|tsconfig[^/]*\\.json|jsconfig\\.json|\\.eslintrc[^/]*|eslint\\.config\\.[^/]+|\\.prettierrc[^/]*|prettier\\.config\\.[^/]+|\\.prettierignore|\\.editorconfig|biome\\.jsonc?|\\.nvmrc|\\.node-version|\\.tool-versions|\\.python-version|\\.?ruff\\.toml|turbo\\.json|pnpm-workspace\\.yaml)$"},
+      {"path": "(^|/)vercel\\.json$", "json_unchanged": ["headers"]}
+    ],
+    "dependencies": [
+      {"path": "(^|/)(package-lock\\.json|pnpm-lock\\.yaml|yarn\\.lock|bun\\.lockb?|requirements[^/]*\\.txt|poetry\\.lock|uv\\.lock|Pipfile\\.lock|go\\.mod|go\\.sum|Cargo\\.lock|Gemfile\\.lock)$"},
+      {"path": "(^|/)package\\.json$", "json_changes_only": ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies", "overrides", "resolutions", "packageManager", "engines", "pnpm.overrides"]}
+    ],
+    "tests": [
+      {"path": "(^|/)(tests?|e2e|cypress|__tests__|fixtures)/|\\.(test|spec)\\.[^/]+$|(^|/)(playwright|vitest|jest)[^/]*\\.config\\.[^/]+$"}
+    ]
+  },
+  "exclusions": {
+    "database": {
+      "description": "a migration, SQL or supabase/ file",
+      "path": "(^|/)(migrations|supabase)/|\\.sql$", "ignore_case": true
+    },
+    "codeowners": {
+      "description": "a CODEOWNERS file",
+      "path": "(^|/)codeowners$", "ignore_case": true
+    },
+    "security-names": {
+      "description": "an auth, policy, permission, secret, security, credential or middleware file",
+      "path": "auth|polic|permission|secret|security|credential|middleware", "ignore_case": true,
+      "except": "\\.mdx?$"
+    },
+    "rls": {
+      "description": "a row-level security (rls) file",
+      "path": "(^|[^A-Za-z])[Rr][Ll][Ss]|[a-z]R[Ll][Ss]",
+      "except": "\\.mdx?$"
+    },
+    "workflow-security": {
+      "description": "a workflow line with a write scope, write-all, a secret other than GITHUB_TOKEN, secrets: inherit, pull_request_target or id-token, or a removed permissions line",
+      "path": "^\\.github/",
+      "except": "\\.mdx?$",
+      "lines": {
+        "ignore_case": true,
+        "strip": "secrets\\.github_token([^a-z0-9_]|$)",
+        "changed": ":\\s*[\"']?write[\"']?\\s*([,}#]|$)|write-all|(^|[^a-z0-9_${-]|^\\{|[^$]\\{)secrets([^a-z0-9_:-]|$)|secrets\\s*:\\s*[\"']?inherit|pull_request_target|id-token",
+        "removed": "permissions\\s*:|:\\s*[\"']?(read|write|none)[\"']?\\s*([,}#]|$)"
+      }
+    }
+  },
+  "grants": [
+    {
+      "name": "non-product grant",
+      "categories": ["ci", "docs", "build", "dependencies", "tests"],
+      "exclusions": ["database", "codeowners", "security-names", "rls", "workflow-security"]
+    }
+  ]
+}

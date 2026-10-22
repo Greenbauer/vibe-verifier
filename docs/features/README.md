@@ -22,6 +22,7 @@ One file per feature of this catalog: its gates, its harnesses, its command-line
 | [package.json hygiene](package-json.md) | `no-duplicate-package-json-keys`, `build-tools-in-devdependencies` |
 | [Branch name length](branch-name.md) | `branch-name-length` |
 | [Ticket requirement coverage](ticket-coverage.md) | `ticket-coverage` |
+| [Merge grants](merge-grant.md) | `merge-grant` (not a gate: whether a merge policy lets an agent merge a pull request; a merge guard and the dashboard read it) |
 | [Proof audit](proof-audit.md) | `proof-audit` (gate and command: a model grades whether the tests prove each requirement, the gate checks its quotes) |
 | [Feature map drift](feature-map.md) | `feature-map` |
 | [Browser acceptance verification (QAE)](qae-harness.md) | `acceptance-verdict`, `qae-artifacts`, `criteria`, `features`, `qae-inputs`, `qa-review`, `tool` |

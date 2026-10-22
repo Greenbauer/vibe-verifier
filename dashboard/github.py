@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 
 from .config import Config
 from .gh_api import ApiError, GitHubAPI
+from .merge_grant import MergeGrants
 from .pull_signals import face_fields
 from .required_workflows import RequiredWorkflows
 from .bot_runs import runner_name
@@ -96,6 +97,8 @@ class GitHubCollector(OwnerSet, BotHistory):
         self._heads_ok = False
         self._heads_complete = False
         self._read_now: set[tuple] = set()
+        # Which grant of the merge policy covers each pull request's current head (dashboard/merge_grant.py).
+        self._grants = MergeGrants(config.merge_policy) if config.merge_policy else None
 
     def clear_private_cache(self) -> None:
         with self._job_lock:
@@ -109,6 +112,7 @@ class GitHubCollector(OwnerSet, BotHistory):
         self._detail.clear()
         self._urgent.clear()
         self._heads = {}
+        self._grants = MergeGrants(self.config.merge_policy) if self.config.merge_policy else None
         self._heads_ok = False
         self._heads_complete = False
         self._read_now = set()
@@ -327,7 +331,8 @@ class GitHubCollector(OwnerSet, BotHistory):
         attention, reason = self._attention(checks + statuses, runs, expected)
         face = face_fields(current, signals, evidence=True, draft=draft, checks=checks, statuses=statuses,
                            expected=expected, rules=rules)
-        return {**identity, **face, "draft": draft, "head_changed": False, "evidence_available": True,
+        grant = self._grants.grant(self.api, repository, current) if self._grants else None
+        return {**identity, **face, "draft": draft, "head_changed": False, "evidence_available": True, "merge_grant": grant,
                 "attention": attention, "attention_reason": reason, "checks_sampled_at": iso_time(self.clock()),
                 "checks": checks, "statuses": statuses, "expected": expected, "runs": runs}
 
