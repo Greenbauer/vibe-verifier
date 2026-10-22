@@ -66,7 +66,7 @@ const { chromium } = load("playwright") || load("playwright-core");
 """
 # Every 25px from a small phone to a wide desktop, and both sides of each breakpoint the row grid or the
 # sidebar changes at (styles.css: 650 phone, 920 sidebar above the list, 1080 the row's wide minimums).
-WIDTHS = sorted(set(range(320, 1601, 25)) | {650, 651, 920, 921, 1080, 1081, 1100})
+WIDTHS = sorted(set(range(320, 1601, 25)) | {650, 651, 920, 921, 1080, 1081, 1100, 1600})
 TYPES = {".js": "text/javascript", ".css": "text/css", ".html": "text/html", ".svg": "image/svg+xml", ".png": "image/png"}
 
 
