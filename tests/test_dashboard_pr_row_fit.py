@@ -12,8 +12,14 @@ SCROLLBAR = 17  # A classic (non-overlay) vertical scrollbar in main takes this 
 
 
 def block(query):
+    """The media rule's text up to its matching close, whether it spans one line or many."""
     start = CSS.index("@media (" + query + ") {")
-    return CSS[start:CSS.index("\n}\n", start)]
+    depth = 0
+    for end in range(CSS.index("{", start), len(CSS)):
+        depth += {"{": 1, "}": -1}.get(CSS[end], 0)
+        if depth == 0:
+            return CSS[start:end + 1]
+    raise ValueError(f"unclosed @media ({query})")
 
 
 def grids():
