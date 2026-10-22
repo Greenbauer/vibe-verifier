@@ -714,7 +714,7 @@ one consumer's four security updates (2026-10-06):
 - **The run had no model token.** A run Dependabot starts reads the Dependabot secret store, never
   the Actions one (its log says `Secret source: Dependabot`), so `CLAUDE_CODE_OAUTH_TOKEN` is empty
   there until the repository adds it to that store. The workflow's `permissions:` apply to that run's
-  `GITHUB_TOKEN` as to any other, so the verdict and the review comment are still posted.
+  `GITHUB_TOKEN` as to any other, so the QA review comment is still posted.
 - **The body says nothing to check.** It has no `## Acceptance criteria` section, so it lists no
   criteria and the verdict gate refuses it. (Read as a plain list it was 105 of them, one for each
   line of a changelog; a body is read by its heading only since then.)
@@ -1019,8 +1019,8 @@ read-back value is escaped a second time, and the explorer could write a value a
 `qae-artifacts/`. So after the explorer the action replaces every value in each non-image file there
 (the session log, the step logs, the verdict), in three spellings: as written, inside JSON strings
 nested up to four deep (the session log is two), and percent-encoded with every character but
-letters, digits and `-._~` encoded (a space as `%20` or `+`). Then it removes its copies. The posted
-verdict and the uploaded evidence hold no value in those spellings. Any other is not found: a URL a
+letters, digits and `-._~` encoded (a space as `%20` or `+`). Then it removes its copies. The
+uploaded evidence holds no value in those spellings. Any other is not found: a URL a
 browser wrote leaves some punctuation as it is, for one. Never
 write a value into `site.md` or the prompt: the explorer does not need it, and the action can only
 redact what the file declares. `codex exec --ephemeral` keeps the run's session rollout, which holds
@@ -1168,11 +1168,8 @@ same. What differs, and why:
   go quiet copies [`codex-keepalive.yml`](codex-keepalive.yml) too: Codex refreshes a store that is
   about eight days old during any run, and the weekly exec keeps that happening.
 - **The model holds no GitHub token either.** The explorer step is given no secret and the checkout
-  has none, so the model cannot post, push, or read a credential. The workflow posts
-  `qae-artifacts/verdict.md` itself after the model finishes, which is why step 4 of the prompt
-  reads "do not post anything" in this lane. The comment is for people; the verify job reads the
-  file. The post is tried up to five times, because one GitHub 5xx would otherwise fail a finished
-  exploration's job.
+  has none, so the model cannot post, push, or read a credential. Nothing posts the verdict it writes:
+  the verify job reads the file, and its QA review is the one comment ([comment rules](../../docs/comments.md)).
 - **Caller-owned model settings.** `actions/qae-codex` accepts optional `model` and
   `reasoning-effort` inputs. Both default to empty, which preserves the runner's selection;
   the action never claims which model or effort that default chose. A model identifier starts

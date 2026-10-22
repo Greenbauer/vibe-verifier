@@ -43,7 +43,7 @@ from _acceptance import HTML_COMMENT
 from _affected_graph import JS_EXTENSIONS
 from _affected_tests import JS_TESTS, NODE_TEST
 from _contract import PY_TESTS, CannotRun, Finding, git, matches, planted, qualify, run_gate
-from _proof_audit import SCHEMA, merge_base, requirements
+from _proof_audit import SCHEMA, merge_base, proof_summary, requirements, table, write_table
 from _schema_subset import schema_problem
 from _ticket import LINK, links, unfenced
 import ticket_coverage
@@ -89,11 +89,12 @@ def envelopes(directory):
         for name in sorted(names):
             if re.fullmatch(r"[0-9]+\.json", name):
                 path = os.path.join(folder, name)
+                shown = os.path.relpath(path, directory)
                 try:
                     with open(path, encoding="utf-8") as handle:
-                        found.append((path, json.load(handle)))
+                        found.append((shown, json.load(handle)))
                 except (OSError, ValueError) as error:
-                    raise CannotRun("grade %s cannot be read: %s" % (os.path.relpath(path, directory), error))
+                    raise CannotRun("grade %s cannot be read: %s" % (shown, getattr(error, "strerror", None) or error))
     if not found:
         raise CannotRun("no grades: the proof-audit job graded nothing (did it run?)")
     return found
@@ -349,37 +350,6 @@ def verdict(files, grades, linked):
         return ("UNPROVEN", problem) if problem else ("EXCLUDED", "%s (%s:%d: %s)" % (
             grade["exclusion"]["owner"], grade["exclusion"]["plan"], grade["exclusion"]["line"], grade["exclusion"]["quote"].strip()))
     return "UNPROVEN", grade["missing"].strip() or "the grader named nothing missing"
-
-
-def proof_summary(grade):
-    return "; ".join("%s: %s" % (case["case"], ", ".join(proof_cite(proof) for proof in case["proof"]))
-                     for case in grade["cases"])
-
-
-def proof_cite(proof):
-    """`file:line` (test), and the line the grader cited when the gate found the quote elsewhere in that test."""
-    moved = "; cited :%d" % proof["cited_line"] if "cited_line" in proof else ""
-    return "`%s:%d` (%s%s)" % (proof["file"], proof["line"], proof["test"].strip(), moved)
-
-
-def cell(text, limit=600):
-    text = " ".join(str(text).split()).replace("|", "\\|")
-    return text if len(text) <= limit else text[:limit - 1] + "…"
-
-
-def table(rows, note=None):
-    proven = sum(1 for _, status, _ in rows if status != "UNPROVEN")
-    lines = ["## Proof audit: %s" % (note or "%d of %d requirements proven or excluded" % (proven, len(rows))), ""]
-    if rows:
-        lines += ["| ID | Verdict | Proof, or what is missing |", "|---|---|---|"]
-        lines += ["| %s | %s | %s |" % (rid, status, cell(detail)) for rid, status, detail in rows]
-    return "\n".join(lines) + "\n"
-
-
-def write_table(path, text):
-    if path:
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(text)
 
 
 def unlinked(args, body):

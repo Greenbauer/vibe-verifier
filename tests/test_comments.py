@@ -11,7 +11,9 @@ from pathlib import Path
 
 from helpers import ROOT, clean_env
 from qa_review_fixture import HEAD, MARKER, GhFixture
+import _acceptance  # noqa: E402  (gates/, which helpers puts on the path)
 import test_proof_audit  # its fixture only: a TestCase imported by name would run its tests here too
+import test_qae_carry
 from test_review_harness import step_script
 
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
@@ -19,7 +21,8 @@ LINK_TARGET = re.compile(r"\]\([^)\s]+\)")
 RULES = {
     "an em dash": re.compile("—"),
     "an en dash used as an aside": re.compile(" – "),
-    "a commit hash": re.compile(r"\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b"),
+    "a commit hash": re.compile(r"\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b|`[0-9a-f]{7,40}`"),
+    "a run ID": re.compile(r"\brun #?\d{3,}|\b\d{9,}\b", re.I),
     "a runner or box path": re.compile(r"(?:^|[\s`(])/(?:home|Users|tmp|var/folders|opt|runner)/"),
     "a tailnet address": re.compile(r"\.ts\.net\b"),
     "a bare URL": re.compile(r"https?://"),
@@ -39,7 +42,8 @@ def problems(body):
 class TheCheck(unittest.TestCase):
     def test_it_sees_each_rule_broken_in_the_visible_text(self):
         for text, rule in (("Passed — all good", "an em dash"), ("Passed – all good", "an en dash used as an aside"),
-                           ("Reviewed on `a1b2c3d4`.", "a commit hash"), ("See /home/agent/x.log", "a runner or box path"),
+                           ("Reviewed on `a1b2c3d4`.", "a commit hash"), ("Reviewed on `01234567`.", "a commit hash"),
+                           ("See run 18726455012.", "a run ID"), ("See /home/agent/x.log", "a runner or box path"),
                            ("[preview](https://box.tail0000.ts.net/)", "a tailnet address"),
                            ("Logs: https://example.com/run", "a bare URL"), ("QA passed (https://example.com/run 5)", "a bare URL"),
                            ("@review-bot please check", "an @-mention"), ("Asked (@bob) and cc:@carol", "an @-mention"),
@@ -61,18 +65,19 @@ class QaReview(GhFixture):
         (site / ".jobs.json").write_text(json.dumps([{"id": 100, "name": "qae-explore", "conclusion": "failure"}]))
 
     def test_every_state_follows_the_rules(self):
+        # The reasons as gates/_acceptance.py writes them, for changed paths no site renders and for a carried walk.
+        paths = _acceptance.not_required("x\n", ["docs/a.md"])
+        walk = _acceptance.not_required(test_qae_carry.BODY, [], "", test_qae_carry.facts())
         states = {"passed": {}, "changes needed": {"gates": "failure"}, "could not run": {"explore": "cancelled"},
-                  "not required": {"gates": "skipped", "not_required": "only docs changed", "verdict": False},
-                  # The reason as gates/_acceptance.py writes it for a carried walk.
-                  "carried": {"explore": "skipped", "gates": "skipped", "verdict": False, "carried": "a" * 40,
-                              "not_required": "QA passed in [an earlier run](https://github.com/acme/site/actions/runs/5), and every "
-                                              "file changed since (2) is CI configuration or documentation no site renders"},
-                  "usage limit": {"explore": "failure", "gates": "", "verdict": False}}
+                  "not required": {"gates": "skipped", "not_required": paths, "verdict": False},
+                  "passed on an earlier head": {"explore": "skipped", "gates": "skipped", "verdict": False, "carried": "a" * 40,
+                                                "not_required": walk},
+                  "could not run, model usage limit": {"explore": "failure", "gates": "", "verdict": False}}
         for state, kwargs in states.items():
-            if state == "usage limit":
+            if "usage limit" in state:
                 self.explorer_limit()
             body = self.posted(**kwargs)
-            self.assertTrue(body.startswith(MARKER + "\n"), state)
+            self.assertTrue(body.startswith(MARKER + "\n## QA review: %s " % state), (state, body))
             self.assertIn("[this commit](https://github.com/acme/site/commit/%s)" % HEAD, body, state)
             self.assertEqual(problems(body), [], (state, body))
 
@@ -98,7 +103,11 @@ class ProofAudit(unittest.TestCase):
         unproven = test_proof_audit.valid()
         unproven[1] = {"id": "C-8", "status": "UNPROVEN", "cases": [], "exclusion": None, "missing": "no test drops two files"}
         states = {"proven": (test_proof_audit.envelope(1, ["C-15", "C-8", "C-30"], test_proof_audit.valid()),), "unproven": (test_proof_audit.envelope(1, ["C-15", "C-8", "C-30"], unproven),),
-                  "graded nothing": (), "usage limit": (test_proof_audit.envelope(1, ["C-15", "C-8", "C-30"], error="You've hit your usage limit."),)}
+                  "graded nothing": (), "usage limit": (test_proof_audit.envelope(1, ["C-15", "C-8", "C-30"], error="You've hit your usage limit."),),
+                  "malformed grade": ({"shard": 1},)}
+        headings = {"proven": "3 of 3", "unproven": "2 of 3", "graded nothing": "could not run: no grades",
+                    "usage limit": "could not run", "malformed grade": "could not run: proof-audit-1/1.json lacks",
+                    "no ticket": "nothing to audit", "claims with no ticket": "nothing audited"}
         bodies = {state: self.audit(self.repo(), *envelopes)[1] for state, envelopes in states.items()}
         bodies["no ticket"] = self.audit(self.repo(), body="No ticket here.\n")[1]
         bodies["claims with no ticket"] = self.audit(self.repo(), body="Covers %s.\n" % ", ".join(
@@ -106,7 +115,7 @@ class ProofAudit(unittest.TestCase):
         self.assertIn("C-11", bodies["claims with no ticket"])
         for state, table in bodies.items():
             body = self.comment(table)
-            self.assertTrue(body.startswith("<!-- vibe-verifier:proof-audit -->\n## Proof audit: "), (state, body))
+            self.assertTrue(body.startswith("<!-- vibe-verifier:proof-audit -->\n## Proof audit: " + headings[state]), (state, body))
             self.assertIn("On [this commit](https://github.com/o/r/commit/%s). [The run and its evidence]"
                           "(https://github.com/o/r/actions/runs/42)." % HEAD, body)
             self.assertEqual(problems(body), [], (state, body))

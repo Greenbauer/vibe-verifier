@@ -332,3 +332,35 @@ def add_arguments(parser):
                         help="passed to the gate: a pull request that changes a file matching GLOB (repeatable) must link "
                         "a Ticket section or say why none applies on a `No ticket: <why>` line")
     parser.add_argument("--format", choices=["text", "github"], default="text")
+
+
+# The per-ID table proof_audit.py writes, which the action posts as the pull request's proof-audit comment.
+def proof_summary(grade):
+    return "; ".join("%s: %s" % (case["case"], ", ".join(proof_cite(proof) for proof in case["proof"]))
+                     for case in grade["cases"])
+
+
+def proof_cite(proof):
+    """`file:line` (test), and the line the grader cited when the gate found the quote elsewhere in that test."""
+    moved = "; cited :%d" % proof["cited_line"] if "cited_line" in proof else ""
+    return "`%s:%d` (%s%s)" % (proof["file"], proof["line"], proof["test"].strip(), moved)
+
+
+def cell(text, limit=600):
+    text = " ".join(str(text).split()).replace("|", "\\|")
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def table(rows, note=None):
+    proven = sum(1 for _, status, _ in rows if status != "UNPROVEN")
+    lines = ["## Proof audit: %s" % (note or "%d of %d requirements proven or excluded" % (proven, len(rows))), ""]
+    if rows:
+        lines += ["| ID | Verdict | Proof, or what is missing |", "|---|---|---|"]
+        lines += ["| %s | %s | %s |" % (rid, status, cell(detail)) for rid, status, detail in rows]
+    return "\n".join(lines) + "\n"
+
+
+def write_table(path, text):
+    if path:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)

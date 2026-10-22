@@ -32,8 +32,8 @@ inputs:
       <secret>NAME</secret> instead. A result can still carry a value in another spelling (JSON-escaped,
       when a script reads a field back), and playwright-mcp's session log keeps every result. So after
       the explorer every non-image file under the artifacts directory has each value replaced, as
-      written, inside JSON strings nested up to four deep, and percent-encoded: neither the posted
-      verdict nor the uploaded evidence holds one in those spellings. A malformed file fails the step
+      written, inside JSON strings nested up to four deep, and percent-encoded: the uploaded evidence
+      holds none in those spellings. A malformed file fails the step
       before the model runs. Empty (the default) adds nothing.
     default: ""
   usage-account-alias:
