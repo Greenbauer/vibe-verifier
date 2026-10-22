@@ -347,10 +347,12 @@ def proof_cite(proof):
 
 
 def cell(text, limit=600):
-    """One line of the comment, for a person: a URL or a runner path in text the gate did not write (a CLI's
-    error, a grade) goes to the job log, a runner path two or more folders deep to its last part (docs/comments.md)."""
+    """One line of the comment, for a person: in text the gate did not write (a CLI's error, a grade) a URL goes to
+    the job log, and this runner's own folders are dropped from a path, never a route (docs/comments.md)."""
     text = re.sub(r"https?://\S+", "(link in the job log)", " ".join(str(text).split()).replace("|", "\\|"))
-    text = re.sub(r"(?<![\w.~])/(?:home|Users|tmp|var|opt|root|private|runner|github|__w)/(?:[^\s/`]+/)+", "", text)
+    roots = {os.environ.get(name, "").rstrip("/") for name in ("GITHUB_WORKSPACE", "RUNNER_TEMP", "HOME", "TMPDIR")}
+    for root in sorted(filter(None, roots), key=len, reverse=True):
+        text = text.replace(root + "/", "")
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 

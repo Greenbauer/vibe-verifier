@@ -24,7 +24,7 @@ coordinates.
 |---|---|---|---|
 | `<!-- vibe-verifier:qa-review -->`, line one | `actions/qa-review` | the next run, to find the comment it edits | a new comment every run |
 | `<!-- vibe-verifier:proof-audit -->`, line one | `actions/proof-audit` | the next run, the same way | a new comment every run |
-| `<!-- vibe-verifier:review-receipt -->`, line one, then one `<!-- review-receipt: <sha> -- <mode> -- run <id> -->` line per run (the newest hundred) | the review workflow's "Post the receipt" step | its scope step (the last reviewed commit, for a delta review) and its verify job (the receipt for this head, judged by the `review-receipt` gate) | no receipt is found: every head reviews in full and the verify job fails |
+| `<!-- vibe-verifier:review-receipt -->`, line one, then one `<!-- review-receipt: <sha> -- <mode> -- run <id> -->` line per run (the newest hundred) | the review workflow's "Post the receipt" step | its scope step (the last reviewed commit, for a delta review) and its verify job (the receipt for this head, judged by the `review-receipt` gate); the newest receipt is the highest run number, whatever comment holds it | no receipt is found: every head reviews in full and the verify job fails |
 
 Only comments by `github-actions[bot]` that start with their marker are read. A receipt is read only
 from a comment of the receipt comment's exact shape (the marker, the line for people, then receipt lines

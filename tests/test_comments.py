@@ -7,6 +7,7 @@ import re
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from helpers import ROOT, clean_env
@@ -112,10 +113,14 @@ class ProofAudit(unittest.TestCase):
         return json.loads((work / "out.json").read_text())["body"]
 
     def test_a_cell_keeps_the_repositorys_paths_and_routes_and_drops_the_runners(self):
-        for kept in ("`tests/a.test.ts:4`", "the /api/orders route", "the /github/callback route", "the `/private/messages` page"):
-            self.assertEqual(_proof_audit.cell(kept), kept)
-        self.assertEqual(_proof_audit.cell("no login at /home/runner/.codex-qae/auth.json; see https://example.com/x"),
-                         "no login at auth.json; see (link in the job log)")
+        runner = {"HOME": "/home/runner", "RUNNER_TEMP": "/home/runner/work/_temp", "GITHUB_WORKSPACE": "/home/runner/work/r/r"}
+        with unittest.mock.patch.dict(os.environ, runner):
+            for kept in ("`tests/a.test.ts:4`", "the /api/orders route", "the /github/callback/ route",
+                         "the `/private/messages/42` page", "the /home/settings/profile page"):
+                self.assertEqual(_proof_audit.cell(kept), kept)
+            self.assertEqual(_proof_audit.cell("no login at /home/runner/.codex-qae/auth.json; grades in "
+                                               "/home/runner/work/_temp/proof-audit-grades/1.json; see https://example.com/x"),
+                             "no login at .codex-qae/auth.json; grades in proof-audit-grades/1.json; see (link in the job log)")
 
     def test_every_state_follows_the_rules(self):
         unproven = test_proof_audit.valid()
@@ -126,8 +131,8 @@ class ProofAudit(unittest.TestCase):
                       "You've hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits "
                       "or try again at 9:00 AM.")),),
                   "no login": (test_proof_audit.envelope(1, ["C-15", "C-8", "C-30"], error=(
-                      "no Codex login at /home/runner/.codex-qae/auth.json: seed it once, as this user: "
-                      "CODEX_HOME=/home/runner/.codex-qae codex login --device-auth (harnesses/qae/README.md)")),),
+                      "no Codex login at {0}/.codex-qae/auth.json: seed it once, as this user: "
+                      "CODEX_HOME={0}/.codex-qae codex login --device-auth (harnesses/qae/README.md)".format(Path.home()))),),
                   "malformed grade": ({"shard": 1},)}
         headings = {"proven": "3 of 3", "unproven": "2 of 3", "graded nothing": "could not run: no grades",
                     "usage limit": "could not run", "no login": "could not run", "malformed grade": "could not run: proof-audit-1/1.json lacks",
@@ -217,12 +222,13 @@ json.dump(comments, open(path, "w"))
 
     def test_a_later_run_finds_the_comment_however_github_ends_it_and_after_the_trim(self):
         # GitHub may hand the body back with or without its last newline; each later run edits the same comment.
-        for ending in ("", "\n", "\n\n"):
+        for ending in ("", "\n", "\n\n", "\r\n", " ", "\t\n"):
             body = "<!-- vibe-verifier:review-receipt -->\n**Code review** finished.\n\n" + "\n".join(
                 "<!-- review-receipt: %040x -- full -- run %d -->" % (n, n) for n in range(1, 121)) + ending
             self.comments.write_text(json.dumps([{"id": 1, "user": {"login": "github-actions[bot]"}, "body": body}]))
             (self.temp / "comments.json.writes").unlink(missing_ok=True)
-            self.post("c" * 40, "full", 121)
+            first = self.post("c" * 40, "full", 121)[0]
+            self.assertIn("<!-- review-receipt: %040x -- full -- run 120 -->\n<!-- review-receipt: %s" % (120, "c" * 40), first, repr(ending))
             bodies = self.post("d" * 40, "full", 122)
             self.assertEqual(len(bodies), 1, ending)
             self.assertEqual((self.temp / "comments.json.writes").read_text().splitlines(), ["PATCH repos/o/r/issues/comments/1"] * 2)

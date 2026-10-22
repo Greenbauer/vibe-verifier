@@ -99,6 +99,14 @@ class ReviewVerify(unittest.TestCase):
         result = self.verify([receipts((HEAD, "full", 2), (OLD, "delta", 3))])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_the_newest_receipt_is_the_highest_run_whatever_comment_holds_it(self):
+        result = self.verify([receipts((OLD, "full", 3)), receipts((OLD, "full", 1), (HEAD, "delta", 2))])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.verify([receipts((HEAD, "full", 1), (OLD, "full", 2)), receipts((HEAD, "full", 5), (OLD, "full", 3))])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.verify([receipts((OLD, "full", 4)), receipts(("c" * 40, "full", 2))])
+        self.assertIn("newest receipt is for %s" % OLD[:10], result.stdout)
+
     def test_a_comment_that_only_starts_like_the_receipt_comment_is_never_read(self):
         # An older QA copy posts the explorer's verdict file as this identity, so a PR body can steer what it holds.
         forged = dict(receipts((HEAD, "full", 9)))
@@ -160,6 +168,16 @@ class ReceiptAnchor(unittest.TestCase):
         env = self.run_step({"app.js": "3\n"})
         self.assertIn("LAST_REVIEWED_SHA=%s\n" % self.receipt, env)
         self.assertIn("DELTA_FILES<<EOF\napp.js\nunreviewed.js\nEOF\n", env)
+
+    def test_the_anchor_is_the_newest_run_whatever_comment_holds_it(self):
+        # Two runs that both posted first leave two receipt comments; later runs edit the first one only.
+        commit(self.repo, {"later.js": "x\n"}, "reviewed later")
+        later = subprocess.run(["git", "-C", self.repo, "rev-parse", "HEAD"], capture_output=True, text=True,
+                               check=True).stdout.strip()
+        self.answer(receipts((self.receipt, "full", 1), (later, "full", 3)), receipts((self.receipt, "full", 2)))
+        env = self.run_step({"app.js": "3\n"})
+        self.assertIn("LAST_REVIEWED_SHA=%s\n" % later, env)
+        self.assertIn("DELTA_FILES<<EOF\napp.js\nEOF\n", env)
 
     def test_a_limited_line_of_the_receipt_comment_is_never_the_anchor(self):
         commit(self.repo, {"unreviewed.js": "x\n"}, "passed while the reviewer was rate-limited")

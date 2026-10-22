@@ -78,11 +78,13 @@ jobs:
           # from a comment of the receipt comment's exact shape (one per pull request, a line per run) or,
           # from a copy made before it, a comment that is one receipt: any other comment of this identity
           # can carry text a pull request wrote (the QA review lists the criteria), so a receipt in it could
-          # be forged.
+          # be forged. The newest is the highest run number, never the comment order: two runs that both
+          # posted first leave two receipt comments, and later runs edit only the first.
           LAST=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" --paginate \
             | jq -r -s '[.[][] | select(.user.login == "github-actions[bot]")
                 | select(.body | test("\\A<!-- vibe-verifier:review-receipt -->\\n\\*\\*Code review\\*\\* [^\\n]*\\n\\n(?:<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->\\s*)+\\z") or test("\\Areview-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+\\s*\\z")) | .body
-                | scan("review-receipt: ([0-9a-f]{40}) -- ([a-z]+)") | select(.[1] != "limited") | .[0]] | last // ""')
+                | scan("review-receipt: ([0-9a-f]{40}) -- ([a-z]+) -- run ([0-9]+)") | select(.[1] != "limited")]
+                | if length == 0 then "" else max_by(.[2] | tonumber) | .[0] end')
           mode="full"
           if [ -n "$LAST" ] && git cat-file -e "${LAST}^{commit}" 2>/dev/null && git merge-base --is-ancestor "$LAST" HEAD 2>/dev/null; then
             PR_FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD")
@@ -424,7 +426,8 @@ jobs:
                  | jq -c -s --arg marker "$marker" '[.[][] | select(.user.login == "github-actions[bot]" and (.body | test("\\A<!-- vibe-verifier:review-receipt -->\\n\\*\\*Code review\\*\\* [^\\n]*\\n\\n(?:<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->\\s*)+\\z")))] | first // {}'); then
               # The receipts of the 99 latest earlier runs, as this comment holds them, and this run's once:
               # a hundred lines keep the comment far under GitHub's size limit, and older ones anchor nothing.
-              earlier=$(jq -r '.body // ""' <<< "$found" | grep -E '^<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->$' | grep -vxF "$line" | tail -n 99 || true)
+              earlier=$(jq -r '.body // ""' <<< "$found" | sed 's/[[:space:]]*$//' \
+                | grep -E '^<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->$' | grep -vxF "$line" | tail -n 99 || true)
               body=$(printf '%s\n**Code review** %s. [The run](%s).\n\n%s%s\n' "$marker" "$said" \
                 "${GITHUB_SERVER_URL}/${REPO}/actions/runs/${GITHUB_RUN_ID}" "${earlier:+$earlier$'\n'}" "$line")
               id=$(jq -r '.id // ""' <<< "$found")
@@ -490,7 +493,8 @@ jobs:
             | jq -r -s --arg head "$HEAD_SHA" '[.[][] | select(.user.login == "github-actions[bot]")
                 | select(.body | test("\\A<!-- vibe-verifier:review-receipt -->\\n\\*\\*Code review\\*\\* [^\\n]*\\n\\n(?:<!-- review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+ -->\\s*)+\\z") or test("\\Areview-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+\\s*\\z")) | .body
                 | scan("review-receipt: [0-9a-f]{40} -- [a-z]+ -- run [0-9]+")]
-                | ((map(select(startswith("review-receipt: " + $head))) | last) // last) // ""' > review-inputs/receipt.md
+                | def newest: if length == 0 then null else max_by(capture("run (?<n>[0-9]+)$").n | tonumber) end;
+                  (map(select(startswith("review-receipt: " + $head))) | newest) // newest // ""' > review-inputs/receipt.md
           gh api graphql -f query="query { repository(owner: \"${REPO%/*}\", name: \"${REPO#*/}\") { pullRequest(number: ${PR_NUMBER}) { reviewThreads(first: 100) { nodes { isResolved } } } } }" \
             --jq '{unresolved: [.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)] | length}' > review-inputs/threads.json
           cat review-inputs/threads.json
