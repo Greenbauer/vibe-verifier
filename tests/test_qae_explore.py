@@ -194,13 +194,14 @@ class Steps(unittest.TestCase):
                       "    if: needs.criteria.outputs.count != '0'\n", text)
         self.assertIn("    outputs:\n      count: ${{ steps.criteria.outputs.count }}\n", text[:text.index("\n  explore:\n")])
 
-    def test_the_only_comment_the_explorer_may_post_is_the_verdict_file(self):
-        # gh opens --body-file itself, so a wildcard rule would let a hostile PR body post any file.
+    def test_the_explorer_may_post_nothing(self):
+        # docs/comments.md: the verify job's QA review is the one comment. With no gh rule, nothing a hostile
+        # PR body asks the explorer to read can reach the pull request.
         text = TEMPLATE.read_text()
         tools = re.search(r'--allowed-tools "([^"]+)"', text).group(1).split(",")
-        comment_rules = [rule for rule in tools if "gh pr comment" in rule]
-        self.assertEqual(comment_rules, ["Bash(gh pr comment ${{ github.event.pull_request.number }} --body-file qae-artifacts/verdict.md)"])
-        self.assertIn("gh pr comment ${{ github.event.pull_request.number }} --body-file qae-artifacts/verdict.md\n", text)
+        self.assertEqual([rule for rule in tools if rule.startswith("Bash(gh")], [])
+        self.assertIn("Bash(mkdir:*)", tools)
+        self.assertNotIn("gh pr comment", text)
 
     def test_dependabot_and_the_repositorys_pull_sync_bot_are_the_bots_that_reach_the_explorer(self):
         # claude-code-action refuses a run a bot started unless allowed_bots names it (Dependabot's, 2026-10-06; the

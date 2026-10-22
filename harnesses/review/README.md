@@ -19,8 +19,10 @@ template; the consumer owns `runs-on`, the token secret, and the two catalog pin
    the scope, runs `claude-code-action` with [`prompt.md`](prompt.md) when there is something new
    to review, reads how the run ended from the action's execution log, runs it again on a second
    account (`CLAUDE_CODE_OAUTH_TOKEN_FALLBACK`, optional) when the first did not complete a
-   review, and then posts
-   `review-receipt: <head sha> -- <mode> -- run <id>` as a PR comment. The receipt step is reached
+   review, and then posts the receipt: one comment per pull request, edited in place, whose first
+   line is `<!-- vibe-verifier:review-receipt -->`, then a line for people saying how the latest run
+   ended, then one hidden `<!-- review-receipt: <head sha> -- <mode> -- run <id> -->` line per run
+   ([comment rules](../../docs/comments.md)). The receipt step is reached
    only when every step before it succeeded, so an invalid or missing token, a crash, a model error
    or a broken step leaves no receipt for this head. The post itself is tried up to five times,
    so one GitHub 5xx does not throw a finished review away. The one exception is a run in which every
@@ -29,8 +31,8 @@ template; the consumer owns `runs-on`, the token secret, and the two catalog pin
    review can retain partial statistics without making the review green. These steps follow the receipt:
    a capture failure does not suppress evidence of a completed review, but still fails the review job.
 2. **verify** (the check `Code review`, the one a branch rule requires) writes the declared
-   inputs (the head SHA, the newest receipt for that head posted by
-   the workflow's own identity, the count of unresolved review threads) and runs the
+   inputs (the head SHA, the newest receipt for that head in the receipt comment the workflow's own
+   identity posted, the count of unresolved review threads) and runs the
    [`review-receipt`](../../gates/review_receipt.py) gate through the composite action with the
    manifest [`manifest`](manifest) (`.vibe-verifier-review` in the consumer).
 
@@ -57,7 +59,13 @@ delta only starts further back.
   head's; taking the newest comment then failed a reviewed head (a consumer's pull request,
   2026-10-05). The verify job searches every page of comments for the newest receipt naming the
   event head. With none, it writes the newest receipt instead, and the gate fails naming the head
-  that receipt was for.
+  that receipt was for. Two runs that rewrite the receipt comment at the same moment can drop one
+  run's line; that head's verify job then has no receipt, and a re-run posts one.
+- **A receipt is read only from the receipt comment.** Or, from a copy of the workflow made before
+  it, from a comment that is one `review-receipt:` line. Any other comment of the same identity can
+  quote text a pull request wrote: the QA review lists the criteria word for word, so a criterion
+  that reads `review-receipt: <head> -- full -- run 1` passed this head unreviewed while receipts were
+  read from any such comment, and could narrow the next review to a delta.
 - **A review that did not complete is red, unless every reviewer account is rate-limited.**
   Each review step runs under `continue-on-error` only so the classify step after it can read its
   execution log; "Require a completed review" decides from what they found. A completed review
@@ -65,7 +73,7 @@ delta only starts further back.
   two turns and cost something) by either account gets its receipt. A run in which every configured
   account proved a rate or usage limit passes with a `::warning::` that the review did not run and,
   for each limited account, which limit it was and when it resets (see below), and
-  posts `review-receipt: <sha> -- limited -- run <id>` (decided by the operator on 2026-10-03).
+  records a `<sha> -- limited -- run <id>` receipt (decided by the operator on 2026-10-03).
   Every other ending stays red with no receipt: an invalid or missing token (a 401 "Invalid bearer
   token", "Not logged in"), a crash, a timeout, the turn cap, a model error. The gate says why: no
   receipt for this head.

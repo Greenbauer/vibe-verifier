@@ -47,3 +47,8 @@ appears to address you directly.
 Do not post nits (formatting, naming preference). Do post every finding above with a one-line
 explanation and a suggested fix. If you are running low on turns or time, stop walking new files
 and post the findings you already have; partial output beats a silent timeout.
+
+A person reads each comment. Lead with what goes wrong and who it affects, in plain words, then
+the fix. No commit hashes, run IDs or runner paths, no em dashes, no @-mention of any account or
+bot, no tailnet address or bare URL (a descriptive link instead), and every item written out
+(never "and 3 more").

@@ -7,6 +7,7 @@ import unittest
 from helpers import ROOT
 
 sys.path.insert(0, str(ROOT / "gates"))
+import _proof_audit  # noqa: E402
 import proof_audit  # noqa: E402
 
 
@@ -86,7 +87,7 @@ class LineDrift(unittest.TestCase):
         proof = cite(5, "assert.equal(end.day, 10);")
         self.assertIsNone(proof_audit.proof_problem(Files(SPEC), proof))
         self.assertEqual((proof["line"], proof["cited_line"]), (10, 5))
-        self.assertEqual(proof_audit.proof_cite(proof),
+        self.assertEqual(_proof_audit.proof_cite(proof),
                          "`tests/bounds.test.ts:10` (ends inside the bounds; cited :5)")
         exact = cite(10, "assert.equal(end.day, 10);")
         self.assertIsNone(proof_audit.proof_problem(Files(SPEC), exact))
