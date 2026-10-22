@@ -114,6 +114,8 @@ DASHBOARDS="$(python3 "$REPO_ROOT/lib/lanes.py" dashboards "$HOST_YML")" || die 
 # ---- helpers ---------------------------------------------------------------------------------------
 load() { read_settings dashboard-env "$HOST_YML" "$1"; }
 uid_of() { getent passwd "$1" | cut -d: -f3; }
+# The host file's config names a merge_policy_file of its own (set by hand, without an inline policy).
+policy_named() { python3 "$REPO_ROOT/lib/lanes.py" dashboard-config "$HOST_YML" "$1" | jq -e 'has("merge_policy_file")' >/dev/null; }
 web() { printf 'vibe-dashboard@%s.service' "$1"; }
 installed_names() { local d; for d in "$ETC_BASE"/*/; do [ -d "$d" ] && basename "$d"; done; return 0; }
 declared() { grep -qx -- "$1" <<< "$DASHBOARDS"; }
@@ -138,6 +140,23 @@ converge_owned() {
   mv -f "$tmp" "$dest"
   log "wrote $dest" >&2
   echo changed
+}
+
+# The catalog's merge-policy loader, from the checkout the dashboard runs: a policy the dashboard would
+# refuse at startup never replaces the live one (a policy-only change leaves dashboard.json as it was,
+# so vv_accepts never sees it).
+policy_accepts() {
+  python3 -B -s -c 'import sys; sys.path.insert(0, sys.argv[1] + "/gates"); import _merge_grant; _merge_grant.load_policy(sys.argv[2])' \
+    "$VV" "$1"
+}
+
+# The merge policy: its content through policy_accepts, and its owner and mode put right when only they
+# drifted (the dashboard's loader requires its account to own the file, and converge_owned compares content).
+converge_policy() {  # $1: path, $2: content
+  if [ -f "$1" ] && [ "$(cat "$1")" = "$2" ] && [ "$(stat -c '%U %a' "$1" 2>/dev/null)" != "$ACCOUNT 600" ]; then
+    run_mutation chown "$ACCOUNT:$ACCOUNT" "$1" >&2; run_mutation chmod 0600 "$1" >&2; echo changed
+  fi
+  converge_owned "$1" "$2" "$ACCOUNT:$ACCOUNT" 0600 policy_accepts
 }
 
 # The dashboard's own configuration loader, from the checkout it runs, as its account will read the file.
@@ -264,9 +283,10 @@ ensure_dashboard() {  # $1: name
   ensure_dir "$STATE_BASE" 0755; ensure_dir "$STATE_BASE/$name" 0700
   # The merge policy dashboard.json names goes first, so the loader's check of the draft can read it.
   policy="$(python3 "$REPO_ROOT/lib/lanes.py" dashboard-merge-policy "$HOST_YML" "$name")"
-  [ -z "$policy" ] || changed+="$(converge_owned "$etc/merge-policy.json" "$policy" "$ACCOUNT:$ACCOUNT" 0600)"
+  [ -z "$policy" ] || changed+="$(converge_policy "$etc/merge-policy.json" "$policy")"
   changed+="$(converge_owned "$etc/dashboard.json" "$(python3 "$REPO_ROOT/lib/lanes.py" dashboard-config "$HOST_YML" "$name")" "$ACCOUNT:$ACCOUNT" 0600 vv_accepts)"
-  if [ -z "$policy" ] && [ -e "$etc/merge-policy.json" ]; then
+  # A policy no longer declared goes, unless the config names a file of its own (set by hand).
+  if [ -z "$policy" ] && [ -e "$etc/merge-policy.json" ] && ! policy_named "$name"; then
     run_mutation rm -f "$etc/merge-policy.json"; changed+=changed
   fi
   changed+="$(converge_owned "$etc/host.env" "$(render_host_env)" root:root 0644)"
@@ -449,7 +469,7 @@ check_dashboard() {  # $1: name
   check_file config "$etc/dashboard.json" "$ACCOUNT" 600 "$(python3 "$REPO_ROOT/lib/lanes.py" dashboard-config "$HOST_YML" "$name")"
   policy="$(python3 "$REPO_ROOT/lib/lanes.py" dashboard-merge-policy "$HOST_YML" "$name")"
   if [ -n "$policy" ]; then check_file merge_policy "$etc/merge-policy.json" "$ACCOUNT" 600 "$policy"
-  elif [ -e "$etc/merge-policy.json" ]; then printf 'merge_policy=%s is no longer declared (re-run --apply)\n' "$etc/merge-policy.json"; bad; fi
+  elif [ -e "$etc/merge-policy.json" ] && ! policy_named "$name"; then printf 'merge_policy=%s is no longer declared (re-run --apply)\n' "$etc/merge-policy.json"; bad; fi
   check_file host_env "$etc/host.env" root 644 "$(render_host_env)"
   check_file collector "$etc/collector.json" root 600 "$(python3 "$REPO_ROOT/lib/lanes.py" dashboard-collector "$HOST_YML" "$name")"
   check_file app_key "$etc/app.pem" root 600

@@ -635,8 +635,10 @@ nologin); `/etc/vibe-dashboard/<name>/` (root, 0755) with `dashboard.json` (the 
 host file's `config` plus `telemetry_file`), `host.env` (root, 0644: `PORT` and the lane's App id,
 installation and login), `merge-policy.json` (the account's, 0600: the `config`'s inline `merge_policy`,
 the [merge policy](../docs/features/merge-grant.md) behind the Pull requests view's "Agent mergeable"
-pill, which `dashboard.json` then names as `merge_policy_file`; written before `dashboard.json`, and
-removed once the host file no longer declares it), `app.pem` (root, 0600: a copy of the lane's App key, re-copied by the next apply
+pill, which `dashboard.json` then names as `merge_policy_file`; checked by the catalog's policy loader
+before it replaces the live one, written before `dashboard.json`, a change restarting that dashboard,
+and removed once the host file no longer declares it, unless the config names a `merge_policy_file` of
+its own), `app.pem` (root, 0600: a copy of the lane's App key, re-copied by the next apply
 after the key changes) and `collector.json` (root, 0600: the collector's local mode on the lane's
 `/etc/<lane>/listener.json`, with `workspace_path` the lane's state directory `/var/lib/<lane>`,
 which holds its slot and store images, and `codex_home` the lane's first Codex store, or
