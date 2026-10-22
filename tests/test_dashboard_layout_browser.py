@@ -20,7 +20,50 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from helpers import ROOT
 
 STATIC = ROOT / "dashboard" / "static"
-SWEEP = ROOT / "tests" / "dashboard_layout_sweep.js"
+# Run with `node -e`: opens the dashboard at argv[1] in a real Chromium and, at each window width in argv[2]
+# (comma separated), prints one JSON line: the cells of a .pr-row that end outside their row, how many rows
+# show an idle line, a timeline and a meter, and how far the page, the view and each list scroll sideways.
+# The browser comes from the Playwright in VV_PLAYWRIGHT_DIR (its node_modules), channel VV_BROWSER_CHANNEL.
+SWEEP = r"""
+"use strict";
+const path = require("node:path");
+
+const modules = path.join(process.env.VV_PLAYWRIGHT_DIR, "node_modules");
+const load = name => { try { return require(path.join(modules, name)); } catch { return null; } };
+const { chromium } = load("playwright") || load("playwright-core");
+
+(async () => {
+  const browser = await chromium.launch({ channel: process.env.VV_BROWSER_CHANNEL || "chromium" });
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const errors = [];
+  page.on("pageerror", error => errors.push(String(error)));
+  await page.goto(process.argv[1], { waitUntil: "networkidle" });
+  await page.waitForSelector(".pr-row");
+  for (const width of process.argv[2].split(",").map(Number)) {
+    await page.setViewportSize({ width, height: 900 });
+    const measured = await page.evaluate(() => {
+      const outside = [];
+      for (const row of document.querySelectorAll(".pr-row")) {
+        const box = row.getBoundingClientRect();
+        for (const cell of row.children) {
+          const own = cell.getBoundingClientRect();
+          if (own.width === 0 && own.height === 0) continue;
+          const past = Math.max(own.right - box.right, box.left - own.left);
+          if (past > 0.5) outside.push(`${row.querySelector(".pr-title, b")?.textContent.slice(0, 30)}: ${cell.className} ${past.toFixed(1)}px`);
+        }
+      }
+      const sideways = node => node.scrollWidth - node.clientWidth;
+      const count = selector => document.querySelectorAll(selector).length;
+      return { rows: count(".pr-row"), idle: count(".pr-row .idle-line"), timelines: count(".pr-row .timeline-cell"),
+        meters: count(".pr-row .check-meter"), outside, page: sideways(document.scrollingElement),
+        view: sideways(document.querySelector("main")), lists: Math.max(...[...document.querySelectorAll(".pr-list")].map(sideways)) };
+    });
+    console.log(JSON.stringify({ width, ...measured }));
+  }
+  console.log(JSON.stringify({ errors }));
+  await browser.close();
+})().catch(error => { console.error(error); process.exit(1); });
+"""
 # Every 25px from a small phone to a wide desktop, and both sides of each breakpoint the row grid or the
 # sidebar changes at (styles.css: 650 phone, 920 sidebar above the list, 1080 the row's wide minimums).
 WIDTHS = sorted(set(range(320, 1601, 25)) | {650, 651, 920, 921, 1080, 1081, 1100})
@@ -96,7 +139,7 @@ class DashboardLayoutInABrowser(unittest.TestCase):
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         result = subprocess.run(
-            ["node", str(SWEEP), f"http://127.0.0.1:{server.server_address[1]}/", ",".join(map(str, WIDTHS))],
+            ["node", "-e", SWEEP, f"http://127.0.0.1:{server.server_address[1]}/", ",".join(map(str, WIDTHS))],
             capture_output=True, text=True, timeout=300, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         lines = [json.loads(line) for line in result.stdout.splitlines()]
