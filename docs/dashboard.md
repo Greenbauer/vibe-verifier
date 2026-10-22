@@ -174,7 +174,8 @@ roster shows no invented agents. See
     {"id": "ci-qae", "name": "QAE", "role": "qae", "workflow_role": "explorer"}
   ],
   "telemetry_file": "/absolute/path/telemetry.json",
-  "proxy_origin": "https://dashboard.example.test"
+  "proxy_origin": "https://dashboard.example.test",
+  "merge_policy_file": "/absolute/path/merge-policy.json"
 }
 ```
 
@@ -186,7 +187,9 @@ does: the catalog's harnesses now name their jobs as above, and a repository's c
 rename still runs under the old name (`review`, `qae-explore`, `qae-verify`) until it takes the new one.
 
 `telemetry_file` is optional and must be absolute. Deleting it makes telemetry unavailable without
-affecting GitHub data. `proxy_origin` is optional; omit it for local-only mode. It must be one exact
+affecting GitHub data. `merge_policy_file` is optional and must be absolute: an owned, not group- or
+world-writable [merge policy](features/merge-grant.md), the same file a merge guard reads, checked at
+startup (a malformed policy stops the dashboard). Without it no row shows the "Agent mergeable" pill. `proxy_origin` is optional; omit it for local-only mode. It must be one exact
 HTTPS origin with a hostname and optional valid port, with no trailing slash, credentials, path,
 query, fragment, wildcard, or control character. The file is immutable after startup. A repository
 with no open pull request has no group and is not in the filter. The Pull requests page says nothing
@@ -237,7 +240,9 @@ each commit status. It makes no extra GitHub call.
   wait, and a commit status never waits.
 - **Opened**, the timeline lists every job under its workflow's name on an axis with round-time
   ticks, with its run time (or "so far", or how long it has waited) and a Log link to the job on
-  GitHub when the job's page is under the configured owner. A job's name opens its steps, drawn on
+  GitHub when the job's page is under the configured owner. On a phone the time column is narrow,
+  so a long time such as "1h 2m so far" wraps to two lines in it rather than running into the Log
+  link. A job's name opens its steps, drawn on
   that job's own scale (a note says so) because a one-minute job's steps on an hour's axis would be
   dots. Bold names are the critical path: from the last job to finish, back through each job whose
   finish created it (a finish within five seconds of a job's creation). Only Actions jobs are
@@ -252,8 +257,9 @@ each commit status. It makes no extra GitHub call.
   app's queued check draws nothing until it starts; the counts in the CI column include both.
 
 `tests/test_dashboard_timeline.py` runs `dashboard/static/timeline.test.js` and `dashboard/static/prs.test.js` and checks the row's
-swap from the meter, that there is no scale menu and each row is fit to its own timeline, and the bar
-colors and box.
+swap from the meter, that there is no scale menu and each row is fit to its own timeline, the bar
+colors and box. `tests/test_dashboard_timeline_phone.py` checks that a phone wraps a long job time in
+its column.
 
 ## Work view
 
@@ -667,6 +673,18 @@ within one beat, and a pull request the detail budget has not reached shows it t
 when the head is up to date, for a pull request from a fork, for one into a branch other than the
 default branch, and when GitHub returned no comparison. The title rule above is separate: a head
 behind the base stays white only where the base branch requires it to be up to date.
+When a grant of the configured merge policy lets an agent merge the head without a human review,
+the same bottom line ends with an "Agent mergeable" pill, after the behind pill, and its
+tooltip says an agent may merge it without a human review and names the grant ("under the non-product grant"). The decision is the catalog's
+[`merge-grant`](features/merge-grant.md), the code a merge guard runs, fed by the pull request's
+changed files and, for a file whose content decides (a `package.json`, a workflow), its text at the
+base and the head. It is read once per head, base and title, and kept until one of them moves. The
+pill is not merge-readiness and does not change the title: a green title says GitHub's merge state,
+the checks and the review threads allow a merge now, while the pill says only that the diff is one an
+agent may merge, whatever its checks say. A pull request can show either, both or neither. The pill
+is hidden when no policy is configured, when no grant covers the pull request, when the reading has
+not reached it, when GitHub did not answer (it is asked again on the next pass), and on a row whose
+head has moved since the reading.
 When the pull request has unresolved review threads, the check line shows a message icon and
 that number. The number is a lower bound, with a plus, when more threads exist than the read
 returned. The icon is hidden when every thread is resolved, and when the comment read did not
@@ -751,6 +769,7 @@ published history's reader, and the collector-to-page path.
 points, runner waits (jobs only, over 30 seconds), the critical path, the shared and fitted scales
 and the menu that picks them, the opened rows and steps, the bar colors and box, the row's swap
 from the check meter, and the row's title link to GitHub and its timeline toggle.
+`tests/test_dashboard_timeline_phone.py` covers a phone wrapping a job's time inside its column.
 `tests/test_dashboard_behind.py` covers how far a head is behind the default branch and that both
 the full pass and the head beat put it on the row.
 `tests/test_dashboard_push_kind.py` covers the latest push's label and time, and
