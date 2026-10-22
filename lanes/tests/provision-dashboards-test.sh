@@ -310,10 +310,11 @@ out="$(run_dash --apply 2>&1)"; rc=$?
 expect $? "a policy the catalog's loader refuses never replaces the live one, and nothing restarts"
 sed -i 's#merge_policy: {version: 1, refuse: true,#merge_policy: {version: 1,#' "$S/config/hosts/example.yml"
 sed -i 's#repos: \[Greenbauer/vibe-verifier, Greenbauer/runners\]#repos: [Greenbauer/vibe-verifier]#; s/^      owner: Greenbauer$/      owner: Greenbauer\n      refuse: true/' "$S/config/hosts/example.yml"
-before_pol="$(cat "$pol")"; : > "$CALLLOG"
+before_pol="$(cat "$pol")"; before_cfg="$(cat "$cfg")"; : > "$CALLLOG"
 out="$(run_dash --apply 2>&1)"; rc=$?
-[ "$rc" -ne 0 ] && [ "$(cat "$pol")" = "$before_pol" ] && ! grep -q "systemctl restart" "$CALLLOG"
-expect $? "a policy change beside a config the loader refuses leaves the live policy too, so no change goes live unrestarted"
+[ "$rc" -ne 0 ] && grep -q "the dashboard's own loader refused the new $pol; the old file stays" <<< "$out" && [ "$(cat "$pol")" = "$before_pol" ] \
+  && [ "$(cat "$cfg")" = "$before_cfg" ] && ! grep -q "systemctl restart" "$CALLLOG" && [ -z "$(ls "$S/etc/greenbauer" | grep 'dashboard.json\.')" ]
+expect $? "a policy change beside a config the loader refuses leaves the live policy and dashboard.json, so no change goes live unrestarted"
 sed -i '/^      refuse: true$/d; s#repos: \[Greenbauer/vibe-verifier\]#repos: [Greenbauer/vibe-verifier, Greenbauer/runners]#' "$S/config/hosts/example.yml"
 out="$(run_dash --check 2>&1)"; grep -qx "merge_policy=$pol ok" <<< "$out"; expect $? "after the refusal the live policy still matches the host file"
 printf '{}\n' > "$pol"
