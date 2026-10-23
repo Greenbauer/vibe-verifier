@@ -233,6 +233,16 @@ grader on both trees: `python3 -m unittest tests.test_proof_audit.Replay` from t
 - An assertion counts for the test it sits in, found as the nearest test declaration above it (a
   `test(...)`/`it(...)` call and its `.only`, `.skip`, `.each(...)` forms, or a Python `def test_*`); a test
   whose title is not a string literal is matched on the declaration's text. A line in a hook or a helper
-  does not count, which is what the prompt asks for too.
+  does not count, which is what the prompt asks for too: the line must also sit inside the named test's
+  body, which ends at the first line after its declaration indented no deeper than the declaration (a
+  declaration wrapped over up to 40 lines, a comment line, and the text of a JS template literal or block
+  comment or a Python triple-quoted string do not end it), so a hook or helper after the test is refused even
+  when the grader cites its exact line, whatever the test's title. The reading is line by line, not a parser, and
+  is built for formatted code: it steps over strings, over a regex literal whose `/` follows an operator, an
+  opening bracket, a comma or `return`, and over a template literal's `${...}` as code, so a template nested in
+  one (`${items.map((i) => `<li>${i}</li>`)}`) closes where it does. JSX (in a template's `${...}` too), or a
+  regex after `)` or `await`, holding a backtick or `/*` reads as opening a template or comment, so the body runs to
+  the end of the file and a hook after it passes. Code after the `{` on a JS declaration's own line that ends in `)` or `);` can end the
+  body early and turn away an assertion in it.
 - The grade artifacts are named by shard. A re-run whose plan has fewer shards than the first attempt's
   finds the extra shard's grades, and the gate cannot run (never passes) until the next push.

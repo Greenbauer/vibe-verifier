@@ -1,6 +1,7 @@
 """proof-audit: which assertion lines a grade may quote. A test declared `void it(...)` or `void test(...)` names
 its assertions, a short value line counts only inside an assert or expect call still open above it, and a quote at
-the wrong line number counts when it sits exactly once inside the test the grade names."""
+the wrong line number counts when it sits exactly once inside the test the grade names (where a line cited exactly
+counts: test_proof_audit_body.py)."""
 import sys
 import unittest
 
@@ -11,15 +12,21 @@ import _proof_audit  # noqa: E402
 import proof_audit  # noqa: E402
 
 
+
+def declared_above(lines, number):
+    """The title of the test declared nearest above line `number`."""
+    start = proof_audit.declaration_above(lines, number)
+    return proof_audit.declared_title("\n".join(lines[start:start + 3]))
+
 class Quotes(unittest.TestCase):
     def test_a_void_prefixed_declaration_is_a_test(self):
         # A type-aware lint forbids node:test's floating promise, so infra tests read `void it(...)`.
         lines = ['void describe("UserPool", () => {', '  void it("keeps the policy", () => {',
                  "    assert.equal(policy.MinimumLength, 8);", "  });", '  void test("another", () => {',
                  "    expect(other).toBe(true);", "  });", "});"]
-        self.assertEqual(proof_audit.declared_title(proof_audit.enclosing_test(lines, 3)), "keeps the policy")
-        self.assertEqual(proof_audit.declared_title(proof_audit.enclosing_test(lines, 6)), "another")
-        self.assertIsNone(proof_audit.enclosing_test(lines, 1))
+        self.assertEqual(declared_above(lines, 3), "keeps the policy")
+        self.assertEqual(declared_above(lines, 6), "another")
+        self.assertIsNone(proof_audit.declaration_above(lines, 1))
 
     def test_a_short_value_inside_a_wrapped_assertion_is_quotable(self):
         lines = ['test("counts", async () => {', "  assert.equal(", "    await count(),", "    0", "  );",

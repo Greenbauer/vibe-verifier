@@ -16,6 +16,7 @@ from helpers import ROOT, clean_env, commit, gate, git, make_repo, runner, write
 sys.path.insert(0, str(ROOT / "gates"))
 import _proof_audit  # noqa: E402
 import proof_audit  # noqa: E402
+from test_proof_audit_quotes import declared_above  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "proof-audit" / "c8"
 PLAN = ("# Plan\n\n## C. Covers\n\n"
@@ -403,9 +404,9 @@ class Declarations(unittest.TestCase):
         lines = ['test("first", () => {});', "for (const width of [1, 2]) {", "  test(", "    `wraps at ${width}px`,",
                  "    async () => {", "      test.setTimeout(9);", '      await test.step("open", async () => {});',
                  "      expect(a).toBe(1);", "  });", "}", "def test_python_case(self):", "    self.assertTrue(x)"]
-        self.assertEqual(proof_audit.declared_title(proof_audit.enclosing_test(lines, 8)), "wraps at ${width}px")
-        self.assertEqual(proof_audit.declared_title(proof_audit.enclosing_test(lines, 12)), "test_python_case")
-        self.assertIsNone(proof_audit.enclosing_test(lines, 1))
+        self.assertEqual(declared_above(lines, 8), "wraps at ${width}px")
+        self.assertEqual(declared_above(lines, 12), "test_python_case")
+        self.assertIsNone(proof_audit.declaration_above(lines, 1))
 
     def test_a_line_that_only_opens_a_call_is_not_an_assertion(self):
         for opener in ("assert.equal(", "await expect(", "assert.deepEqual("):
