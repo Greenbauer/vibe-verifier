@@ -226,6 +226,27 @@ class LineDrift(unittest.TestCase):
             line = spec.index("    expect(cleanup()).toBe(true);" if title == "renders" else "  expect(cleanup()).toBe(true);") + 1
             self.assertIn("below the end of the test", problem(spec, line, "expect(cleanup()).toBe(true);", title) or "")
 
+    def test_an_escaped_backtick_an_unclosed_regex_and_an_overlong_header_keep_their_stated_bounds(self):
+        def problem(spec, line, title="a"):
+            return proof_audit.proof_problem(Files(spec), {"file": "tests/a.test.ts", "test": title, "line": line,
+                                                           "assertion": spec[line - 1].strip()})
+        hook = ["afterEach(() => {", "  assert.equal(hookOnly(), 2);", "});"]
+        # An escaped backtick does not close the template, so its column-0 text does not end the test early.
+        escaped = ['test("a", () => {', "  const fixture = `", "a \\` b", "c", "`;", "  assert.equal(one(), 1);",
+                   "});"] + hook
+        self.assertIsNone(problem(escaped, 6))
+        self.assertIn("below the end of the test 'a'", problem(escaped, 9) or "")
+        # A regex left open on its line ends there: its backtick opens no template that would run to the file's end.
+        unclosed = ['test("a", () => {', "  const fence = /`", "  assert.equal(one(), 1);", "});"] + hook
+        self.assertIsNone(problem(unclosed, 3))
+        self.assertIn("below the end of the test 'a'", problem(unclosed, 6) or "")
+        # A header wrapped past HEADER_LINES fails closed, as the README says: its own assertion is turned away too.
+        wide = ['test("wide", async ({'] + ["  fixture%d," % number for number in range(_test_body.HEADER_LINES + 5)]
+        wide += ["}) => {", "  assert.equal(one(), 1);", "});"] + hook
+        self.assertEqual(_test_body.header_end(wide, 0), 0)
+        for line in (len(wide) - 4, len(wide) - 1):
+            self.assertIn("below the end of the test 'wide'", problem(wide, line, "wide") or "", line)
+
     def test_a_python_test_body_runs_to_its_dedent(self):
         lines = ["class Bounds(unittest.TestCase):", "    def test_end(self):", "        end = bound(10)",
                  "", "        self.assertEqual(end.day, 10)", "", "    def helper(self):",
