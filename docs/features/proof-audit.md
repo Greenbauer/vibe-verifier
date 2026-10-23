@@ -49,6 +49,7 @@ In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one s
 - `tests/test_proof_audit_body.py::test_an_escaped_backtick_an_unclosed_regex_and_an_overlong_header_keep_their_stated_bounds`
 - `tests/test_proof_audit_body.py::test_a_template_nested_in_a_template_expression_closes_where_it_does`
 - `tests/test_proof_audit_body.py::test_a_regex_a_string_or_a_comment_holding_a_backtick_opens_no_template`
+- `tests/test_proof_audit_body_shapes.py::test_each_shape_keeps_its_own_lines_and_turns_away_the_hook_after_it`
 - `tests/test_proof_audit.py::test_the_recorded_grade_of_the_proven_tree_passes_and_does_not_pass_on_the_other_tree`
 
 ## Gotchas

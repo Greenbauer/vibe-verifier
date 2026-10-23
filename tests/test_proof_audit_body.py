@@ -105,7 +105,7 @@ class TestBody(unittest.TestCase):
         self.assertIsNone(problem(unclosed, 3))
         self.assertIn("below the end of the test 'a'", problem(unclosed, 6) or "")
         # A header wrapped past HEADER_LINES fails closed, as the README says: its own assertion is turned away too.
-        wide = ['test("wide", async ({'] + ["  fixture%d," % number for number in range(_test_body.HEADER_LINES + 5)]
+        wide = ['test("wide", async ({'] + ["  fixture%d," % number for number in range(45)]  # past the README's 40
         wide += ["}) => {", "  assert.equal(one(), 1);", "});"] + hook
         self.assertEqual(_test_body.header_end(wide, 0), 0)
         for line in (len(wide) - 4, len(wide) - 1):

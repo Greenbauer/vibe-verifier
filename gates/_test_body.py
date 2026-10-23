@@ -9,8 +9,8 @@ BLOCK_COMMENT = re.compile(r"/\*.*?\*/")
 HEADER_LINES = 40  # how far a wrapped declaration may run (one parameter or fixture per line) before its body opens
 REGEX_FOLLOWS = "(,=:[!&|?{};+-*%<>~^"  # what comes before a `/` that opens a regex literal, not a division
 PY_OPENERS, JS_OPENERS = ('"""', "'''"), ("`", "/*")  # what opens a string or comment that can span lines
-OPENS_ON_LINE = re.compile(r"(?:=>|\))\s*\{|\)\s*(?:->[^:]*)?:")  # `=> {`, `) {` or a def's `):` anywhere on a line
-BODY_OPENS = re.compile(r"(?:=>|\))\s*\{?$|:$")  # `=> {`, `=>`, `) {`, or a Python def's closing `:`
+OPENS_ON_LINE = re.compile(r"(?:=>|\))\s*\{")  # `=> {` or `) {` anywhere on a line
+BODY_OPENS = re.compile(r"(?:=>|\))\s*\{?$")  # `=> {`, `=>` or `) {` at a line's end
 # A test declaration: a JS test call (test(...), it(...), test.only(...), test.each(...)(...)), `void` first when a
 # type-aware lint forbids a floating promise (`void it(...)`), or a Python test
 # function. Its title is the call's first string literal, or the function's name. Only the modifiers that still
@@ -35,8 +35,8 @@ def closes_on_its_line(line):
 
 
 def bracket_depth(text):
-    """Openers minus closers on a line, string literals and a trailing `//` comment left out."""
-    text = STRING.sub("", text).split("//", 1)[0]
+    """Openers minus closers on a line, string literals, block comments and a trailing `//` comment left out."""
+    text = STRING.sub("", BLOCK_COMMENT.sub("", text)).split("//", 1)[0]
     return sum(text.count(c) for c in "([{") - sum(text.count(c) for c in ")]}")
 
 
@@ -165,8 +165,8 @@ def regex_can_start(line, index):
 
 
 def regex_end(line, index):
-    """The index just past the regex literal that opens at `index`: its closing `/` outside a [...] class, then its
-    flags (past the line's end if it never closes there)."""
+    """The index just past the regex literal that opens at `index`: its closing `/` outside a [...] class (past the
+    line's end if it never closes there). Its flags are letters, which read as code the same."""
     index, in_class = index + 1, False
     while index < len(line):
         char = line[index]
@@ -174,10 +174,7 @@ def regex_end(line, index):
             index += 2
             continue
         if char == "/" and not in_class:
-            index += 1
-            while index < len(line) and line[index].isalpha():
-                index += 1
-            return index
+            return index + 1
         in_class = (in_class or char == "[") and char != "]"
         index += 1
     return index
