@@ -240,9 +240,9 @@ grader on both trees: `python3 -m unittest tests.test_proof_audit.Replay` from t
   when the grader cites its exact line, whatever the test's title. The reading is line by line, not a parser, and
   is built for formatted code: it steps over strings, over a regex literal whose `/` follows an operator, an
   opening bracket, a comma or `return`, and over a template literal's `${...}` as code, so a template nested in
-  one (`${items.map((i) => `<li>${i}</li>`)}`) closes where it does. JSX text, or a regex after `)` or `await`,
-  holding a backtick or `/*` reads as opening a template or comment, so the body runs to the end of the file and a
-  hook after it passes. Code after the `{` on a JS declaration's own line that ends in `)` or `);` can end the
+  one (`${items.map((i) => `<li>${i}</li>`)}`) closes where it does. JSX (in a template's `${...}` too), or a
+  regex after `)` or `await`, holding a backtick or `/*` reads as opening a template or comment, so the body runs to
+  the end of the file and a hook after it passes. Code after the `{` on a JS declaration's own line that ends in `)` or `);` can end the
   body early and turn away an assertion in it.
 - The grade artifacts are named by shard. A re-run whose plan has fewer shards than the first attempt's
   finds the extra shard's grades, and the gate cannot run (never passes) until the next push.

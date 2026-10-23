@@ -127,12 +127,28 @@ class TestBody(unittest.TestCase):
         for spec in ((['test("renders the list", () => {', "  document.body.innerHTML = `", "<ul>",
                        '${items.map((i) => `<li>${i}</li>`).join("")}', "</ul>", "`;",
                        '  expect(render()).toContain("li");', "});"] + hook),
-                     (['test("styles", () => {', "  const css = `", ".a { color: ${theme({ dark: true }).fg}; }", "`;",
+                     (['test("styles", () => {', "  const css = `", "${theme({ dark: true }, '`')}", "`;",
                        '  expect(render()).toContain("li");', "});"] + hook)):
             inside = spec.index('  expect(render()).toContain("li");') + 1
             self.assertIsNone(problem(spec, inside), spec[0])
             self.assertIn("below the end of the test", problem(spec, len(spec) - 1) or "", spec[0])
 
+
+    def test_a_regex_a_string_or_a_comment_holding_a_backtick_opens_no_template(self):
+        # Each line holds a backtick that is not a template: read as one, the body would run to the file's end and
+        # let the hook after the test in.
+        for held in (["  const fence = () => { return /`/; };"],                      # a regex after `return`
+                     ["  expect(fence).toMatch(", "    /^`{3}\\w*$/,", "  );"],        # a regex starting its line
+                     ["  expect(path).toMatch(/[/`]/);"],                             # a `/` in a regex's [...] class
+                     ["  expect(say('it\\'s `')).toBe(1);"],                          # an escaped quote in a string
+                     ["  /* C:\\*/ const tick = '`';"]):                              # a backslash ending a comment
+            spec = ['test("a", () => {'] + held + ["  assert.equal(one(), 1);", "});", "afterEach(() => {",
+                                                   "  assert.equal(hookOnly(), 2);", "});"]
+            inside = {"file": "tests/a.test.ts", "test": "a", "line": len(held) + 2,
+                      "assertion": "assert.equal(one(), 1);"}
+            self.assertIsNone(proof_audit.proof_problem(Files(spec), inside), held)
+            hook = dict(inside, line=len(spec) - 1, assertion="assert.equal(hookOnly(), 2);")
+            self.assertIn("below the end of the test 'a'", proof_audit.proof_problem(Files(spec), hook) or "", held)
 
 if __name__ == "__main__":
     unittest.main()
