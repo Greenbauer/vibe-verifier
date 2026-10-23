@@ -94,11 +94,11 @@ def first_dedent(lines, start):
     their indentation."""
     python = bool(PYTHON_TEST.match(lines[start]))
     indent = len(lines[start]) - len(lines[start].lstrip())
-    header, inside = header_end(lines, start), None
+    header, inside = header_end(lines, start), ()
     for index in range(start, len(lines)):
         line = lines[index]
         text = line.strip()
-        if (index > header and inside is None and text and not text.startswith("#" if python else ("//", "/*"))
+        if (index > header and not inside and text and not text.startswith("#" if python else ("//", "/*"))
                 and len(line) - len(line.lstrip()) <= indent):
             return index
         inside = open_at_end(line, inside, python)
@@ -106,22 +106,39 @@ def first_dedent(lines, start):
 
 
 def open_at_end(line, inside, python):
-    """The closing delimiter of the multi-line string or comment still open at the end of `line`, given the one open
-    at its start (None for none): a Python triple-quoted string, or a JS template literal or block comment. A string
-    that opens and closes on the line, and a line comment, change nothing."""
+    """The multi-line strings, comments and template `${...}` expressions still open at the end of `line`, innermost
+    last, given those open at its start (() for none): a Python triple-quoted string, or a JS template literal, block
+    comment, or the code of a `${...}` (closed by its `}`), where a template literal can open again. A string that
+    opens and closes on the line, and a line comment, change nothing."""
     index = 0
     while index < len(line):
-        index, inside = past_close(line, index, inside) if inside else past_token(line, index, python)
+        if inside and inside[-1] != "}":
+            index, inside = past_close(line, index, inside)
+        else:
+            index, inside = past_code(line, index, inside, python)
     return inside
 
 
 def past_close(line, index, inside):
-    """One step through the string or comment `inside` closes: (the next index, `inside` or None once closed)."""
-    if line[index] == "\\" and inside != "*/":
+    """One step through the string or comment inside[-1] closes: (the next index, `inside` with it popped once
+    closed, or with a `${...}` pushed when a template literal opens one)."""
+    closer = inside[-1]
+    if line[index] == "\\" and closer != "*/":
         return index + 2, inside
-    if line.startswith(inside, index):
-        return index + len(inside), None
+    if closer == "`" and line.startswith("${", index):
+        return index + 2, inside + ("}",)
+    if line.startswith(closer, index):
+        return index + len(closer), inside[:-1]
     return index + 1, inside
+
+
+def past_code(line, index, inside, python):
+    """One step through code, at the top level or in a `${...}` (inside[-1] == "}"), where a `{` nests and the `}`
+    that matches closes it: (the next index, `inside` with what opened or closed here pushed or popped)."""
+    if inside and line[index] in "{}":
+        return index + 1, inside + ("}",) if line[index] == "{" else inside[:-1]
+    index, opened = past_token(line, index, python)
+    return index, inside + (opened,) if opened else inside
 
 
 def past_token(line, index, python):

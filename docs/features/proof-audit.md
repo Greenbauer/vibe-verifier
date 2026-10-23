@@ -44,9 +44,10 @@ In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one s
 - `tests/test_proof_audit_planted.py::test_the_run_s_own_grades_in_the_checkout_are_judged`
 - `tests/test_proof_audit_planted.py::test_the_recipe_keeps_the_grades_outside_the_checkout`
 - `tests/test_proof_audit.py::test_the_recorded_grade_of_the_gif_case_is_unproven`
-- `tests/test_proof_audit_quotes.py::test_a_hook_or_helper_line_cited_exactly_is_not_the_test_above_it`
-- `tests/test_proof_audit_quotes.py::test_strings_comments_and_shared_titles_neither_end_a_test_early_nor_reopen_one`
-- `tests/test_proof_audit_quotes.py::test_an_escaped_backtick_an_unclosed_regex_and_an_overlong_header_keep_their_stated_bounds`
+- `tests/test_proof_audit_body.py::test_a_hook_or_helper_line_cited_exactly_is_not_the_test_above_it`
+- `tests/test_proof_audit_body.py::test_strings_comments_and_shared_titles_neither_end_a_test_early_nor_reopen_one`
+- `tests/test_proof_audit_body.py::test_an_escaped_backtick_an_unclosed_regex_and_an_overlong_header_keep_their_stated_bounds`
+- `tests/test_proof_audit_body.py::test_a_template_nested_in_a_template_expression_closes_where_it_does`
 - `tests/test_proof_audit.py::test_the_recorded_grade_of_the_proven_tree_passes_and_does_not_pass_on_the_other_tree`
 
 ## Gotchas
