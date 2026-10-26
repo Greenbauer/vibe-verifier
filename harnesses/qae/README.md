@@ -1447,13 +1447,15 @@ A changed path names a URL when one of the URL path's words (3 characters or mor
 `graphql`, `v1` and the like, not a number or record id) is part of a word of the path, letters and digits only:
 `POST /api/dashboard` is named by `app/(main)/dashboard/page.tsx`, `/rest/v1/journeys` by
 `supabase/migrations/2026_journeys.sql`. A URL with no such word counts as named, and so does every URL when the
-manifest's `qae-artifacts` line has no `--changed-files`. The match is crude on purpose: it can only ever take a
-retry away.
+manifest's `qae-artifacts` line has no `--changed-files`. The match is crude and leans toward no retry, but it
+cannot see a change to code a URL reaches through a shared module (a database client, middleware), and the gate
+cannot tell which error made the step fail. So a real bug can pass this way only when it fails once, works on the
+retry, and the same request is answered below 400 somewhere in the run.
 
 A retry that does not count is a finding that says why, so its criterion cannot pass on it. One that counts is
 printed in the gate's log and on the criterion's row of the QA review, and it excuses its errors: a 5xx or failed
 request, and Chromium's console line for it, only when the same request (method and URL) was answered below 400
-somewhere in the run's evidence or the page record, as [a cancelled request](#a-request-the-page-cancelled) is; a
+in the run's network records (never a step log or verdict the explorer writes) or the page record, as [a cancelled request](#a-request-the-page-cancelled) is; a
 websocket failure on the retry alone, since no record holds a websocket's answer. A repeat of the same error during
 the retry is excused with it, and so is the same error anywhere else in the run, since the excuse is by status and
 URL. Whether the retried step held is the explorer's verdict, which `acceptance-verdict`

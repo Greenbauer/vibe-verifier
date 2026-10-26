@@ -36,12 +36,16 @@ A changed file names a URL when one of the URL path's words (3 characters or mor
 and the like, not a record id or a number) is part of a word of the file's path (a directory, or the file name
 before its first dot), letters and digits only, case ignored: `/api/dashboard` is named by
 `app/(main)/dashboard/page.tsx`, `/rest/v1/journeys` by `supabase/migrations/2026_journeys.sql`. A URL with no
-such word is taken as named, and with no --changed-files every URL is: the rule only ever errs toward no retry.
+such word is taken as named, and with no --changed-files every URL is. The match cannot see a change to code a URL
+reaches through a shared module (a database client, middleware), and the gate cannot tell which error made the step
+fail: a real bug passes this way only when it fails once and works on the retry, with the same request also answered
+below 400 in the run.
 
 A retry that does not count is a finding, so its criterion cannot pass on it. One that counts excuses its errors
 in the qae-artifacts gate: a 5xx or failed request only when the same request (method and URL) was answered below
-400 somewhere in the run's evidence, its network records or the page record, and a websocket failure on the retry
-alone, since no record holds a websocket's answer. A repeat of the same error, by status and URL anywhere in the run, is
+400 in the run's network records (session logs, files browser_network_requests saved, network-*.log) or the page
+record, never a step log or verdict the explorer writes; a websocket failure on the retry alone, since no record holds
+a websocket's answer. A repeat of the same error, by status and URL anywhere in the run, is
 excused with it: whether the retried step held is the explorer's verdict, which acceptance-verdict judges, and a FAIL
 there stays a FAIL.
 """
@@ -263,11 +267,19 @@ class _Urls:
         return exact(url) in self.urls
 
 
-def answered(root):
-    """The requests (method, URL) answered below 400 anywhere in the evidence, and the page record's answers."""
+def answered(root, calls):
+    """The requests (method, URL) answered below 400 in the run's network records: the session logs, each file a
+    browser_network_requests call saved (`calls`, from tool_calls), and network-*.log; and the page record's answers.
+    Never a step log or verdict, which the explorer writes itself."""
+    paths = glob.glob(os.path.join(root, "session-*", "session.md")) + glob.glob(os.path.join(root, "network-*.log"))
+    evidence = os.path.basename(os.path.normpath(root)) + "/"
+    for name, saved in (call for session in calls for call in session):
+        path = os.path.normpath(os.path.join(root, saved.rpartition(evidence)[2]))
+        if name == "browser_network_requests" and saved and path.startswith(os.path.join(os.path.normpath(root), "")):
+            paths.append(path)
     seen = set()
-    for path in glob.glob(os.path.join(root, "**", "*"), recursive=True):
-        if path.endswith((".txt", ".log", ".md")) and os.path.isfile(path):
+    for path in paths:
+        if os.path.isfile(path):
             seen.update((r.group("method"), exact(r.group("url"))) for r in REQUEST.finditer(read(path))
                         if r.group("status") != "FAILED" and int(r.group("status")) < 400)
     return seen, page_record(root)[1]
@@ -282,7 +294,7 @@ def retry_checks(root, changed_files):
     counted = [retry for retry in found if not retry.problem]
     if not counted:
         return findings, []
-    seen, recorded = answered(root)
+    seen, recorded = answered(root, tool_calls(root))
     excused = {}
     for retry in counted:
         print("qae-artifacts: %s: %s" % (retry.item, retry.describe()))

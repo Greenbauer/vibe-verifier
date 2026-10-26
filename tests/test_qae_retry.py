@@ -176,6 +176,13 @@ class Retry(unittest.TestCase):
         self.assertIn("POST /api/dashboard is not excused: it was never answered below 400 in this run", result.stdout)
         self.assertIn("request answered 500 outside the allowlist", result.stdout)
 
+    def test_an_answer_the_explorer_wrote_itself_excuses_nothing(self):
+        # Only a tool's network record or the page record shows an answer; a step log or verdict is the explorer's text.
+        answer = "9. [POST] %s/api/dashboard => [200] OK\n" % SITE
+        write(self.root, {"session-1/session.md": session(NETWORK, requests=(FIVE_HUNDRED,)), "qae/AC1.md": STEPS + answer,
+                          "verdicts/1.md": answer})
+        self.assertIn("POST /api/dashboard is not excused: it was never answered below 400 in this run", self.artifacts().stdout)
+
 
 class NamedUrl(unittest.TestCase):
     def test_a_changed_path_names_a_url_by_a_word_and_errs_toward_named(self):

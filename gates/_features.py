@@ -269,7 +269,8 @@ def add_selection_arguments(parser):
     parser.add_argument("--features", metavar="DIR", default=None,
                         help="the feature map; turns on the re-walk check (default: off)")
     parser.add_argument("--changed-files", metavar="FILE", default=None,
-                        help="the pull request's changed paths, one per line (required with --features)")
+                        help="the pull request's changed paths, one per line (required with --features; qae-artifacts "
+                             "also reads it for retried steps)")
     parser.add_argument("--max-features", metavar="N", type=int, default=3,
                         help="re-walk at most this many features (default: 3)")
     parser.add_argument("--shared-over", metavar="N", type=int, default=2,
