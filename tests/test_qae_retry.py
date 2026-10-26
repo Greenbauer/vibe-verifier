@@ -1,0 +1,187 @@
+"""A step the QAE explorer took once more after an environment error (gates/_retry.py): the qae-artifacts gate
+counts the retry, and excuses its error, only on structural evidence; acceptance-verdict still judges the
+explorer's verdict, so a retry that fails again stays a FAIL; and the QA review names every retry it saw.
+Driven through the gates' and the runner's command lines against evidence shaped like playwright-mcp's."""
+import json
+import shutil
+import tempfile
+import unittest
+
+from helpers import gate, make_repo, write
+from qa_review_fixture import GhFixture
+
+SITE = "http://localhost:3000"
+BODY = "## Acceptance criteria\n\n- Organization search finds a company\n"
+STEPS = ("- step 1: opened organization search -> the console reports a dashboard POST 500\n"
+         "- step 2: retry of step 1: opened organization search -> the search is active\n")
+FIVE_HUNDRED = "1. [POST] %s/api/dashboard => [500] Internal Server Error\n" % SITE
+# Chromium's console line for that answer, as console-*.log holds it.
+CONSOLE_500 = ("[  900ms] [ERROR] Failed to load resource: the server responded with a status of 500 () @ "
+               "%s/api/dashboard:0\n" % SITE)
+SOCKET = "wss://abc.supabase.co/realtime/v1/websocket?apikey=k&vsn=1.0.0"
+SOCKET_LINE = ("WebSocket connection to '%s' failed: Error during WebSocket handshake: Unexpected response code: 500 "
+               "@ %s/_next/static/chunks/app.js:1" % (SOCKET, SITE))
+
+
+def call(name, args, result):
+    return "### Tool call: %s\n- Args\n```json\n%s\n```\n- Result\n```json\n%s\n```\n\n" % (
+        name, json.dumps(args), json.dumps(result))
+
+
+def shot(item, k):
+    path = "qae-artifacts/qae/%s-step-%s.png" % (item, k)
+    return call("browser_take_screenshot", {"filename": path}, {"result": "- [Screenshot](%s)" % path})
+
+
+def saved(tool, path):
+    return call(tool, {"filename": "qae-artifacts/" + path}, {"result": "- [Record](qae-artifacts/%s)" % path})
+
+
+def session(*records, requests=(FIVE_HUNDRED, "2. [POST] %s/api/dashboard => [200] OK\n" % SITE)):
+    """The explorer's session: step 1's action and screenshot, then `records` saved, then the retry and its screenshot,
+    then the criterion's network record."""
+    return (call("browser_navigate", {"url": SITE + "/search"}, {"page": "- Page URL: %s/search" % SITE}) + shot("AC1", 1)
+            + "".join(records) + call("browser_click", {"target": "e1"}, {}) + shot("AC1", 2)
+            + call("browser_network_requests", {}, {"result": "".join(requests)}))
+
+
+NETWORK = saved("browser_network_requests", "qae/AC1-step-1-network.txt")
+CONSOLE = saved("browser_console_messages", "qae/AC1-step-1-console.txt")
+
+
+class Retry(unittest.TestCase):
+    def setUp(self):
+        self.repo = make_repo(self, {"README.md": "x"})
+        # Named as the verify job names it: a record saved to qae-artifacts/<path> is read at <path> under it.
+        self.root = tempfile.mkdtemp(prefix="vv-retry-") + "/qae-artifacts"
+        self.addCleanup(shutil.rmtree, self.root.rpartition("/")[0], True)
+        self.inputs = tempfile.mkdtemp(prefix="vv-retry-in-")
+        self.addCleanup(shutil.rmtree, self.inputs, True)
+        write(self.inputs, {"pr-body.md": BODY, "changed-files": "src/search/OrgSearch.tsx\n"})
+        write(self.root, {"qae/AC1.md": STEPS, "qae/AC1-step-1.png": "png", "qae/AC1-step-2.png": "png",
+                          "qae/AC1-step-1-network.txt": FIVE_HUNDRED, "console-1.log": CONSOLE_500,
+                          "session-1/session.md": session(NETWORK)})
+
+    def artifacts(self, changed=True):
+        extra = ["--changed-files", self.inputs + "/changed-files"] if changed else []
+        return gate("qae-artifacts", self.repo, "--artifacts", self.root, "--criteria", self.inputs + "/pr-body.md",
+                    "--site", SITE, *extra)
+
+    def verdict(self, word):
+        write(self.inputs, {"verdict.md": "acceptance-check: AC1 -- %s -- searched (qae/AC1.md::step 2: retry of step 1: "
+                                          "opened organization search -> the search is active)\n" % word})
+        return gate("acceptance-verdict", self.repo, "--criteria", self.inputs + "/pr-body.md",
+                    "--verdict", self.inputs + "/verdict.md", "--artifacts", self.root)
+
+    def refused(self, why, changed=True):
+        result = self.artifacts(changed)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("qae/AC1.md: step 1 retried as step 2, which does not count: " + why, result.stdout)
+        return result
+
+    # A retried environment FAIL: the 5xx is on a path no changed file names, and the endpoint answered in the run.
+
+    def test_a_retried_5xx_on_an_unchanged_endpoint_passes_and_says_why(self):
+        result = self.artifacts()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("qae-artifacts: AC1: step 1 retried once as step 2 after an environment error: POST /api/dashboard "
+                      "answered 500", result.stdout)
+        self.assertEqual(self.verdict("PASS").returncode, 0)
+
+    def test_without_the_retry_the_same_500_fails_the_run(self):
+        write(self.root, {"qae/AC1.md": STEPS.splitlines(True)[0]})
+        result = self.artifacts()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("request answered 500 outside the allowlist: [POST] %s/api/dashboard" % SITE, result.stdout)
+        self.assertIn("console error outside the allowlist: Failed to load resource", result.stdout)
+
+    def test_vercel_protection_counts_whatever_the_pull_request_changed(self):
+        login = "1. [GET] https://vercel.com/login?next=%2Fsso-api%3Furl%3Dhttps%253A%252F%252Fsite => [200] OK\n"
+        write(self.root, {"qae/AC1-step-1-network.txt": login, "console-1.log": "",
+                          "session-1/session.md": session(NETWORK, requests=("1. [GET] %s/search => [200] OK\n" % SITE,))})
+        result = self.artifacts(changed=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("after an environment error: the site answered with Vercel's deployment protection login", result.stdout)
+
+    def test_a_failed_websocket_counts_and_its_console_line_is_excused(self):
+        write(self.root, {"qae/AC1-step-1-network.txt": "", "qae/AC1-step-1-console.txt": "[ERROR] " + SOCKET_LINE + "\n",
+                          "console-1.log": "[  900ms] [ERROR] %s\n" % SOCKET_LINE,
+                          "session-1/session.md": session(CONSOLE, requests=())})
+        result = self.artifacts()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("after an environment error: the websocket to /realtime/v1/websocket failed", result.stdout)
+
+    # A FAIL with any other cause is not retried: the retry does not count, and the run fails on it.
+
+    def test_a_400_is_not_an_environment_error(self):
+        # A consumer's walk (2026-10-08): an invalid input answered 400 failed it; a later walk that skipped it passed.
+        write(self.root, {"qae/AC1-step-1-network.txt": "1. [POST] %s/api/lines => [400] Bad Request\n" % SITE,
+                          "console-1.log": ""})
+        self.refused("step 1's records show no environment error")
+
+    def test_a_5xx_on_an_endpoint_the_pull_request_changes_is_its_own(self):
+        write(self.inputs, {"changed-files": "app/api/dashboard/route.ts\n"})
+        self.refused("step 1's records show POST /api/dashboard answered 500, on a URL the pull request's changed files name")
+
+    def test_without_changed_files_no_5xx_counts(self):
+        self.refused("step 1's records show POST /api/dashboard answered 500, and without the pull request's changed "
+                     "paths no URL can be told apart from its own: give the qae-artifacts line --changed-files "
+                     "qae-inputs/changed-files", changed=False)
+
+    def test_a_retry_another_way_does_not_count(self):
+        write(self.root, {"qae/AC1.md": STEPS.replace("retry of step 1: opened organization search",
+                                                       "retry of step 1: typed into the header search")})
+        self.refused("its action is not step 1's word for word")
+
+    def test_a_step_retried_twice_does_not_count(self):
+        write(self.root, {"qae/AC1.md": STEPS + "- step 3: retry of step 1: opened organization search -> the search\n",
+                          "qae/AC1-step-3.png": "png"})
+        self.refused("step 1 is retried 2 times, and a step is retried once")
+
+    def test_records_the_tool_did_not_save_between_the_screenshots_do_not_count(self):
+        write(self.root, {"session-1/session.md": NETWORK + session()})
+        self.refused("no record of step 1 (qae/AC1-step-1-network.txt or -console.txt) was saved by its tool")
+
+    # A retry that fails again stays a FAIL.
+
+    def test_a_retry_that_fails_again_stays_a_fail(self):
+        # The retry counts, so its error is excused here; the explorer's FAIL is what acceptance-verdict judges.
+        self.assertEqual(self.artifacts().returncode, 0)
+        result = self.verdict("FAIL")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("AC1 is not a PASS", result.stdout)
+
+    def test_an_endpoint_never_answered_in_the_run_is_not_excused(self):
+        write(self.root, {"session-1/session.md": session(NETWORK, requests=(FIVE_HUNDRED,))})
+        result = self.artifacts()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("POST /api/dashboard is not excused: it was never answered below 400 in this run", result.stdout)
+        self.assertIn("request answered 500 outside the allowlist", result.stdout)
+
+
+class NamedUrl(unittest.TestCase):
+    def test_a_changed_path_names_a_url_by_a_word_and_errs_toward_named(self):
+        import _retry
+        self.assertTrue(_retry.named(SITE + "/api/dashboard", ["app/(main)/dashboard/page.tsx"]))
+        self.assertTrue(_retry.named("https://db.example/rest/v1/journeys?id=eq.1", ["supabase/migrations/2026_journeys.sql"]))
+        self.assertFalse(_retry.named(SITE + "/api/dashboard", ["src/search/OrgSearch.tsx"]))
+        self.assertFalse(_retry.named(SOCKET, ["app/chat/page.tsx"]))
+        # No word of its own, or no changed paths to compare with: named, so no retry counts on it.
+        self.assertTrue(_retry.named(SITE + "/api/v1/8697e680-1111-2222-3333-444455556666", ["README.md"]))
+        self.assertTrue(_retry.named(SITE + "/api/dashboard", None))
+
+
+class RetryInTheReview(GhFixture):
+    def test_the_review_says_a_criterion_passed_on_a_retry_and_why(self):
+        root = tempfile.mkdtemp(prefix="vv-retry-")
+        self.addCleanup(shutil.rmtree, root, True)
+        write(root, {"qae/AC1.md": STEPS, "qae/AC1-step-1-network.txt": FIVE_HUNDRED, "session-1/session.md": session(NETWORK)})
+        changed = self.file("changed-files", "src/search/OrgSearch.tsx\n")
+        body = self.posted(extra=("--artifacts", root, "--changed-files", changed))
+        self.assertIn("- AC1, explorer says PASS (step 1 retried once as step 2 after an environment error: POST "
+                      "/api/dashboard answered 500): The home page loads\n", body)
+        self.assertIn("- AC2, explorer says FAIL: The menu opens\n", body)
+
+
+if __name__ == "__main__":
+    unittest.main()

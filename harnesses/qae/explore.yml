@@ -314,6 +314,18 @@ jobs:
                matches): a console message a console pattern matches, and a request whose URL a request pattern matches,
                are not the site's failure and never a reason to FAIL a criterion. Judge the criterion on what the page
                shows.
+               A step may fail on the environment instead of the site: a request answered 500 or above, Vercel's deployment
+               protection login in place of the site, or a websocket or network connection that failed. When a step's screen or
+               console shows one, right after that step's screenshot save the moment's records: call browser_network_requests
+               with filename qae-artifacts/qae/ACn-step-k-network.txt and browser_console_messages with filename
+               qae-artifacts/qae/ACn-step-k-console.txt, k being that step. Then take that same step once more, the same action on
+               the same screen, as a step of its own whose line names it and repeats its action word for word (after "as <role>:"
+               when the criterion has roles):
+                 - step m: retry of step k: <step k's action, exactly as you wrote it> -> <what you saw>
+               Judge the criterion on what the retry shows: if it fails again, the criterion is a FAIL. Retry a step at most once,
+               never a step that failed for any other reason, and never by walking the criterion another way: a gate counts a
+               retry only when step k's records show such an error on a URL this pull request does not change, and a retry it
+               does not count fails the run.
                If the directory qae-inputs/features/ exists, each <id>.md in it describes a feature this pull
                request's changes touch, as this pull request has that file. After the criteria, re-walk each
                one in part. A feature's states are the numbered steps of its Verify section (in a file with

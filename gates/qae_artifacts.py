@@ -100,6 +100,8 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    from this line as the base has it. Feature re-walk logs are not held to it.
 
 7. Explorers of one run keep off each other's records: gates/_page_record.py, isolation_findings, says how.
+8. A step retried after an environment error counts, and excuses that error, only on the evidence gates/_retry.py
+   names (--changed-files, the paths the pull request changes); a retry that does not count is a finding.
 
 Exit 2 when the artifact directory is missing, or a --site-file is missing or holds anything but
 http(s) URLs: nothing was adjudicated.
@@ -114,6 +116,7 @@ from _acceptance import body_criteria, declares_none, named_references, png_size
 from _contract import CannotRun, Finding, run_gate
 from _features import add_selection_arguments, parse, selection
 from _page_record import digest, harness_refusals, isolation_findings, page_record
+from _retry import REQUEST, SAVED_TO, TOOL_CALL, console_excused, exact, retry_checks
 
 GATE = "qae-artifacts"
 STEP_LINE = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):", re.IGNORECASE)
@@ -125,15 +128,9 @@ CONSOLE_ENTRY = re.compile(r"^\[\s*-?[0-9]+ms\]\s+(?P<text>.*)$")
 LEVEL = re.compile(r"^\[(?P<level>[A-Z]+)\]\s+")
 # A frame of an exception's stack names the script the exception came through: `    at f (<url>:1:49)`.
 STACK_FRAME = re.compile(r"^\s+at\s.*?(?P<url>https?://[^\s)]+)")
-TOOL_CALL = re.compile(r"^### Tool call: (?P<name>\S+)\s*$", re.MULTILINE)
-# `3. [GET] http://host/path => [404] Not Found` or `=> [FAILED] net::ERR_...`, as the tool renders it;
-# inside a JSON result the newline is escaped, so the line is matched without anchors.
-REQUEST = re.compile(r"[0-9]+\. \[(?P<method>[A-Z]+)\] (?P<url>\S+) => \[(?P<status>[0-9]{3}|FAILED)\](?: (?P<reason>net::[A-Z0-9_]+))?")
 # The page's own cancellation of a request: it aborted its fetch, for whatever reason. A request
 # still pending when a document unloads is recorded with no failure at all, so this is never that.
 CANCELLED = "net::ERR_ABORTED"
-# What a browser_network_requests call was told to save its result to, in the call's Args block.
-SAVED_TO = re.compile(r'"filename":\s*"(?P<name>[^"\\]+)"')
 REFUSAL = re.compile(r"expected-refusal:[ \t]*(?P<status>[^\s`]+)[ \t]+(?P<target>[^\s`)]+)", re.IGNORECASE)
 REFUSABLE = ("400", "401", "403", "404", "409", "422")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -230,10 +227,6 @@ def width_list(text):
     return list(dict.fromkeys(widths))
 
 
-def exact(url):
-    return urllib.parse.urldefrag(url)[0]
-
-
 def refusal_pattern(target):
     """The exact URL a declaration names; each `{id}` is one path segment a run mints (no `/`, `?`, `#`)."""
     return re.compile("[^/?#]+".join(re.escape(part) for part in exact(target).split("{id}")))
@@ -323,7 +316,8 @@ def console_is_clean(root, allowed, expected, sites):
         for number, kind, message in console_errors(read(log)):
             if any(pattern.search(message) for pattern in allowed) or message in seen:
                 continue
-            if resource_error_is_excused(message, expected, sites) or logged_off_site(message, pages, sites):
+            if resource_error_is_excused(message, expected, sites) or logged_off_site(message, pages, sites) or \
+                    console_excused(message, expected):
                 continue
             seen.add(message)
             shown = " ".join(line.strip() for line in message.splitlines())
@@ -476,7 +470,9 @@ def check(args):
     items = ([] if reason else body_criteria(HTML_COMMENT.sub("", body))) + ticket + feature_steps(args)
     expected, declared = expected_refusals(items, sites)
     expected.add(harness_refusals(root))
-    return (declared
+    retried, excused = retry_checks(root, args.changed_files)
+    expected.update(excused)
+    return (declared + retried
             + steps_have_screenshots(root)
             + (widths_findings(root, args.widths) if args.widths else [])
             + console_is_clean(root, console_allow, expected, sites)

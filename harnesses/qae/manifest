@@ -16,7 +16,9 @@ acceptance-verdict --criteria qae-inputs/pr-body.md --verdict qae-inputs/verdict
 # --site-file is the URL the explore job's site step declared, local or a preview; --site <URL> fixes one instead.
 # To check every criterion at more than one viewport width, add for example --widths 1280,375: each criterion's step
 # screenshots must then include one of each width, and the explorer is told the same widths (qae-inputs/widths).
-qae-artifacts --artifacts qae-artifacts --criteria qae-inputs/pr-body.md --site-file qae-inputs/site-url --ticket qae-inputs/ticket.md
+# --changed-files lets a step the explorer retried after an environment error count: a 5xx or failed connection on a
+# URL none of the pull request's changed paths name (harnesses/qae/README.md). Without it only Vercel's protection does.
+qae-artifacts --artifacts qae-artifacts --criteria qae-inputs/pr-body.md --site-file qae-inputs/site-url --ticket qae-inputs/ticket.md --changed-files qae-inputs/changed-files
 
 # Trace every linked requirement to HEAD proof or an owner that accepted it at the merge base.
 # actions/criteria also runs this line before any browser skip; its job needs a full-history checkout.
