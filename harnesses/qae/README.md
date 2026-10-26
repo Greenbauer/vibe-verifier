@@ -1420,7 +1420,7 @@ once more, in the same walk, and the gate counts that retry only on structural e
 
 The prompt tells the explorer, when a step shows one of those errors, to save that moment's records right after
 the step's screenshot (`browser_network_requests` to `qae/ACn-step-k-network.txt`, `browser_console_messages` to
-`qae/ACn-step-k-console.txt`), then take the same step again as a step of its own:
+`qae/ACn-step-k-console.txt`), then take the same step again as the very next step:
 
 ```
 - step 5: as admin: opened organization search -> the console reports a dashboard POST 500
@@ -1429,14 +1429,14 @@ the step's screenshot (`browser_network_requests` to `qae/ACn-step-k-network.txt
 
 The `qae-artifacts` gate counts the retry when:
 
-- it names an earlier step of the same criterion's log, not a retry itself, and no other retry names that step:
-  a step is retried once;
+- it is the step right after the one it names, in the same criterion's log, which is not a retry itself and no
+  other retry names: a step is retried once, at once, before the criterion is walked any further;
 - its action, the text before `->` with the marker taken out, is that step's word for word: a retry takes the
   same step again, never another way;
 - a record of the step is in the evidence, and the session log shows its tool saved it after the step's screenshot
   and before the retry's;
-- that record shows an environment error: a request answered 500 or above, a request that failed with a connection
-  error (`net::ERR_CONNECTION_*`, `ERR_TIMED_OUT`, `ERR_NAME_NOT_RESOLVED` and the like, never `ERR_ABORTED`), or a
+- that record shows an environment error: a request answered 500 or above, a request (or Chromium's console line
+  for a resource) that failed with a connection error (`net::ERR_CONNECTION_*`, `ERR_TIMED_OUT`, `ERR_NAME_NOT_RESOLVED` and the like, never `ERR_ABORTED`), or a
   console line `WebSocket connection to '<url>' failed`, each on a URL none of the pull request's changed paths
   names; or a request to Vercel's login for a protected deployment (`https://vercel.com/sso-api`, or
   `https://vercel.com/login` whose query names `/sso-api`: a protected preview answers 302 to the first, which
@@ -1455,5 +1455,6 @@ printed in the gate's log and on the criterion's row of the QA review, and it ex
 request, and Chromium's console line for it, only when the same request (method and URL) was answered below 400
 somewhere in the run's evidence or the page record, as [a cancelled request](#a-request-the-page-cancelled) is; a
 websocket failure on the retry alone, since no record holds a websocket's answer. A repeat of the same error during
-the retry is excused with it. Whether the retried step held is the explorer's verdict, which `acceptance-verdict`
+the retry is excused with it, and so is the same error anywhere else in the run, since the excuse is by status and
+URL. Whether the retried step held is the explorer's verdict, which `acceptance-verdict`
 judges: a criterion that fails again is a FAIL, and the run is refused on it.

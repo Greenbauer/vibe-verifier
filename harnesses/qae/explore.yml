@@ -318,9 +318,9 @@ jobs:
                protection login in place of the site, or a websocket or network connection that failed. When a step's screen or
                console shows one, right after that step's screenshot save the moment's records: call browser_network_requests
                with filename qae-artifacts/qae/ACn-step-k-network.txt and browser_console_messages with filename
-               qae-artifacts/qae/ACn-step-k-console.txt, k being that step. Then take that same step once more, the same action on
-               the same screen, as a step of its own whose line names it and repeats its action word for word (after "as <role>:"
-               when the criterion has roles):
+               qae-artifacts/qae/ACn-step-k-console.txt, k being that step. Then, as the very next step, take that same step once
+               more, the same action on the same screen, logged as a step of its own whose line names it and repeats its action
+               word for word (after "as <role>:" when the criterion has roles):
                  - step m: retry of step k: <step k's action, exactly as you wrote it> -> <what you saw>
                Judge the criterion on what the retry shows: if it fails again, the criterion is a FAIL. Retry a step at most once,
                never a step that failed for any other reason, and never by walking the criterion another way: a gate counts a

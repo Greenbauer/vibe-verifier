@@ -2,6 +2,7 @@
 counts the retry, and excuses its error, only on structural evidence; acceptance-verdict still judges the
 explorer's verdict, so a retry that fails again stays a FAIL; and the QA review names every retry it saw.
 Driven through the gates' and the runner's command lines against evidence shaped like playwright-mcp's."""
+import hashlib
 import json
 import shutil
 import tempfile
@@ -73,10 +74,10 @@ class Retry(unittest.TestCase):
         return gate("acceptance-verdict", self.repo, "--criteria", self.inputs + "/pr-body.md",
                     "--verdict", self.inputs + "/verdict.md", "--artifacts", self.root)
 
-    def refused(self, why, changed=True):
+    def refused(self, why, changed=True, step=2):
         result = self.artifacts(changed)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("qae/AC1.md: step 1 retried as step 2, which does not count: " + why, result.stdout)
+        self.assertIn("qae/AC1.md: step 1 retried as step %d, which does not count: %s" % (step, why), result.stdout)
         return result
 
     # A retried environment FAIL: the 5xx is on a path no changed file names, and the endpoint answered in the run.
@@ -137,6 +138,23 @@ class Retry(unittest.TestCase):
         write(self.root, {"qae/AC1.md": STEPS + "- step 3: retry of step 1: opened organization search -> the search\n",
                           "qae/AC1-step-3.png": "png"})
         self.refused("step 1 is retried 2 times, and a step is retried once")
+
+    def test_a_retry_after_walking_on_another_way_does_not_count(self):
+        # Steps between the failure and the retry would be the criterion walked another way, with a retry line added.
+        write(self.root, {"qae/AC1.md": STEPS.splitlines(True)[0] + "- step 2: typed into the header search -> results\n"
+                          + STEPS.splitlines(True)[1].replace("step 2:", "step 3:"), "qae/AC1-step-3.png": "png",
+                          "session-1/session.md": session(NETWORK).replace("AC1-step-2.png", "AC1-step-3.png")})
+        self.refused("it is not the step right after step 1", step=3)
+
+    def test_a_dropped_connection_only_the_console_shows_counts(self):
+        chunk = "%s/_next/static/chunks/app.js" % SITE
+        write(self.root, {"qae/AC1-step-1-network.txt": "", "console-1.log": "",
+                          "qae/AC1-step-1-console.txt": "[ERROR] Failed to load resource: net::ERR_CONNECTION_RESET @ %s:0\n" % chunk,
+                          "console-pages.jsonl": json.dumps({"answered": hashlib.sha256(("GET " + chunk).encode()).hexdigest()}) + "\n",
+                          "session-1/session.md": session(CONSOLE, requests=())})
+        result = self.artifacts()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("after an environment error: GET /_next/static/chunks/app.js failed (net::ERR_CONNECTION_RESET)", result.stdout)
 
     def test_records_the_tool_did_not_save_between_the_screenshots_do_not_count(self):
         write(self.root, {"session-1/session.md": NETWORK + session()})

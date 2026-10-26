@@ -17,13 +17,14 @@ then logs the retry as a step of its own, naming step k and repeating its action
 
 A retry counts when all of these hold:
 
-- it names an earlier step of the same criterion's log, which is not a retry itself and no other retry names;
+- it is the step right after the one it names, in the same criterion's log, which is not a retry itself and no other
+  retry names;
 - its action, the text before `->` with the marker taken out (an `as <role>:` prefix stays), is step k's;
 - a record of step k is in the evidence, and the session log shows the tool saved it after step k's screenshot and
   before the retry's;
 - those records show an environment error, and no 5xx or failed connection on a URL the pull request changes:
     5xx                     a request answered 500 or above,
-    network                 a request failed with a connection error (net::ERR_CONNECTION_*, ERR_TIMED_OUT,
+    network                 a request, or Chromium's console line for a resource, failed with a connection error (net::ERR_CONNECTION_*, ERR_TIMED_OUT,
                             ERR_NAME_NOT_RESOLVED, ...), never ERR_ABORTED, which is the page's own cancellation,
     websocket               a console line `WebSocket connection to '<url>' failed`,
   each on a URL the pull request's changed files do not name (below), or
@@ -40,8 +41,9 @@ such word is taken as named, and with no --changed-files every URL is: the rule 
 A retry that does not count is a finding, so its criterion cannot pass on it. One that counts excuses its errors
 in the qae-artifacts gate: a 5xx or failed request only when the same request (method and URL) was answered below
 400 somewhere in the run's evidence, its network records or the page record, and a websocket failure on the retry
-alone, since no record holds a websocket's answer. A repeat of the same error is excused with it: whether the
-retried step held is the explorer's verdict, which acceptance-verdict judges, and a FAIL there stays a FAIL.
+alone, since no record holds a websocket's answer. A repeat of the same error, by status and URL anywhere in the run, is
+excused with it: whether the retried step held is the explorer's verdict, which acceptance-verdict judges, and a FAIL
+there stays a FAIL.
 """
 import glob
 import os
@@ -63,7 +65,7 @@ REQUEST = re.compile(r"[0-9]+\. \[(?P<method>[A-Z]+)\] (?P<url>\S+) => \[(?P<sta
 CONNECTION = re.compile(r"net::ERR_(?:CONNECTION_[A-Z_]+|TIMED_OUT|NAME_NOT_RESOLVED|NETWORK_CHANGED|INTERNET_DISCONNECTED"
                         r"|EMPTY_RESPONSE|ADDRESS_UNREACHABLE)")
 WEBSOCKET = re.compile(r"WebSocket connection to '(?P<url>[^']+)' failed")
-RESOURCE = re.compile(r"^Failed to load resource: net::ERR_[A-Z_]+ @ (?P<url>\S+):[0-9]+$")
+RESOURCE = re.compile(r"Failed to load resource: (?P<reason>net::ERR_[A-Z_]+) @ (?P<url>\S+):[0-9]+$", re.MULTILINE)
 GENERIC = re.compile(r"(?:api|rest|rpc|graphql|v[0-9]+|next)")
 RECORD_ID = re.compile(r"[0-9]+|[0-9a-f-]{16,}|[0-9a-hjkmnp-tv-z]{26}", re.IGNORECASE)
 RECORDS = (("browser_network_requests", "network"), ("browser_console_messages", "console"))
@@ -112,6 +114,13 @@ def environment(texts, changed):
     """([description of each environment error], [(status, URL, method) to excuse], [what the pull request's own
     URLs answered]) in the records `texts` of one step."""
     errors, excuses, own = [], [], []
+
+    def found(said, url, excuse):
+        if named(url, changed):
+            own.append(said)
+        else:
+            errors.append(said)
+            excuses.append(excuse)
     for text in texts:
         for request in REQUEST.finditer(text):
             method, url, status = request.group("method", "url", "status")
@@ -122,18 +131,15 @@ def environment(texts, changed):
             if not (failed or (status != "FAILED" and int(status) >= 500)):
                 continue
             said = "%s %s %s" % (method, shown(url), "failed (%s)" % request.group("reason") if failed else "answered " + status)
-            if named(url, changed):
-                own.append(said)
-            else:
-                errors.append(said)
-                excuses.append((status, exact(url), method))
+            found(said, url, (status, exact(url), method))
+        # A connection the console reports and the network record leaves out (a static chunk): a GET, by Chromium.
+        for resource in RESOURCE.finditer(text):
+            url = resource.group("url")
+            if CONNECTION.fullmatch(resource.group("reason")):
+                found("GET %s failed (%s)" % (shown(url), resource.group("reason")), url, ("FAILED", exact(url), "GET"))
         for socket in WEBSOCKET.finditer(text):
             url = socket.group("url")
-            if named(url, changed):
-                own.append("the websocket to %s failed" % shown(url))
-            else:
-                errors.append("the websocket to %s failed" % shown(url))
-                excuses.append(("WEBSOCKET", exact(url), None))
+            found("the websocket to %s failed" % shown(url), url, ("WEBSOCKET", exact(url), None))
     return list(dict.fromkeys(errors)), excuses, list(dict.fromkeys(own))
 
 
@@ -206,8 +212,9 @@ def log_retries(root, calls, item, text, changed):
 
 
 def judge(root, calls, item, steps, k, m, repeated, times, changed):
-    if k not in steps or k >= m:
-        return Retry(item, k, m, problem="the log has no step %s before it" % k)
+    if k not in steps or m != k + 1:
+        return Retry(item, k, m, problem="it is not the step right after step %s: a retry takes the failed step again at "
+                                         "once, before the criterion is walked any further" % k)
     if RETRY.match(steps[k]):
         return Retry(item, k, m, problem="step %s is a retry itself, and a step is retried once" % k)
     if times > 1:
@@ -292,6 +299,6 @@ def console_excused(message, expected):
     """True for Chromium's console line about a websocket or a connection a counted retry excused (a 5xx's own line
     is excused as an expected refusal is)."""
     first = message.split("\n")[0]
-    socket, resource = WEBSOCKET.search(first), RESOURCE.match(first)
+    socket, resource = WEBSOCKET.search(first), RESOURCE.search(first)
     status, url = ("WEBSOCKET", socket.group("url")) if socket else ("FAILED", resource.group("url")) if resource else (None, "")
     return any(status == want and pattern.fullmatch(url) for want, pattern in expected)
