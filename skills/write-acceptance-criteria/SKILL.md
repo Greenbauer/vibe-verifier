@@ -38,8 +38,9 @@ other pull request.
 - **End every write in something on screen.** "Clicking Save shows 'Profile updated.'" A save with no
   visible result cannot be told from a click that did nothing.
 - **Say who.** When the result depends on who is signed in, add `[as: <role>]` with the roles the
-  workflow provides. QAE signs in as those test accounts only, so a control only some other user sees
-  cannot be a criterion; prove it with a test and say so in the description.
+  workflow provides, spelled as it names them. QAE signs in as those test accounts only, so a control only
+  some other user sees cannot be a criterion; prove it with a test and say so in the description. A
+  workflow that passes its roles to the criteria job fails any other role there, before a walk.
 - **Expected errors are declared.** A criterion that expects the server to refuse something says so in
   its own text: `expected-refusal: 422 /api/profile`. Otherwise the refused request fails the check.
 - **Keep data local to the criterion.** Explorers may run in parallel on one preview. A criterion that

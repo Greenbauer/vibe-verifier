@@ -23,6 +23,12 @@ inputs:
       1 (the default) never splits. A criterion is never split, nor are criteria that name each other by
       number ("the record from item 2", "after AC3"): one explorer walks such a chain whole, in order. More needs that many QAE runners at once; with fewer the explorers queue.
     default: "1"
+  roles:
+    description: >-
+      The roles the preview has a login for, comma separated, as the site step names them in qae-inputs/site.md
+      (`admin, rep, read-only`). Given, a criterion whose `[as: ...]` names any other role fails this step,
+      before a preview is built or walked, instead of failing its walk later. Empty (the default) checks no role.
+    default: ""
   manifest:
     description: >-
       The QAE manifest, relative to the workspace, as the workflow fetched it: the --widths of its
@@ -89,6 +95,7 @@ runs:
         VV_TICKET: ${{ inputs.ticket }}
         VV_MAX_SHARDS: ${{ inputs.max-shards }}
         VV_MANIFEST: ${{ inputs.manifest }}
+        VV_ROLES: ${{ inputs.roles }}
         VV_ENTRIES: ${{ inputs.entries }}
         GH_TOKEN: ${{ inputs.token }}
         VV_REPO: ${{ github.repository }}
@@ -117,6 +124,7 @@ runs:
         fi
         if [ -n "$VV_CHANGED" ]; then args+=(--changed-files "$VV_CHANGED"); fi
         if [ -n "$VV_TICKET" ]; then args+=(--ticket "$VV_TICKET"); fi
+        if [ -n "${VV_ROLES:-}" ]; then args+=(--roles "$VV_ROLES"); fi
         manifest="$VV_MANIFEST"
         if [ -n "$VV_ENTRIES" ]; then
           manifest="$RUNNER_TEMP/vibe-verifier-qae-entries"
