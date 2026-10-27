@@ -1432,9 +1432,11 @@ The `qae-artifacts` gate counts the retry when:
 - it is the step right after the one it names, in the same criterion's log, which is not a retry itself and no
   other retry names: a step is retried once, at once, before the criterion is walked any further;
 - its action, the text before `->` with the marker taken out, is that step's word for word, and no later step
-  takes it again; and the session log shows the retry making the same page-changing calls as the step (tool names
-  in order, a navigation with its URL; reads such as snapshots and screenshots left out): a retry takes the same
-  step again, never another way;
+  takes it again; and the session log shows the retry making the last of the step's page-changing calls again:
+  the same tools in order, with the same navigation URL and the same typed, filled, selected or pressed values
+  (element refs, which change when the page renders again, and reads such as snapshots and screenshots are left
+  out). A sign-in or navigation that opened the criterion may come before the step's own calls. A retry takes the
+  same step again, never another way;
 - a record of the step is in the evidence, and the session log shows its tool saved it after the step's screenshot
   and before the retry's;
 - that record shows an environment error: a request answered 500 or above, a request (or Chromium's console line

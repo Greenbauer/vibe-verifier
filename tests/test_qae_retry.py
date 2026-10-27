@@ -41,10 +41,10 @@ def saved(tool, path):
 OPEN = call("browser_navigate", {"url": SITE + "/search"}, {"page": "- Page URL: %s/search" % SITE})
 
 
-def session(*records, requests=(FIVE_HUNDRED, "2. [POST] %s/api/dashboard => [200] OK\n" % SITE), retry=OPEN):
+def session(*records, requests=(FIVE_HUNDRED, "2. [POST] %s/api/dashboard => [200] OK\n" % SITE), retry=OPEN, step=OPEN):
     """The explorer's session: step 1's action (opening the search) and screenshot, then `records` saved, then the
     retry's calls and screenshot, then the criterion's network record."""
-    return (OPEN + shot("AC1", 1) + "".join(records) + retry + shot("AC1", 2)
+    return (step + shot("AC1", 1) + "".join(records) + retry + shot("AC1", 2)
             + call("browser_network_requests", {}, {"result": "".join(requests)}))
 
 
@@ -164,6 +164,23 @@ class Retry(unittest.TestCase):
         write(self.root, {"session-1/session.md": session(NETWORK, retry=retry)})
         self.refused("the session log shows step 1's calls (browser_navigate /search) and the retry's (browser_navigate "
                      "/companies, browser_type)")
+
+    def test_a_retry_of_the_step_after_the_sign_in_before_it_counts(self):
+        # The sign-in that opened the criterion is not part of the step the retry takes again.
+        sign_in = (call("browser_navigate", {"url": SITE + "/login"}, {}) + call("browser_type", {"ref": "e3", "text": "qae"}, {})
+                   + call("browser_click", {"ref": "e5"}, {}))
+        write(self.root, {"session-1/session.md": session(NETWORK, step=sign_in + OPEN)})
+        result = self.artifacts()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_retry_that_fills_in_something_else_does_not_count(self):
+        # Refs change when the page renders again; the values typed are the step itself.
+        fill = lambda value, ref: call("browser_fill_form", {"fields": [{"ref": ref, "value": value}]}, {})  # noqa: E731
+        write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + fill("bad", "e1"), retry=fill("good@x.com", "f2e1"))})
+        self.refused("the session log shows step 1's calls (browser_navigate /search, browser_fill_form) and the retry's "
+                     "(browser_fill_form): a retry makes the last of the step's calls again, with the same URLs and values")
+        write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + fill("bad", "e1"), retry=fill("bad", "f2e1"))})
+        self.assertEqual(self.artifacts().returncode, 0)
 
     def test_taking_the_step_a_third_time_after_the_retry_does_not_count(self):
         write(self.root, {"qae/AC1.md": STEPS + "- step 3: opened organization search -> the search is active\n",

@@ -1,57 +1,32 @@
-"""A step the QAE explorer took once more because the environment failed it, as the gates read it.
+"""A step the QAE explorer took once more because the environment failed it, as the qae-artifacts gate reads it.
 
-A walk can fail on something that is not the pull request's doing: a 5xx from an endpoint it does not change,
-Vercel's deployment protection in place of the site, a websocket or network connection that drops. On the same
-head a second walk then passes, but a blind second walk also passes when it skips the step that failed (a
-2026-10-26 backtest of 89 repeated walks found 4 real bugs that way). So the explorer takes only that step once
-more, and the qae-artifacts gate counts the retry only on structural evidence, never on the explorer's words.
+Why, and the explorer's side: harnesses/qae/README.md, "A step retried after an environment error". The explorer
+saves the failed step's records by filename after its screenshot (qae/ACn-step-k-network.txt, -console.txt), then
+logs `- step k+1: [as <role>:] retry of step k: <step k's action> -> <what it saw>`. The retry counts when:
 
-The explorer (harnesses/qae/prompt.md) saves the moment's records by filename, right after step k's screenshot,
-then logs the retry as a step of its own, naming step k and repeating its action word for word:
+- it is step k+1, step k is not a retry, nothing else retries it, and no later step takes step k's action again;
+- its action (text before `->`, marker removed) is step k's word for word;
+- its page-changing calls in the session log (navigation URL, typed, filled, selected or pressed values; reads and
+  element refs left out) are the last of step k's, which may follow a sign-in or the criterion's opening navigation;
+- a record of step k saved by its tool between step k's screenshot and the retry's shows an environment error, and
+  none on a URL the pull request's changed files name: a request answered 500 or above, a request or Chromium's
+  console line for a resource failed with a connection error (CONNECTION, never ERR_ABORTED), a console line
+  `WebSocket connection to '<url>' failed` (each on an unnamed URL), or a request to Vercel's protection login
+  (https://vercel.com/sso-api, or https://vercel.com/login whose query names /sso-api).
 
-    - step 5: as admin: opened organization search -> the console reports a dashboard POST 500
-    - step 6: as admin: retry of step 5: opened organization search -> the search is active
+A changed path names a URL when a word of the URL's path (3 characters or more, not GENERIC, not a record id or
+number) is part of a word of the path, letters and digits only. A URL with no such word is named, and with no
+--changed-files every URL is. The match cannot see a change reached through a shared module, and no check can tell
+which error made a step fail: a real bug passes only when it fails once, works on the retry, and its request was
+answered below 400 in the run.
 
-    qae/AC1-step-5-network.txt    browser_network_requests, filename given
-    qae/AC1-step-5-console.txt    browser_console_messages, filename given
-
-A retry counts when all of these hold:
-
-- it is the step right after the one it names, in the same criterion's log, which is not a retry itself and no other
-  retry names;
-- its action, the text before `->` with the marker taken out (an `as <role>:` prefix stays), is step k's, and no
-  later step takes that action again;
-- the calls the session log shows for it (the page-changing ones, a navigation with its URL) are step k's;
-- a record of step k is in the evidence, and the session log shows the tool saved it after step k's screenshot and
-  before the retry's;
-- those records show an environment error, and no 5xx or failed connection on a URL the pull request changes:
-    5xx                     a request answered 500 or above,
-    network                 a request, or Chromium's console line for a resource, failed with a connection error (net::ERR_CONNECTION_*, ERR_TIMED_OUT,
-                            ERR_NAME_NOT_RESOLVED, ...), never ERR_ABORTED, which is the page's own cancellation,
-    websocket               a console line `WebSocket connection to '<url>' failed`,
-  each on a URL the pull request's changed files do not name (below), or
-    deployment protection   a request to Vercel's login for a protected deployment: https://vercel.com/sso-api, or
-                            https://vercel.com/login whose query names /sso-api (checked on a protected preview,
-                            2026-10-26: 302 to the first, which redirects to the second).
-
-A changed file names a URL when one of the URL path's words (3 characters or more, not `api`, `rest`, `rpc`, `v1`
-and the like, not a record id or a number) is part of a word of the file's path (a directory, or the file name
-before its first dot), letters and digits only, case ignored: `/api/dashboard` is named by
-`app/(main)/dashboard/page.tsx`, `/rest/v1/journeys` by `supabase/migrations/2026_journeys.sql`. A URL with no
-such word is taken as named, and with no --changed-files every URL is. The match cannot see a change to code a URL
-reaches through a shared module (a database client, middleware), and the gate cannot tell which error made the step
-fail: a real bug passes this way only when it fails once and works on the retry, with the same request also answered
-below 400 in the run.
-
-A retry that does not count is a finding, so its criterion cannot pass on it. One that counts excuses its errors
-in the qae-artifacts gate: a 5xx or failed request only when the same request (method and URL) was answered below
-400 in the run's network records (browser_network_requests results and the files they saved, network-*.log) or the
-page record, never a step log or verdict the explorer writes; a websocket failure on the retry alone, since no record holds
-a websocket's answer. A repeat of the same error, by status and URL anywhere in the run, is
-excused with it: whether the retried step held is the explorer's verdict, which acceptance-verdict judges, and a FAIL
-there stays a FAIL.
+A retry that does not count is a finding. One that counts excuses its errors by status and URL across the run: a
+request only when the same request was answered below 400 in a browser_network_requests result, a file one saved,
+network-*.log or the page record (never text the explorer chose: a step log, a verdict, another call); a websocket on
+the retry alone. Whether the retried step held is the explorer's verdict, judged by acceptance-verdict.
 """
 import glob
+import json
 import os
 import re
 import urllib.parse
@@ -78,7 +53,7 @@ RECORDS = (("browser_network_requests", "network"), ("browser_console_messages",
 # Tools that only read the page: a step's action is the other calls it made, in order.
 READS = ("browser_snapshot", "browser_console_messages", "browser_network_requests", "browser_take_screenshot",
          "browser_wait_for")
-URL_ARG = re.compile(r'"url":\s*"(?P<url>[^"\\]+)"')
+ARGS = re.compile(r"```json\n(?P<json>.*?)\n```", re.DOTALL)
 
 
 def exact(url):
@@ -120,36 +95,42 @@ def shown(url):
     return (parts.netloc if parts.hostname and parts.path in ("", "/") else "") + (parts.path or "/")
 
 
+def request_errors(text):
+    """(description, URL, excuse) per error a network record's text shows: a 5xx or a connection failure. Vercel's
+    protection login is one too, with no URL to judge and nothing to excuse (it is not on the site's origin)."""
+    for request in REQUEST.finditer(text):
+        method, url, status = request.group("method", "url", "status")
+        failed = status == "FAILED" and CONNECTION.fullmatch(request.group("reason") or "")
+        if protected(url):
+            yield "the site answered with Vercel's deployment protection login", None, None
+        elif failed or (status != "FAILED" and int(status) >= 500):
+            said = "failed (%s)" % request.group("reason") if failed else "answered " + status
+            yield "%s %s %s" % (method, shown(url), said), url, (status, exact(url), method)
+
+
+def console_errors(text):
+    """(description, URL, excuse) per error a console record's text shows: a connection failure Chromium reports for
+    a resource the network record leaves out (a static chunk, always a GET), and a failed websocket."""
+    for resource in RESOURCE.finditer(text):
+        url, reason = resource.group("url", "reason")
+        if CONNECTION.fullmatch(reason):
+            yield "GET %s failed (%s)" % (shown(url), reason), url, ("FAILED", exact(url), "GET")
+    for socket in WEBSOCKET.finditer(text):
+        url = socket.group("url")
+        yield "the websocket to %s failed" % shown(url), url, ("WEBSOCKET", exact(url), None)
+
+
 def environment(texts, changed):
     """([description of each environment error], [(status, URL, method) to excuse], [what the pull request's own
     URLs answered]) in the records `texts` of one step."""
     errors, excuses, own = [], [], []
-
-    def found(said, url, excuse):
-        if named(url, changed):
+    for said, url, excuse in (error for text in texts for error in (*request_errors(text), *console_errors(text))):
+        if url is not None and named(url, changed):
             own.append(said)
-        else:
-            errors.append(said)
+            continue
+        errors.append(said)
+        if excuse:
             excuses.append(excuse)
-    for text in texts:
-        for request in REQUEST.finditer(text):
-            method, url, status = request.group("method", "url", "status")
-            if protected(url):
-                errors.append("the site answered with Vercel's deployment protection login")
-                continue
-            failed = status == "FAILED" and CONNECTION.fullmatch(request.group("reason") or "")
-            if not (failed or (status != "FAILED" and int(status) >= 500)):
-                continue
-            said = "%s %s %s" % (method, shown(url), "failed (%s)" % request.group("reason") if failed else "answered " + status)
-            found(said, url, (status, exact(url), method))
-        # A connection the console reports and the network record leaves out (a static chunk): a GET, by Chromium.
-        for resource in RESOURCE.finditer(text):
-            url = resource.group("url")
-            if CONNECTION.fullmatch(resource.group("reason")):
-                found("GET %s failed (%s)" % (shown(url), resource.group("reason")), url, ("FAILED", exact(url), "GET"))
-        for socket in WEBSOCKET.finditer(text):
-            url = socket.group("url")
-            found("the websocket to %s failed" % shown(url), url, ("WEBSOCKET", exact(url), None))
     return list(dict.fromkeys(errors)), excuses, list(dict.fromkeys(own))
 
 
@@ -166,36 +147,60 @@ def tool_calls(root):
         calls, listed = TOOL_CALL.split(read(session)), []
         for name, body in zip(calls[1::2], calls[2::2]):
             args, _, result = body.partition("- Result")
-            saved, url = SAVED_TO.search(args), URL_ARG.search(args)
-            listed.append((name, saved.group("name") if saved else "", url.group("url") if url else "", result))
+            saved = SAVED_TO.search(args)
+            listed.append((name, saved.group("name") if saved else "", inputs(args), result))
         sessions.append(listed)
     return sessions
 
 
+def inputs(args):
+    """(URL, values) a call's Args name: what it navigated to and what it typed, filled, selected or pressed, never the
+    element refs, which change when the page renders again."""
+    try:
+        given = json.loads(ARGS.search(args).group("json"))
+    except (AttributeError, ValueError):
+        return "", ()
+    given = given if isinstance(given, dict) else {}
+    fields = [field.get("value") for field in given.get("fields") or [] if isinstance(field, dict)]
+    values = [given.get(key) for key in ("text", "value", "values", "key")] + fields
+    return str(given.get("url") or ""), tuple(json.dumps(value) for value in values if value is not None)
+
+
 def acts(calls):
-    """The calls that changed the page, as (tool, URL) in order: what a step did, its reads left out."""
-    return [(name, url) for name, _, url, _ in calls if name not in READS]
+    """The calls that changed the page, as (tool, (URL, values)) in order: what a step did, its reads left out."""
+    return [(name, given) for name, _, given, _ in calls if name not in READS]
+
+
+def step_records(root, calls, item, k):
+    """The texts of step k's records (qae/<item>-step-k-network.txt, -console.txt) that one of `calls` saved."""
+    texts = []
+    for (tool, kind), (name, saved, _, _) in ((record, call) for call in calls for record in RECORDS):
+        own = "qae/%s-step-%s-%s.txt" % (item, k, kind)
+        if name == tool and saved.endswith(own) and os.path.isfile(os.path.join(root, own)):
+            texts.append(read(os.path.join(root, own)))
+    return texts
+
+
+def screenshots(session, item, k, m):
+    """(the screenshot before step k's of any step or -1, step k's, step m's) as call indexes, or None when the
+    session holds no screenshot of step k before one of step m."""
+    shots = [i for i, call in enumerate(session) if call[0] == "browser_take_screenshot"]
+    after = [i for i in shots if session[i][1].endswith("qae/%s-step-%s.png" % (item, m))]
+    before = [i for i in shots if after and i < after[0] and session[i][1].endswith("qae/%s-step-%s.png" % (item, k))]
+    if not before:
+        return None
+    return max([i for i in shots if i < before[-1]], default=-1), before[-1], after[0]
 
 
 def window(root, calls, item, k, m):
     """(the texts of step k's records the session log shows saved between step k's screenshot and step m's, what
-    step k did, what step m did), or None when the session log holds no screenshot of step k before one of step m.
-    Step k's calls run from the screenshot before it (of any step) to its own."""
-    shot = "qae/%s-step-%%s.png" % item
+    step k did, what step m did), or None. Step k's calls run from the screenshot before it (of any step) to its own."""
     for session in calls:
-        shots = [i for i, call in enumerate(session) if call[0] == "browser_take_screenshot"]
-        after = [i for i in shots if session[i][1].endswith(shot % m)]
-        before = [i for i in shots if session[i][1].endswith(shot % k) and after and i < after[0]]
-        if not before:
-            continue
-        start = max([i for i in shots if i < before[-1]], default=-1)
-        texts = []
-        for name, saved, _, _ in session[before[-1] + 1:after[0]]:
-            for tool, kind in RECORDS:
-                own = "qae/%s-step-%s-%s.txt" % (item, k, kind)
-                if name == tool and saved.endswith(own) and os.path.isfile(os.path.join(root, own)):
-                    texts.append(read(os.path.join(root, own)))
-        return texts, acts(session[start + 1:before[-1]]), acts(session[before[-1] + 1:after[0]])
+        found = screenshots(session, item, k, m)
+        if found:
+            start, own, retry = found
+            return (step_records(root, session[own + 1:retry], item, k), acts(session[start + 1:own]),
+                    acts(session[own + 1:retry]))
     return None
 
 
@@ -213,7 +218,7 @@ class Retry:
 
 
 def shown_acts(done):
-    return "(%s)" % ", ".join(name + (" " + shown(url) if url else "") for name, url in done) if done else "(none)"
+    return "(%s)" % ", ".join(name + (" " + shown(url) if url else "") for name, (url, _) in done) if done else "(none)"
 
 
 def action(text):
@@ -236,37 +241,48 @@ def log_retries(root, calls, item, text, changed):
     return found
 
 
-def judge(root, calls, item, steps, k, m, repeated, times, changed):
+def log_problem(steps, k, m, repeated, times):
+    """Why the step log alone rules the retry of step k as step m out (its words `repeated`), or None."""
     if k not in steps or m != k + 1:
-        return Retry(item, k, m, problem="it is not the step right after step %s: a retry takes the failed step again at "
-                                         "once, before the criterion is walked any further" % k)
+        return ("it is not the step right after step %s: a retry takes the failed step again at once, before the "
+                "criterion is walked any further" % k)
     if RETRY.match(steps[k]):
-        return Retry(item, k, m, problem="step %s is a retry itself, and a step is retried once" % k)
+        return "step %s is a retry itself, and a step is retried once" % k
     if times > 1:
-        return Retry(item, k, m, problem="step %s is retried %d times, and a step is retried once" % (k, times))
+        return "step %s is retried %d times, and a step is retried once" % (k, times)
     again = [n for n, said in steps.items() if n > m and action(said) == action(steps[k])]
     if again:
-        return Retry(item, k, m, problem="step %s takes step %s's action again after the retry, and a step is retried "
-                                         "once" % (again[0], k))
+        return "step %s takes step %s's action again after the retry, and a step is retried once" % (again[0], k)
     if action(repeated) != action(steps[k]):
-        return Retry(item, k, m, problem="its action is not step %s's word for word (%r, step %s: %r), and a retry takes "
-                                         "the same step again, never another way" % (k, action(repeated)[:120], k,
-                                                                                     action(steps[k])[:120]))
-    texts, did, redid = window(root, calls, item, k, m) or ([], [], [])
-    if texts and did != redid:
-        return Retry(item, k, m, problem="the session log shows step %s's calls %s and the retry's %s: a retry takes the "
-                                         "same step again, never another way" % (k, shown_acts(did), shown_acts(redid)))
+        return ("its action is not step %s's word for word (%r, step %s: %r), and a retry takes the same step again, "
+                "never another way" % (k, action(repeated)[:120], k, action(steps[k])[:120]))
+    return None
+
+
+def record_problem(item, k, m, texts, did, redid):
+    """Why the session log rules the retry out: no record of step k saved in its window, or calls that are not the
+    end of step k's (before them may come the sign-in or navigation that opened the criterion). None when neither."""
     if not texts:
-        return Retry(item, k, m, problem="no record of step %s (qae/%s-step-%s-network.txt or -console.txt) was saved "
-                                         "by its tool between step %s's screenshot and step %s's" % (k, item, k, k, m))
+        return ("no record of step %s (qae/%s-step-%s-network.txt or -console.txt) was saved by its tool between step "
+                "%s's screenshot and step %s's" % (k, item, k, k, m))
+    if (did and not redid) or redid != did[len(did) - len(redid):]:
+        return ("the session log shows step %s's calls %s and the retry's %s: a retry makes the last of the step's "
+                "calls again, with the same URLs and values, never another way" % (k, shown_acts(did), shown_acts(redid)))
+    return None
+
+
+def judge(root, calls, item, steps, k, m, repeated, times, changed):
+    problem = log_problem(steps, k, m, repeated, times)
+    texts, did, redid = window(root, calls, item, k, m) or ([], [], [])
+    problem = problem or record_problem(item, k, m, texts, did, redid)
+    if problem:
+        return Retry(item, k, m, problem=problem)
     errors, excuses, own = environment(texts, changed)
-    if own and changed is None:
-        return Retry(item, k, m, errors, problem="step %s's records show %s, and without the pull request's changed paths "
-                                                 "no URL can be told apart from its own: give the qae-artifacts line "
-                                                 "--changed-files qae-inputs/changed-files" % (k, "; ".join(own)))
     if own:
-        return Retry(item, k, m, errors, problem="step %s's records show %s, on a URL the pull request's changed files "
-                                                 "name, so it may be the pull request's doing" % (k, "; ".join(own)))
+        why = (", and without the pull request's changed paths no URL can be told apart from its own: give the "
+               "qae-artifacts line --changed-files qae-inputs/changed-files" if changed is None else
+               ", on a URL the pull request's changed files name, so it may be the pull request's doing")
+        return Retry(item, k, m, errors, problem="step %s's records show %s%s" % (k, "; ".join(own), why))
     if not errors:
         return Retry(item, k, m, problem="step %s's records show no environment error (a 5xx, a failed connection or "
                                          "websocket, Vercel's deployment protection) on a URL the pull request does not "
