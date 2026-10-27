@@ -444,8 +444,9 @@ touches, or as a handled error, is judgment. Two structural checks still apply. 
 and so does the invalid input's request, if it reaches the server, unless the criterion declares that
 refusal in its own text (`expected-refusal: 422 /api/profile`,
 [below](#the-adjudicator-the-artifacts-decide-not-the-prose)); the same words in a step line declare
-nothing. The explorer is told to prefer an invalid input the page refuses before sending anything, and
-never to navigate to a URL that neither the criterion names nor the site links to: on a consumer's live
+nothing, except a 400 or 422 to the step the explorer marks as its invalid-input probe while the page shows a
+handled error ([below](#an-invalid-input-refused-with-a-handled-error)). The explorer is told to prefer an invalid
+input the page refuses before sending anything, and never to navigate to a URL that neither the criterion names nor the site links to: on a consumer's live
 run (2026-10-07) "try one invalid input" on a criterion with no form sent it to an invented URL, whose
 404 the network check refused.
 
@@ -1480,3 +1481,77 @@ websocket failure on the retry alone, since no record holds a websocket's answer
 the retry is excused with it, and so is the same error anywhere else in the run, since the excuse is by status and
 URL. Whether the retried step held is the explorer's verdict, which `acceptance-verdict`
 judges: a criterion that fails again is a FAIL, and the run is refused on it.
+
+### An invalid input refused with a handled error
+
+On a criterion's screen with a form, the explorer tries one invalid input. When the site checks it on the server, it
+answers 400 or 422 and the page shows why ("quantity must be a positive number"). Before this rule that answer failed
+the network check unless the criterion declared it, and the explorer wrote FAIL for it: a backtest of 410 criterion
+FAILs across seven consumers (2026-10-26) found about 30 (7%) were exactly that, a handled validation message on the
+page and a 4xx in the record, one pull request alone 16, each costing a walk. So the probe is marked, and the gate
+excuses its 400 or 422 only on structural evidence ([`gates/_probe.py`](../../gates/_probe.py), reading the session
+log through [`gates/_session_log.py`](../../gates/_session_log.py)), never on the explorer's words.
+
+The prompt tells the explorer to take the invalid input as one step, acting on the form's controls by their snapshot
+refs and never by a script: enter it, call `browser_snapshot` with no depth right before the action that sends it,
+take that action, call `browser_snapshot` again once the page has answered and before the step's screenshot, and log
+it:
+
+```
+- step 4: as admin: invalid input: saved the add-line row with quantity -1 -> the row said quantity must be positive
+```
+
+The `qae-artifacts` gate counts a 400 or 422 as that step's handled refusal when:
+
+- the criterion's log marks that step, no other step of the same role (the explorer tries one invalid input per
+  criterion, once per role it walks it as), and numbers no step twice;
+- Chromium's console line for the answer (`Failed to load resource: the server responded with a status of 400`, at
+  the request's URL) is one playwright-mcp says a call of the step logged: an action's result carries an `events`
+  field, `New console entries: <console log>#L<a>-L<b>`, naming the lines that arrived during it (in the pinned
+  build's source, and in consumers' session logs from 2026-10-11 on; a log without it excuses nothing). The step's
+  calls are the ones from the screenshot before its first, of any step, to that screenshot;
+- it is the only 400 or 422 the step's calls logged, the call that logged it is the step's last page-changing call or
+  a read after it, and the step ran no script (`browser_evaluate`, `browser_run_code`, which can send a request and
+  change the page themselves). A second refused request in the step (a totals request answering 400 beside the save),
+  or an answer to an earlier action of the step (an autosave on entry before the submit), is not excused, since which
+  request was the probe's cannot be told;
+- the run's network records list that answer only to a write (`POST`, `PUT`, `PATCH`, `DELETE`), as a form sends
+  its input: a refused read the action set off beside it is not excused;
+- the snapshot of the whole page a call of the step wrote right before that action (the explorer's
+  `browser_snapshot`, or the result of the step's action before it; no page-changing call between it and the action,
+  never a `browser_snapshot` given a depth or an element, which shows part of the page, and never one of an earlier
+  step, which can hold what the page showed before the step began) and the last one
+  written from the answer's call to the step's screenshot (a call's `snapshot` field, or `inlineSnapshot` for
+  `browser_snapshot`; never a script's result, which holds whatever the script returned) show the page answering in
+  place ([`gates/_snapshot.py`](../../gates/_snapshot.py) compares them):
+  - at the same page URL (the call's `page` field);
+  - keeping 90% of the elements it showed before, each under the same ref, role and name, and every control the
+    step acted on, each named by its snapshot ref (`e23`, `f1e3`). Playwright keeps an element's ref while the
+    element keeps its role and name, gives a new element a new ref, and starts over when a document loads, so a
+    crash, an error page or a blank page in place of the form keeps few of them, landmarks or not. A control named by
+    a selector cannot be checked, so a step that used one is not excused;
+  - with an element's own text that the page did not show anywhere before the action, holding no value typed in the
+    session up to the answer (in this step or an earlier one), under a ref the snapshot before did not show, inside an element at most four levels above a control the
+    step used that is not the page's top and holds no landmark (`main`, `banner`, `navigation`, `contentinfo`,
+    `complementary`): the field's cell, its row, the table or form around it. An element's name does not count, since
+    Playwright names a cell or a row from its content, the typed value included. Text that was on the page before the
+    action (an "unsaved changes" the entry put up, a total re-rendered under a new ref) and new text elsewhere (a
+    "last synced" status in the banner, a toast in a region at the page's top level) do not count. A toast region placed
+    within four levels of the form, below the page's top, does count, as any new text there does;
+- and none of the step's console entries is an uncaught exception.
+
+The excuse is by status and URL, as a declared refusal's is, so it is withdrawn when it could reach another step:
+when the run holds a console line of that status and URL that no counted probe logged, or its network records list
+that answer under more request numbers than there are of those lines. A 5xx, any other status, an answer no call of
+the step logged and an unmarked step are never excused. A probe a 400 or 422 answered is printed in the gate's log
+and on its criterion's row of the QA review, with what was excused, or why not.
+
+What the gate cannot read is whether the new text is an error message, and which write the form sent. A page that
+kept itself and its controls and put up new text beside them after the answer passes this check, and so does an
+action that set off one other write the site refused while the form showed text of its own. So a real bug can pass
+this way only when the explorer marks as its invalid input a step whose one refused write came with the page staying
+and showing new text beside the controls, and the criterion's own steps still have to hold for the explorer's verdict,
+which `acceptance-verdict` judges. A probe the page refused before sending anything (no request) is the better
+outcome and needs no excuse. The step that sends the input must take its own whole-page snapshot right before
+sending it: a walk that entered the value in one step and saved in the next with no snapshot in between, as a
+consumer's walk of 2026-10-08 did, is not excused, so a consumer benefits once its copy of the prompt is refreshed.

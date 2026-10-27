@@ -21,6 +21,8 @@ DESCRIPTIONS = ("element", "startElement", "endElement")  # and a form field's `
 TARGETS = ("ref", "target", "startTarget", "endTarget")
 REF_ID = re.compile(r"(?:f[0-9]+)?e[0-9]+")
 PAGE_URL = re.compile(r"^- Page URL: (?P<url>\S+)", re.MULTILINE)
+# What a call's Result says it logged to the console (its `events`): a console log of the evidence and its lines.
+CONSOLE_LINK = re.compile(r"New console entries: (?P<path>\S+?)#L(?P<first>[0-9]+)(?:-L(?P<last>[0-9]+))?")
 ARGS = re.compile(r"```json\n(?P<json>.*?)\n```", re.DOTALL)
 
 
@@ -29,19 +31,36 @@ def read(path):
         return handle.read()
 
 
-def tool_calls(root):
-    """[(tool name, the file its Args saved to or '', (URL, its other arguments) from inputs, its Result)] per session
-    log, in the order called."""
+def session_calls(root):
+    """[(tool name, its Args as written, its Result)] per session log, in the order called."""
     sessions = []
     for session in sorted(glob.glob(os.path.join(root, "session-*", "session.md"))):
         calls, listed = TOOL_CALL.split(read(session)), []
         for name, body in zip(calls[1::2], calls[2::2]):
             block = ARGS.search(body)  # the Args: the first fenced block (JSON holds no raw newline)
-            args, result = (block.group("json"), body[block.end():]) if block else ("", body)
-            saved = SAVED_TO.search(args)
-            listed.append((name, saved.group("name") if saved else "", inputs(args), result))
+            listed.append((name, block.group("json"), body[block.end():]) if block else (name, "", body))
         sessions.append(listed)
     return sessions
+
+
+def tool_calls(root):
+    """[(tool name, the file its Args saved to or '', (URL, its other arguments) from inputs, its Result)] per session
+    log, in the order called."""
+    return [[(name, saved_to(args), inputs(args), result) for name, args, result in session]
+            for session in session_calls(root)]
+
+
+def saved_to(args):
+    saved = SAVED_TO.search(args)
+    return saved.group("name") if saved else ""
+
+
+def evidence_path(root, name):
+    """A file a tool was told to write (`name`, from the workspace: qae-artifacts/qae/AC1-network.txt) as a path in the
+    evidence directory `root`, which is all the verify job holds, or None outside it."""
+    evidence = os.path.basename(os.path.normpath(root)) + "/"
+    path = os.path.normpath(os.path.join(root, name.rpartition(evidence)[2]))
+    return path if path.startswith(os.path.join(os.path.normpath(root), "")) else None
 
 
 def unref(value, field=False):
@@ -98,3 +117,35 @@ def page_urls(result):
     """The URLs a call's Result says the page was at: its `page` field, which playwright-mcp writes, never the result
     a script returned."""
     return PAGE_URL.findall(result_field(result, "page"))
+
+
+def snapshot(result):
+    """The page's snapshot playwright-mcp wrote in a call's Result (`snapshot`, `inlineSnapshot` for browser_snapshot),
+    or '': never a script's result, which holds whatever the script returned."""
+    return result_field(result, "snapshot") or result_field(result, "inlineSnapshot")
+
+
+def console_lines(root, result):
+    """(console log path in `root`, line number) per line of the console entries a call's Result says it logged."""
+    lines = []
+    for link in CONSOLE_LINK.finditer(result_field(result, "events")):
+        path = evidence_path(root, link.group("path"))
+        if path and os.path.isfile(path):
+            first = int(link.group("first"))
+            lines += [(os.path.relpath(path, root), n) for n in range(first, int(link.group("last") or first) + 1)]
+    return lines
+
+
+def network_texts(root, calls):
+    """The run's network records: each browser_network_requests result in the session logs (`calls`, from tool_calls)
+    and the file it saved, and network-*.log. Never another call's arguments or result, a step log or a verdict, which
+    hold text the explorer chose."""
+    texts = [read(path) for path in glob.glob(os.path.join(root, "network-*.log"))]
+    for name, saved, _, result in (call for session in calls for call in session):
+        if name != "browser_network_requests":
+            continue
+        texts.append(result_field(result, "result"))
+        path = evidence_path(root, saved) if saved else None
+        if path and os.path.isfile(path):
+            texts.append(read(path))
+    return texts

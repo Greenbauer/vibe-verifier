@@ -102,6 +102,7 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
 
 7. Explorers of one run keep off each other's records: gates/_page_record.py, isolation_findings, says how.
 8. A retry after an environment error counts, and excuses it, only as gates/_retry.py says; else, a finding.
+9. A 400 or 422 to the explorer's invalid-input probe is excused only as gates/_probe.py says.
 
 Exit 2 when the artifact directory is missing, or a --site-file is missing or holds anything but
 http(s) URLs: nothing was adjudicated.
@@ -116,8 +117,9 @@ from _acceptance import body_criteria, declares_none, named_references, png_size
 from _contract import CannotRun, Finding, run_gate
 from _features import add_selection_arguments, parse, selection
 from _page_record import digest, harness_refusals, isolation_findings, page_record
+from _probe import probe_excuses
 from _retry import REQUEST, console_excused, exact, retry_checks
-from _session_log import SAVED_TO, TOOL_CALL
+from _session_log import SAVED_TO, TOOL_CALL, evidence_path
 
 GATE = "qae-artifacts"
 STEP_LINE = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):", re.IGNORECASE)
@@ -346,15 +348,14 @@ def saved_network_records(root, sessions):
     is as the explorer gave it, from the workspace (`qae-artifacts/qae/AC1-network.txt`), and is
     looked up inside the evidence directory, which is all the verify job holds."""
     files, findings = set(), []
-    evidence = os.path.basename(os.path.normpath(root)) + "/"
     for session in sessions:
         calls = TOOL_CALL.split(read(session))
         for name, body in zip(calls[1::2], calls[2::2]):
             saved = SAVED_TO.search(body.partition("- Result")[0]) if name == "browser_network_requests" else None
             if not saved:
                 continue
-            path = os.path.normpath(os.path.join(root, saved.group("name").rpartition(evidence)[2]))
-            if path.startswith(os.path.join(os.path.normpath(root), "")) and os.path.isfile(path):
+            path = evidence_path(root, saved.group("name"))
+            if path and os.path.isfile(path):
                 files.add(path)
             else:
                 findings.append(Finding("network record saved to %s, which the evidence does not hold: save it under the "
@@ -369,7 +370,7 @@ def session_and_network(root, allowed, sites, expected):
         return [Finding("no session log (run playwright-mcp with --save-session so every tool call is on record)")]
     calls = []
     for session in sessions:
-        calls += [name for name in TOOL_CALL.findall(read(session))]
+        calls += TOOL_CALL.findall(read(session))
     findings = []
     if "browser_navigate" not in calls:
         findings.append(Finding("the browser was never navigated: no browser_navigate call in the session log"))
@@ -472,7 +473,7 @@ def check(args):
     expected, declared = expected_refusals(items, sites)
     expected.add(harness_refusals(root))
     retried, excused = retry_checks(root, args.changed_files)
-    expected.update(excused)
+    expected.update(excused + probe_excuses(root))
     return (declared + retried
             + steps_have_screenshots(root)
             + (widths_findings(root, args.widths) if args.widths else [])
