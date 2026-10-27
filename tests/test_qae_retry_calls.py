@@ -25,6 +25,17 @@ class SameStep(RetryFixture):
         self.refused("the session log shows step 1's calls (browser_navigate /search, browser_click) and the retry's")
 
 
+    def test_a_name_that_is_an_argument_is_compared(self):
+        # Only a form field's name describes it; a cookie's name is what the call sets.
+        cookie = lambda name: call("browser_cookie_set", {"name": name, "value": "1"}, {})  # noqa: E731
+        write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + cookie("old_ui"), retry=cookie("new_ui"))})
+        self.refused("the session log shows step 1's calls (browser_navigate /search, browser_cookie_set) and the retry's")
+
+    def test_a_record_saved_after_the_retry_acted_is_not_the_steps(self):
+        # Saved once the retry has acted, the record shows the retry, not the step.
+        write(self.root, {"session-1/session.md": session(retry=OPEN + NETWORK)})
+        self.refused("no record of step 1 (qae/AC1-step-1-network.txt or -console.txt) was saved by its tool")
+
     def test_a_walk_between_two_screenshots_of_the_retry_does_not_count(self):
         other = call("browser_navigate", {"url": SITE + "/companies"}, {}) + call("browser_type", {"text": "Acme"}, {})
         write(self.root, {"session-1/session.md": session(NETWORK, retry=OPEN + shot("AC1", 2) + other)})

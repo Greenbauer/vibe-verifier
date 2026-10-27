@@ -183,6 +183,13 @@ class Retry(RetryFixture):
         self.refused("step 1's records show no environment error", changed=False)
 
 
+    def test_a_step_taken_before_the_retried_one_too_does_not_count(self):
+        # Taking the action at step 1 and again at step 2, then "retrying" step 2, is three takes.
+        write(self.root, {"qae/AC1.md": STEPS.splitlines(True)[0] + STEPS.splitlines(True)[0].replace("step 1:", "step 2:")
+                          + "- step 3: retry of step 2: opened organization search -> the search is active\n"})
+        result = self.artifacts()
+        self.assertIn("step 1 takes step 2's action too, and a step is taken once and retried once", result.stdout)
+
     def test_a_log_that_numbers_a_step_twice_counts_no_retry(self):
         write(self.root, {"qae/AC1.md": STEPS + STEPS.splitlines(True)[1]})
         self.refused("the log numbers step 2 more than once, so its steps cannot be told apart")
@@ -190,7 +197,7 @@ class Retry(RetryFixture):
     def test_taking_the_step_a_third_time_after_the_retry_does_not_count(self):
         write(self.root, {"qae/AC1.md": STEPS + "- step 3: opened organization search -> the search is active\n",
                           "qae/AC1-step-3.png": "png"})
-        self.refused("step 3 takes step 1's action again after the retry, and a step is retried once")
+        self.refused("step 3 takes step 1's action too, and a step is taken once and retried once")
 
     def test_records_the_tool_did_not_save_between_the_screenshots_do_not_count(self):
         write(self.root, {"session-1/session.md": NETWORK + session()})
@@ -240,10 +247,17 @@ class RetryInTheReview(GhFixture):
         self.addCleanup(shutil.rmtree, root, True)
         write(root, {"qae/AC1.md": STEPS, "qae/AC1-step-1-network.txt": FIVE_HUNDRED, "session-1/session.md": session(NETWORK)})
         changed = self.file("changed-files", "src/search/OrgSearch.tsx\n")
-        body = self.posted(extra=("--artifacts", root, "--changed-files", changed))
+        # The review reads the changed paths the manifest's qae-artifacts line gives the gate, so the two agree.
+        manifest = self.file("manifest", "qae-artifacts --artifacts qae-artifacts --changed-files %s\n" % changed)
+        body = self.posted(extra=("--artifacts", root, "--manifest", manifest))
         self.assertIn("- AC1, explorer says PASS (step 1 retried once as step 2 after an environment error: POST "
                       "/api/dashboard answered 500): The home page loads\n", body)
         self.assertIn("- AC2, explorer says FAIL: The menu opens\n", body)
+        # A line without them counts no URL as the environment, in the gate and in the review alike.
+        self.file("manifest", "qae-artifacts --artifacts qae-artifacts\n")
+        body = self.posted(extra=("--artifacts", root, "--manifest", manifest))
+        self.assertIn("- AC1, explorer says PASS (step 1 retried as step 2, which does not count: step 1's records show "
+                      "POST /api/dashboard answered 500, and without the pull request's changed paths", body)
 
 
 if __name__ == "__main__":

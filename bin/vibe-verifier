@@ -1546,9 +1546,20 @@ def feature_edits(args, fids):
 
 def retry_notes(args):
     """{criterion: [what the qae-artifacts gate found of each step the explorer retried]}, read from the run's
-    evidence and changed paths in the verify job's workspace (gates/_retry.py)."""
+    evidence (gates/_retry.py) with the changed paths the manifest's qae-artifacts line gives that gate, judged from
+    the base as the gate's line is: without them the gate counts no URL as the environment, and neither does this."""
+    changed = None
+    if os.path.isfile(args.manifest):
+        try:
+            lines = [gate_args for gate, gate_args in judged_entries(argparse.Namespace(
+                manifest=args.manifest, repo=args.checkout, base_ref=None), notice=sys.stderr) if gate == "qae-artifacts"]
+        except (SystemExit, CannotRun, OSError, ValueError):
+            lines = []
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--changed-files")
+        changed = parser.parse_known_args(lines[0])[0].changed_files if lines else None
     notes = {}
-    for retry in retries(args.artifacts, args.changed_files):
+    for retry in retries(args.artifacts, changed):
         notes.setdefault(retry.item, []).append(retry.describe())
     return notes
 
@@ -1764,8 +1775,6 @@ def main():
     review.add_argument("--checkout", default=".", metavar="DIR", help="the pull request's checkout, with the base's history")
     review.add_argument("--artifacts", default="qae-artifacts", metavar="DIR", help="the run's evidence: a step the "
                         "explorer retried after an environment error is named on its criterion's row")
-    review.add_argument("--changed-files", default="qae-inputs/changed-files", metavar="FILE",
-                        help="the pull request's changed paths, which decide whether a retried step's error was its own")
     review.add_argument("--run-id", default="", metavar="ID", help="the workflow run's id: when its explore job failed, "
                         "its failure annotations are read to tell a model usage limit from any other failure")
     args = parser.parse_args()

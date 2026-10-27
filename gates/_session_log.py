@@ -17,7 +17,7 @@ READS = frozenset("""annotate console_clear console_messages cookie_get cookie_l
     verify_value video_chapter video_hide_actions video_show_actions wait_for webmcp_list""".split())
 # Arguments that describe an element in words, and ones that name it by a snapshot ref (e23, f1e3), which change
 # when the page renders again. A target given as a selector is kept: another selector is another element.
-DESCRIPTIONS = ("element", "startElement", "endElement", "name")
+DESCRIPTIONS = ("element", "startElement", "endElement")  # and a form field's `name`, in `fields`
 TARGETS = ("ref", "target", "startTarget", "endTarget")
 REF_ID = re.compile(r"(?:f[0-9]+)?e[0-9]+")
 PAGE_URL = re.compile(r"^- Page URL: (?P<url>\S+)", re.MULTILINE)
@@ -44,11 +44,14 @@ def tool_calls(root):
     return sessions
 
 
-def unref(value):
+def unref(value, field=False):
+    """`value` without its snapshot refs and descriptions in words; `field` is one of browser_fill_form's `fields`,
+    whose `name` is a description too (another tool's `name`, a cookie's or a WebMCP tool's, is an argument)."""
     if isinstance(value, dict):
-        return {key: unref(field) for key, field in value.items()
-                if key not in DESCRIPTIONS and not (key in TARGETS and REF_ID.fullmatch(str(field)))}
-    return [unref(item) for item in value] if isinstance(value, list) else value
+        return {key: unref(item, key == "fields") for key, item in value.items()
+                if key not in DESCRIPTIONS and not (field and key == "name")
+                and not (key in TARGETS and REF_ID.fullmatch(str(item)))}
+    return [unref(item, field) for item in value] if isinstance(value, list) else value
 
 
 def inputs(args):

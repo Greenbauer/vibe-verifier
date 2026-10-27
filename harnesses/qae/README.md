@@ -820,8 +820,9 @@ prose: under it the comment lists each criterion with the word the explorer wrot
 or no verdict), links the head commit it judged, and links the run. A criterion with a step the explorer
 retried after an environment error says so on its row, with what the gate found: `explorer says PASS (step 5
 retried once as step 6 after an environment error: POST /api/dashboard answered 500)`, or why the retry did not
-count ([below](#a-step-retried-after-an-environment-error)); the action's run reads `qae-artifacts/` and
-`qae-inputs/changed-files` in the verify job's workspace for it. A re-walked feature's row adds
+count ([below](#a-step-retried-after-an-environment-error)); the action's run reads `qae-artifacts/` in the verify
+job's workspace and the changed paths the manifest's `qae-artifacts` line gives the gate (`--changed-files`, read from
+the base as the gate's line is), so the row says what the gate decided. A re-walked feature's row adds
 `Note: this pull request changed its Verify section: N lines added, M removed` when the pull request
 edited the steps that judged it (or that it added the feature), comparing the map the QAE manifest's
 `acceptance-verdict` line names in the job's checkout with the merge base; the action's `manifest`
@@ -1431,8 +1432,8 @@ The `qae-artifacts` gate counts the retry when:
 
 - it is the step right after the one it names, in the same criterion's log (which numbers no step twice), which is
   not a retry itself and no other retry names: a step is retried once, at once, before the criterion is walked any further;
-- its action, the text before `->` with the marker taken out, is that step's word for word, and no later step
-  takes it again; and the session log shows the retry making the last of the step's page-changing calls again:
+- its action, the text before `->` with the marker taken out, is that step's word for word, and no other step
+  of the log takes it (before or after); and the session log shows the retry making the last of the step's page-changing calls again:
   the same tools in order, each with the same arguments (the URL, what was typed, filled, selected, pressed or run),
   but for snapshot refs (`e23`, `f1e3`) and descriptions in words (`element`, a form field's `name`), which change
   when the page renders again; a target given as a selector is compared. Calls of the tools the pinned
@@ -1441,7 +1442,7 @@ The `qae-artifacts` gate counts the retry when:
   step or the retry may be shot more than once as long as nothing changed the page between its screenshots. A retry
   takes the same step again, never another way;
 - a record of the step is in the evidence, and the session log shows its tool saved it after the step's screenshot
-  and before the retry's;
+  and before the retry's first page-changing call, so it is a record of the step and not of the retry;
 - that record shows an environment error: a request answered 500 or above, a request (or Chromium's console line
   for a resource) that failed with a connection error (`net::ERR_CONNECTION_*`, `ERR_TIMED_OUT`, `ERR_NAME_NOT_RESOLVED` and the like, never `ERR_ABORTED`), or a
   console line `WebSocket connection to '<url>' failed`, each on a URL none of the pull request's changed paths

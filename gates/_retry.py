@@ -4,10 +4,10 @@ Why, and the explorer's side: harnesses/qae/README.md, "A step retried after an 
 saves the failed step's records by filename after its screenshot (qae/ACn-step-k-network.txt, -console.txt), then
 logs `- step k+1: [as <role>:] retry of step k: <step k's action> -> <what it saw>`. The retry counts when:
 
-- it is step k+1 of a log that numbers no step twice, step k is not a retry, nothing else retries it, and no later step takes step k's action again;
+- it is step k+1 of a log that numbers no step twice, step k is not a retry, nothing else retries it, and no other step takes step k's action;
 - its action (text before `->`, marker removed) is step k's word for word;
 - its page-changing calls in the session log (every argument but element refs and descriptions; reads left out) are the last of step k's, which may follow a sign-in or the criterion's opening navigation;
-- a record of step k saved by its tool between step k's screenshot and the retry's shows an environment error, and
+- a record of step k saved by its tool after step k's screenshot, before the retry's first page-changing call, shows an environment error, and
   none on a URL the pull request's changed files name: a request answered 500 or above, a request or Chromium's
   console line for a resource failed with a connection error (CONNECTION, never ERR_ABORTED), a console line
   `WebSocket connection to '<url>' failed` (each on an unnamed URL), or Vercel's protection login
@@ -140,15 +140,16 @@ def step_records(root, calls, item, k):
 
 
 def window(root, calls, item, k, m):
-    """(the texts of step k's records saved between its screenshot and step m's, what step k did, what it did between
-    two screenshots of itself, what step m did, the page URLs step k's calls report), or None. Step k's calls run from
-    the screenshot before it (of any step) to its own."""
+    """(the texts of step k's records saved after its screenshot and before the retry changed the page, what step k
+    did, what it did between two screenshots of itself, what step m did, the page URLs step k's calls report), or
+    None. Step k's calls run from the screenshot before it (of any step) to its own."""
     for session in calls:
         found = screenshots(session, item, k, m)
         if found:
             start, first, last, retry, retried = found
             pages = [url for call in session[start + 1:last] for url in page_urls(call[3])]
-            return (step_records(root, session[first + 1:retry], item, k), acts(session[start + 1:first]),
+            redo = next((i for i in range(last + 1, retry) if acts(session[i:i + 1])), retry)
+            return (step_records(root, session[first + 1:redo], item, k), acts(session[start + 1:first]),
                     acts(session[first + 1:last]) + acts(session[retry + 1:retried]), acts(session[last + 1:retry]), pages)
     return None
 
@@ -198,9 +199,9 @@ def log_problem(steps, k, m, repeated, times):
         return "step %s is a retry itself, and a step is retried once" % k
     if times > 1:
         return "step %s is retried %d times, and a step is retried once" % (k, times)
-    again = [n for n, said in steps.items() if n > m and action(said) == action(steps[k])]
+    again = [n for n, said in steps.items() if n not in (k, m) and action(said) == action(steps[k])]
     if again:
-        return "step %s takes step %s's action again after the retry, and a step is retried once" % (again[0], k)
+        return "step %s takes step %s's action too, and a step is taken once and retried once" % (again[0], k)
     if action(repeated) != action(steps[k]):
         return ("its action is not step %s's word for word (%r, step %s: %r), and a retry takes the same step again, "
                 "never another way" % (k, action(repeated)[:120], k, action(steps[k])[:120]))
@@ -211,8 +212,8 @@ def record_problem(item, k, m, texts, did, between, redid):
     """Why the session log rules the retry out: no record of step k saved in its window, or calls that are not the
     end of step k's (before them may come the sign-in or navigation that opened the criterion). None when neither."""
     if not texts:
-        return ("no record of step %s (qae/%s-step-%s-network.txt or -console.txt) was saved by its tool between step "
-                "%s's screenshot and step %s's" % (k, item, k, k, m))
+        return ("no record of step %s (qae/%s-step-%s-network.txt or -console.txt) was saved by its tool after step "
+                "%s's screenshot and before the retry acted" % (k, item, k, k))
     if between:
         return ("the session log shows calls %s between two screenshots of step %s or of the retry: a step that changed "
                 "the page after its screenshot is not one step" % (shown_acts(between), k))
