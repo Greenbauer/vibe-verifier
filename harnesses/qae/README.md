@@ -34,7 +34,9 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
    [split across several](#splitting-a-large-pull-request-across-explorers). It fails the run
    there, before any explorer starts, when the body holds criteria no run can check: a heading that
    names acceptance criteria but is not exactly `## Acceptance criteria` (with nothing under the exact
-   one), or a criterion judged against main or production, which the explorer never opens. How to write
+   one), a criterion judged against main or production, which the explorer never opens, or, when the
+   workflow passes `roles` (the roles its site step gives a login), a criterion whose `[as: ...]` names
+   another role, which the explorer could only fail after walking the rest. How to write
    them: [`write-acceptance-criteria`](../../skills/write-acceptance-criteria/SKILL.md).
 2. **explore** runs only when the criteria job found a criterion. It checks out the PR with its
    base, picks the [features to re-walk](#re-walking-the-features-a-pull-request-touches) when that is

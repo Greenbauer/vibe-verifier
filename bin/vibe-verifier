@@ -101,8 +101,9 @@ line of `--manifest FILE`, judged from the base like a run (no manifest counts o
 than the explorer with the most of them is sized for prints one `::warning::` with the numbers. Exit 1, printing nothing on
 stdout and one `::error::` line per problem on stderr, when the body holds criteria no run can check: a
 heading that names acceptance criteria but is not exactly `## Acceptance criteria` (with no criteria under
-the exact one), or a criterion judged against main or production, which QAE never opens. Run it on a PR
-body before pushing. Exit 2 when a file cannot be read.
+the exact one), a criterion judged against main or production, which QAE never opens, or, given
+`--roles admin, rep` (the roles the preview has a login for, as the site step names them), a criterion
+whose `[as: ...]` names any other role. Run it on a PR body before pushing. Exit 2 when a file cannot be read.
 
 `qae-inputs [--manifest FILE] [--widths-file FILE] [--environmental-file FILE] [--references DIR] [--evidence DIR] [--listing FILE]
 [--digests FILE] [--turns FILE [--criteria FILE] [--ticket FILE] [--features DIR] [--shard K --shards N]
@@ -1025,16 +1026,19 @@ def criteria_command(args):
         return 0
     ticket, problem = ticket_items(ticket_text, args.ticket)
     body = [] if declares_none(text) else read_criteria(text)
+    walked, proven = split_ticket(ticket, text)
     # What no run can check fails here, before a harness spends a browser run on it: a body whose
-    # heading missed, and a criterion judged against main or production.
+    # heading missed, a criterion judged against main or production, and one that names a role the
+    # preview has no login for.
     unrunnable = baseline_problems(body)
     if not body and not declares_none(text) and no_criteria_message(text) != NO_CRITERIA:
         unrunnable.append(no_criteria_message(text))
+    if args.roles is not None:
+        unrunnable += role_problems(body + walked, args.roles)
     if unrunnable:
         for message in unrunnable:
             print("::error::" + message, file=sys.stderr)
         return 1
-    walked, proven = split_ticket(ticket, text)
     wanted = body + walked
     print("criteria: %d" % len(wanted))
     if problem:
@@ -1049,6 +1053,16 @@ def criteria_command(args):
     if args.max_shards is not None:
         print("\n".join(shard_plan(wanted, manifest_widths(args), args.max_shards)))
     return 0
+
+
+def role_problems(items, roles):
+    """One message per criterion naming, in `[as: ...]`, a role outside `roles` (a comma list, compared without
+    case, as the gate reads step lines). The explorer fails such a criterion only after its walk."""
+    logins = [role.strip() for role in roles.split(",") if role.strip()]
+    known = {role.casefold() for role in logins}
+    return ["%s names [as: %s], and this preview has a login only for %s: name one of those, or give the site "
+            "step a login for it" % (item, role, ", ".join(logins) or "no role")
+            for item, wording in items for role in annotations(wording).roles if role.casefold() not in known]
 
 
 def criteria_ticket_coverage(args):
@@ -1655,6 +1669,8 @@ def main():
                         "any browser skip; with --max-shards, its qae-artifacts --widths count toward the walks")
     reader.add_argument("--carry", metavar="FILE", help="what actions/criteria/carry_facts.py read about the pull "
                         "request's last QAE walk: when its verdict still holds, prints `none:` naming it and `carried: <sha> <url>`")
+    reader.add_argument("--roles", metavar="LIST", default=None, help="the roles the preview has a login for, comma "
+                        "separated (the site step's): a criterion whose [as: ...] names another fails here")
     reader.add_argument("--repo", default=".")
     reader.add_argument("--base-ref", default=None)
     inputs = commands.add_parser("qae-inputs", help="copy the site step's design references into the QAE evidence, "

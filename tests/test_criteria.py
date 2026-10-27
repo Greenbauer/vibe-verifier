@@ -1,10 +1,12 @@
 """`vibe-verifier criteria`: the one-line answer a harness keys its skip on, from the PR body and,
 when given, its changed paths."""
 import os
+import subprocess
 import tempfile
 import unittest
 
-from helpers import runner
+from helpers import ROOT, clean_env, runner
+from test_qae_annotations import action_script
 
 BODY = "## Why\n\nx\n\n## Acceptance criteria\n\n%s\n"
 
@@ -45,6 +47,37 @@ class Criteria(unittest.TestCase):
             result = runner("criteria", self.doc(BODY % ("- A page loads\n- " + wording)))
             self.assertEqual((result.returncode, result.stdout), (1, ""), wording)
             self.assertIn("::error::AC2 compares with main or production (`%s`)" % phrase, result.stderr)
+
+    def test_a_role_the_preview_has_no_login_for_fails_before_any_browser_run(self):
+        # consumer PRs, 2026-10: 41 criteria named a role the site step gave no login (a planner where only
+        # a viewer signs in, "Customer B"); each failed only after a full walk.
+        body = self.doc(BODY % "- Lists orders [as: admin, Read-only]\n- Approves a plan [as: planner]")
+        result = runner("criteria", body, "--roles", "admin, read-only, rep")
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+        self.assertEqual(result.stderr.count("::error::"), 1)
+        self.assertIn("::error::AC2 names [as: planner], and this preview has a login only for admin, read-only, rep",
+                      result.stderr)
+
+    def test_a_ticket_criterion_naming_a_role_with_no_login_fails_too(self):
+        ticket = self.doc("- Approves a plan [as: planner]\n")
+        result = runner("criteria", self.doc(BODY % "- Lists orders"), "--ticket", ticket, "--roles", "viewer")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("::error::TC1 names [as: planner], and this preview has a login only for viewer", result.stderr)
+
+    def test_roles_are_checked_only_when_the_harness_names_them(self):
+        body = self.doc(BODY % "- Approves a plan [as: planner]")
+        self.assertEqual(runner("criteria", body).stdout, "criteria: 1\nAC1 roles: planner\n")
+        self.assertEqual(runner("criteria", body, "--roles", "Planner").returncode, 0)
+
+    def test_the_action_passes_its_roles_on(self):
+        body, output = self.doc(BODY % "- Approves a plan [as: planner]"), self.doc("")
+        env = {"GITHUB_ACTION_PATH": str(ROOT / "actions" / "criteria"), "GITHUB_OUTPUT": output, "VV_PATH": body,
+               "VV_CHANGED": "", "VV_TICKET": "", "VV_MAX_SHARDS": "1", "VV_MANIFEST": "", "VV_ENTRIES": ""}
+        script = ["bash", "-e", "-c", action_script("criteria")]
+        refused = subprocess.run(script, capture_output=True, text=True, env=clean_env(dict(env, VV_ROLES="viewer")))
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("::error::AC1 names [as: planner]", refused.stderr)
+        self.assertEqual(subprocess.run(script, capture_output=True, text=True, env=clean_env(env)).returncode, 0)
 
     def test_main_or_production_as_words_on_a_page_is_not_a_comparison(self):
         for wording in ("Clicking Home returns to the main page", "The main menu opens",
