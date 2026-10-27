@@ -61,7 +61,7 @@ class Criteria(unittest.TestCase):
     def test_a_ticket_criterion_naming_a_role_with_no_login_fails_too(self):
         ticket = self.doc("- Approves a plan [as: planner]\n")
         result = runner("criteria", self.doc(BODY % "- Lists orders"), "--ticket", ticket, "--roles", "viewer")
-        self.assertEqual(result.returncode, 1)
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
         self.assertIn("::error::TC1 names [as: planner], and this preview has a login only for viewer", result.stderr)
 
     def test_each_role_with_no_login_is_its_own_error_and_a_malformed_bracket_none(self):
