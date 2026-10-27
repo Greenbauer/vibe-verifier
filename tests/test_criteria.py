@@ -64,6 +64,20 @@ class Criteria(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("::error::TC1 names [as: planner], and this preview has a login only for viewer", result.stderr)
 
+    def test_each_role_with_no_login_is_its_own_error_and_a_malformed_bracket_none(self):
+        body = self.doc(BODY % "- Approves a plan [as: planner, buyer]\n- Opens the list [as: plan:ner]")
+        result = runner("criteria", body, "--roles", "viewer")
+        self.assertEqual(result.stderr.count("::error::"), 2, result.stderr)
+        self.assertIn("AC1 names [as: planner]", result.stderr)
+        self.assertIn("AC1 names [as: buyer]", result.stderr)
+
+    def test_a_ticket_criterion_proven_by_a_test_is_not_walked_so_not_checked(self):
+        ticket = self.doc("- Approves a plan [as: planner]\n- Exports a CSV [as: buyer]\n")
+        body = self.doc(BODY % "- Lists orders" + "\nticket-proof: TC1 -- (lib/plan.test.ts::approves)\n")
+        result = runner("criteria", body, "--ticket", ticket, "--roles", "viewer")
+        self.assertEqual(result.stderr.count("::error::"), 1, result.stderr)
+        self.assertIn("::error::TC2 names [as: buyer]", result.stderr)
+
     def test_roles_are_checked_only_when_the_harness_names_them(self):
         body = self.doc(BODY % "- Approves a plan [as: planner]")
         self.assertEqual(runner("criteria", body).stdout, "criteria: 1\nAC1 roles: planner\n")
@@ -77,7 +91,8 @@ class Criteria(unittest.TestCase):
         refused = subprocess.run(script, capture_output=True, text=True, env=clean_env(dict(env, VV_ROLES="viewer")))
         self.assertNotEqual(refused.returncode, 0)
         self.assertIn("::error::AC1 names [as: planner]", refused.stderr)
-        self.assertEqual(subprocess.run(script, capture_output=True, text=True, env=clean_env(env)).returncode, 0)
+        for unset in (env, dict(env, VV_ROLES="")):  # an action input left empty, as GitHub passes it
+            self.assertEqual(subprocess.run(script, capture_output=True, text=True, env=clean_env(unset)).returncode, 0)
 
     def test_main_or_production_as_words_on_a_page_is_not_a_comparison(self):
         for wording in ("Clicking Home returns to the main page", "The main menu opens",

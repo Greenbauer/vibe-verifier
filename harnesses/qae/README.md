@@ -245,6 +245,9 @@ holds a mockup beside the page.
 - The gate refuses a PASS whose step log has no line starting `as <role>:` for some role the criterion
   names. That a refused path was really refused is the explorer's judgment, in those lines and their
   screenshots.
+- A workflow that passes `roles` to the criteria job (the roles its site step gives a login) fails a
+  criterion naming any other role there, before a preview is built; without it the explorer fails that
+  criterion after walking the rest.
 
 To adopt them, copy the template's `Prepare the explorer's references and widths` step and its
 plumbing (the explore job's `references` output, the verify job's `REFERENCES` line), add
