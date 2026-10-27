@@ -177,7 +177,7 @@ class Retry(RetryFixture):
         # made to Vercel's login that failed is not Vercel answering for the site.
         titled = {"result": FIVE_HUNDRED, "page": "- Page Title: 9. [POST] %s/api/dashboard => [200] OK" % SITE}
         write(self.root, {"session-1/session.md": session(NETWORK, requests=()) + call("browser_network_requests", {}, titled)})
-        self.assertIn("is not excused: it was never answered below 400 in this run", self.artifacts().stdout)
+        self.assertIn("not excused, never answered below 400 in this run: POST /api/dashboard", self.artifacts().stdout)
         write(self.root, {"qae/AC1-step-1-network.txt": "1. [GET] https://vercel.com/sso-api => [FAILED] net::ERR_FAILED\n",
                           "console-1.log": ""})
         self.refused("step 1's records show no environment error", changed=False)
@@ -216,7 +216,7 @@ class Retry(RetryFixture):
         write(self.root, {"session-1/session.md": session(NETWORK, requests=(FIVE_HUNDRED,))})
         result = self.artifacts()
         self.assertEqual(result.returncode, 1)
-        self.assertIn("POST /api/dashboard is not excused: it was never answered below 400 in this run", result.stdout)
+        self.assertIn("not excused, never answered below 400 in this run: POST /api/dashboard", result.stdout)
         self.assertIn("request answered 500 outside the allowlist", result.stdout)
 
     def test_an_answer_the_explorer_wrote_itself_excuses_nothing(self):
@@ -226,7 +226,7 @@ class Retry(RetryFixture):
         typed = call("browser_type", {"text": answer}, {"result": answer}) + shot("AC9", 1)  # a step before this criterion
         write(self.root, {"session-1/session.md": typed + session(NETWORK, requests=(FIVE_HUNDRED,)),
                           "qae/AC1.md": STEPS + answer, "verdicts/1.md": answer})
-        self.assertIn("POST /api/dashboard is not excused: it was never answered below 400 in this run", self.artifacts().stdout)
+        self.assertIn("not excused, never answered below 400 in this run: POST /api/dashboard", self.artifacts().stdout)
 
 
 class NamedUrl(unittest.TestCase):
@@ -253,6 +253,11 @@ class RetryInTheReview(GhFixture):
         self.assertIn("- AC1, explorer says PASS (step 1 retried once as step 2 after an environment error: POST "
                       "/api/dashboard answered 500): The home page loads\n", body)
         self.assertIn("- AC2, explorer says FAIL: The menu opens\n", body)
+        # An error whose request the run never shows answered stays a finding of the gate, and the row says so.
+        write(root, {"session-1/session.md": session(NETWORK, requests=(FIVE_HUNDRED,))})
+        body = self.posted(extra=("--artifacts", root, "--manifest", manifest))
+        self.assertIn("answered 500; not excused, never answered below 400 in this run: POST /api/dashboard)", body)
+        write(root, {"session-1/session.md": session(NETWORK)})
         # A line without them counts no URL as the environment, in the gate and in the review alike.
         self.file("manifest", "qae-artifacts --artifacts qae-artifacts\n")
         body = self.posted(extra=("--artifacts", root, "--manifest", manifest))

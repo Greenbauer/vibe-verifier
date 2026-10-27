@@ -159,12 +159,14 @@ class Retry:
 
     def __init__(self, item, k, m, errors=(), excuses=(), problem=None):
         self.item, self.k, self.m = item, k, m
-        self.errors, self.excuses, self.problem = list(errors), list(excuses), problem
+        self.errors, self.excuses, self.problem, self.unexcused = list(errors), list(excuses), problem, []
 
     def describe(self):
         if self.problem:
             return "step %s retried as step %s, which does not count: %s" % (self.k, self.m, self.problem)
-        return "step %s retried once as step %s after an environment error: %s" % (self.k, self.m, "; ".join(self.errors))
+        unexcused = "; not excused, never answered below 400 in this run: %s" % ", ".join(self.unexcused)
+        return "step %s retried once as step %s after an environment error: %s%s" % (
+            self.k, self.m, "; ".join(self.errors), unexcused if self.unexcused else "")
 
 
 def shown_acts(done):
@@ -252,7 +254,14 @@ def retries(root, changed_files):
                for step in map(STEP.match, text.splitlines()) if step):
         return []
     calls, changed = tool_calls(root), changed_paths(changed_files)
-    return [retry for item, text in texts.items() for retry in log_retries(root, calls, item, text, changed)]
+    found = [retry for item, text in texts.items() for retry in log_retries(root, calls, item, text, changed)]
+    seen, recorded = answered(root, calls)
+    for retry in (retry for retry in found if not retry.problem):
+        kept = [(status, url, method) for status, url, method in retry.excuses
+                if method is None or (method, url) in seen or digest("%s %s" % (method, url)) in recorded]
+        retry.unexcused = ["%s %s" % (excuse[2], shown(excuse[1])) for excuse in retry.excuses if excuse not in kept]
+        retry.excuses = kept
+    return found
 
 
 class _Urls:
@@ -285,22 +294,14 @@ def answered(root, calls):
 def retry_checks(root, changed_files):
     """(findings, expected) for the qae-artifacts gate: a finding per retry that does not count, and the
     (status, URL pattern) pairs a counted one excuses, as the gate's expected refusals are written. Each counted
-    retry is printed, so the log says what was retried and why."""
+    retry is printed, so the log says what was retried and why, and which of its errors stay findings."""
     found = retries(root, changed_files)
     findings = [Finding(retry.describe(), "qae/%s.md" % retry.item) for retry in found if retry.problem]
-    counted = [retry for retry in found if not retry.problem]
-    if not counted:
-        return findings, []
-    seen, recorded = answered(root, tool_calls(root))
     excused = {}
-    for retry in counted:
+    for retry in (retry for retry in found if not retry.problem):
         print("qae-artifacts: %s: %s" % (retry.item, retry.describe()))
-        for status, url, method in retry.excuses:
-            if method is None or (method, url) in seen or digest("%s %s" % (method, url)) in recorded:
-                excused.setdefault(status, set()).add(url)
-            else:
-                print("qae-artifacts: %s: %s %s is not excused: it was never answered below 400 in this run"
-                      % (retry.item, method, shown(url)))
+        for status, url, _ in retry.excuses:
+            excused.setdefault(status, set()).add(url)
     return findings, [(status, _Urls(urls)) for status, urls in excused.items()]
 
 

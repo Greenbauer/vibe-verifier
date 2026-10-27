@@ -29,7 +29,8 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
                              declares `- None:` still needs one when its ticket has criteria to walk
     --features DIR           the feature map, with --changed-files and the selection options of the
     --changed-files FILE     acceptance-verdict line (docs/feature-map.md): a numbered Verify step of
-                             a feature the re-walk selected may declare `expected-refusal:` too (see 5)
+                             a feature the re-walk selected may declare `expected-refusal:` too (see 5;
+                             for retries, 8)
 
 1. Every step in every step log has its screenshot: `qae/ACn.md` line `- step k:` needs a
    non-empty `qae/ACn-step-k.png`. A step without a picture is a claim, not evidence. A feature
@@ -100,8 +101,7 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    from this line as the base has it. Feature re-walk logs are not held to it.
 
 7. Explorers of one run keep off each other's records: gates/_page_record.py, isolation_findings, says how.
-8. A step retried after an environment error counts, and excuses it, only on the evidence gates/_retry.py names
-   (it reads --changed-files); one that does not count is a finding.
+8. A retry after an environment error counts, and excuses it, only as gates/_retry.py says; else, a finding.
 
 Exit 2 when the artifact directory is missing, or a --site-file is missing or holds anything but
 http(s) URLs: nothing was adjudicated.
