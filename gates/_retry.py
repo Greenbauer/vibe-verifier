@@ -15,7 +15,8 @@ logs `- step k+1: [as <role>:] retry of step k: <step k's action> -> <what it sa
   URL a call of step k reports; a step may be shot more than once if nothing changed the page between.
 
 A changed path names a URL when a word of the URL's path (3 characters or more, not GENERIC, not a record id or
-number) is part of a word of the path, letters and digits only. A URL with no such word is named, and with no
+number) and a word of the path (a directory, or a file name before its first dot) contain one another, words taken
+whole and split at punctuation, letters and digits only. A URL with no such word is named, and with no
 --changed-files every URL is. The match cannot see a change reached through a shared module, and no check can tell
 which error made a step fail: a real bug passes only when it fails once, works on the retry, and its request was
 answered below 400 in the run.
@@ -44,7 +45,7 @@ CONNECTION = re.compile(r"net::ERR_(?:CONNECTION_[A-Z_]+|TIMED_OUT|NAME_NOT_RESO
                         r"|EMPTY_RESPONSE|ADDRESS_UNREACHABLE)")
 WEBSOCKET = re.compile(r"WebSocket connection to '(?P<url>[^']+)' failed")
 RESOURCE = re.compile(r"Failed to load resource: (?P<reason>net::ERR_[A-Z_]+) @ (?P<url>\S+):[0-9]+$", re.MULTILINE)
-GENERIC = re.compile(r"(?:api|rest|rpc|graphql|v[0-9]+|next)")
+GENERIC = re.compile(r"(?:api|rest|rpc|trpc|graphql|v[0-9]+|next)")
 RECORD_ID = re.compile(r"[0-9]+|[0-9a-f-]{16,}|[0-9a-hjkmnp-tv-z]{26}", re.IGNORECASE)
 RECORDS = (("browser_network_requests", "network"), ("browser_console_messages", "console"))
 
@@ -57,6 +58,11 @@ def word(text):
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
+def pieces(text):
+    """`text` whole and split at every non-letter-or-digit, lowercased: `org.search` is org, search and orgsearch."""
+    return {word(text)} | set(re.split(r"[^a-z0-9]+", text.lower()))
+
+
 def changed_paths(path):
     """The changed paths the manifest line names (--changed-files), or None when it names none."""
     if not path or not os.path.isfile(path):
@@ -65,15 +71,21 @@ def changed_paths(path):
         return [line.strip() for line in handle if line.strip()]
 
 
+def url_words(url):
+    """The words of a URL's path that can name it: 3 characters or more, not GENERIC, not a record id or number."""
+    segments = [urllib.parse.unquote(part) for part in urllib.parse.urlsplit(url).path.split("/")]
+    words = {w for part in segments if not RECORD_ID.fullmatch(part) for w in pieces(part)}
+    return [w for w in words if len(w) >= 3 and not GENERIC.fullmatch(w) and not RECORD_ID.fullmatch(w)]
+
+
 def named(url, changed):
     """True when a changed path names `url` (see the module docstring), or when that cannot be told."""
-    segments = [urllib.parse.unquote(part) for part in urllib.parse.urlsplit(url).path.split("/")]
-    words = [word(part) for part in segments if part and not RECORD_ID.fullmatch(part)]
-    words = [w for w in words if len(w) >= 3 and not GENERIC.fullmatch(w)]
+    words = url_words(url)
     if not words or changed is None:
         return True
-    parts = {word(part.split(".")[0]) for path in changed for part in path.split("/")}
-    return any(w in part for w in words for part in parts if part)
+    parts = {p for path in changed for part in path.split("/") for p in pieces(part.split(".")[0]) if len(p) >= 3}
+    # Either way round: `users` is served by user.js, and `org.search` by routers/org.ts.
+    return any(w in part or part in w for w in words for part in parts)
 
 
 def protected(url):

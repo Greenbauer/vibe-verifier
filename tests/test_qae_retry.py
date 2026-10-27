@@ -235,6 +235,9 @@ class NamedUrl(unittest.TestCase):
         self.assertTrue(_retry.named(SITE + "/api/dashboard", ["app/(main)/dashboard/page.tsx"]))
         self.assertTrue(_retry.named("https://db.example/rest/v1/journeys?id=eq.1", ["supabase/migrations/2026_journeys.sql"]))
         self.assertFalse(_retry.named(SITE + "/api/dashboard", ["src/search/OrgSearch.tsx"]))
+        # Either way round, and split at punctuation: a handler file named for part of its route names it.
+        self.assertTrue(_retry.named(SITE + "/api/users", ["server/routes/user.js"]))
+        self.assertTrue(_retry.named(SITE + "/api/trpc/org.search?batch=1", ["src/server/api/routers/org.ts"]))
         self.assertFalse(_retry.named(SOCKET, ["app/chat/page.tsx"]))
         # No word of its own, or no changed paths to compare with: named, so no retry counts on it.
         self.assertTrue(_retry.named(SITE + "/api/v1/8697e680-1111-2222-3333-444455556666", ["README.md"]))

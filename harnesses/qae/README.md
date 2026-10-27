@@ -1459,11 +1459,12 @@ The `qae-artifacts` gate counts the retry when:
 - and it shows no such error on a URL a changed path does name, which may be the pull request's own doing.
 
 A changed path names a URL when one of the URL path's words (3 characters or more, not `api`, `rest`, `rpc`,
-`graphql`, `v1` and the like, not a number or record id) is part of a word of the path, letters and digits only:
-`POST /api/dashboard` is named by `app/(main)/dashboard/page.tsx`, `/rest/v1/journeys` by
-`supabase/migrations/2026_journeys.sql`. A URL with no such word counts as named, and so does every URL when the
-manifest's `qae-artifacts` line has no `--changed-files`. The match is crude and leans toward no retry, but it
-cannot see a change to code a URL reaches through a shared module (a database client, middleware), and the gate
+`trpc`, `graphql`, `v1` and the like, not a number or record id) and one of the path's words (a directory, or a file
+name before its first dot) contain one another; words are taken whole and split at punctuation, letters and digits
+only. `POST /api/dashboard` is named by `app/(main)/dashboard/page.tsx`, `/rest/v1/journeys` by
+`supabase/migrations/2026_journeys.sql`, `/api/users` by `server/routes/user.js`, `/api/trpc/org.search` by
+`src/server/routers/org.ts`. A URL with no such word counts as named, and so does every URL when the manifest's
+`qae-artifacts` line has no `--changed-files`. The match is crude and leans toward no retry, but it cannot see a change to code a URL reaches through a shared module (a database client, middleware), and the gate
 cannot tell which error made the step fail. So a real bug can pass this way only when it fails once, works on the
 retry, and the same request is answered below 400 somewhere in the run. The once rule reads the step log's words:
 a later step that takes the same action in other words, after a retry that failed again, is not caught, and the
