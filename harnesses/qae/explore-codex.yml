@@ -103,6 +103,7 @@ jobs:
           ticket: qae-inputs/ticket.md
           manifest: qae-inputs/manifest
           max-shards: 1   # CONSUMER: the most explorers one pull request's criteria are split across
+          roles: ""   # CONSUMER: the roles your site step gives a login, comma separated ("admin, read-only"): a criterion naming another fails here, before any walk
           token: ${{ secrets.GITHUB_TOKEN }}   # carries a passing walk's verdict across an update no browser can see
 
   explore:

@@ -34,7 +34,9 @@ pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `u
    [split across several](#splitting-a-large-pull-request-across-explorers). It fails the run
    there, before any explorer starts, when the body holds criteria no run can check: a heading that
    names acceptance criteria but is not exactly `## Acceptance criteria` (with nothing under the exact
-   one), or a criterion judged against main or production, which the explorer never opens. How to write
+   one), a criterion judged against main or production, which the explorer never opens, or, when the
+   workflow passes `roles` (the roles its site step gives a login), a criterion whose `[as: ...]` names
+   another role, which the explorer could only fail after walking the rest. How to write
    them: [`write-acceptance-criteria`](../../skills/write-acceptance-criteria/SKILL.md).
 2. **explore** runs only when the criteria job found a criterion. It checks out the PR with its
    base, picks the [features to re-walk](#re-walking-the-features-a-pull-request-touches) when that is
@@ -243,6 +245,9 @@ holds a mockup beside the page.
 - The gate refuses a PASS whose step log has no line starting `as <role>:` for some role the criterion
   names. That a refused path was really refused is the explorer's judgment, in those lines and their
   screenshots.
+- A workflow that passes `roles` to the criteria job (the roles its site step gives a login) fails a
+  criterion naming any other role there, before a preview is built; without it the explorer fails that
+  criterion after walking the rest.
 
 To adopt them, copy the template's `Prepare the explorer's references and widths` step and its
 plumbing (the explore job's `references` output, the verify job's `REFERENCES` line), add

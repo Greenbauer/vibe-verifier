@@ -182,7 +182,7 @@ The [proof audit](harnesses/proof-audit/README.md) asks whether the tests prove 
 
 ### Browser acceptance verification
 
-The [QAE harness](harnesses/qae/README.md) turns pull-request acceptance criteria into browser evidence against a running application. Criteria it cannot check (a heading that is not exactly `## Acceptance criteria`, a comparison with main or production) fail before any browser starts; the [`write-acceptance-criteria`](skills/write-acceptance-criteria/SKILL.md) agent skill says how to write them, check them before pushing, and re-run after an edit.
+The [QAE harness](harnesses/qae/README.md) turns pull-request acceptance criteria into browser evidence against a running application. Criteria it cannot check (a heading that is not exactly `## Acceptance criteria`, a comparison with main or production, and, when the workflow names its roles, an `[as: ...]` role the preview has no login for) fail before any browser starts; the [`write-acceptance-criteria`](skills/write-acceptance-criteria/SKILL.md) agent skill says how to write them, check them before pushing, and re-run after an edit.
 
 ```mermaid
 flowchart LR
