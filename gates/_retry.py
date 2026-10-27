@@ -255,13 +255,19 @@ def retries(root, changed_files):
         return []
     calls, changed = tool_calls(root), changed_paths(changed_files)
     found = [retry for item, text in texts.items() for retry in log_retries(root, calls, item, text, changed)]
-    seen, recorded = answered(root, calls)
+    answers = answered(root, calls)
     for retry in (retry for retry in found if not retry.problem):
-        kept = [(status, url, method) for status, url, method in retry.excuses
-                if method is None or (method, url) in seen or digest("%s %s" % (method, url)) in recorded]
-        retry.unexcused = ["%s %s" % (excuse[2], shown(excuse[1])) for excuse in retry.excuses if excuse not in kept]
-        retry.excuses = kept
+        excuse_answered(retry, *answers)
     return found
+
+
+def excuse_answered(retry, seen, recorded):
+    """Keep of a counted retry's excuses the ones the run shows answered below 400 (a websocket's has no method and
+    stands on the retry); the rest are its `unexcused`, still findings of the gate."""
+    kept = [(status, url, method) for status, url, method in retry.excuses
+            if method is None or (method, url) in seen or digest("%s %s" % (method, url)) in recorded]
+    retry.unexcused = ["%s %s" % (excuse[2], shown(excuse[1])) for excuse in retry.excuses if excuse not in kept]
+    retry.excuses = kept
 
 
 class _Urls:
