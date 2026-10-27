@@ -10,8 +10,9 @@ logs `- step k+1: [as <role>:] retry of step k: <step k's action> -> <what it sa
 - a record of step k saved by its tool between step k's screenshot and the retry's shows an environment error, and
   none on a URL the pull request's changed files name: a request answered 500 or above, a request or Chromium's
   console line for a resource failed with a connection error (CONNECTION, never ERR_ABORTED), a console line
-  `WebSocket connection to '<url>' failed` (each on an unnamed URL), or a request to Vercel's protection login
-  (https://vercel.com/sso-api, or https://vercel.com/login whose query names /sso-api).
+  `WebSocket connection to '<url>' failed` (each on an unnamed URL), or Vercel's protection login
+  (https://vercel.com/sso-api, or https://vercel.com/login whose query names /sso-api) as a request or as the page
+  URL a call of step k reports; a step may be shot more than once if nothing changed the page between.
 
 A changed path names a URL when a word of the URL's path (3 characters or more, not GENERIC, not a record id or
 number) is part of a word of the path, letters and digits only. A URL with no such word is named, and with no
@@ -31,7 +32,7 @@ import urllib.parse
 
 from _contract import Finding
 from _page_record import digest, page_record
-from _session_log import acts, read, screenshots, tool_calls
+from _session_log import acts, page_urls, read, screenshots, tool_calls
 
 STEP = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):(?P<text>.*)$", re.IGNORECASE)
 RETRY = re.compile(r"^(?P<role>[ \t]*(?:as[ \t]+[^:>]+:)?)[ \t]*retry[ \t]+of[ \t]+step[ \t]+(?P<k>[0-9]+)[ \t]*:",
@@ -112,10 +113,12 @@ def console_errors(text):
         yield "the websocket to %s failed" % shown(url), url, ("WEBSOCKET", exact(url), None)
 
 
-def environment(texts, changed):
+def environment(texts, changed, pages=()):
     """([description of each environment error], [(status, URL, method) to excuse], [what the pull request's own
-    URLs answered]) in the records `texts` of one step."""
-    errors, excuses, own = [], [], []
+    URLs answered]) in the records `texts` of one step and the page URLs its calls report. The network record leaves
+    out a document answered below 400, so Vercel's protection login shows only as the page's own URL."""
+    errors = ["the site answered with Vercel's deployment protection login"] if any(map(protected, pages)) else []
+    excuses, own = [], []
     for said, url, excuse in (error for text in texts for error in (*request_errors(text), *console_errors(text))):
         if url is not None and named(url, changed):
             own.append(said)
@@ -137,14 +140,16 @@ def step_records(root, calls, item, k):
 
 
 def window(root, calls, item, k, m):
-    """(the texts of step k's records the session log shows saved between step k's screenshot and step m's, what
-    step k did, what step m did), or None. Step k's calls run from the screenshot before it (of any step) to its own."""
+    """(the texts of step k's records saved between its screenshot and step m's, what step k did, what it did between
+    two screenshots of itself, what step m did, the page URLs step k's calls report), or None. Step k's calls run from
+    the screenshot before it (of any step) to its own."""
     for session in calls:
         found = screenshots(session, item, k, m)
         if found:
-            start, own, retry = found
-            return (step_records(root, session[own + 1:retry], item, k), acts(session[start + 1:own]),
-                    acts(session[own + 1:retry]))
+            start, first, last, retry = found
+            pages = [url for call in session[start + 1:last] for url in page_urls(call[3])]
+            return (step_records(root, session[first + 1:retry], item, k), acts(session[start + 1:first]),
+                    acts(session[first + 1:last]), acts(session[last + 1:retry]), pages)
     return None
 
 
@@ -202,12 +207,15 @@ def log_problem(steps, k, m, repeated, times):
     return None
 
 
-def record_problem(item, k, m, texts, did, redid):
+def record_problem(item, k, m, texts, did, between, redid):
     """Why the session log rules the retry out: no record of step k saved in its window, or calls that are not the
     end of step k's (before them may come the sign-in or navigation that opened the criterion). None when neither."""
     if not texts:
         return ("no record of step %s (qae/%s-step-%s-network.txt or -console.txt) was saved by its tool between step "
                 "%s's screenshot and step %s's" % (k, item, k, k, m))
+    if between:
+        return ("the session log shows calls %s between two screenshots of step %s: a step that changed the page after "
+                "its screenshot is not one step" % (shown_acts(between), k))
     if (did and not redid) or redid != did[len(did) - len(redid):]:
         return ("the session log shows step %s's calls %s and the retry's %s: a retry makes the last of the step's "
                 "calls again, with the same URLs and values, never another way" % (k, shown_acts(did), shown_acts(redid)))
@@ -216,11 +224,11 @@ def record_problem(item, k, m, texts, did, redid):
 
 def judge(root, calls, item, steps, k, m, repeated, times, changed):
     problem = log_problem(steps, k, m, repeated, times)
-    texts, did, redid = window(root, calls, item, k, m) or ([], [], [])
-    problem = problem or record_problem(item, k, m, texts, did, redid)
+    texts, did, between, redid, pages = window(root, calls, item, k, m) or ([], [], [], [], [])
+    problem = problem or record_problem(item, k, m, texts, did, between, redid)
     if problem:
         return Retry(item, k, m, problem=problem)
-    errors, excuses, own = environment(texts, changed)
+    errors, excuses, own = environment(texts, changed, pages)
     if own:
         why = (", and without the pull request's changed paths no URL can be told apart from its own: give the "
                "qae-artifacts line --changed-files qae-inputs/changed-files" if changed is None else

@@ -12,6 +12,7 @@ SAVED_TO = re.compile(r'"filename":\s*"(?P<name>[^"\\]+)"')
 READS = ("browser_snapshot", "browser_console_messages", "browser_network_requests", "browser_take_screenshot",
          "browser_wait_for")
 REFS = ("ref", "target", "element")
+PAGE_URL = re.compile(r"^- Page URL: (?P<url>\S+)", re.MULTILINE)
 ARGS = re.compile(r"```json\n(?P<json>.*?)\n```", re.DOTALL)
 
 
@@ -59,11 +60,22 @@ def acts(calls):
 
 
 def screenshots(session, item, k, m):
-    """(the screenshot before step k's of any step or -1, step k's, step m's) as call indexes, or None when the
-    session holds no screenshot of step k before one of step m."""
+    """(the screenshot before step k's of any step or -1, step k's first, step k's last, step m's) as call indexes, or
+    None when the session holds no screenshot of step k before one of step m. A step may be shot more than once."""
     shots = [i for i, call in enumerate(session) if call[0] == "browser_take_screenshot"]
     after = [i for i in shots if session[i][1].endswith("qae/%s-step-%s.png" % (item, m))]
-    before = [i for i in shots if after and i < after[0] and session[i][1].endswith("qae/%s-step-%s.png" % (item, k))]
-    if not before:
+    own = [i for i in shots if after and i < after[0] and session[i][1].endswith("qae/%s-step-%s.png" % (item, k))]
+    if not own:
         return None
-    return max([i for i in shots if i < before[-1]], default=-1), before[-1], after[0]
+    return max([i for i in shots if i < own[0]], default=-1), own[0], own[-1], after[0]
+
+
+def page_urls(result):
+    """The URLs a call's Result says the page was at: its `page` field, which playwright-mcp writes, never the result
+    a script returned."""
+    block = ARGS.search(result)
+    try:
+        page = json.loads(block.group("json")).get("page")
+    except (AttributeError, ValueError):
+        return []
+    return PAGE_URL.findall(page) if isinstance(page, str) else []

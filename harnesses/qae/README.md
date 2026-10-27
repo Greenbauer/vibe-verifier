@@ -1435,16 +1435,19 @@ The `qae-artifacts` gate counts the retry when:
   takes it again; and the session log shows the retry making the last of the step's page-changing calls again:
   the same tools in order, each with the same arguments (the URL, what was typed, filled, selected, pressed or run),
   but for element refs and descriptions, which change when the page renders again (reads such as snapshots and
-  screenshots are left out). A sign-in or navigation that opened the criterion may come before the step's own calls. A retry takes the
-  same step again, never another way;
+  screenshots are left out). A sign-in or navigation that opened the criterion may come before the step's own
+  calls, and a step may be shot more than once as long as nothing changed the page between its screenshots. A retry
+  takes the same step again, never another way;
 - a record of the step is in the evidence, and the session log shows its tool saved it after the step's screenshot
   and before the retry's;
 - that record shows an environment error: a request answered 500 or above, a request (or Chromium's console line
   for a resource) that failed with a connection error (`net::ERR_CONNECTION_*`, `ERR_TIMED_OUT`, `ERR_NAME_NOT_RESOLVED` and the like, never `ERR_ABORTED`), or a
   console line `WebSocket connection to '<url>' failed`, each on a URL none of the pull request's changed paths
-  names; or a request to Vercel's login for a protected deployment (`https://vercel.com/sso-api`, or
-  `https://vercel.com/login` whose query names `/sso-api`: a protected preview answers 302 to the first, which
-  redirects to the second, checked 2026-10-26);
+  names; or Vercel's login for a protected deployment (`https://vercel.com/sso-api`, or `https://vercel.com/login`
+  whose query names `/sso-api`: a protected preview answers 302 to the first, which redirects to the second, checked
+  2026-10-26), as a request in the record or as the page URL playwright-mcp reports for one of the step's calls (its
+  `page` field, never a script's result): the network record leaves out a document answered below 400, so the
+  redirects themselves are usually not listed;
 - and it shows no such error on a URL a changed path does name, which may be the pull request's own doing.
 
 A changed path names a URL when one of the URL path's words (3 characters or more, not `api`, `rest`, `rpc`,
@@ -1454,7 +1457,9 @@ A changed path names a URL when one of the URL path's words (3 characters or mor
 manifest's `qae-artifacts` line has no `--changed-files`. The match is crude and leans toward no retry, but it
 cannot see a change to code a URL reaches through a shared module (a database client, middleware), and the gate
 cannot tell which error made the step fail. So a real bug can pass this way only when it fails once, works on the
-retry, and the same request is answered below 400 somewhere in the run.
+retry, and the same request is answered below 400 somewhere in the run. The once rule reads the step log's words:
+a later step that takes the same action in other words, after a retry that failed again, is not caught, and the
+explorer is told never to do that.
 
 A retry that does not count is a finding that says why, so its criterion cannot pass on it. One that counts is
 printed in the gate's log and on the criterion's row of the QA review, and it excuses its errors: a 5xx or failed

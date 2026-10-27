@@ -99,12 +99,30 @@ class Retry(unittest.TestCase):
         self.assertIn("console error outside the allowlist: Failed to load resource", result.stdout)
 
     def test_vercel_protection_counts_whatever_the_pull_request_changed(self):
-        login = "1. [GET] https://vercel.com/login?next=%2Fsso-api%3Furl%3Dhttps%253A%252F%252Fsite => [200] OK\n"
-        write(self.root, {"qae/AC1-step-1-network.txt": login, "console-1.log": "",
-                          "session-1/session.md": session(NETWORK, requests=("1. [GET] %s/search => [200] OK\n" % SITE,))})
+        # The network record leaves out a document answered below 400, Vercel's redirects included, so the protection
+        # shows as the page URL playwright-mcp reports for the step's navigation.
+        page = "- Page URL: https://vercel.com/login?next=%2Fsso-api%3Furl%3Dhttps%253A%252F%252Fsite\n- Page Title: Login"
+        navigate = call("browser_navigate", {"url": SITE + "/search"}, {"page": page})
+        hidden = "\nNote: 3 static requests not shown, run with \"static\" option to see them."
+        write(self.root, {"qae/AC1-step-1-network.txt": hidden, "console-1.log": "",
+                          "session-1/session.md": session(NETWORK, step=navigate, requests=())})
         result = self.artifacts(changed=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("after an environment error: the site answered with Vercel's deployment protection login", result.stdout)
+        # A script's own result naming that page shows nothing: only the page field playwright-mcp writes does.
+        faked = call("browser_evaluate", {"function": "() => 1"}, {"result": page, "page": "- Page URL: %s/search" % SITE})
+        write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + faked, retry=OPEN + faked, requests=())})
+        self.refused("step 1's records show no environment error", changed=False)
+
+    def test_a_step_shot_twice_counts_only_when_nothing_changed_the_page_between(self):
+        # A screenshot taken too early and taken again is one step; a walk in between is not.
+        wait = call("browser_wait_for", {"time": 1}, {})
+        write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + shot("AC1", 1) + wait)})
+        result = self.artifacts()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        other = call("browser_navigate", {"url": SITE + "/other"}, {}) + call("browser_click", {"ref": "e9"}, {})
+        write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + shot("AC1", 1) + other, retry=other)})
+        self.refused("the session log shows calls (browser_navigate /other, browser_click) between two screenshots of step 1")
 
     def test_a_failed_websocket_counts_and_its_console_line_is_excused(self):
         write(self.root, {"qae/AC1-step-1-network.txt": "", "qae/AC1-step-1-console.txt": "[ERROR] " + SOCKET_LINE + "\n",
