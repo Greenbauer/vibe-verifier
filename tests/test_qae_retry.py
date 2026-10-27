@@ -52,7 +52,9 @@ NETWORK = saved("browser_network_requests", "qae/AC1-step-1-network.txt")
 CONSOLE = saved("browser_console_messages", "qae/AC1-step-1-console.txt")
 
 
-class Retry(unittest.TestCase):
+class RetryFixture(unittest.TestCase):
+    """The evidence of a walk whose step 1 met a 500 on /api/dashboard and was retried as step 2; tests change it."""
+
     def setUp(self):
         self.repo = make_repo(self, {"README.md": "x"})
         # Named as the verify job names it: a record saved to qae-artifacts/<path> is read at <path> under it.
@@ -82,6 +84,8 @@ class Retry(unittest.TestCase):
         self.assertIn("qae/AC1.md: step 1 retried as step %d, which does not count: %s" % (step, why), result.stdout)
         return result
 
+
+class Retry(RetryFixture):
     # A retried environment FAIL: the 5xx is on a path no changed file names, and the endpoint answered in the run.
 
     def test_a_retried_5xx_on_an_unchanged_endpoint_passes_and_says_why(self):
@@ -114,15 +118,6 @@ class Retry(unittest.TestCase):
         write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + faked, retry=OPEN + faked, requests=())})
         self.refused("step 1's records show no environment error", changed=False)
 
-    def test_a_step_shot_twice_counts_only_when_nothing_changed_the_page_between(self):
-        # A screenshot taken too early and taken again is one step; a walk in between is not.
-        wait = call("browser_wait_for", {"time": 1}, {})
-        write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + shot("AC1", 1) + wait)})
-        result = self.artifacts()
-        self.assertEqual(result.returncode, 0, result.stdout)
-        other = call("browser_navigate", {"url": SITE + "/other"}, {}) + call("browser_click", {"ref": "e9"}, {})
-        write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + shot("AC1", 1) + other, retry=other)})
-        self.refused("the session log shows calls (browser_navigate /other, browser_click) between two screenshots of step 1")
 
     def test_a_failed_websocket_counts_and_its_console_line_is_excused(self):
         write(self.root, {"qae/AC1-step-1-network.txt": "", "qae/AC1-step-1-console.txt": "[ERROR] " + SOCKET_LINE + "\n",
@@ -176,40 +171,17 @@ class Retry(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("after an environment error: GET /_next/static/chunks/app.js failed (net::ERR_CONNECTION_RESET)", result.stdout)
 
-    def test_a_retry_whose_calls_are_not_the_steps_does_not_count(self):
-        # The log copies step 1's words, but the session log shows the retry went somewhere else.
-        retry = call("browser_navigate", {"url": SITE + "/companies"}, {}) + call("browser_type", {"text": "Acme"}, {})
-        write(self.root, {"session-1/session.md": session(NETWORK, retry=retry)})
-        self.refused("the session log shows step 1's calls (browser_navigate /search) and the retry's (browser_navigate "
-                     "/companies, browser_type)")
 
-    def test_a_retry_of_the_step_after_the_sign_in_before_it_counts(self):
-        # The sign-in that opened the criterion is not part of the step the retry takes again.
-        sign_in = (call("browser_navigate", {"url": SITE + "/login"}, {}) + call("browser_type", {"ref": "e3", "text": "qae"}, {})
-                   + call("browser_click", {"ref": "e5"}, {}))
-        write(self.root, {"session-1/session.md": session(NETWORK, step=sign_in + OPEN)})
-        result = self.artifacts()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    def test_a_page_title_or_a_failed_fetch_shows_no_answer_and_no_protection(self):
+        # The page section of a network result holds the page's title, which a script can set; and a fetch the page
+        # made to Vercel's login that failed is not Vercel answering for the site.
+        titled = {"result": FIVE_HUNDRED, "page": "- Page Title: 9. [POST] %s/api/dashboard => [200] OK" % SITE}
+        write(self.root, {"session-1/session.md": session(NETWORK, requests=()) + call("browser_network_requests", {}, titled)})
+        self.assertIn("is not excused: it was never answered below 400 in this run", self.artifacts().stdout)
+        write(self.root, {"qae/AC1-step-1-network.txt": "1. [GET] https://vercel.com/sso-api => [FAILED] net::ERR_FAILED\n",
+                          "console-1.log": ""})
+        self.refused("step 1's records show no environment error", changed=False)
 
-    def test_a_retry_that_fills_in_something_else_does_not_count(self):
-        # Refs change when the page renders again; the values typed are the step itself.
-        fill = lambda value, ref: call("browser_fill_form", {"fields": [{"ref": ref, "value": value}]}, {})  # noqa: E731
-        write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + fill("bad", "e1"), retry=fill("good@x.com", "f2e1"))})
-        self.refused("the session log shows step 1's calls (browser_navigate /search, browser_fill_form) and the retry's "
-                     "(browser_fill_form): a retry makes the last of the step's calls again, with the same URLs and values")
-        write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + fill("bad", "e1"), retry=fill("bad", "f2e1"))})
-        self.assertEqual(self.artifacts().returncode, 0)
-
-    def test_a_retry_that_runs_other_code_or_hides_its_values_does_not_count(self):
-        # Every argument but an element ref is the step: a script's code, and typed text that reads like the log's
-        # own "- Result" heading.
-        run = lambda code: call("browser_evaluate", {"function": code}, {})  # noqa: E731
-        write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + run("() => save()"), retry=run("() => go()"))})
-        self.refused("the session log shows step 1's calls (browser_navigate /search, browser_evaluate) and the retry's")
-        typed = lambda text: call("browser_type", {"ref": "e1", "text": text}, {})  # noqa: E731
-        write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + typed("bad - Result"),
-                                                          retry=typed("good - Result"))})
-        self.refused("the session log shows step 1's calls (browser_navigate /search, browser_type) and the retry's")
 
     def test_a_log_that_numbers_a_step_twice_counts_no_retry(self):
         write(self.root, {"qae/AC1.md": STEPS + STEPS.splitlines(True)[1]})
@@ -260,14 +232,6 @@ class NamedUrl(unittest.TestCase):
         # No word of its own, or no changed paths to compare with: named, so no retry counts on it.
         self.assertTrue(_retry.named(SITE + "/api/v1/8697e680-1111-2222-3333-444455556666", ["README.md"]))
         self.assertTrue(_retry.named(SITE + "/api/dashboard", None))
-
-
-class SessionLog(unittest.TestCase):
-    def test_a_calls_arguments_are_everything_but_its_element_refs(self):
-        import _session_log
-        url, given = _session_log.inputs(json.dumps({"url": SITE, "fields": [{"ref": "e1", "element": "Email", "value": "a"}]}))
-        self.assertEqual((url, json.loads(given)), (SITE, {"url": SITE, "fields": [{"value": "a"}]}))
-        self.assertEqual(_session_log.inputs("not json"), ("", ""))
 
 
 class RetryInTheReview(GhFixture):

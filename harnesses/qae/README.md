@@ -1434,9 +1434,11 @@ The `qae-artifacts` gate counts the retry when:
 - its action, the text before `->` with the marker taken out, is that step's word for word, and no later step
   takes it again; and the session log shows the retry making the last of the step's page-changing calls again:
   the same tools in order, each with the same arguments (the URL, what was typed, filled, selected, pressed or run),
-  but for element refs and descriptions, which change when the page renders again (reads such as snapshots and
-  screenshots are left out). A sign-in or navigation that opened the criterion may come before the step's own
-  calls, and a step may be shot more than once as long as nothing changed the page between its screenshots. A retry
+  but for snapshot refs (`e23`, `f1e3`) and descriptions in words (`element`, a form field's `name`), which change
+  when the page renders again; a target given as a selector is compared. Calls of the tools the pinned
+  playwright-mcp marks read-only or assertion (snapshots, screenshots, `browser_find`, `browser_network_request`,
+  ...) are left out. A sign-in or navigation that opened the criterion may come before the step's own calls, and the
+  step or the retry may be shot more than once as long as nothing changed the page between its screenshots. A retry
   takes the same step again, never another way;
 - a record of the step is in the evidence, and the session log shows its tool saved it after the step's screenshot
   and before the retry's;
@@ -1459,7 +1461,8 @@ cannot see a change to code a URL reaches through a shared module (a database cl
 cannot tell which error made the step fail. So a real bug can pass this way only when it fails once, works on the
 retry, and the same request is answered below 400 somewhere in the run. The once rule reads the step log's words:
 a later step that takes the same action in other words, after a retry that failed again, is not caught, and the
-explorer is told never to do that.
+explorer is told never to do that. And the gate trusts a console line as a record, as the rest of `qae-artifacts`
+does: a script the explorer runs can log one, just as the explorer can write any file in its evidence.
 
 A retry that does not count is a finding that says why, so its criterion cannot pass on it. One that counts is
 printed in the gate's log and on the criterion's row of the QA review, and it excuses its errors: a 5xx or failed

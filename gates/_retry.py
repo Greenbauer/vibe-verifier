@@ -32,7 +32,7 @@ import urllib.parse
 
 from _contract import Finding
 from _page_record import digest, page_record
-from _session_log import acts, page_urls, read, screenshots, tool_calls
+from _session_log import acts, page_urls, read, result_field, screenshots, tool_calls
 
 STEP = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):(?P<text>.*)$", re.IGNORECASE)
 RETRY = re.compile(r"^(?P<role>[ \t]*(?:as[ \t]+[^:>]+:)?)[ \t]*retry[ \t]+of[ \t]+step[ \t]+(?P<k>[0-9]+)[ \t]*:",
@@ -94,7 +94,7 @@ def request_errors(text):
     for request in REQUEST.finditer(text):
         method, url, status = request.group("method", "url", "status")
         failed = status == "FAILED" and CONNECTION.fullmatch(request.group("reason") or "")
-        if protected(url):
+        if protected(url) and status != "FAILED":
             yield "the site answered with Vercel's deployment protection login", None, None
         elif failed or (status != "FAILED" and int(status) >= 500):
             said = "failed (%s)" % request.group("reason") if failed else "answered " + status
@@ -146,10 +146,10 @@ def window(root, calls, item, k, m):
     for session in calls:
         found = screenshots(session, item, k, m)
         if found:
-            start, first, last, retry = found
+            start, first, last, retry, retried = found
             pages = [url for call in session[start + 1:last] for url in page_urls(call[3])]
             return (step_records(root, session[first + 1:retry], item, k), acts(session[start + 1:first]),
-                    acts(session[first + 1:last]), acts(session[last + 1:retry]), pages)
+                    acts(session[first + 1:last]) + acts(session[retry + 1:retried]), acts(session[last + 1:retry]), pages)
     return None
 
 
@@ -214,8 +214,8 @@ def record_problem(item, k, m, texts, did, between, redid):
         return ("no record of step %s (qae/%s-step-%s-network.txt or -console.txt) was saved by its tool between step "
                 "%s's screenshot and step %s's" % (k, item, k, k, m))
     if between:
-        return ("the session log shows calls %s between two screenshots of step %s: a step that changed the page after "
-                "its screenshot is not one step" % (shown_acts(between), k))
+        return ("the session log shows calls %s between two screenshots of step %s or of the retry: a step that changed "
+                "the page after its screenshot is not one step" % (shown_acts(between), k))
     if (did and not redid) or redid != did[len(did) - len(redid):]:
         return ("the session log shows step %s's calls %s and the retry's %s: a retry makes the last of the step's "
                 "calls again, with the same URLs and values, never another way" % (k, shown_acts(did), shown_acts(redid)))
@@ -273,7 +273,7 @@ def answered(root, calls):
         path = os.path.normpath(os.path.join(root, saved.rpartition(evidence)[2]))
         if name != "browser_network_requests":
             continue
-        texts.append(result)
+        texts.append(result_field(result, "result"))
         if saved and path.startswith(os.path.join(os.path.normpath(root), "")) and os.path.isfile(path):
             texts.append(read(path))
     seen = {(r.group("method"), exact(r.group("url"))) for text in texts for r in REQUEST.finditer(text)
