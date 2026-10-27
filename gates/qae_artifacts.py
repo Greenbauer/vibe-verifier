@@ -100,8 +100,8 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    from this line as the base has it. Feature re-walk logs are not held to it.
 
 7. Explorers of one run keep off each other's records: gates/_page_record.py, isolation_findings, says how.
-8. A step retried after an environment error counts, and excuses that error, only on the evidence gates/_retry.py
-   names (--changed-files, the paths the pull request changes); a retry that does not count is a finding.
+8. A step retried after an environment error counts, and excuses it, only on the evidence gates/_retry.py names
+   (it reads --changed-files); one that does not count is a finding.
 
 Exit 2 when the artifact directory is missing, or a --site-file is missing or holds anything but
 http(s) URLs: nothing was adjudicated.
@@ -116,7 +116,8 @@ from _acceptance import body_criteria, declares_none, named_references, png_size
 from _contract import CannotRun, Finding, run_gate
 from _features import add_selection_arguments, parse, selection
 from _page_record import digest, harness_refusals, isolation_findings, page_record
-from _retry import REQUEST, SAVED_TO, TOOL_CALL, console_excused, exact, retry_checks
+from _retry import REQUEST, console_excused, exact, retry_checks
+from _session_log import SAVED_TO, TOOL_CALL
 
 GATE = "qae-artifacts"
 STEP_LINE = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):", re.IGNORECASE)

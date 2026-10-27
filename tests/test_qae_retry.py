@@ -182,6 +182,21 @@ class Retry(unittest.TestCase):
         write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + fill("bad", "e1"), retry=fill("bad", "f2e1"))})
         self.assertEqual(self.artifacts().returncode, 0)
 
+    def test_a_retry_that_runs_other_code_or_hides_its_values_does_not_count(self):
+        # Every argument but an element ref is the step: a script's code, and typed text that reads like the log's
+        # own "- Result" heading.
+        run = lambda code: call("browser_evaluate", {"function": code}, {})  # noqa: E731
+        write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + run("() => save()"), retry=run("() => go()"))})
+        self.refused("the session log shows step 1's calls (browser_navigate /search, browser_evaluate) and the retry's")
+        typed = lambda text: call("browser_type", {"ref": "e1", "text": text}, {})  # noqa: E731
+        write(self.root, {"session-1/session.md": session(NETWORK, step=OPEN + typed("bad - Result"),
+                                                          retry=typed("good - Result"))})
+        self.refused("the session log shows step 1's calls (browser_navigate /search, browser_type) and the retry's")
+
+    def test_a_log_that_numbers_a_step_twice_counts_no_retry(self):
+        write(self.root, {"qae/AC1.md": STEPS + STEPS.splitlines(True)[1]})
+        self.refused("the log numbers step 2 more than once, so its steps cannot be told apart")
+
     def test_taking_the_step_a_third_time_after_the_retry_does_not_count(self):
         write(self.root, {"qae/AC1.md": STEPS + "- step 3: opened organization search -> the search is active\n",
                           "qae/AC1-step-3.png": "png"})
@@ -227,6 +242,14 @@ class NamedUrl(unittest.TestCase):
         # No word of its own, or no changed paths to compare with: named, so no retry counts on it.
         self.assertTrue(_retry.named(SITE + "/api/v1/8697e680-1111-2222-3333-444455556666", ["README.md"]))
         self.assertTrue(_retry.named(SITE + "/api/dashboard", None))
+
+
+class SessionLog(unittest.TestCase):
+    def test_a_calls_arguments_are_everything_but_its_element_refs(self):
+        import _session_log
+        url, given = _session_log.inputs(json.dumps({"url": SITE, "fields": [{"ref": "e1", "element": "Email", "value": "a"}]}))
+        self.assertEqual((url, json.loads(given)), (SITE, {"url": SITE, "fields": [{"value": "a"}]}))
+        self.assertEqual(_session_log.inputs("not json"), ("", ""))
 
 
 class RetryInTheReview(GhFixture):

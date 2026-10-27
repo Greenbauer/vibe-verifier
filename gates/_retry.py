@@ -4,10 +4,9 @@ Why, and the explorer's side: harnesses/qae/README.md, "A step retried after an 
 saves the failed step's records by filename after its screenshot (qae/ACn-step-k-network.txt, -console.txt), then
 logs `- step k+1: [as <role>:] retry of step k: <step k's action> -> <what it saw>`. The retry counts when:
 
-- it is step k+1, step k is not a retry, nothing else retries it, and no later step takes step k's action again;
+- it is step k+1 of a log that numbers no step twice, step k is not a retry, nothing else retries it, and no later step takes step k's action again;
 - its action (text before `->`, marker removed) is step k's word for word;
-- its page-changing calls in the session log (navigation URL, typed, filled, selected or pressed values; reads and
-  element refs left out) are the last of step k's, which may follow a sign-in or the criterion's opening navigation;
+- its page-changing calls in the session log (every argument but element refs and descriptions; reads left out) are the last of step k's, which may follow a sign-in or the criterion's opening navigation;
 - a record of step k saved by its tool between step k's screenshot and the retry's shows an environment error, and
   none on a URL the pull request's changed files name: a request answered 500 or above, a request or Chromium's
   console line for a resource failed with a connection error (CONNECTION, never ERR_ABORTED), a console line
@@ -26,20 +25,17 @@ network-*.log or the page record (never text the explorer chose: a step log, a v
 the retry alone. Whether the retried step held is the explorer's verdict, judged by acceptance-verdict.
 """
 import glob
-import json
 import os
 import re
 import urllib.parse
 
 from _contract import Finding
 from _page_record import digest, page_record
+from _session_log import acts, read, screenshots, tool_calls
 
 STEP = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):(?P<text>.*)$", re.IGNORECASE)
 RETRY = re.compile(r"^(?P<role>[ \t]*(?:as[ \t]+[^:>]+:)?)[ \t]*retry[ \t]+of[ \t]+step[ \t]+(?P<k>[0-9]+)[ \t]*:",
                    re.IGNORECASE)
-TOOL_CALL = re.compile(r"^### Tool call: (?P<name>\S+)\s*$", re.MULTILINE)
-# What a tool call was told to save its result to, in the call's Args block.
-SAVED_TO = re.compile(r'"filename":\s*"(?P<name>[^"\\]+)"')
 # `3. [GET] http://host/path => [404] Not Found` or `=> [FAILED] net::ERR_...`, as the tool renders it;
 # inside a JSON result the newline is escaped, so the line is matched without anchors.
 REQUEST = re.compile(r"[0-9]+\. \[(?P<method>[A-Z]+)\] (?P<url>\S+) => \[(?P<status>[0-9]{3}|FAILED)\](?: (?P<reason>net::[A-Z0-9_]+))?")
@@ -50,10 +46,6 @@ RESOURCE = re.compile(r"Failed to load resource: (?P<reason>net::ERR_[A-Z_]+) @ 
 GENERIC = re.compile(r"(?:api|rest|rpc|graphql|v[0-9]+|next)")
 RECORD_ID = re.compile(r"[0-9]+|[0-9a-f-]{16,}|[0-9a-hjkmnp-tv-z]{26}", re.IGNORECASE)
 RECORDS = (("browser_network_requests", "network"), ("browser_console_messages", "console"))
-# Tools that only read the page: a step's action is the other calls it made, in order.
-READS = ("browser_snapshot", "browser_console_messages", "browser_network_requests", "browser_take_screenshot",
-         "browser_wait_for")
-ARGS = re.compile(r"```json\n(?P<json>.*?)\n```", re.DOTALL)
 
 
 def exact(url):
@@ -134,43 +126,6 @@ def environment(texts, changed):
     return list(dict.fromkeys(errors)), excuses, list(dict.fromkeys(own))
 
 
-def read(path):
-    with open(path, encoding="utf-8", errors="replace") as handle:
-        return handle.read()
-
-
-def tool_calls(root):
-    """[(tool name, the file its Args saved to or '', the URL its Args name or '', its Result)] per session log, in
-    the order called."""
-    sessions = []
-    for session in sorted(glob.glob(os.path.join(root, "session-*", "session.md"))):
-        calls, listed = TOOL_CALL.split(read(session)), []
-        for name, body in zip(calls[1::2], calls[2::2]):
-            args, _, result = body.partition("- Result")
-            saved = SAVED_TO.search(args)
-            listed.append((name, saved.group("name") if saved else "", inputs(args), result))
-        sessions.append(listed)
-    return sessions
-
-
-def inputs(args):
-    """(URL, values) a call's Args name: what it navigated to and what it typed, filled, selected or pressed, never the
-    element refs, which change when the page renders again."""
-    try:
-        given = json.loads(ARGS.search(args).group("json"))
-    except (AttributeError, ValueError):
-        return "", ()
-    given = given if isinstance(given, dict) else {}
-    fields = [field.get("value") for field in given.get("fields") or [] if isinstance(field, dict)]
-    values = [given.get(key) for key in ("text", "value", "values", "key")] + fields
-    return str(given.get("url") or ""), tuple(json.dumps(value) for value in values if value is not None)
-
-
-def acts(calls):
-    """The calls that changed the page, as (tool, (URL, values)) in order: what a step did, its reads left out."""
-    return [(name, given) for name, _, given, _ in calls if name not in READS]
-
-
 def step_records(root, calls, item, k):
     """The texts of step k's records (qae/<item>-step-k-network.txt, -console.txt) that one of `calls` saved."""
     texts = []
@@ -179,17 +134,6 @@ def step_records(root, calls, item, k):
         if name == tool and saved.endswith(own) and os.path.isfile(os.path.join(root, own)):
             texts.append(read(os.path.join(root, own)))
     return texts
-
-
-def screenshots(session, item, k, m):
-    """(the screenshot before step k's of any step or -1, step k's, step m's) as call indexes, or None when the
-    session holds no screenshot of step k before one of step m."""
-    shots = [i for i, call in enumerate(session) if call[0] == "browser_take_screenshot"]
-    after = [i for i in shots if session[i][1].endswith("qae/%s-step-%s.png" % (item, m))]
-    before = [i for i in shots if after and i < after[0] and session[i][1].endswith("qae/%s-step-%s.png" % (item, k))]
-    if not before:
-        return None
-    return max([i for i in shots if i < before[-1]], default=-1), before[-1], after[0]
 
 
 def window(root, calls, item, k, m):
@@ -226,19 +170,18 @@ def action(text):
 
 
 def log_retries(root, calls, item, text, changed):
-    steps, retried, found = {}, {}, []
-    for line in text.splitlines():
-        step = STEP.match(line)
-        if step:
-            steps.setdefault(int(step.group("k")), step.group("text"))
-    for m, said in sorted(steps.items()):
+    lines = [(int(step.group("k")), step.group("text")) for step in map(STEP.match, text.splitlines()) if step]
+    steps, retried = dict(reversed(lines)), {}
+    for m, said in lines:
         marker = RETRY.match(said)
         if marker:
             retried.setdefault(int(marker.group("k")), []).append((m, marker.group("role") + said[marker.end():]))
-    for k, again in sorted(retried.items()):
-        for m, repeated in again:
-            found.append(judge(root, calls, item, steps, k, m, repeated, len(again), changed))
-    return found
+    twice = sorted(n for n in steps if [k for k, _ in lines].count(n) > 1)
+    if twice:  # a step number used twice hides a step from every rule below
+        return [Retry(item, k, m, problem="the log numbers step %s more than once, so its steps cannot be told apart"
+                      % twice[0]) for k, again in sorted(retried.items()) for m, _ in again]
+    return [judge(root, calls, item, steps, k, m, repeated, len(again), changed)
+            for k, again in sorted(retried.items()) for m, repeated in again]
 
 
 def log_problem(steps, k, m, repeated, times):

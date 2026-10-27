@@ -1416,7 +1416,7 @@ had the criterion or its setup edited between the walks, and about 4 were real b
 failing step of: a table clipped at 375 pixels, an invalid input answered 400, an empty second page. So a blind
 second walk lets real bugs through, and the harness does not walk again. The explorer takes only the failed step
 once more, in the same walk, and the gate counts that retry only on structural evidence
-([`gates/_retry.py`](../../gates/_retry.py)), never on the explorer's words.
+([`gates/_retry.py`](../../gates/_retry.py), reading the session log through [`gates/_session_log.py`](../../gates/_session_log.py)), never on the explorer's words.
 
 The prompt tells the explorer, when a step shows one of those errors, to save that moment's records right after
 the step's screenshot (`browser_network_requests` to `qae/ACn-step-k-network.txt`, `browser_console_messages` to
@@ -1429,13 +1429,13 @@ the step's screenshot (`browser_network_requests` to `qae/ACn-step-k-network.txt
 
 The `qae-artifacts` gate counts the retry when:
 
-- it is the step right after the one it names, in the same criterion's log, which is not a retry itself and no
-  other retry names: a step is retried once, at once, before the criterion is walked any further;
+- it is the step right after the one it names, in the same criterion's log (which numbers no step twice), which is
+  not a retry itself and no other retry names: a step is retried once, at once, before the criterion is walked any further;
 - its action, the text before `->` with the marker taken out, is that step's word for word, and no later step
   takes it again; and the session log shows the retry making the last of the step's page-changing calls again:
-  the same tools in order, with the same navigation URL and the same typed, filled, selected or pressed values
-  (element refs, which change when the page renders again, and reads such as snapshots and screenshots are left
-  out). A sign-in or navigation that opened the criterion may come before the step's own calls. A retry takes the
+  the same tools in order, each with the same arguments (the URL, what was typed, filled, selected, pressed or run),
+  but for element refs and descriptions, which change when the page renders again (reads such as snapshots and
+  screenshots are left out). A sign-in or navigation that opened the criterion may come before the step's own calls. A retry takes the
   same step again, never another way;
 - a record of the step is in the evidence, and the session log shows its tool saved it after the step's screenshot
   and before the retry's;
