@@ -25,6 +25,8 @@ The QAE harness: an explorer walks a pull request's acceptance criteria (and, op
 - source: `gates/_features.py`
 - source: `gates/_verify_edits.py`
 - source: `gates/_retry.py`
+- source: `gates/_probe.py`
+- source: `gates/_snapshot.py`
 - source: `gates/_session_log.py`
 - source: `tools/qae-browser/**`
 - source: `tools/codex/**`
@@ -112,6 +114,14 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_qae_retry_calls.py::test_reads_new_refs_and_reworded_descriptions_do_not_make_another_step`
 - `tests/test_qae_retry.py::test_a_retry_that_fails_again_stays_a_fail`
 - `tests/test_qae_retry.py::test_the_review_says_a_criterion_passed_on_a_retry_and_why`
+- `tests/test_qae_probe.py::test_a_handled_400_to_the_marked_probe_is_excused_and_says_why`
+- `tests/test_qae_probe.py::test_the_same_step_unmarked_is_not_excused`
+- `tests/test_qae_probe.py::test_an_error_page_in_place_of_the_form_is_not_excused`
+- `tests/test_qae_probe.py::test_a_blank_page_is_not_excused`
+- `tests/test_qae_probe.py::test_a_5xx_to_the_probe_is_never_excused`
+- `tests/test_qae_probe.py::test_an_answer_no_call_of_the_step_logged_is_not_the_probes`
+- `tests/test_qae_probe_steps.py::test_the_excuse_does_not_reach_the_same_answer_to_another_step`
+- `tests/test_qae_probe.py::test_the_review_says_what_the_probe_excused_and_why_not`
 
 ## Gotchas
 
@@ -135,4 +145,5 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - A pull request opened before the feature map landed on the base has no feature file to re-walk: `features` prints `features: 0` and why, and `acceptance-verdict` passes labelled `re-walk not run: the branch predates the feature map`. Any other head with no feature file, a removed map included, is exit 2 in both.
 - The evidence artifact is `qae-artifacts-<run_attempt>` (`-<n>` appended for an explorer past the first), and the verify job downloads every attempt's and takes each explorer's newest, so one failed explorer can be run again alone. It fails when the explore job's `attempt` output is newer than any evidence. A consumer copy that still names it `qae-artifacts` in both jobs hands a re-run's verify job whichever attempt's artifact GitHub returns.
 - A step the explorer retried after an environment error counts only on the evidence `gates/_retry.py` names: it is step k+1, makes the last of step k's page-changing calls again with the same arguments but snapshot refs and descriptions (per the session log; read-only tools left out, from the pinned playwright-mcp's own list), the log numbers no step twice, no other step takes its action, and step k's own network or console record, saved by its tool after step k's screenshot and before the retry changes the page, showing a 5xx, a failed connection or websocket on a URL no changed path names, or Vercel's deployment protection (read from the page URL playwright-mcp reports, since the network record hides its redirects), and nothing of that kind on a URL a changed path does name. Which URL a changed path names is a word match, so it errs toward no retry, and a retry that does not count fails `qae-artifacts`. Whether the retried step then held is still the explorer's verdict: a counted retry excuses a repeat of the same error, by status and URL anywhere in the run, so a FAIL after it rests on acceptance-verdict alone. A consumer manifest without `--changed-files` on its `qae-artifacts` line counts only the protection class.
+- The explorer's invalid-input probe, the step it logs `invalid input:` (one per criterion and role), excuses a 400 or 422 only on the evidence `gates/_probe.py` names: Chromium's console line for the answer is the only 400 or 422 the step's calls logged, logged by its last page-changing call or a read after it (the call's `events` field), with no script run in the step; the network records list it only to a write; and the whole-page snapshot a call of the step wrote right before that action (never one of an earlier step) and the last one after the answer (never a script's result; `gates/_snapshot.py` compares them) show the same URL, 90% of the elements and every control the step used still under the same ref, role and name (a control named by a selector cannot be checked, so is not excused), and an element's own text the page did not show before, holding no value typed in the session, under a new ref, at most four levels above a used control that is not the page's top and holds no landmark. The excuse is by status and URL, so it is withdrawn when the same answer came to another step: a console line no counted probe logged, or more request numbers in the network records than lines. A 5xx, another status or an unmarked step is never excused. Whether the new text is an error message, and which write the form sent, are not read: the explorer's verdict still judges the criterion. A walk whose sending step took no whole-page snapshot of its own right before the action (one that entered the value in an earlier step and only saved in this one, say) is not excused, so consumers benefit once their prompt copy is refreshed.
 - `actions/qae-browser` reads the names of the missing system packages from the pinned Playwright's `install-deps --dry-run` report. A Playwright bump that changes that report fails the step (never reads as nothing missing), and the catalog's `QA browser tests` CI job is where that shows first.

@@ -1398,7 +1398,12 @@ harness's page record, static requests included, and is a finding when it does n
 (`gates/_retry.py`: the very next step, the same calls with the same arguments, once, and the step's own record
 showing a 5xx, a failed connection or websocket on a URL none of the pull request's changed paths, `--changed-files`,
 names, or Vercel's deployment protection). A retry that counts excuses those errors by status and URL, a request only
-when the run also shows it answered below 400, as for a cancelled one. With a site declared, Chromium's `Failed to load resource` console line for
+when the run also shows it answered below 400, as for a cancelled one. A 400 or 422 to the step the explorer marked
+as its invalid-input probe is excused only on `gates/_probe.py`'s evidence: the step's last action, or a read after
+it, logged Chromium's console line for it, the only such answer of the step, to a write, with no script run and no
+uncaught exception; and the whole-page snapshot a call of the step wrote right before that action and the last one after
+the answer show the same URL, 90% of the page's elements and the controls the step used (same refs, roles and names), and
+new text beside them; no other step's answer of that status and URL is in the run. With a site declared, Chromium's `Failed to load resource` console line for
 another host is skipped like that host's request, and so is an error only pages outside the site
 logged (a hosted page a link opened), unless it is about a URL of the site (for an exception, a
 script in its stack). The page is read from

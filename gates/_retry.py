@@ -33,7 +33,7 @@ import urllib.parse
 
 from _contract import Finding
 from _page_record import digest, page_record
-from _session_log import acts, page_urls, read, result_field, screenshots, tool_calls
+from _session_log import acts, network_texts, page_urls, read, screenshots, tool_calls
 
 STEP = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):(?P<text>.*)$", re.IGNORECASE)
 RETRY = re.compile(r"^(?P<role>[ \t]*(?:as[ \t]+[^:>]+:)?)[ \t]*retry[ \t]+of[ \t]+step[ \t]+(?P<k>[0-9]+)[ \t]*:",
@@ -291,19 +291,9 @@ class _Urls:
 
 
 def answered(root, calls):
-    """The requests (method, URL) answered below 400 in the run's network records: the result of each
-    browser_network_requests call in the session logs (`calls`, from tool_calls), or the file it saved, and
-    network-*.log; and the page record's answers. Never another call's arguments or result, a step log or a verdict,
-    which hold text the explorer chose."""
-    texts = [read(path) for path in glob.glob(os.path.join(root, "network-*.log"))]
-    evidence = os.path.basename(os.path.normpath(root)) + "/"
-    for name, saved, _, result in (call for session in calls for call in session):
-        path = os.path.normpath(os.path.join(root, saved.rpartition(evidence)[2]))
-        if name != "browser_network_requests":
-            continue
-        texts.append(result_field(result, "result"))
-        if saved and path.startswith(os.path.join(os.path.normpath(root), "")) and os.path.isfile(path):
-            texts.append(read(path))
+    """The requests (method, URL) answered below 400 in the run's network records (network_texts) and the page record's
+    answers."""
+    texts = network_texts(root, calls)
     seen = {(r.group("method"), exact(r.group("url"))) for text in texts for r in REQUEST.finditer(text)
             if r.group("status") != "FAILED" and int(r.group("status")) < 400}
     return seen, page_record(root)[1]

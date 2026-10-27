@@ -56,10 +56,19 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
    when that screen has a form or another input, try one invalid input in it (an empty required field,
    a malformed value) and check that the site answers with a handled error, not a crash or a blank page.
    Never navigate to a URL that neither the criterion names nor the site links to: an invented page is
-   not an input, and its 404 fails the run. Prefer an input the page refuses before sending anything: a
+   not an input, and its 404 fails the run. Prefer an input the page refuses before sending anything. Take
+   the invalid input as one step, acting on the form's controls by their snapshot refs and never by a
+   script: enter it, call browser_snapshot with no depth right before the action that sends it, take that
+   action, and once the page has answered call browser_snapshot again before the step's screenshot. Its
+   line names it, after "as <role>:" when the criterion has roles:
+     - step k: invalid input: <what you did> -> <what you saw>
+   Mark that one step of the criterion (one per role) and never another. A 400 or 422 the site answers to
+   it, while the page shows a handled error, is not a reason to FAIL: a gate excuses it when the page stayed
+   at its URL, kept its elements and the controls the step used, and showed new text beside them. Any other
    request the site answers with 400 or worse fails the run unless the criterion's own text declares it
-   (expected-refusal: <status> <path>), and writing that in a step line declares nothing. Log each as a
-   step of that criterion; any of them that fails makes the criterion a FAIL.
+   (expected-refusal: <status> <path>), and writing that in a step line declares nothing. Log each as a step
+   of that criterion; any of them that fails makes the criterion a FAIL, and a 5xx, a crash or a blank page
+   always does.
    If qae-inputs/environmental exists, each of its lines is `console: <pattern>` or `request: <pattern>`, a
    regular expression this repository's manifest declares environmental (the gate does not judge what it
    matches): a console message a console pattern matches, and a request whose URL a request pattern matches,

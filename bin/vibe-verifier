@@ -211,6 +211,7 @@ from _acceptance import (REFERENCE_KEY, annotations, baseline_problems, body_cri
 from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
 from _features import add_selection_arguments, describe, map_directory, selection  # noqa: E402
 from _verify_edits import verify_edits  # noqa: E402
+from _probe import probes  # noqa: E402
 from _retry import retries  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
 import _affected_tests  # noqa: E402
@@ -1510,8 +1511,9 @@ def review_criteria(criteria_text, verdict_text, ticket_text="", edits=None, ret
         proof = proofs.get(item.casefold()) if item.startswith("TC") else None
         said_by = ("not walked, the pull request proves it with a test: %s" % said(proof[0], PROOF_TOKEN) if proof
                    else explorer_said(lines.get(item.casefold(), [])))
-        # A step the explorer took again after an environment error, as the qae-artifacts gate judged it (`retried`,
-        # {criterion: [what it found]} from retry_notes): a retried PASS says so, and why.
+        # A step the explorer took again after an environment error, and its invalid-input probe a 400 or 422 answered,
+        # as the qae-artifacts gate judged them (`retried`, {criterion: [what it found]} from retry_notes): a PASS on a
+        # retry or a refused probe says so, and why.
         if (retried or {}).get(item):
             said_by += " (%s)" % "; ".join(retried[item])
         rows.append("- %s%s, %s: %s" % (item, source, said_by, wording))
@@ -1559,9 +1561,10 @@ def feature_edits(args, fids):
 
 
 def retry_notes(args):
-    """{criterion: [what the qae-artifacts gate found of each step the explorer retried]}, read from the run's
-    evidence (gates/_retry.py) with the changed paths the manifest's qae-artifacts line gives that gate, judged from
-    the base as the gate's line is: without them the gate counts no URL as the environment, and neither does this."""
+    """{criterion: [what the qae-artifacts gate found of each step the explorer retried, and of each invalid-input probe
+    a 400 or 422 answered]}, read from the run's evidence (gates/_retry.py, gates/_probe.py) with the changed paths the
+    manifest's qae-artifacts line gives that gate, judged from the base as the gate's line is: without them the gate
+    counts no URL as the environment, and neither does this."""
     changed = None
     if os.path.isfile(args.manifest):
         try:
@@ -1573,8 +1576,8 @@ def retry_notes(args):
         parser.add_argument("--changed-files")
         changed = parser.parse_known_args(lines[0])[0].changed_files if lines else None
     notes = {}
-    for retry in retries(args.artifacts, changed):
-        notes.setdefault(retry.item, []).append(retry.describe())
+    for found in retries(args.artifacts, changed) + probes(args.artifacts):
+        notes.setdefault(found.item, []).append(found.describe())
     return notes
 
 
