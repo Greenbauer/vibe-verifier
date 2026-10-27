@@ -1431,8 +1431,10 @@ The `qae-artifacts` gate counts the retry when:
 
 - it is the step right after the one it names, in the same criterion's log, which is not a retry itself and no
   other retry names: a step is retried once, at once, before the criterion is walked any further;
-- its action, the text before `->` with the marker taken out, is that step's word for word: a retry takes the
-  same step again, never another way;
+- its action, the text before `->` with the marker taken out, is that step's word for word, and no later step
+  takes it again; and the session log shows the retry making the same page-changing calls as the step (tool names
+  in order, a navigation with its URL; reads such as snapshots and screenshots left out): a retry takes the same
+  step again, never another way;
 - a record of the step is in the evidence, and the session log shows its tool saved it after the step's screenshot
   and before the retry's;
 - that record shows an environment error: a request answered 500 or above, a request (or Chromium's console line
@@ -1455,7 +1457,8 @@ retry, and the same request is answered below 400 somewhere in the run.
 A retry that does not count is a finding that says why, so its criterion cannot pass on it. One that counts is
 printed in the gate's log and on the criterion's row of the QA review, and it excuses its errors: a 5xx or failed
 request, and Chromium's console line for it, only when the same request (method and URL) was answered below 400
-in the run's network records (never a step log or verdict the explorer writes) or the page record, as [a cancelled request](#a-request-the-page-cancelled) is; a
+in the run's network records (`browser_network_requests` results, the files they saved, `network-*.log`; never a
+step log, a verdict or another tool call's text) or the page record, as [a cancelled request](#a-request-the-page-cancelled) is; a
 websocket failure on the retry alone, since no record holds a websocket's answer. A repeat of the same error during
 the retry is excused with it, and so is the same error anywhere else in the run, since the excuse is by status and
 URL. Whether the retried step held is the explorer's verdict, which `acceptance-verdict`

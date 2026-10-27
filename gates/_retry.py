@@ -19,7 +19,9 @@ A retry counts when all of these hold:
 
 - it is the step right after the one it names, in the same criterion's log, which is not a retry itself and no other
   retry names;
-- its action, the text before `->` with the marker taken out (an `as <role>:` prefix stays), is step k's;
+- its action, the text before `->` with the marker taken out (an `as <role>:` prefix stays), is step k's, and no
+  later step takes that action again;
+- the calls the session log shows for it (the page-changing ones, a navigation with its URL) are step k's;
 - a record of step k is in the evidence, and the session log shows the tool saved it after step k's screenshot and
   before the retry's;
 - those records show an environment error, and no 5xx or failed connection on a URL the pull request changes:
@@ -43,8 +45,8 @@ below 400 in the run.
 
 A retry that does not count is a finding, so its criterion cannot pass on it. One that counts excuses its errors
 in the qae-artifacts gate: a 5xx or failed request only when the same request (method and URL) was answered below
-400 in the run's network records (session logs, files browser_network_requests saved, network-*.log) or the page
-record, never a step log or verdict the explorer writes; a websocket failure on the retry alone, since no record holds
+400 in the run's network records (browser_network_requests results and the files they saved, network-*.log) or the
+page record, never a step log or verdict the explorer writes; a websocket failure on the retry alone, since no record holds
 a websocket's answer. A repeat of the same error, by status and URL anywhere in the run, is
 excused with it: whether the retried step held is the explorer's verdict, which acceptance-verdict judges, and a FAIL
 there stays a FAIL.
@@ -73,6 +75,10 @@ RESOURCE = re.compile(r"Failed to load resource: (?P<reason>net::ERR_[A-Z_]+) @ 
 GENERIC = re.compile(r"(?:api|rest|rpc|graphql|v[0-9]+|next)")
 RECORD_ID = re.compile(r"[0-9]+|[0-9a-f-]{16,}|[0-9a-hjkmnp-tv-z]{26}", re.IGNORECASE)
 RECORDS = (("browser_network_requests", "network"), ("browser_console_messages", "console"))
+# Tools that only read the page: a step's action is the other calls it made, in order.
+READS = ("browser_snapshot", "browser_console_messages", "browser_network_requests", "browser_take_screenshot",
+         "browser_wait_for")
+URL_ARG = re.compile(r'"url":\s*"(?P<url>[^"\\]+)"')
 
 
 def exact(url):
@@ -153,33 +159,44 @@ def read(path):
 
 
 def tool_calls(root):
-    """[(tool name, the file its Args saved to or '')] per session log, in the order called."""
+    """[(tool name, the file its Args saved to or '', the URL its Args name or '', its Result)] per session log, in
+    the order called."""
     sessions = []
     for session in sorted(glob.glob(os.path.join(root, "session-*", "session.md"))):
         calls, listed = TOOL_CALL.split(read(session)), []
         for name, body in zip(calls[1::2], calls[2::2]):
-            saved = SAVED_TO.search(body.partition("- Result")[0])
-            listed.append((name, saved.group("name") if saved else ""))
+            args, _, result = body.partition("- Result")
+            saved, url = SAVED_TO.search(args), URL_ARG.search(args)
+            listed.append((name, saved.group("name") if saved else "", url.group("url") if url else "", result))
         sessions.append(listed)
     return sessions
 
 
-def records(root, calls, item, k, m):
-    """The texts of step k's records the session log shows saved between step k's screenshot and step m's."""
+def acts(calls):
+    """The calls that changed the page, as (tool, URL) in order: what a step did, its reads left out."""
+    return [(name, url) for name, _, url, _ in calls if name not in READS]
+
+
+def window(root, calls, item, k, m):
+    """(the texts of step k's records the session log shows saved between step k's screenshot and step m's, what
+    step k did, what step m did), or None when the session log holds no screenshot of step k before one of step m.
+    Step k's calls run from the screenshot before it (of any step) to its own."""
     shot = "qae/%s-step-%%s.png" % item
-    texts = []
     for session in calls:
-        shots = [i for i, (name, saved) in enumerate(session) if name == "browser_take_screenshot"]
+        shots = [i for i, call in enumerate(session) if call[0] == "browser_take_screenshot"]
         after = [i for i in shots if session[i][1].endswith(shot % m)]
         before = [i for i in shots if session[i][1].endswith(shot % k) and after and i < after[0]]
         if not before:
             continue
-        for name, saved in session[before[-1] + 1:after[0]]:
+        start = max([i for i in shots if i < before[-1]], default=-1)
+        texts = []
+        for name, saved, _, _ in session[before[-1] + 1:after[0]]:
             for tool, kind in RECORDS:
                 own = "qae/%s-step-%s-%s.txt" % (item, k, kind)
                 if name == tool and saved.endswith(own) and os.path.isfile(os.path.join(root, own)):
                     texts.append(read(os.path.join(root, own)))
-    return texts
+        return texts, acts(session[start + 1:before[-1]]), acts(session[before[-1] + 1:after[0]])
+    return None
 
 
 class Retry:
@@ -193,6 +210,10 @@ class Retry:
         if self.problem:
             return "step %s retried as step %s, which does not count: %s" % (self.k, self.m, self.problem)
         return "step %s retried once as step %s after an environment error: %s" % (self.k, self.m, "; ".join(self.errors))
+
+
+def shown_acts(done):
+    return "(%s)" % ", ".join(name + (" " + shown(url) if url else "") for name, url in done) if done else "(none)"
 
 
 def action(text):
@@ -223,11 +244,18 @@ def judge(root, calls, item, steps, k, m, repeated, times, changed):
         return Retry(item, k, m, problem="step %s is a retry itself, and a step is retried once" % k)
     if times > 1:
         return Retry(item, k, m, problem="step %s is retried %d times, and a step is retried once" % (k, times))
+    again = [n for n, said in steps.items() if n > m and action(said) == action(steps[k])]
+    if again:
+        return Retry(item, k, m, problem="step %s takes step %s's action again after the retry, and a step is retried "
+                                         "once" % (again[0], k))
     if action(repeated) != action(steps[k]):
         return Retry(item, k, m, problem="its action is not step %s's word for word (%r, step %s: %r), and a retry takes "
                                          "the same step again, never another way" % (k, action(repeated)[:120], k,
                                                                                      action(steps[k])[:120]))
-    texts = records(root, calls, item, k, m)
+    texts, did, redid = window(root, calls, item, k, m) or ([], [], [])
+    if texts and did != redid:
+        return Retry(item, k, m, problem="the session log shows step %s's calls %s and the retry's %s: a retry takes the "
+                                         "same step again, never another way" % (k, shown_acts(did), shown_acts(redid)))
     if not texts:
         return Retry(item, k, m, problem="no record of step %s (qae/%s-step-%s-network.txt or -console.txt) was saved "
                                          "by its tool between step %s's screenshot and step %s's" % (k, item, k, k, m))
@@ -268,20 +296,21 @@ class _Urls:
 
 
 def answered(root, calls):
-    """The requests (method, URL) answered below 400 in the run's network records: the session logs, each file a
-    browser_network_requests call saved (`calls`, from tool_calls), and network-*.log; and the page record's answers.
-    Never a step log or verdict, which the explorer writes itself."""
-    paths = glob.glob(os.path.join(root, "session-*", "session.md")) + glob.glob(os.path.join(root, "network-*.log"))
+    """The requests (method, URL) answered below 400 in the run's network records: the result of each
+    browser_network_requests call in the session logs (`calls`, from tool_calls), or the file it saved, and
+    network-*.log; and the page record's answers. Never another call's arguments or result, a step log or a verdict,
+    which hold text the explorer chose."""
+    texts = [read(path) for path in glob.glob(os.path.join(root, "network-*.log"))]
     evidence = os.path.basename(os.path.normpath(root)) + "/"
-    for name, saved in (call for session in calls for call in session):
+    for name, saved, _, result in (call for session in calls for call in session):
         path = os.path.normpath(os.path.join(root, saved.rpartition(evidence)[2]))
-        if name == "browser_network_requests" and saved and path.startswith(os.path.join(os.path.normpath(root), "")):
-            paths.append(path)
-    seen = set()
-    for path in paths:
-        if os.path.isfile(path):
-            seen.update((r.group("method"), exact(r.group("url"))) for r in REQUEST.finditer(read(path))
-                        if r.group("status") != "FAILED" and int(r.group("status")) < 400)
+        if name != "browser_network_requests":
+            continue
+        texts.append(result)
+        if saved and path.startswith(os.path.join(os.path.normpath(root), "")) and os.path.isfile(path):
+            texts.append(read(path))
+    seen = {(r.group("method"), exact(r.group("url"))) for text in texts for r in REQUEST.finditer(text)
+            if r.group("status") != "FAILED" and int(r.group("status")) < 400}
     return seen, page_record(root)[1]
 
 

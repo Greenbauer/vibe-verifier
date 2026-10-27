@@ -38,11 +38,13 @@ def saved(tool, path):
     return call(tool, {"filename": "qae-artifacts/" + path}, {"result": "- [Record](qae-artifacts/%s)" % path})
 
 
-def session(*records, requests=(FIVE_HUNDRED, "2. [POST] %s/api/dashboard => [200] OK\n" % SITE)):
-    """The explorer's session: step 1's action and screenshot, then `records` saved, then the retry and its screenshot,
-    then the criterion's network record."""
-    return (call("browser_navigate", {"url": SITE + "/search"}, {"page": "- Page URL: %s/search" % SITE}) + shot("AC1", 1)
-            + "".join(records) + call("browser_click", {"target": "e1"}, {}) + shot("AC1", 2)
+OPEN = call("browser_navigate", {"url": SITE + "/search"}, {"page": "- Page URL: %s/search" % SITE})
+
+
+def session(*records, requests=(FIVE_HUNDRED, "2. [POST] %s/api/dashboard => [200] OK\n" % SITE), retry=OPEN):
+    """The explorer's session: step 1's action (opening the search) and screenshot, then `records` saved, then the
+    retry's calls and screenshot, then the criterion's network record."""
+    return (OPEN + shot("AC1", 1) + "".join(records) + retry + shot("AC1", 2)
             + call("browser_network_requests", {}, {"result": "".join(requests)}))
 
 
@@ -156,6 +158,18 @@ class Retry(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("after an environment error: GET /_next/static/chunks/app.js failed (net::ERR_CONNECTION_RESET)", result.stdout)
 
+    def test_a_retry_whose_calls_are_not_the_steps_does_not_count(self):
+        # The log copies step 1's words, but the session log shows the retry went somewhere else.
+        retry = call("browser_navigate", {"url": SITE + "/companies"}, {}) + call("browser_type", {"text": "Acme"}, {})
+        write(self.root, {"session-1/session.md": session(NETWORK, retry=retry)})
+        self.refused("the session log shows step 1's calls (browser_navigate /search) and the retry's (browser_navigate "
+                     "/companies, browser_type)")
+
+    def test_taking_the_step_a_third_time_after_the_retry_does_not_count(self):
+        write(self.root, {"qae/AC1.md": STEPS + "- step 3: opened organization search -> the search is active\n",
+                          "qae/AC1-step-3.png": "png"})
+        self.refused("step 3 takes step 1's action again after the retry, and a step is retried once")
+
     def test_records_the_tool_did_not_save_between_the_screenshots_do_not_count(self):
         write(self.root, {"session-1/session.md": NETWORK + session()})
         self.refused("no record of step 1 (qae/AC1-step-1-network.txt or -console.txt) was saved by its tool")
@@ -177,10 +191,12 @@ class Retry(unittest.TestCase):
         self.assertIn("request answered 500 outside the allowlist", result.stdout)
 
     def test_an_answer_the_explorer_wrote_itself_excuses_nothing(self):
-        # Only a tool's network record or the page record shows an answer; a step log or verdict is the explorer's text.
+        # Only a network record or the page record shows an answer; a step log, a verdict, or text the explorer typed
+        # into another tool call is its own.
         answer = "9. [POST] %s/api/dashboard => [200] OK\n" % SITE
-        write(self.root, {"session-1/session.md": session(NETWORK, requests=(FIVE_HUNDRED,)), "qae/AC1.md": STEPS + answer,
-                          "verdicts/1.md": answer})
+        typed = call("browser_type", {"text": answer}, {"result": answer}) + shot("AC9", 1)  # a step before this criterion
+        write(self.root, {"session-1/session.md": typed + session(NETWORK, requests=(FIVE_HUNDRED,)),
+                          "qae/AC1.md": STEPS + answer, "verdicts/1.md": answer})
         self.assertIn("POST /api/dashboard is not excused: it was never answered below 400 in this run", self.artifacts().stdout)
 
 
