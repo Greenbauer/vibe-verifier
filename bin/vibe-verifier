@@ -211,6 +211,7 @@ from _acceptance import (REFERENCE_KEY, annotations, baseline_problems, body_cri
 from _contract import QUALIFIER, CannotRun, resolve_base  # noqa: E402
 from _features import add_selection_arguments, describe, map_directory, selection  # noqa: E402
 from _verify_edits import verify_edits  # noqa: E402
+from _retry import retries  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
 import _affected_tests  # noqa: E402
 import _merge_grant_cli  # noqa: E402
@@ -1495,7 +1496,7 @@ def job_limit(repo, job_id):
     return reset.group("when").strip() if reset else ""
 
 
-def review_criteria(criteria_text, verdict_text, ticket_text="", edits=None):
+def review_criteria(criteria_text, verdict_text, ticket_text="", edits=None, retried=None):
     ticket, problem = ticket_items(ticket_text)
     wanted = ([] if declares_none(criteria_text) and (ticket or problem) else read_criteria(criteria_text)) + ticket
     rows = ["The ticket's criteria could not be read: %s." % problem] if problem else []
@@ -1509,6 +1510,10 @@ def review_criteria(criteria_text, verdict_text, ticket_text="", edits=None):
         proof = proofs.get(item.casefold()) if item.startswith("TC") else None
         said_by = ("not walked, the pull request proves it with a test: %s" % said(proof[0], PROOF_TOKEN) if proof
                    else explorer_said(lines.get(item.casefold(), [])))
+        # A step the explorer took again after an environment error, as the qae-artifacts gate judged it (`retried`,
+        # {criterion: [what it found]} from retry_notes): a retried PASS says so, and why.
+        if (retried or {}).get(item):
+            said_by += " (%s)" % "; ".join(retried[item])
         rows.append("- %s%s, %s: %s" % (item, source, said_by, wording))
     # A feature re-walk (docs/feature-map.md) adds one line per feature; which features were required is
     # the gate's to decide, so this lists what the explorer wrote and the gate's log names any missing.
@@ -1551,6 +1556,26 @@ def feature_edits(args, fids):
     except (CannotRun, OSError, ValueError) as error:
         return str(error)
     return {fid.casefold(): note for fid, note in notes.items()}
+
+
+def retry_notes(args):
+    """{criterion: [what the qae-artifacts gate found of each step the explorer retried]}, read from the run's
+    evidence (gates/_retry.py) with the changed paths the manifest's qae-artifacts line gives that gate, judged from
+    the base as the gate's line is: without them the gate counts no URL as the environment, and neither does this."""
+    changed = None
+    if os.path.isfile(args.manifest):
+        try:
+            lines = [gate_args for gate, gate_args in judged_entries(argparse.Namespace(
+                manifest=args.manifest, repo=args.checkout, base_ref=None), notice=sys.stderr) if gate == "qae-artifacts"]
+        except (SystemExit, CannotRun, OSError, ValueError):
+            lines = []
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--changed-files")
+        changed = parser.parse_known_args(lines[0])[0].changed_files if lines else None
+    notes = {}
+    for retry in retries(args.artifacts, changed):
+        notes.setdefault(retry.item, []).append(retry.describe())
+    return notes
 
 
 def explorer_said(carried):
@@ -1597,7 +1622,7 @@ def review_body(state, args, limits=None):
         verdict = read_text(args.verdict) if args.verdict and os.path.isfile(args.verdict) else ""
         ticket = read_text(args.ticket) if args.ticket and os.path.isfile(args.ticket) else ""
         edits = feature_edits(args, list(check_lines(verdict, "regression-check")))
-        lines += review_criteria(read_text(args.criteria), verdict, ticket, edits)
+        lines += review_criteria(read_text(args.criteria), verdict, ticket, edits, retry_notes(args))
     lines += ["", "[The run and its evidence](%s)" % args.run_url]
     return "\n".join(lines) + "\n"
 
@@ -1764,6 +1789,8 @@ def main():
     review.add_argument("--manifest", default=".vibe-verifier-qae", help="the QAE manifest: its acceptance-verdict line's "
                         "--features names the map whose Verify sections a re-walked feature's row compares with the base")
     review.add_argument("--checkout", default=".", metavar="DIR", help="the pull request's checkout, with the base's history")
+    review.add_argument("--artifacts", default="qae-artifacts", metavar="DIR", help="the run's evidence: a step the "
+                        "explorer retried after an environment error is named on its criterion's row")
     review.add_argument("--run-id", default="", metavar="ID", help="the workflow run's id: when its explore job failed, "
                         "its failure annotations are read to tell a model usage limit from any other failure")
     args = parser.parse_args()

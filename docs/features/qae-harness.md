@@ -24,6 +24,8 @@ The QAE harness: an explorer walks a pull request's acceptance criteria (and, op
 - source: `gates/_acceptance.py`
 - source: `gates/_features.py`
 - source: `gates/_verify_edits.py`
+- source: `gates/_retry.py`
+- source: `gates/_session_log.py`
 - source: `tools/qae-browser/**`
 - source: `tools/codex/**`
 
@@ -101,6 +103,15 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_qae_chains.py::test_each_explorer_and_each_attempt_has_a_tag_of_its_own`
 - `tests/test_qae_browser.py::test_where_sudo_needs_no_password_only_the_missing_packages_are_installed`
 - `tests/test_qae_browser.py::test_a_fetch_that_runs_out_of_time_is_tried_once_more_from_the_next_mirror`
+- `tests/test_qae_retry.py::test_a_retried_5xx_on_an_unchanged_endpoint_passes_and_says_why`
+- `tests/test_qae_retry.py::test_a_400_is_not_an_environment_error`
+- `tests/test_qae_retry.py::test_a_5xx_on_an_endpoint_the_pull_request_changes_is_its_own`
+- `tests/test_qae_retry.py::test_a_retry_another_way_does_not_count`
+- `tests/test_qae_retry.py::test_a_retry_after_walking_on_another_way_does_not_count`
+- `tests/test_qae_retry_calls.py::test_a_retry_whose_calls_are_not_the_steps_does_not_count`
+- `tests/test_qae_retry_calls.py::test_reads_new_refs_and_reworded_descriptions_do_not_make_another_step`
+- `tests/test_qae_retry.py::test_a_retry_that_fails_again_stays_a_fail`
+- `tests/test_qae_retry.py::test_the_review_says_a_criterion_passed_on_a_retry_and_why`
 
 ## Gotchas
 
@@ -123,4 +134,5 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - A feature re-walk covers at most `--max-states` states of each feature. A `regression-check` FAIL means a walked step broke; a state not reached goes on a `regression-skip` line, which no gate judges. A consumer copy with the older prompt still tells the explorer to walk every state. A feature no browser can walk is taken out by `re-walk: none -- <why>` in its own file (read from the base), never by a skip line. A FAIL is a warning, not a finding, only when the explorer's `regression-known` line is anchored to a step of its walk of the base branch's site (`qae/features/base/<id>.md`) whose screenshot is there; the explorer walks that site only when the workflow wrote `qae-inputs/base-site.md`, and the gate checks the evidence, not that file. The network check still judges every request to the pull request's own declared origins, so a base-branch site that shares one (an API or database) can still fail the run through `qae-artifacts`.
 - A pull request opened before the feature map landed on the base has no feature file to re-walk: `features` prints `features: 0` and why, and `acceptance-verdict` passes labelled `re-walk not run: the branch predates the feature map`. Any other head with no feature file, a removed map included, is exit 2 in both.
 - The evidence artifact is `qae-artifacts-<run_attempt>` (`-<n>` appended for an explorer past the first), and the verify job downloads every attempt's and takes each explorer's newest, so one failed explorer can be run again alone. It fails when the explore job's `attempt` output is newer than any evidence. A consumer copy that still names it `qae-artifacts` in both jobs hands a re-run's verify job whichever attempt's artifact GitHub returns.
+- A step the explorer retried after an environment error counts only on the evidence `gates/_retry.py` names: it is step k+1, makes the last of step k's page-changing calls again with the same arguments but snapshot refs and descriptions (per the session log; read-only tools left out, from the pinned playwright-mcp's own list), the log numbers no step twice, no other step takes its action, and step k's own network or console record, saved by its tool after step k's screenshot and before the retry changes the page, showing a 5xx, a failed connection or websocket on a URL no changed path names, or Vercel's deployment protection (read from the page URL playwright-mcp reports, since the network record hides its redirects), and nothing of that kind on a URL a changed path does name. Which URL a changed path names is a word match, so it errs toward no retry, and a retry that does not count fails `qae-artifacts`. Whether the retried step then held is still the explorer's verdict: a counted retry excuses a repeat of the same error, by status and URL anywhere in the run, so a FAIL after it rests on acceptance-verdict alone. A consumer manifest without `--changed-files` on its `qae-artifacts` line counts only the protection class.
 - `actions/qae-browser` reads the names of the missing system packages from the pinned Playwright's `install-deps --dry-run` report. A Playwright bump that changes that report fails the step (never reads as nothing missing), and the catalog's `QA browser tests` CI job is where that shows first.

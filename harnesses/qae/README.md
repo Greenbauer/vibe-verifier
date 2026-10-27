@@ -822,7 +822,12 @@ qa-review`) keeps one comment on the pull request, edited in place on every run,
 
 Earlier rows win. The state comes from the jobs' and the gates' outcomes, never from the explorer's
 prose: under it the comment lists each criterion with the word the explorer wrote for it (PASS, FAIL,
-or no verdict), links the head commit it judged, and links the run. A re-walked feature's row adds
+or no verdict), links the head commit it judged, and links the run. A criterion with a step the explorer
+retried after an environment error says so on its row, with what the gate found: `explorer says PASS (step 5
+retried once as step 6 after an environment error: POST /api/dashboard answered 500)`, or why the retry did not
+count ([below](#a-step-retried-after-an-environment-error)); the action's run reads `qae-artifacts/` in the verify
+job's workspace and the changed paths the manifest's `qae-artifacts` line gives the gate (`--changed-files`, read from
+the base as the gate's line is), so the row says what the gate decided. A re-walked feature's row adds
 `Note: this pull request changed its Verify section: N lines added, M removed` when the pull request
 edited the steps that judged it (or that it added the feature), comparing the map the QAE manifest's
 `acceptance-verdict` line names in the job's checkout with the merge base; the action's `manifest`
@@ -1254,7 +1259,10 @@ and refuses on structural facts:
    URL) answered below 400 somewhere, in a network record or in the page record's answers, and is a
    finding when it does not ([below](#a-request-the-page-cancelled));
 5. with `--widths`, each criterion's step screenshots include one of each declared width
-   ([above](#viewports-themes-and-what-a-criterion-does-not-say)).
+   ([above](#viewports-themes-and-what-a-criterion-does-not-say));
+6. a step the explorer retried after an environment error counts, and excuses that error, only on the
+   evidence [below](#a-step-retried-after-an-environment-error) names; a retry that does not count is a
+   finding.
 
 Run against the pilot's real first-run artifacts with no allowlist it found three things: the
 second step of AC2 had no screenshot, the analytics 404, and no network record. The consumer
@@ -1403,3 +1411,72 @@ which that request is answered once.
 
 A manifest copied before the site URL was declared reads `--site http://localhost:3000`, and keeps
 working: `--site` judges a fixed URL, `--site-file` the declared one, and a line takes one or the other.
+
+### A step retried after an environment error
+
+A walk can fail on something the pull request did not do. A backtest of 4192 verdict lines across seven
+consumers (2026-10-26) found that a criterion that failed and was walked again on the same head failed again 35%
+of the time and passed 65%. Of 18 of those passes read by hand, 5 were the environment (a 5xx from an endpoint the
+pull request does not touch, Vercel's deployment protection in place of the site, a websocket that failed), about 9
+had the criterion or its setup edited between the walks, and about 4 were real bugs the passing walk never did the
+failing step of: a table clipped at 375 pixels, an invalid input answered 400, an empty second page. So a blind
+second walk lets real bugs through, and the harness does not walk again. The explorer takes only the failed step
+once more, in the same walk, and the gate counts that retry only on structural evidence
+([`gates/_retry.py`](../../gates/_retry.py), reading the session log through [`gates/_session_log.py`](../../gates/_session_log.py)), never on the explorer's words.
+
+The prompt tells the explorer, when a step shows one of those errors, to save that moment's records right after
+the step's screenshot (`browser_network_requests` to `qae/ACn-step-k-network.txt`, `browser_console_messages` to
+`qae/ACn-step-k-console.txt`), then take the same step again as the very next step:
+
+```
+- step 5: as admin: opened organization search -> the console reports a dashboard POST 500
+- step 6: as admin: retry of step 5: opened organization search -> the search is active
+```
+
+The `qae-artifacts` gate counts the retry when:
+
+- it is the step right after the one it names, in the same criterion's log (which numbers no step twice), which is
+  not a retry itself and no other retry names: a step is retried once, at once, before the criterion is walked any further;
+- its action, the text before `->` with the marker taken out, is that step's word for word, and no other step
+  of the log takes it (before or after); and the session log shows the retry making the last of the step's page-changing calls again:
+  the same tools in order, each with the same arguments (the URL, what was typed, filled, selected, pressed or run),
+  but for snapshot refs (`e23`, `f1e3`) and descriptions in words (`element`, a form field's `name`), which change
+  when the page renders again; a target given as a selector is compared. Calls of the tools the pinned
+  playwright-mcp marks read-only or assertion (snapshots, screenshots, `browser_find`, `browser_network_request`,
+  ...) are left out. A sign-in or navigation that opened the criterion may come before the step's own calls, and the
+  step or the retry may be shot more than once as long as nothing changed the page between its screenshots. A retry
+  takes the same step again, never another way;
+- a record of the step is in the evidence, and the session log shows its tool saved it after the step's screenshot
+  and before the retry's first page-changing call, so it is a record of the step and not of the retry;
+- that record shows an environment error: a request answered 500 or above, a request (or Chromium's console line
+  for a resource) that failed with a connection error (`net::ERR_CONNECTION_*`, `ERR_TIMED_OUT`, `ERR_NAME_NOT_RESOLVED` and the like, never `ERR_ABORTED`), or a
+  console line `WebSocket connection to '<url>' failed`, each on a URL none of the pull request's changed paths
+  names; or Vercel's login for a protected deployment (`https://vercel.com/sso-api`, or `https://vercel.com/login`
+  whose query names `/sso-api`: a protected preview answers 302 to the first, which redirects to the second, checked
+  2026-10-26), as a request in the record or as the page URL playwright-mcp reports for one of the step's calls (its
+  `page` field, never a script's result): the network record leaves out a document answered below 400, so the
+  redirects themselves are usually not listed;
+- and it shows no such error on a URL a changed path does name, which may be the pull request's own doing.
+
+A changed path names a URL when one of the URL path's words (3 characters or more, not `api`, `rest`, `rpc`,
+`trpc`, `graphql`, `v1` and the like, not a number or record id) and one of the path's words (a directory, or a file
+name before its first dot) contain one another; words are taken whole and split at punctuation, letters and digits
+only. `POST /api/dashboard` is named by `app/(main)/dashboard/page.tsx`, `/rest/v1/journeys` by
+`supabase/migrations/2026_journeys.sql`, `/api/users` by `server/routes/user.js`, `/api/trpc/org.search` by
+`src/server/routers/org.ts`. A URL with no such word counts as named, and so does every URL when the manifest's
+`qae-artifacts` line has no `--changed-files`. The match is crude and leans toward no retry, but it cannot see a change to code a URL reaches through a shared module (a database client, middleware), and the gate
+cannot tell which error made the step fail. So a real bug can pass this way only when it fails once, works on the
+retry, and the same request is answered below 400 somewhere in the run. The once rule reads the step log's words:
+a later step that takes the same action in other words, after a retry that failed again, is not caught, and the
+explorer is told never to do that. And the gate trusts a console line as a record, as the rest of `qae-artifacts`
+does: a script the explorer runs can log one, just as the explorer can write any file in its evidence.
+
+A retry that does not count is a finding that says why, so its criterion cannot pass on it. One that counts is
+printed in the gate's log and on the criterion's row of the QA review, and it excuses its errors: a 5xx or failed
+request, and Chromium's console line for it, only when the same request (method and URL) was answered below 400
+in the run's network records (`browser_network_requests` results, the files they saved, `network-*.log`; never a
+step log, a verdict or another tool call's text) or the page record, as [a cancelled request](#a-request-the-page-cancelled) is; a
+websocket failure on the retry alone, since no record holds a websocket's answer. A repeat of the same error during
+the retry is excused with it, and so is the same error anywhere else in the run, since the excuse is by status and
+URL. Whether the retried step held is the explorer's verdict, which `acceptance-verdict`
+judges: a criterion that fails again is a FAIL, and the run is refused on it.

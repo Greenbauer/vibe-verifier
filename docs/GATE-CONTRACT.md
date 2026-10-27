@@ -1394,7 +1394,11 @@ record, a request to the site under test that answered 400 or worse or failed (o
 cancelled itself, `net::ERR_ABORTED`, is not judged when the run also holds that request, same
 method and URL, answered below 400 somewhere, in a network record or among the answers in the
 harness's page record, static requests included, and is a finding when it does not) outside
-`--allow-request`. With a site declared, Chromium's `Failed to load resource` console line for
+`--allow-request`, and a step the explorer retried after an environment error whose retry does not count
+(`gates/_retry.py`: the very next step, the same calls with the same arguments, once, and the step's own record
+showing a 5xx, a failed connection or websocket on a URL none of the pull request's changed paths, `--changed-files`,
+names, or Vercel's deployment protection). A retry that counts excuses those errors by status and URL, a request only
+when the run also shows it answered below 400, as for a cancelled one. With a site declared, Chromium's `Failed to load resource` console line for
 another host is skipped like that host's request, and so is an error only pages outside the site
 logged (a hosted page a link opened), unless it is about a URL of the site (for an exception, a
 script in its stack). The page is read from
