@@ -17,6 +17,8 @@ EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}")
 # A context name: an identifier not after a dot (a property) and not inside a string literal. A call is a
 # built-in function, allowed anywhere, except hashFiles, which the schema allows only in some places.
 NAME = re.compile(r"(?<![.\w-])([A-Za-z_][A-Za-z0-9_-]*)(\s*\()?")
+# A key on its own line or as a sequence item (`- name: x`), with the value after the colon.
+ITEM = re.compile(r"^( *)(?:- +)?([A-Za-z0-9_-]+):(.*)$")
 
 
 def names(line):
@@ -54,7 +56,40 @@ def expressions(text):
     return found
 
 
+def plain_values_with_a_colon(text):
+    """Line numbers of each unquoted one-line value holding `: `. YAML reads that colon as a second key, so the
+    whole file fails to load ("mapping values are not allowed in this context") and every job using the action
+    stops at "Set up job". A quoted value or a block scalar (`>-`, `|`) may hold one."""
+    found, block = [], None
+    for number, line in enumerate(text.splitlines(), 1):
+        indent = len(line) - len(line.lstrip(" "))
+        if not line.strip() or line.lstrip().startswith("#") or (block is not None and indent > block):
+            continue
+        block, match = None, ITEM.match(line)
+        if match is None:
+            continue
+        value = match.group(3).strip()
+        if value and CONTINUES.match(value):
+            block = len(match.group(1))
+        elif value and value[0] not in "\"'[{&*!" and ": " in value.split(" #", 1)[0]:
+            found.append(number)
+    return found
+
+
 class ActionMetadata(unittest.TestCase):
+    def test_every_action_loads_as_yaml(self):
+        for path in sorted((ROOT / "actions").glob("*/action.yml")):
+            with self.subTest(action=path.parent.name):
+                self.assertEqual(plain_values_with_a_colon(path.read_text()), [])
+
+    def test_the_check_sees_a_colon_in_a_plain_value_only(self):
+        self.assertEqual(plain_values_with_a_colon("name: a\ndescription: posts nothing: the verify job\n"), [2])
+        self.assertEqual(plain_values_with_a_colon("steps:\n  - name: a: b\n"), [2])
+        self.assertEqual(plain_values_with_a_colon('description: "posts nothing: the verify job"\n'), [])
+        self.assertEqual(plain_values_with_a_colon("description: >-\n  posts nothing: the verify job\n"), [])
+        self.assertEqual(plain_values_with_a_colon("run: |\n  echo a: b\nname: x # a: b\n"), [])
+        self.assertEqual(plain_values_with_a_colon("default: ${{ github.event_name }}\nurl: https://x.y/z\n"), [])
+
     def test_every_expression_before_runs_is_one_the_runner_evaluates(self):
         actions = sorted((ROOT / "actions").glob("*/action.yml"))
         self.assertTrue(actions)
