@@ -102,6 +102,8 @@ max-file-lines --max 500
 
 Each line is both a subscription and that gate's configuration. Add `--soak` while introducing a gate if you want findings reported before they block merging.
 
+These four gates are a good first set: they need no project dependencies installed (`gitleaks` downloads its own tool on first use). Add more from the [gate list](#deterministic-verification-gates) once the first run is clean.
+
 ### 2. Run it locally
 
 Check out and commit the branch you want to verify. The gates use Git history, so uncommitted edits are not fully checked and the branch you plan to merge into must be available locally.
@@ -122,6 +124,14 @@ Results distinguish gates that **passed**, **found violations**, and **could not
 ### 3. Make it a GitHub merge gate
 
 Copy [`consumer/vibe-verifier.yml`](consumer/vibe-verifier.yml) to the consumer repository as `.github/workflows/vibe-verifier.yml`. Replace the all-zero placeholder on its last line with the full commit SHA from `git rev-parse HEAD` in the Vibe Verifier clone.
+
+From the consumer repository, with the Vibe Verifier clone at `/path/to/vibe-verifier`:
+
+```bash
+sha=$(git -C /path/to/vibe-verifier rev-parse HEAD)
+sed -i.bak "s/0\{40\}/$sha/" .github/workflows/vibe-verifier.yml
+rm .github/workflows/vibe-verifier.yml.bak
+```
 
 Commit the workflow and `.vibe-verifier` together, then make `Gates` a required check when it should block merging. The check shows as `Standards / Gates`; a stub copied before the catalog adopted its [check names](docs/check-names.md) names it `vibe-verifier-ok`. Every check the catalog's workflows and harnesses add is named by that standard: a stage as the workflow, what the check proves as the job.
 
