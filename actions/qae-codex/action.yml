@@ -1,5 +1,5 @@
 name: Vibe Verifier QAE explorer on Codex
-description: Run the QAE explorer prompt with the Codex CLI from the catalog's lockfile, on a runner that holds a ChatGPT-managed Codex login. The model holds no GitHub token and posts nothing: the verify job's QA review is the one comment, quoting only the sentences the gates read. An optional storage state starts the browser with cookies the workflow obtained, such as a preview host's protection-bypass cookie.
+description: "Run the QAE explorer prompt with the Codex CLI from the catalog's lockfile, on a runner that holds a ChatGPT-managed Codex login. The model holds no GitHub token and posts nothing: the verify job's QA review is the one comment, quoting only the sentences the gates read. An optional storage state starts the browser with cookies the workflow obtained, such as a preview host's protection-bypass cookie."
 inputs:
   prompt-file:
     description: The prompt to run, written by the workflow (the harness prompt with this pull request's numbers filled in).
