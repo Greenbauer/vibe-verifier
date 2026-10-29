@@ -1,5 +1,5 @@
 name: Vibe Verifier QA review
-description: Post the QAE's one review comment on a pull request (passed, changes needed, not required, could not run), or edit it in place. A failed explore job is read through its failure annotations, so the verify job needs `actions read` and `checks read` for the model usage limit body.
+description: Post the QAE's one review comment on a pull request (passed, changes needed, not required, could not run, or not walked when every explorer hit a model usage limit), or edit it in place.
 inputs:
   criteria:
     description: The PR body the run read, relative to the workspace.
@@ -25,6 +25,9 @@ inputs:
   manifest:
     description: The QAE manifest, relative to the workspace (the pull request's checkout). Its acceptance-verdict line's --features map is where a re-walked feature's row reads whether the pull request changed that feature's Verify section.
     default: .vibe-verifier-qae
+  limits:
+    description: The qa-limit step's limits output; when it lists any, the review says the walk did not run and when each limit resets, and records the head as limited.
+    default: ""
   token:
     description: A token that may comment on the pull request.
     required: true
@@ -48,6 +51,7 @@ runs:
         VV_NOT_REQUIRED: ${{ inputs.not-required }}
         VV_CARRIED: ${{ inputs.carried-from }}
         VV_MANIFEST: ${{ inputs.manifest }}
+        VV_LIMITS: ${{ inputs.limits }}
       run: |
         set -euo pipefail
         args=(qa-review --repo "$VV_REPO" --pr "$VV_PR" --head "$VV_HEAD" --run-url "$VV_RUN"
@@ -55,4 +59,5 @@ runs:
               --not-required "$VV_NOT_REQUIRED" --carried-from "$VV_CARRIED" --run-id "$VV_RUN_ID" --manifest "$VV_MANIFEST")
         if [ -n "$VV_VERDICT" ]; then args+=(--verdict "$VV_VERDICT"); fi
         if [ -n "$VV_TICKET" ]; then args+=(--ticket "$VV_TICKET"); fi
+        if [ -n "$VV_LIMITS" ]; then args+=(--limits "$VV_LIMITS"); fi
         python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}"

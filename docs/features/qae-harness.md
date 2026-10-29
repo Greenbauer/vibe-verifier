@@ -9,12 +9,14 @@ The QAE harness: an explorer walks a pull request's acceptance criteria (and, op
 - command: `criteria`
 - command: `features`
 - command: `qa-review`
+- command: `qa-limit`
 - command: `qae-inputs`
 - command: `tool`
 - source: `harnesses/qae/**`
 - source: `actions/criteria/**`
 - source: `actions/features/**`
 - source: `actions/qa-review/**`
+- source: `actions/qa-limit/**`
 - source: `actions/qae-inputs/**`
 - source: `actions/qae-browser/**`
 - source: `actions/qae-codex/**`
@@ -68,8 +70,10 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_features.py::test_a_branch_that_predates_the_map_is_not_re_walked_and_not_failed`
 - `tests/test_features.py::test_a_pull_request_that_removes_the_map_cannot_be_re_walked`
 - `tests/test_qa_review.py::test_changes_needed_lists_each_criterion_as_the_explorer_judged_it`
-- `tests/test_qa_review.py::test_a_usage_limit_tells_the_driver_to_walk_by_hand`
-- `tests/test_qa_review.py::test_any_other_explore_failure_keeps_the_plain_body`
+- `tests/test_qa_limit.py::test_a_usage_limit_on_every_explorer_passes_with_a_warning`
+- `tests/test_qa_limit.py::test_a_usage_limit_on_only_some_explorers_stays_red`
+- `tests/test_qa_limit.py::test_any_other_explore_failure_stays_red`
+- `tests/test_qa_limit.py::test_a_usage_limit_on_every_explorer_skips_what_judges_a_walk`
 - `tests/test_verify_edits.py::test_unchanged_edited_and_added_features_in_the_features_and_gate_logs`
 - `tests/test_verify_edits.py::test_each_re_walked_row_says_whether_the_pull_request_changed_its_verify_section`
 - `tests/test_verify_edits.py::test_a_walk_that_passes_passes_whatever_the_pull_request_did_to_the_steps`

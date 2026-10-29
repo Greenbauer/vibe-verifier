@@ -243,9 +243,11 @@ def shell_status(returncode, forwarded_signal):
 
 def annotate_failure(exit_status, last_error):
     """The failed step's annotation: the one place a failed run says why (stderr is not kept), and what
-    `vibe-verifier qa-review` reads to tell a model usage limit from any other failure."""
-    if exit_status and last_error:
-        escaped = last_error.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    `vibe-verifier qa-limit` reads to tell a model usage limit from any other failure."""
+    if exit_status:
+        # Every failure says something of its own, so a limit message another step printed can never stand in for it.
+        message = last_error or "exit status %d, with no error message" % exit_status
+        escaped = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
         print("::error::Codex ended with an error: %s" % escaped, flush=True)
 
 

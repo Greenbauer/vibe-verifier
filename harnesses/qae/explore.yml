@@ -629,8 +629,17 @@ jobs:
           ticket: qae-inputs/ticket.md
           carry: qae-inputs/carry.json   # the criteria job's facts, so both jobs decide a carry alike
           manifest: .vibe-verifier-qae
+      - name: Tell a model usage limit from a failure
+        # A failed explore job whose every explorer hit its model usage limit walked nothing. This step reads
+        # their failure annotations and, when that is so, warns with each limit and its reset: the steps below
+        # that judge a walk are skipped, so this job passes with the warning, and the QA review records the head
+        # as limited, never as walked (operator, 2026-10-29). An explorer that succeeded or failed any other way,
+        # or annotations it cannot read, leave `limited` false and the job judges as before.
+        id: limit
+        if: needs.explore.result == 'failure'
+        uses: Greenbauer/vibe-verifier/actions/qa-limit@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        if: steps.criteria.outputs.count != '0'
+        if: steps.criteria.outputs.count != '0' && steps.limit.outputs.limited != 'true'
         # Every explorer's evidence, of every attempt of this run, each in a directory named for its
         # artifact: qae-evidence/qae-artifacts-<attempt>[-<explorer>]/ in the runner's temporary directory,
         # outside the checkout, so a directory the pull request commits is never one of them. The next
@@ -654,7 +663,7 @@ jobs:
         # A qae-artifacts/ the checkout already has came from the pull request (Git makes no empty
         # directory), so the step stops before writing anything: a link there could send the copies
         # anywhere on the runner. The gates refuse such evidence too (gates/_contract.py, planted).
-        if: steps.criteria.outputs.count != '0'
+        if: steps.criteria.outputs.count != '0' && steps.limit.outputs.limited != 'true'
         env:
           SHARDS: ${{ needs.criteria.outputs.shards }}
           EXPLORE_ATTEMPT: ${{ needs.explore.outputs.attempt }}
@@ -711,7 +720,7 @@ jobs:
           echo "verdict lines: $(grep -c 'acceptance-check:' qae-inputs/verdict.md || true)"
       - name: Run the QA gates
         id: gates
-        if: steps.criteria.outputs.declared-none == ''
+        if: steps.criteria.outputs.declared-none == '' && steps.limit.outputs.limited != 'true'
         uses: Greenbauer/vibe-verifier/actions/gates@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
         with:
           manifest: .vibe-verifier-qae
@@ -719,15 +728,17 @@ jobs:
         # The first explorer's job has the explore job's plain name whatever the split, so a branch rule
         # can require it. The others, that name with (2), (3), ..., exist only on a large pull request,
         # and no rule can name them. So on a split run this job fails unless every explorer's job
-        # succeeded, after the gates have said what they found. A run with one explorer is not touched.
-        if: ${{ !cancelled() && needs.criteria.outputs.shards != '[""]' && needs.explore.result != 'success' && needs.explore.result != 'skipped' }}
+        # succeeded, after the gates have said what they found, or a usage limit stopped every one (the
+        # step above). A run with one explorer is not touched.
+        if: ${{ !cancelled() && needs.criteria.outputs.shards != '[""]' && needs.explore.result != 'success' && needs.explore.result != 'skipped' && steps.limit.outputs.limited != 'true' }}
         env:
           EXPLORE_RESULT: ${{ needs.explore.result }}
         run: |
           echo "::error::an explorer's job did not succeed (the explore job ended $EXPLORE_RESULT): run the failed explorer again"; exit 1
       - name: Post the QA review
         # One comment per pull request, edited in place on every run: passed, changes needed, not
-        # required, or could not run, from what the jobs and gates concluded, never the explorer's prose.
+        # required, could not run, or not walked (a usage limit), from what the jobs and gates concluded,
+        # never the explorer's prose.
         if: ${{ !cancelled() }}
         uses: Greenbauer/vibe-verifier/actions/qa-review@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
         with:
@@ -738,4 +749,5 @@ jobs:
           gates-outcome: ${{ steps.gates.outcome }}
           not-required: ${{ steps.criteria.outputs.declared-none }}
           carried-from: ${{ steps.criteria.outputs.carried-from }}
+          limits: ${{ steps.limit.outputs.limits }}
           token: ${{ secrets.GITHUB_TOKEN }}

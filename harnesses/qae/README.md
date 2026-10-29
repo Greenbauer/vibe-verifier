@@ -20,10 +20,10 @@ the template; the consumer owns each job's `runs-on` and how the site is built a
 step declares the site's URL as its `url` output. For a site behind a login, it writes
 `qae-inputs/site.md` in that same step to tell the explorer how to sign in and what state the site
 starts in (a throwaway account on a throwaway backend, never production), and it supplies any
-[design references](#design-references-and-roles) the criteria name. Its eight catalog
-pins (`criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `usage@` in explore,
-`criteria@`, `gates@` and `qa-review@` in verify) are inventoried and bumped by `consumers` and
-`apply-down` exactly like the stub's.
+[design references](#design-references-and-roles) the criteria name. Its ten catalog
+pins (`ticket@` and `criteria@` in criteria, `features@`, `qae-inputs@`, `qae-browser@` and `usage@` in
+explore, `criteria@`, `qa-limit@`, `gates@` and `qa-review@` in verify) are inventoried and bumped by
+`consumers` and `apply-down` exactly like the stub's.
 
 1. **criteria** reads the PR body, its changed paths and, when the consumer supplies them,
    [its ticket's criteria](#the-tickets-criteria) with `actions/criteria`, on any runner: it
@@ -816,7 +816,7 @@ qa-review`) keeps one comment on the pull request, edited in place on every run,
 | Heading | When |
 |---|---|
 | `## QA review: not required ✅` | the pull request needs no check; the comment gives the reason |
-| `## QA review: could not run, model usage limit ⚠️` | every explore job that failed failed on the model's usage limit; the comment says when it resets and tells the agent driving the pull request to walk the criteria by hand ([below](#when-the-explorer-hits-a-usage-limit)) |
+| `## QA review: not walked, model usage limit ⚠️` | every explore job failed on the model's usage limit; the check passes with a warning, and the comment names each limit and when it resets and records the head as limited ([below](#when-the-explorer-hits-a-usage-limit)) |
 | `## QA review: could not run ⚠️` | the explore job did not finish, or the verify job stopped before its gates ran, so nothing was judged |
 | `## QA review: passed ✅` | the gates passed |
 | `## QA review: changes needed ❌` | the gates refused |
@@ -841,34 +841,50 @@ read-only, so the review step cannot post there and fails the verify job.
 
 ### When the explorer hits a usage limit
 
-A subscription's usage limit fails the explore job before the explorer walks anything. The review
-then says so, with the reset time the limit message gave, instead of the plain "could not run":
-the agent driving the pull request (in any session, on any harness) does the QA walk by hand
-until the reset, in place of waiting on it (operator directive, 2026-10-12):
+A subscription's usage limit fails the explore job before the explorer walks anything. When every
+explorer of the run failed that way, the `Acceptance criteria` check passes with a `::warning::`
+instead of staying red (operator decision, 2026-10-29): the same rule as a code review whose every
+reviewer account is rate-limited ([review harness](../review/README.md)). The verify job's
+"Tell a model usage limit from a failure" step ([`actions/qa-limit`](../../actions/qa-limit/action.yml),
+`bin/vibe-verifier qa-limit`) decides it, before anything is judged:
 
-1. Open the pull request's preview at the current head and walk every bullet under
-   `## Acceptance criteria` (and the ticket's criteria), at each width on the `--widths` of the
-   manifest's `qae-artifacts` line.
-2. Post the evidence as a pull request comment: one line per criterion, PASS or FAIL, with the head
-   it was walked on, what was done and what the page showed.
-3. Rerun the workflow after the reset (`gh run rerun <run id>`), so the QAE judges the head itself.
+- **The warning names each limit and its reset**, as the limit message gave them:
+  `Acceptance criteria: walk: You've hit your limit, resets 9am (UTC)`. The steps that judge a walk
+  (the evidence download and merge, the QA gates, and the split run's every-explorer check) are
+  skipped, so the job passes with that warning.
+- **The QA review says the walk did not run**, with the same limits and resets, and ends with
+  `<!-- qa-review: <head sha> -- limited -- run <id> -->`: the record, for that exact head, that it
+  was not walked, shaped like the review harness's `limited` receipt.
+- **A limited run is never mistaken for a walk.** Its explore jobs still fail, so the run concludes
+  failure, and a carried walk is taken only from an earlier run that succeeded
+  ([a walk that still holds](#a-walk-that-still-holds)). Rerun the workflow after the reset (`gh run rerun <run id>
+  --failed`), or push: the next walk checks every criterion on the head it runs on.
 
-The checks stay red throughout: the review posts no verdict, and a hand walk is evidence for the
-reviewer, never a pass. The fact is structural, never the explorer's prose: `qa-review` lists the
-run's latest jobs, and when every failed explore job (`Acceptance criteria: walk`, or `qae-explore` in
-an older copy: each explorer of a split run, and `<caller> / <name>` in a reusable workflow) carries a
-failure annotation with the limit message,
-it is a usage limit. The Claude lane's pinned action fails with "Claude Code returned an error
-result: You've hit your limit · resets 9am (UTC)" and writes no execution log in that case (measured
-on Greenbauer/zack.land run 38286901786: the explorer's usage record says `no_artifact`), so the
-annotation is the one record of it; `actions/qae-codex` prints the Codex CLI's last error as one
-(`You've hit your usage limit. ... try again at <time>.`). A server-side rate limit ("not your usage
-limit") does not match: a rerun fixes that one. Any other failure, one explorer of several failing
-for another reason, or annotations the job cannot read keep the plain "could not run" body. Reading
-them needs `actions: read` and `checks: read` on the verify job, which both templates grant; a
-consumer workflow copied before 2026-10-12 lacks them and keeps the plain body until it adds them.
-An annotation is text any step of that job can print, so a pull request's own build script could
-fake one; that only swaps one could-not-run body for another and never turns a check green.
+The fact is structural, never the explorer's prose: `qa-limit` lists the run's latest jobs, and it is
+a usage limit only when every explore job (`Acceptance criteria: walk`, or `qae-explore` in an older
+copy: each explorer of a split run, and `<caller> / <name>` in a reusable workflow) failed with
+"Explore the acceptance criteria in a real browser" as its one failed step, and its only failure
+annotations are the limit message and the runner's "Process completed with exit code 1.", as a real
+limit leaves them. The Claude lane's pinned action fails with
+"Claude Code returned an error result: You've hit your limit · resets 9am (UTC)" and writes no
+execution log in that case (measured on Greenbauer/zack.land run 38286901786: the explorer's usage
+record says `no_artifact`), so the annotation is the one record of it; `actions/qae-codex` prints the
+Codex CLI's last error as one (`You've hit your usage limit. ... try again at <time>.`). Everything
+else stays red with the plain "could not run" review: a server-side rate limit ("not your usage
+limit", which a rerun fixes), any other failure, an explorer of several that failed another way or
+walked (its verdict is the gates' to judge), and annotations the job cannot read. Reading them needs
+`actions: read` and `checks: read` on the verify job, which both templates grant. An annotation is
+text any step of that job can print, a pull request's own build script among them, which is why the
+step, its exit code and the annotations are all judged: a build that prints the limit and fails is a
+failed build step; one that prints it and succeeds leaves the explorer to fail on its own, which adds
+that lane's own annotation (the Claude action's error, or `actions/qae-codex`'s for any Codex exit,
+with its exit status when Codex named no error), and a site process that kills the explorer makes it
+exit 137 or 143. What is left is narrow and needs the pull request's own code to do both: print the
+limit, then break the explorer so that it exits 1 with no annotation of its own (the Codex lane's CLI
+install failing, say). The warning and the QA review then say this head was not walked, and the head
+is recorded as limited, never as a walk. The `Acceptance criteria: walk` checks
+themselves stay red on a limited run, since those jobs did fail: require `Acceptance criteria`, as
+above, not them.
 
 ## A reachable preview instead of a site on the runner
 
@@ -1231,7 +1247,7 @@ same. What differs, and why:
   same dedicated 7-day artifact as the Claude lane. It still writes `qae-artifacts/final.md` for
   the existing flow and returns the Codex process status after preserving partial usage. A run
   that fails prints the CLI's last error message as its one failure annotation, which is how the
-  QA review tells a [usage limit](#when-the-explorer-hits-a-usage-limit) from any other failure. The
+  verify job tells a [usage limit](#when-the-explorer-hits-a-usage-limit) from any other failure. The
   weekly keepalive has no browser MCP and does not upload an explorer usage artifact. See
   [`docs/USAGE-CONTRACT.md`](../../docs/USAGE-CONTRACT.md) for the shared schema and privacy rules.
 

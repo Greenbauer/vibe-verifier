@@ -1,6 +1,5 @@
 """`vibe-verifier qa-review` and actions/qa-review: the QAE's one review comment on a pull request,
 driven through the command line (and the action's own script) against a fake `gh` that records writes."""
-import json
 import re
 import subprocess
 import unittest
@@ -112,91 +111,6 @@ class QaReview(GhFixture):
         self.assertEqual(body.splitlines()[1], "## QA review: could not run ⚠️")
         self.assertIn("The explore job ended `failure` on " + COMMIT, body)
 
-    # A model usage limit: the explore job's failure annotations say so, and the comment tells the agent
-    # driving the pull request to walk the criteria by hand until the reset. Messages as the lanes print them.
-
-    CLAUDE_LIMIT = ("Action failed with error: SDK execution error: Error: Claude Code returned an error result: "
-                    "You've hit your limit \u00b7 resets 9am (UTC)")  # Greenbauer/zack.land run 38286901786
-    CODEX_LIMIT = ("Codex ended with an error: You've hit your usage limit. Visit https://chatgpt.com/settings/usage "
-                   "to purchase more credits or try again at Oct 13th, 2026 9:00 AM.")
-
-    def explorers(self, *jobs):
-        """Each job a (name, conclusion, [failure annotation messages]); its id is its position plus 100."""
-        site = Path(self.fixtures) / "acme" / "site"
-        (site / ".annotations").mkdir(exist_ok=True)
-        listed = []
-        for number, (name, conclusion, messages) in enumerate(jobs, 100):
-            listed.append({"id": number, "name": name, "conclusion": conclusion})
-            notes = [{"annotation_level": "failure", "message": "Process completed with exit code 1."}]
-            notes += [{"annotation_level": "failure", "message": message} for message in messages]
-            notes.append({"annotation_level": "warning", "message": "Node.js 20 is deprecated."})
-            (site / ".annotations" / ("%d.json" % number)).write_text(json.dumps(notes))
-        (site / ".jobs.json").write_text(json.dumps([{"id": 1, "name": "qae-criteria", "conclusion": "success"}] + listed))
-
-    def test_a_usage_limit_tells_the_driver_to_walk_by_hand(self):
-        self.explorers(("qae-explore", "failure", [self.CLAUDE_LIMIT]))
-        body = self.posted(explore="failure", gates="", verdict=False)
-        self.assertEqual(body.splitlines()[1], "## QA review: could not run, model usage limit \u26a0\ufe0f")
-        self.assertIn("The explorer hit its model usage limit on " + COMMIT + " (it resets 9am (UTC)), so nothing was "
-                      "checked and these checks stay red.", body)
-        for step in ("walk every bullet under `## Acceptance criteria`", "`--widths` of the `qae-artifacts` line",
-                     "Post the evidence as a pull request comment: one line per criterion, PASS or FAIL",
-                     "Rerun this workflow after the reset", "never a verdict"):
-            self.assertIn(step, body)
-        self.assertIn("[The run and its evidence](%s)" % RUN, body)
-        self.assertNotIn("Its log has the cause", body)
-        self.assertIn("repos/acme/site/actions/runs/42/jobs?filter=latest&per_page=100",
-                      [c["endpoint"] for c in self.calls()])
-
-    def test_the_codex_lanes_limit_and_a_split_run_read_alike(self):
-        self.explorers(("qae-explore", "failure", [self.CODEX_LIMIT]), ("qae / qae-explore (2)", "failure", [self.CODEX_LIMIT]))
-        body = self.posted(explore="failure", gates="failure", verdict=False)
-        self.assertEqual(body.splitlines()[1], "## QA review: could not run, model usage limit \u26a0\ufe0f")
-        # The names docs/check-names.md gave the explore jobs read alike.
-        self.explorers(("Acceptance criteria: walk", "failure", [self.CODEX_LIMIT]),
-                       ("qa / Acceptance criteria: walk (2)", "failure", [self.CODEX_LIMIT]))
-        self.assertIn("model usage limit", self.posted(explore="failure", gates="", verdict=False).splitlines()[1])
-        self.assertIn("(it resets Oct 13th, 2026 9:00 AM)", body)
-        self.explorers(("qae-explore", "failure", ["You've reached your Fable limit. Switch to another model."]))
-        self.assertIn("(its message names no reset time)", self.posted(explore="failure", gates="", verdict=False))
-
-    def test_any_other_explore_failure_keeps_the_plain_body(self):
-        cases = {
-            "no annotation but the exit code": [("qae-explore", "failure", [])],
-            "the write scope": [("qae-explore", "failure", ["the explorer wrote outside qae-artifacts/:"])],
-            "a server-side rate limit, which a rerun fixes": [("qae-explore", "failure", [
-                "Codex ended with an error: API Error: Server is temporarily limiting requests (not your usage limit)"])],
-            "one explorer of two for another reason": [("qae-explore", "failure", [self.CLAUDE_LIMIT]),
-                                                       ("qae-explore (2)", "failure", ["site did not answer"])],
-            "no failed explore job in the latest attempt": [("qae-explore", "success", [self.CLAUDE_LIMIT])],
-            "a limit printed by another job": [("qae-verify", "failure", [self.CLAUDE_LIMIT])],
-            "the verify job, named as now": [("Acceptance criteria", "failure", [self.CLAUDE_LIMIT])],
-        }
-        for why, jobs in cases.items():
-            self.explorers(*jobs)
-            body = self.posted(explore="failure", gates="", verdict=False)
-            self.assertEqual(body.splitlines()[1], "## QA review: could not run \u26a0\ufe0f", why)
-            self.assertIn("The explore job ended `failure` on " + COMMIT + ", so nothing was checked. Its log has the cause", body, why)
-
-    def test_a_cancelled_explore_or_a_missing_run_id_reads_nothing(self):
-        self.explorers(("qae-explore", "failure", [self.CLAUDE_LIMIT]))
-        for explore, run_id in (("cancelled", "42"), ("failure", "")):
-            body = self.posted(explore=explore, gates="", verdict=False, run_id=run_id)
-            self.assertEqual(body.splitlines()[1], "## QA review: could not run \u26a0\ufe0f")
-            self.assertFalse([c for c in self.calls() if "/jobs" in c["endpoint"]], explore)
-
-    def test_jobs_that_cannot_be_read_still_post_the_plain_body(self):
-        # A consumer workflow without `actions: read` and `checks: read`: the read fails, the review is still posted.
-        (Path(self.fixtures) / "acme" / "site" / ".jobs.json").write_text("not json")
-        result = self.review(explore="failure", gates="", verdict=False)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("::warning::could not tell why the explore job failed", result.stdout)
-        self.assertEqual(self.writes()[0]["body"]["body"].splitlines()[1], "## QA review: could not run \u26a0\ufe0f")
-
-    def test_not_required_beats_a_usage_limit(self):
-        self.explorers(("qae-explore", "failure", [self.CLAUDE_LIMIT]))
-        self.assertIn("not required", self.posted(explore="failure", gates="skipped", not_required="a pin bump", verdict=False))
-
     # Which state wins: the order is not-required, then a failed explore, then the gates.
 
     def test_not_required_beats_a_failed_explore(self):
@@ -276,7 +190,7 @@ class QaReview(GhFixture):
         env = clean_env(dict(self.env, GITHUB_ACTION_PATH=str(action_path), GH_TOKEN="x", VV_REPO="acme/site",
                              VV_PR="7", VV_HEAD=HEAD, VV_RUN=RUN, VV_CRITERIA=self.criteria, VV_VERDICT=self.verdict,
                              VV_TICKET="", VV_EXPLORE="success", VV_GATES="failure", VV_NOT_REQUIRED="", VV_CARRIED="",
-                             VV_RUN_ID="42", VV_MANIFEST=".vibe-verifier-qae"))
+                             VV_RUN_ID="42", VV_MANIFEST=".vibe-verifier-qae", VV_LIMITS=""))
         result = subprocess.run(["bash", "-e", "-c", script], capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         body = self.writes()[0]["body"]["body"]
@@ -285,7 +199,8 @@ class QaReview(GhFixture):
         for wired in ("${{ github.event.pull_request.head.sha }}", "${{ inputs.not-required }}", "${{ inputs.gates-outcome }}",
                       "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
                       "VV_RUN_ID: ${{ github.run_id }}", '--run-id "$VV_RUN_ID"',
-                      "VV_MANIFEST: ${{ inputs.manifest }}", '--manifest "$VV_MANIFEST"'):
+                      "VV_MANIFEST: ${{ inputs.manifest }}", '--manifest "$VV_MANIFEST"',
+                      "VV_LIMITS: ${{ inputs.limits }}", '--limits "$VV_LIMITS"'):
             self.assertIn(wired, text)
 
 

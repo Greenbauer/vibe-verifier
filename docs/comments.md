@@ -23,6 +23,7 @@ coordinates.
 | Text | Written by | Read by | If it changed |
 |---|---|---|---|
 | `<!-- vibe-verifier:qa-review -->`, line one | `actions/qa-review` | the next run, to find the comment it edits | a new comment every run |
+| `<!-- qa-review: <sha> -- limited -- run <id> -->`, the last line of a not-walked QA review | `actions/qa-review` | no job: the record that this head was not walked (a carried walk is taken only from a run that succeeded) | nothing |
 | `<!-- vibe-verifier:proof-audit -->`, line one | `actions/proof-audit` | the next run, the same way | a new comment every run |
 | `<!-- vibe-verifier:review-receipt -->`, line one, then one `<!-- review-receipt: <sha> -- <mode> -- run <id> -->` line per run (the newest hundred) | the review workflow's "Post the receipt" step | its scope step (the last reviewed commit, for a delta review) and its verify job (the receipt for this head, judged by the `review-receipt` gate); the newest receipt is the highest run number, whatever comment holds it | no receipt is found: every head reviews in full and the verify job fails |
 

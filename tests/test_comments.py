@@ -69,13 +69,6 @@ class Prompts(unittest.TestCase):
 
 
 class QaReview(GhFixture):
-    def explorer_limit(self):
-        site = Path(self.fixtures) / "acme" / "site"
-        (site / ".annotations").mkdir()
-        (site / ".annotations" / "100.json").write_text(json.dumps(
-            [{"annotation_level": "failure", "message": "Claude Code returned an error result: You've hit your limit · resets 9am (UTC)"}]))
-        (site / ".jobs.json").write_text(json.dumps([{"id": 100, "name": "qae-explore", "conclusion": "failure"}]))
-
     def test_every_state_follows_the_rules(self):
         # The reasons as gates/_acceptance.py writes them, for changed paths no site renders and for a carried walk.
         paths = _acceptance.not_required("x\n", ["docs/a.md"])
@@ -84,10 +77,11 @@ class QaReview(GhFixture):
                   "not required": {"gates": "skipped", "not_required": paths, "verdict": False},
                   "passed on an earlier head": {"explore": "skipped", "gates": "skipped", "verdict": False, "carried": "a" * 40,
                                                 "not_required": walk},
-                  "could not run, model usage limit": {"explore": "failure", "gates": "", "verdict": False}}
+                  # The limits as the qa-limit step writes them (tests/test_qa_limit.py).
+                  "not walked, model usage limit": {"explore": "failure", "gates": "skipped", "verdict": False, "extra": (
+                      "--limits", json.dumps([{"job": "Acceptance criteria: walk", "limit": "You've hit your limit",
+                                               "reset": "9am (UTC)"}]))}}
         for state, kwargs in states.items():
-            if "usage limit" in state:
-                self.explorer_limit()
             body = self.posted(**kwargs)
             self.assertTrue(body.startswith(MARKER + "\n## QA review: %s " % state), (state, body))
             self.assertIn("[this commit](https://github.com/acme/site/commit/%s)" % HEAD, body, state)
