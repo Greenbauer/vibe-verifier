@@ -13,6 +13,7 @@ from qa_review_fixture import HEAD, RUN, GhFixture
 
 COMMIT = "[this commit](https://github.com/acme/site/commit/%s)" % HEAD
 LIMIT_ACTION = ROOT / "actions" / "qa-limit" / "action.yml"
+EXPLORER_STEP = "Explore the acceptance criteria in a real browser"
 
 
 class QaLimit(GhFixture):
@@ -27,12 +28,17 @@ class QaLimit(GhFixture):
                    "to purchase more credits or try again at Oct 13th, 2026 9:00 AM.")
 
     def explorers(self, *jobs):
-        """Each job a (name, conclusion, [failure annotation messages]); its id is its position plus 100."""
+        """Each job a (name, conclusion, [failure annotation messages], [failed steps]: by default the explorer's when
+        it failed); its id is its position plus 100."""
         site = Path(self.fixtures) / "acme" / "site"
         (site / ".annotations").mkdir(exist_ok=True)
         listed = []
-        for number, (name, conclusion, messages) in enumerate(jobs, 100):
-            listed.append({"id": number, "name": name, "conclusion": conclusion})
+        for number, job in enumerate(jobs, 100):
+            name, conclusion, messages = job[:3]
+            failed = job[3] if len(job) > 3 else ([EXPLORER_STEP] if conclusion == "failure" else [])
+            steps = [{"number": 1, "name": "Set up job", "conclusion": "success"}] + [
+                {"number": 2 + index, "name": step, "conclusion": "failure"} for index, step in enumerate(failed)]
+            listed.append({"id": number, "name": name, "conclusion": conclusion, "steps": steps})
             notes = [{"annotation_level": "failure", "message": "Process completed with exit code 1."}]
             notes += [{"annotation_level": "failure", "message": message} for message in messages]
             notes.append({"annotation_level": "warning", "message": "Node.js 20 is deprecated."})
@@ -106,6 +112,17 @@ class QaLimit(GhFixture):
             "the write scope": [("qae-explore", "failure", ["the explorer wrote outside qae-artifacts/:"])],
             "no failed explore job in the latest attempt": [("qae-explore", "success", [self.CLAUDE_LIMIT])],
             "a limit printed by another job": [("qae-verify", "failure", [self.CLAUDE_LIMIT])],
+            # A pull request's build script printing the limit, as GitHub records it: the build step fails, or it
+            # exits 0 and the explorer then fails for a reason of its own, which its lane annotates.
+            "a limit the build printed, which failed the build": [
+                ("qae-explore", "failure", [self.CLAUDE_LIMIT], ["Build and start the site under test"])],
+            "a limit the build printed, and the explorer's own failure": [("qae-explore", "failure", [
+                self.CLAUDE_LIMIT, "Action failed with error: Claude Code returned an error result: max turns reached"])],
+            "a limit the build printed, and a Codex failure with no error event": [("qae-explore", "failure", [
+                self.CODEX_LIMIT, "Codex ended with an error: exit status 1, with no error message"])],
+            "a limit, and the write scope failing too": [("qae-explore", "failure", [self.CLAUDE_LIMIT],
+                                                          [EXPLORER_STEP, "Enforce the write scope"])],
+            "a job whose steps are not listed": [("qae-explore", "failure", [self.CLAUDE_LIMIT], [])],
             "the verify job, named as now": [("Acceptance criteria", "failure", [self.CLAUDE_LIMIT])],
         }
         for why, jobs in cases.items():

@@ -1473,6 +1473,12 @@ USAGE_LIMIT = re.compile(r"(?P<limit>You(?:'|\u2019)ve (?:hit|reached) your (?:[
 LIMIT_RESET = re.compile(r"\b(?:resets|try again (?:at|in))\s+(?P<when>[^\u00b7\n]+?)\s*\.?\s*$", re.I)
 # Its name, or the one docs/check-names.md replaced, which a copy made before it still carries.
 EXPLORE_JOB = re.compile(r"(?:Acceptance criteria: walk|qae-explore)(?: \([0-9]+\))?")
+# The explorer's step in both lanes, and the runner's own annotation for a failed step. An annotation is text
+# any step can print, a pull request's build script among them, so a limit counts only when the explorer's step
+# is the job's one failed step and every failure annotation is the limit or this (Greenbauer/zack.land run
+# 38286901786): a real failure of another kind always adds its own (each lane annotates every failure).
+EXPLORER_STEP = "Explore the acceptance criteria in a real browser"
+EXIT_CODE = re.compile(r"Process completed with exit code [0-9]+\.")
 
 
 def explorer_limits(repo, run_id):
@@ -1494,11 +1500,14 @@ def explorer_limits(repo, run_id):
 
 
 def job_limit(repo, job):
-    """{job, limit, reset} from a job's usage-limit failure annotation (reset '' when it names none), or None."""
+    """{job, limit, reset} when the job's one failed step is the explorer's and its failure annotations are a
+    usage limit and the exit code (reset '' when the limit names none); None otherwise."""
+    if [step.get("name") for step in job.get("steps") or [] if step.get("conclusion") == "failure"] != [EXPLORER_STEP]:
+        return None
     notes = gh_json("repos/%s/check-runs/%s/annotations?per_page=100" % (repo, job["id"]))
-    found = [USAGE_LIMIT.search(note.get("message") or "") for note in notes if note.get("annotation_level") == "failure"]
-    found = [match for match in found if match]
-    if not found:
+    messages = [note.get("message") or "" for note in notes if note.get("annotation_level") == "failure"]
+    found = [match for match in map(USAGE_LIMIT.search, messages) if match]
+    if not found or any(not USAGE_LIMIT.search(message) and not EXIT_CODE.fullmatch(message) for message in messages):
         return None
     reset = LIMIT_RESET.search(found[0].group("rest").strip())
     return {"job": job["name"], "limit": found[0].group("limit"), "reset": reset.group("when").strip() if reset else ""}

@@ -77,7 +77,7 @@ class QaReview(GhFixture):
                   "not required": {"gates": "skipped", "not_required": paths, "verdict": False},
                   "passed on an earlier head": {"explore": "skipped", "gates": "skipped", "verdict": False, "carried": "a" * 40,
                                                 "not_required": walk},
-                  # The limits as the qa-limit step writes them (tests/test_qa_review.py).
+                  # The limits as the qa-limit step writes them (tests/test_qa_limit.py).
                   "not walked, model usage limit": {"explore": "failure", "gates": "skipped", "verdict": False, "extra": (
                       "--limits", json.dumps([{"job": "Acceptance criteria: walk", "limit": "You've hit your limit",
                                                "reset": "9am (UTC)"}]))}}

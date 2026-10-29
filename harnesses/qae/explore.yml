@@ -572,7 +572,7 @@ jobs:
       contents: read
       pull-requests: write   # the QA review comment, and nothing else
       actions: read    # the explore jobs of this run, and
-      checks: read     # their failure annotations: a model usage limit passes with a warning (actions/qa-limit)
+      checks: read     # their failure annotations: a model usage limit gets its own QA review (actions/qa-review)
     steps:
       - name: Require a finished criteria job
         # The explore job is skipped when the criteria job found nothing to walk, and also when that

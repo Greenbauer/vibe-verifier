@@ -1,5 +1,5 @@
-"""The Codex lane of the QAE harness: the same harness as explore.yml outside the explorer block,
-the harness prompt inlined with one lane-specific step, and the composite action carrying the
+"""The Codex lane of the QAE harness: the same harness as explore.yml outside the explorer block
+(its prompt is test_qae_codex_prompt.py), and the composite action carrying the
 settings a non-interactive Codex run needs. All read the shipped files, so the test judges what a
 consumer copies."""
 import json
@@ -17,26 +17,8 @@ from helpers import ROOT, clean_env
 CLAUDE = ROOT / "harnesses" / "qae" / "explore.yml"
 CODEX = ROOT / "harnesses" / "qae" / "explore-codex.yml"
 KEEPALIVE = ROOT / "harnesses" / "qae" / "codex-keepalive.yml"
-PROMPT = ROOT / "harnesses" / "qae" / "prompt.md"
 ACTION = ROOT / "actions" / "qae-codex" / "action.yml"
 README = ROOT / "harnesses" / "qae" / "README.md"
-
-STEP_4 = ("4. Do not post anything: the workflow turns qae-artifacts/verdict.md into the pull request's one\n"
-          "   QA review comment after you finish.\n")
-
-
-def inlined_prompt():
-    text = CODEX.read_text()
-    match = re.search(r"cat > qae-inputs/prompt\.md <<'PROMPT'\n(.*?)\n +PROMPT\n", text, re.DOTALL)
-    return "".join(line[12:] if line.strip() else "\n" for line in match.group(1).splitlines(True)) + "\n"
-
-
-def prompt_script():
-    text = CODEX.read_text()
-    step = text[text.index("- name: Write the explorer's prompt"):text.index("- name: Explore the acceptance criteria in a real browser")]
-    match = re.search(r"^( +)run: \|\n((?:\1 .*\n|\n)+)", step, re.MULTILINE)
-    indent = len(match.group(1)) + 2
-    return "".join(line[indent:] if line.strip() else "\n" for line in match.group(2).splitlines(True))
 
 
 def run_script(text, start, end=None):
@@ -52,31 +34,6 @@ def readme_site_step():
     section = README.read_text().split("## A preview behind Vercel SSO", 1)[1]
     block = section.split("```yaml\n", 1)[1].split("```\n", 1)[0]
     return "set -euo pipefail\n" + "".join(line[10:] if line.strip() else "\n" for line in block.splitlines(True))
-
-
-class Prompt(unittest.TestCase):
-    def test_the_prompt_is_the_harness_prompt_and_the_model_posts_nothing(self):
-        # docs/comments.md: the verify job's QA review is the one comment; neither lane's model posts.
-        expected = PROMPT.read_text()
-        self.assertIn(STEP_4, expected)
-        expected = (expected.replace("#PR_NUMBER", "#${{ github.event.pull_request.number }}")
-                    .replace("REPOSITORY", "${{ github.repository }}"))
-        self.assertEqual(inlined_prompt(), expected)
-
-    def test_the_prompt_names_the_url_the_site_step_declared_and_the_shell_never_parses_it(self):
-        # Run as the shell it is: the URL arrives through env, so `&` and `$(...)` in it stay text.
-        work = tempfile.mkdtemp(prefix="vv-prompt-")
-        self.addCleanup(shutil.rmtree, work, True)
-        os.mkdir(os.path.join(work, "qae-inputs"))
-        url = "https://site-git-feat-team.vercel.app/?a=1&b=$(id)"
-        self.assertIn("SITE_URL: ${{ steps.site.outputs.url }}", CODEX.read_text())
-        result = subprocess.run(["bash", "-e", "-c", prompt_script()], cwd=work, capture_output=True, text=True,
-                                env=clean_env({"SITE_URL": url, "SHARD_SHARE": "Your share of the criteria is AC2."}))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        written = Path(work, "qae-inputs", "prompt.md").read_text()
-        self.assertEqual("".join(line[2:] if line.strip() else "\n" for line in written.splitlines(True)),
-                         inlined_prompt().replace("SITE_URL", url).replace("SHARD_SHARE", "Your share of the criteria is AC2."))
-        self.assertIn("The site built from this PR is running at %s.\n" % url, written)
 
 
 class Template(unittest.TestCase):
@@ -105,7 +62,7 @@ class Template(unittest.TestCase):
         self.assertNotIn("gh pr comment", text)
 
     def test_every_catalog_pin_is_the_placeholder_a_consumer_replaces(self):
-        for template, count in ((CODEX, 9), (KEEPALIVE, 1)):
+        for template, count in ((CODEX, 10), (KEEPALIVE, 1)):
             pins = re.findall(r"vibe-verifier/actions/[\w-]+@(\S+)( #[^\n]*)?", template.read_text())
             self.assertEqual(len(pins), count, template.name)
             for sha, comment in pins:

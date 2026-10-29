@@ -860,10 +860,11 @@ reviewer account is rate-limited ([review harness](../review/README.md)). The ve
   ([a walk that still holds](#a-walk-that-still-holds)). Rerun the workflow after the reset (`gh run rerun <run id>
   --failed`), or push: the next walk checks every criterion on the head it runs on.
 
-The fact is structural, never the explorer's prose: `qa-limit` lists the run's latest jobs, and only
-when every explore job (`Acceptance criteria: walk`, or `qae-explore` in an older copy: each explorer
-of a split run, and `<caller> / <name>` in a reusable workflow) failed and carries a failure
-annotation with the limit message is it a usage limit. The Claude lane's pinned action fails with
+The fact is structural, never the explorer's prose: `qa-limit` lists the run's latest jobs, and it is
+a usage limit only when every explore job (`Acceptance criteria: walk`, or `qae-explore` in an older
+copy: each explorer of a split run, and `<caller> / <name>` in a reusable workflow) failed with
+"Explore the acceptance criteria in a real browser" as its one failed step, and its only failure
+annotations are the limit message and the runner's "Process completed with exit code N.". The Claude lane's pinned action fails with
 "Claude Code returned an error result: You've hit your limit · resets 9am (UTC)" and writes no
 execution log in that case (measured on Greenbauer/zack.land run 38286901786: the explorer's usage
 record says `no_artifact`), so the annotation is the one record of it; `actions/qae-codex` prints the
@@ -872,8 +873,13 @@ else stays red with the plain "could not run" review: a server-side rate limit (
 limit", which a rerun fixes), any other failure, an explorer of several that failed another way or
 walked (its verdict is the gates' to judge), and annotations the job cannot read. Reading them needs
 `actions: read` and `checks: read` on the verify job, which both templates grant. An annotation is
-text any step of that job can print, so a pull request's own build script could fake one; the walk
-then did not run either, and the review and the warning say so for that head.
+text any step of that job can print, a pull request's own build script among them, which is why the
+step and the annotations are both judged: a build that prints the limit and fails is a failed build
+step, and one that prints it and succeeds leaves the explorer to fail on its own, which adds that
+lane's own annotation (the Claude action's error, or `actions/qae-codex`'s, which annotates every
+failure, with its exit status when Codex named no error). The `Acceptance criteria: walk` checks
+themselves stay red on a limited run, since those jobs did fail: require `Acceptance criteria`, as
+above, not them.
 
 ## A reachable preview instead of a site on the runner
 
