@@ -25,7 +25,7 @@ One file per feature of this catalog: its gates, its harnesses, its command-line
 | [Merge grants](merge-grant.md) | `merge-grant` (not a gate: whether a merge policy lets an agent merge a pull request; a merge guard and the dashboard read it) |
 | [Proof audit](proof-audit.md) | `proof-audit` (gate and command: a model grades whether the tests prove each requirement, the gate checks its quotes) |
 | [Feature map drift](feature-map.md) | `feature-map` |
-| [Browser acceptance verification (QAE)](qae-harness.md) | `acceptance-verdict`, `qae-artifacts`, `criteria`, `features`, `qae-inputs`, `qa-review`, `tool` |
+| [Browser acceptance verification (QAE)](qae-harness.md) | `acceptance-verdict`, `qae-artifacts`, `criteria`, `features`, `qae-inputs`, `qa-review`, `qa-limit`, `tool` |
 | [Revision-bound AI review](review-harness.md) | `review-receipt` |
 | [Pull request sync](pull-sync.md) | none: `actions/pull-sync` is an action a workflow runs |
 | [Preview address](preview.md) | none: `actions/preview` is an action a workflow runs |

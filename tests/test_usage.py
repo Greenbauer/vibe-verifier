@@ -205,7 +205,7 @@ class CodexUsage(CollectorCase):
 
     def test_a_failed_run_annotates_its_last_error_for_the_qa_review(self):
         # stderr is not kept, so the failure annotation is where a failed run says why; vibe-verifier
-        # qa-review reads it to tell a model usage limit from any other failure. Newlines are escaped.
+        # qa-limit reads it to tell a model usage limit from any other failure. Newlines are escaped.
         limit = "You've hit your usage limit. Try again at 9:00 AM.\n100% used"
         run = self.run_fake([{"type": "thread.started"}, {"type": "error", "message": "Reconnecting... 1/5"},
                              {"type": "turn.failed", "error": {"message": limit}}], exit_code=1)

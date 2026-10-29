@@ -229,7 +229,7 @@ class Steps(unittest.TestCase):
 
     def test_every_catalog_pin_is_the_placeholder_a_consumer_replaces(self):
         pins = re.findall(r"vibe-verifier/actions/[\w-]+@(\S+)( #[^\n]*)?", TEMPLATE.read_text())
-        self.assertEqual(len(pins), 9)
+        self.assertEqual(len(pins), 10)
         for sha, comment in pins:
             self.assertEqual(sha, "0" * 40)
             self.assertIn("CONSUMER: pin the commit you subscribe to", comment)
@@ -360,7 +360,7 @@ class Applicability(unittest.TestCase):
         self.assertLess(verify.index("- name: Read the criteria"), download)
         self.assertIn("if: steps.criteria.outputs.count != '0'", verify[download:download + 200])
         gates = verify.index("- name: Run the QA gates")
-        self.assertIn("        id: gates\n        if: steps.criteria.outputs.declared-none == ''\n", verify[gates:gates + 200])
+        self.assertIn("        id: gates\n        if: steps.criteria.outputs.declared-none == ''", verify[gates:gates + 200])
 
 
 class Evidence(unittest.TestCase):
@@ -401,7 +401,7 @@ class Review(unittest.TestCase):
         text = TEMPLATE.read_text()
         verify = text[text.index("\n  verify:\n"):]
         self.assertIn("      pull-requests: write   # the QA review comment, and nothing else\n", verify)
-        # Read access only, to tell a model usage limit from any other failed explore job (actions/qa-review).
+        # Read access only, to tell a model usage limit from any other failed explore job (actions/qa-limit).
         self.assertIn("      actions: read    # the explore jobs of this run, and\n", verify)
         self.assertIn("      checks: read     # their failure annotations", verify)
         self.assertNotIn("issues: write", text)

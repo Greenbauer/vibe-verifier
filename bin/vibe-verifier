@@ -167,11 +167,17 @@ replaces the block in that file, appending it when the file has none. `repo-rule
 pull request whose block differs from what this renders for its HEAD.
 
 `qa-review` posts the QAE's one review comment on a pull request, or edits it in place when it is
-already there: passed, changes needed, not required, or could not run (with its own body when every
-failed explorer hit a model usage limit, read from the explore jobs' failure annotations), with the head it judged,
+already there: passed, changes needed, not required, could not run, or not walked (when `--limits`, from
+`qa-limit`, says every explorer hit a model usage limit: the head is recorded as limited), with the head it judged,
 each criterion's verdict from the explorer (and each re-walked feature's, noting a feature whose Verify section the
 pull request changed, read from the map `--manifest` names in `--checkout`), and a link to the run. The state comes
 from what the workflow's jobs and gates concluded, never from the explorer's prose.
+
+`qa-limit --repo OWNER/NAME --run-id ID --head SHA` reads the failure annotations of a run's explore jobs and, when
+every one failed on a model usage limit, warns with each limit and its reset and writes `limited=true` and the limits
+to $GITHUB_OUTPUT: the QAE verify job then skips the steps that judge a walk and passes with that warning. Any other
+failure, a server-side rate limit among them, an explorer that succeeded, or annotations it cannot read write
+`limited=false`.
 
 `proof-audit --body FILE [--model M] [--reasoning-effort E] [--max-ids N] [--grades DIR]` grades, with a model
 on the Codex CLI (tools/codex) under a ChatGPT-managed login ($CODEX_HOME, default ~/.codex), whether the
@@ -1435,7 +1441,7 @@ REVIEW_HEADINGS = {
     "not-required": "## QA review: not required \u2705",
     "carried": "## QA review: passed on an earlier head \u2705",
     "could-not-run": "## QA review: could not run \u26a0\ufe0f",
-    "usage-limit": "## QA review: could not run, model usage limit \u26a0\ufe0f",
+    "usage-limit": "## QA review: not walked, model usage limit \u26a0\ufe0f",
 }
 
 
@@ -1448,10 +1454,10 @@ def review_state(args, limits=None):
     judged nothing, so that is could-not-run too, never a refusal. A skipped explore job found no
     criterion to walk: the verify job's first step fails when the criteria job that decided it did not
     finish, so its gates never run and that case lands on could-not-run too. A failed explore job whose
-    every failed explorer hit a model usage limit (`limits`, from explorer_limits) is usage-limit."""
+    every explorer hit a model usage limit (`limits`, the qa-limit step's, from explorer_limits) is usage-limit."""
     if args.not_required:
         return "carried" if args.carried_from else "not-required"
-    if args.explore_result == "failure" and limits is not None:
+    if args.explore_result == "failure" and limits:
         return "usage-limit"
     if args.explore_result not in EXPLORE_DONE or args.gates_outcome not in ("success", "failure"):
         return "could-not-run"
@@ -1462,39 +1468,64 @@ def review_state(args, limits=None):
 # pinned action fails with "... Claude Code returned an error result: You've hit your limit · resets 9am
 # (UTC)" (and writes no execution log, so nothing in the job can read it), and actions/qae-codex with
 # "Codex ended with an error: You've hit your usage limit. ... try again at <time>." A server-side rate
-# limit ("not your usage limit") does not match: that one is retried, not walked by hand.
-USAGE_LIMIT = re.compile(r"You(?:'|\u2019)ve (?:hit|reached) your (?:[\w-]+ ){0,3}limit\b(?P<rest>.*)", re.I | re.S)
+# limit ("not your usage limit") does not match: a rerun fixes that one, so it stays red.
+USAGE_LIMIT = re.compile(r"(?P<limit>You(?:'|\u2019)ve (?:hit|reached) your (?:[\w-]+ ){0,3}limit)\b(?P<rest>.*)", re.I | re.S)
 LIMIT_RESET = re.compile(r"\b(?:resets|try again (?:at|in))\s+(?P<when>[^\u00b7\n]+?)\s*\.?\s*$", re.I)
 # Its name, or the one docs/check-names.md replaced, which a copy made before it still carries.
 EXPLORE_JOB = re.compile(r"(?:Acceptance criteria: walk|qae-explore)(?: \([0-9]+\))?")
 
 
 def explorer_limits(repo, run_id):
-    """The reset times (each '' when the message names none) when every failed explore job of the run's
-    latest attempt failed on a model usage limit; None when any failed for another reason, when none
-    failed, or when the jobs or their annotations cannot be read (the workflow then lacks `actions: read`
-    and `checks: read`, and the plain could-not-run body is posted). A job of a reusable workflow is
-    named `<caller> / Acceptance criteria: walk`."""
+    """[{job, limit, reset}] (reset '' when the message names none), one per explore job of the run's latest
+    attempt, when every one of them failed on a model usage limit, so no explorer walked anything. None when
+    any explorer succeeded (its verdict is the gates' to judge) or failed for another reason, when there is
+    none, or when the jobs or their annotations cannot be read (the workflow then lacks `actions: read` and
+    `checks: read`). A job of a reusable workflow is named `<caller> / Acceptance criteria: walk`."""
     try:
         jobs = gh_json("repos/%s/actions/runs/%s/jobs?filter=latest&per_page=100" % (repo, run_id)).get("jobs", [])
-        failed = [job for job in jobs if EXPLORE_JOB.fullmatch(job.get("name", "").split(" / ")[-1])
-                  and job.get("conclusion") == "failure"]
-        resets = [job_limit(repo, job["id"]) for job in failed]
+        explorers = [job for job in jobs if EXPLORE_JOB.fullmatch(job.get("name", "").split(" / ")[-1])]
+        if not explorers or any(job.get("conclusion") != "failure" for job in explorers):
+            return None
+        limits = [job_limit(repo, job) for job in explorers]
     except (CannotRead, ValueError, KeyError, TypeError, AttributeError) as error:
         print("::warning::could not tell why the explore job failed: %s" % error)
         return None
-    return resets if resets and None not in resets else None
+    return limits if None not in limits else None
 
 
-def job_limit(repo, job_id):
-    """The reset time a job's usage-limit failure annotation names ('' for none), or None when it has none."""
-    notes = gh_json("repos/%s/check-runs/%s/annotations?per_page=100" % (repo, job_id))
+def job_limit(repo, job):
+    """{job, limit, reset} from a job's usage-limit failure annotation (reset '' when it names none), or None."""
+    notes = gh_json("repos/%s/check-runs/%s/annotations?per_page=100" % (repo, job["id"]))
     found = [USAGE_LIMIT.search(note.get("message") or "") for note in notes if note.get("annotation_level") == "failure"]
     found = [match for match in found if match]
     if not found:
         return None
     reset = LIMIT_RESET.search(found[0].group("rest").strip())
-    return reset.group("when").strip() if reset else ""
+    return {"job": job["name"], "limit": found[0].group("limit"), "reset": reset.group("when").strip() if reset else ""}
+
+
+def describe_limits(limits):
+    """Each explorer's limit and its reset, one string each: `Acceptance criteria: walk: You've hit your limit, resets 9am`."""
+    return ["%s: %s, %s" % (found["job"], found["limit"], "resets " + found["reset"] if found["reset"]
+                            else "its message names no reset time") for found in limits]
+
+
+def qa_limit_command(args):
+    """The QAE verify job's usage-limit step: when every explorer hit its model usage limit, warn with each limit and
+    its reset and write `limited=true` and the limits (JSON) to $GITHUB_OUTPUT, so the steps that judge a walk are
+    skipped and the job passes with the warning (operator, 2026-10-29); otherwise `limited=false`."""
+    limits = explorer_limits(args.repo, args.run_id)
+    if limits:
+        print("::warning::The acceptance walk did not run on %s: every explorer hit its model usage limit (%s). This "
+              "head was NOT checked in a browser; the QA review records it as limited, never as a walk. Rerun the "
+              "workflow after the reset, so the next walk checks it." % (args.head[:10], "; ".join(describe_limits(limits))))
+    else:
+        print("not a model usage limit on every explorer: the walk is judged as usual")
+    output = os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a", encoding="utf-8") as handle:
+            handle.write("limited=%s\nlimits=%s\n" % ("true" if limits else "false", json.dumps(limits or [])))
+    return 0
 
 
 def review_criteria(criteria_text, verdict_text, ticket_text="", edits=None, retried=None):
@@ -1586,20 +1617,12 @@ def explorer_said(carried):
 
 
 def usage_limit_lines(head, limits):
-    """The usage-limit review's text: when the limit resets, and the QA walk the driver does by hand until then."""
-    resets = sorted(set(reset for reset in limits if reset))
-    when = "it resets %s" % " / ".join(resets) if resets else "its message names no reset time"
-    return ["The explorer hit its model usage limit on %s (%s), so nothing was checked and these checks "
-            "stay red. Until the reset, the agent driving this pull request does the QA walk by hand:" % (head, when),
-            "",
-            "1. Open this pull request's preview at the current head and walk every bullet under "
-            "`## Acceptance criteria` (and the ticket's criteria, when it has any), at each width on the "
-            "`--widths` of the `qae-artifacts` line in the QAE manifest (`.vibe-verifier-qae`).",
-            "2. Post the evidence as a pull request comment: one line per criterion, PASS or FAIL, with "
-            "the head it was walked on, what was done and what the page showed (a screenshot or its text).",
-            "3. Rerun this workflow after the reset, so the QAE judges the head itself.",
-            "",
-            "A hand walk is evidence for the reviewer, never a verdict: only a rerun turns these checks green."]
+    """The usage-limit review's text: the walk did not run, which limit each explorer hit and when it resets."""
+    return (["The walk did not run on %s: every explorer hit its model usage limit, so nothing was checked in a "
+             "browser. The Acceptance criteria check passes with a warning, and this head is recorded as limited, "
+             "never as a walk:" % head, ""]
+            + ["- %s" % line for line in describe_limits(limits)]
+            + ["", "Rerun this workflow after the reset: the next walk checks every criterion on the head it runs on."])
 
 
 def review_body(state, args, limits=None):
@@ -1627,6 +1650,9 @@ def review_body(state, args, limits=None):
         edits = feature_edits(args, list(check_lines(verdict, "regression-check")))
         lines += review_criteria(read_text(args.criteria), verdict, ticket, edits, retry_notes(args))
     lines += ["", "[The run and its evidence](%s)" % args.run_url]
+    if state == "usage-limit":
+        # This head's record that it was not walked, shaped like the review harness's `limited` receipt.
+        lines.append("<!-- qa-review: %s -- limited -- run %s -->" % (args.head, args.run_id))
     return "\n".join(lines) + "\n"
 
 
@@ -1642,7 +1668,7 @@ def review_comment_ids(repo, pr):
 
 def qa_review_command(args):
     try:
-        limits = explorer_limits(args.repo, args.run_id) if args.run_id and args.explore_result == "failure" else None
+        limits = json.loads(args.limits) if args.limits else None
         state = review_state(args, limits)
         body = review_body(state, args, limits)
         found = review_comment_ids(args.repo, args.pr)
@@ -1650,7 +1676,7 @@ def qa_review_command(args):
             gh_json("repos/%s/issues/comments/%s" % (args.repo, found[0]), method="PATCH", body={"body": body})
         else:
             gh_json("repos/%s/issues/%s/comments" % (args.repo, args.pr), method="POST", body={"body": body})
-    except (OSError, CannotRead) as error:
+    except (OSError, CannotRead, ValueError) as error:
         return fail("could not post the QA review: %s" % error)
     print("%s the QA review: %s" % ("edited" if found else "posted", state))
     return 0
@@ -1794,8 +1820,14 @@ def main():
     review.add_argument("--checkout", default=".", metavar="DIR", help="the pull request's checkout, with the base's history")
     review.add_argument("--artifacts", default="qae-artifacts", metavar="DIR", help="the run's evidence: a step the "
                         "explorer retried after an environment error is named on its criterion's row")
-    review.add_argument("--run-id", default="", metavar="ID", help="the workflow run's id: when its explore job failed, "
-                        "its failure annotations are read to tell a model usage limit from any other failure")
+    review.add_argument("--run-id", default="", metavar="ID", help="the workflow run's id, named in a limited head's record")
+    review.add_argument("--limits", default="", metavar="JSON", help="the qa-limit step's limits: when it found every "
+                        "explorer hit its model usage limit, the review says the walk did not run and when each resets")
+    limit = commands.add_parser("qa-limit", help="whether every explore job of a run failed on a model usage limit, "
+                                "from their failure annotations (via gh): warns and writes `limited` to $GITHUB_OUTPUT")
+    limit.add_argument("--repo", required=True, metavar="OWNER/NAME")
+    limit.add_argument("--run-id", required=True, metavar="ID")
+    limit.add_argument("--head", required=True, metavar="SHA", help="the head commit the run judged")
     args = parser.parse_args()
     if args.command == "list":
         print("\n".join(available()))
@@ -1812,6 +1844,8 @@ def main():
         return qae_inputs_command(args)
     if args.command == "qa-review":
         return qa_review_command(args)
+    if args.command == "qa-limit":
+        return qa_limit_command(args)
     if args.command == "tool":
         return tool_command(args)
     if args.command == "rules-doc":

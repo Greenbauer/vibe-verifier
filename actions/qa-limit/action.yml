@@ -1,0 +1,27 @@
+name: Vibe Verifier QA usage limit
+description: Tell, from the failure annotations of this run's explore jobs, whether every explorer failed on the model's usage limit (the verify job needs `actions read` and `checks read`). When so it warns with each limit and its reset and sets `limited` to true, so the verify job skips the steps that judge a walk and passes with that warning; otherwise `limited` is false.
+inputs:
+  token:
+    description: A token that may read this run's jobs and their annotations.
+    default: ${{ github.token }}
+outputs:
+  limited:
+    description: true when every explorer failed on a model usage limit, else false.
+    value: ${{ steps.read.outputs.limited }}
+  limits:
+    description: Each explorer's limit and reset, as JSON, for actions/qa-review's `limits` input ([] when not limited).
+    value: ${{ steps.read.outputs.limits }}
+runs:
+  using: composite
+  steps:
+    - name: Read the explore jobs' failure annotations
+      id: read
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        VV_REPO: ${{ github.repository }}
+        VV_RUN_ID: ${{ github.run_id }}
+        VV_HEAD: ${{ github.event.pull_request.head.sha }}
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" qa-limit --repo "$VV_REPO" --run-id "$VV_RUN_ID" --head "$VV_HEAD"

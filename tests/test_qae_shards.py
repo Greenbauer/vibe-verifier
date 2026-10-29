@@ -343,7 +343,7 @@ class Templates(unittest.TestCase):
             _, _, verify = self.parts(template)
             self.assertLess(verify.index("- name: Run the QA gates"), verify.index(required))
             self.assertIn("        if: ${{ !cancelled() && needs.criteria.outputs.shards != '[\"\"]' && needs.explore.result != 'success' "
-                          "&& needs.explore.result != 'skipped' }}\n", verify[verify.index(required):verify.index("- name: Post the QA review")])
+                          "&& needs.explore.result != 'skipped'", verify[verify.index(required):verify.index("- name: Post the QA review")])
         failed = run_step(step_script(TEMPLATES[0].read_text(), required, "- name: Post the QA review"), workdir(self), {"EXPLORE_RESULT": "failure"})
         self.assertEqual(failed.returncode, 1)
         self.assertIn("::error::an explorer's job did not succeed (the explore job ended failure)", failed.stdout)
