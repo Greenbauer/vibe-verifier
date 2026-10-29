@@ -864,7 +864,8 @@ The fact is structural, never the explorer's prose: `qa-limit` lists the run's l
 a usage limit only when every explore job (`Acceptance criteria: walk`, or `qae-explore` in an older
 copy: each explorer of a split run, and `<caller> / <name>` in a reusable workflow) failed with
 "Explore the acceptance criteria in a real browser" as its one failed step, and its only failure
-annotations are the limit message and the runner's "Process completed with exit code N.". The Claude lane's pinned action fails with
+annotations are the limit message and the runner's "Process completed with exit code 1.", as a real
+limit leaves them. The Claude lane's pinned action fails with
 "Claude Code returned an error result: You've hit your limit · resets 9am (UTC)" and writes no
 execution log in that case (measured on Greenbauer/zack.land run 38286901786: the explorer's usage
 record says `no_artifact`), so the annotation is the one record of it; `actions/qae-codex` prints the
@@ -874,10 +875,14 @@ limit", which a rerun fixes), any other failure, an explorer of several that fai
 walked (its verdict is the gates' to judge), and annotations the job cannot read. Reading them needs
 `actions: read` and `checks: read` on the verify job, which both templates grant. An annotation is
 text any step of that job can print, a pull request's own build script among them, which is why the
-step and the annotations are both judged: a build that prints the limit and fails is a failed build
-step, and one that prints it and succeeds leaves the explorer to fail on its own, which adds that
-lane's own annotation (the Claude action's error, or `actions/qae-codex`'s, which annotates every
-failure, with its exit status when Codex named no error). The `Acceptance criteria: walk` checks
+step, its exit code and the annotations are all judged: a build that prints the limit and fails is a
+failed build step; one that prints it and succeeds leaves the explorer to fail on its own, which adds
+that lane's own annotation (the Claude action's error, or `actions/qae-codex`'s for any Codex exit,
+with its exit status when Codex named no error), and a site process that kills the explorer makes it
+exit 137 or 143. What is left is narrow and needs the pull request's own code to do both: print the
+limit, then break the explorer so that it exits 1 with no annotation of its own (the Codex lane's CLI
+install failing, say). The warning and the QA review then say this head was not walked, and the head
+is recorded as limited, never as a walk. The `Acceptance criteria: walk` checks
 themselves stay red on a limited run, since those jobs did fail: require `Acceptance criteria`, as
 above, not them.
 

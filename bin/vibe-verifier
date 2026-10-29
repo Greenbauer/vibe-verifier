@@ -1473,12 +1473,13 @@ USAGE_LIMIT = re.compile(r"(?P<limit>You(?:'|\u2019)ve (?:hit|reached) your (?:[
 LIMIT_RESET = re.compile(r"\b(?:resets|try again (?:at|in))\s+(?P<when>[^\u00b7\n]+?)\s*\.?\s*$", re.I)
 # Its name, or the one docs/check-names.md replaced, which a copy made before it still carries.
 EXPLORE_JOB = re.compile(r"(?:Acceptance criteria: walk|qae-explore)(?: \([0-9]+\))?")
-# The explorer's step in both lanes, and the runner's own annotation for a failed step. An annotation is text
-# any step can print, a pull request's build script among them, so a limit counts only when the explorer's step
-# is the job's one failed step and every failure annotation is the limit or this (Greenbauer/zack.land run
-# 38286901786): a real failure of another kind always adds its own (each lane annotates every failure).
+# The explorer's step in both lanes, and the runner's annotation for a step that exited 1, as a real limit
+# leaves them (Greenbauer/zack.land run 38286901786). An annotation is text any step can print, a pull request's
+# build script among them, so a limit counts only when the explorer's step is the job's one failed step, it exited
+# 1, and every other failure annotation is the limit: a killed explorer exits 137 or 143, and the lanes' own
+# failures (the Claude action's error, actions/qae-codex's on any Codex exit) add an annotation of their own.
 EXPLORER_STEP = "Explore the acceptance criteria in a real browser"
-EXIT_CODE = re.compile(r"Process completed with exit code [0-9]+\.")
+EXIT_CODE = re.compile(r"Process completed with exit code 1\.")
 
 
 def explorer_limits(repo, run_id):

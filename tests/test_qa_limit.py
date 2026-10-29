@@ -123,6 +123,8 @@ class QaLimit(GhFixture):
             "a limit, and the write scope failing too": [("qae-explore", "failure", [self.CLAUDE_LIMIT],
                                                           [EXPLORER_STEP, "Enforce the write scope"])],
             "a job whose steps are not listed": [("qae-explore", "failure", [self.CLAUDE_LIMIT], [])],
+            "a limit the build printed, and an explorer its site killed": [("qae-explore", "failure", [
+                self.CLAUDE_LIMIT, "Process completed with exit code 137."])],
             "the verify job, named as now": [("Acceptance criteria", "failure", [self.CLAUDE_LIMIT])],
         }
         for why, jobs in cases.items():
