@@ -30,8 +30,9 @@ later) is read too when the consumer names the store:
                            [{body}]}`, the amendments oldest first, given the bearer token in $VV_PLANS_TOKEN
     --title TEXT           the pull request's title, which may carry the marker as the body may
 
-A `[plan:<id>]` marker in the title or body (outside code fences, HTML comments and `Split off:` lines, whose
-plan is another owner's) names a plan; gates/_plan_store.py reads it from the store. Its criteria
+A `[plan:<id>]` marker in the title or body (outside code fences, HTML comments and `Split off: ... -> ...`
+lines, a list item or not, whose plan is another owner's) names a plan; gates/_plan_store.py reads it from the
+store, following no redirect. Its criteria
 are the list items under each plan heading that starts "Acceptance", then, for each amendment in order, the
 items under its own "Acceptance criteria" heading or bold line, or, when it has none, the whole amendment as
 one criterion: an amendment is a requirement however it is written. They follow any `Ticket:` section's

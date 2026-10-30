@@ -136,6 +136,7 @@ def run_codex(args, prompt, work):
     errors = os.path.join(work, "stderr.log")
     home = args.codex_home or os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
     env = dict(os.environ, CODEX_HOME=check_login(home))
+    env.pop("VV_PLANS_TOKEN", None)  # the plan store's token is the plan step's and the gate's, never the model's
     before, started = tree_state(args.repo, args.grades), time.monotonic()
     with open(errors, "wb") as stderr:
         child = subprocess.Popen(codex_command(args, prompt, last), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -215,7 +216,7 @@ def plan_of(args):
     except OSError as error:
         raise CannotRun("--body cannot be read: %s" % error)
     items, notes = requirements(args.repo, args.base_ref, body, args.title, args.plans_endpoint,
-                                os.environ.get("VV_PLANS_TOKEN", ""))
+                                os.environ.get("VV_PLANS_TOKEN", ""), args.pr)
     for note in notes:
         print("%s: %s" % (NAME, note), flush=True)
     return shards([item for item in items if "split" not in item], args.max_ids)
@@ -239,7 +240,8 @@ def audit(args):
         list(pool.map(lambda pair: grade(args, *pair), enumerate(cuts, 1)))
     table = os.path.join(args.grades, "table.md")
     command = [sys.executable, GATE, "--repo", args.repo, "--body", args.body, "--grades", args.grades,
-               "--table", table, "--format", args.format, "--title", args.title, "--plans-endpoint", args.plans_endpoint]
+               "--table", table, "--format", args.format, "--title=" + args.title, "--plans-endpoint=" + args.plans_endpoint,
+               "--pr=" + args.pr]
     if args.base_ref:
         command += ["--base-ref", args.base_ref]
     for glob in args.require_ticket:
@@ -289,6 +291,7 @@ def add_arguments(parser):
     parser.add_argument("--title", default="", help="the pull request's title, read for a `[plan:<id>]` marker as the body is")
     parser.add_argument("--plans-endpoint", default="", metavar="URL", help="a plan store answering GET <URL>/plans/<id> "
                         "(the bearer token in $VV_PLANS_TOKEN): each plan a marker names is graded whole")
+    parser.add_argument("--pr", default="", metavar="N", help="this pull request's number: no `Split off:` line may name it")
     parser.add_argument("--plan", metavar="OUT", help="write the plan (the requirements cut into shards) and stop")
     parser.add_argument("--requirements", metavar="PLAN", help="with --shard, the plan --plan wrote")
     parser.add_argument("--shard", type=int, metavar="K", help="grade only shard K of --requirements")

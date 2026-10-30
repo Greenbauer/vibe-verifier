@@ -8,27 +8,30 @@
   into requirements `PL-1`, `AM1-1`, ... (gates/_plan_store.py has the rules). They follow the Ticket sections'.
   A store that cannot be read, a marker with no token, or a plan with nothing to grade cannot run (exit 2). With
   no store given, a marker is not read, and a note says so.
-- A body line `Split off: <ID>[, <ID> ...] -> <owner>`, the owner a pull request (`#123`, or its URL on github.com)
-  or another plan (`[plan:<id>]`), gives those requirements of a stored plan to that owner: they are not graded,
-  and the table lists each as SPLIT with its owner. A Ticket section's item goes to another section with
-  `[takes: ID]` instead. A line that is not of that form, an ID no plan this pull request names in the store
-  defines, an ID split off twice, or the plan this pull request implements as the owner cannot run: a split-off
-  line never passes a requirement the plan does not define.
+- A body line `Split off: <ID>[, <ID> ...] -> <owner>`, a list item or not, the owner a pull request (`#123`, or its
+  URL on github.com) or another plan (`[plan:<id>]`), gives those requirements of a stored plan to that owner: they
+  are not graded, and the table lists each as SPLIT with its owner. A `Split off:` line with no `->` is prose. A
+  Ticket section's item goes to another section with `[takes: ID]` instead. A `->` line not of that form, an ID no
+  plan this pull request names in the store defines, an ID split off twice, an owner that is this pull request
+  (`--pr`, and $GITHUB_REPOSITORY for a URL) or the plan it implements, and requirements all split off, so that
+  nothing is graded, cannot run: a split-off line never passes a requirement. Whether `#123` is a real pull
+  request is not checked; the table shows it.
 
 The lines are read outside code fences and HTML comments, as the markers are, and only by these two steps: the
 model is never given the body.
 """
+import os
 import re
 
 from _acceptance import HTML_COMMENT
 from _contract import CannotRun, Finding, git, matches, resolve_base
-from _plan_store import PLAN_MARKER, SPLIT_LINE, plan_ids, plan_requirements, stored_plans
+from _plan_store import PLAN_MARKER, SPLIT_LINE, SPLIT_START, plan_ids, plan_requirements, stored_plans
 from _ticket import Unreadable, links, unfenced
 import ticket_coverage
 
 IDS = r"%s(?:[ \t]*,[ \t]*%s)*" % (ticket_coverage.ID, ticket_coverage.ID)
 OWNER = r"#[0-9]+|https://github\.com/[\w.-]+/[\w.-]+/pull/[0-9]+/?|" + PLAN_MARKER.pattern
-SPLIT = re.compile(r"^[ \t]*(?i:split[ \t]+off):[ \t]*(?P<ids>%s)[ \t]*->[ \t]*(?P<owner>%s)[ \t]*$" % (IDS, OWNER))
+SPLIT = re.compile(SPLIT_START + r"[ \t]*(?P<ids>%s)[ \t]*->[ \t]*(?P<owner>%s)[ \t]*$" % (IDS, OWNER))
 # A body's declared reason for linking no plan section, as `- None: <why>` declares no criteria.
 NO_TICKET = re.compile(r"^\s*No ticket:\s*\w", re.I)  # a word, so a template's `No ticket: <why>` is no reason
 
@@ -97,22 +100,34 @@ def unknown(rid, items, plans):
     return CannotRun("`Split off: %s`: no plan this pull request names in the plan store defines %s%s" % (rid, rid, why))
 
 
-def split(items, plans, body):
+def itself(owner, pr):
+    """Whether the owner is pull request `pr` itself: `#<pr>`, or `<owner>/<name>#<pr>` of $GITHUB_REPOSITORY."""
+    cited = re.fullmatch(r"(?:(?P<repository>[\w.-]+/[\w.-]+))?#(?P<number>[0-9]+)", owner)
+    if not (pr and cited and cited.group("number") == str(pr)):
+        return False
+    return not cited.group("repository") or cited.group("repository").lower() == os.environ.get("GITHUB_REPOSITORY", "").lower()
+
+
+def split(items, plans, body, pr):
     """Mark each requirement a `Split off:` line gives away with its owner (`split`), refusing any other line."""
     keyed, own = {item["id"]: item for item in items if stored(item)}, {plan_id for plan_id, _ in plans}
     for rid, owner in split_offs(body).items():
         if rid not in keyed:
             raise unknown(rid, items, plans)
         marker = PLAN_MARKER.fullmatch(owner)
-        if marker and marker.group("id").lower() in own:
-            raise CannotRun("`Split off: %s` names plan %s, which this pull request implements" % (rid, marker.group("id")))
+        if marker and marker.group("id").lower() in own or itself(owner, pr):
+            raise CannotRun("`Split off: %s` names %s, which is this pull request or the plan it implements" % (rid, owner))
         keyed[rid]["split"] = owner
+    if items and all("split" in item for item in items):
+        raise CannotRun("every requirement (%d) is split off, so nothing is graded: a pull request that implements "
+                        "none of its plan does not name it" % len(items))
 
 
-def requirements(repo, base_ref, body, title="", endpoint="", token=""):
+def requirements(repo, base_ref, body, title="", endpoint="", token="", pr=""):
     """(requirements, notes): every requirement the body's Ticket links and the plans it names in the store define,
     each {id, text, plan, line, section, heading} and `split`, its owner, when a `Split off:` line gives it away;
-    notes say why there is nothing to audit (no ticket, a linked section with no IDs, a marker with no store)."""
+    notes say why there is nothing to audit (no ticket, a linked section with no IDs, a marker with no store). `pr`
+    is this pull request's number, which no `Split off:` line may name as the owner."""
     try:
         found = links(body)
         plans = stored_plans(title, body, endpoint, token)
@@ -124,7 +139,7 @@ def requirements(repo, base_ref, body, title="", endpoint="", token=""):
             items.append(item)
     except Unreadable as error:
         raise CannotRun(str(error))
-    split(items, plans, body)
+    split(items, plans, body, pr)
     if not found and not plans:
         notes.append("no ticket linked")
     if not endpoint and plan_ids(title, body):

@@ -183,7 +183,8 @@ failure, a server-side rate limit among them, an explorer that succeeded, or ann
 on the Codex CLI (tools/codex) under a ChatGPT-managed login ($CODEX_HOME, default ~/.codex), whether the
 repository's tests prove each requirement the sections the body's `Ticket:` lines link define, and, with
 `--plans-endpoint URL` (the token in $VV_PLANS_TOKEN), the whole wording of each plan a `[plan:<id>]` marker in
-the body or `--title` names in a plan store, less the IDs its `Split off:` lines give away, never showing
+the body or `--title` names in a plan store, less the IDs its `Split off:` lines give to another owner (one
+that is `--pr`, this pull request's number, cannot run), never showing
 the model the body, then runs the proof-audit gate on the grades and exits with its code: the same prompt,
 schema and gate the QAE verify job runs, so a session can see the verdict before it pushes. `--plan OUT` and
 `--requirements PLAN --shard K` are CI's two halves of it (harnesses/proof-audit/README.md).

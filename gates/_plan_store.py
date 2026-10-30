@@ -12,12 +12,14 @@ audit (gates/_proof_requirements.py) grades its whole wording, cut here into req
 
 Not requirements: a heading; a label, a line that is bold and nothing else and no sentence
 (`**Added acceptance criteria**`, where `**Prices never show in dollars.**` is a paragraph); a closed HTML comment;
-everything under a heading whose text starts with Why, Problem, Background, Context, Repo baseline, Out of scope or
-Non-goals (any case, its subsections with it), but never under the plan's title, a `# ...` heading before any other;
-the list or paragraph directly under a label whose text starts so (up to a heading, a label, or a paragraph after a
-blank line or a code fence); and an item or paragraph that starts with "Out of scope", bold or plain. A second plan
-one pull request names numbers its IDs `P2PL-1`, `P2AM1-1`, a third `P3PL-1`, so no two plans share an ID. Every ID fits ticket-coverage's grammar
-(a letter, letters or digits, a hyphen, digits).
+everything under an aside heading (its subsections with it), whose text is one of the phrases Why, Problem(s),
+Background, Context, Repo baseline, Out of scope or Non-goals, in any case, with nothing after it but punctuation (a
+dash after a space) and what that opens (`## Why (verified on ...)`, `## Repo baseline: ...`; never `## Context menu`
+or `## Context-aware search`), though never under the plan's title, a `# ...` heading before any other; the one list
+or paragraph directly under an aside label (`**Background**`); and an item or paragraph that opens with the label `Out of scope:` or a bold `**Out of scope`
+(never `Out-of-scope requests return 403.`). A second plan one pull request names numbers its IDs `P2PL-1`,
+`P2AM1-1`, a third `P3PL-1`, so no two plans share an ID. Every ID fits ticket-coverage's grammar (a letter,
+letters or digits, a hyphen, digits).
 """
 import json
 import re
@@ -32,20 +34,25 @@ PLAN_MARKER = re.compile(r"\[plan:[ \t]*(?P<id>[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-
 # A line in bold and nothing else: `**Added acceptance criteria**`. An amendment marks its criteria with one for
 # actions/ticket; the proof audit reads one that is no sentence as a label (label()).
 BOLD_LINE = re.compile(r"^[ \t]*(\*\*|__)(?P<text>[^*_].*?)\1[ \t]*:?[ \t]*$")
-# A body's `Split off: <IDs> -> <owner>` line (gates/_proof_requirements.py): a `[plan:<id>]` on it names the plan
-# that takes those requirements, never one this pull request implements.
-SPLIT_LINE = re.compile(r"^[ \t]*split[ \t]+off:", re.IGNORECASE)
-ASIDE = re.compile(r"^(?:why|problems?|background|context|repo(?:sitory)? baseline|out[- ]of[- ]scope|non[- ]goals?)\b",
-                   re.IGNORECASE)
-OUT_OF_SCOPE = re.compile(r"^out[- ]of[- ]scope\b", re.IGNORECASE)
+# A body's `Split off: <IDs> -> <owner>` line (gates/_proof_requirements.py), as a list item or not: a `[plan:<id>]`
+# on it names the plan that takes those requirements, never one this pull request implements. A `Split off:` line
+# with no `->` is prose. SPLIT_START is shared with the line's full grammar there.
+SPLIT_START = r"^[ \t]*(?:(?:[-*+]|[0-9]+[.)])[ \t]+)?(?i:split[ \t]+off):"
+SPLIT_LINE = re.compile(SPLIT_START + r".*->")
+# An aside heading or label: the whole phrase, then nothing but punctuation (a bracket, a colon, a dash after a
+# space) and what it opens. A hyphen against the word joins it to another (`Context-aware search`): no aside.
+ASIDE = re.compile(r"^(?:why|problems?|background|context|repo(?:sitory)? baseline|out[- ]of[- ]scope|non[- ]goals?)"
+                   r"(?:[ \t]*(?:$|[(\[:?.,;])|[ \t]+[\u2013\u2014-])", re.IGNORECASE)
+# An item or paragraph that opens with the label `Out of scope:`, or a bold `**Out of scope**` / `**Out of scope:**`.
+OUT_OF_SCOPE = re.compile(r"^(?:out[- ]of[- ]scope[ \t]*:|(\*\*|__)out[- ]of[- ]scope[ \t]*(?::|\1))", re.IGNORECASE)
 # A closed HTML comment in a plan's text, read across code fences too. One left open is text, so a fenced example's
 # `<!--` keeps what follows it unless a `-->` comes later in the plan.
 PLAN_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
 def plan_ids(*texts):
-    """The plan ids `[plan:<id>]` markers name in `texts`, outside code fences, HTML comments and `Split off:` lines,
-    in order, once each."""
+    """The plan ids `[plan:<id>]` markers name in `texts`, outside code fences, HTML comments and split-off lines
+    (SPLIT_LINE), in order, once each."""
     found = []
     for text in texts:
         for _, line in unfenced(HTML_COMMENT.sub("", text).splitlines()):
@@ -54,17 +61,25 @@ def plan_ids(*texts):
     return list(dict.fromkeys(found))
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow no redirect: urllib would send the store's bearer token on to wherever one points, another host too."""
+
+    def redirect_request(self, *args):
+        return None
+
+
 def fetch_plan(endpoint, plan_id, token):
-    """The plan store's JSON for one plan, over http(s) only."""
+    """The plan store's JSON for one plan, over http(s) only, from the endpoint itself: a redirect is Unreadable."""
     if urllib.parse.urlsplit(endpoint).scheme not in ("https", "http"):
         raise Unreadable("the plan store endpoint is not an http(s) URL: %s" % endpoint)
     request = urllib.request.Request("%s/plans/%s" % (endpoint.rstrip("/"), plan_id),
                                      headers={"Authorization": "Bearer " + token, "Accept": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310: the scheme is checked http(s) above
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
             plan = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
-        raise Unreadable("the plan store answered %d" % error.code)
+        moved = " (a redirect, which is not followed: give the store's own address)" if 300 <= error.code < 400 else ""
+        raise Unreadable("the plan store answered %d%s" % (error.code, moved))
     except (urllib.error.URLError, OSError, ValueError) as error:
         raise Unreadable("the plan store could not be read: %s" % error)
     if not isinstance(plan.get("planMarkdown"), str) or not isinstance(plan.get("amendments", []), list):
@@ -107,26 +122,39 @@ def opened(stack, heading, first):
     return [entry for entry in stack if entry[0] < level] + [(level, aside)]
 
 
-def past_label(blank, line):
-    """Whether `line` is past the list or paragraph directly under a label: a paragraph after a blank line."""
-    return blank and bool(line.strip()) and not ITEM.match(line) and line == line.lstrip()
+def aside_label(marked):
+    """"label" when `marked`, a label's text or None, is an aside, so the one block under it is left out; else None."""
+    return "label" if marked is not None and ASIDE.match(lead(marked)) else None
+
+
+def under_label(block, blank, line):
+    """The block directly under an aside label that `line` is in: "list" or "paragraph", the first it opens (`block`
+    "label"), or None once it is past it. A paragraph ends at a blank line or an item; a list, loose or not, at a
+    line after a blank line that is no item and not indented."""
+    if not line.strip() or block is None:
+        return block
+    if block == "label":
+        return "list" if ITEM.match(line) else "paragraph"
+    if block == "paragraph":
+        return None if blank or ITEM.match(line) else block
+    return None if blank and not ITEM.match(line) and line == line.lstrip() else block
 
 
 def outline(lines, titled):
     """The (index, line) pairs of `lines` outside code fences that indexed_list_items reads: a heading or a label as
-    None, a skipped code fence as a blank line, and none under an aside heading, or directly under an aside label.
-    With `titled`, a first heading of `# ...` is the plan's title, never an aside."""
-    stack, under, last, blank = [], False, -1, False
+    None, a skipped code fence as a blank line, and none under an aside heading, or in the one block directly under
+    an aside label. With `titled`, a first heading of `# ...` is the plan's title, never an aside."""
+    stack, under, last, blank = [], None, -1, False
     for index, line in unfenced(lines):
         if index != last + 1:
             blank = True
             yield index - 1, ""  # a code fence ends a paragraph, as a blank line does
         last, heading, marked = index, HEADING.match(line), label(line)
-        under = under and not past_label(blank, line)
+        under = under_label(under, blank, line)
         if heading:
             stack = opened(stack, heading, titled and not stack)
         if heading or marked is not None:
-            under = marked is not None and bool(ASIDE.match(lead(marked)))
+            under = aside_label(marked)
             yield index, None
         elif not line.strip() or not (under or any(aside for _, aside in stack)):
             yield index, line
@@ -137,7 +165,7 @@ def wording(lines, titled=False):
     """(line number, text) of each list item and paragraph of `lines` that is a requirement (the module's rules).
     With `titled`, a first heading of `# ...` is the plan's title."""
     return [(number, text) for number, text in indexed_list_items(list(outline(lines, titled)), paragraphs=True)
-            if not OUT_OF_SCOPE.match(lead(text))]
+            if not OUT_OF_SCOPE.match(text)]
 
 
 def has_wording(lines):

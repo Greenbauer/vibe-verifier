@@ -304,7 +304,7 @@ def check(args):
         write_table(args.table, table([], "nothing judged: the pull request supplies grades of its own"))
         return supplied
     items, notes = requirements(args.repo, args.base_ref, body, args.title, args.plans_endpoint,
-                                os.environ.get("VV_PLANS_TOKEN", ""))
+                                os.environ.get("VV_PLANS_TOKEN", ""), args.pr)
     unaudited = [] if items else unlinked(args, body)
     if unaudited:
         write_table(args.table, table([], "nothing audited: %s" % unaudited[0].message))
@@ -339,6 +339,7 @@ def add_arguments(parser):
     parser.add_argument("--title", default="", help="the pull request's title, read for a `[plan:<id>]` marker as the body is")
     parser.add_argument("--plans-endpoint", default="", metavar="URL", help="a plan store answering GET <URL>/plans/<id> "
                         "(the bearer token in $VV_PLANS_TOKEN): each plan a marker names is graded whole")
+    parser.add_argument("--pr", default="", metavar="N", help="this pull request's number: no `Split off:` line may name it")
     parser.add_argument("--require-ticket", action="append", default=[], metavar="GLOB",
                         help="a pull request that changes a file matching GLOB (repeatable) must link a Ticket section or "
                         "say why none applies on a `No ticket: <why>` line")

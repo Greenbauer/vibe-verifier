@@ -68,18 +68,18 @@ class PlanStoreAudit(unittest.TestCase):
         write(self.work, {"codex": FAKE})
         self.plans[PLAN_ID] = {"planMarkdown": STORED, "amendments": AMENDMENTS}
 
-    def audit(self, *args, body=base.BODY, title="Euro prices [plan:%s]" % PLAN_ID, token="secret", grades=None):
+    def audit(self, *args, body=base.BODY, title="Euro prices [plan:%s]" % PLAN_ID, token="secret", grades=None, env=None):
         if grades is not None:
             write(self.work, {"grades.json": json.dumps({g["id"]: g for g in grades})})
         write(self.work, {"body.md": body})
-        env = {"FAKE_LOG": str(self.work / "calls.jsonl"), "FAKE_GRADES": str(self.work / "grades.json"),
-               "VV_PLANS_TOKEN": token}
+        env = dict({"FAKE_LOG": str(self.work / "calls.jsonl"), "FAKE_GRADES": str(self.work / "grades.json"),
+                    "VV_PLANS_TOKEN": token}, **(env or {}))
         return runner("proof-audit", "--repo", self.repo, "--base-ref", "main", "--codex", str(self.work / "codex"),
-                      "--codex-home", str(self.work / "home"), "--body", str(self.work / "body.md"), "--title", title,
+                      "--codex-home", str(self.work / "home"), "--body", str(self.work / "body.md"), "--title=" + title,
                       "--plans-endpoint", self.endpoint, *args, env=env)
 
-    def planned(self, **options):
-        result = self.audit("--plan", str(self.work / "plan.json"), **options)
+    def planned(self, *args, **options):
+        result = self.audit("--plan", str(self.work / "plan.json"), *args, **options)
         cuts = json.loads((self.work / "plan.json").read_text())["shards"] if result.returncode == 0 else []
         return result, [item for cut in cuts for item in cut]
 
@@ -156,9 +156,8 @@ class PlanStoreAudit(unittest.TestCase):
         self.assertEqual([path for path, _ in self.seen], ["/api/v1/plans/%s" % PLAN_ID])
         for line, words in (("Split off: PL-99 -> #12", "no plan this pull request names in the plan store defines PL-99"),
                             ("Split off: C-8 -> #12", "goes to another section that carries [takes: C-8]"),
-                            ("Split off: PL-1 to #12", "is not a split-off line"),
                             ("Split off: PL-1 -> issue 12", "is not a split-off line"),
-                            ("Split off: PL-1 -> [plan:%s]" % PLAN_ID, "which this pull request implements"),
+                            ("Split off: PL-1 -> [plan:%s]" % PLAN_ID, "is this pull request or the plan it implements"),
                             ("Split off: PL-1 -> #1\nSplit off: PL-1 -> #2", "PL-1 is split off twice")):
             with self.subTest(line=line):
                 result, _ = self.planned(body=base.BODY + line + "\n")
@@ -210,7 +209,7 @@ class PlanStoreAudit(unittest.TestCase):
         env = clean_env({"GITHUB_ACTION_PATH": str(ROOT / "actions" / "proof-audit"), "RUNNER_TEMP": str(self.work),
                          "GITHUB_OUTPUT": str(self.work / "output"), "VV_BODY": str(self.work / "body.md"),
                          "VV_MAX_IDS": "4", "VV_TITLE": "Euro prices [plan:%s]" % PLAN_ID,
-                         "VV_PLANS_ENDPOINT": self.endpoint, "VV_PLANS_TOKEN": "secret"})
+                         "VV_PLANS_ENDPOINT": self.endpoint, "VV_PLANS_TOKEN": "secret", "VV_PR": ""})
         result = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c",
                                  unlinked.action_step("- name: Plan the proof audit")], cwd=self.repo, env=env,
                                 capture_output=True, text=True)

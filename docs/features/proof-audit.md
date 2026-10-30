@@ -63,7 +63,13 @@ In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one s
 - `tests/test_proof_audit_plan_store.py::test_a_plan_the_audit_cannot_read_cannot_run`
 - `tests/test_proof_audit_plan_store.py::test_the_actions_plan_step_passes_the_title_and_store_by_env`
 - `tests/test_proof_audit_split.py::test_a_split_off_requirement_is_listed_with_its_owner_and_never_graded`
-- `tests/test_proof_audit_split.py::test_a_plan_split_off_whole_needs_no_grades`
+- `tests/test_proof_audit_split.py::test_a_plan_split_off_whole_grades_nothing_and_cannot_pass`
+- `tests/test_proof_audit_plan_rules.py::test_an_aside_heading_is_its_whole_phrase_and_a_label_leaves_out_one_block`
+- `tests/test_proof_audit_plan_rules.py::test_a_split_off_line_has_an_arrow_and_may_be_a_list_item`
+- `tests/test_proof_audit_plan_rules.py::test_no_owner_is_this_pull_request_and_something_is_graded`
+- `tests/test_proof_audit_plan_rules.py::test_a_title_that_starts_with_a_dash_is_still_the_title`
+- `tests/test_proof_audit_plan_rules.py::test_a_store_that_redirects_is_not_followed`
+- `tests/test_proof_audit_plan_rules.py::test_the_model_is_never_given_the_stores_token`
 - `tests/test_proof_audit_split.py::test_an_excluded_grade_on_a_stored_requirement_is_unproven`
 - `tests/test_proof_audit_split.py::test_a_store_the_gate_cannot_read_cannot_run`
 - `tests/test_proof_audit_split.py::test_the_verify_step_reports_only_under_soak_but_fails_a_gate_that_cannot_run`
@@ -71,7 +77,7 @@ In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one s
 ## Gotchas
 
 - Whether an assertion exercises a case is the model's judgment; the gate proves only that the quotes are real. The one-file replay (`tests/fixtures/proof-audit/c8`) is the case it was built for: run it live with `VV_PROOF_AUDIT_LIVE=1` after changing the prompt.
-- A stored plan has no `[takes:]`: its requirement graded EXCLUDED is UNPROVEN, and one the pull request leaves to another goes on a `Split off: <ID> -> <owner>` line. Without `plans-endpoint` a `[plan:<id>]` marker is not read (a note says so, and a `Split off:` line cannot run), so a local run grades CI's list only when given the same store.
+- A stored plan has no `[takes:]`: its requirement graded EXCLUDED is UNPROVEN, and one the pull request leaves to another goes on a `Split off: <ID> -> <owner>` line (a list item or not; without `->` it is prose). An owner that is the pull request itself (`--pr`), or every requirement split off so that nothing is graded, cannot run; a made-up `#123` is not checked, only shown. The store is never followed through a redirect, and its token never reaches the model's run. Without `plans-endpoint` a `[plan:<id>]` marker is not read (a note says so, and a `Split off:` line cannot run), so a local run grades CI's list only when given the same store.
 - No `Ticket:` line and no stored plan audits nothing, and passes, unless the body claims `[req: ID]` items anyway (a finding: the line that would define them is missing) or the consumer sets `require-ticket` globs and the pull request changes a matching file without a `No ticket: <why>` line (a finding).
 - The model never sees the body: keep a local `--body` file outside the repository, which the model reads.
 - The grades stay in the runner's temporary directory from the grade job's write to the verify job's read. The gate judges none of them when the checkout supplied any: a path the branch tracks at, under or on the way to `--grades`, or a symbolic link in it (`planted` in `gates/_contract.py`). A consumer copy made before that keeps them in the checkout: refresh the copy, not only its pins.

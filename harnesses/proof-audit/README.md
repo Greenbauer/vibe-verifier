@@ -198,8 +198,9 @@ consumer copy made before this keeps them in the checkout (`path: proof-audit-gr
 A `Ticket:` section's requirements carry their IDs. A plan a requester submits to a plan store, and amends
 later, carries none, so `actions/ticket` gives QAE only its Acceptance items, and a requirement written
 anywhere else in it was never graded. Given the store, the audit grades its whole wording. A `[plan:<id>]`
-marker in the title or body (outside code fences, HTML comments and `Split off:` lines) names the plan, read
-from the store when the step runs, so an amendment added while the pull request is open is graded on its
+marker in the title or body (outside code fences, HTML comments and `Split off: ... -> ...` lines) names the
+plan, read from the store's own address when the step runs (a redirect is not followed, so its token goes
+nowhere else), so an amendment added while the pull request is open is graded on its
 next run. [`gates/_plan_store.py`](../../gates/_plan_store.py) cuts it into requirements, the same way every
 time:
 
@@ -209,16 +210,18 @@ time:
   no paragraph at all (only a heading or a code block) is one requirement, its whole text;
 - left out: headings; labels, lines that are bold and nothing else and no sentence
   (`**Added acceptance criteria**`; `**Prices never show in dollars.**` is a paragraph); closed HTML comments;
-  everything under a heading that starts with Why, Problem, Background, Context, Repo baseline, Out of
-  scope or Non-goals (any case, its subsections too), though never under the plan's title, a `# ...`
-  heading before any other; the list or paragraph directly under a label that starts so
-  (`**Out of scope**`), up to a heading, a label, or a paragraph after a blank line or a code fence; and
-  an item or paragraph that starts with "Out of scope", bold or plain;
+  everything under an aside heading (its subsections too), one whose text is the phrase Why, Problem(s),
+  Background, Context, Repo baseline, Out of scope or Non-goals, in any case, followed by nothing but
+  punctuation and what it opens (`## Why (verified on ...)`, `## Repo baseline: ...`, but never
+  `## Context menu`, `## Background jobs` or `## Context-aware search`: a dash counts only after a space),
+  though never under the plan's title, a `# ...` heading before any other; the one list or paragraph
+  directly under an aside label (`**Background**`), not a block after it; and an item or paragraph that opens with the label `Out of scope:` or a bold
+  `**Out of scope` (`Out-of-scope requests return 403.` is a requirement);
 - a second plan the pull request names numbers its IDs `P2PL-1`, `P2AM1-1`, so no two plans share one.
 
 They follow the Ticket sections' requirements. The model is given each with `plan:<id>` as where it is
 defined, and is told there is no file to read for it. A requirement this pull request leaves to another
-goes on a line of the body, which only the plan step and the gate read:
+goes on a line of the body, a list item or not, which only the plan step and the gate read:
 
 ```text
 Split off: PL-4, AM1-2 -> #123
@@ -227,13 +230,18 @@ Split off: AM2-1 -> [plan:<id of the plan that takes it>]
 ```
 
 A split-off ID is not graded, and the table lists it as SPLIT with its owner (a pull request's URL as
-`<owner>/<name>#45`). A line not of that form, an ID no plan the pull request names defines (a Ticket
-section's item goes to another section with `[takes: ID]` instead), an ID split off twice, or the pull
-request's own plan as the owner is could-not-run, never a pass. So are a store that does not answer 200, a
-marker with no token, and a plan with nothing to grade. With no `plans-endpoint` a marker is not read, and
-the run says so in a note (a `Split off:` line then cannot run: no plan defines its IDs). The plan's
-wording reaches the model's prompt as written by its requester: an instruction in it can steer a grade,
-never past the gate's checks of every quote.
+`<owner>/<name>#45`). A `Split off:` line without `->` is prose and splits nothing off. A `->` line not of
+that form, an ID no plan the pull request names defines (a Ticket section's item goes to another section
+with `[takes: ID]` instead), an ID split off twice, an owner that is the pull request itself (`#<its
+number>`, or its URL; the plan and verify steps pass the number as `--pr`) or the plan it implements, and
+every requirement split off, so that nothing is graded, are could-not-run, never a pass. Whether `#123` is
+a real pull request is not checked (the gate makes no GitHub call): the table shows the owner for a reviewer
+to follow. A store that does not answer 200 (a redirect included), a marker with no token, and a
+plan with nothing to grade are could-not-run too. With no `plans-endpoint` a marker is not read, and the
+run says so in a note (a `Split off:` line then cannot run: no plan defines its IDs). The plan's wording
+reaches the model's prompt as written by its requester: an instruction in it can steer a grade, never past
+the gate's checks of every quote. The store's token reaches the plan step and the gate, never the model's
+run.
 
 ## Run it before pushing
 
@@ -246,8 +254,9 @@ reads git history):
 ```
 
 `--body` is the pull request body as it will be posted; keep it outside the repository, which the model
-reads. For a plan in a plan store add `--title "<the pull request's title>" --plans-endpoint <URL>`, with
-the store's token in `$VV_PLANS_TOKEN`, so the run grades the list CI grades. The shards are graded in
+reads. For a plan in a plan store add `--title="<the pull request's title>" --plans-endpoint=<URL>` (and
+`--pr=<its number>` once it has one), with the store's token in `$VV_PLANS_TOKEN`, so the run grades the
+list CI grades; the `=` form keeps a title that starts with a dash a title. The shards are graded in
 parallel (`--jobs`, default 4) with the login in `$CODEX_HOME` (default `~/.codex`;
 `codex login --device-auth` seeds one), then the table is printed and the command exits as CI's step
 does: 0 every requirement proven, excluded or split off, 1 any UNPROVEN, 2 could not run (no login, a

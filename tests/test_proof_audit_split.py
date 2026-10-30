@@ -48,11 +48,17 @@ class SplitGate(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("the grades are for", result.stdout + result.stderr)
 
-    def test_a_plan_split_off_whole_needs_no_grades(self):
+    def test_a_plan_split_off_whole_grades_nothing_and_cannot_pass(self):
         self.plans[stored.PLAN_ID] = {"planMarkdown": "- Prices show in euros.\n", "amendments": []}
-        result, table = self.judge(body="Built it.\n\nSplit off: PL-1 -> #7\n")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("0 of 1 requirements proven or excluded, 1 split off", table)
+        result, _ = self.judge(body="Built it.\n\nSplit off: PL-1 -> #7\n", extra=("--soak",))
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("every requirement (1) is split off, so nothing is graded", result.stdout + result.stderr)
+        # So does a split to this pull request itself, the gate's --pr.
+        self.plans[stored.PLAN_ID] = {"planMarkdown": "- Prices show in euros.\n- Totals too.\n", "amendments": []}
+        result, _ = self.judge(base.envelope(1, ["PL-2"], [stored.proven("PL-2")]), body="Split off: PL-1 -> #7\n",
+                               extra=("--pr", "7"))
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("names #7, which is this pull request", result.stdout + result.stderr)
 
     def test_an_excluded_grade_on_a_stored_requirement_is_unproven(self):
         envelope = everything()
