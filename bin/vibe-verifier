@@ -1497,19 +1497,19 @@ def explorer_limits(repo, run_id, wait=420, interval=15):
     GitHub lists a finished job's steps and annotations some time after the job ends (Greenbauer/zack.land run
     41110815005: no steps listed 5 minutes after both walks failed, all of them about 15 minutes after), so a
     failed explorer whose steps or failure annotations are not listed yet is read again every `interval` seconds
-    for up to `wait`, inside the verify job's 10 minutes; still unlisted then, nothing is excused."""
+    for up to `wait`, inside the verify job's 10 minutes; still unlisted then, nothing is excused. A listed
+    explorer that failed another way ends the wait at once: whatever the others show, the run is not excused."""
     deadline = time.monotonic() + wait
-    originals = {}
     try:
         while True:
             jobs = gh_json("repos/%s/actions/runs/%s/jobs?filter=latest&per_page=100" % (repo, run_id)).get("jobs", [])
             explorers = [job for job in jobs if EXPLORE_JOB.fullmatch(job.get("name", "").split(" / ")[-1])]
             if not explorers or any(job.get("conclusion") != "failure" for job in explorers):
                 return None
-            ran = [ran_job(repo, run_id, job, originals) for job in explorers]
-            read = [(job, listed_failures(repo, job)) for job in ran]
-            if all(notes is not None for _, notes in read):
-                limits = [job_limit(job, notes) for job, notes in read]
+            originals = {}  # read again on every pass: an earlier attempt's steps can be the ones still unlisted
+            read = [(job, listed_failures(repo, job)) for job in (ran_job(repo, run_id, job, originals) for job in explorers)]
+            limits = [job_limit(job, notes) for job, notes in read if notes is not None]
+            if None in limits or len(limits) == len(read):
                 return limits if None not in limits else None
             if time.monotonic() >= deadline:
                 print("::warning::GitHub had not listed every explore job's steps and failure annotations after %ds, "
@@ -1524,7 +1524,8 @@ def explorer_limits(repo, run_id, wait=420, interval=15):
 def ran_job(repo, run_id, job, originals):
     """The job as it ran. Rerunning only the verify job copies the explore jobs into the new attempt under new
     ids, with their steps and times but none of their annotations (run 41110815005, attempt 2), so a copy is read
-    as the earliest attempt's job of the same name, start and end. `originals` keeps each attempt's jobs."""
+    as the earliest attempt's job of the same name, start and end. `originals` keeps each attempt's jobs for one
+    pass."""
     for attempt in range(1, int(job.get("run_attempt") or 1)):
         if attempt not in originals:
             originals[attempt] = gh_json("repos/%s/actions/runs/%s/attempts/%d/jobs?per_page=100"
