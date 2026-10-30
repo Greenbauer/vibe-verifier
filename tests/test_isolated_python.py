@@ -2,15 +2,16 @@
 (`-I`). Without it Python puts the working directory on sys.path, and these steps run in a pull request's checkout
 while holding a secret (a plan store's token, a Codex login, a test seat's session): a `json.py` the pull request
 commits would run with it. `-m` puts the working directory there too; it is allowed only in the catalog's own
-workflows, which test the catalog's own code and hold no secret."""
+workflows that test the catalog's own code and hold no secret (OWN_WORKFLOWS)."""
 import re
 import unittest
 
 from helpers import ROOT
 
-PYTHON = re.compile(r"(?<![\w/.$-])python(?:3(?:\.\d+)?)?(?![\w.-])")
+PYTHON = re.compile(r"(?<![\w.$-])python(?:3(?:\.\d+)?)?(?![\w.-])")  # by name or at the end of a path
 TAKES_VALUE = {"-X", "-W", "-Q"}
 SHELL = re.compile(r"^(<|>|\||;|&|\)|\$\(|`)")
+OWN_WORKFLOWS = (".github/workflows/ci.yml", ".github/workflows/nightly.yml")  # the catalog's tests; no secret
 SOURCES = ("actions/**/*.yml", "actions/**/*.md", "harnesses/**/*.yml", "harnesses/**/*.md", ".github/workflows/*.yml")
 
 
@@ -36,7 +37,7 @@ def runs(text, markdown):
 
 def mode(rest):
     """(isolated, how the script is given: "stdin", "c", "m" or "path") from the words after `python`."""
-    words, isolated, skip = rest.split(), False, False
+    words, isolated, skip = rest.lstrip("\"'").split(), False, False
     for word in words:
         if skip:
             skip = False
@@ -81,7 +82,7 @@ class IsolatedPython(unittest.TestCase):
             for path in ROOT.glob(pattern):
                 name = str(path.relative_to(ROOT))
                 lines = unisolated(path.read_text(), markdown=name.endswith(".md"),
-                                   own_workflow=name.startswith(".github/workflows/"))
+                                   own_workflow=name in OWN_WORKFLOWS)
                 if lines:
                     found[name] = lines
         self.assertEqual(found, {})
@@ -90,7 +91,8 @@ class IsolatedPython(unittest.TestCase):
         flagged = ["python3 - \"$a\" <<'PY'", "python3 -c 'x'", "python -c 'y'", "python3 <<'PY'", "cat s | python3",
                    "python3.12 -c 'x'", "python3 -uc 'x'", "python3 -X utf8 -c 'x'", "python3 -W ignore -",
                    "python3 -Xutf8 -c 'x'", "env A=1 python3 - <<'PY'", "uv run python -c 'x'", "x=$(python3 -c 'y')",
-                   "python3 -m pytest"]
+                   "python3 -m pytest", "/usr/bin/python3 -c 'x'", "\"$RUNNER_TEMP/venv/bin/python\" -c 'x'",
+                   ".venv/bin/python - <<'PY'"]
         for line in flagged:
             with self.subTest(line):
                 self.assertEqual(unisolated(line), [1])
