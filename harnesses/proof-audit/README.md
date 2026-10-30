@@ -211,11 +211,12 @@ time:
 - left out: headings; labels, lines that are bold and nothing else and no sentence
   (`**Added acceptance criteria**`; `**Prices never show in dollars.**` is a paragraph); closed HTML comments;
   everything under an aside heading (its subsections too), one whose text is the phrase Why, Problem(s),
-  Background, Context, Repo baseline, Out of scope or Non-goals, in any case, followed by nothing but
-  punctuation and what it opens (`## Why (verified on ...)`, `## Repo baseline: ...`, but never
-  `## Context menu`, `## Background jobs` or `## Context-aware search`: a dash counts only after a space),
-  though never under the plan's title, a `# ...` heading before any other; the one list or paragraph
-  directly under an aside label (`**Background**`), not a block after it; and an item or paragraph that opens with the label `Out of scope:` or a bold
+  Background, Context, Repo baseline, Out of scope or Non-goals, in any case and with or without emphasis
+  (`## **Why**`), followed by nothing but punctuation and what it opens (`## Why (verified on ...)`,
+  `## Repo baseline: ...`, but never `## Context menu`, `## Background jobs` or `## Context-aware search`:
+  a dash counts only after a space), though never under the plan's title, a `# ...` heading before any
+  other; the one list, paragraph or code block directly under an aside label (`**Background**`), not a
+  block after it; and an item or paragraph that opens with the label `Out of scope:` or a bold
   `**Out of scope` (`Out-of-scope requests return 403.` is a requirement);
 - a second plan the pull request names numbers its IDs `P2PL-1`, `P2AM1-1`, so no two plans share one.
 

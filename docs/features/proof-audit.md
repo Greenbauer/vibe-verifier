@@ -65,6 +65,7 @@ In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one s
 - `tests/test_proof_audit_split.py::test_a_split_off_requirement_is_listed_with_its_owner_and_never_graded`
 - `tests/test_proof_audit_split.py::test_a_plan_split_off_whole_grades_nothing_and_cannot_pass`
 - `tests/test_proof_audit_plan_rules.py::test_an_aside_heading_is_its_whole_phrase_and_a_label_leaves_out_one_block`
+- `tests/test_proof_audit_plan_rules.py::test_a_code_fence_is_the_block_under_a_label_and_emphasis_does_not_hide_an_aside`
 - `tests/test_proof_audit_plan_rules.py::test_a_split_off_line_has_an_arrow_and_may_be_a_list_item`
 - `tests/test_proof_audit_plan_rules.py::test_no_owner_is_this_pull_request_and_something_is_graded`
 - `tests/test_proof_audit_plan_rules.py::test_a_title_that_starts_with_a_dash_is_still_the_title`

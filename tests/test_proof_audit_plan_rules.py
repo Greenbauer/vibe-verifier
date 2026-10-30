@@ -43,6 +43,25 @@ class PlanRules(unittest.TestCase):
             (25, "The page loads in under 2s."), (29, "Loads in under a second."), (31, "Out-of-scope requests return 403."),
             (36, "Results rank by the open project."), (38, "A search box.")])
 
+    def test_a_code_fence_is_the_block_under_a_label_and_emphasis_does_not_hide_an_aside(self):
+        def cut(markdown):
+            plan = {"planMarkdown": markdown, "amendments": []}
+            return [item["text"] for item in _plan_store.plan_requirements([(stored.PLAN_ID, plan)])]
+        fence = "```sql\ncreate table x();\n```\n"
+        after = "\n- Req item after fence.\n- Req 2\n\nReq3.\n"
+        for gap in ("\n", ""):  # the fence after a blank line, or right under the label
+            with self.subTest(gap=gap):
+                self.assertEqual(cut("# T\n\n**Context**\n" + gap + fence + after), ["Req item after fence.", "Req 2", "Req3."])
+        self.assertEqual(cut("# T\n\n**Context**\n```sql\nx\n```\nPara req.\n"), ["Para req."])  # no blank line around it
+        # A fence at the margin after the list under a label ends that list; an indented one directly under it is the
+        # block; one indented inside that list is part of it, and so is what continues it.
+        self.assertEqual(cut("# T\n\n**Context**\n- bg item\n```sql\nx\n```\n\n- Kept.\n"), ["Kept."])
+        self.assertEqual(cut("# T\n\n**Context**\n  ```\n  x\n  ```\n- Kept.\n"), ["Kept."])
+        self.assertEqual(cut("# T\n\n**Out of scope**\n- The PDF export:\n  ```\n  code\n  ```\n  and its email.\n\nDone.\n"),
+                         ["Done."])
+        self.assertEqual(cut("# T\n\n## **Why**\n- left out\n## _Background_\n- left out\n## Why!\n- left out\n"
+                             "## *Context* (verified)\n- left out\n## Scope\n- Kept.\n"), ["Kept."])
+
     def test_a_split_off_line_has_an_arrow_and_may_be_a_list_item(self):
         # Prose that starts "Split off:" splits nothing off, with a plan store or without one.
         write(self.work, {"prose.md": "Split off: the CSS cleanup went to #41\n"})

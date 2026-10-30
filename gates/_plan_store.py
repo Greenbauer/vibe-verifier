@@ -13,10 +13,11 @@ audit (gates/_proof_requirements.py) grades its whole wording, cut here into req
 Not requirements: a heading; a label, a line that is bold and nothing else and no sentence
 (`**Added acceptance criteria**`, where `**Prices never show in dollars.**` is a paragraph); a closed HTML comment;
 everything under an aside heading (its subsections with it), whose text is one of the phrases Why, Problem(s),
-Background, Context, Repo baseline, Out of scope or Non-goals, in any case, with nothing after it but punctuation (a
-dash after a space) and what that opens (`## Why (verified on ...)`, `## Repo baseline: ...`; never `## Context menu`
-or `## Context-aware search`), though never under the plan's title, a `# ...` heading before any other; the one list
-or paragraph directly under an aside label (`**Background**`); and an item or paragraph that opens with the label `Out of scope:` or a bold `**Out of scope`
+Background, Context, Repo baseline, Out of scope or Non-goals, in any case and emphasis or none (`## **Why**`), with
+nothing after it but punctuation (a dash after a space) and what that opens (`## Why (verified on ...)`,
+`## Repo baseline: ...`; never `## Context menu` or `## Context-aware search`), though never under the plan's title, a
+`# ...` heading before any other; the one list, paragraph or code block directly under an aside label
+(`**Background**`); and an item or paragraph that opens with the label `Out of scope:` or a bold `**Out of scope`
 (never `Out-of-scope requests return 403.`). A second plan one pull request names numbers its IDs `P2PL-1`,
 `P2AM1-1`, a third `P3PL-1`, so no two plans share an ID. Every ID fits ticket-coverage's grammar (a letter,
 letters or digits, a hyphen, digits).
@@ -42,7 +43,7 @@ SPLIT_LINE = re.compile(SPLIT_START + r".*->")
 # An aside heading or label: the whole phrase, then nothing but punctuation (a bracket, a colon, a dash after a
 # space) and what it opens. A hyphen against the word joins it to another (`Context-aware search`): no aside.
 ASIDE = re.compile(r"^(?:why|problems?|background|context|repo(?:sitory)? baseline|out[- ]of[- ]scope|non[- ]goals?)"
-                   r"(?:[ \t]*(?:$|[(\[:?.,;])|[ \t]+[\u2013\u2014-])", re.IGNORECASE)
+                   r"(?:[ \t]*(?:$|[(\[:?!.,;])|[ \t]+[\u2013\u2014-])", re.IGNORECASE)
 # An item or paragraph that opens with the label `Out of scope:`, or a bold `**Out of scope**` / `**Out of scope:**`.
 OUT_OF_SCOPE = re.compile(r"^(?:out[- ]of[- ]scope[ \t]*:|(\*\*|__)out[- ]of[- ]scope[ \t]*(?::|\1))", re.IGNORECASE)
 # A closed HTML comment in a plan's text, read across code fences too. One left open is text, so a fenced example's
@@ -104,8 +105,9 @@ def stored_plans(title, body, endpoint, token):
 
 
 def lead(text):
-    """The text from its first letter on: a heading's number, a bold marker or other punctuation before it dropped."""
-    return re.sub(r"^[^A-Za-z]+", "", text)
+    """The text from its first letter on, without emphasis: `**Why**` and `_Background_` read as the words, and a
+    heading's number or other punctuation before them is dropped."""
+    return re.sub(r"^[^A-Za-z]+", "", re.sub(r"[*_]+", "", text))
 
 
 def label(line):
@@ -140,6 +142,12 @@ def under_label(block, blank, line):
     return None if blank and not ITEM.match(line) and line == line.lstrip() else block
 
 
+def past_fence(block, fence):
+    """The block under an aside label once a code fence opening `fence` is skipped: the fence is the block directly
+    under the label, and it ends a block of one, unless it is indented inside the list there."""
+    return block if block == "list" and fence != fence.lstrip() else None
+
+
 def outline(lines, titled):
     """The (index, line) pairs of `lines` outside code fences that indexed_list_items reads: a heading or a label as
     None, a skipped code fence as a blank line, and none under an aside heading, or in the one block directly under
@@ -147,7 +155,7 @@ def outline(lines, titled):
     stack, under, last, blank = [], None, -1, False
     for index, line in unfenced(lines):
         if index != last + 1:
-            blank = True
+            blank, under = True, past_fence(under, lines[last + 1])
             yield index - 1, ""  # a code fence ends a paragraph, as a blank line does
         last, heading, marked = index, HEADING.match(line), label(line)
         under = under_label(under, blank, line)
