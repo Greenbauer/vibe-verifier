@@ -64,7 +64,8 @@ QAE workflow so its required `Acceptance criteria` check (`qae-verify` in a copy
 3. **verify** (`mode: verify`), in the verify job, never skipped by a `- None:` or a carried walk:
    downloads the grades, runs the gate, appends the per-ID table to the step summary and posts it as one
    pull request comment, edited in place, so the author can fix every gap in one pass. A pull request
-   with nothing to audit (it links no plan) gets no comment; one that had a comment has it replaced, so
+   with nothing to audit (no `Ticket:` line or plan marker, a linked section with no requirement IDs, or a
+   plan marker where no plan store is configured) gets no comment; one that had a comment has it replaced, so
    an unlinked plan leaves no stale grades. The step's exit
    code is the gate's. With `soak: "true"` (the gate's common `--soak`) the table is summarized and posted
    the same, and an UNPROVEN requirement is reported without failing the step, so a consumer can measure

@@ -183,8 +183,8 @@ runs:
           if [ -n "$found" ]; then
             gh api -X PATCH "repos/$VV_REPO/issues/comments/$found" --input "$comment" > /dev/null || echo "::warning::could not edit the proof audit comment"
           elif head -n 1 "$table" | grep -q '^## Proof audit: nothing to audit'; then
-            # A pull request that links no plan gets no comment; one that unlinks its plan has its old table
-            # replaced above, so no stale grades stay on it (docs/comments.md).
+            # Nothing to audit (no Ticket line or plan marker, a section with no IDs, a marker and no plan store):
+            # no comment. One that had a comment has it replaced above, so no stale grades stay (docs/comments.md).
             :
           else
             gh api -X POST "repos/$VV_REPO/issues/$VV_PR/comments" --input "$comment" > /dev/null || echo "::warning::could not post the proof audit comment"

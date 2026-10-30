@@ -6,7 +6,8 @@ import unittest
 
 from helpers import write
 
-import test_proof_audit_unlinked as unlinked  # as a module, so its test class is not collected twice
+import test_proof_audit as base  # as modules, so their test classes are not collected twice
+import test_proof_audit_unlinked as unlinked
 
 
 FAKE_GH = """#!/bin/bash
@@ -19,13 +20,13 @@ exit 0
 class Comment(unittest.TestCase):
     repo, outside = unlinked.Unlinked.repo, unlinked.Unlinked.outside
 
-    def calls(self, body, found=""):
+    def calls(self, body, found="", grades=()):
         bin_dir = self.outside()
         write(bin_dir, {"gh": FAKE_GH})
         os.chmod(bin_dir / "gh", 0o755)
         log = bin_dir / "gh.log"
         result, _ = unlinked.Unlinked.verify_step(
-            self, self.repo(), body, GH_TOKEN="t", VV_PR="7", VV_REPO="o/r", VV_HEAD="a" * 40,
+            self, self.repo(), body, grades=grades, GH_TOKEN="t", VV_PR="7", VV_REPO="o/r", VV_HEAD="a" * 40,
             VV_RUN="https://github.com/o/r/actions/runs/42", GH_LOG=str(log), GH_FOUND=found,
             PATH="%s:%s" % (bin_dir, os.environ["PATH"]))
         return result, [line.split()[:3] for line in (log.read_text().splitlines() if log.exists() else [])]
@@ -41,7 +42,16 @@ class Comment(unittest.TestCase):
         self.assertIn(["api", "-X", "PATCH"], calls)
 
     def test_any_other_table_is_posted(self):
-        # Claims with no Ticket line: "nothing audited", a failure the author must see.
-        result, calls = self.calls("Built it.\n\n- [req: C-8] [proof: tests/covers.test.ts::x]\n")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn(["api", "-X", "POST"], calls)
+        ids = ["C-15", "C-8", "C-30"]
+        unproven = base.valid()
+        unproven[1] = {"id": "C-8", "status": "UNPROVEN", "cases": [], "exclusion": None, "missing": "no JPEG case"}
+        cases = {  # a table, the gate's exit code
+            "nothing audited": ("Built it.\n\n- [req: C-8] [proof: tests/covers.test.ts::x]\n", (), 1),
+            "could not run": (base.BODY, (), 2),
+            "proven": (base.BODY, (base.envelope(1, ids, base.valid()),), 0),
+            "unproven": (base.BODY, (base.envelope(1, ids, unproven),), 1)}
+        for name, (body, grades, code) in cases.items():
+            with self.subTest(name):
+                result, calls = self.calls(body, grades=grades)
+                self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                self.assertIn(["api", "-X", "POST"], calls)
