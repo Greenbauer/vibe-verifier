@@ -47,4 +47,4 @@ runs:
         VV_PLANS_TOKEN: ${{ inputs.plans-token }}
       run: >-
         python3 "$GITHUB_ACTION_PATH/ticket.py" --body "$VV_BODY" --repo "$VV_REPO" --base "$VV_BASE" --out "$VV_OUT"
-        --names "$VV_NAMES" --title "$VV_TITLE" --plans-endpoint "$VV_PLANS_ENDPOINT"
+        --names "$VV_NAMES" --title="$VV_TITLE" --plans-endpoint "$VV_PLANS_ENDPOINT"
