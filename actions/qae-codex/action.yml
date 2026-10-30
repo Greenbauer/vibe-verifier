@@ -72,7 +72,7 @@ runs:
           echo "::error::no Codex login at $file. Seed it once on this runner, as the runner user: CODEX_HOME=$home codex login --device-auth, with cli_auth_credentials_store = \"file\" in $home/config.toml (harnesses/qae/README.md)."
           exit 2
         fi
-        state=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("auth_mode",""), bool((d.get("tokens") or {}).get("refresh_token")))' "$file")
+        state=$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("auth_mode",""), bool((d.get("tokens") or {}).get("refresh_token")))' "$file")
         if [ "$state" != "chatgpt True" ]; then
           echo "::error::$file is not a ChatGPT-managed login with a refresh token (auth_mode, refresh token present: $state)"
           exit 2
@@ -138,7 +138,7 @@ runs:
             # in every tool result, saved file and session log, so the cookie never reaches the model
             # through the browser or the uploaded artifacts. Checked here first, never printed: a file
             # that is not a cookies-only storage state stops the run before a model session is spent on it.
-            if ! state=$(python3 - "$STORAGE_STATE" "$redact" <<'PY'
+            if ! state=$(python3 -I - "$STORAGE_STATE" "$redact" <<'PY'
         import json, os, re, sys
         path, redact = sys.argv[1], sys.argv[2]
         def refuse(why):
@@ -179,7 +179,7 @@ runs:
           # quote characters, and a 24-character generated password with punctuation does that about
           # once in a hundred.
           if [ -n "$SECRETS_FILE" ] || [ -s "$redact" ]; then
-            if ! out=$(python3 - "$SECRETS_FILE" "$redact" "$config" <<'PY'
+            if ! out=$(python3 -I - "$SECRETS_FILE" "$redact" "$config" <<'PY'
         import json, os, re, sys
         given, redact, config = sys.argv[1], sys.argv[2], sys.argv[3]
         def refuse(why):
@@ -247,7 +247,7 @@ runs:
         set -euo pipefail
         redact="$RUNNER_TEMP/qae-codex-redact.json"
         [ -s "$redact" ] || { rm -f "$RUNNER_TEMP/qae-codex-mcp.json"; exit 0; }
-        python3 - "$redact" "$ARTIFACTS" <<'PY'
+        python3 -I - "$redact" "$ARTIFACTS" <<'PY'
         import json, pathlib, sys, urllib.parse
         values = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
         forms = {}

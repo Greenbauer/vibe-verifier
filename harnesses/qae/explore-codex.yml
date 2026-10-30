@@ -462,7 +462,7 @@ jobs:
           SHARDS: ${{ strategy.job-total }}
           SHARE_IDS: ${{ steps.references.outputs.share-ids }}
         run: |
-          python3 - <<'PY'
+          python3 -I - <<'PY'
           import glob, json, os, re, shutil, sys
           root, shard, moved = "qae-artifacts", os.environ["SHARD"], {}
           own, split = "shard-" + shard, os.environ["SHARDS"] != "1"
@@ -657,7 +657,7 @@ jobs:
           EXPLORE_ATTEMPT: ${{ needs.explore.outputs.attempt }}
           EVIDENCE: ${{ runner.temp }}/qae-evidence
         run: |
-          python3 - <<'PY'
+          python3 -I - <<'PY'
           import filecmp, json, os, re, shutil, sys
 
           def stop(message):

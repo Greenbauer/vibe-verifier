@@ -981,7 +981,7 @@ secret in the step's env as `BYPASS`:
           jar="$RUNNER_TEMP/vercel-bypass.jar"
           printf 'x-vercel-protection-bypass: %s\nx-vercel-set-bypass-cookie: true\n' "$BYPASS" \
             | curl -fsS -o /dev/null -c "$jar" -H @- "$url/"
-          python3 - "$jar" "$RUNNER_TEMP/storage-state.json" <<'PY'
+          python3 -I - "$jar" "$RUNNER_TEMP/storage-state.json" <<'PY'
           import json, sys
           cookies = []
           for line in open(sys.argv[1]):

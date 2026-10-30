@@ -171,7 +171,7 @@ runs:
           # as a link (docs/comments.md).
           marker='<!-- vibe-verifier:proof-audit -->'
           comment="$RUNNER_TEMP/proof-audit-comment.json"
-          python3 - "$table" "$marker" "$VV_HEAD" "$VV_RUN" "$comment" <<'PY'
+          python3 -I - "$table" "$marker" "$VV_HEAD" "$VV_RUN" "$comment" <<'PY'
         import json, sys
         table, marker, head, run, out = sys.argv[1:]
         text = open(table, encoding="utf-8").read().rstrip("\n")
@@ -182,6 +182,10 @@ runs:
             --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -1) || found=""
           if [ -n "$found" ]; then
             gh api -X PATCH "repos/$VV_REPO/issues/comments/$found" --input "$comment" > /dev/null || echo "::warning::could not edit the proof audit comment"
+          elif head -n 1 "$table" | grep -q '^## Proof audit: nothing to audit'; then
+            # Nothing to audit (no Ticket line or plan marker, a section with no IDs, a marker and no plan store):
+            # no comment. One that had a comment has it replaced above, so no stale grades stay (docs/comments.md).
+            :
           else
             gh api -X POST "repos/$VV_REPO/issues/$VV_PR/comments" --input "$comment" > /dev/null || echo "::warning::could not post the proof audit comment"
           fi

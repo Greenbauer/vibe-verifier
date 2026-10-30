@@ -87,7 +87,7 @@ jobs:
           for lock in tools/*/package-lock.json; do
             python3 bin/vibe-verifier tool "$(basename "$(dirname "$lock")")" > /dev/null
           done
-          python3 -c 'import sys; sys.path.insert(0, "gates"); import _tools; [_tools.ensure(name) for name in sorted(_tools.TOOLS)]'
+          python3 -I -c 'import sys; sys.path.insert(0, "gates"); import _tools; [_tools.ensure(name) for name in sorted(_tools.TOOLS)]'
       - name: coverage-not-lost on the whole suite
         uses: ./actions/gates # zizmor: ignore[self-repository]
         env:
