@@ -70,6 +70,21 @@ class PlanStore(unittest.TestCase):
     def criteria(self, text):
         return text[text.index("## Acceptance criteria"):].splitlines()[2:]
 
+    def test_a_title_that_starts_with_a_dash_reaches_the_step_as_the_title(self):
+        # Run as the action runs it: its folded `run:` line, with the title in $VV_TITLE. A title with no space
+        # after its dash once reached argparse as an option, and the step failed instead of reading the marker.
+        self.plans[PLAN_ID] = {"planMarkdown": STORED_PLAN, "amendments": []}
+        write(self.work, {"body.md": BODY})
+        out = os.path.join(self.work, "ticket.md")
+        run = " ".join((ROOT / "actions" / "ticket" / "action.yml").read_text().split("run: >-", 1)[1].split())
+        env = clean_env({"GITHUB_ACTION_PATH": str(ROOT / "actions" / "ticket"),
+                         "VV_BODY": os.path.join(self.work, "body.md"), "VV_OUT": out, "VV_REPO": "o/r",
+                         "VV_BASE": "b" * 40, "VV_NAMES": "", "VV_TITLE": "-WIP[plan:%s]" % PLAN_ID,
+                         "VV_PLANS_ENDPOINT": self.endpoint, "VV_PLANS_TOKEN": "secret"})
+        result = subprocess.run(["bash", "--noprofile", "--norc", "-c", run], capture_output=True, text=True, env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("- Prices show in euros on the shop page.", self.criteria(Path(out).read_text()))
+
     def test_the_plans_acceptance_sections_and_each_amendment_are_the_ticket(self):
         self.plans[PLAN_ID] = {"planMarkdown": STORED_PLAN, "amendments": [AMENDED, PLAIN_AMENDMENT]}
         result, text = self.run_ticket(BODY, title="Euro prices [plan:%s]" % PLAN_ID.upper(), summary=True)
