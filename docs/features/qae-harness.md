@@ -73,6 +73,11 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_qa_limit.py::test_a_usage_limit_on_every_explorer_passes_with_a_warning`
 - `tests/test_qa_limit.py::test_a_usage_limit_on_only_some_explorers_stays_red`
 - `tests/test_qa_limit.py::test_any_other_explore_failure_stays_red`
+- `tests/test_qa_limit_listing.py::test_steps_github_has_not_listed_yet_are_read_again`
+- `tests/test_qa_limit_listing.py::test_annotations_github_has_not_listed_yet_are_read_again`
+- `tests/test_qa_limit_listing.py::test_steps_still_unlisted_at_the_deadline_stay_red`
+- `tests/test_qa_limit_listing.py::test_a_listed_failure_of_another_kind_ends_the_wait`
+- `tests/test_qa_limit_listing.py::test_a_rerun_of_the_verify_job_reads_the_walks_that_ran`
 - `tests/test_qa_limit.py::test_a_usage_limit_on_every_explorer_skips_what_judges_a_walk`
 - `tests/test_verify_edits.py::test_unchanged_edited_and_added_features_in_the_features_and_gate_logs`
 - `tests/test_verify_edits.py::test_each_re_walked_row_says_whether_the_pull_request_changed_its_verify_section`

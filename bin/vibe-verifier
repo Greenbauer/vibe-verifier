@@ -177,7 +177,8 @@ from what the workflow's jobs and gates concluded, never from the explorer's pro
 every one failed on a model usage limit, warns with each limit and its reset and writes `limited=true` and the limits
 to $GITHUB_OUTPUT: the QAE verify job then skips the steps that judge a walk and passes with that warning. Any other
 failure, a server-side rate limit among them, an explorer that succeeded, or annotations it cannot read write
-`limited=false`.
+`limited=false`. A failed explore job whose steps or annotations GitHub has not listed yet is read again every
+`--interval` seconds (15) for up to `--wait` (420), and a job a rerun copied is read as the attempt that ran it.
 
 `proof-audit --body FILE [--model M] [--reasoning-effort E] [--max-ids N] [--grades DIR]` grades, with a model
 on the Codex CLI (tools/codex) under a ChatGPT-managed login ($CODEX_HOME, default ~/.codex), whether the
@@ -210,6 +211,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATES = os.path.join(ROOT, "gates")
@@ -1485,31 +1487,71 @@ EXPLORER_STEP = "Explore the acceptance criteria in a real browser"
 EXIT_CODE = re.compile(r"Process completed with exit code 1\.")
 
 
-def explorer_limits(repo, run_id):
+def explorer_limits(repo, run_id, wait=420, interval=15):
     """[{job, limit, reset}] (reset '' when the message names none), one per explore job of the run's latest
     attempt, when every one of them failed on a model usage limit, so no explorer walked anything. None when
     any explorer succeeded (its verdict is the gates' to judge) or failed for another reason, when there is
     none, or when the jobs or their annotations cannot be read (the workflow then lacks `actions: read` and
-    `checks: read`). A job of a reusable workflow is named `<caller> / Acceptance criteria: walk`."""
+    `checks: read`). A job of a reusable workflow is named `<caller> / Acceptance criteria: walk`.
+
+    GitHub lists a finished job's steps and annotations some time after the job ends (Greenbauer/zack.land run
+    41110815005: no steps listed 5 minutes after both walks failed, all of them about 15 minutes after), so a
+    failed explorer whose steps or failure annotations are not listed yet is read again every `interval` seconds
+    for up to `wait`, inside the verify job's 10 minutes; still unlisted then, nothing is excused. A listed
+    explorer that failed another way ends the wait at once: whatever the others show, the run is not excused."""
+    deadline = time.monotonic() + wait
     try:
-        jobs = gh_json("repos/%s/actions/runs/%s/jobs?filter=latest&per_page=100" % (repo, run_id)).get("jobs", [])
-        explorers = [job for job in jobs if EXPLORE_JOB.fullmatch(job.get("name", "").split(" / ")[-1])]
-        if not explorers or any(job.get("conclusion") != "failure" for job in explorers):
-            return None
-        limits = [job_limit(repo, job) for job in explorers]
+        while True:
+            jobs = gh_json("repos/%s/actions/runs/%s/jobs?filter=latest&per_page=100" % (repo, run_id)).get("jobs", [])
+            explorers = [job for job in jobs if EXPLORE_JOB.fullmatch(job.get("name", "").split(" / ")[-1])]
+            if not explorers or any(job.get("conclusion") != "failure" for job in explorers):
+                return None
+            originals = {}  # read again on every pass: an earlier attempt's steps can be the ones still unlisted
+            read = [(job, listed_failures(repo, job)) for job in (ran_job(repo, run_id, job, originals) for job in explorers)]
+            limits = [job_limit(job, notes) for job, notes in read if notes is not None]
+            if None in limits or len(limits) == len(read):
+                return limits if None not in limits else None
+            if time.monotonic() >= deadline:
+                print("::warning::GitHub had not listed every explore job's steps and failure annotations after %ds, "
+                      "so the cause of the failure is unknown: rerun this job once they are listed" % wait)
+                return None
+            time.sleep(interval)
     except (CannotRead, ValueError, KeyError, TypeError, AttributeError) as error:
         print("::warning::could not tell why the explore job failed: %s" % error)
         return None
-    return limits if None not in limits else None
 
 
-def job_limit(repo, job):
-    """{job, limit, reset} when the job's one failed step is the explorer's and its failure annotations are a
-    usage limit and the exit code (reset '' when the limit names none); None otherwise."""
-    if [step.get("name") for step in job.get("steps") or [] if step.get("conclusion") == "failure"] != [EXPLORER_STEP]:
+def ran_job(repo, run_id, job, originals):
+    """The job as it ran. Rerunning only the verify job copies the explore jobs into the new attempt under new
+    ids, with their steps and times but none of their annotations (run 41110815005, attempt 2), so a copy is read
+    as the earliest attempt's job of the same name, start and end. `originals` keeps each attempt's jobs for one
+    pass."""
+    for attempt in range(1, int(job.get("run_attempt") or 1)):
+        if attempt not in originals:
+            originals[attempt] = gh_json("repos/%s/actions/runs/%s/attempts/%d/jobs?per_page=100"
+                                         % (repo, run_id, attempt)).get("jobs", [])
+        for earlier in originals[attempt]:
+            if [earlier.get(key) for key in ("name", "started_at", "completed_at")] == [
+                    job.get(key) for key in ("name", "started_at", "completed_at")]:
+                return earlier
+    return job
+
+
+def listed_failures(repo, job):
+    """The failed job's failure annotation messages, or None while GitHub has not listed them yet: no steps, a
+    step with no conclusion, or no failure annotation (every failed step leaves at least its exit code's)."""
+    steps = job.get("steps") or []
+    if not steps or any(step.get("conclusion") is None for step in steps):
         return None
     notes = gh_json("repos/%s/check-runs/%s/annotations?per_page=100" % (repo, job["id"]))
-    messages = [note.get("message") or "" for note in notes if note.get("annotation_level") == "failure"]
+    return [note.get("message") or "" for note in notes if note.get("annotation_level") == "failure"] or None
+
+
+def job_limit(job, messages):
+    """{job, limit, reset} when the job's one failed step is the explorer's and its failure annotations are a
+    usage limit and the exit code (reset '' when the limit names none); None otherwise."""
+    if [step.get("name") for step in job["steps"] if step.get("conclusion") == "failure"] != [EXPLORER_STEP]:
+        return None
     found = [match for match in map(USAGE_LIMIT.search, messages) if match]
     if not found or any(not USAGE_LIMIT.search(message) and not EXIT_CODE.fullmatch(message) for message in messages):
         return None
@@ -1527,7 +1569,7 @@ def qa_limit_command(args):
     """The QAE verify job's usage-limit step: when every explorer hit its model usage limit, warn with each limit and
     its reset and write `limited=true` and the limits (JSON) to $GITHUB_OUTPUT, so the steps that judge a walk are
     skipped and the job passes with the warning (operator, 2026-10-29); otherwise `limited=false`."""
-    limits = explorer_limits(args.repo, args.run_id)
+    limits = explorer_limits(args.repo, args.run_id, args.wait, args.interval)
     if limits:
         print("::warning::The acceptance walk did not run on %s: every explorer hit its model usage limit (%s). This "
               "head was NOT checked in a browser; the QA review records it as limited, never as a walk. Rerun the "
@@ -1841,6 +1883,9 @@ def main():
     limit.add_argument("--repo", required=True, metavar="OWNER/NAME")
     limit.add_argument("--run-id", required=True, metavar="ID")
     limit.add_argument("--head", required=True, metavar="SHA", help="the head commit the run judged")
+    limit.add_argument("--wait", type=int, default=420, metavar="SECONDS", help="how long to wait for GitHub to list a "
+                       "failed explore job's steps and annotations (default 420, inside the verify job's 10 minutes)")
+    limit.add_argument("--interval", type=int, default=15, metavar="SECONDS", help="seconds between reads while waiting")
     args = parser.parse_args()
     if args.command == "list":
         print("\n".join(available()))

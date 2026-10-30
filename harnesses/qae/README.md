@@ -876,7 +876,20 @@ record says `no_artifact`), so the annotation is the one record of it; `actions/
 Codex CLI's last error as one (`You've hit your usage limit. ... try again at <time>.`). Everything
 else stays red with the plain "could not run" review: a server-side rate limit ("not your usage
 limit", which a rerun fixes), any other failure, an explorer of several that failed another way or
-walked (its verdict is the gates' to judge), and annotations the job cannot read. Reading them needs
+walked (its verdict is the gates' to judge), and annotations the job cannot read.
+
+GitHub lists a finished job's steps and annotations some time after the job ends: on
+Greenbauer/zack.land run 41110815005 it listed no steps on one walk, and steps with no conclusion on
+the other, five minutes after both failed on the limit, and all of them about fifteen minutes after.
+So a failed explore job whose steps, a step's conclusion or failure annotations are not listed yet
+is read again every 15 seconds for up to 7 minutes (`--wait`, `--interval`), inside the verify job's
+10-minute timeout. An explore job GitHub has listed that failed another way ends the wait at once, since the run is
+not excused whatever the others show. Still unlisted then, the step warns that the cause is unknown
+and the check stays red: rerun only the `Acceptance criteria` job once GitHub lists them. That rerun
+copies the explore jobs into its attempt under new ids, with their steps and times but none of their
+annotations, so a copy is read as the job of the earliest attempt with the same name, start and end,
+the one that ran, and that attempt is read again on every pass, since its steps can be the ones
+still unlisted. Reading the jobs and their annotations needs
 `actions: read` and `checks: read` on the verify job, which both templates grant. An annotation is
 text any step of that job can print, a pull request's own build script among them, which is why the
 step, its exit code and the annotations are all judged: a build that prints the limit and fails is a

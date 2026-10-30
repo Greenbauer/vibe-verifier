@@ -10,8 +10,11 @@ directory instead of GitHub and records every call, so a test can assert what wa
     FAKE_GH_ROOT/<owner>/<name>/.id      the repository id `gh api repos/<owner>/<name>` answers (default 1)
     FAKE_GH_ROOT/<owner>/<name>/.comments.json  the pull request's comments, a JSON list served by
                                          `issues/<n>/comments`, paged by its per_page and page parameters
-    FAKE_GH_ROOT/<owner>/<name>/.jobs.json  the jobs `actions/runs/<id>/jobs` answers, a JSON list
-    FAKE_GH_ROOT/<owner>/<name>/.annotations/<id>.json  the annotations of check run <id>, a JSON list
+    FAKE_GH_ROOT/<owner>/<name>/.jobs.json  the jobs `actions/runs/<id>/jobs` answers, a JSON list, or
+                                         {"sequence": [list, ...]}: one list per read, the last one repeated
+    FAKE_GH_ROOT/<owner>/<name>/.jobs-attempt-<n>.json  the jobs `actions/runs/<id>/attempts/<n>/jobs` answers
+    FAKE_GH_ROOT/<owner>/<name>/.annotations/<id>.json  the annotations of check run <id>, a JSON list, or a
+                                         sequence as for .jobs.json
     FAKE_GH_ROOT/<owner>/.rulesets.json  the organization's rulesets, a JSON list of full ruleset objects;
                                          absent, `orgs/<owner>/rulesets` answers 404, as for a user account
     FAKE_GH_ROOT/calls.log               one JSON object per call: {method, endpoint, content?, body?}
@@ -35,6 +38,21 @@ argv = sys.argv[1:]
 def record(method, endpoint, **extra):
     with open(os.path.join(root, "calls.log"), "a") as handle:
         handle.write(json.dumps(dict(method=method, endpoint=endpoint, **extra)) + "\n")
+
+
+def served(path, default):
+    """The JSON at `path` (`default` when absent); a {"sequence": [...]} answers its next entry on each read,
+    counted in `path`.reads, and keeps answering the last."""
+    if not os.path.exists(path):
+        return default
+    answer = json.load(open(path))
+    if not isinstance(answer, dict) or "sequence" not in answer:
+        return answer
+    count = path + ".reads"
+    reads = int(open(count).read()) if os.path.exists(count) else 0
+    with open(count, "w") as handle:
+        handle.write(str(reads + 1))
+    return answer["sequence"][min(reads, len(answer["sequence"]) - 1)]
 
 
 def fields():
@@ -136,12 +154,13 @@ if argv[:1] == ["api"]:
         print(json.dumps(comments[(page - 1) * size:page * size]))
         sys.exit(0)
     if "/actions/runs/" in endpoint and endpoint.split("?")[0].endswith("/jobs"):
-        path = os.path.join(root, repo, ".jobs.json")
-        print(json.dumps({"jobs": json.load(open(path)) if os.path.exists(path) else []}))
+        attempt = endpoint.split("?")[0].split("/attempts/")[1].split("/")[0] if "/attempts/" in endpoint else ""
+        path = os.path.join(root, repo, ".jobs-attempt-%s.json" % attempt if attempt else ".jobs.json")
+        print(json.dumps({"jobs": served(path, [])}))
         sys.exit(0)
     if "/check-runs/" in endpoint and endpoint.split("?")[0].endswith("/annotations"):
         path = os.path.join(root, repo, ".annotations", endpoint.split("/check-runs/")[1].split("/")[0] + ".json")
-        print(json.dumps(json.load(open(path)) if os.path.exists(path) else []))
+        print(json.dumps(served(path, [])))
         sys.exit(0)
     if "/git/ref/heads/" in endpoint:
         print(json.dumps({"object": {"sha": "a" * 40}}))
