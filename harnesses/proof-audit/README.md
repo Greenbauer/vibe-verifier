@@ -10,13 +10,16 @@ upload" was proved by a test whose second dropped file was a GIF, which the type
 JPEG" had no JPEG case.
 
 The proof audit closes that gap. A model on the Codex CLI is given the requirement list of the
-sections the body links, and the repository's tree, and grades every ID, cold:
+sections the body links (and of a plan it names in a plan store: see below), and the repository's
+tree, and grades every ID, cold:
 
 - **PROVEN**: the wording split into the cases it names, and for each case the test file, the test's
   title and the assertion lines that would fail if that case broke, quoted verbatim with their line
   numbers.
 - **EXCLUDED**: the plan line that gives the item to another section, quoted with its line number, and
-  that section's link; the section must carry `[takes: ID]`.
+  that section's link; the section must carry `[takes: ID]`. A stored plan's requirement is never
+  EXCLUDED (the gate counts it UNPROVEN): its body's `Split off:` line gives it away instead, and the
+  table lists it as **SPLIT** with its owner.
 - **UNPROVEN**: what is missing, in a sentence the author can act on.
 
 The model never sees the pull request's body or its `[proof:]` map: it finds the proving tests itself.
@@ -43,9 +46,10 @@ QAE workflow so its required `Acceptance criteria` check (`qae-verify` in a copy
 [check names](../../docs/check-names.md)) carries the verdict:
 
 1. **plan** (`mode: plan`), in the criteria job, on any runner: reads the body's `Ticket:` lines and the
-   linked sections at the merge base (ticket-coverage's grammar and parser), and cuts the requirement
-   IDs into shards of at most `max-ids` (default 10). Outputs `count`, `shards` (the grade jobs'
-   matrix) and `plan` (the requirements, as JSON). No Ticket line is a count of 0.
+   linked sections at the merge base (ticket-coverage's grammar and parser), and the plans its markers
+   name in a plan store when `plans-endpoint` is given, and cuts the requirement IDs into shards of at
+   most `max-ids` (default 10). Outputs `count`, `shards` (the grade jobs' matrix) and `plan` (the
+   requirements, as JSON). No Ticket line and no stored plan is a count of 0.
 2. **grade** (`mode: grade`), one job per shard, on the runner that holds the QAE explorer's
    ChatGPT-managed Codex login (`$HOME/.codex-qae`, checked as `actions/qae-codex` checks it): runs
    `bin/vibe-verifier proof-audit --requirements <plan> --shard K`, which writes `<K>.json` (the IDs it
@@ -60,10 +64,13 @@ QAE workflow so its required `Acceptance criteria` check (`qae-verify` in a copy
 3. **verify** (`mode: verify`), in the verify job, never skipped by a `- None:` or a carried walk:
    downloads the grades, runs the gate, appends the per-ID table to the step summary and posts it as one
    pull request comment, edited in place, so the author can fix every gap in one pass. The step's exit
-   code is the gate's.
+   code is the gate's. With `soak: "true"` (the gate's common `--soak`) the table is summarized and posted
+   the same, and an UNPROVEN requirement is reported without failing the step, so a consumer can measure
+   a new audit (a plan store's, say) before it blocks; a gate that could not run (exit 2) still fails it.
 
-No Ticket line audits nothing, and that alone passes (a CI or docs pull request implements no plan
-section). Two such bodies fail instead, so dropping the line is never a way past the audit:
+No Ticket line and no stored plan audits nothing, and that alone passes (a CI or docs pull request
+implements no plan section). Two such bodies fail instead, so dropping the line is never a way past the
+audit:
 
 - a body that claims `[req: ID]` items (a proof map kept under its own heading, say) without the
   `Ticket:` line that links the section defining them;
@@ -157,6 +164,17 @@ In the verify job, add `proof-audit` to its `needs`, and after the QA gates:
           token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
+A consumer whose plans live in a plan store gives the plan and verify steps the same three inputs, as it
+gives `actions/ticket` (harnesses/qae/README.md, "The ticket's criteria"; "A plan kept in a plan store"
+below says what it grades):
+
+```yaml
+          title: ${{ github.event.pull_request.title }}
+          plans-endpoint: https://plans.example/api/v1   # CONSUMER: answers GET <endpoint>/plans/<id>
+          plans-token: ${{ secrets.PLANS_TOKEN }}         # CONSUMER: a read-only token of the store's
+          soak: "true"                                    # verify only, optional: report before it blocks
+```
+
 The verify job is already a required check, so nothing in branch protection changes. A grade job
 does not wait for the preview, so it normally finishes long before the explorers do.
 
@@ -175,6 +193,48 @@ grades in the checkout, but not grades the grade job uploaded from there into a 
 consumer copy made before this keeps them in the checkout (`path: proof-audit-grades/` and
 `grades: proof-audit-grades`): refresh the copy, not only its pins.
 
+## A plan kept in a plan store
+
+A `Ticket:` section's requirements carry their IDs. A plan a requester submits to a plan store, and amends
+later, carries none, so `actions/ticket` gives QAE only its Acceptance items, and a requirement written
+anywhere else in it was never graded. Given the store, the audit grades its whole wording. A `[plan:<id>]`
+marker in the title or body (outside code fences, HTML comments and `Split off:` lines) names the plan, read
+from the store when the step runs, so an amendment added while the pull request is open is graded on its
+next run. [`gates/_plan_store.py`](../../gates/_plan_store.py) cuts it into requirements, the same way every
+time:
+
+- every list item (nested items and continuation lines joined to their parent) and every paragraph of the
+  plan, outside code fences, in the order written: `PL-1`, `PL-2`, ...;
+- then each amendment's, oldest first: `AM1-1`, `AM1-2`, ... for the first; an amendment with no item and
+  no paragraph at all (only a heading or a code block) is one requirement, its whole text;
+- left out: headings; labels, lines that are bold and nothing else and no sentence
+  (`**Added acceptance criteria**`; `**Prices never show in dollars.**` is a paragraph); closed HTML comments;
+  everything under a heading that starts with Why, Problem, Background, Context, Repo baseline, Out of
+  scope or Non-goals (any case, its subsections too), though never under the plan's title, a `# ...`
+  heading before any other; the list or paragraph directly under a label that starts so
+  (`**Out of scope**`), up to a heading, a label, or a paragraph after a blank line or a code fence; and
+  an item or paragraph that starts with "Out of scope", bold or plain;
+- a second plan the pull request names numbers its IDs `P2PL-1`, `P2AM1-1`, so no two plans share one.
+
+They follow the Ticket sections' requirements. The model is given each with `plan:<id>` as where it is
+defined, and is told there is no file to read for it. A requirement this pull request leaves to another
+goes on a line of the body, which only the plan step and the gate read:
+
+```text
+Split off: PL-4, AM1-2 -> #123
+Split off: PL-7 -> https://github.com/<owner>/<name>/pull/45
+Split off: AM2-1 -> [plan:<id of the plan that takes it>]
+```
+
+A split-off ID is not graded, and the table lists it as SPLIT with its owner (a pull request's URL as
+`<owner>/<name>#45`). A line not of that form, an ID no plan the pull request names defines (a Ticket
+section's item goes to another section with `[takes: ID]` instead), an ID split off twice, or the pull
+request's own plan as the owner is could-not-run, never a pass. So are a store that does not answer 200, a
+marker with no token, and a plan with nothing to grade. With no `plans-endpoint` a marker is not read, and
+the run says so in a note (a `Split off:` line then cannot run: no plan defines its IDs). The plan's
+wording reaches the model's prompt as written by its requester: an instruction in it can steer a grade,
+never past the gate's checks of every quote.
+
 ## Run it before pushing
 
 The same plan, prompt, schema and gate, from a catalog checkout, against a committed branch (the gate
@@ -186,10 +246,12 @@ reads git history):
 ```
 
 `--body` is the pull request body as it will be posted; keep it outside the repository, which the model
-reads. The shards are graded in parallel (`--jobs`, default 4) with the login in `$CODEX_HOME`
-(default `~/.codex`; `codex login --device-auth` seeds one), then the table is printed and the command
-exits as CI's step does: 0 every requirement proven or excluded, 1 any UNPROVEN, 2 could not run (no
-login, a usage limit, an unreadable ticket link). `--grades DIR` keeps the grade files. Pass the
+reads. For a plan in a plan store add `--title "<the pull request's title>" --plans-endpoint <URL>`, with
+the store's token in `$VV_PLANS_TOKEN`, so the run grades the list CI grades. The shards are graded in
+parallel (`--jobs`, default 4) with the login in `$CODEX_HOME` (default `~/.codex`;
+`codex login --device-auth` seeds one), then the table is printed and the command exits as CI's step
+does: 0 every requirement proven, excluded or split off, 1 any UNPROVEN, 2 could not run (no login, a
+usage limit, an unreadable ticket link or plan store). `--grades DIR` keeps the grade files. Pass the
 workflow's `require-ticket` globs as `--require-ticket GLOB` (once each) to check an unlinked body as CI
 does.
 

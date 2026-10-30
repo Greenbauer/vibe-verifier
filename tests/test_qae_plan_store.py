@@ -104,6 +104,18 @@ class PlanStore(unittest.TestCase):
         self.assertEqual((result.returncode, text), (0, ""), result.stderr)
         self.assertEqual(self.seen, [])
 
+    def test_a_split_off_lines_plan_is_another_owners_and_not_read(self):
+        # `Split off: <IDs> -> [plan:<id>]` gives the proof audit's requirements to that plan (gates/_proof_requirements.py).
+        other = "a8f1bf53-0a04-4d73-8ebd-57bffa15257d"
+        self.plans[PLAN_ID] = {"planMarkdown": STORED_PLAN, "amendments": []}
+        result, text = self.run_ticket(BODY + "\nSplit off: PL-2 -> [plan:%s]\n" % other, title="[plan:%s]" % PLAN_ID)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ticket: 4 criteria", result.stdout)
+        self.assertEqual(self.seen, [("/api/v1/plans/%s" % PLAN_ID, "Bearer secret")])
+        result, text = self.run_ticket("Split off: PL-2 -> [plan:%s]\n" % other)
+        self.assertEqual((result.returncode, text), (0, ""), result.stderr)
+        self.assertEqual(len(self.seen), 1)
+
     def test_a_plan_the_step_cannot_read_fails(self):
         self.plans[PLAN_ID] = {"planMarkdown": "# A plan\n\n## Goal\n\n- prose only\n", "amendments": []}
         other = "a8f1bf53-0a04-4d73-8ebd-57bffa15257d"

@@ -1,6 +1,6 @@
 # Proof audit
 
-A model on the Codex CLI grades, cold, whether a repository's tests prove each requirement its pull request's Ticket sections define (PROVEN with quoted assertions, EXCLUDED to an owner that took the item, or UNPROVEN), and the `proof-audit` gate holds every quote to the repository and fails on any UNPROVEN.
+A model on the Codex CLI grades, cold, whether a repository's tests prove each requirement its pull request's Ticket sections define, and, given a plan store, each requirement of the whole wording of a plan its `[plan:<id>]` marker names (PROVEN with quoted assertions, EXCLUDED to an owner that took the item, or UNPROVEN; a stored plan's requirement a `Split off:` line gives to another pull request or plan is SPLIT), and the `proof-audit` gate holds every quote to the repository and fails on any UNPROVEN.
 
 ## Surfaces
 
@@ -8,6 +8,8 @@ A model on the Codex CLI grades, cold, whether a repository's tests prove each r
 - command: `proof-audit`
 - source: `gates/proof_audit.py`
 - source: `gates/_proof_audit.py`
+- source: `gates/_proof_requirements.py`
+- source: `gates/_plan_store.py`
 - source: `gates/_schema_subset.py`
 - source: `gates/_test_body.py`
 - source: `harnesses/proof-audit/**`
@@ -16,7 +18,7 @@ A model on the Codex CLI grades, cold, whether a repository's tests prove each r
 
 ## Reach
 
-In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one shard per job on the runner with the Codex login, and verifies in the verify job ([harnesses/proof-audit/README.md](../../harnesses/proof-audit/README.md)). Before pushing, from a clone: `bin/vibe-verifier proof-audit --repo <project> --base-ref main --body <body file outside the project>`, which exits as the CI step does.
+In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one shard per job on the runner with the Codex login, and verifies in the verify job ([harnesses/proof-audit/README.md](../../harnesses/proof-audit/README.md)); a consumer whose plans live in a plan store gives the plan and verify steps `title`, `plans-endpoint` and `plans-token`, and `soak: "true"` makes the verify step report only. Before pushing, from a clone: `bin/vibe-verifier proof-audit --repo <project> --base-ref main --body <body file outside the project>` (with `--title` and `--plans-endpoint`, the token in `$VV_PLANS_TOKEN`, for a stored plan), which exits as the CI step does.
 
 ## Verify
 
@@ -51,11 +53,26 @@ In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one s
 - `tests/test_proof_audit_body.py::test_a_regex_a_string_or_a_comment_holding_a_backtick_opens_no_template`
 - `tests/test_proof_audit_body_shapes.py::test_each_shape_keeps_its_own_lines_and_turns_away_the_hook_after_it`
 - `tests/test_proof_audit.py::test_the_recorded_grade_of_the_proven_tree_passes_and_does_not_pass_on_the_other_tree`
+- `tests/test_proof_audit_plan_store.py::test_a_plans_wording_is_cut_into_requirements_with_stable_ids`
+- `tests/test_proof_audit_plan_store.py::test_the_title_labels_comments_and_each_aside_word_are_read_as_written`
+- `tests/test_proof_audit_plan_store.py::test_a_labels_block_and_the_title_end_where_the_markdown_says`
+- `tests/test_proof_audit_plan_store.py::test_the_plan_step_reads_the_named_plan_after_the_tickets_and_leaves_split_ids_ungraded`
+- `tests/test_proof_audit_plan_store.py::test_an_id_a_ticket_section_and_a_stored_plan_both_define_cannot_run`
+- `tests/test_proof_audit_plan_store.py::test_the_model_is_given_the_plans_wording_and_never_the_split_lines`
+- `tests/test_proof_audit_plan_store.py::test_split_off_lines_name_a_stored_requirement_and_its_owner`
+- `tests/test_proof_audit_plan_store.py::test_a_plan_the_audit_cannot_read_cannot_run`
+- `tests/test_proof_audit_plan_store.py::test_the_actions_plan_step_passes_the_title_and_store_by_env`
+- `tests/test_proof_audit_split.py::test_a_split_off_requirement_is_listed_with_its_owner_and_never_graded`
+- `tests/test_proof_audit_split.py::test_a_plan_split_off_whole_needs_no_grades`
+- `tests/test_proof_audit_split.py::test_an_excluded_grade_on_a_stored_requirement_is_unproven`
+- `tests/test_proof_audit_split.py::test_a_store_the_gate_cannot_read_cannot_run`
+- `tests/test_proof_audit_split.py::test_the_verify_step_reports_only_under_soak_but_fails_a_gate_that_cannot_run`
 
 ## Gotchas
 
 - Whether an assertion exercises a case is the model's judgment; the gate proves only that the quotes are real. The one-file replay (`tests/fixtures/proof-audit/c8`) is the case it was built for: run it live with `VV_PROOF_AUDIT_LIVE=1` after changing the prompt.
-- No `Ticket:` line audits nothing, and passes, unless the body claims `[req: ID]` items anyway (a finding: the line that would define them is missing) or the consumer sets `require-ticket` globs and the pull request changes a matching file without a `No ticket: <why>` line (a finding).
+- A stored plan has no `[takes:]`: its requirement graded EXCLUDED is UNPROVEN, and one the pull request leaves to another goes on a `Split off: <ID> -> <owner>` line. Without `plans-endpoint` a `[plan:<id>]` marker is not read (a note says so, and a `Split off:` line cannot run), so a local run grades CI's list only when given the same store.
+- No `Ticket:` line and no stored plan audits nothing, and passes, unless the body claims `[req: ID]` items anyway (a finding: the line that would define them is missing) or the consumer sets `require-ticket` globs and the pull request changes a matching file without a `No ticket: <why>` line (a finding).
 - The model never sees the body: keep a local `--body` file outside the repository, which the model reads.
 - The grades stay in the runner's temporary directory from the grade job's write to the verify job's read. The gate judges none of them when the checkout supplied any: a path the branch tracks at, under or on the way to `--grades`, or a symbolic link in it (`planted` in `gates/_contract.py`). A consumer copy made before that keeps them in the checkout: refresh the copy, not only its pins.
 - A grade is for the tree it was given. Grades recorded on another commit fail their quotes, as they should.

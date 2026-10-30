@@ -1,11 +1,12 @@
 """The proof audit's grader, `bin/vibe-verifier proof-audit`: a model grades, cold, whether this repository's
-tests prove each requirement the pull request's Ticket sections define, and gates/proof_audit.py checks
-every quote it gives against the repository.
+tests prove each requirement the pull request's tickets define, and gates/proof_audit.py checks every quote
+it gives against the repository.
 
-The requirements are the `[req: ID]` items of each section a `Ticket: <plan>#<anchor>` line of the body
-links, read at the merge base exactly as ticket-coverage reads them. The model is given those IDs with
-their wording and where the plan defines them, and the repository's tree; never the body, and never the
-body's `[proof:]` map: it finds the proving tests itself. Its prompt and output schema are
+The requirements are gates/_proof_requirements.py's: the `[req: ID]` items of each section a `Ticket:` line of
+the body links, and, given a plan store (--plans-endpoint, $VV_PLANS_TOKEN), the whole wording of each plan a
+`[plan:<id>]` marker in --title or the body names, less what `Split off:` lines give away. The model is given
+the IDs with their wording and where the plan defines them, and the repository's tree; never the body, and
+never the body's `[proof:]` map: it finds the proving tests itself. Its prompt and output schema are
 harnesses/proof-audit/prompt.md and schema.json, the one copy CI and a laptop both run. It runs on the
 Codex CLI from tools/codex's lockfile, under a ChatGPT-managed login (CODEX_HOME, default ~/.codex), with
 the user's config ignored, so a laptop grades with the settings CI uses, and a read-only sandbox (--sandbox;
@@ -35,9 +36,8 @@ import threading
 import time
 import traceback
 
-from _contract import CannotRun, git, resolve_base
-from _ticket import Unreadable, links
-import ticket_coverage
+from _contract import CannotRun
+from _proof_requirements import requirements
 
 NAME = "proof-audit"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -50,35 +50,6 @@ DEFAULT_TIMEOUT = 3000  # seconds: inside a 55-minute job with its checkout and 
 PLACEHOLDER = re.compile(r"\b(REQUIREMENTS|SECTIONS)\b")
 EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
 MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-
-
-def merge_base(repo, base_ref):
-    return git(repo, "merge-base", resolve_base(repo, base_ref), "HEAD").strip()
-
-
-def requirements(repo, base_ref, body):
-    """(requirements, notes): every requirement ID the body's Ticket links define at the merge base, in
-    plan order, each {id, text, plan, line, section, heading}; notes say why there is nothing to audit
-    (no Ticket line, or a linked section with no IDs). An unreadable link, file or anchor is CannotRun."""
-    try:
-        found = links(body)
-    except Unreadable as error:
-        raise CannotRun(str(error))
-    if not found:
-        return [], ["no ticket linked"]
-    base = merge_base(repo, base_ref)
-    result, notes, seen = [], [], set()
-    for path, anchor in found:
-        lines, start, level = ticket_coverage.linked_section(repo, base, path, anchor)
-        defined = ticket_coverage.section_ids(lines, start, level)
-        if not defined:
-            notes.append("%s#%s: ticket section has no requirement IDs; nothing audited" % (path, anchor))
-        for rid, number, text in defined:
-            if rid not in seen:
-                seen.add(rid)
-                result.append({"id": rid, "text": text, "plan": path, "line": number,
-                               "section": "%s#%s" % (path, anchor), "heading": lines[start].lstrip("#").strip()})
-    return result, notes
 
 
 def shards(items, max_ids):
@@ -243,10 +214,11 @@ def plan_of(args):
             body = handle.read()
     except OSError as error:
         raise CannotRun("--body cannot be read: %s" % error)
-    items, notes = requirements(args.repo, args.base_ref, body)
+    items, notes = requirements(args.repo, args.base_ref, body, args.title, args.plans_endpoint,
+                                os.environ.get("VV_PLANS_TOKEN", ""))
     for note in notes:
         print("%s: %s" % (NAME, note), flush=True)
-    return shards(items, args.max_ids)
+    return shards([item for item in items if "split" not in item], args.max_ids)
 
 
 def validate_options(args):
@@ -267,7 +239,7 @@ def audit(args):
         list(pool.map(lambda pair: grade(args, *pair), enumerate(cuts, 1)))
     table = os.path.join(args.grades, "table.md")
     command = [sys.executable, GATE, "--repo", args.repo, "--body", args.body, "--grades", args.grades,
-               "--table", table, "--format", args.format]
+               "--table", table, "--format", args.format, "--title", args.title, "--plans-endpoint", args.plans_endpoint]
     if args.base_ref:
         command += ["--base-ref", args.base_ref]
     for glob in args.require_ticket:
@@ -314,6 +286,9 @@ def add_arguments(parser):
                         "$VIBE_VERIFIER_BASE_REF, $GITHUB_BASE_REF, main, master)")
     parser.add_argument("--body", metavar="FILE", help="the pull request's body: its Ticket lines name the requirements. "
                         "Keep it outside the repository, which the model reads")
+    parser.add_argument("--title", default="", help="the pull request's title, read for a `[plan:<id>]` marker as the body is")
+    parser.add_argument("--plans-endpoint", default="", metavar="URL", help="a plan store answering GET <URL>/plans/<id> "
+                        "(the bearer token in $VV_PLANS_TOKEN): each plan a marker names is graded whole")
     parser.add_argument("--plan", metavar="OUT", help="write the plan (the requirements cut into shards) and stop")
     parser.add_argument("--requirements", metavar="PLAN", help="with --shard, the plan --plan wrote")
     parser.add_argument("--shard", type=int, metavar="K", help="grade only shard K of --requirements")
@@ -366,8 +341,10 @@ def cell(text, limit=600):
 
 
 def table(rows, note=None):
-    proven = sum(1 for _, status, _ in rows if status != "UNPROVEN")
-    lines = ["## Proof audit: %s" % cell(note or "%d of %d requirements proven or excluded" % (proven, len(rows))), ""]
+    proven = sum(1 for _, status, _ in rows if status in ("PROVEN", "EXCLUDED"))
+    split = sum(1 for _, status, _ in rows if status == "SPLIT")
+    note = note or "%d of %d requirements proven or excluded%s" % (proven, len(rows), ", %d split off" % split if split else "")
+    lines = ["## Proof audit: %s" % cell(note), ""]
     if rows:
         lines += ["| ID | Verdict | Proof, or what is missing |", "|---|---|---|"]
         lines += ["| %s | %s | %s |" % (rid, status, cell(detail)) for rid, status, detail in rows]

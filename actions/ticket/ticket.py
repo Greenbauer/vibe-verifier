@@ -30,7 +30,8 @@ later) is read too when the consumer names the store:
                            [{body}]}`, the amendments oldest first, given the bearer token in $VV_PLANS_TOKEN
     --title TEXT           the pull request's title, which may carry the marker as the body may
 
-A `[plan:<id>]` marker in the title or body (outside code fences and HTML comments) names a plan. Its criteria
+A `[plan:<id>]` marker in the title or body (outside code fences, HTML comments and `Split off:` lines, whose
+plan is another owner's) names a plan; gates/_plan_store.py reads it from the store. Its criteria
 are the list items under each plan heading that starts "Acceptance", then, for each amendment in order, the
 items under its own "Acceptance criteria" heading or bold line, or, when it has none, the whole amendment as
 one criterion: an amendment is a requirement however it is written. They follow any `Ticket:` section's
@@ -40,25 +41,19 @@ a plan amended later is graded on the next run.
 """
 import argparse
 import base64
-import json
 import os
 import re
 import subprocess
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gates"))
+from _plan_store import BOLD_LINE, stored_plans
 from _ticket import (HEADING, Unreadable, headings, indexed_body_lines, indexed_list_items, links, named,
                      section_items, unfenced)
 
-PLAN_MARKER = re.compile(r"\[plan:[ \t]*(?P<id>[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})[ \t]*\]")
-HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
 PLAN_SECTION = re.compile(r"^acceptance\b", re.IGNORECASE)
-# An amendment marks its criteria with a heading or a line in bold: `**Added acceptance criteria**`.
-BOLD_LINE = re.compile(r"^[ \t]*(\*\*|__)(?P<text>[^*_].*?)\1[ \t]*:?[ \t]*$")
+# An amendment marks its criteria with a heading or a line in bold (BOLD_LINE): `**Added acceptance criteria**`.
 CRITERIA_WORDS = re.compile(r"acceptance criteria", re.IGNORECASE)
 
 
@@ -68,33 +63,6 @@ def fetch(repo, path, ref):
     if result.returncode != 0:
         raise Unreadable("%s cannot be read at the base commit %s: %s" % (path, ref, result.stderr.strip()))
     return base64.b64decode(result.stdout).decode("utf-8")
-
-
-def plan_ids(*texts):
-    """The plan ids `[plan:<id>]` markers name in `texts`, outside code fences and HTML comments, in order, once each."""
-    found = []
-    for text in texts:
-        for _, line in unfenced(HTML_COMMENT.sub("", text).splitlines()):
-            found += [match.group("id").lower() for match in PLAN_MARKER.finditer(line)]
-    return list(dict.fromkeys(found))
-
-
-def fetch_plan(endpoint, plan_id, token):
-    """The plan store's JSON for one plan, over http(s) only."""
-    if urllib.parse.urlsplit(endpoint).scheme not in ("https", "http"):
-        raise Unreadable("the plan store endpoint is not an http(s) URL: %s" % endpoint)
-    request = urllib.request.Request("%s/plans/%s" % (endpoint.rstrip("/"), plan_id),
-                                     headers={"Authorization": "Bearer " + token, "Accept": "application/json"})
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310: the scheme is checked http(s) above
-            plan = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        raise Unreadable("the plan store answered %d" % error.code)
-    except (urllib.error.URLError, OSError, ValueError) as error:
-        raise Unreadable("the plan store could not be read: %s" % error)
-    if not isinstance(plan.get("planMarkdown"), str) or not isinstance(plan.get("amendments", []), list):
-        raise Unreadable("the plan store's answer has no planMarkdown or amendments list")
-    return plan
 
 
 def plan_body_items(markdown):
@@ -141,13 +109,10 @@ def plan_items(plan_id, plan):
 
 def plan_criteria(body, title, endpoint, token):
     """([(source line, criteria)] of each plan the title or body names), or [] when no store is named."""
-    found = plan_ids(title, body) if endpoint else []
-    if found and not token:
-        raise Unreadable("the pull request names plan %s, and the step has no token for the plan store" % found[0])
     read = []
-    for plan_id in found:
+    for plan_id, plan in stored_plans(title, body, endpoint, token):
         try:
-            read.append(("- plan %s, read from the plan store" % plan_id, plan_items(plan_id, fetch_plan(endpoint, plan_id, token))))
+            read.append(("- plan %s, read from the plan store" % plan_id, plan_items(plan_id, plan)))
         except Unreadable as error:
             raise Unreadable("plan %s: %s" % (plan_id, error))
     return read

@@ -1,9 +1,9 @@
 name: Vibe Verifier proof audit
 description: >-
-  Grade, cold, whether a repository's tests prove each requirement its pull request's Ticket sections define, and
-  hold the grades to the repository. Three modes, one per job (harnesses/proof-audit/README.md): `plan` on any
-  runner, `grade` on a runner holding a ChatGPT-managed Codex login, one job per shard, and `verify`, which runs
-  the proof-audit gate and posts its per-ID table.
+  Grade, cold, whether a repository's tests prove each requirement its pull request's Ticket sections, or a plan it
+  names in a plan store, define, and hold the grades to the repository. Three modes, one per job
+  (harnesses/proof-audit/README.md): `plan` on any runner, `grade` on a runner holding a ChatGPT-managed Codex
+  login, one job per shard, and `verify`, which runs the proof-audit gate and posts its per-ID table.
 inputs:
   mode:
     description: plan, grade or verify.
@@ -11,7 +11,19 @@ inputs:
   body:
     description: >-
       plan and verify: the pull request's body, written by the workflow outside the workspace ($RUNNER_TEMP) for
-      plan, so a model never reads it. Its `Ticket:` lines name the requirements.
+      plan, so a model never reads it. Its `Ticket:` lines name the requirements, and so may its plan markers.
+    default: ""
+  title:
+    description: plan and verify, the pull request's title, read for a `[plan:<id>]` marker as the body is. Empty reads none.
+    default: ""
+  plans-endpoint:
+    description: >-
+      plan and verify, a plan store's API base, as actions/ticket's: each plan a `[plan:<id>]` marker in the title or
+      body names, `GET <endpoint>/plans/<id>` with its amendments, is graded whole (harnesses/proof-audit/README.md).
+      Give both modes the same value. Empty (the default) reads no plan store.
+    default: ""
+  plans-token:
+    description: plan and verify, the bearer token the plan store reads plans with, a secret of the consumer's. Needed with plans-endpoint.
     default: ""
   plan:
     description: grade, the plan job's `plan` output (the requirements cut into shards, as JSON).
@@ -57,6 +69,11 @@ inputs:
       with a `Ticket:` line or says why none applies on a `No ticket: <why>` line, such as the application's source.
       Empty requires neither. A body that claims `[req: ID]` items with no Ticket line fails either way.
     default: ""
+  soak:
+    description: >-
+      verify, "true" to report only: the per-ID table is summarized and posted as always, and an UNPROVEN requirement
+      does not fail the step (the gate's common --soak). A gate that could not run fails the step all the same.
+    default: "false"
   token:
     description: verify, a token that may comment on the pull request; the table is posted, or edited in place, as one comment. Empty posts none (the step summary still has it).
     default: ""
@@ -80,10 +97,14 @@ runs:
       env:
         VV_BODY: ${{ inputs.body }}
         VV_MAX_IDS: ${{ inputs.max-ids }}
+        VV_TITLE: ${{ inputs.title }}
+        VV_PLANS_ENDPOINT: ${{ inputs.plans-endpoint }}
+        VV_PLANS_TOKEN: ${{ inputs.plans-token }}
       run: |
         set -euo pipefail
         plan="$RUNNER_TEMP/proof-audit-plan.json"
-        out=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" proof-audit --body "$VV_BODY" --plan "$plan" --max-ids "$VV_MAX_IDS")
+        out=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" proof-audit --body "$VV_BODY" --title "$VV_TITLE" \
+          --plans-endpoint "$VV_PLANS_ENDPOINT" --plan "$plan" --max-ids "$VV_MAX_IDS")
         echo "$out"
         count=$(printf '%s\n' "$out" | sed -n 's/^requirements: \([0-9][0-9]*\)$/\1/p')
         shards=$(printf '%s\n' "$out" | sed -n 's/^shards: \(\[[0-9,]*\]\)$/\1/p')
@@ -116,6 +137,10 @@ runs:
         VV_BODY: ${{ inputs.body }}
         VV_GRADES: ${{ inputs.grades }}
         VV_REQUIRE_TICKET: ${{ inputs.require-ticket }}
+        VV_TITLE: ${{ inputs.title }}
+        VV_PLANS_ENDPOINT: ${{ inputs.plans-endpoint }}
+        VV_PLANS_TOKEN: ${{ inputs.plans-token }}
+        VV_SOAK: ${{ inputs.soak }}
         VV_REPO: ${{ github.repository }}
         VV_PR: ${{ github.event.pull_request.number }}
         VV_HEAD: ${{ github.event.pull_request.head.sha }}
@@ -129,11 +154,14 @@ runs:
           glob="${glob#"${glob%%[![:space:]]*}"}"; glob="${glob%"${glob##*[![:space:]]}"}"
           [ -n "$glob" ] && required+=(--require-ticket "$glob")
         done <<< "$VV_REQUIRE_TICKET"
+        soak=()
+        if [ "$VV_SOAK" = "true" ]; then soak=(--soak); fi
         # GitHub runs `shell: bash` with -e: without `|| code=$?` a failing gate ends the step here, before its
         # table reaches the step summary and the comment, which is when the author needs it.
         code=0
         python3 "$GITHUB_ACTION_PATH/../../gates/proof_audit.py" --body "$VV_BODY" --grades "$VV_GRADES" \
-          --table "$table" --format github ${required[@]+"${required[@]}"} || code=$?
+          --table "$table" --format github --title "$VV_TITLE" --plans-endpoint "$VV_PLANS_ENDPOINT" \
+          ${required[@]+"${required[@]}"} ${soak[@]+"${soak[@]}"} || code=$?
         [ -s "$table" ] || printf '## Proof audit: could not run (the gate wrote no table; its log says why)\n' > "$table"
         cat "$table" >> "$GITHUB_STEP_SUMMARY"
         if [ -n "$GH_TOKEN" ] && [ -n "$VV_PR" ]; then

@@ -17,6 +17,9 @@ only the wording above:
 
 SECTIONS
 
+A requirement whose plan is `plan:<id>` comes from a plan kept in a plan store, outside this repository: its
+wording above is all there is to read of it, and it is never EXCLUDED.
+
 How to grade one requirement:
 
 1. Split its wording into every case it names: each value, type, role, state, boundary, action and outcome

@@ -118,7 +118,7 @@ The explorer can be wrong. The architecture prevents an unsupported sentence suc
 
 See [`harnesses/qae/README.md`](../harnesses/qae/README.md).
 
-The same verify job runs the [proof audit](../harnesses/proof-audit/README.md), which asks the question `ticket-coverage` leaves open: do the tests prove each requirement a linked section defines, as worded? A planning step in the criteria job reads the requirement IDs at the merge base; grade jobs on the Codex runner give a model the requirement list and the checkout, never the body or its `[proof:]` map, and keep its JSON grades (PROVEN with quoted assertions, EXCLUDED to an owner that took the item, UNPROVEN); the `proof-audit` gate then checks every quote and title against the repository and every exclusion's `[takes:]` at the merge base, and fails on any UNPROVEN. A grade job that fails, a usage limit included, leaves its error in its grade file, and the gate cannot run. A body with no `Ticket:` line audits nothing; the gate fails it when it claims `[req:]` IDs anyway, or when it changes a path the consumer's `require-ticket` globs list and gives no `No ticket: <why>` line. Whether an assertion exercises a case stays the model's judgment.
+The same verify job runs the [proof audit](../harnesses/proof-audit/README.md), which asks the question `ticket-coverage` leaves open: do the tests prove each requirement a linked section defines, as worded? A planning step in the criteria job reads the requirement IDs at the merge base, and, given the consumer's plan store, cuts the whole wording of each plan a `[plan:<id>]` marker names into IDs of its own (less what the body's `Split off:` lines give to another pull request or plan, listed as SPLIT); grade jobs on the Codex runner give a model the requirement list and the checkout, never the body or its `[proof:]` map, and keep its JSON grades (PROVEN with quoted assertions, EXCLUDED to an owner that took the item, UNPROVEN); the `proof-audit` gate then checks every quote and title against the repository and every exclusion's `[takes:]` at the merge base, and fails on any UNPROVEN. A grade job that fails, a usage limit included, leaves its error in its grade file, and the gate cannot run. A body with no `Ticket:` line and no stored plan audits nothing; the gate fails it when it claims `[req:]` IDs anyway, or when it changes a path the consumer's `require-ticket` globs list and gives no `No ticket: <why>` line. Whether an assertion exercises a case stays the model's judgment.
 
 ### 5. Repository and organization governance
 
@@ -197,7 +197,7 @@ A recurring pattern is that the workflow declares the values that determine what
 | Design reference images, and their digests | Consumer workflow (site step), declared by the workflow before the explorer runs |
 | Browser observations/screenshots | Model/browser harness |
 | Acceptance verdict validity | Deterministic gates |
-| Which requirements a pull request owes proof for | `Ticket:` links and the plan at the merge base, read by the proof audit's planning step before any model runs |
+| Which requirements a pull request owes proof for | `Ticket:` links and the plan at the merge base, and a stored plan the consumer's plan store returns for a `[plan:<id>]` marker, less the body's `Split off:` lines, read by the proof audit's planning step before any model runs and again by its gate |
 | Requirement proof grades | Model (proof audit), every quote and exclusion checked by the `proof-audit` gate |
 | Aggregate CI status | Gate runner / GitHub job |
 
