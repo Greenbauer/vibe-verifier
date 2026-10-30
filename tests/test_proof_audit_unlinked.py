@@ -1,6 +1,7 @@
 """proof-audit with no `Ticket:` line: nothing is graded, so a body that claims `[req:]` items anyway, or (with
 --require-ticket) a pull request that changes a listed path without a `No ticket: <why>` line, is a finding, and
 the action's verify step keeps the table when the gate fails. Fixtures and helpers: tests/test_proof_audit.py."""
+import json
 import re
 import subprocess
 import unittest
@@ -8,6 +9,15 @@ import unittest
 from helpers import ROOT, clean_env, write
 
 import test_proof_audit as base  # as a module, so its test classes are not collected twice
+
+
+def action_step(name):
+    """The `run:` script of the actions/proof-audit step called `name`, as bash is given it."""
+    text = (ROOT / "actions" / "proof-audit" / "action.yml").read_text()
+    step = text[text.index(name):]
+    block = re.search(r"^( +)run: \|\n((?:\1 .*\n|\n)+)", step, re.MULTILINE)
+    indent = len(block.group(1)) + 2
+    return "".join(line[indent:] if line.strip() else "\n" for line in block.group(2).splitlines(True))
 
 
 class Unlinked(unittest.TestCase):
@@ -41,21 +51,21 @@ class Unlinked(unittest.TestCase):
                 result, _ = self.audit(repo, body="Built it.\n", extra=extra)
                 self.assert_code(result, 0, "no ticket linked")
 
-    def verify_step(self, repo, body, require_ticket=""):
-        """The action's verify step, run as GitHub runs `shell: bash` (with -e), against an empty grades directory."""
-        text = (ROOT / "actions" / "proof-audit" / "action.yml").read_text()
-        step = text[text.index("- name: Hold the grades to the repository"):]
-        block = re.search(r"^( +)run: \|\n((?:\1 .*\n|\n)+)", step, re.MULTILINE)
-        indent = len(block.group(1)) + 2
-        script = "".join(line[indent:] if line.strip() else "\n" for line in block.group(2).splitlines(True))
+    def verify_step(self, repo, body, require_ticket="", grades=(), **inputs):
+        """The action's verify step, run as GitHub runs `shell: bash` (with -e), against a grades directory holding
+        `grades` (envelopes), with each other input empty unless `inputs` (VV_SOAK="true", say) sets it."""
         work = self.outside()
         write(work, {"body.md": body, "summary.md": ""})
         (work / "grades").mkdir()
+        for item in grades:
+            write(work, {"grades/proof-audit-%d/%d.json" % (item["shard"], item["shard"]): json.dumps(item)})
         env = dict(clean_env(), GITHUB_ACTION_PATH=str(ROOT / "actions" / "proof-audit"), RUNNER_TEMP=str(work),
                    GITHUB_STEP_SUMMARY=str(work / "summary.md"), VV_BODY=str(work / "body.md"),
                    VV_GRADES=str(work / "grades"), VV_REQUIRE_TICKET=require_ticket, GH_TOKEN="", VV_PR="",
-                   VIBE_VERIFIER_BASE_REF="main")
-        result = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script], cwd=repo, env=env,
+                   VIBE_VERIFIER_BASE_REF="main", VV_TITLE="", VV_PLANS_ENDPOINT="", VV_PLANS_TOKEN="", VV_SOAK="false")
+        env.update(inputs)
+        result = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c",
+                                 action_step("- name: Hold the grades to the repository")], cwd=repo, env=env,
                                 capture_output=True, text=True)
         return result, (work / "summary.md").read_text()
 

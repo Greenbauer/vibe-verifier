@@ -102,27 +102,43 @@ def indent_of(line, item):
     return len((item.group("indent") if item else re.match(r"[ \t]*", line).group(0)).expandtabs(4))
 
 
-def indexed_list_items(section):
-    """Each (line number, item), nested items and continuation lines joined to their parent."""
+def indexed_list_items(section, paragraphs=False):
+    """Each (line number, item), nested items and continuation lines joined to their parent. With `paragraphs`,
+    each paragraph outside a list too, its lines joined, in the order written."""
     # `top` is the indent of the list being read (None outside one). After a blank line, only an item or an
     # indented line continues it; an unindented paragraph ends it. A subsection's heading ends it too.
-    items, top, blank = [], None, False
+    # `prose`: the last entry is a paragraph that the next line, with no blank line between, continues.
+    items, top, blank, prose = [], None, False, False
     for index, line in section:
         if line is None or not line.strip():
             top, blank = (None, blank) if line is None else (top, True)
+            prose = False
             continue
         item = ITEM.match(line)
         indent = indent_of(line, item)
         if item and (top is None or indent <= top):
-            top = indent
+            top, prose = indent, False
             items.append((index + 1, item.group("text").strip()))
         elif top is not None and (not blank or indent > top):
             number, text = items[-1]
             items[-1] = (number, text + " " + (item.group("text") if item else line).strip())
         else:
             top = None
+            prose = add_prose(items, index, line, prose, paragraphs)
         blank = False
     return items
+
+
+def add_prose(items, index, line, joined, paragraphs):
+    """With `paragraphs`, add a line outside a list to `items`: to the paragraph it continues when `joined`, else as
+    a new one. Whether a paragraph is open after it."""
+    if not paragraphs:
+        return False
+    if joined:
+        items[-1] = (items[-1][0], items[-1][1] + " " + line.strip())
+    else:
+        items.append((index + 1, line.strip()))
+    return True
 
 
 def list_items(section):

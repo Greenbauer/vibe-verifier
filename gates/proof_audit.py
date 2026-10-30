@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Hold the proof auditor's grades to the repository: every requirement a linked ticket section defines is
-PROVEN by quotes that are really there, EXCLUDED to an owner that took it, or a finding.
+"""Hold the proof auditor's grades to the repository: every requirement the pull request's tickets define is
+PROVEN by quotes that are really there, EXCLUDED to an owner that took it, SPLIT off, or a finding.
 
     # the QAE verify job, after the proof-audit jobs graded the requirements (harnesses/proof-audit)
     proof-audit --body qae-inputs/pr-body.md --grades "$RUNNER_TEMP/proof-audit-grades"
 
-The requirements are the `[req: ID]` items of each section a `Ticket: <plan>#<anchor>` line of the body
-links, read at the merge base as ticket-coverage reads them. --grades is a directory of the grader's
-`<K>.json` files (`bin/vibe-verifier proof-audit`): between them they must grade exactly those IDs, or the
-gate cannot run. Per ID, the model's grade is checked, never trusted:
+The requirements are gates/_proof_requirements.py's, as the plan step read them: the `[req: ID]` items of each
+section a `Ticket:` line of the body links, at the merge base, and with --plans-endpoint ($VV_PLANS_TOKEN) the
+whole wording of each plan a `[plan:<id>]` marker in --title or the body names in a plan store; a requirement
+a body line `Split off: <ID> -> <owner>` gives away is SPLIT, with its owner, and not graded. --grades is a
+directory of the grader's `<K>.json` files (`bin/vibe-verifier proof-audit`): between them they must grade
+exactly the other IDs, or the gate cannot run. Per ID, the model's grade is checked, never trusted:
 
 - PROVEN needs at least one case, each with at least one assertion. Every assertion names a test file at
   HEAD (*.test.*, *.spec.*, __tests__/, node:test, or a Python test), a line whose whole text is the quote
@@ -20,12 +22,13 @@ gate cannot run. Per ID, the model's grade is checked, never trusted:
   the table gives that line, and the cited one beside it. One quote that is not there makes the requirement
   UNPROVEN: a fabricated quote is not proof.
 - EXCLUDED needs a plan line, quoted verbatim (in part, 12 characters or more) at its line number at the merge base, and an owner section
-  (`path#anchor`) that carries `[takes: ID]` at the merge base and is not one this body links.
+  (`path#anchor`) that carries `[takes: ID]` at the merge base and is not one this body links. A stored plan's
+  requirement has no `[takes:]` to give it away, so EXCLUDED is UNPROVEN for it: a `Split off:` line does that.
 - UNPROVEN, a missing grade or a doubled one is a finding.
 
 A shard the grader could not grade (the Codex CLI's own error: a usage limit, a timeout, output that is not
 JSON) is exit 2, never a pass, and so are grades that do not match harnesses/proof-audit/schema.json. No
-Ticket line, or linked sections with no IDs, is a qualified pass, with two exceptions that are findings: a body
+Ticket line and no stored plan, or linked sections with no IDs, is a qualified pass, with two exceptions that are findings: a body
 that claims `[req: ID]` items without the Ticket line that would define them, and, with --require-ticket GLOB, a
 pull request that changes a matching file and neither links a section nor says why on a `No ticket: <why>`
 line. --table FILE gets the per-ID table.
@@ -40,15 +43,15 @@ import posixpath
 import re
 import subprocess
 
-from _acceptance import HTML_COMMENT
 from _affected_graph import JS_EXTENSIONS
 from _affected_tests import JS_TESTS, NODE_TEST
 from _contract import PY_TESTS, CannotRun, Finding, git, matches, planted, qualify, run_gate
-from _proof_audit import SCHEMA, merge_base, proof_summary, requirements, table, write_table
+from _proof_audit import SCHEMA, proof_summary, table, write_table
+from _proof_requirements import merge_base, requirements, stored, unlinked, where
 from _schema_subset import schema_problem
 from _test_body import (CLOSERS_ONLY, DECLARATION, body_end, bracket_depth, declaration_above, declared_title,
                         test_body)
-from _ticket import LINK, links, unfenced
+from _ticket import LINK, links
 import ticket_coverage
 
 GATE = "proof-audit"
@@ -64,8 +67,6 @@ MIN_PART = 12  # a plan line, and a test title that is not a literal, may be quo
 # A model usage limit as the Codex CLI words it ("You've hit your usage limit ... try again at 3:05 PM."):
 # the same pattern bin/vibe-verifier's USAGE_LIMIT reads from an explorer's failure annotation.
 USAGE_LIMIT = re.compile(r"You(?:'|’)ve (?:hit|reached) your (?:[\w-]+ ){0,3}limit\b", re.I)
-# A body's declared reason for linking no plan section, as `- None: <why>` declares no criteria.
-NO_TICKET = re.compile(r"^\s*No ticket:\s*\w", re.I)  # a word, so a template's `No ticket: <why>` is no reason
 
 
 ENVELOPE = {"type": "object", "required": ["shard", "ids", "error", "output", "seconds"],
@@ -105,10 +106,11 @@ def checked(path, envelope, schema):
     return envelope
 
 
-def graded(found, wanted, schema):
-    """{id: [grade, ...]} from the envelopes, which must grade exactly the wanted IDs, each in one shard."""
+def graded(directory, wanted, schema):
+    """{id: [grade, ...]} from the envelopes in the directory, which must grade exactly the wanted IDs, each in
+    one shard. None wanted (every requirement split off) reads none: the plan step planned no grade job."""
     owner, grades = {}, {}
-    for path, envelope in found:
+    for path, envelope in envelopes(directory) if wanted else []:
         checked(path, envelope, schema)
         for rid in envelope["ids"]:
             if rid in owner:
@@ -270,8 +272,11 @@ def excluded_problem(files, grade, linked):
     return None if grade["id"] in taken else "%s carries no [takes: %s] at the merge base" % (exclusion["owner"], grade["id"])
 
 
-def verdict(files, grades, linked):
-    """(status, detail) for one requirement: the grade's own, or UNPROVEN with the reason a check failed."""
+def verdict(files, grades, linked, item):
+    """(status, detail) for one requirement: SPLIT to its owner, the grade's own, or UNPROVEN with the reason a
+    check failed."""
+    if "split" in item:
+        return "SPLIT", "split off to %s" % item["split"]
     if not grades:
         return "UNPROVEN", "the grader returned no grade for it"
     if len(grades) > 1:
@@ -281,34 +286,11 @@ def verdict(files, grades, linked):
         problem = proven_problem(files, grade)
         return ("UNPROVEN", problem) if problem else ("PROVEN", proof_summary(grade))
     if grade["status"] == "EXCLUDED":
-        problem = excluded_problem(files, grade, linked)
+        problem = ("graded EXCLUDED, but a stored plan gives no requirement to another owner: a `Split off:` line "
+                   "does" if stored(item) else excluded_problem(files, grade, linked))
         return ("UNPROVEN", problem) if problem else ("EXCLUDED", "%s (%s:%d: %s)" % (
             grade["exclusion"]["owner"], grade["exclusion"]["plan"], grade["exclusion"]["line"], grade["exclusion"]["quote"].strip()))
     return "UNPROVEN", grade["missing"].strip() or "the grader named nothing missing"
-
-
-def unlinked(args, body):
-    """The finding for a body that links no Ticket section yet must: one that claims `[req: ID]` items anyway
-    (the section that defines them is unlinked, so none would be audited), or, with --require-ticket, one whose
-    pull request changes a matching file and gives no `No ticket: <why>` line."""
-    if links(body):
-        return []
-    lines = [line for _, line in unfenced(HTML_COMMENT.sub("", body).splitlines())]  # a template's example claims nothing
-    claimed = list(dict.fromkeys(rid for line in lines for rid in ticket_coverage.ids(line)))
-    if claimed:
-        return [Finding("the body claims %d requirement ID(s) (%s) but no `Ticket: <plan>#<anchor>` line links the "
-                        "section that defines them, so none of them is audited: add that line"
-                        % (len(claimed), ", ".join(claimed)))]
-    if not args.require_ticket or any(NO_TICKET.match(line) for line in lines):
-        return []
-    base = merge_base(args.repo, args.base_ref)
-    changed = [path for path in git(args.repo, "diff", "--name-only", "--no-renames", "-z", base, "HEAD").split("\0")
-               if path and matches(path, args.require_ticket)]
-    if not changed:
-        return []
-    return [Finding("the pull request changes %d file(s) under --require-ticket (%s) and links no plan section: add "
-                    "`Ticket: <plan>#<anchor>` for the section it implements, or a line `No ticket: <why>` saying why "
-                    "none applies" % (len(changed), ", ".join(changed)))]
 
 
 def check(args):
@@ -321,7 +303,8 @@ def check(args):
     if supplied:
         write_table(args.table, table([], "nothing judged: the pull request supplies grades of its own"))
         return supplied
-    items, notes = requirements(args.repo, args.base_ref, body)
+    items, notes = requirements(args.repo, args.base_ref, body, args.title, args.plans_endpoint,
+                                os.environ.get("VV_PLANS_TOKEN", ""), args.pr)
     unaudited = [] if items else unlinked(args, body)
     if unaudited:
         write_table(args.table, table([], "nothing audited: %s" % unaudited[0].message))
@@ -333,7 +316,7 @@ def check(args):
     with open(SCHEMA, encoding="utf-8") as handle:
         schema = json.load(handle)
     try:
-        grades = graded(envelopes(args.grades), [item["id"] for item in items], schema)
+        grades = graded(args.grades, [item["id"] for item in items if "split" not in item], schema)
     except CannotRun as reason:
         write_table(args.table, table([], "could not run: %s" % reason))
         raise
@@ -341,10 +324,10 @@ def check(args):
     linked = set(links(body))
     rows, findings = [], [Finding(note, advisory=True) for note in notes]
     for item in items:
-        status, detail = verdict(files, grades.get(item["id"], []), linked)
+        status, detail = verdict(files, grades.get(item["id"], []), linked, item)
         rows.append((item["id"], status, detail))
         if status == "UNPROVEN":
-            findings.append(Finding("%s UNPROVEN: %s. Requirement: %s" % (item["id"], detail, item["text"]), item["plan"], item["line"]))
+            findings.append(Finding("%s UNPROVEN: %s. Requirement: %s" % (item["id"], detail, item["text"]), *where(item)))
     write_table(args.table, table(rows))
     return findings
 
@@ -353,6 +336,10 @@ def add_arguments(parser):
     parser.add_argument("--body", required=True, metavar="FILE", help="the pull request's body: its Ticket lines name the requirements")
     parser.add_argument("--grades", required=True, metavar="DIR", help="the grader's <K>.json files (bin/vibe-verifier proof-audit)")
     parser.add_argument("--table", metavar="FILE", help="write the per-ID table, in Markdown, here")
+    parser.add_argument("--title", default="", help="the pull request's title, read for a `[plan:<id>]` marker as the body is")
+    parser.add_argument("--plans-endpoint", default="", metavar="URL", help="a plan store answering GET <URL>/plans/<id> "
+                        "(the bearer token in $VV_PLANS_TOKEN): each plan a marker names is graded whole")
+    parser.add_argument("--pr", default="", metavar="N", help="this pull request's number: no `Split off:` line may name it")
     parser.add_argument("--require-ticket", action="append", default=[], metavar="GLOB",
                         help="a pull request that changes a file matching GLOB (repeatable) must link a Ticket section or "
                         "say why none applies on a `No ticket: <why>` line")

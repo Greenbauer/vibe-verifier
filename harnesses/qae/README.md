@@ -332,7 +332,11 @@ now reads the ticket by default, and the harness holds the pull request to its c
   `Ticket:` section's criteria, and the step's job summary numbers them all, TC1, TC2, ..., so an
   author knows which number a `ticket-proof:` line names. The store is read on every run, so an
   amendment added while the pull request is open is graded on its next run. A plan with no Acceptance
-  section, a store that does not answer 200, or a marker with no token fails the step.
+  section, a store that does not answer 200, or a marker with no token fails the step. A marker on a
+  `Split off:` line names the plan that takes some of the proof audit's requirements, not this one, and
+  is not read (a `Split off: ... -> ...` line, a list item or not). The store is read from its own
+  address: a redirect is not followed. Give the [proof audit](../proof-audit/README.md)'s plan and verify steps the same inputs
+  and it grades the plan's whole wording, not only its Acceptance items.
 - A spec kept elsewhere needs its own step in place of the default (a declared custom), or one beside it
   that appends to the same file, writing the ticket's criteria with
   the PR body's grammar: a `## Acceptance criteria` list (a ticket body that has that section can be
