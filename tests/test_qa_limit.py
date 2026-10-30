@@ -45,10 +45,10 @@ class QaLimit(GhFixture):
             (site / ".annotations" / ("%d.json" % number)).write_text(json.dumps(notes))
         (site / ".jobs.json").write_text(json.dumps([{"id": 1, "name": "qae-criteria", "conclusion": "success"}] + listed))
 
-    def limit(self):
+    def limit(self, *extra):
         """The qa-limit step on run 42: its stdout and the outputs it wrote to $GITHUB_OUTPUT."""
         output = self.file("github-output", "")
-        result = runner("qa-limit", "--repo", "acme/site", "--run-id", "42", "--head", HEAD,
+        result = runner("qa-limit", "--repo", "acme/site", "--run-id", "42", "--head", HEAD, *extra,
                         env=dict(self.env, GITHUB_OUTPUT=output))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         outputs = dict(line.split("=", 1) for line in Path(output).read_text().splitlines())
@@ -134,6 +134,72 @@ class QaLimit(GhFixture):
             self.assertEqual(body.splitlines()[1], "## QA review: could not run ⚠️", why)
             self.assertIn("The explore job ended `failure` on " + COMMIT + ", so nothing was checked. Its log has the cause", body, why)
             self.assertNotIn("limited", body, why)
+
+    def site(self, name):
+        return Path(self.fixtures) / "acme" / "site" / name
+
+    def listed(self):
+        return json.loads(self.site(".jobs.json").read_text())
+
+    def jobs_reads(self):
+        return len([c for c in self.calls() if c["endpoint"].startswith("repos/acme/site/actions/runs/42/jobs")])
+
+    def test_steps_github_has_not_listed_yet_are_read_again(self):
+        # Greenbauer/zack.land run 41110815005: read seconds after both walks failed on the limit, GitHub listed no
+        # steps on one and steps with no conclusion on the other; about 15 minutes later it listed them all.
+        self.explorers(("Acceptance criteria: walk", "failure", [self.CLAUDE_LIMIT]),
+                       ("Acceptance criteria: walk (2)", "failure", [self.CLAUDE_LIMIT]))
+        filled = self.listed()
+        empty = json.loads(json.dumps(filled))
+        empty[1]["steps"] = []
+        for step in empty[2]["steps"]:
+            step["conclusion"] = None
+        self.site(".jobs.json").write_text(json.dumps({"sequence": [empty, empty, filled]}))
+        stdout, outputs = self.limit("--wait", "60", "--interval", "0")
+        self.assertEqual(outputs["limited"], "true", stdout)
+        self.assertEqual(self.jobs_reads(), 3)
+
+    def test_annotations_github_has_not_listed_yet_are_read_again(self):
+        self.explorers(("Acceptance criteria: walk", "failure", [self.CLAUDE_LIMIT]))
+        notes = self.site(".annotations") / "100.json"
+        notes.write_text(json.dumps({"sequence": [[], json.loads(notes.read_text())]}))
+        stdout, outputs = self.limit("--wait", "60", "--interval", "0")
+        self.assertEqual(outputs["limited"], "true", stdout)
+        self.assertEqual(self.jobs_reads(), 2)
+
+    def test_steps_still_unlisted_at_the_deadline_stay_red(self):
+        self.explorers(("Acceptance criteria: walk", "failure", [self.CLAUDE_LIMIT]))
+        jobs = self.listed()
+        jobs[1]["steps"] = []
+        self.site(".jobs.json").write_text(json.dumps(jobs))
+        stdout, outputs = self.limit("--wait", "0", "--interval", "0")
+        self.assertEqual(outputs, {"limited": "false", "limits": "[]"})
+        self.assertIn("::warning::GitHub had not listed every explore job's steps and failure annotations after 0s, "
+                      "so the cause of the failure is unknown: rerun this job once they are listed", stdout)
+
+    def test_a_rerun_of_the_verify_job_reads_the_walks_that_ran(self):
+        # Rerunning only the verify job (run 41110815005, attempt 2) copies the walks into the new attempt under new
+        # ids, with their steps and times but no annotations; the attempt that ran them has the limit.
+        self.explorers(("Acceptance criteria: walk", "failure", [self.CLAUDE_LIMIT]),
+                       ("Acceptance criteria: walk (2)", "failure", [self.CLAUDE_LIMIT]))
+        ran = self.listed()
+        for job in ran:
+            job.update(run_attempt=1, started_at="2026-10-30T18:54:24Z", completed_at="2026-10-30T18:5%dZ" % job["id"])
+        copies = [dict(job, id=job["id"] + 100, run_attempt=2) for job in ran]
+        self.site(".jobs-attempt-1.json").write_text(json.dumps(ran))
+        self.site(".jobs.json").write_text(json.dumps(copies))
+        stdout, outputs = self.limit("--wait", "0", "--interval", "0")
+        self.assertEqual(outputs["limited"], "true", stdout)
+        endpoints = [c["endpoint"] for c in self.calls()]
+        self.assertIn("repos/acme/site/actions/runs/42/attempts/1/jobs?per_page=100", endpoints)
+        self.assertIn("repos/acme/site/check-runs/101/annotations?per_page=100", endpoints)
+        # A walk this attempt ran again (a start of its own) is read as itself: its own annotations say no limit.
+        copies[2].update(started_at="2026-10-30T19:12:30Z")
+        (self.site(".annotations") / "201.json").write_text(json.dumps([
+            {"annotation_level": "failure", "message": "Process completed with exit code 1."},
+            {"annotation_level": "failure", "message": "site did not answer"}]))
+        self.site(".jobs.json").write_text(json.dumps(copies))
+        self.assertEqual(self.limit("--wait", "0", "--interval", "0")[1], {"limited": "false", "limits": "[]"})
 
     def test_jobs_that_cannot_be_read_stay_red(self):
         # A consumer workflow without `actions: read` and `checks: read`: the read fails, and nothing is excused.
