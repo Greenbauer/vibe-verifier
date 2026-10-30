@@ -120,7 +120,7 @@ runs:
         carry_json=""
         if [ -n "$carry" ]; then
           args+=(--carry "$carry")
-          carry_json=$(python3 -c 'import json, sys; print(json.dumps(json.load(open(sys.argv[1]))))' "$carry")
+          carry_json=$(python3 -I -c 'import json, sys; print(json.dumps(json.load(open(sys.argv[1]))))' "$carry")
         fi
         if [ -n "$VV_CHANGED" ]; then args+=(--changed-files "$VV_CHANGED"); fi
         if [ -n "$VV_TICKET" ]; then args+=(--ticket "$VV_TICKET"); fi
@@ -141,7 +141,7 @@ runs:
           *) echo "::error::unexpected output from vibe-verifier criteria: $first"; exit 2 ;;
         esac
         # The ticket's text as a multi-line output, under a delimiter its text cannot hold.
-        delimiter="VV_TICKET_$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+        delimiter="VV_TICKET_$(python3 -I -c 'import secrets; print(secrets.token_hex(16))')"
         { echo "ticket<<$delimiter"; if [ -n "$VV_TICKET" ]; then cat "$VV_TICKET"; echo; fi; echo "$delimiter"; } >> "$GITHUB_OUTPUT"
         # The `shards: [1,2,3]` line as the explore job's matrix, the first value blank (see the output's
         # description). A pull request that needs no check prints no such line and gets the one explorer.
