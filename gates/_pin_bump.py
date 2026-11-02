@@ -246,14 +246,23 @@ def open_bump(repo, changes, target, branch, default_branch, wrapper=None):
     """One pull request changing only pin lines, one commit per workflow file. Returns its URL. With
     `wrapper` (OWNER/NAME) the pins are of that wrapper's workflows, not of catalog actions."""
     head = gh_json("repos/%s/git/ref/heads/%s" % (repo, default_branch))["object"]["sha"]
-    gh_json("repos/%s/git/refs" % repo, method="POST", fields={"ref": "refs/heads/" + branch, "sha": head})
+    try:
+        gh_json("repos/%s/git/refs" % repo, method="POST", fields={"ref": "refs/heads/" + branch, "sha": head})
+    except CannotRead as error:
+        if "Reference already exists" not in str(error):
+            raise
+        # This tool's own branch, left by a bump that failed part way or was closed by hand with its branch
+        # kept; no open pull request has it (the caller looked), so it starts again from the default branch.
+        gh_json("repos/%s/git/refs/heads/%s" % (repo, branch), method="PATCH", body={"sha": head, "force": True})
     what = "the %s workflow" % wrapper if wrapper else "the Vibe Verifier action"
     why = ("The workflow a caller runs comes from the pinned commit, so this is how a repository takes up the wrapper's changes."
            if wrapper else "The gates and actions a workflow runs come from the pinned commit, so this is how a repository takes up catalog changes.")
     for path, shas, text in changes:
         blob = gh_json("repos/%s/contents/%s?ref=%s" % (repo, path, default_branch))["sha"]
         message = "ci: bump %s pin to %s in %s\n\nPin lines only. %s\n" % (what, target[:10], path, why)
-        gh_json("repos/%s/contents/%s" % (repo, path), method="PUT", fields={
+        # The file goes in the request body, never on gh's command line: a large workflow (a QAE harness copy)
+        # is past Linux's limit for one argument, and the run died with "Argument list too long".
+        gh_json("repos/%s/contents/%s" % (repo, path), method="PUT", body={
             "message": message, "branch": branch, "sha": blob,
             "content": base64.b64encode(text.encode()).decode()})
     moved = "\n".join("- `%s`: %s -> `%s`" % (path, ", ".join("`%s`" % s[:10] for s in shas), target[:10]) for path, shas, _ in changes)
