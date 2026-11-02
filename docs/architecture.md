@@ -134,7 +134,7 @@ In that shape:
 - the wrapper itself pins the Vibe Verifier catalog by commit SHA,
 - organization rulesets pin the wrapper workflow by commit SHA.
 
-`bin/vibe-verifier consumers --wrapper ...` inventories both pin levels and policy drift. `apply-down --wrapper ...` moves them through explicit update plans.
+`bin/vibe-verifier consumers --wrapper ...` inventories both pin levels and policy drift. `apply-down --wrapper ...` moves them through explicit update plans. On a schedule, `actions/pin-bump` opens the wrapper's catalog bump and the wrapper's own job moves its ruleset pins.
 
 See [Wrappers](GATE-CONTRACT.md#wrappers).
 
@@ -145,6 +145,8 @@ Consumers run released catalog code by commit, not by a floating branch or tag.
 `bin/vibe-verifier consumers` reports stale or drifted subscriptions. `bin/vibe-verifier apply-down` computes the exact pin changes it would make and prints a digest. No write occurs until the same plan is rerun with `--confirm <digest>`.
 
 When confirmed, it opens pull requests that change the planned workflow pin lines. With `--wrapper`, the plan can also include direct updates to organization ruleset pins after the wrapper revision is on its default branch. It never merges the update pull requests. The consumer's own CI run checks whether the new catalog revision works there.
+
+[`actions/pin-bump`](../actions/pin-bump/README.md) runs the same plan on a schedule (`apply-down --auto`) from each owner's own CI repository, with that owner's own app token: it confirms its own digest when the owner's runner lane is quiet, when the oldest release commit waiting is six hours old, or on demand, and holds a bump that would move a tool version for the sweep a person does first.
 
 ### 7. Read-only observability
 

@@ -1,0 +1,60 @@
+name: Vibe Verifier pin bump
+description: Open the pin-bump pull requests apply-down would, on a schedule, when the lane is quiet or the bump is overdue. A dry run unless act is true. Never merges.
+inputs:
+  token:
+    description: >-
+      A GitHub App or bot token with contents, pull requests and workflows write in every repository listed (actions read
+      too with lane). Not the workflow's GITHUB_TOKEN: it cannot write workflow files, and a pull request it opens
+      starts no workflow.
+    required: true
+  repositories:
+    description: The repositories to bump, owner/name, separated by spaces or new lines. Empty with wrapper bumps only the wrapper.
+    default: ""
+  wrapper:
+    description: A checkout of a wrapper repository (with origin/main fetched) whose catalog pins to bump. Its rulesets are never moved here.
+    default: ""
+  act:
+    description: Open the pull requests when it is time. Anything but true prints the plan and the decision and writes nothing.
+    default: "false"
+  now:
+    description: Bump without waiting for a quiet lane.
+    default: "false"
+  lane:
+    description: The runner label the bumps' checks run on; the bump waits until it is quiet. Empty never waits.
+    default: ""
+  overdue-hours:
+    description: Bump once the oldest release commit waiting is this old, quiet or not.
+    default: "6"
+runs:
+  using: composite
+  steps:
+    - name: Bump stale catalog pins
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPOS: ${{ inputs.repositories }}
+        WRAPPER: ${{ inputs.wrapper }}
+        ACT: ${{ inputs.act }}
+        NOW: ${{ inputs.now }}
+        LANE: ${{ inputs.lane }}
+        OVERDUE_HOURS: ${{ inputs.overdue-hours }}
+      run: |
+        set -euo pipefail
+        # Pins are judged against the catalog's main, which this action's own download has no history of. The catalog
+        # is public, so it is cloned with no credential; trees only, since nothing here reads a file's content.
+        catalog="$RUNNER_TEMP/vibe-verifier-catalog"
+        rm -rf "$catalog"
+        git clone --quiet --filter=blob:none --no-checkout https://github.com/Greenbauer/vibe-verifier.git "$catalog"
+        args=(apply-down --auto --source "$catalog" --source-ref origin/main --overdue-hours "$OVERDUE_HOURS")
+        [ -n "$WRAPPER" ] && args+=(--wrapper "$WRAPPER")
+        [ -n "$LANE" ] && args+=(--lane "$LANE")
+        [ "$NOW" = true ] && args+=(--now)
+        [ "$ACT" = true ] && args+=(--act)
+        set -f   # the list is split on spaces and new lines, never expanded as file names
+        for repo in $REPOS; do args+=(--repo "$repo"); done
+        status=0
+        python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}" > "$RUNNER_TEMP/pin-bump.txt" || status=$?
+        cat "$RUNNER_TEMP/pin-bump.txt"
+        { echo '### Pin bump'; echo; echo '```'; cat "$RUNNER_TEMP/pin-bump.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        # 0: did what the plan said (bumped, waiting, or nothing to bump); 1: a bump is held for a person; 2: failed.
+        exit "$status"

@@ -226,7 +226,7 @@ flowchart TD
     RULESET --> C["Repo C"]
 ```
 
-`bin/vibe-verifier consumers` inventories policy, workflow drift, action pins, and selected native GitHub enforcement. `bin/vibe-verifier apply-down` plans pin updates and prints a digest. Confirming that plan opens pin-update pull requests; with `--wrapper`, it can also update organization ruleset pins directly once the wrapper changes are on its default branch. It never merges the update pull requests.
+`bin/vibe-verifier consumers` inventories policy, workflow drift, action pins, and selected native GitHub enforcement. `bin/vibe-verifier apply-down` plans pin updates and prints a digest. Confirming that plan opens pin-update pull requests; with `--wrapper`, it can also update organization ruleset pins directly once the wrapper changes are on its default branch. It never merges the update pull requests. [`actions/pin-bump`](actions/pin-bump/README.md) runs it on a schedule from each owner's own CI repository, so pins move without anyone running it: when that owner's runner lane is quiet, after six hours at most, or on demand.
 
 See [Wrappers](docs/GATE-CONTRACT.md#wrappers) for the complete model and limitations.
 

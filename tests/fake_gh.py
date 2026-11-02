@@ -5,6 +5,10 @@ directory instead of GitHub and records every call, so a test can assert what wa
     FAKE_GH_ROOT/<owner>/<name>/<path>   the file `gh api repos/<owner>/<name>/contents/<path>` returns
     FAKE_GH_ROOT/<owner>/<name>/.broken  make every read of that repository fail with HTTP 500
     FAKE_GH_ROOT/<owner>/<name>/.open-pr an already-open pin-bump PR, served to the head query
+    FAKE_GH_ROOT/<owner>/<name>/.open-prs.json  the open pull requests, a JSON list, served to a pulls query
+                                         with no head (closing one with `gh pr close` is recorded as CLOSE)
+    FAKE_GH_ROOT/<owner>/<name>/.runs.json  workflow runs, {"recent": [...], "queued": [...], "in_progress": [...]}:
+                                         `actions/runs?created=...` answers recent, `?status=<s>` that status
     FAKE_GH_ROOT/<owner>/<name>/.native  JSON overriding that repository's native enforcement:
                                          {"allowed_actions", "sha_pinning_required", "patterns_allowed", "alerts"}
     FAKE_GH_ROOT/<owner>/<name>/.id      the repository id `gh api repos/<owner>/<name>` answers (default 1)
@@ -86,6 +90,11 @@ if argv[:2] == ["pr", "create"]:
     print("https://github.com/%s/pull/1" % repo)
     sys.exit(0)
 
+if argv[:2] == ["pr", "close"]:
+    repo = argv[argv.index("--repo") + 1]
+    record("CLOSE", repo, number=argv[2], comment=argv[argv.index("--comment") + 1])
+    sys.exit(0)
+
 if argv[:1] == ["api"]:
     endpoint = argv[1]
     method = argv[argv.index("-X") + 1] if "-X" in argv else "GET"
@@ -164,6 +173,20 @@ if argv[:1] == ["api"]:
         sys.exit(0)
     if "/git/ref/heads/" in endpoint:
         print(json.dumps({"object": {"sha": "a" * 40}}))
+        sys.exit(0)
+    if endpoint.split("?")[0].endswith("/actions/runs"):
+        path = os.path.join(root, repo, ".runs.json")
+        runs = json.load(open(path)) if os.path.exists(path) else {}
+        status = endpoint.split("status=")[1].split("&")[0] if "status=" in endpoint else "recent"
+        listed = runs.get(status, [])
+        print(json.dumps({"total_count": len(listed), "workflow_runs": listed}))
+        sys.exit(0)
+    if "/pulls" in endpoint and "head=" not in endpoint:
+        path = os.path.join(root, repo, ".open-prs.json")
+        pulls = json.load(open(path)) if os.path.exists(path) else []
+        query = dict(part.split("=", 1) for part in endpoint.partition("?")[2].split("&") if "=" in part)
+        size, page = int(query.get("per_page", 30)), int(query.get("page", 1))
+        print(json.dumps(pulls[(page - 1) * size:page * size]))
         sys.exit(0)
     if "/pulls" in endpoint:
         open_pr = os.path.join(root, repo, ".open-pr")
