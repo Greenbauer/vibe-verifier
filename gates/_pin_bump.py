@@ -65,13 +65,17 @@ def tool_moves(source, planned, target):
     catalog's history does not have (a deleted branch, a fork, a tag) cannot be read, so it is held too."""
     held = {}
     for repo, level, _, changes in planned:
-        paths = set()
-        for sha in {sha for _, shas, _ in changes for sha in shas} if level is None else ():
-            diff = git(source, "diff", "--name-only", sha, target, "--", *TOOL_PATHS)
-            paths |= set(diff.stdout.split()) if diff.returncode == 0 else {"(%s is not in the catalog's history)" % sha[:10]}
+        shas = {sha for _, shas, _ in changes for sha in shas} if level is None else set()
+        paths = sorted({path for sha in shas for path in moved_tools(source, sha, target)})
         if paths:
-            held[repo] = sorted(paths)
+            held[repo] = paths
     return held
+
+
+def moved_tools(source, sha, target):
+    """The tool paths that differ between the pin `sha` and `target`."""
+    diff = git(source, "diff", "--name-only", sha, target, "--", *TOOL_PATHS)
+    return diff.stdout.split() if diff.returncode == 0 else ["(%s is not in the catalog's history)" % sha[:10]]
 
 
 def first_waiting(source, planned, target, release_paths):
