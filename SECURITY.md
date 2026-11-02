@@ -12,7 +12,8 @@ workflow file, the commit you tested, and the steps that reproduce it.
 
 This project has one maintainer and no response-time guarantee. Reports get an acknowledgement, a
 fix on `main` when confirmed, and a note in the pull request that lands it. Consumers pick the fix up
-by bumping their pins (`bin/vibe-verifier apply-down`).
+by bumping their pins: each owner's scheduled pin bump ([`actions/pin-bump`](actions/pin-bump/README.md))
+opens those pull requests within hours, and `bin/vibe-verifier apply-down` opens them at once.
 
 ## Supported versions
 

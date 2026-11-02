@@ -245,6 +245,17 @@ class Wrapper(unittest.TestCase):
         self.assertEqual(len([c for c in self.calls() if c["method"] == "PR"]), 2)
         self.assertRegex(result.stdout, r"ruleset acme/vibe-verifier-gates +updated: vibe-verifier.yml")
 
+    def test_auto_bumps_the_wrapper_and_leaves_its_rulesets_to_the_wrapper(self):
+        # The scheduled bump (actions/pin-bump) opens the wrapper's catalog bump; the rulesets' pins of the
+        # wrapper are the wrapper's own job to move, so it neither reads nor writes them.
+        self.repo("acme/ci", workflows={"vibe-verifier.yml": gate_workflow(self.old)})
+        self.ruleset([(GATE, self.w1)])
+        result = self.apply_down("--auto", "--act", "--now")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([c["endpoint"] for c in self.calls() if c["method"] == "PUT"], ["repos/acme/ci/contents/" + GATE])
+        self.assertEqual(len([c for c in self.calls() if c["method"] == "PR"]), 1)
+        self.assertEqual([c for c in self.calls() if c["endpoint"].startswith("orgs/")], [])
+
     def test_a_wrapper_that_is_not_a_checkout_with_an_origin_is_refused(self):
         bare = make_repo(self, {"README.md": "1"})
         result = runner("consumers", "--source", self.source, "--source-ref", "main", "--wrapper", bare,

@@ -132,12 +132,23 @@ pin in any other workflow under `.github/workflows/` (a harness copy such as `qa
 `gates@` and `criteria@`). With no `--confirm` it prints a plan and a digest; `--confirm <digest>`
 opens one pull request per repository changing only pin lines, one commit per file. It never
 merges, skips a repository whose stub has drifted, and returns an already-open bump instead of
-opening a second. A digest that no longer matches is refused, so what is applied is what was read.
+opening a second; an open bump to an older commit is closed, with a comment naming the one that
+replaces it. A digest that no longer matches is refused, so what is applied is what was read.
+
+Pins do not wait for someone to run it: [`actions/pin-bump`](../actions/pin-bump/README.md) runs
+`apply-down --auto` on a schedule, from a CI repository of each owner with that owner's own app token,
+on that owner's own runner lane. It bumps when the lane the bumps' checks run on is quiet (the
+rule the first wrapper's ruleset pin mover uses: at most 6 unscheduled runs started in the last hour, then no job waiting and at most 2
+running), when the oldest release commit waiting is six hours old, or when dispatched with `now`, and
+confirms its own plan's digest. It never merges; a pin-only bump merges like any other pull request.
 
 Before bumping a pin that moves a tool version (`gates/_tools.py`, or a `tools/<name>/` lockfile),
 run that gate with `--all` on every consumer and land the cleanups with the bump. `zizmor` adds
 audits about monthly, and a workflow gate judges the whole of any workflow a pull request touches,
-so a bump that is not swept re-arms a backlog that lands on whoever next touches `ci.yml`.
+so a bump that is not swept re-arms a backlog that lands on whoever next touches `ci.yml`. So
+`apply-down --auto` holds a repository whose pins would cross a commit under `gates/_tools.py` or
+`tools/`, opens nothing for it, and exits 1, which makes the scheduled run red until a person sweeps and
+runs `apply-down` by hand (where the same plan prints the move as a note).
 
 Anything a composite action reads through `$GITHUB_ACTION_PATH/../..` must live under a release
 path (`gates/`, `bin/`, `actions/`, `consumer/`, `tools/`, `rules/`): that is what makes a change
@@ -274,7 +285,9 @@ An organization can subscribe its repositories through one CI repository of its 
   whose own runs are the proof, a caller's `uses:` pins in a pull request of its own, and a
   ruleset's pins with a `PUT` of that ruleset's rules once the new commit is on the wrapper's
   default branch. So a catalog release reaches a wrapper's repositories in two runs: one that opens
-  the wrapper's bump, and one after it merges.
+  the wrapper's bump, and one after it merges. Both happen on their own: `actions/pin-bump`, given the
+  wrapper's checkout, opens the wrapper's bump and never touches a ruleset (`--auto` moves none), and
+  the wrapper moves its rulesets' pins once the bump merges.
 - Moving a repository from its stub to a wrapper deletes the stub, a workflow that invoked the
   catalog, so the merge guard leaves that pull request to the operator.
 

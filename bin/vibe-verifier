@@ -63,9 +63,12 @@ reusable workflow is listed even with no manifest.
 `--confirm` it reads the same inventory and prints a plan plus a digest of exactly what
 it would write; `--confirm <digest>` opens one pull request per repository, changing only
 pin lines (one commit per workflow file). It never merges, never touches a repository whose
-stub has drifted, and never opens a second pull request for a bump that is already open. A
-plan whose digest no longer matches is refused rather than applied, so a bump is reviewed as
-the thing it was. With `--wrapper PATH` it bumps both levels in the same plan: the wrapper's
+stub has drifted, and never opens a second pull request for a bump that is already open; an open
+bump to an older commit is closed as superseded by the new one. A plan whose digest no longer
+matches is refused rather than applied, so a bump is reviewed as the thing it was. `--auto` is the
+scheduled form (actions/pin-bump, gates/_pin_bump.py): it holds a repository whose bump moves a tool
+version (exit 1), moves no ruleset, and confirms its own digest only with `--act` and when it is
+time: `--now`, the oldest waiting release commit `--overdue-hours` old, or a quiet `--lane`. With `--wrapper PATH` it bumps both levels in the same plan: the wrapper's
 catalog pins in a pull request to the wrapper, each caller's pins of wrapper workflows in a pull
 request of its own, and each ruleset's pins with a PUT of that ruleset's rules, where only the
 stale entries' `sha` moves to the wrapper's head. A ruleset moves to what is on the wrapper's
@@ -227,6 +230,8 @@ from _retry import retries  # noqa: E402
 from _tools import NODE_TOOLS, ensure, ensure_node_tool  # noqa: E402
 import _affected_tests  # noqa: E402
 import _merge_grant_cli  # noqa: E402
+import _pin_bump  # noqa: E402
+from _pin_bump import CannotRead, gh_json, open_bump  # noqa: E402
 import _proof_audit  # noqa: E402
 import qae_artifacts  # noqa: E402
 import repo_rules  # noqa: E402
@@ -372,10 +377,6 @@ def gate_process(command, manifest):
             return code, note.read().strip()
     finally:
         os.unlink(note_path)
-
-
-class CannotRead(Exception):
-    """A read through gh failed for a reason other than the file not existing."""
 
 
 def gh_file(repo, path):
@@ -789,22 +790,6 @@ def report(args, name, problems):
     return bool(problems)
 
 
-def gh_json(*api_args, method=None, fields=None, body=None):
-    """A gh api call returning parsed JSON, with an optional JSON request body. Raises CannotRead with
-    gh's own last line."""
-    command = ["gh", "api", *api_args]
-    if method:
-        command += ["-X", method]
-    for name, value in (fields or {}).items():
-        command += ["-f", "%s=%s" % (name, value)]
-    if body is not None:
-        command += ["--input", "-"]
-    result = subprocess.run(command, capture_output=True, text=True, input=None if body is None else json.dumps(body))
-    if result.returncode != 0:
-        raise CannotRead((result.stderr.strip() or "gh api failed").splitlines()[-1])
-    return json.loads(result.stdout) if result.stdout.strip() else {}
-
-
 def gh_ok(endpoint):
     """True for an endpoint that answers 204, False for one that answers 404. Anything else is
     CannotRead: a switch that cannot be read must not report as off."""
@@ -881,38 +866,6 @@ def ruleset_plan(wrapper):
     return moves
 
 
-def open_bump(repo, changes, target, branch, default_branch, wrapper=None):
-    """One pull request changing only pin lines, one commit per workflow file. Returns its URL. With
-    `wrapper` (OWNER/NAME) the pins are of that wrapper's workflows, not of catalog actions."""
-    head = gh_json("repos/%s/git/ref/heads/%s" % (repo, default_branch))["object"]["sha"]
-    gh_json("repos/%s/git/refs" % repo, method="POST", fields={"ref": "refs/heads/" + branch, "sha": head})
-    what = "the %s workflow" % wrapper if wrapper else "the Vibe Verifier action"
-    why = ("The workflow a caller runs comes from the pinned commit, so this is how a repository takes up the wrapper's changes."
-           if wrapper else "The gates and actions a workflow runs come from the pinned commit, so this is how a repository takes up catalog changes.")
-    for path, shas, text in changes:
-        blob = gh_json("repos/%s/contents/%s?ref=%s" % (repo, path, default_branch))["sha"]
-        message = "ci: bump %s pin to %s in %s\n\nPin lines only. %s\n" % (what, target[:10], path, why)
-        gh_json("repos/%s/contents/%s" % (repo, path), method="PUT", fields={
-            "message": message, "branch": branch, "sha": blob,
-            "content": base64.b64encode(text.encode()).decode()})
-    moved = "\n".join("- `%s`: %s -> `%s`" % (path, ", ".join("`%s`" % s[:10] for s in shas), target[:10]) for path, shas, _ in changes)
-    proof = ("This PR's own run of the called workflow is the proof that it works here." if wrapper
-             else "This PR's own run of the gate job (`Gates`, or `vibe-verifier-ok` in an older stub) is the proof "
-                  "that the new catalog passes here.")
-    result = subprocess.run(["gh", "pr", "create", "--repo", repo, "--base", default_branch, "--head", branch,
-                             "--title", "ci: bump %s pin to %s" % (what, target[:10]),
-                             "--body", "Moves %s pins to `%s`, and changes nothing else:\n\n%s\n\n%s %s\n\n"
-                                       "## Acceptance criteria\n\n- None: this changes "
-                                       "pinned commit SHAs in workflow files. No application code, route, or rendered surface "
-                                       "changes, so there is nothing for a browser to check.\n\n"
-                                       "🤖 Generated with [Claude Code](https://claude.com/claude-code)" % (
-                                           "`%s` workflow" % wrapper if wrapper else "catalog", target[:10], moved, why, proof)],
-                            capture_output=True, text=True)
-    if result.returncode != 0:
-        raise CannotRead((result.stderr.strip() or "gh pr create failed").splitlines()[-1])
-    return result.stdout.strip().splitlines()[-1]
-
-
 def apply_down(args):
     wrapper, error = load_wrapper(args)
     if error:
@@ -934,23 +887,39 @@ def apply_down(args):
     if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", args._target_date):
         return fail("could not read the date of %s in %s" % (target[:10], args.source))
     planned, skipped = bump_plan(args, target, wrapper)
+    tools = _pin_bump.tool_moves(args.source, planned, target)
+    if args.auto:  # a tool move waits for its sweep (GATE-CONTRACT.md); ruleset pins are the wrapper's to move
+        planned = [bump for bump in planned if bump[1] is not None or bump[0] not in tools]
     moves = []
-    if wrapper:
+    if wrapper and not args.auto:
         try:
             moves = ruleset_plan(wrapper)
         except CannotRead as error:
             skipped.append(("rulesets of %s" % wrapper.owner, "could not read: %s" % error))
     for repo, reason in skipped:
         print("%-32s skipped: %s" % (repo, reason))
+    for repo, paths in sorted(tools.items()):
+        print("%-32s %s: moves %s, so sweep that gate with --all on every consumer first" % (
+            repo, "held" if args.auto else "note", " ".join(paths)))
+    held = int(bool(args.auto and tools))
     if not planned and not moves:
         print("\nnothing to bump")
-        return 2 if any("could not read" in reason for _, reason in skipped) else 0
+        return 2 if any("could not read" in reason for _, reason in skipped) else held
     lines = [(repo, path, sha, to) for repo, _, to, changes in planned for path, shas, _ in changes for sha in shas]
     lines += [("ruleset %s/%s" % (wrapper.owner, ruleset.get("name")), path, old, wrapper.head()[0])
               for ruleset, moving, _ in moves for path, old in moving]
     digest = hashlib.sha256("\n".join("%s %s %s %s" % line for line in lines).encode()).hexdigest()[:12]
     for repo, path, sha, to in lines:
         print("%-32s %-40s %s -> %s" % (repo, path, sha[:10], to[:10]))
+    if args.auto:
+        try:
+            go, why = _pin_bump.when(args, planned, target, RELEASE_PATHS)
+        except CannotRead as error:
+            return fail("could not read the lane: %s" % error)
+        print("\n%s: %s%s" % ("bump now" if go else "waiting", why, "" if args.act or not go else ". Dry run: nothing written"))
+        if not (go and args.act):
+            return held
+        args.confirm = digest
     if not args.confirm:
         print("\n%d pull request(s) and %d ruleset update(s) to make. Re-run with --confirm %s" % (len(planned), len(moves), digest))
         return 1
@@ -962,7 +931,8 @@ def apply_down(args):
         try:
             default_branch = gh_json("repos/%s" % repo)["default_branch"]
             existing = gh_json("repos/%s/pulls?head=%s:%s&state=open" % (repo, repo.split("/")[0], branch))
-            print("%-32s %s" % (repo, existing[0]["html_url"] if existing else open_bump(repo, changes, to, branch, default_branch, level)))
+            url = existing[0]["html_url"] if existing else open_bump(repo, changes, to, branch, default_branch, level)
+            print("%-32s %s" % (repo, url) + "".join("\n%-32s closed %s, superseded" % (repo, old) for old in _pin_bump.supersede(repo, branch, url)))
         except CannotRead as error:
             print("%-32s could not open: %s" % (repo, error))
             failed = True
@@ -974,7 +944,7 @@ def apply_down(args):
         except CannotRead as error:
             print("%-32s could not update: %s" % (name, error))
             failed = True
-    return 2 if failed else 0
+    return 2 if failed else held
 
 
 def tool_command(args):
@@ -1765,6 +1735,7 @@ def main():
     bump.add_argument("--wrapper", metavar="PATH", help="a checkout of a wrapper repository: bump its catalog pins, its "
                       "callers' pins of its workflows and its organization's ruleset pins")
     bump.add_argument("--wrapper-ref", default="origin/main", help="the wrapper ref pins move to (default: origin/main)")
+    _pin_bump.add_arguments(bump)
     toolchain = commands.add_parser("tool", help="install (once per lockfile digest) and print the directory of a node toolchain under tools/")
     toolchain.add_argument("name", help="the toolchain: a directory under tools/ with a package-lock.json")
     reader = commands.add_parser("criteria", help="read a criteria document: prints `none: <reason>` or `criteria: <n>`")
