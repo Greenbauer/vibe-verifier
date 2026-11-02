@@ -110,21 +110,43 @@ def undeclared_inputs(source, target, path, text):
 
 def passed_inputs(text):
     """[(action, input)] for each `with:` key of each step of `text` that uses a catalog action. Read line by line
-    (the catalog parses no YAML): a step's keys sit at the column of its `uses:`, its inputs one level under `with:`."""
+    (the catalog parses no YAML): a step's keys sit at the column of its `uses:`, its inputs one level under `with:`,
+    which may come before or after `uses:`, or inline as `with: {a: 1}`."""
     lines, found = text.splitlines(), []
     for at, line in enumerate(lines):
         use = USES.match(line)
         if use:
-            found += [(use.group(2), key) for key in with_keys(lines[at + 1:], len(use.group(1)))]
+            column = len(use.group(1))
+            found += [(use.group(2), key) for key in with_keys(lines[step_start(lines, at, column):], column)]
     return found
 
 
+def step_start(lines, at, column):
+    """The index after the `- ` line that opens the step whose `uses:` is on line `at` (that line itself when
+    `uses:` is the step's first key, whose own text is then not a key at `column`)."""
+    if lines[at].lstrip().startswith("- "):
+        return at + 1
+    for back in range(at - 1, -1, -1):
+        stripped = lines[back].lstrip()
+        if stripped.startswith("- ") and len(lines[back]) - len(stripped) == column - 2:
+            return back + 1
+    return at + 1
+
+
+WITH = re.compile(r"^with:\s*(\{[^}]*\})?\s*(?:#.*)?$")
+
+
 def with_keys(rest, column):
-    """The keys under the `with:` of a step whose keys sit at `column`, from the lines after its `uses:`."""
+    """The keys under the `with:` of a step whose keys sit at `column`, from the step's lines."""
     lines = step_lines(rest, column)
-    start = next((at for at, (indent, text) in enumerate(lines) if indent == column and text == "with:"), None)
+    start = next((at for at, (indent, text) in enumerate(lines) if indent == column and WITH.match(text)), None)
+    if start is None:
+        return []
+    inline = WITH.match(lines[start][1]).group(1)
+    if inline:
+        return re.findall(r"([A-Za-z0-9_-]+)\s*:", inline)
     block = []
-    for indent, text in lines[start + 1:] if start is not None else ():
+    for indent, text in lines[start + 1:]:
         if indent <= column:
             break
         block.append((indent, text))
@@ -151,15 +173,12 @@ def action_inputs(source, target, action):
     shown = git(source, "show", "%s:actions/%s/action.yml" % (target, action))
     if shown.returncode:
         return None
-    block = shown.stdout.split("\ninputs:\n", 1)
-    body = block[1] if len(block) == 2 else ""
-    names = []
-    for line in body.splitlines():
-        if line.strip() and not line.startswith(" "):
-            break
-        key = KEY.match(line)
-        names += [key.group(2)] if key and len(key.group(1)) == 2 else []
-    return names
+    lines = shown.stdout.splitlines()
+    start = next((at for at, line in enumerate(lines) if re.match(r"^inputs:\s*(?:#.*)?$", line)), len(lines))
+    body = [line for line in lines[start + 1:] if line.strip() and not line.lstrip().startswith("#")]
+    end = next((at for at, line in enumerate(body) if not line.startswith(" ")), len(body))
+    depth = min((len(line) - len(line.lstrip()) for line in body[:end]), default=0)
+    return [KEY.match(line).group(2) for line in body[:end] if KEY.match(line) and len(KEY.match(line).group(1)) == depth]
 
 
 def first_waiting(source, planned, target, release_paths):

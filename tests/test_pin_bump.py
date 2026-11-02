@@ -199,6 +199,19 @@ class PinBump(unittest.TestCase):
                 "      - name: last\n        uses: Greenbauer/vibe-verifier/actions/criteria@abc\n        with:\n          file: x\n")
         self.assertEqual(_pin_bump.passed_inputs(text), [("gates", "entries"), ("gates", "base-ref"), ("criteria", "file")])
 
+    def test_inputs_before_uses_inline_or_with_a_comment_are_read_too(self):
+        text = ("    steps:\n      - name: before\n        with:\n          first: 1\n"
+                "        uses: Greenbauer/vibe-verifier/actions/gates@abc\n"
+                "      - uses: Greenbauer/vibe-verifier/actions/criteria@abc\n        with: {second: 1, third: x}\n"
+                "      - uses: Greenbauer/vibe-verifier/actions/pull-sync@abc\n        with: # the sync's inputs\n          fourth: 1\n")
+        self.assertEqual(_pin_bump.passed_inputs(text),
+                         [("gates", "first"), ("criteria", "second"), ("criteria", "third"), ("pull-sync", "fourth")])
+
+    def test_declared_inputs_are_read_past_comments_and_at_any_indent(self):
+        commit(self.source, {"actions/odd/action.yml": "inputs: # what it takes\n    token:\n      required: true\n"
+                             "# a note\n    act:\n      default: x\nruns:\n  using: composite\n"}, "odd action")
+        self.assertEqual(_pin_bump.action_inputs(self.source, self.head(), "odd"), ["token", "act"])
+
     def test_a_pin_that_is_not_a_sha_never_reaches_git_as_an_option(self):
         planted = Path(self.fixtures) / "planted"
         self.consumer("acme/app", stub_pinned_to(self.old).replace("@" + self.old, "@--output=%s" % planted))
