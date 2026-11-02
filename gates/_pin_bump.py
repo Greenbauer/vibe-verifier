@@ -79,6 +79,108 @@ def moved_tools(source, sha, target):
     return diff.stdout.split() if diff and diff.returncode == 0 else ["(%s is not in the catalog's history)" % sha[:10]]
 
 
+def holds(source, planned, target):
+    """{repo: [why]} for each catalog-level bump in `planned` that must wait for a person: it moves a tool version
+    (tool_moves), or a workflow it rewrites passes a `with:` input the action no longer declares at `target`,
+    which would fail every run of that workflow from the merge on."""
+    held = {repo: ["moves %s, so sweep that gate with --all on every consumer first" % " ".join(paths)]
+                   for repo, paths in tool_moves(source, planned, target).items()}
+    for repo, level, _, changes in planned:
+        missing = [why for path, _, text in changes for why in undeclared_inputs(source, target, path, text)] if level is None else []
+        if missing:
+            held.setdefault(repo, []).extend(missing)
+    return held
+
+
+USES = re.compile(r"^([ \t]*(?:- +)?)uses: *\S*vibe-verifier/actions/([A-Za-z0-9_-]+)@")
+KEY = re.compile(r"^( *)([A-Za-z0-9_-]+):")
+
+
+def undeclared_inputs(source, target, path, text):
+    """Why each input `text` passes to a catalog action is not one of that action's inputs at `target`."""
+    found = []
+    for action, key in passed_inputs(text):
+        declared = action_inputs(source, target, action)
+        if declared is None:
+            found.append("%s uses actions/%s, which %s does not have" % (path, action, target[:10]))
+        elif key not in declared:
+            found.append("%s passes `%s` to actions/%s, which %s does not declare" % (path, key, action, target[:10]))
+    return sorted(set(found))
+
+
+def passed_inputs(text):
+    """[(action, input)] for each `with:` key of each step of `text` that uses a catalog action. Read line by line
+    (the catalog parses no YAML): a step's keys sit at the column of its `uses:`, its inputs one level under `with:`,
+    which may come before or after `uses:`, or inline as `with: {a: 1}`."""
+    lines, found = text.splitlines(), []
+    for at, line in enumerate(lines):
+        use = USES.match(line)
+        if use:
+            column = len(use.group(1))
+            found += [(use.group(2), key) for key in with_keys(lines[step_start(lines, at, column):], column)]
+    return found
+
+
+def step_start(lines, at, column):
+    """The index after the `- ` line that opens the step whose `uses:` is on line `at` (that line itself when
+    `uses:` is the step's first key, whose own text is then not a key at `column`)."""
+    if lines[at].lstrip().startswith("- "):
+        return at + 1
+    for back in range(at - 1, -1, -1):
+        stripped = lines[back].lstrip()
+        if stripped.startswith("- ") and len(lines[back]) - len(stripped) == column - 2:
+            return back + 1
+    return at + 1
+
+
+WITH = re.compile(r"^with:\s*(\{[^}]*\})?\s*(?:#.*)?$")
+
+
+def with_keys(rest, column):
+    """The keys under the `with:` of a step whose keys sit at `column`, from the step's lines."""
+    lines = step_lines(rest, column)
+    start = next((at for at, (indent, text) in enumerate(lines) if indent == column and WITH.match(text)), None)
+    if start is None:
+        return []
+    inline = WITH.match(lines[start][1]).group(1)
+    if inline:
+        return re.findall(r"([A-Za-z0-9_-]+)\s*:", inline)
+    block = []
+    for indent, text in lines[start + 1:]:
+        if indent <= column:
+            break
+        block.append((indent, text))
+    depth = block[0][0] if block else None
+    return [KEY.match(text).group(2) for indent, text in block if indent == depth and KEY.match(text)]
+
+
+def step_lines(rest, column):
+    """[(indent, stripped text)] of the step's own lines, blank lines and comments left out: up to the next step
+    (a `- ` at the list's column) or the first line left of the step's keys."""
+    lines = []
+    for line in rest:
+        text, indent = line.strip(), len(line) - len(line.lstrip())
+        if not text or text.startswith("#"):
+            continue
+        if indent < column or (indent == column - 2 and text.startswith("- ")):
+            break
+        lines.append((indent, text))
+    return lines
+
+
+def action_inputs(source, target, action):
+    """The inputs actions/<action>/action.yml declares at `target`, or None when there is no such action."""
+    shown = git(source, "show", "%s:actions/%s/action.yml" % (target, action))
+    if shown.returncode:
+        return None
+    lines = shown.stdout.splitlines()
+    start = next((at for at, line in enumerate(lines) if re.match(r"^inputs:\s*(?:#.*)?$", line)), len(lines))
+    body = [line for line in lines[start + 1:] if line.strip() and not line.lstrip().startswith("#")]
+    end = next((at for at, line in enumerate(body) if not line.startswith(" ")), len(body))
+    depth = min((len(line) - len(line.lstrip()) for line in body[:end]), default=0)
+    return [KEY.match(line).group(2) for line in body[:end] if KEY.match(line) and len(KEY.match(line).group(1)) == depth]
+
+
 def first_waiting(source, planned, target, release_paths):
     """Epoch seconds of the oldest release commit any catalog-level bump in `planned` would deliver."""
     times = [waiting_since(source, sha, target, release_paths) for _, level, _, changes in planned if level is None

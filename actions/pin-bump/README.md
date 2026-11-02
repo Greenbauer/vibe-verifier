@@ -12,7 +12,9 @@ rules), which opens the same pin-only pull requests a person would open with `ap
 2. **Holds** a repository whose bump would cross a commit under `gates/_tools.py` or `tools/`: a tool
    version moves, and [GATE-CONTRACT.md](../../docs/GATE-CONTRACT.md#subscribing-in-ci) asks for that gate
    to be swept with `--all` on every consumer first. It opens nothing there and the run exits 1, red,
-   naming the files, until a person sweeps and runs `apply-down` by hand.
+   naming the files, until a person sweeps and runs `apply-down` by hand. It holds a repository the same
+   way when a workflow the bump rewrites passes a `with:` input the action does not declare at the new
+   commit, or names an action that commit does not have: that workflow would fail from the merge on.
 3. Decides whether it is time, with the rule the first wrapper's ruleset pin mover uses for its own pins:
    - `now` is true; or
    - the oldest release commit any bump would deliver landed `overdue-hours` ago (default 6); or

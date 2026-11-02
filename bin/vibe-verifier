@@ -67,7 +67,7 @@ stub has drifted, and never opens a second pull request for a bump that is alrea
 bump to an older commit is closed as superseded by the new one. A plan whose digest no longer
 matches is refused rather than applied, so a bump is reviewed as the thing it was. `--auto` is the
 scheduled form (actions/pin-bump, gates/_pin_bump.py): it holds a repository whose bump moves a tool
-version (exit 1), moves no ruleset, and confirms its own digest only with `--act` and when it is
+version or drops an input a workflow passes (exit 1), moves no ruleset, and confirms its own digest only with `--act` and when it is
 time: `--now`, the oldest waiting release commit `--overdue-hours` old, or a quiet `--lane`. With `--wrapper PATH` it bumps both levels in the same plan: the wrapper's
 catalog pins in a pull request to the wrapper, each caller's pins of wrapper workflows in a pull
 request of its own, and each ruleset's pins with a PUT of that ruleset's rules, where only the
@@ -887,7 +887,7 @@ def apply_down(args):
     if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", args._target_date):
         return fail("could not read the date of %s in %s" % (target[:10], args.source))
     planned, skipped = bump_plan(args, target, wrapper)
-    tools = _pin_bump.tool_moves(args.source, planned, target)
+    tools = _pin_bump.holds(args.source, planned, target)
     if args.auto:  # a tool move waits for its sweep (GATE-CONTRACT.md); ruleset pins are the wrapper's to move
         planned = [bump for bump in planned if bump[1] is not None or bump[0] not in tools]
     moves = []
@@ -898,9 +898,8 @@ def apply_down(args):
             skipped.append(("rulesets of %s" % wrapper.owner, "could not read: %s" % error))
     for repo, reason in skipped:
         print("%-32s skipped: %s" % (repo, reason))
-    for repo, paths in sorted(tools.items()):
-        print("%-32s %s: moves %s, so sweep that gate with --all on every consumer first" % (
-            repo, "held" if args.auto else "note", " ".join(paths)))
+    for repo, reasons in sorted(tools.items()):
+        print("".join("%-32s %s: %s\n" % (repo, "held" if args.auto else "note", why) for why in reasons), end="")
     held = int(bool(args.auto and tools))
     if not planned and not moves:
         print("\nnothing to bump")

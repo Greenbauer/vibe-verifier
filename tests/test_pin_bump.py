@@ -165,6 +165,53 @@ class PinBump(unittest.TestCase):
         self.assertIn("held: moves (ffffffffff is not in the catalog's history)", result.stdout)
         self.assertEqual(self.writes(), [])
 
+    def caller(self, inputs):
+        return ("jobs:\n  sync:\n    runs-on: x\n    steps:\n      - name: Sync\n"
+                "        uses: Greenbauer/vibe-verifier/actions/pull-sync@%s # main x\n        with:\n%s"
+                "      - run: echo done\n" % (self.old, "".join("          %s: v\n" % key for key in inputs)))
+
+    def test_an_input_the_action_no_longer_declares_holds_the_bump(self):
+        # A bump that leaves a workflow passing an input the new pin's action dropped fails every run of it.
+        commit(self.source, {"actions/pull-sync/action.yml": "name: x\ninputs:\n  token:\n    required: true\n"
+                             "  act:\n    default: \"false\"\nruns:\n  using: composite\n"}, "pull-sync drops needs-update")
+        self.consumer("acme/app", stub_pinned_to(self.head()))
+        (Path(self.fixtures) / "acme/app/.github/workflows/sync.yml").write_text(self.caller(["token", "needs-update"]))
+        result = self.bump("--act", "--now")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("held: .github/workflows/sync.yml passes `needs-update` to actions/pull-sync, which %s does not declare"
+                      % self.head()[:10], result.stdout)
+        self.assertEqual(self.writes(), [])
+        (Path(self.fixtures) / "acme/app/.github/workflows/sync.yml").write_text(self.caller(["token", "act"]))
+        declared = self.bump("--act", "--now")
+        self.assertEqual(declared.returncode, 0, declared.stdout + declared.stderr)
+        self.assertEqual(len(self.calls("PR")), 1)
+
+    def test_an_input_passed_to_an_action_the_target_lacks_holds_the_bump(self):
+        (Path(self.fixtures) / "acme/app/.github/workflows/sync.yml").write_text(self.caller(["token"]))
+        result = self.bump("--now")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("uses actions/pull-sync, which %s does not have" % self.new[:10], result.stdout)
+
+    def test_inputs_are_read_per_step_and_only_under_with(self):
+        text = ("    steps:\n      - uses: Greenbauer/vibe-verifier/actions/gates@abc # x\n        with:\n"
+                "          entries: |\n            nested: no\n          base-ref: main\n        env:\n          NOT_AN_INPUT: 1\n"
+                "      - name: other\n        with:\n          skipped: 1\n"
+                "      - name: last\n        uses: Greenbauer/vibe-verifier/actions/criteria@abc\n        with:\n          file: x\n")
+        self.assertEqual(_pin_bump.passed_inputs(text), [("gates", "entries"), ("gates", "base-ref"), ("criteria", "file")])
+
+    def test_inputs_before_uses_inline_or_with_a_comment_are_read_too(self):
+        text = ("    steps:\n      - name: before\n        with:\n          first: 1\n"
+                "        uses: Greenbauer/vibe-verifier/actions/gates@abc\n"
+                "      - uses: Greenbauer/vibe-verifier/actions/criteria@abc\n        with: {second: 1, third: x}\n"
+                "      - uses: Greenbauer/vibe-verifier/actions/pull-sync@abc\n        with: # the sync's inputs\n          fourth: 1\n")
+        self.assertEqual(_pin_bump.passed_inputs(text),
+                         [("gates", "first"), ("criteria", "second"), ("criteria", "third"), ("pull-sync", "fourth")])
+
+    def test_declared_inputs_are_read_past_comments_and_at_any_indent(self):
+        commit(self.source, {"actions/odd/action.yml": "inputs: # what it takes\n    token:\n      required: true\n"
+                             "# a note\n    act:\n      default: x\nruns:\n  using: composite\n"}, "odd action")
+        self.assertEqual(_pin_bump.action_inputs(self.source, self.head(), "odd"), ["token", "act"])
+
     def test_a_pin_that_is_not_a_sha_never_reaches_git_as_an_option(self):
         planted = Path(self.fixtures) / "planted"
         self.consumer("acme/app", stub_pinned_to(self.old).replace("@" + self.old, "@--output=%s" % planted))
