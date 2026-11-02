@@ -121,21 +121,29 @@ def passed_inputs(text):
 
 def with_keys(rest, column):
     """The keys under the `with:` of a step whose keys sit at `column`, from the lines after its `uses:`."""
-    keys, inside, depth = [], False, None
-    for line in rest:
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        indent = len(line) - len(line.lstrip())
-        if indent < column or (indent == column - 2 and line.lstrip().startswith("- ")):
+    lines = step_lines(rest, column)
+    start = next((at for at, (indent, text) in enumerate(lines) if indent == column and text == "with:"), None)
+    block = []
+    for indent, text in lines[start + 1:] if start is not None else ():
+        if indent <= column:
             break
-        if indent == column:
-            inside = line.strip() == "with:"
+        block.append((indent, text))
+    depth = block[0][0] if block else None
+    return [KEY.match(text).group(2) for indent, text in block if indent == depth and KEY.match(text)]
+
+
+def step_lines(rest, column):
+    """[(indent, stripped text)] of the step's own lines, blank lines and comments left out: up to the next step
+    (a `- ` at the list's column) or the first line left of the step's keys."""
+    lines = []
+    for line in rest:
+        text, indent = line.strip(), len(line) - len(line.lstrip())
+        if not text or text.startswith("#"):
             continue
-        key = KEY.match(line) if inside else None
-        depth = depth if depth is not None else (indent if key else None)
-        if key and indent == depth:
-            keys.append(key.group(2))
-    return keys
+        if indent < column or (indent == column - 2 and text.startswith("- ")):
+            break
+        lines.append((indent, text))
+    return lines
 
 
 def action_inputs(source, target, action):
