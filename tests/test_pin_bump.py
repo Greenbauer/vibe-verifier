@@ -212,6 +212,28 @@ class PinBump(unittest.TestCase):
                              "# a note\n    act:\n      default: x\nruns:\n  using: composite\n"}, "odd action")
         self.assertEqual(_pin_bump.action_inputs(self.source, self.head(), "odd"), ["token", "act"])
 
+    def test_a_large_workflow_goes_in_the_request_body_not_on_the_command_line(self):
+        # A QAE harness copy is past Linux's 128 KiB limit for one argument; the first real run died there.
+        big = ("jobs:\n  explore:\n    steps:\n      - uses: Greenbauer/vibe-verifier/actions/criteria@%s # main x\n"
+               "# %s\n" % (self.old, "x" * 200000))
+        self.consumer("acme/app", stub_pinned_to(self.new))
+        (Path(self.fixtures) / "acme/app/.github/workflows/qae-explore.yml").write_text(big)
+        result = self.bump("--act", "--now")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        written = self.calls("PUT")
+        self.assertEqual(len(written), 1)
+        self.assertIn("criteria@%s # main " % self.new, written[0]["content"])
+        self.assertIn("x" * 200000, written[0]["content"])
+
+    def test_a_leftover_bump_branch_is_reset_and_reused(self):
+        (Path(self.fixtures) / "acme/app/.ref-exists").write_text("")
+        result = self.bump("--act", "--now")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        reset = self.calls("PATCH")
+        self.assertEqual([c["endpoint"] for c in reset], ["repos/acme/app/git/refs/heads/ci/vibe-verifier-pin-%s" % self.new[:10]])
+        self.assertEqual(reset[0]["body"], {"sha": "a" * 40, "force": True})
+        self.assertEqual(len(self.calls("PR")), 1)
+
     def test_a_pin_that_is_not_a_sha_never_reaches_git_as_an_option(self):
         planted = Path(self.fixtures) / "planted"
         self.consumer("acme/app", stub_pinned_to(self.old).replace("@" + self.old, "@--output=%s" % planted))

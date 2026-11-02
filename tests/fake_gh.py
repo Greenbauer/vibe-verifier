@@ -5,6 +5,7 @@ directory instead of GitHub and records every call, so a test can assert what wa
     FAKE_GH_ROOT/<owner>/<name>/<path>   the file `gh api repos/<owner>/<name>/contents/<path>` returns
     FAKE_GH_ROOT/<owner>/<name>/.broken  make every read of that repository fail with HTTP 500
     FAKE_GH_ROOT/<owner>/<name>/.open-pr an already-open pin-bump PR, served to the head query
+    FAKE_GH_ROOT/<owner>/<name>/.ref-exists  the bump branch already exists: creating it answers HTTP 422
     FAKE_GH_ROOT/<owner>/<name>/.open-prs.json  the open pull requests, a JSON list, served to a pulls query
                                          with no head (closing one with `gh pr close` is recorded as CLOSE)
     FAKE_GH_ROOT/<owner>/<name>/.runs.json  workflow runs, {"recent": [...], "queued": [...], "in_progress": [...]}:
@@ -102,6 +103,8 @@ if argv[:1] == ["api"]:
     extra = {"content": base64.b64decode(given["content"]).decode()} if "content" in given else {}
     if "--input" in argv and argv[argv.index("--input") + 1] == "-":
         extra["body"] = json.load(sys.stdin)
+        if isinstance(extra["body"], dict) and "content" in extra["body"]:
+            extra["content"] = base64.b64decode(extra["body"]["content"]).decode()
     record(method, endpoint, **extra)
     if endpoint.startswith("orgs/"):
         owner, rest = endpoint.split("/")[1], endpoint.split("?")[0].split("/")[2:]
@@ -119,6 +122,9 @@ if argv[:1] == ["api"]:
         sys.exit(0)
     repo = endpoint[len("repos/"):].split("/contents/")[0].split("/git/")[0].split("/pulls")[0].split("?")[0].rstrip("/")
     repo = "/".join(repo.split("/")[:2])
+    if method == "POST" and endpoint.endswith("/git/refs") and os.path.exists(os.path.join(root, repo, ".ref-exists")):
+        print("gh: Reference already exists (HTTP 422)", file=sys.stderr)
+        sys.exit(1)
     if broken(repo):
         print("gh: Internal Server Error (HTTP 500)", file=sys.stderr)
         sys.exit(1)

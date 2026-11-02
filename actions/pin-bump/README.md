@@ -29,8 +29,8 @@ rules), which opens the same pin-only pull requests a person would open with `ap
 It never moves an organization ruleset's pin of a wrapper: that is the wrapper's own job, which
 moves them once the wrapper's bump merges.
 
-A bump branch left behind by a bump pull request closed by hand (without deleting its branch) makes the
-next bump to that commit fail, exit 2, until the branch is deleted.
+A bump branch with no open pull request (left by a run that failed part way, or by a bump closed by hand
+without deleting its branch) is reset to the default branch and used again.
 
 Every run prints the plan and the decision in the job summary. Exit 0: it did what the plan said
 (bumped, waiting, or nothing to bump). Exit 1: a bump is held. Exit 2: something could not be read or
