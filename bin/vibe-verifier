@@ -932,9 +932,11 @@ def apply_down(args):
             default_branch = gh_json("repos/%s" % repo)["default_branch"]
             existing = gh_json("repos/%s/pulls?head=%s:%s&state=open" % (repo, repo.split("/")[0], branch))
             url = existing[0]["html_url"] if existing else open_bump(repo, changes, to, branch, default_branch, level)
-            print("%-32s %s" % (repo, url) + "".join("\n%-32s closed %s, superseded" % (repo, old) for old in _pin_bump.supersede(repo, branch, url)))
+            print("%-32s %s" % (repo, url))
+            older = _pin_bump.older_than(wrapper.checkout if level else args.source, to)
+            print("".join("%-32s closed %s, superseded\n" % (repo, old) for old in _pin_bump.supersede(repo, branch, url, older)), end="")
         except CannotRead as error:
-            print("%-32s could not open: %s" % (repo, error))
+            print("%-32s failed: %s" % (repo, error))
             failed = True
     for ruleset, moving, rules in moves:
         name = "ruleset %s/%s" % (wrapper.owner, ruleset.get("name"))

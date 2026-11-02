@@ -61,55 +61,63 @@ def git(source, *args):
 
 
 def tool_moves(source, planned, target):
-    """{repo: [tool paths]} for each catalog-level bump in `planned` whose pins move a tool version."""
+    """{repo: [tool paths]} for each catalog-level bump in `planned` whose pins move a tool version. A pin the
+    catalog's history does not have (a deleted branch, a fork, a tag) cannot be read, so it is held too."""
     held = {}
     for repo, level, _, changes in planned:
-        if level is None:
-            paths = sorted({path for _, shas, _ in changes for sha in shas for path in git(
-                source, "diff", "--name-only", sha, target, "--", *TOOL_PATHS).stdout.split()})
-            if paths:
-                held[repo] = paths
+        paths = set()
+        for sha in {sha for _, shas, _ in changes for sha in shas} if level is None else ():
+            diff = git(source, "diff", "--name-only", sha, target, "--", *TOOL_PATHS)
+            paths |= set(diff.stdout.split()) if diff.returncode == 0 else {"(%s is not in the catalog's history)" % sha[:10]}
+        if paths:
+            held[repo] = sorted(paths)
     return held
 
 
 def first_waiting(source, planned, target, release_paths):
-    """Epoch seconds of the oldest release commit any catalog-level bump in `planned` would deliver. A pin
-    that is not in the target's history counts from the target itself."""
-    times = []
-    for _, level, _, changes in planned:
-        for sha in {sha for _, shas, _ in changes for sha in shas} if level is None else ():
-            if git(source, "merge-base", "--is-ancestor", sha, target).returncode:
-                times.append(int(git(source, "log", "-1", "--format=%ct", target).stdout.strip()))
-                continue
-            first = git(source, "log", "--reverse", "--format=%ct", "%s..%s" % (sha, target), "--", *release_paths).stdout.split()
-            times += [int(first[0])] if first else []
+    """Epoch seconds of the oldest release commit any catalog-level bump in `planned` would deliver."""
+    times = [waiting_since(source, sha, target, release_paths) for _, level, _, changes in planned if level is None
+             for sha in {sha for _, shas, _ in changes for sha in shas}]
+    times = [at for at in times if at is not None]
     return min(times) if times else None
+
+
+def waiting_since(source, sha, target, release_paths):
+    """Epoch seconds of the first release commit after the pin `sha`, None when there is none. A pin that is
+    not in the target's history counts from the target itself."""
+    if git(source, "merge-base", "--is-ancestor", sha, target).returncode:
+        return int(git(source, "log", "-1", "--format=%ct", target).stdout.strip())
+    first = git(source, "log", "--reverse", "--format=%ct", "%s..%s" % (sha, target), "--", *release_paths).stdout.split()
+    return int(first[0]) if first else None
 
 
 def lane(label, repos, clock=time.time):
     """(quiet, why) for the runner label across `repos`, read through gh: the run this is part of
     ($GITHUB_REPOSITORY, $GITHUB_RUN_ID) is left out."""
     since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(clock() - 3600))
-    mine = (os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_RUN_ID", ""))
-    recent = 0
-    for repo in repos:
-        answer = gh_json("repos/%s/actions/runs?per_page=100&created=%%3E%%3D%s" % (repo, since))
-        runs = answer.get("workflow_runs") or []
-        recent += max(answer.get("total_count", 0) - len(runs), 0) + sum(1 for run in runs if run.get("event") != "schedule")
+    recent = sum(recent_runs(repo, since) for repo in repos)
     if recent > MAX_RECENT_RUNS:
         return False, "%d runs started in the last hour (quiet is at most %d)" % (recent, MAX_RECENT_RUNS)
-    waiting = running = 0
-    for repo in repos:
-        for status in ("queued", "in_progress"):
-            for run in gh_json("repos/%s/actions/runs?per_page=100&status=%s" % (repo, status)).get("workflow_runs") or []:
-                if (repo, str(run.get("id"))) == mine:
-                    continue
-                for job in gh_json("repos/%s/actions/runs/%s/jobs?per_page=100" % (repo, run.get("id"))).get("jobs") or []:
-                    if label in (job.get("labels") or []):
-                        waiting += job.get("status") == "queued"
-                        running += job.get("status") == "in_progress"
+    statuses = [job.get("status") for repo in repos for job in lane_jobs(repo) if label in (job.get("labels") or [])]
+    waiting, running = statuses.count("queued"), statuses.count("in_progress")
     why = "%d run(s) in the last hour, %d job(s) waiting for %s, %d running" % (recent, waiting, label, running)
     return waiting == 0 and running <= MAX_RUNNING, why
+
+
+def recent_runs(repo, since):
+    """Runs of `repo` created since `since`, scheduled ones left out (a page past the first counts whole)."""
+    answer = gh_json("repos/%s/actions/runs?per_page=100&created=%%3E%%3D%s" % (repo, since))
+    runs = answer.get("workflow_runs") or []
+    return max(answer.get("total_count", 0) - len(runs), 0) + sum(1 for run in runs if run.get("event") != "schedule")
+
+
+def lane_jobs(repo):
+    """Every job of the queued and running runs of `repo`, but those of the run this is part of."""
+    mine = (os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_RUN_ID", ""))
+    runs = [run for status in ("queued", "in_progress")
+            for run in gh_json("repos/%s/actions/runs?per_page=100&status=%s" % (repo, status)).get("workflow_runs") or []
+            if (repo, str(run.get("id"))) != mine]
+    return [job for run in runs for job in gh_json("repos/%s/actions/runs/%s/jobs?per_page=100" % (repo, run.get("id"))).get("jobs") or []]
 
 
 def when(args, planned, target, release_paths, clock=time.time):
@@ -118,7 +126,7 @@ def when(args, planned, target, release_paths, clock=time.time):
         return True, "asked to bump now"
     oldest = first_waiting(args.source, planned, target, release_paths)
     waited = clock() - oldest if oldest is not None else 0
-    if oldest is None or waited >= args.overdue_hours * 3600:
+    if oldest is not None and waited >= args.overdue_hours * 3600:
         return True, "the oldest release commit waiting is %.1fh old (the limit is %gh)" % (waited / 3600, args.overdue_hours)
     if not args.lane:
         return True, "no lane to wait for"
@@ -159,14 +167,17 @@ def open_bump(repo, changes, target, branch, default_branch, wrapper=None):
     return result.stdout.strip().splitlines()[-1]
 
 
-def supersede(repo, branch, url):
+def supersede(repo, branch, url, older):
     """Close every other open bump of the same level in `repo` (a branch of this repository named like
-    `branch` up to its target), saying which pull request replaced it. Returns the closed URLs."""
+    `branch` up to its target) whose target `older(short sha)` says the new one includes, saying which pull
+    request replaced it. Returns the closed URLs."""
     prefix = next(p for p in BRANCH_PREFIXES if branch.startswith(p))
     closed = []
     for pull in gh_json("repos/%s/pulls?state=open&per_page=100" % repo):
         head = pull.get("head") or {}
-        if head.get("ref", "").startswith(prefix) and head.get("ref") != branch and (head.get("repo") or {}).get("full_name") == repo:
+        ref = head.get("ref", "")
+        if (ref.startswith(prefix) and ref != branch and (head.get("repo") or {}).get("full_name") == repo
+                and older(ref[len(prefix):])):
             result = subprocess.run(["gh", "pr", "close", str(pull["number"]), "--repo", repo, "--delete-branch",  # nosec B603 B607
                                      "--comment", "Superseded by %s, which moves the same pins to a newer commit." % url],
                                     capture_output=True, text=True)
@@ -174,3 +185,8 @@ def supersede(repo, branch, url):
                 raise CannotRead((result.stderr.strip() or "gh pr close failed").splitlines()[-1])
             closed.append(pull.get("html_url", "#%s" % pull["number"]))
     return closed
+
+
+def older_than(checkout, target):
+    """A test for supersede: whether a short commit SHA is in `checkout` and an ancestor of `target`."""
+    return lambda short: git(checkout, "merge-base", "--is-ancestor", short, target).returncode == 0

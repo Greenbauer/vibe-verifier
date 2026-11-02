@@ -21,10 +21,14 @@ rules), which opens the same pin-only pull requests a person would open with `ap
      running there, this run left out. With no `lane`, it never waits.
 4. When it is time and `act` is true, confirms its own plan's digest and opens the pull requests. An
    open bump to the same commit is kept; an open bump to an older commit is closed with a comment naming
-   the one that replaces it, so a repository never has two.
+   the one that replaces it, so a repository never has two. A bump to a commit the new one does not
+   include is left open.
 
 It never moves an organization ruleset's pin of a wrapper: that is the wrapper's own job, which
 moves them once the wrapper's bump merges.
+
+A bump branch left behind by a bump pull request closed by hand (without deleting its branch) makes the
+next bump to that commit fail, exit 2, until the branch is deleted.
 
 Every run prints the plan and the decision in the job summary. Exit 0: it did what the plan said
 (bumped, waiting, or nothing to bump). Exit 1: a bump is held. Exit 2: something could not be read or

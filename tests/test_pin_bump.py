@@ -131,13 +131,14 @@ class PinBump(unittest.TestCase):
         self.assertEqual(len(self.calls("PR")), 1)
 
     def test_an_older_open_bump_is_closed_as_superseded(self):
-        older = {"number": 3, "html_url": "https://github.com/acme/app/pull/3",
-                 "head": {"ref": "ci/vibe-verifier-pin-0123456789", "repo": {"full_name": "acme/app"}}}
-        fork = {"number": 4, "html_url": "https://github.com/acme/app/pull/4",
-                "head": {"ref": "ci/vibe-verifier-pin-0123456789", "repo": {"full_name": "someone/app"}}}
-        other = {"number": 5, "html_url": "https://github.com/acme/app/pull/5",
-                 "head": {"ref": "feature/x", "repo": {"full_name": "acme/app"}}}
-        self.serve("acme/app", ".open-prs.json", [older, fork, other])
+        def pull(number, ref, owner="acme"):
+            return {"number": number, "html_url": "https://github.com/acme/app/pull/%d" % number,
+                    "head": {"ref": ref, "repo": {"full_name": "%s/app" % owner}}}
+        older = pull(3, "ci/vibe-verifier-pin-" + self.old[:10])
+        fork = pull(4, "ci/vibe-verifier-pin-" + self.old[:10], owner="someone")
+        other = pull(5, "feature/x")
+        unknown = pull(6, "ci/vibe-verifier-pin-0123456789")  # not an ancestor of the new target: never closed
+        self.serve("acme/app", ".open-prs.json", [older, fork, other, unknown])
         result = self.bump("--act", "--now")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         closed = self.calls("CLOSE")
@@ -154,11 +155,26 @@ class PinBump(unittest.TestCase):
         self.assertEqual(_pin_bump.tool_moves(self.source, planned, target), {"acme/app": ["tools/lint/package-lock.json"]})
         self.assertEqual(_pin_bump.tool_moves(self.source, planned[1:], target), {})
 
-    def test_the_action_is_a_dry_run_unless_act_is_true(self):
+    def test_a_pin_the_catalog_history_does_not_have_is_held(self):
+        # Its tool moves cannot be read, so it is not bumped blind.
+        self.consumer("acme/app", stub_pinned_to("f" * 40))
+        result = self.bump("--act", "--now")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("held: moves (ffffffffff is not in the catalog's history)", result.stdout)
+        self.assertEqual(self.writes(), [])
+
+    def test_the_action_is_a_dry_run_unless_act_is_true_and_never_merges(self):
         action = (ROOT / "actions" / "pin-bump" / "action.yml").read_text()
         self.assertIn('[ "$ACT" = true ] && args+=(--act)', action)
         self.assertIn("apply-down --auto", action)
         self.assertNotIn("--confirm", action)
+        self.assertIn('overdue-hours:\n    description: Bump once the oldest release commit waiting is this old, quiet or not.\n'
+                      '    default: "6"', action)
+        for text in (action, (ROOT / "gates" / "_pin_bump.py").read_text()):
+            self.assertNotIn('"merge"', text)
+            self.assertNotIn("pr merge", text)
+        self.bump("--act", "--now")
+        self.assertEqual({c["method"] for c in self.writes()}, {"POST", "PUT", "PR"})
 
 
 if __name__ == "__main__":
