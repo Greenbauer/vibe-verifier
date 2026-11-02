@@ -2,7 +2,7 @@
 store, and the requirements the proof audit cuts from its wording.
 
 A store answers `GET <endpoint>/plans/<id>` with JSON `{planMarkdown, amendments: [{body}]}`, the amendments oldest
-first, given a bearer token. actions/ticket makes a named plan's Acceptance items the ticket's criteria; the proof
+first, given a bearer token. actions/ticket makes a named plan's Acceptance items (its whole wording, cut as below, when it has none) the ticket's criteria; the proof
 audit (gates/_proof_requirements.py) grades its whole wording, cut here into requirements:
 
 - every list item (nested items and continuation lines joined to their parent, as a `Ticket:` section's items are)

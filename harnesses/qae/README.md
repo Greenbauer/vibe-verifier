@@ -327,13 +327,15 @@ now reads the ticket by default, and the harness holds the pull request to its c
 
   A `[plan:<id>]` marker in the pull request's title or body (outside code fences and HTML comments)
   names the plan. Its criteria are the list items under each heading of the plan that starts
-  "Acceptance", then each amendment's, oldest first: the items under its own "Acceptance criteria"
-  heading or bold line, or, when it has none, the whole amendment as one criterion. They follow any
-  `Ticket:` section's criteria, and the step's job summary numbers them all, TC1, TC2, ..., so an
-  author knows which number a `ticket-proof:` line names. The store is read on every run, so an
-  amendment added while the pull request is open is graded on its next run. A plan with no Acceptance
-  section, a store that does not answer 200, or a marker with no token fails the step. A marker on a
-  `Split off:` line names the plan that takes some of the proof audit's requirements, not this one, and
+  "Acceptance" (a plan with no list item under such a heading, such as one submitted before plans
+  carried one, gives its whole wording instead, every list item and paragraph outside its title and
+  asides, cut as the proof audit cuts it), then each amendment's, oldest first: the items under its
+  own "Acceptance criteria" heading or bold line, or, when it has none, the whole amendment as one
+  criterion. They follow any `Ticket:` section's criteria, and the step's job summary numbers them
+  all, TC1, TC2, ..., so an author knows which number a `ticket-proof:` line names. The store is read
+  on every run, so an amendment added while the pull request is open is graded on its next run. A plan
+  with nothing to walk at all, a store that does not answer 200, or a marker with no token fails the
+  step. A marker on a `Split off:` line names the plan that takes some of the proof audit's requirements, not this one, and
   is not read (a `Split off: ... -> ...` line, a list item or not). The store is read from its own
   address: a redirect is not followed. Give the [proof audit](../proof-audit/README.md)'s plan and verify steps the same inputs
   and it grades the plan's whole wording, not only its Acceptance items.
