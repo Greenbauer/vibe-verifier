@@ -199,8 +199,8 @@ consumer copy made before this keeps them in the checkout (`path: proof-audit-gr
 ## A plan kept in a plan store
 
 A `Ticket:` section's requirements carry their IDs. A plan a requester submits to a plan store, and amends
-later, carries none, so `actions/ticket` gives QAE only its Acceptance items, and a requirement written
-anywhere else in it was never graded. Given the store, the audit grades its whole wording. A `[plan:<id>]`
+later, carries none, so `actions/ticket` gives QAE only its Acceptance items (its whole wording only when it has none), and a
+requirement written anywhere else in it was never graded. Given the store, the audit grades its whole wording. A `[plan:<id>]`
 marker in the title or body (outside code fences, HTML comments and `Split off: ... -> ...` lines) names the
 plan, read from the store's own address when the step runs (a redirect is not followed, so its token goes
 nowhere else), so an amendment added while the pull request is open is graded on its

@@ -33,10 +33,11 @@ later) is read too when the consumer names the store:
 A `[plan:<id>]` marker in the title or body (outside code fences, HTML comments and `Split off: ... -> ...`
 lines, a list item or not, whose plan is another owner's) names a plan; gates/_plan_store.py reads it from the
 store, following no redirect. Its criteria
-are the list items under each plan heading that starts "Acceptance", then, for each amendment in order, the
+are the list items under each plan heading that starts "Acceptance" (with no such heading, the plan's whole wording as
+the proof audit cuts it: every list item and paragraph outside its title and asides), then, for each amendment in order, the
 items under its own "Acceptance criteria" heading or bold line, or, when it has none, the whole amendment as
 one criterion: an amendment is a requirement however it is written. They follow any `Ticket:` section's
-criteria. A plan with no Acceptance section, a store that does not answer 200, or a marker with no token
+criteria. A plan with nothing to walk at all, a store that does not answer 200, or a marker with no token
 exits 2: a plan the step could not read never reads as "no ticket". The store is read when the step runs, so
 a plan amended later is graded on the next run.
 """
@@ -49,7 +50,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gates"))
-from _plan_store import BOLD_LINE, stored_plans
+from _plan_store import BOLD_LINE, PLAN_COMMENT, stored_plans, wording
 from _ticket import (HEADING, Unreadable, headings, indexed_body_lines, indexed_list_items, links, named,
                      section_items, unfenced)
 
@@ -67,13 +68,19 @@ def fetch(repo, path, ref):
 
 
 def plan_body_items(markdown):
-    """The list items under each heading of the plan that starts "Acceptance", subsections included."""
+    """The list items under each heading of the plan that starts "Acceptance", subsections included. A plan with no
+    such heading gives its whole wording instead, cut as the proof audit cuts it (_plan_store.wording): every list
+    item and paragraph outside its title and asides, so a plan written before it had an Acceptance section is
+    walked on everything it asks for, never refused."""
     lines = markdown.splitlines()
     items = []
     for start, level, title in headings(lines):
         if PLAN_SECTION.match(title):
             items += [text for _, text in indexed_list_items(indexed_body_lines(lines, start, level))]
-    return items
+    if items:
+        return items
+    blanked = PLAN_COMMENT.sub(lambda comment: "\n" * comment.group(0).count("\n"), markdown)
+    return [text for _, text in wording(blanked.splitlines(), titled=True)]
 
 
 def marked_block(lines):
@@ -102,7 +109,7 @@ def plan_items(plan_id, plan):
     """A plan's criteria: its Acceptance sections' items, then each amendment's, oldest first."""
     items = plan_body_items(plan["planMarkdown"])
     if not items:
-        raise Unreadable("plan %s has no list under an Acceptance heading" % plan_id)
+        raise Unreadable("plan %s has no Acceptance item, list item or paragraph to walk" % plan_id)
     for number, amendment in enumerate(plan.get("amendments") or [], 1):
         items += amendment_items(number, str(amendment.get("body", "")))
     return items

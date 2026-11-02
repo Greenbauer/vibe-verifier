@@ -131,10 +131,25 @@ class PlanStore(unittest.TestCase):
         self.assertEqual((result.returncode, text), (0, ""), result.stderr)
         self.assertEqual(len(self.seen), 1)
 
+    def test_a_plan_with_no_acceptance_heading_is_walked_on_its_whole_wording(self):
+        # A consumer's plan written with "## User-facing flow" and "## Test" and no Acceptance heading was refused
+        # (2026-11-02), so its pull request could never pass QAE.
+        plan = ("# Euro prices box\n\nAdd a box\nto the shop page.\n\n## User-facing flow\n"
+                "1. A currency dropdown.\n   - Default is Euro.\n2. Four totals.\n\n## Background\n\n"
+                "- Not a criterion: an aside\n\n<!-- a note -->\n\n## Test\n\nThe box loads with Euro.\n")
+        self.plans[PLAN_ID] = {"planMarkdown": plan, "amendments": [PLAIN_AMENDMENT]}
+        result, text = self.run_ticket(BODY, title="[plan:%s]" % PLAN_ID)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.criteria(text), [
+            "- Add a box to the shop page.", "- A currency dropdown. Default is Euro.",
+            "- Four totals.", "- The box loads with Euro.",
+            "- Amendment 1: Also show the currency code beside every total."])
+        self.assertIn("ticket: 5 criteria", result.stdout)
+
     def test_a_plan_the_step_cannot_read_fails(self):
-        self.plans[PLAN_ID] = {"planMarkdown": "# A plan\n\n## Goal\n\n- prose only\n", "amendments": []}
+        self.plans[PLAN_ID] = {"planMarkdown": "# A plan\n\n## Background\n\n- an aside only\n", "amendments": []}
         other = "a8f1bf53-0a04-4d73-8ebd-57bffa15257d"
-        for body, token, says in (("[plan:%s]" % PLAN_ID, "secret", "has no list under an Acceptance heading"),
+        for body, token, says in (("[plan:%s]" % PLAN_ID, "secret", "has no Acceptance item, list item or paragraph to walk"),
                                   ("[plan:%s]" % other, "secret", "the plan store answered 404"),
                                   ("[plan:%s]" % PLAN_ID, "", "the step has no token for the plan store"),
                                   ("[plan:%s]" % PLAN_ID, "wrong", "the plan store answered 404")):
