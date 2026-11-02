@@ -11,6 +11,7 @@ from pathlib import Path
 
 from helpers import ROOT, commit, make_repo, runner
 from test_apply_down import stub_pinned_to
+import _pin_bump  # noqa: E402  (gates/ is on the path through helpers)
 
 LANE = "example-ci"
 
@@ -143,6 +144,15 @@ class PinBump(unittest.TestCase):
         self.assertEqual([c["number"] for c in closed], ["3"])
         self.assertIn("Superseded by https://github.com/acme/app/pull/1", closed[0]["comment"])
         self.assertIn("closed https://github.com/acme/app/pull/3, superseded", result.stdout)
+
+    def test_only_the_catalog_level_of_a_bump_is_held_for_a_tool_move(self):
+        # A caller's pins of a wrapper's workflows move no catalog tool, whatever commits they cross.
+        commit(self.source, {"tools/lint/package-lock.json": "2"}, "tool version")
+        target = self.head()
+        planned = [("acme/app", None, target, [("a.yml", [self.old], "")]),
+                   ("acme/app", "acme/ci", "w" * 40, [("b.yml", [self.old], "")])]
+        self.assertEqual(_pin_bump.tool_moves(self.source, planned, target), {"acme/app": ["tools/lint/package-lock.json"]})
+        self.assertEqual(_pin_bump.tool_moves(self.source, planned[1:], target), {})
 
     def test_the_action_is_a_dry_run_unless_act_is_true(self):
         action = (ROOT / "actions" / "pin-bump" / "action.yml").read_text()
