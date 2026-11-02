@@ -44,6 +44,7 @@ The QAE template includes the body subscription. Its full-history criteria check
 ## Verify
 
 - `tests/test_qae_plan_store.py::test_the_plans_acceptance_sections_and_each_amendment_are_the_ticket`
+- `tests/test_qae_plan_store.py::test_a_plan_with_no_acceptance_heading_is_walked_on_its_whole_wording`
 - `tests/test_qae_plan_store.py::test_a_plan_the_step_cannot_read_fails`
 - `tests/test_qae_plan_store.py::test_a_split_off_lines_plan_is_another_owners_and_not_read`
 

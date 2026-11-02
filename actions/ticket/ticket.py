@@ -30,16 +30,15 @@ later) is read too when the consumer names the store:
                            [{body}]}`, the amendments oldest first, given the bearer token in $VV_PLANS_TOKEN
     --title TEXT           the pull request's title, which may carry the marker as the body may
 
-A `[plan:<id>]` marker in the title or body (outside code fences, HTML comments and `Split off: ... -> ...`
-lines, a list item or not, whose plan is another owner's) names a plan; gates/_plan_store.py reads it from the
-store, following no redirect. Its criteria
-are the list items under each plan heading that starts "Acceptance" (with no such heading, the plan's whole wording as
-the proof audit cuts it: every list item and paragraph outside its title and asides), then, for each amendment in order, the
-items under its own "Acceptance criteria" heading or bold line, or, when it has none, the whole amendment as
-one criterion: an amendment is a requirement however it is written. They follow any `Ticket:` section's
-criteria. A plan with nothing to walk at all, a store that does not answer 200, or a marker with no token
-exits 2: a plan the step could not read never reads as "no ticket". The store is read when the step runs, so
-a plan amended later is graded on the next run.
+A `[plan:<id>]` marker in the title or body (outside code fences, HTML comments and `Split off: ... -> ...` lines, a
+list item or not, whose plan is another owner's) names a plan; gates/_plan_store.py reads it from the store,
+following no redirect. Its criteria are the list items under each plan heading that starts "Acceptance" (with no
+list item under such a heading, the plan's whole wording as the proof audit cuts it: every list item and paragraph
+outside its title and asides), then, for each amendment in order, the items under its own "Acceptance criteria"
+heading or bold line, or, when it has none, the whole amendment as one criterion: an amendment is a requirement
+however it is written. They follow any `Ticket:` section's criteria. A plan with nothing to walk at all, a store
+that does not answer 200, or a marker with no token exits 2: a plan the step could not read never reads as "no
+ticket". The store is read when the step runs, so a plan amended later is graded on the next run.
 """
 import argparse
 import base64
@@ -69,9 +68,9 @@ def fetch(repo, path, ref):
 
 def plan_body_items(markdown):
     """The list items under each heading of the plan that starts "Acceptance", subsections included. A plan with no
-    such heading gives its whole wording instead, cut as the proof audit cuts it (_plan_store.wording): every list
-    item and paragraph outside its title and asides, so a plan written before it had an Acceptance section is
-    walked on everything it asks for, never refused."""
+    list item under such a heading gives its whole wording instead, cut as the proof audit cuts it
+    (_plan_store.wording): every list item and paragraph outside its title and asides, so a plan written before it
+    had an Acceptance section is walked on everything it asks for, never refused."""
     lines = markdown.splitlines()
     items = []
     for start, level, title in headings(lines):
