@@ -10,6 +10,7 @@ run on is quiet. It confirms its own plan's digest, so what it writes is what it
 import base64
 import json
 import os
+import re
 import subprocess  # nosec B404: runs gh and git, the caller's own tools, with fixed arguments
 import time
 
@@ -74,8 +75,8 @@ def tool_moves(source, planned, target):
 
 def moved_tools(source, sha, target):
     """The tool paths that differ between the pin `sha` and `target`."""
-    diff = git(source, "diff", "--name-only", sha, target, "--", *TOOL_PATHS)
-    return diff.stdout.split() if diff.returncode == 0 else ["(%s is not in the catalog's history)" % sha[:10]]
+    diff = git(source, "diff", "--name-only", sha, target, "--", *TOOL_PATHS) if is_sha(sha) else None
+    return diff.stdout.split() if diff and diff.returncode == 0 else ["(%s is not in the catalog's history)" % sha[:10]]
 
 
 def first_waiting(source, planned, target, release_paths):
@@ -89,7 +90,7 @@ def first_waiting(source, planned, target, release_paths):
 def waiting_since(source, sha, target, release_paths):
     """Epoch seconds of the first release commit after the pin `sha`, None when there is none. A pin that is
     not in the target's history counts from the target itself."""
-    if git(source, "merge-base", "--is-ancestor", sha, target).returncode:
+    if not is_sha(sha) or git(source, "merge-base", "--is-ancestor", sha, target).returncode:
         return int(git(source, "log", "-1", "--format=%ct", target).stdout.strip())
     first = git(source, "log", "--reverse", "--format=%ct", "%s..%s" % (sha, target), "--", *release_paths).stdout.split()
     return int(first[0]) if first else None
@@ -204,4 +205,10 @@ def open_pulls(repo):
 
 def older_than(checkout, target):
     """A test for supersede: whether a short commit SHA is in `checkout` and an ancestor of `target`."""
-    return lambda short: git(checkout, "merge-base", "--is-ancestor", short, target).returncode == 0
+    return lambda short: is_sha(short, 7) and git(checkout, "merge-base", "--is-ancestor", short, target).returncode == 0
+
+
+def is_sha(text, shortest=40):
+    """Whether `text` is a commit SHA (at least `shortest` hex digits): a pin or branch name read from another
+    repository goes to git as an argument only then, never as an option such as --output=<file>."""
+    return re.fullmatch(r"[0-9a-f]{%d,40}" % shortest, text or "") is not None

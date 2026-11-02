@@ -165,6 +165,15 @@ class PinBump(unittest.TestCase):
         self.assertIn("held: moves (ffffffffff is not in the catalog's history)", result.stdout)
         self.assertEqual(self.writes(), [])
 
+    def test_a_pin_that_is_not_a_sha_never_reaches_git_as_an_option(self):
+        planted = Path(self.fixtures) / "planted"
+        self.consumer("acme/app", stub_pinned_to(self.old).replace("@" + self.old, "@--output=%s" % planted))
+        result = self.bump("--act", "--now")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("held: moves (--output=/", result.stdout)
+        self.assertFalse(planted.exists())
+        self.assertFalse(_pin_bump.older_than(self.source, self.new)("--output=x"))
+
     def test_the_action_is_a_dry_run_unless_act_is_true_and_never_merges(self):
         action = (ROOT / "actions" / "pin-bump" / "action.yml").read_text()
         self.assertIn('[ "$ACT" = true ] && args+=(--act)', action)
