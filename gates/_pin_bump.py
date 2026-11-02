@@ -177,7 +177,7 @@ def supersede(repo, branch, url, older):
     request replaced it. Returns the closed URLs."""
     prefix = next(p for p in BRANCH_PREFIXES if branch.startswith(p))
     closed = []
-    for pull in gh_json("repos/%s/pulls?state=open&per_page=100" % repo):
+    for pull in open_pulls(repo):
         head = pull.get("head") or {}
         ref = head.get("ref", "")
         if (ref.startswith(prefix) and ref != branch and (head.get("repo") or {}).get("full_name") == repo
@@ -189,6 +189,17 @@ def supersede(repo, branch, url, older):
                 raise CannotRead((result.stderr.strip() or "gh pr close failed").splitlines()[-1])
             closed.append(pull.get("html_url", "#%s" % pull["number"]))
     return closed
+
+
+def open_pulls(repo):
+    """Every open pull request of `repo`, page by page."""
+    pulls, page = [], 1
+    while True:
+        batch = gh_json("repos/%s/pulls?state=open&per_page=100&page=%d" % (repo, page))
+        pulls += batch
+        if len(batch) < 100:
+            return pulls
+        page += 1
 
 
 def older_than(checkout, target):

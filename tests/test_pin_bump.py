@@ -138,7 +138,9 @@ class PinBump(unittest.TestCase):
         fork = pull(4, "ci/vibe-verifier-pin-" + self.old[:10], owner="someone")
         other = pull(5, "feature/x")
         unknown = pull(6, "ci/vibe-verifier-pin-0123456789")  # not an ancestor of the new target: never closed
-        self.serve("acme/app", ".open-prs.json", [older, fork, other, unknown])
+        # Past the first page of 100, where an older bump still has to be found.
+        crowd = [pull(100 + n, "feature/%d" % n) for n in range(100)]
+        self.serve("acme/app", ".open-prs.json", crowd + [older, fork, other, unknown])
         result = self.bump("--act", "--now")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         closed = self.calls("CLOSE")

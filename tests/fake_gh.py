@@ -183,7 +183,10 @@ if argv[:1] == ["api"]:
         sys.exit(0)
     if "/pulls" in endpoint and "head=" not in endpoint:
         path = os.path.join(root, repo, ".open-prs.json")
-        print(open(path).read() if os.path.exists(path) else "[]")
+        pulls = json.load(open(path)) if os.path.exists(path) else []
+        query = dict(part.split("=", 1) for part in endpoint.partition("?")[2].split("&") if "=" in part)
+        size, page = int(query.get("per_page", 30)), int(query.get("page", 1))
+        print(json.dumps(pulls[(page - 1) * size:page * size]))
         sys.exit(0)
     if "/pulls" in endpoint:
         open_pr = os.path.join(root, repo, ".open-pr")
