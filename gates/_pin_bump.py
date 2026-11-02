@@ -79,6 +79,81 @@ def moved_tools(source, sha, target):
     return diff.stdout.split() if diff and diff.returncode == 0 else ["(%s is not in the catalog's history)" % sha[:10]]
 
 
+def holds(source, planned, target):
+    """{repo: [why]} for each catalog-level bump in `planned` that must wait for a person: it moves a tool version
+    (tool_moves), or a workflow it rewrites passes a `with:` input the action no longer declares at `target`,
+    which would fail every run of that workflow from the merge on."""
+    held = {repo: ["moves %s, so sweep that gate with --all on every consumer first" % " ".join(paths)]
+                   for repo, paths in tool_moves(source, planned, target).items()}
+    for repo, level, _, changes in planned:
+        missing = [why for path, _, text in changes for why in undeclared_inputs(source, target, path, text)] if level is None else []
+        if missing:
+            held.setdefault(repo, []).extend(missing)
+    return held
+
+
+USES = re.compile(r"^([ \t]*(?:- +)?)uses: *\S*vibe-verifier/actions/([A-Za-z0-9_-]+)@")
+KEY = re.compile(r"^( *)([A-Za-z0-9_-]+):")
+
+
+def undeclared_inputs(source, target, path, text):
+    """Why each input `text` passes to a catalog action is not one of that action's inputs at `target`."""
+    found = []
+    for action, key in passed_inputs(text):
+        declared = action_inputs(source, target, action)
+        if declared is None:
+            found.append("%s uses actions/%s, which %s does not have" % (path, action, target[:10]))
+        elif key not in declared:
+            found.append("%s passes `%s` to actions/%s, which %s does not declare" % (path, key, action, target[:10]))
+    return sorted(set(found))
+
+
+def passed_inputs(text):
+    """[(action, input)] for each `with:` key of each step of `text` that uses a catalog action. Read line by line
+    (the catalog parses no YAML): a step's keys sit at the column of its `uses:`, its inputs one level under `with:`."""
+    lines, found = text.splitlines(), []
+    for at, line in enumerate(lines):
+        use = USES.match(line)
+        if use:
+            found += [(use.group(2), key) for key in with_keys(lines[at + 1:], len(use.group(1)))]
+    return found
+
+
+def with_keys(rest, column):
+    """The keys under the `with:` of a step whose keys sit at `column`, from the lines after its `uses:`."""
+    keys, inside, depth = [], False, None
+    for line in rest:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent < column or (indent == column - 2 and line.lstrip().startswith("- ")):
+            break
+        if indent == column:
+            inside = line.strip() == "with:"
+            continue
+        key = KEY.match(line) if inside else None
+        depth = depth if depth is not None else (indent if key else None)
+        if key and indent == depth:
+            keys.append(key.group(2))
+    return keys
+
+
+def action_inputs(source, target, action):
+    """The inputs actions/<action>/action.yml declares at `target`, or None when there is no such action."""
+    shown = git(source, "show", "%s:actions/%s/action.yml" % (target, action))
+    if shown.returncode:
+        return None
+    block = shown.stdout.split("\ninputs:\n", 1)
+    body = block[1] if len(block) == 2 else ""
+    names = []
+    for line in body.splitlines():
+        if line.strip() and not line.startswith(" "):
+            break
+        key = KEY.match(line)
+        names += [key.group(2)] if key and len(key.group(1)) == 2 else []
+    return names
+
+
 def first_waiting(source, planned, target, release_paths):
     """Epoch seconds of the oldest release commit any catalog-level bump in `planned` would deliver."""
     times = [waiting_since(source, sha, target, release_paths) for _, level, _, changes in planned if level is None

@@ -148,7 +148,9 @@ audits about monthly, and a workflow gate judges the whole of any workflow a pul
 so a bump that is not swept re-arms a backlog that lands on whoever next touches `ci.yml`. So
 `apply-down --auto` holds a repository whose pins would cross a commit under `gates/_tools.py` or
 `tools/`, opens nothing for it, and exits 1, which makes the scheduled run red until a person sweeps and
-runs `apply-down` by hand (where the same plan prints the move as a note).
+runs `apply-down` by hand (where the same plan prints the move as a note). It holds a repository the same
+way when a workflow the bump rewrites passes a `with:` input that the action no longer declares at the new
+commit (or uses an action the new commit lacks): that workflow would fail on every run from the merge on.
 
 Anything a composite action reads through `$GITHUB_ACTION_PATH/../..` must live under a release
 path (`gates/`, `bin/`, `actions/`, `consumer/`, `tools/`, `rules/`): that is what makes a change
