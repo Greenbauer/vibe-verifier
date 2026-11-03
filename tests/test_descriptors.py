@@ -226,6 +226,16 @@ class CountRatchet(StandIn):
         git(moved, "commit", "-q", "-m", "move")
         self.assertEqual(self.run_gate(moved, "--base-ref", "HEAD~1").returncode, 0)
 
+    def test_an_advisory_finding_is_never_counted_or_made_blocking(self):
+        notes_only = self.run_gate(self.repo({}, {"a.txt": "fine\n"}, parser="sarif", ratchet="count"), "--base-ref", "HEAD~1",
+                                   "--format", "json", mode="sarif")
+        self.assertEqual(notes_only.returncode, 0, notes_only.stdout + notes_only.stderr)
+        self.assertEqual([f["advisory"] for f in json.loads(notes_only.stdout)["findings"]], [True])
+        both = self.run_gate(self.repo({}, {"a.txt": "BAD\n"}, parser="sarif", ratchet="count"), "--base-ref", "HEAD~1",
+                             "--format", "json", mode="sarif")
+        self.assertEqual(both.returncode, 1)
+        self.assertIn("0 at the base, 1 now", [f for f in json.loads(both.stdout)["findings"] if not f["advisory"]][0]["message"])
+
     def test_all_reports_every_finding_without_counts(self):
         repo = self.repo({"a.txt": "BAD\n"}, {"README.md": "y\n"}, ratchet="count")
         result = self.run_gate(repo, "--all", "--format", "json")

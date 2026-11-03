@@ -5,7 +5,8 @@ request moved at its old path, one it added not at all). A file blocks on a rule
 at HEAD than at the merge base, and then every finding of that rule in the file is reported, with both counts, since a
 tool does not say which one is new. Editing, moving or fixing code that already had a finding never blocks; fixing one
 and adding one of the same rule in the same file nets zero. A finding's rule is the one its parser names (gates/_parsers.py
-sets `rule`), else its message.
+sets `rule`), else its message. An advisory finding (a SARIF note, say) is not counted and is reported as it is: it
+never blocks, with the ratchet or without.
 """
 import os
 import subprocess
@@ -35,15 +36,16 @@ def _write_base(repo, start, moved, files, snapshot):
 
 
 def count_ratchet(repo, base, files, head, scan):
-    """The findings of `head` (the tool's at HEAD) that block: those of each (file, rule) with more of them than at the
-    merge base. `scan(root, paths)` runs the tool on `paths` written under `root`."""
+    """The findings of `head` (the tool's at HEAD) to report: every advisory one as it is, and the blocking ones of each
+    (file, rule) with more of them than at the merge base. `scan(root, paths)` runs the tool on `paths` under `root`."""
     start = git(repo, "merge-base", base, "HEAD").strip()
     with tempfile.TemporaryDirectory(prefix="vv-base-") as snapshot:
         at_base = _write_base(repo, start, renamed(repo, base), files, snapshot)
         before = scan(snapshot, at_base) if at_base else []
-    was = Counter((finding.path, rule(finding)) for finding in before)
-    now = Counter((finding.path, rule(finding)) for finding in head)
-    return [Finding("%s (%s results in this file: %d at the base, %d now)" % (finding.message, rule(finding),
-                                                                          was[key], now[key]), finding.path, finding.line)
-            for finding in sorted(head, key=lambda f: (f.path or "", f.line or 0, f.message))
-            for key in [(finding.path, rule(finding))] if now[key] > was[key]]
+    blocking = sorted((f for f in head if not f.advisory), key=lambda f: (f.path or "", f.line or 0, f.message))
+    was = Counter((finding.path, rule(finding)) for finding in before if not finding.advisory)
+    now = Counter((finding.path, rule(finding)) for finding in blocking)
+    rose = [Finding("%s (%s results in this file: %d at the base, %d now)" % (finding.message, rule(finding), was[key],
+                                                                          now[key]), finding.path, finding.line)
+            for finding in blocking for key in [(finding.path, rule(finding))] if now[key] > was[key]]
+    return [finding for finding in head if finding.advisory] + rose
