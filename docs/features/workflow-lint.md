@@ -1,9 +1,10 @@
 # Workflow lint and audit
 
-`actionlint` and `zizmor` judge the workflows a pull request adds or changes, with pinned tools. `actionlint` is a tool descriptor, run by the shared runner ([tool descriptors](tool-descriptors.md)), so this feature owns it by its file, `gates/descriptors/actionlint.json`, rather than as a `gate:` surface.
+`actionlint` and `zizmor` judge the workflows a pull request adds or changes, with pinned tools. `actionlint` is a tool descriptor, run by the shared runner ([tool descriptors](tool-descriptors.md)).
 
 ## Surfaces
 
+- gate: `actionlint`
 - gate: `zizmor`
 - source: `gates/descriptors/actionlint.json`
 - source: `gates/zizmor.py`
