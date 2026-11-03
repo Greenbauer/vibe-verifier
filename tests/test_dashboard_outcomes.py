@@ -165,7 +165,7 @@ class Reader(unittest.TestCase):
         outcomes.api.graphql_values.append(search(node()))
         outcomes.collect([REPO])
         # The second cycle lists merged pull requests and reads nothing else: the record never changes.
-        self.assertEqual(outcomes.api.calls[calls:], [("graphql", "is:pr is:merged user:octocat merged:>=2026-10-20 sort:updated-desc")])
+        self.assertEqual(outcomes.api.calls[calls:], [("graphql", "is:pr is:merged user:octocat merged:>=2026-10-04 sort:updated-desc")])
 
     def test_the_search_follows_its_pages_and_refuses_an_answer_without_results(self):
         first = search(node())

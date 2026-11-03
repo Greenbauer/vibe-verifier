@@ -355,6 +355,13 @@ pull requests that merged, never the open ones the Pull requests view shows. Top
 
 - **Four cards** for pull requests merged in the last 7 days, each with the same number for the 7
   days before: how many merged, and the median of each part of a pull request's time below.
+- **Trends** (`dashboard/static/outcome-trend.js`), with `7d`, `14d` and `30d` buttons beside the
+  title (30d first; the choice lasts while the tab is open): one small line chart per part of a
+  pull request's time, each the median per day of the pull requests merged that day, on a scale of
+  its own (a runner wait of seconds and a merge wait of hours never share an axis). A day with
+  nothing merged breaks the line, and a day alone draws a short stroke. Hover a day for its median
+  and count. Under each chart: the median over every pull request merged in the range, and the top of its
+  scale (`chart max`).
 - **Merged pull requests**, newest first, each split three ways:
   - **Waiting for a runner** (or a QA slot) and **checks running** split its merged head's latest
     round of CI, with the [CI timeline](#ci-timeline)'s own rules (`split` in `timeline.js`, the
@@ -378,8 +385,8 @@ What it does not count: the operator's own actions on a pull request. Every agen
 machine comments, pushes and merges under the operator's GitHub login, so GitHub cannot tell them
 apart; counting them needs agents to have their own GitHub identity first.
 
-**How it reads.** `dashboard/outcomes.py` searches the owner's pull requests merged in the last 14
-days (one GraphQL search, up to ten pages of 50), keeps those in the configured repositories, and
+**How it reads.** `dashboard/outcomes.py` searches the owner's pull requests merged in the last 30
+days (one GraphQL search, up to 20 pages of 50, GitHub's limit of 1000 results), keeps those in the configured repositories, and
 reads each one that has no record yet, newest first: the Actions runs on its head branch created
 between its opening and its merge, from its own repository (one listing), and the jobs of every
 attempt of each run. A finished run's jobs that the Pull requests view already read are taken from
@@ -391,7 +398,7 @@ pull requests always come first; the page says so while it waits. The page asks 
 for the records when it opens and at most once a minute after.
 
 **A record is written once.** A merged pull request does not change, so its record is never read
-or updated again, and it is dropped once its merge is more than 14 days old. Records are kept across
+or updated again, and it is dropped once its merge is more than 30 days old. Records are kept across
 a restart in the state directory (`outcomes`, see [kept across a restart](dashboard-data.md#kept-across-a-restart)),
 so a start serves them at once with when they were read, and they are deleted, on disk too, when a
 read meets lost access.
@@ -399,7 +406,7 @@ read meets lost access.
 `tests/test_dashboard_outcomes.py` covers the reader: the record, the branch's runs and attempts, the
 live cache, the budget, the window, the counter reserve, failures, the restart and lost access. It
 runs `dashboard/static/outcomes.test.js`: the split, the merge wait, the medians, runner time per
-check, and the view in each state. `timeline.test.js` checks that the split counts exactly the waits
+check, the trend's days and range buttons, and the view in each state. `timeline.test.js` checks that the split counts exactly the waits
 the timeline draws.
 
 ## Capacity view
@@ -794,8 +801,8 @@ them under the meter, across both columns.
 - Telemetry: created and atomically replaced by an optional collector, read only by this process,
   bounded to a current snapshot plus seven days of samples, and
   unavailable when deleted.
-- Outcomes: one record per pull request merged in the last 14 days, created once its runs have all
-  finished, never updated, and deleted once the merge is 14 days old or access is lost. Kept in the
+- Outcomes: one record per pull request merged in the last 30 days, created once its runs have all
+  finished, never updated, and deleted once the merge is 30 days old or access is lost. Kept in the
   state directory when there is one (`outcomes`, `outcomes-responses`), otherwise only in memory.
 - Work queues: read from each source at most every five minutes while viewed, held only in memory,
   replaced by the next reading, forgotten when the source refuses the key, and gone when the process

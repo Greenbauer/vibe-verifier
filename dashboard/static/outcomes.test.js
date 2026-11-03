@@ -21,11 +21,13 @@ class Node {
   }
 }
 global.Node = Node;
-global.document = { createElement: tag => new Node(tag), createTextNode: data => ({ data, text: data }), querySelector: () => null };
+global.document = { createElement: tag => new Node(tag), createElementNS: (_, tag) => new Node(tag),
+  createTextNode: data => ({ data, text: data }), querySelector: () => null };
 global.CSS = { escape: value => value };
 global.window = global;
 global.VV = require("./helpers.js");
 const outcomes = require("./outcomes.js");
+const trend = require("./outcome-trend.js");
 const { element: el } = global.VV;
 
 const HOUR = 3600 * 1000;
@@ -140,4 +142,47 @@ test("the view says what it is still reading, why reading paused, and when nothi
   assert.match(content.find("source-banner")[0].text, /paused while less than half of GitHub's hourly budget/);
   ({ content } = await rendered(null, false));
   assert.match(content.text, /Outcomes unavailable/);
+});
+
+const DAY = 24 * HOUR;
+// A pull request merged `back` days ago at local noon with the given split.
+function onDay(back, wait, running, merge) {
+  const noon = new Date(); noon.setHours(12, 0, 0, 0); noon.setDate(noon.getDate() - back);
+  return { record: { merged_at: noon.toISOString() }, round: { wait_seconds: wait, running_seconds: running }, merge_wait_seconds: merge };
+}
+
+test("the trend gives each day of the range its medians, oldest first, and nothing on a day with no merge", () => {
+  const rows = [onDay(0, 0, 600, 60), onDay(0, 120, 1200, 180), onDay(2, 30, 300, 7200), onDay(40, 1, 1, 1),
+    { ...onDay(1, 0, 0, 90), round: null }];
+  const list = trend.days(rows, 7, Date.now(), outcomes.median);
+  assert.strictEqual(list.length, 7);
+  assert.deepStrictEqual(list.map(day => day.merged), [0, 0, 0, 0, 1, 1, 2]);
+  assert.deepStrictEqual(list.slice(4).map(day => [day.wait, day.running, day.merge]), [[30, 300, 7200], [null, null, 90], [60, 900, 120]]);
+  assert.ok(list.every((day, index) => index === 0 || day.start > list[index - 1].start));
+});
+
+test("the trend panel draws one chart per timer and its buttons switch between 7, 14 and 30 days", () => {
+  const rows = [onDay(0, 0, 600, 60), onDay(2, 30, 300, 7200), onDay(20, 10, 100, 10)];
+  let redrawn = 0;
+  trend.choose("30d");
+  const panel = trend.panel(rows, Date.now(), outcomes.median, () => { redrawn += 1; });
+  const cards = panel.find("burn-card").map(card => card.text);
+  assert.deepStrictEqual(panel.find("burn-head").map(head => head.text), ["Waiting for a runner", "Checks running", "Waiting on the merge"]);
+  assert.match(cards[2], /today Median over the range 1m 0s · chart max 2h 0m$/);
+  // SVG items take their class as an attribute.
+  const svgFind = (node, name) => [...(node.attrs?.class === name ? [node] : []), ...(node.children || []).flatMap(child => svgFind(child, name))];
+  const hits = svgFind(panel, "trend-hit");
+  assert.strictEqual(hits.length, 3 * 30);
+  assert.match(hits[29].text, /median 0s over 1 merged pull request$/);
+  assert.match(hits[28].text, /no merged pull requests to measure/);
+  const buttons = panel.find("range-buttons")[0].children;
+  assert.deepStrictEqual(buttons.map(button => [button.text, button.attrs["aria-pressed"]]), [["7d", "false"], ["14d", "false"], ["30d", "true"]]);
+  buttons[0].listeners.click();
+  assert.strictEqual(redrawn, 1);
+  const week = trend.panel(rows, Date.now(), outcomes.median, () => {});
+  assert.strictEqual(svgFind(week, "trend-hit").length, 3 * 7);
+  assert.strictEqual(svgFind(week, "burn-line").length, 3 * 2);
+  // The 20-day-old merge is outside the week: the merge wait median is the last two days' only.
+  assert.match(week.find("burn-card")[2].text, /Median over the range 1h 0m/);
+  trend.choose("30d");
 });
