@@ -15,13 +15,14 @@ from helpers import ROOT, clean_env, commit, gate, make_repo, runner
 
 sys.path.insert(0, str(ROOT / "gates"))
 import _descriptors  # noqa: E402
+import _parsers  # noqa: E402
 
 sys.path.remove(str(ROOT / "gates"))
 
 # A stand-in linter: a finding for every file it is given that holds BAD, in the shape STANDIN_MODE names.
 STANDIN = r'''#!/usr/bin/env python3
 import json, os, sys
-files = [a for a in sys.argv[1:] if not a.startswith("-")]
+files = [a for a in sys.argv[1:] if os.path.isfile(a)]
 if os.environ.get("STANDIN_LOG"):
     with open(os.environ["STANDIN_LOG"], "a") as log:
         log.write(" ".join(sys.argv[1:]) + "\n")
@@ -48,11 +49,12 @@ sys.exit(1 if bad or mode == "empty" else 0)
 '''
 
 
-def descriptor(gate_name="lint-text", tool="vv-standin", parser="json", args=None, files=None):
+def descriptor(gate_name="lint-text", tool="vv-standin", parser="json", args=None, files=None, options=None):
     output = {"parser": "sarif"} if parser == "sarif" else {"parser": "json", "message": "{rule}: {msg} ({missing})",
                                                               "path": "file", "line": "ln"}
-    return json.dumps({"gate": gate_name, "description": "Fail on BAD.", "tool": tool, "args": args or ["--check"],
-                       "files": files or ["**/*.txt"], "output": output})
+    found = {"gate": gate_name, "description": "Fail on BAD.", "tool": tool, "args": args or ["--check"],
+             "files": files or ["**/*.txt"], "output": output}
+    return json.dumps(dict(found, options=options) if options else found)
 
 
 class StandIn(unittest.TestCase):
@@ -111,6 +113,13 @@ class Contract(StandIn):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual([f["path"] for f in json.loads(result.stdout)["findings"]], ["src/a.txt"])
 
+    def test_a_declared_option_is_passed_to_the_tool_only_when_given(self):
+        repo = self.repo({}, {"a.txt": "fine\n"}, options={"--level": "how strict"})
+        self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1", "--level", "high").returncode, 0)
+        self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1").returncode, 0)
+        self.assertEqual(self.log.read_text(), "--check --level high a.txt\n--check a.txt\n")
+        self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1", "--other", "x").returncode, 2)  # undeclared
+
     def test_soak_reports_and_passes(self):
         result = self.run_gate(self.repo({}, {"a.txt": "BAD\n"}), "--base-ref", "HEAD~1", "--soak")
         self.assertEqual(result.returncode, 0)
@@ -136,7 +145,8 @@ class Contract(StandIn):
     def test_a_malformed_descriptor_cannot_run(self):
         for text, why in ((descriptor(gate_name="other"), "`gate` must be the file's own name"),
                           (descriptor(tool="/opt/homebrew/bin/zizmor"), "a bare command name, not a path"),
-                          (json.dumps({"gate": "lint-text"}), "exactly the keys"),
+                          (descriptor(options={"--soak": "x"}), "`options` cannot declare --soak"),
+                          (json.dumps({"gate": "lint-text"}), "a descriptor has the keys"),
                           ("{", "is not JSON")):
             with self.subTest(why=why):
                 repo = make_repo(self, {".vibe-verifier-tools/lint-text.json": text})
@@ -193,14 +203,17 @@ class NoDuplicates(StandIn):
 
     def test_the_tools_python_gates_run_are_found(self):
         tools = _descriptors.gate_tools()
-        self.assertTrue({"gitleaks", "zizmor", "bandit", "osv-scanner", "ast-grep", "vale"} <= set(tools), tools)
+        self.assertTrue({"gitleaks", "bandit", "osv-scanner", "ast-grep", "vale"} <= set(tools), tools)
         self.assertEqual(tools["bandit"], "gates/bandit.py")  # passed as the constant GATE
-        self.assertNotIn("actionlint", tools)  # its descriptor runs it now
+        self.assertFalse({"actionlint", "zizmor"} & set(tools))  # their descriptors run them now
+
+    def test_every_output_has_a_parser(self):
+        self.assertEqual(set(_descriptors.OUTPUTS), set(_parsers.PARSERS))
 
     def test_a_descriptor_running_a_python_gates_tool_cannot_run(self):
-        result = self.run_gate(self.repo({}, {"a.txt": "BAD\n"}, tool="zizmor"), "--base-ref", "HEAD~1")
+        result = self.run_gate(self.repo({}, {"a.txt": "BAD\n"}, tool="bandit"), "--base-ref", "HEAD~1")
         self.assertEqual(result.returncode, 2, result.stdout)
-        self.assertIn("tool 'zizmor' is in gates/zizmor.py and HEAD~1:.vibe-verifier-tools/lint-text.json", result.stderr)
+        self.assertIn("tool 'bandit' is in gates/bandit.py and HEAD~1:.vibe-verifier-tools/lint-text.json", result.stderr)
 
     def test_a_descriptor_running_a_catalog_descriptors_tool_stops_both(self):
         repo = self.repo({}, {"a.txt": "BAD\n"}, tool="actionlint")

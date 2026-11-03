@@ -773,7 +773,7 @@ zizmor runs `--offline`. A finding a repository ignores the way the tool documen
 
 A gate that only runs an outside tool on the files a pull request changed is written as data, a JSON descriptor, and
 run by one shared runner, [`gates/_descriptors.py`](../gates/_descriptors.py). The catalog's are
-`gates/descriptors/<gate>.json` (`actionlint` is the first); a repository keeps its own in `.vibe-verifier-tools/<gate>.json`.
+`gates/descriptors/<gate>.json` (`actionlint` and `zizmor`); a repository keeps its own in `.vibe-verifier-tools/<gate>.json`.
 `bin/vibe-verifier run` and `list` find them beside the Python gates, and a manifest line names one the same way. This
 catalog's `feature-map` line reads a descriptor's `"gate"` as a gate surface, the way it reads a Python gate's `GATE`.
 
@@ -788,9 +788,14 @@ catalog's `feature-map` line reads a descriptor's `"gate"` as a gate surface, th
 }
 ```
 
-- **Keys**, exactly these: `gate` (its manifest name and the file's own name), `description`, `tool`, `args` (the
-  judged files follow them), `files` (globs of tracked files) and `output`. Any other key, a missing one or a gate name
-  that is not the file's is exit 2.
+- **Keys**: `gate` (its manifest name and the file's own name), `description`, `tool`, `args` (the
+  judged files follow them), `files` (globs of tracked files), `output`, and optionally `options`. Any other key, a
+  missing one or a gate name that is not the file's is exit 2.
+- **Options.** `options` maps each flag the gate takes to its help text, such as zizmor's
+  `{"--min-severity": "...", "--min-confidence": "..."}`. A flag is `--lowercase-words` and none of the flags every
+  gate has (`--repo`, `--base-ref`, `--format`, `--soak`, `--all`). Each takes one value, and the runner passes it to
+  the tool as written, `--flag value` after `args` and before the files, only when the manifest line gives it; an
+  undeclared flag on the line is exit 2.
 - **The tool.** A catalog descriptor names a tool pinned in `gates/_tools.py`, resolved on the terms above. A
   repository's own may instead name a command on PATH, one its job installs; one that is not there is exit 2. It names the
   tool itself by a bare command name: a path is exit 2, and a launcher such as `env` or `npx` with the tool in `args`
@@ -806,8 +811,9 @@ catalog's `feature-map` line reads a descriptor's `"gate"` as a gate surface, th
   (a percent-encoded or `file:` URI read as a repository path); a result with a suppression is not a finding, and one of
   level `note` or `none` is advisory. `{"parser": "json", ...}` reads a JSON list of objects (`null` or nothing is none):
   `message` is a `str.format` template of each object's keys, a missing key reading `?`, and `path` and `line` name
-  the keys that hold them. A tool whose report neither reads is a Python gate until a named parser for it is added
-  to the runner's `PARSERS`.
+  the keys that hold them. A tool whose report neither reads gets a named parser in
+  [`gates/_parsers.py`](../gates/_parsers.py), one function in its `PARSERS`: `{"parser": "zizmor"}` reads zizmor's
+  JSON report, each item zizmor did not mark ignored, at its primary location, with its severity and confidence.
 - **No duplicates.** A descriptor may share neither its gate name nor its tool with another descriptor or a Python
   gate (a Python gate's tools are those it passes to `ensure`, `ensure_node_tool` or `ensure_python_tool`). Every
   descriptor gate in such a conflict is exit 2, the message naming both files, and `run` also refuses a repository's
