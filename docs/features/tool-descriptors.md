@@ -5,7 +5,6 @@ A gate that only runs an outside tool is a JSON descriptor (command, file globs,
 ## Surfaces
 
 - source: `gates/_descriptors.py`
-- source: `gates/descriptors/*.json`
 
 ## Reach
 
@@ -21,8 +20,11 @@ Write `.vibe-verifier-tools/<gate>.json` in the repository and add `<gate>` to `
 - `tests/test_descriptors.py::test_a_descriptor_running_a_python_gates_tool_cannot_run`
 - `tests/test_descriptors.py::test_a_descriptor_named_like_a_python_gate_cannot_run`
 - `tests/test_descriptors.py::test_the_runner_runs_a_repositorys_own_descriptor`
+- `tests/test_descriptors.py::test_every_catalog_descriptor_is_owned_by_a_feature`
 
 ## Gotchas
+
+- A descriptor's gate is not a `gate:` surface of the feature map: the `feature-map` line in `.vibe-verifier` reads gates from `gates/*.py` only. The feature that serves it lists its file instead, a `- source:` line naming `gates/descriptors/<gate>.json`, and `tests/test_descriptors.py::test_every_catalog_descriptor_is_owned_by_a_feature` fails on one no feature lists. A pull request is judged by main's feature-map arguments, so a descriptor surface added there could never pass on the pull request that adds it.
 
 - Every descriptor is read on every run, for the duplicate check, so one in `.vibe-verifier-tools/` that cannot be read stops every descriptor gate in that repository, the catalog's included.
 - `bin/vibe-verifier consumers` reads a consumer's manifest without its checkout, so it reports a gate only that repository's own descriptor defines as unknown.
