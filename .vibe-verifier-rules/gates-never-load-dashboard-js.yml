@@ -1,0 +1,15 @@
+id: gates-never-load-dashboard-js
+language: JavaScript
+message: Code under gates/, harnesses/, actions/ and bin/ must not import or load dashboard/ or lanes/; move the shared code into gates/ or the action and have the dashboard or lane load it from there.
+note: |
+  Outside users run the actions without dashboard/ or lanes/, so the dependency points one way only.
+  This flags a string that reaches a root dashboard/ or lanes/ directory as a relative path
+  (import, require, import(), path.join). docs/architecture.md, "Layer boundary", says why.
+files:
+  - gates/**
+  - harnesses/**
+  - actions/**
+  - bin/**
+rule:
+  kind: string_fragment
+  regex: '^(\.\./)+(dashboard|lanes)(/|$)|^(dashboard|lanes)$'

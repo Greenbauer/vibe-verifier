@@ -51,7 +51,7 @@ outputs:
       qae-inputs/ticket.md at one width of qae-inputs/widths as one role it names, or up to three states of
       one feature in qae-inputs/features/ (the acceptance-verdict line's --max-states, default 3, is how many
       states of each are walked); the cap is 40 plus 30 a walk, never below 80 nor above 240 (the numbers
-      behind it: TURNS_BASE in bin/vibe-verifier). The explore job writes those inputs before this step runs.
+      behind it: TURNS_BASE in bin/cli/qae_shards.py). The explore job writes those inputs before this step runs.
       One explorer of several is sized to its own share.
     value: ${{ steps.prepare.outputs.max-turns }}
   share:

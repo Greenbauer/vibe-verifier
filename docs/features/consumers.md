@@ -7,6 +7,9 @@
 - command: `consumers`
 - command: `apply-down`
 - source: `bin/vibe-verifier`
+- source: `bin/cli/consumers.py`
+- source: `bin/cli/wrapper.py`
+- source: `bin/cli/apply_down.py`
 - source: `gates/_pin_bump.py`
 - source: `actions/pin-bump/action.yml`
 
