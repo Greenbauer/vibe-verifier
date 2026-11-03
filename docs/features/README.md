@@ -1,6 +1,6 @@
 # Feature map
 
-One file per feature of this catalog: its gates, its harnesses, its command-line subcommands and its runner-lane kit. The format and the rules for creating, updating and retiring a feature are in [docs/feature-map.md](../feature-map.md). The `feature-map` line in `.vibe-verifier` fails a pull request that adds a gate or a subcommand no feature lists, lists one that no longer exists, or leaves a source glob or a test anchor dangling.
+One file per feature of this catalog: its gates, its harnesses, its command-line subcommands and its runner-lane kit. The format and the rules for creating, updating and retiring a feature are in [docs/feature-map.md](../feature-map.md). The `feature-map` line in `.vibe-verifier` fails a pull request that adds a Python gate or a subcommand no feature lists (a tool descriptor no feature lists as a source fails `tests/test_descriptors.py`), lists one that no longer exists, or leaves a source glob or a test anchor dangling.
 
 | Feature | Gates and subcommands |
 |---|---|
@@ -8,6 +8,7 @@ One file per feature of this catalog: its gates, its harnesses, its command-line
 | [Inventory and pin propagation](consumers.md) | `consumers`, `apply-down` |
 | [Secret scanning](secrets.md) | `gitleaks` |
 | [Workflow lint and audit](workflow-lint.md) | `actionlint`, `zizmor` |
+| [Tool descriptors](tool-descriptors.md) | none: the shared runner of the gates written as descriptors, such as `actionlint` |
 | [Python security analysis](python-security.md) | `bandit` |
 | [Dependency vulnerabilities](dependency-vulnerabilities.md) | `osv-scanner` |
 | [New source has a test](test-presence.md) | `new-source-has-test` |

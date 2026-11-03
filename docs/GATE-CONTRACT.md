@@ -295,6 +295,14 @@ An organization can subscribe its repositories through one CI repository of its 
 
 ## Adding a gate
 
+A new check goes in the cheapest tier that can express it: an [ast-grep rule](#repository-rules) (in a repository's
+`.vibe-verifier-rules/`, or a catalog pack), then a [tool descriptor](#tool-descriptors) when an outside tool already
+does the check, then a Python gate only for what needs Git history, a running application or logic across commits.
+Neither tier may repeat a check another already makes: two descriptors, or a descriptor and a Python gate, may not
+share a gate name or a tool.
+
+For a Python gate:
+
 1. Add `gates/<name_with_underscores>.py`. Build it on `run_gate` from `gates/_contract.py`, which
    supplies the common flags and the exit codes. Raise `CannotRun` when no verdict is possible.
    Python standard library only.
@@ -713,7 +721,8 @@ maintenance. A gate may depend on such a binary, on these terms, all in
   again. No network, an unsupported platform, a digest mismatch or an unwritable cache is exit 2, never
   a pass, and the fetch error says how many attempts were made. `--soak` cannot mask any of it.
 - **The gate owns the invocation.** Flags, scope and output parsing are the gate's, tested against the
-  real binary and against a stand-in for the edges.
+  real binary and against a stand-in for the edges. A gate that is only that invocation is a
+  [tool descriptor](#tool-descriptors) instead, and the shared runner owns the scope and the exit contract.
 
 The first is `gitleaks`: it scans the commits since the base ref (`base..HEAD`), so a secret already
 in history is a separate clean-up and never a reason to admit a new one; rules follow gitleaks'
@@ -759,6 +768,55 @@ integrations are off (they switch themselves on wherever those tools happen to b
 zizmor runs `--offline`. A finding a repository ignores the way the tool documents (`zizmor.yml`, a
 `# zizmor: ignore[...]` comment) is not a finding here; zizmor's `--min-severity` and
 `--min-confidence` pass through.
+
+### Tool descriptors
+
+A gate that only runs an outside tool on the files a pull request changed is written as data, a JSON descriptor, and
+run by one shared runner, [`gates/_descriptors.py`](../gates/_descriptors.py). The catalog's are
+`gates/descriptors/<gate>.json` (`actionlint` is the first); a repository keeps its own in `.vibe-verifier-tools/<gate>.json`.
+`bin/vibe-verifier run` and `list` find them beside the Python gates, and a manifest line names one the same way. In
+this catalog's feature map a descriptor's gate is owned by the feature that lists its file as a source, which the suite
+checks (`tests/test_descriptors.py`), since feature-map's own `gate` surfaces are read from `gates/*.py`.
+
+```json
+{
+  "gate": "actionlint",
+  "description": "Fail when a workflow this pull request added or changed does not lint with actionlint ...",
+  "tool": "actionlint",
+  "args": ["-shellcheck=", "-pyflakes=", "-format", "{{json .}}"],
+  "files": [".github/workflows/**/*.yml", ".github/workflows/**/*.yaml"],
+  "output": {"parser": "json", "message": "{message} [{kind}]", "path": "filepath", "line": "line"}
+}
+```
+
+- **Keys**, exactly these: `gate` (its manifest name and the file's own name), `description`, `tool`, `args` (the
+  judged files follow them), `files` (globs of tracked files) and `output`. Any other key, a missing one or a gate name
+  that is not the file's is exit 2.
+- **The tool.** A catalog descriptor names a tool pinned in `gates/_tools.py`, resolved on the terms above. A
+  repository's own may instead name a command on PATH, one its job installs; one that is not there is exit 2. It names the
+  tool itself by a bare command name: a path is exit 2, and a launcher such as `env` or `npx` with the tool in `args`
+  is not allowed either, since the duplicate check below compares `tool` and cannot see through one (review catches it).
+- **The files.** The runner passes the files the pull request added, copied, modified or renamed since the base that
+  match `files`, or with `--all` every tracked one. With none, the gate passes and the tool never runs. A finding the
+  tool reports on any other file is dropped, so a tool that reads the whole tree still judges only those files; an
+  absolute path it reports is read relative to the repository first.
+- **The exit contract.** The tool runs in the repository. Exit 0 or 1 is a report, read whatever the exit, since a
+  SARIF tool often exits 0 with results; any other exit is exit 2, with the tool's last line of stderr. A report that
+  cannot be read, or exit 1 with no finding in it, is exit 2, never a pass.
+- **The output.** `{"parser": "sarif"}` reads SARIF 2.1.0: each result's `ruleId` and message, at its first location
+  (a percent-encoded or `file:` URI read as a repository path); a result with a suppression is not a finding, and one of
+  level `note` or `none` is advisory. `{"parser": "json", ...}` reads a JSON list of objects (`null` or nothing is none):
+  `message` is a `str.format` template of each object's keys, a missing key reading `?`, and `path` and `line` name
+  the keys that hold them. A tool whose report neither reads is a Python gate until a named parser for it is added
+  to the runner's `PARSERS`.
+- **No duplicates.** A descriptor may share neither its gate name nor its tool with another descriptor or a Python
+  gate (a Python gate's tools are those it passes to `ensure`, `ensure_node_tool` or `ensure_python_tool`). Every
+  descriptor gate in such a conflict is exit 2, the message naming both files, and `run` also refuses a repository's
+  descriptor that names a Python gate. The catalog's own suite fails on a conflict among the catalog's.
+- **Base-controlled**, like a repository's rule files: a descriptor the base has is judged as the base has it, even
+  when the pull request edits or deletes it, and the run says so; one the pull request adds runs at once. With no base
+  to resolve, the working tree's are read. Every descriptor is read on every run, for the duplicate check, so one that
+  cannot be read stops every descriptor gate in that repository.
 
 ### Node toolchains
 

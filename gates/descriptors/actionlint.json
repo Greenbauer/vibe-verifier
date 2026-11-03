@@ -1,0 +1,8 @@
+{
+  "gate": "actionlint",
+  "description": "Fail when a workflow this pull request added or changed does not lint with actionlint (pinned in gates/_tools.py). Only the workflows changed since the base are judged, so a problem in a workflow nobody touched is never this pull request's finding; --all judges every tracked workflow. actionlint's shellcheck and pyflakes integrations are off: they switch themselves on wherever those tools happen to be installed, and a gate must say the same thing on a laptop and on a runner.",
+  "tool": "actionlint",
+  "args": ["-shellcheck=", "-pyflakes=", "-format", "{{json .}}"],
+  "files": [".github/workflows/**/*.yml", ".github/workflows/**/*.yaml"],
+  "output": {"parser": "json", "message": "{message} [{kind}]", "path": "filepath", "line": "line"}
+}
