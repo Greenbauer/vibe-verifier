@@ -773,7 +773,7 @@ zizmor runs `--offline`. A finding a repository ignores the way the tool documen
 
 A gate that only runs an outside tool on the files a pull request changed is written as data, a JSON descriptor, and
 run by one shared runner, [`gates/_descriptors.py`](../gates/_descriptors.py). The catalog's are
-`gates/descriptors/<gate>.json` (`actionlint` and `zizmor`); a repository keeps its own in `.vibe-verifier-tools/<gate>.json`.
+`gates/descriptors/<gate>.json` (`actionlint`, `zizmor` and `bandit`); a repository keeps its own in `.vibe-verifier-tools/<gate>.json`.
 `bin/vibe-verifier run` and `list` find them beside the Python gates, and a manifest line names one the same way. This
 catalog's `feature-map` line reads a descriptor's `"gate"` as a gate surface, the way it reads a Python gate's `GATE`.
 
@@ -789,19 +789,24 @@ catalog's `feature-map` line reads a descriptor's `"gate"` as a gate surface, th
 ```
 
 - **Keys**: `gate` (its manifest name and the file's own name), `description`, `tool`, `args` (the
-  judged files follow them), `files` (globs of tracked files), `output`, and optionally `options`. Any other key, a
-  missing one or a gate name that is not the file's is exit 2.
+  judged files follow them), `files` (globs of tracked files), `output`, and optionally `exclude` (globs never judged),
+  `options` and `ratchet`. Any other key, a missing one or a gate name that is not the file's is exit 2.
 - **Options.** `options` maps each flag the gate takes to its help text, such as zizmor's
-  `{"--min-severity": "...", "--min-confidence": "..."}`. A flag is `--lowercase-words` and none of the flags every
-  gate has or the contract reads (`--repo`, `--base-ref`, `--format`, `--soak`, `--all`, `--artifacts`). Each takes one value, and the runner passes it to
-  the tool as written, `--flag value` after `args` and before the files, only when the manifest line gives it; an
-  undeclared flag on the line is exit 2.
-- **The tool.** A catalog descriptor names a tool pinned in `gates/_tools.py`, resolved on the terms above. A
+  `{"--min-severity": "...", "--min-confidence": "..."}`, or to a spec: `{"help", "to", "default", "choices"}`, only
+  `help` required. bandit's `{"--severity": {"to": "--severity-level", "default": "medium", "choices": ["low",
+  "medium", "high"], ...}}` passes `--severity-level medium` unless the line says otherwise, and a value outside the
+  choices is exit 2. A flag is `--lowercase-words` and none of the runner's own or those the contract reads (`--repo`,
+  `--base-ref`, `--format`, `--soak`, `--all`, `--source`, `--exclude`, `--artifacts`). Each takes one value; the
+  runner passes `<to or the flag> value` to the tool before `args` (so `args` may end in `--`), only when it has a
+  value; an undeclared flag on the line is exit 2.
+- **The tool.** A catalog descriptor names a tool the catalog pins: a binary in `gates/_tools.py`, resolved on the
+  terms above, or a Python toolchain in `tools/<tool>/` (below), run as `python -m <tool>` from its venv. A
   repository's own may instead name a command on PATH, one its job installs; one that is not there is exit 2. It names the
   tool itself by a bare command name: a path is exit 2, and a launcher such as `env` or `npx` with the tool in `args`
   is not allowed either, since the duplicate check below compares `tool` and cannot see through one (review catches it).
 - **The files.** The runner passes the files the pull request added, copied, modified or renamed since the base that
-  match `files`, or with `--all` every tracked one. With none, the gate passes and the tool never runs. A finding the
+  match `files` and none of `exclude`, or with `--all` every tracked one. A manifest line's `--source GLOB` replaces
+  `files` and `--exclude GLOB` adds to `exclude` (both repeatable). With none, the gate passes and the tool never runs. A finding the
   tool reports on any other file is dropped, so a tool that reads the whole tree still judges only those files; an
   absolute path it reports is read relative to the repository first.
 - **The exit contract.** The tool runs in the repository. Exit 0 or 1 is a report, read whatever the exit, since a
@@ -813,7 +818,18 @@ catalog's `feature-map` line reads a descriptor's `"gate"` as a gate surface, th
   `message` is a `str.format` template of each object's keys, a missing key reading `?`, and `path` and `line` name
   the keys that hold them. A tool whose report neither reads gets a named parser in
   [`gates/_parsers.py`](../gates/_parsers.py), one function in its `PARSERS`: `{"parser": "zizmor"}` reads zizmor's
-  JSON report, each item zizmor did not mark ignored, at its primary location, with its severity and confidence.
+  JSON report, each item zizmor did not mark ignored, at its primary location, with its severity and confidence;
+  `{"parser": "bandit"}` reads Bandit's, each result at its line with its check, severity and confidence, and a file
+  Bandit could not read is exit 2. The `json` parser's optional `rule` names the key holding each finding's rule.
+- **The count ratchet.** `"ratchet": "count"` ([`gates/_ratchet.py`](../gates/_ratchet.py)) runs the tool a second
+  time, on the judged files as the merge base has them (a file the pull request moved at its old path, one it added not
+  at all). A file blocks on a rule only when it has more findings of that rule than at the merge base, and then every
+  finding of that rule in it is reported with both counts. Editing, moving or fixing code that already had a finding
+  never blocks. A finding's rule is the one its parser names (SARIF's `ruleId`, zizmor's ident, Bandit's check, the
+  `json` parser's `rule` key), else its message. `--all` reports every finding, with no base.
+- **What stays a Python gate.** A check whose rule is more than a count of one tool's findings: `gitleaks` scans a
+  commit range rather than files, and `osv-scanner` ratchets per advisory of each package, read across the dependency
+  files' history.
 - **No duplicates.** A descriptor may share neither its gate name nor its tool with another descriptor or a Python
   gate (a Python gate's tools are those it passes to `ensure`, `ensure_node_tool` or `ensure_python_tool`). Every
   descriptor gate in such a conflict is exit 2, the message naming both files, and `run` also refuses a repository's
@@ -860,7 +876,8 @@ the venv. The third is `tools/bandit/` (Bandit, for the `bandit` gate). The four
 `tools/coverage-not-lost-python/` (coverage.py, which `coverage-not-lost` appends to the project's own
 interpreter's path the same way).
 
-`bandit` judges the Python files a pull request changed, as a ratchet per Bandit check: a file is a
+`bandit`, a tool descriptor (`gates/descriptors/bandit.json`, with the count ratchet), judges the Python files a
+pull request changed, as a ratchet per Bandit check: a file is a
 finding when it has more results of one check (`B602`, a subprocess with `shell=True`, say) than at
 the merge base, or is new and has any, and every result of that check in it is listed, because
 Bandit does not say which is new. `--severity` and `--confidence` (low, medium or high; default

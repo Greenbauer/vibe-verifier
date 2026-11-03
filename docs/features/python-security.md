@@ -5,7 +5,7 @@
 ## Surfaces
 
 - gate: `bandit`
-- source: `gates/bandit.py`
+- source: `gates/descriptors/bandit.json`
 - source: `tools/bandit/requirements.txt`
 
 ## Reach
