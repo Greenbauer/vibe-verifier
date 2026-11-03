@@ -39,6 +39,22 @@ def _time_key(row: dict, *keys: str) -> datetime:
 PIN_UNKNOWN = datetime.min.replace(tzinfo=timezone.utc)
 
 
+def job_row(row: dict, owner: str, now: datetime) -> dict:
+    """One job from the jobs API, as the dashboard keeps it (without its steps). self_hosted is
+    whether it asked for a self-hosted runner, so it ran on one of the owner's fixed pools."""
+    labels = row.get("labels")
+    return {"id": row.get("id"), "name": str(row.get("name") or "Unnamed job")[:200],
+            "status": row.get("status"), "conclusion": row.get("conclusion"),
+            "category": category(row.get("status"), row.get("conclusion")),
+            "created_at": row.get("created_at"), "started_at": row.get("started_at"),
+            "completed_at": row.get("completed_at"),
+            "queue_seconds": elapsed_seconds(row.get("created_at"), row.get("started_at"), now),
+            "elapsed_seconds": elapsed_seconds(row.get("started_at"), row.get("completed_at"), now),
+            "html_url": github_url(row.get("html_url"), owner),
+            "runner_id": row.get("runner_id"), "runner_name": runner_name(row.get("runner_name")),
+            "self_hosted": isinstance(labels, list) and "self-hosted" in labels}
+
+
 def _newest_attempts(rows: list[dict]) -> dict[int, dict]:
     """The newest attempt of each workflow run, by run id."""
     newest = {}
@@ -217,20 +233,9 @@ class GitHubCollector(OwnerSet, BotHistory):
                 return copy.deepcopy(cached[1])
         rows = self.api.items(_endpoint("repos/%s/actions/runs/%s/attempts/%s/jobs" %
                                         (repository, run_id, attempt), per_page=100), "jobs")
-        jobs = []
-        for row in rows:
-            if row.get("run_id") not in (None, run_id) or row.get("head_sha") not in (None, run.get("head_sha")):
-                continue
-            jobs.append({"id": row.get("id"), "name": str(row.get("name") or "Unnamed job")[:200],
-                         "status": row.get("status"), "conclusion": row.get("conclusion"),
-                         "category": category(row.get("status"), row.get("conclusion")),
-                         "created_at": row.get("created_at"), "started_at": row.get("started_at"),
-                         "completed_at": row.get("completed_at"),
-                         "queue_seconds": elapsed_seconds(row.get("created_at"), row.get("started_at"), self.clock()),
-                         "elapsed_seconds": elapsed_seconds(row.get("started_at"), row.get("completed_at"), self.clock()),
-                         "html_url": github_url(row.get("html_url"), self.config.owner),
-                         "runner_id": row.get("runner_id"), "runner_name": runner_name(row.get("runner_name")),
-                         "steps": self._clean_steps(row.get("steps"))})
+        jobs = [{**job_row(row, self.config.owner, self.clock()), "steps": self._clean_steps(row.get("steps"))}
+                for row in rows
+                if row.get("run_id") in (None, run_id) and row.get("head_sha") in (None, run.get("head_sha"))]
         with self._job_lock:
             self._jobs[key] = jobs
             completed_at = _time_key(run, "updated_at")

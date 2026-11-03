@@ -250,10 +250,11 @@
     renderChrome();
     const work = () => VVWork.render(content, snapshot, { heading, empty, sourceBanner });
     const capacity = () => VVCapacity.render(content, snapshot, { heading, empty, sourceBanner, rerender: render });
+    const outcomes = () => VVOutcomes.render(content, snapshot, { heading, empty, sourceBanner, rerender: render });
     const prs = () => VVPrs.render(content, snapshot, state, { heading, empty, rememberView });
-    ({ work, usage: renderUsage, capacity }[state.view] || prs)();
+    ({ work, outcomes, usage: renderUsage, capacity }[state.view] || prs)();
     rememberView();
-    const title = { prs: "Pull requests", work: "Work", usage: "Bot usage", capacity: "Capacity" }[state.view];
+    const title = { prs: "Pull requests", work: "Work", outcomes: "Outcomes", usage: "Bot usage", capacity: "Capacity" }[state.view];
     document.title = `${title} · Vibe Verifier`;
     if (refreshFailed) content.prepend(sourceBanner("Could not refresh. Showing the last sample.", "warning"));
     announce(`Showing ${state.view}`);

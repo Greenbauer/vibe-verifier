@@ -20,6 +20,8 @@ class FakeService:
         return {"version": 1, "owner": "octocat", "github": {"sampled_at": None, "repositories": [],
                 "bots": {"roles": {}}, "coverage": {"selected": 1},
                 "title": "<img src=x onerror=alert(1)>"}, "telemetry": {"available": False}}
+    def outcome_view(self):
+        return {"available": True, "pulls": [{"title": "<img src=x onerror=alert(1)>"}]}
 
 class FakeSocket:
     def __init__(self, request):
@@ -64,6 +66,13 @@ class ServerSecurity(unittest.TestCase):
         self.assertNotIn(b"<img", body)
         self.assertEqual(json.loads(body)["owner"], "octocat")
         self.assertNotIn("access-control-allow-origin", headers)
+    def test_outcomes_are_served_as_json_and_a_failing_source_is_unavailable(self):
+        status, headers, body = self.request("GET", "/api/outcomes")
+        self.assertEqual((status, headers["content-type"]), (200, "application/json; charset=utf-8"))
+        self.assertNotIn(b"<img", body)
+        self.assertEqual(json.loads(body)["pulls"][0]["title"], "<img src=x onerror=alert(1)>")
+        with mock.patch.object(FakeService, "outcome_view", side_effect=RuntimeError("down")):
+            self.assertEqual(self.request("GET", "/api/outcomes")[0], 503)
     def test_favicon_is_served_same_origin_and_used_as_tab_icon_and_header_logo(self):
         status, headers, body = self.request("GET", "/favicon.svg")
         self.assertEqual(status, 200)
