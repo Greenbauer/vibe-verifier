@@ -16,6 +16,8 @@ from helpers import ROOT, clean_env, commit, gate, git, make_repo, runner
 sys.path.insert(0, str(ROOT / "gates"))
 import _descriptors  # noqa: E402
 import _parsers  # noqa: E402
+import _ratchet  # noqa: E402
+from _contract import Finding  # noqa: E402
 
 sys.path.remove(str(ROOT / "gates"))
 
@@ -200,6 +202,11 @@ class Sarif(StandIn):
 
 
 class CountRatchet(StandIn):
+    def test_a_findings_rule_is_its_parsers_else_its_message(self):
+        named = Finding("B602 subprocess call", "a.py", 5)
+        named.rule = "B602"
+        self.assertEqual((_ratchet.rule(named), _ratchet.rule(Finding("no rule here", "a.py", 1))), ("B602", "no rule here"))
+
     def test_a_rule_only_blocks_a_file_where_its_count_rose(self):
         repo = self.repo({"a.txt": "BAD\n"}, {"a.txt": "BAD\nfine\n"}, ratchet="count")
         self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1").returncode, 0)  # touched, still one
