@@ -155,7 +155,7 @@ class Browser(unittest.TestCase):
         self.assertEqual(measured["good"], [])
         # A raw value in a heading cell or a button counts; a square button touching a rounded one is no segmented group,
         # and neither is a padded card holding two buttons.
-        for expected in ("raw-value: undefined", "raw-value: 3f2b1c4d-1111-4abc-9def-0123456789ab", "raw-value: Status: in_review",
+        for expected in ("raw-value: undefined", "raw-value: 3f2b1c4d-1111-4abc-9def-0123456789ab", "raw-value: Status: in_review", "raw-value: Owner: [object Object]",
                          "touching: Activate", "touching: Square", "touching: Save"):
             self.assertIn(expected, measured["bad-details"])
         record = [json.loads(x) for x in Path(out, "ui-audit.jsonl").read_text().splitlines()]

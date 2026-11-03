@@ -39,7 +39,7 @@ const CLEAR = /rgba\(\d+, \d+, \d+, 0\)|transparent/;
 const CONTROL = 'button, input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea, [role=button], [role=combobox], a[class*="btn"], a[class*="button"]';
 const FIELD = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea, [role=combobox]";
 const GROUP = "[role=group], [role=tablist], [role=radiogroup], [role=toolbar]";
-const RAW = /\b(undefined|null|NaN|\[object Object\])\b|\b[a-z]+_[a-z_]+\b|\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/;
+const RAW = /\b(undefined|null|NaN)\b|\[object Object\]|\b[a-z]+_[a-z_]+\b|\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/;
 
 function cssPath(el) {
   const parts = [];
