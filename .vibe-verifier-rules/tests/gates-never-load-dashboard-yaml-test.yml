@@ -2,11 +2,14 @@ id: gates-never-load-dashboard-yaml
 valid:
   - 'run: python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" run'
   - 'uses: actions/checkout@v4'
+  - 'uses: Greenbauer/vibe-verifier/actions/gates@0123456789abcdef0123456789abcdef01234567'
   - 'description: the job a dashboard names'
   - 'run: npx playwright test app/dashboard/page.spec.ts'
 invalid:
   - 'run: python3 "$GITHUB_ACTION_PATH/../../dashboard/merge_grant.py"'
   - 'uses: ./lanes/listener'
+  - 'uses: Greenbauer/vibe-verifier/lanes/listener@0123456789abcdef0123456789abcdef01234567'
+  - 'uses: Greenbauer/vibe-verifier/dashboard@0123456789abcdef0123456789abcdef01234567'
   - 'run: python3 lanes/kit.py --check'
   - |
     run: |
