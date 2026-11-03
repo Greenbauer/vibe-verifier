@@ -9,6 +9,7 @@ import tempfile
 
 from _contract import QUALIFIER, CannotRun, resolve_base
 from _tools import NODE_TOOLS, ensure_node_tool
+import _descriptors
 import repo_rules
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -17,8 +18,8 @@ LABEL = {0: "PASS", 1: "FAIL", 2: "COULD NOT RUN"}
 
 
 def available():
-    return sorted(name[:-3].replace("_", "-") for name in os.listdir(GATES)
-                  if name.endswith(".py") and not name.startswith("_"))
+    """The catalog's gates: one per gates/*.py, and one per tool descriptor in gates/descriptors/."""
+    return sorted(_descriptors.python_gates() + _descriptors.catalog_names())
 
 
 def parse_manifest(path):
@@ -106,8 +107,13 @@ def read_text(path):
 
 def run(args):
     entries = judged_entries(args)
-    known = available()
-    results = [run_entry(args, known, gate, gate_args) for gate, gate_args in entries]
+    try:
+        own = _descriptors.repository_names(args.repo, args.base_ref)
+    except CannotRun as error:
+        return fail("cannot read %s/: %s" % (_descriptors.REPOSITORY, error))
+    catalog = available()
+    known, shadowed = sorted(set(catalog + own)), set(catalog) & set(own)
+    results = [run_entry(args, known, gate, gate_args, shadowed) for gate, gate_args in entries]
     rows = [(gate, LABEL[code] + (" (soak)" if code == 0 and "--soak" in gate_args else "")
              + (" (%s)" % note if code == 0 and note else "")) for gate, gate_args, code, note in results]
     print("\nvibe-verifier summary")
@@ -122,13 +128,20 @@ def run(args):
     return 2 if 2 in codes else (1 if 1 in codes else 0)
 
 
-def run_entry(args, known, gate, gate_args):
-    """(gate, its arguments, exit code 0, 1 or 2, its note) for one manifest line; an unknown gate is 2."""
+def run_entry(args, known, gate, gate_args, shadowed=()):
+    """(gate, its arguments, exit code 0, 1 or 2, its note) for one manifest line; an unknown gate is 2, and so is one
+    the repository's own descriptors name as well as the catalog (`shadowed`). A gate with no gates/<name>.py is a tool
+    descriptor's, run by gates/_descriptors.py."""
     if not re.match(r"^[a-z0-9-]+$", gate) or gate not in known:
         print("vibe-verifier: unknown gate %r (available: %s)" % (gate, ", ".join(known)), file=sys.stderr)
         return gate, gate_args, 2, ""
-    command = [sys.executable, os.path.join(GATES, gate.replace("-", "_") + ".py"),
-               "--repo", args.repo, "--format", args.format]
+    if gate in shadowed:
+        print("vibe-verifier: %s/%s.json names the catalog's gate %r; one name, one gate: rename or remove it"
+              % (_descriptors.REPOSITORY, gate, gate), file=sys.stderr)
+        return gate, gate_args, 2, ""
+    script = os.path.join(GATES, gate.replace("-", "_") + ".py")
+    command = [sys.executable, script] if os.path.isfile(script) else [sys.executable, os.path.join(GATES, "_descriptors.py"), gate]
+    command += ["--repo", args.repo, "--format", args.format]
     if args.base_ref:
         command += ["--base-ref", args.base_ref]
     print("::group::%s" % gate if args.format == "github" else "== %s ==" % gate, flush=True)

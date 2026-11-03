@@ -213,7 +213,9 @@ This ownership split is the core security boundary of the system.
 
 ## Extension model
 
-A new pure gate belongs in `gates/` when it can make a deterministic decision from the repository and Git history. A wired gate may additionally consume caller-declared files, but the gate itself still does not need to operate GitHub or hold service credentials.
+A new check goes in the cheapest tier that can express it: an ast-grep rule (`repo-rules`), then a tool descriptor (a JSON file naming an outside tool, the files it judges and how its report reads, run by the one shared runner in `gates/_descriptors.py`, which owns the file filter and the exit contract), then a Python gate. A repository's own rules and descriptors live in the repository and are judged from the base; no two gates may share a name or a tool. See [Tool descriptors](GATE-CONTRACT.md#tool-descriptors).
+
+A new pure Python gate belongs in `gates/` when it can make a deterministic decision from the repository and Git history and needs more than one tool run: Git history, a running application, or logic across commits. A wired gate may additionally consume caller-declared files, but the gate itself still does not need to operate GitHub or hold service credentials.
 
 A gate enters the catalog only after tests prove that it:
 

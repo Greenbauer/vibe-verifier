@@ -8,6 +8,7 @@ One file per feature of this catalog: its gates, its harnesses, its command-line
 | [Inventory and pin propagation](consumers.md) | `consumers`, `apply-down` |
 | [Secret scanning](secrets.md) | `gitleaks` |
 | [Workflow lint and audit](workflow-lint.md) | `actionlint`, `zizmor` |
+| [Tool descriptors](tool-descriptors.md) | none: the shared runner of the gates written as descriptors, such as `actionlint` |
 | [Python security analysis](python-security.md) | `bandit` |
 | [Dependency vulnerabilities](dependency-vulnerabilities.md) | `osv-scanner` |
 | [New source has a test](test-presence.md) | `new-source-has-test` |
