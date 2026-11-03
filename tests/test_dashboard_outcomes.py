@@ -165,7 +165,7 @@ class Reader(unittest.TestCase):
         outcomes.api.graphql_values.append(search(node()))
         outcomes.collect([REPO])
         # The second cycle lists merged pull requests and reads nothing else: the record never changes.
-        self.assertEqual(outcomes.api.calls[calls:], [("graphql", "is:pr is:merged user:octocat merged:>=2026-10-20 sort:updated-desc")])
+        self.assertEqual(outcomes.api.calls[calls:], [("graphql", "is:pr is:merged user:octocat merged:>=2026-10-04 sort:updated-desc")])
 
     def test_the_search_follows_its_pages_and_refuses_an_answer_without_results(self):
         first = search(node())
@@ -177,6 +177,14 @@ class Reader(unittest.TestCase):
         broken = reader(graphql=[{"data": {"search": None}}])
         broken.collect([REPO])
         self.assertEqual(broken.view()["error"], "invalid_response")
+
+    def test_the_search_reads_at_most_githubs_1000_results(self):
+        page = search(node())
+        page["data"]["search"]["pageInfo"] = {"hasNextPage": True, "endCursor": "more"}
+        outcomes = reader(graphql=[copy.deepcopy(page) for _ in range(25)])
+        outcomes.collect([REPO])
+        searches = [call for call in outcomes.api.calls if isinstance(call, tuple)]
+        self.assertEqual(len(searches) * 50, 1000)
 
     def test_runs_not_all_finished_leave_no_record_and_are_read_again(self):
         items = standard_items()
@@ -311,8 +319,10 @@ class Page(unittest.TestCase):
         from dashboard.server import FILES
         index = (ROOT / "dashboard/static/index.html").read_text()
         self.assertEqual(FILES["/assets/outcomes.js"][0], "outcomes.js")
+        self.assertEqual(FILES["/assets/outcome-trend.js"][0], "outcome-trend.js")
         self.assertIn('<button data-view="outcomes">Outcomes</button>', index)
-        self.assertLess(index.index("/assets/timeline.js"), index.index("/assets/outcomes.js"))
+        order = [index.index("/assets/" + name) for name in ("charts.js", "timeline.js", "outcome-trend.js", "outcomes.js")]
+        self.assertEqual(order, sorted(order))
 
 
 if __name__ == "__main__":

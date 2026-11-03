@@ -346,6 +346,8 @@ button.timeline-name { min-height: 0; padding: 0; border: 0; background: transpa
 .outcome-checks { grid-template-columns: minmax(0, 2.4fr) 50px repeat(2, minmax(70px, .7fr)) 50px; }
 .outcome-title { display: block; overflow: hidden; text-overflow: ellipsis; }
 .outcome-table .age-yellow, .outcome-cards .age-yellow { color: var(--yellow); }
+.outcome-trend .trend-hit { fill: transparent; pointer-events: all; }
+@media (min-width: 1000px) { .outcome-trend .burn-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .outcome-table .age-red, .outcome-cards .age-red { color: var(--red); }
 
 /* The pull-request row's columns never add up to more than the panel. Wide minimums need about
