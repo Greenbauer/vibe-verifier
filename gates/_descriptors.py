@@ -9,7 +9,7 @@ repository's own), with exactly these keys:
     gate         the gate's name in a manifest, which is also the file's name
     description  what the gate fails on
     tool         a tool pinned in gates/_tools.py (a catalog descriptor must name one); a repository's own descriptor
-                 may name a command on PATH instead, one its job installs
+                 may name a command on PATH instead, one its job installs. A bare name, never a path
     args         the tool's arguments; the judged files follow them
     files        globs of the tracked files it judges (gates/_contract.py glob_to_regex)
     output       how the report on stdout reads: {"parser": "sarif"}, or {"parser": "json", "message": TEMPLATE,
@@ -19,7 +19,8 @@ repository's own), with exactly these keys:
 The runner owns the rest, the same for every descriptor:
 
 - the files: those the pull request added, copied, modified or renamed since the base that match `files`, or every
-  tracked one with --all. With none, the gate passes and the tool never runs.
+  tracked one with --all. With none, the gate passes and the tool never runs. A finding the tool reports on any other
+  file is dropped, so a tool that reads the whole tree still judges only these.
 - the exit contract: the tool runs in the repository. Exit 0 or 1 is a report, read whatever the exit (a SARIF tool
   often exits 0 with results); any other exit is "could not run", with its last line of stderr. A report that cannot
   be read, or exit 1 with no finding in it, is "could not run" too, never a pass.
@@ -50,6 +51,7 @@ GATES = os.path.dirname(os.path.abspath(__file__))
 CATALOG = os.path.join(GATES, "descriptors")
 REPOSITORY = ".vibe-verifier-tools"
 NAME = re.compile(r"^[a-z0-9-]+$")
+TOOL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")  # a bare command name: a path would dodge the duplicate check
 KEYS = {"gate", "description", "tool", "args", "files", "output"}
 OUTPUTS = {"sarif": {"parser"}, "json": {"parser", "message", "path", "line"}}
 # A tool a Python gate runs: the literal, or a constant of that file, it passes to one of gates/_tools.py's resolvers.
@@ -99,6 +101,8 @@ def _problem(descriptor, origin, pinned):
         return "`gate` must be the file's own name, in lowercase letters, digits and dashes"
     if not all(isinstance(descriptor[key], str) and descriptor[key] for key in ("description", "tool")):
         return "`description` and `tool` must be non-empty strings"
+    if not TOOL.match(descriptor["tool"]):
+        return "`tool` must be a bare command name, not a path"
     if not (_strings(descriptor["args"]) and _strings(descriptor["files"]) and descriptor["files"]):
         return "`args` must be a list of strings and `files` a non-empty one"
     output = descriptor["output"] if isinstance(descriptor["output"], dict) else {}
@@ -277,7 +281,9 @@ def checker(gate):
             return []
         result = subprocess.run([resolve(descriptor["tool"]), *descriptor["args"], *files], cwd=args.repo,
                                 capture_output=True, text=True, encoding="utf-8", errors="replace")
-        return report_findings(descriptor, result, args.repo)
+        judged = set(files)
+        return [finding for finding in report_findings(descriptor, result, args.repo)
+                if finding.path is None or os.path.normpath(finding.path) in judged]
     return check
 
 

@@ -25,8 +25,11 @@ files = [a for a in sys.argv[1:] if not a.startswith("-")]
 if os.environ.get("STANDIN_LOG"):
     with open(os.environ["STANDIN_LOG"], "a") as log:
         log.write(" ".join(sys.argv[1:]) + "\n")
-bad = [f for f in files if "BAD" in open(f).read()]
 mode = os.environ.get("STANDIN_MODE", "json")
+if mode == "tree":  # a tool that reads the whole tree, whatever files it is given
+    files = sorted(os.path.normpath(os.path.join(d, n)) for d, _, names in os.walk(".") if ".git" not in d
+                   for n in names if n.endswith(".txt"))
+bad = [f for f in files if "BAD" in open(f).read()]
 if mode == "crash":
     sys.stderr.write("warming up\nboom\n"); sys.exit(4)
 if mode == "garbage":
@@ -94,6 +97,12 @@ class Contract(StandIn):
         self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1").returncode, 0)
         self.assertEqual(self.run_gate(repo, "--all").returncode, 1)
 
+    def test_a_finding_on_a_file_it_was_not_given_is_dropped(self):
+        repo = self.repo({"old.txt": "BAD\n"}, {"new.txt": "BAD\n"})
+        result = self.run_gate(repo, "--base-ref", "HEAD~1", "--format", "json", mode="tree")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual([f["path"] for f in json.loads(result.stdout)["findings"]], ["new.txt"])
+
     def test_soak_reports_and_passes(self):
         result = self.run_gate(self.repo({}, {"a.txt": "BAD\n"}), "--base-ref", "HEAD~1", "--soak")
         self.assertEqual(result.returncode, 0)
@@ -118,6 +127,7 @@ class Contract(StandIn):
 
     def test_a_malformed_descriptor_cannot_run(self):
         for text, why in ((descriptor(gate_name="other"), "`gate` must be the file's own name"),
+                          (descriptor(tool="/opt/homebrew/bin/zizmor"), "a bare command name, not a path"),
                           (json.dumps({"gate": "lint-text"}), "exactly the keys"),
                           ("{", "is not JSON")):
             with self.subTest(why=why):
