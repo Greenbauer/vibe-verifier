@@ -301,3 +301,19 @@ def command(args):
     if selection.reason or selection.selected:
         print("ALL" if selection.reason else "\n".join(selection.selected))
     return 0
+
+
+def add_arguments(parser):
+    parser.add_argument("--repo", default=".")
+    parser.add_argument("--base-ref", default=None, help="the branch the pull request merges into (default: "
+                        "$VIBE_VERIFIER_BASE_REF, then $GITHUB_BASE_REF; none prints ALL)")
+    parser.add_argument("--tests", action="append", metavar="GLOB", help="what a test file is (repeatable; default: JS and "
+                        "TS *.test.*, *.spec.*, __tests__/** and node:test files, and Python test files)")
+    parser.add_argument("--exclude", action="append", metavar="GLOB", help="test files never to list, such as "
+                        "browser suites another job runs (repeatable)")
+    parser.add_argument("--always", action="append", metavar="GLOB", help="test files to list whatever changed (repeatable)")
+    parser.add_argument("--all-on", action="append", metavar="GLOB", help="paths whose change means every test runs, "
+                        "such as the repository's own test runner script (repeatable)")
+    parser.add_argument("--report", action="append", metavar="RESULTS", help="the full run's results, a JUnit XML "
+                        "report or a list of failed test files (repeatable): print the failures the selection missed")
+    parser.add_argument("--format", choices=["text", "github"], default="text")

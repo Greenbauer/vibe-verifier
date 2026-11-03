@@ -65,7 +65,7 @@ OPENER = re.compile(r"^(?:await\s+)?[\w$.!?]+[(\[{]$")
 ASSERTION_OPEN = re.compile(r"^(?:await\s+)?(?:assert\b|expect\s*[.(]|t\.assert|self\.assert)")
 MIN_PART = 12  # a plan line, and a test title that is not a literal, may be quoted in part
 # A model usage limit as the Codex CLI words it ("You've hit your usage limit ... try again at 3:05 PM."):
-# the same pattern bin/vibe-verifier's USAGE_LIMIT reads from an explorer's failure annotation.
+# the same pattern bin/cli/qa_limit.py's USAGE_LIMIT reads from an explorer's failure annotation.
 USAGE_LIMIT = re.compile(r"You(?:'|’)ve (?:hit|reached) your (?:[\w-]+ ){0,3}limit\b", re.I)
 
 
