@@ -65,6 +65,8 @@ Without one it keeps nothing, as before. `dashboard/state_store.py` owns the fil
 | `responses` | every GitHub answer that carries an ETag and was used in the last two passes | with `reading` |
 | `usage` | the last token history and every usage record read; a record whose sample has no `cached_input_tokens` (kept before samples carried it) is dropped on restore and read again | after every usage scan that returned and did not meet lost access |
 | `usage-responses` | the usage reader's ETag answers (artifact listings) | with `usage` |
+| `outcomes` | one record per pull request merged in the last 14 days ([Outcomes view](dashboard.md#outcomes-view)); a record past the window is dropped on the next cycle | after every outcomes cycle that did not meet lost access |
+| `outcomes-responses` | the outcomes reader's ETag answers (run and job listings) | with `outcomes` |
 
 Each document is one file, `<directory>/<owner>/<document>.json.z`: zlib-compressed JSON with the
 format version, a hash of the owner, repository selection and bot definitions, and the time it was
@@ -91,7 +93,8 @@ subscription inventory and the rate-limit pauses are not kept.
   only thing reading GitHub while the page is closed: a token refused to it empties the reading in
   memory as well. The same failure on a usage scan deletes the two usage documents, whether the
   scan failed on it or returned what it could still read. A usage write that is under way when a
-  pass loses access is deleted when it lands.
+  pass loses access is deleted when it lands. Lost access on an outcomes cycle, or on a pass,
+  deletes the two outcomes documents.
 - **A kept answer is not trusted on its own.** A response is served from the kept copy only when
   GitHub answers that request with 304, which it does only for a token that may still read it. A
   kept job list is used without a request, as it is in memory, and only for a run that GitHub has

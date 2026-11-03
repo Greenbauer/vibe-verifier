@@ -12,6 +12,7 @@ from .usage_artifacts import UsageArtifacts, apply_plan_window
 from .util import parse_time
 from .agents import agent_view
 from .work import WorkFeed
+from .outcomes import OutcomesFeed
 
 USAGE_REFRESH_SECONDS = 300
 # A refresh starts at most one interval after the last one ended and then takes its own time, so a
@@ -24,6 +25,8 @@ class LiveService(DashboardService):
         super().__init__(config, **kwargs)
         self.usage_reader = UsageArtifacts(config)
         self.work = WorkFeed(config)
+        self.outcomes = OutcomesFeed(config, live=self.collector, store=self.store,
+                                     monotonic=self.monotonic, clock=self.wall_clock)
         self._usage_result = None
         self._usage_next = 0
         self._usage_lock = threading.Lock()
@@ -45,6 +48,7 @@ class LiveService(DashboardService):
     def _revoke(self):
         with self._usage_lock:
             self._reset_usage()
+        self.outcomes.reset()
         super()._revoke()
 
     def _forget_kept(self):
@@ -52,6 +56,7 @@ class LiveService(DashboardService):
         if kept:
             with self._usage_lock:
                 self._reset_usage()
+            self.outcomes.reset()
         return kept
 
     def _discovered_repositories(self):
@@ -133,7 +138,13 @@ class LiveService(DashboardService):
         if self._discovered_repositories() is not None:
             with self._usage_lock:
                 self._start_usage(self._usage_revoked)
+        self.outcomes.start(self._discovered_repositories())
         self.work.snapshot()
+
+    def outcome_view(self):
+        """The Outcomes page's merged pull requests, starting a read when one is due."""
+        self.outcomes.start(self._discovered_repositories())
+        return self.outcomes.view()
 
     def _age_usage(self, value, usage):
         """Fit the token history to the plan window and mark it stale past USAGE_STALE_AFTER."""

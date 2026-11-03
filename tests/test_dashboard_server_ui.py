@@ -204,12 +204,13 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
         css = (ROOT / "dashboard/static/styles.css").read_text()
         html = (ROOT / "dashboard/static/index.html").read_text()
         self.assertNotIn("innerHTML", app + helpers + (ROOT / "dashboard/static/capacity.js").read_text()
-                         + (ROOT / "dashboard/static/timeline.js").read_text() + (ROOT / "dashboard/static/prs.js").read_text())
+                         + (ROOT / "dashboard/static/timeline.js").read_text() + (ROOT / "dashboard/static/prs.js").read_text()
+                         + (ROOT / "dashboard/static/outcomes.js").read_text())
         for color in ("#090909", "#111111", "#282828"):
             self.assertIn(color, css)
         for color in ("#809cff", "#50d6e8"):
             self.assertIn(color, helpers)
-        self.assertEqual(html.count('data-view="'), 4)
+        self.assertEqual(html.count('data-view="'), 5)
         self.assertNotIn("footer", html.lower())
     def test_workspace_nav_stays_put_while_the_view_scrolls(self):
         css = (ROOT / "dashboard/static/styles.css").read_text()

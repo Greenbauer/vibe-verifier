@@ -96,6 +96,23 @@
     return start;
   }
 
+  // A finished head's latest round, split along the chain of jobs that set its length: the time
+  // jobs on that chain waited for a busy runner (waits of WAIT_SHOWN or less are GitHub's normal
+  // pickup, as in the drawing), and the rest of the round. The Outcomes view's numbers, so it and
+  // this timeline read the same rules. Null when the head ran no Actions job.
+  function split(pull) {
+    const all = lanes(pull), now = Date.now();
+    const latest = latestRound(all, now);
+    const round = all.filter(lane => lane.kind === "job" && lane.queued >= latest);
+    if (!round.length) return null;
+    markCritical(round, now);
+    const start = Math.min(...round.map(lane => lane.queued));
+    const ended = Math.max(...round.map(lane => lane.ended ?? now));
+    const waits = round.filter(lane => lane.critical).map(lane => runnerWait(lane, now)).filter(wait => wait > WAIT_SHOWN);
+    const wait = waits.reduce((sum, value) => sum + value, 0);
+    return { start, ended, wait_seconds: wait / 1000, running_seconds: Math.max(0, ended - start - wait) / 1000 };
+  }
+
   // How long the head's latest round of CI has taken (the timeline's round): from the first check's
   // start in it to now while any check is still open, to the last finish once every check is done.
   // Before any check has started it is the wait since the push, and before a later round's first
@@ -310,7 +327,7 @@
     return box;
   }
 
-  const api = { lanes, timeline, ciTiming, mini, detail, ticks };
+  const api = { lanes, timeline, ciTiming, split, mini, detail, ticks };
   if (typeof module === "object" && module.exports) module.exports = api;
   else window.VVTimeline = api;
 })();

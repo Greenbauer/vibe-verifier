@@ -19,11 +19,11 @@
   };
 
   // The URL hash is the one record of the current view, so refresh, back and forward, and a copied
-  // link all land in the same place: #/prs, #/usage, or #/capacity. A pull request opens on GitHub,
-  // so an older #/pr/<owner>/<repo>/<number> hash is not a view and falls back to the list.
+  // link all land on the view the list below names. A pull request opens on GitHub, so an older
+  // #/pr/<owner>/<repo>/<number> hash is not a view and falls back to the list.
   function parseRoute(hash) {
     const view = /^#\/(\w+)$/.exec(hash || "")?.[1];
-    return { view: ["prs", "work", "usage", "capacity"].includes(view) ? view : "prs" };
+    return { view: ["prs", "work", "outcomes", "usage", "capacity"].includes(view) ? view : "prs" };
   }
 
   function routeHash(route) {

@@ -336,6 +336,15 @@ button.timeline-name { min-height: 0; padding: 0; border: 0; background: transpa
 .state-warm .runner-state { color: var(--green); opacity: .75; }
 .state-unknown .runner-state, .state-free { color: var(--muted); }
 .state-offline .runner-state { color: var(--red); }
+.outcome-cards { margin-bottom: 14px; }
+.outcome-table { margin-top: 10px; }
+.outcome-row { display: grid; gap: 10px; align-items: center; padding: 7px 12px; border-top: 1px solid var(--line); font-size: 12px; }
+.outcome-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outcome-head { border-top: 0; font-size: 11px; align-items: end; }
+.outcome-head > span { white-space: normal; }
+.outcome-pulls { grid-template-columns: minmax(0, 2fr) 150px repeat(3, minmax(70px, .7fr)); }
+.outcome-checks { grid-template-columns: minmax(0, 2.4fr) 50px repeat(2, minmax(70px, .7fr)) 50px; }
+.outcome-title { display: block; overflow: hidden; text-overflow: ellipsis; }
 
 /* The pull-request row's columns never add up to more than the panel. Wide minimums need about
    1080px with the sidebar beside the list; below that, these fit down to 651px (the sidebar moves
@@ -354,6 +363,10 @@ button.timeline-name { min-height: 0; padding: 0; border: 0; background: transpa
 
 @media (max-width: 650px) {
   .topbar { flex-wrap: wrap; gap: 8px 12px; padding: 8px 12px; }
+  .outcome-pulls { grid-template-columns: minmax(0, 1fr) repeat(3, 62px); }
+  .outcome-pulls > :nth-child(2) { display: none; }
+  .outcome-checks { grid-template-columns: minmax(0, 1fr) 62px 62px 40px; }
+  .outcome-checks > :nth-child(4) { display: none; }
   .source-stamp { width: 100%; margin-left: 35px; }
   main { padding: 16px 11px; }
   h1 { font-size: 21px; }
