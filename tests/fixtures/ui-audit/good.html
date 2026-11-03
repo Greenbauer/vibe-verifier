@@ -1,0 +1,27 @@
+<!doctype html><meta charset=utf-8>
+<!-- The same screens done right: the audit finds nothing here (tests/test_qae_ui_audit.py). --><style>
+body{background:#111;color:#eee;font:14px sans-serif;padding:20px}
+.card{border:1px solid #333;border-radius:8px;padding:16px;margin:12px 0}
+.row{display:flex;align-items:center;gap:12px}
+.pill{display:flex;gap:8px;align-items:center;border:1px solid #333;border-radius:8px;padding:0 12px;height:32px;box-sizing:border-box}
+button{border:1px solid #444;background:#222;color:#eee;border-radius:8px;padding:0 12px;height:32px;font:14px sans-serif;display:inline-flex;align-items:center;gap:6px}
+.grid{display:grid;grid-template-columns:repeat(3,200px);gap:12px;align-items:start}
+input{border:1px solid #444;background:#1a1a1a;color:#eee;border-radius:6px;padding:6px;height:28px;box-sizing:border-box}
+.seg{display:inline-flex}.seg button{border-radius:0}.seg button:first-child{border-radius:8px 0 0 8px}.seg button:last-child{border-radius:0 8px 8px 0}
+.spin{display:inline-block;width:10px;height:10px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:s 1s linear infinite}
+@keyframes s{to{transform:rotate(1turn)}}
+</style>
+<div class=card><div class=row><label class=pill><input type=checkbox> Active only</label><button>Apply filters</button></div></div>
+<div class=card><div class=grid>
+<div><label>AMOUNT</label><br><input><div>Inherited from the default</div></div>
+<div><label>OVERRIDE</label><br><input placeholder=Optional></div>
+<div><label>TOTAL</label><br><input></div></div></div>
+<div class=card><div style="display:flex;gap:8px"><button>Activate</button><button>Open</button></div></div>
+<div class=card><div style="display:inline-flex;padding:4px;border-radius:10px;background:#222"><button style="background:#eee;color:#111">Map</button><button style="background:transparent;border-color:transparent">List</button></div></div>
+<div class=card><div class=seg role=group><button>Day</button><button>Week</button><button>Month</button></div></div>
+<div class=card><button><span class=spin></span> Saving</button></div>
+<p>Totals come from the default. Set an override to change one line.</p>
+<input type=hidden value=foo_bar><code>in_review</code>
+<div style="width:80px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">A label far too long for its box</div>
+<select style="width:200px"><option>A long option label here</option></select>
+<input placeholder="Type a long name" value="A value much longer than this narrow field can show" style="width:90px">

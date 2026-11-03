@@ -598,6 +598,13 @@ that included the line. Two rules keep an explorer off another's records:
   builds on a record a criterion outside your share creates, create your own first. One explorer
   walks with no tag and its records are named exactly as the criteria say.
 
+The browser also measures every page the explorer opens. The [layout record](../../actions/qae-browser/ui-audit.js),
+a second `--init-page` in both lanes, runs the layout audit a second after each load and navigation and at once
+when a button gains a spinner, and appends each finding to `ui-audit.jsonl`: rows that do not line up, controls
+touching, a spinner off its button's middle, walls of text, raw values, text cut off. With several explorers the
+step above moves each one's record under `shard-<n>/`, where the [ui-audit gate](../../gates/ui_audit.py) reads it
+([docs/features/ui-audit.md](../../docs/features/ui-audit.md)). The explorer never sees the record.
+
 The browser holds each explorer of several to its tag. `actions/qae-inputs` writes
 `qae-inputs/isolation.json` in the workspace: the explorer's tag, and every record id (a UUID, 24 hex
 digits or a ULID) a criterion outside its share names, the fixtures another explorer's criteria use.

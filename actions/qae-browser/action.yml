@@ -15,6 +15,13 @@ outputs:
       fixture another explorer's criterion names, and records the records each explorer created and
       opened.
     value: ${{ steps.install.outputs.console-pages }}
+  ui-audit:
+    description: >-
+      The harness's layout record, for a second playwright-mcp --init-page. It measures every page the
+      explorer opens (rows that do not line up, controls touching, a spinner off its button's middle,
+      walls of text, raw values, text cut off) and writes ui-audit.jsonl in the output directory, which
+      the ui-audit gate reads.
+    value: ${{ steps.install.outputs.ui-audit }}
 runs:
   using: composite
   steps:
@@ -28,6 +35,7 @@ runs:
         dir=$(python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" tool qae-browser)
         echo "mcp=$dir/node_modules/@playwright/mcp/cli.js" >> "$GITHUB_OUTPUT"
         echo "console-pages=$GITHUB_ACTION_PATH/console-pages.js" >> "$GITHUB_OUTPUT"
+        echo "ui-audit=$GITHUB_ACTION_PATH/ui-audit.js" >> "$GITHUB_OUTPUT"
         # chromium comes from the Playwright build the lockfile pins, so the browser matches the mcp.
         playwright="$dir/node_modules/.bin/playwright"
         "$playwright" install chromium
