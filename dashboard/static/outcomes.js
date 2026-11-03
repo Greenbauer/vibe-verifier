@@ -10,7 +10,7 @@
   const REFETCH = 60 * 1000;
   const MAX_CHECKS = 50;
   const ERRORS = {
-    github_budget_low: "Reading is paused while less than half of GitHub's hourly budget is left. Showing what was read before.",
+    github_budget_low: "Reading is paused while less than half of GitHub's hourly budget is left.",
   };
   const source = { view: null, fetched: 0, loading: false, failed: false };
 
