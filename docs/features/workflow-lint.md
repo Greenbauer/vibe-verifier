@@ -4,6 +4,7 @@
 
 ## Surfaces
 
+- gate: `actionlint`
 - gate: `zizmor`
 - source: `gates/descriptors/actionlint.json`
 - source: `gates/zizmor.py`
