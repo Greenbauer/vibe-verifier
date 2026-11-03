@@ -1,0 +1,11 @@
+id: gates-never-load-dashboard-js
+valid:
+  - import { parse } from "./criteria.mjs"
+  - const contract = require("../../gates/_contract.js")
+  - console.log("the dashboard shows this run")
+  - const route = "app/dashboard/page.tsx"
+invalid:
+  - import { load } from "../../dashboard/static/app.js"
+  - const kit = require("../../lanes/kit.js")
+  - const page = await import("../dashboard/page.mjs")
+  - const dir = path.join(__dirname, "..", "..", "dashboard")

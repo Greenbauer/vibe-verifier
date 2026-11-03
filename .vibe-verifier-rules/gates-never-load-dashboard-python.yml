@@ -1,0 +1,31 @@
+id: gates-never-load-dashboard-python
+language: Python
+message: Code under gates/, harnesses/, actions/ and bin/ must not import or load dashboard/ or lanes/; move the shared code into gates/ and have the dashboard or lane load it from there.
+note: |
+  Outside users run the gates without dashboard/ or lanes/, so the dependency points one way only:
+  the dashboard may read gates (dashboard/merge_grant.py loads gates/_merge_grant.py), never the
+  reverse. This flags an import of a dashboard or lanes module and a string that names one as a path
+  or module (importlib, spec_from_file_location, runpy, sys.path, ROOT / "dashboard").
+  docs/architecture.md, "Layer boundary", says why.
+files:
+  - gates/**
+  - harnesses/**
+  - actions/**
+  - bin/**
+ignores:
+  # The dashboard's own launchers: they start the dashboard, so they are its layer, not the gates'.
+  - bin/vibe-dashboard
+  - bin/vibe-dashboard-host
+  - bin/vibe-dashboard-follow
+rule:
+  any:
+    - kind: import_statement
+      regex: '^import\s+([\w.]+(\s+as\s+\w+)?\s*,\s*)*(dashboard|lanes)(\.|\s|,|$)'
+    - kind: import_from_statement
+      has:
+        field: module_name
+        regex: '^\.*(dashboard|lanes)(\.|$)'
+    - kind: string_content
+      inside:
+        kind: string
+      regex: '^(\.\./)*(dashboard|lanes)(/|$)|^/(dashboard|lanes)/|^(dashboard|lanes)\.[A-Za-z_]'

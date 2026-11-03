@@ -1,0 +1,13 @@
+id: gates-never-load-dashboard-yaml
+valid:
+  - 'run: python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" run'
+  - 'uses: actions/checkout@v4'
+  - 'description: the job a dashboard names'
+  - 'run: npx playwright test app/dashboard/page.spec.ts'
+invalid:
+  - 'run: python3 "$GITHUB_ACTION_PATH/../../dashboard/merge_grant.py"'
+  - 'uses: ./lanes/listener'
+  - 'run: python3 lanes/kit.py --check'
+  - |
+    run: |
+      python3 -c 'import dashboard.host'

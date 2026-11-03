@@ -182,6 +182,12 @@ An update is a new head, so every per-head verdict is established again for it: 
 
 [`actions/affected-tests`](../actions/affected-tests/README.md) lists the test files a pull request's changes can affect, from a static import graph of the head plus every test that reads files, starts a process or uses a database, and the consumer's own test job runs that list. It is not a verification layer and issues no verdict: the tests still pass or fail the job. It errs toward running more: anything it cannot see into (a lockfile, a tsconfig, a test runner's config, a dependency change, no readable base, a push to main) means every test runs, and its report mode names any test a full run failed that it would have left out, so a repository can measure it before trusting it.
 
+## Layer boundary
+
+The gates work without the optional layers. Code under `gates/`, `harnesses/`, `actions/` and `bin/` never imports or loads code from `dashboard/` (layer 7) or `lanes/` (layer 8), so a repository can use the gates, harnesses and actions with neither directory present. The dependency points one way: the dashboard may read gates (`dashboard/merge_grant.py` loads `gates/_merge_grant.py`, so the badge and the merge guard give one answer), and the reverse is not allowed. Code both sides need lives in `gates/`.
+
+The catalog's own `repo-rules` line enforces the boundary with the rules in [`.vibe-verifier-rules/`](../.vibe-verifier-rules/). One rule each for Python, JavaScript and the YAML of actions and harnesses flags an import of a `dashboard` or `lanes` module, a string that names `dashboard/` or `lanes/` as a path or module, and a step's `run`, `uses`, `main`, `pre` or `post` value that runs code from either directory. The dashboard's own launchers, `bin/vibe-dashboard`, `bin/vibe-dashboard-host` and `bin/vibe-dashboard-follow`, are part of the dashboard layer and are exempt. The rules see `bin/vibe-verifier` because their `sgconfig.yml` maps that name to Python. ast-grep matches those globs against a file's name, so a new script in `bin/` without an extension needs its name added there.
+
 ## Evidence ownership
 
 A recurring pattern is that the workflow declares the values that determine what is being judged, while the model supplies observations about that subject.

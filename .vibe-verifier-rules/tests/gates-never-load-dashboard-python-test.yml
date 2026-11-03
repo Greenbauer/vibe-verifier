@@ -1,0 +1,25 @@
+id: gates-never-load-dashboard-python
+valid:
+  - import os
+  - from _contract import Finding
+  - import dashboards
+  - from gates import dashboard_text
+  - 'print("the dashboard shows this run")'
+  - 'url = "/api/dashboard"'
+  - 'path = "docs/dashboard.md"'
+  - 'route = "app/dashboard/page.tsx"'
+  - 'source = ROOT / "gates" / "_merge_grant.py"'
+invalid:
+  - import dashboard
+  - import dashboard.server as server
+  - import os, lanes.listener
+  - from dashboard import host
+  - from dashboard.config import load_config
+  - from lanes.kit import converge
+  - from ..dashboard import merge_grant
+  - 'importlib.import_module("dashboard.config")'
+  - 'spec = importlib.util.spec_from_file_location("x", ROOT / "dashboard" / "x.py")'
+  - 'runpy.run_path(os.path.join(HERE, "..", "lanes", "a.py"))'
+  - 'sys.path.insert(0, f"{ROOT}/dashboard/")'
+  - 'subprocess.run(["python3", "dashboard/merge_grant.py"])'
+  - 'subprocess.run(["python3", "../lanes/kit.py"])'
