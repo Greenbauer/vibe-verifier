@@ -52,7 +52,8 @@ import sys
 
 from _contract import CannotRun, changed_files, git, in_repository, matches, resolve_base, run_gate, tracked_files
 from _parsers import PARSERS
-from _tools import TOOLS, ensure
+from _ratchet import count_ratchet
+from _tools import NODE_TOOLS, TOOLS, ensure, ensure_python_tool
 
 GATES = os.path.dirname(os.path.abspath(__file__))
 CATALOG = os.path.join(GATES, "descriptors")
@@ -60,10 +61,13 @@ REPOSITORY = ".vibe-verifier-tools"
 NAME = re.compile(r"^[a-z0-9-]+$")
 TOOL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")  # a bare command name: a path would dodge the duplicate check
 KEYS = {"gate", "description", "tool", "args", "files", "output"}
-OPTIONAL = {"options"}
-OUTPUTS = {"sarif": {"parser"}, "json": {"parser", "message", "path", "line"}, "zizmor": {"parser"}}
+OPTIONAL = {"options", "exclude", "ratchet"}
+OUTPUTS = {"sarif": {"parser"}, "json": {"parser", "message", "path", "line"}, "zizmor": {"parser"}, "bandit": {"parser"}}
+RATCHETS = ("count",)
 FLAG = re.compile(r"^--[a-z][a-z0-9-]*$")
-RESERVED = {"--repo", "--base-ref", "--format", "--soak", "--all", "--help", "--artifacts"}  # read by every gate (_contract.run_gate)
+OPTION = {"help", "to", "default", "choices"}  # an option given as an object: only `help` is required
+# The flags every descriptor gate takes (the runner's own) and the ones gates/_contract.py run_gate reads.
+RESERVED = {"--repo", "--base-ref", "--format", "--soak", "--all", "--source", "--exclude", "--help", "--artifacts"}
 # A tool a Python gate runs: the literal, or a constant of that file, it passes to one of gates/_tools.py's resolvers.
 ENSURED = re.compile(r'\bensure(?:_node_tool|_python_tool)?\(\s*(?:"([^"]+)"|([A-Z_]+)\b)')
 CONSTANT = re.compile(r'^([A-Z_]+) = "([^"]+)"$', re.M)
@@ -113,14 +117,22 @@ def _problem(descriptor, origin, pinned):
         return "`description` and `tool` must be non-empty strings"
     if not TOOL.match(descriptor["tool"]):
         return "`tool` must be a bare command name, not a path"
-    if not (_strings(descriptor["args"]) and _strings(descriptor["files"]) and descriptor["files"]):
-        return "`args` must be a list of strings and `files` a non-empty one"
+    if not (_strings(descriptor["args"]) and _strings(descriptor["files"]) and descriptor["files"]
+            and _strings(descriptor.get("exclude", []))):
+        return "`args` and `exclude` must be lists of strings and `files` a non-empty one"
+    if descriptor.get("ratchet", "count") not in RATCHETS:
+        return "`ratchet` is %s" % " or ".join('"%s"' % kind for kind in RATCHETS)
     problem = _output_problem(descriptor["output"]) or _options_problem(descriptor.get("options", {}))
     if problem:
         return problem
-    if pinned and descriptor["tool"] not in TOOLS:
-        return "a catalog descriptor runs a tool pinned in gates/_tools.py, and %r is not" % descriptor["tool"]
+    if pinned and not pinned_tool(descriptor["tool"]):
+        return "a catalog descriptor runs a tool pinned in gates/_tools.py or tools/<name>/, and %r is not" % descriptor["tool"]
     return None
+
+
+def pinned_tool(tool):
+    """Whether the catalog pins `tool`: a binary in gates/_tools.py, or a Python toolchain tools/<tool>/requirements.txt."""
+    return tool in TOOLS or os.path.isfile(os.path.join(NODE_TOOLS, tool, "requirements.txt"))
 
 
 def _output_problem(output):
@@ -128,18 +140,35 @@ def _output_problem(output):
     parser = output.get("parser")
     wanted = OUTPUTS.get(parser) if isinstance(parser, str) else None
     if wanted is None or set(output) != wanted or not all(isinstance(value, str) for value in output.values()):
-        return ('`output` must be {"parser": "sarif"}, {"parser": "zizmor"} or '
-                '{"parser": "json", "message": ..., "path": ..., "line": ...}')
+        return ('`output` must be {"parser": NAME} (%s) or {"parser": "json", "message": ..., "path": ..., "line": ...}'
+                % ", ".join(sorted(name for name in OUTPUTS if name != "json")))
+    return None
+
+
+def option(spec):
+    """An option's spec as {help, to, default, choices}: a string is its help text, passed on as the same flag."""
+    return {"help": spec} if isinstance(spec, str) else spec
+
+
+def _option_problem(spec):
+    spec = option(spec)
+    if not isinstance(spec, dict) or not {"help"} <= set(spec) <= OPTION or not isinstance(spec["help"], str):
+        return "an option is its help text, or {\"help\", and optionally \"to\", \"default\", \"choices\"}"
+    if not FLAG.match(spec.get("to", "--x")) or not isinstance(spec.get("default", ""), str):
+        return "an option's `to` is a --flag and its `default` a string"
+    if not _strings(spec.get("choices", [])) or ("default" in spec and spec.get("choices") and spec["default"] not in spec["choices"]):
+        return "an option's `choices` are strings, and hold its `default`"
     return None
 
 
 def _options_problem(options):
-    if not isinstance(options, dict) or not all(isinstance(text, str) and text for text in options.values()):
-        return "`options` must map each flag to its help text"
+    if not isinstance(options, dict):
+        return "`options` must map each flag to its help text or spec"
     taken = [flag for flag in options if not FLAG.match(flag) or flag in RESERVED]
     if taken:
-        return "`options` cannot declare %s: a flag is --lowercase-words, and not one every gate has" % ", ".join(taken)
-    return None
+        return ("`options` cannot declare %s: a flag is --lowercase-words, and not one the runner or the gate contract "
+                "reads" % ", ".join(taken))
+    return next(filter(None, (_option_problem(spec) for spec in options.values())), None)
 
 
 def parse(text, origin, pinned):
@@ -228,12 +257,15 @@ def descriptor_for(repo, base_ref, gate):
 
 
 def resolve(tool):
+    """The command that runs `tool`: a pinned binary, a pinned Python toolchain's `python -m tool`, or one on PATH."""
     if tool in TOOLS:
-        return ensure(tool)
+        return [ensure(tool)]
+    if pinned_tool(tool):
+        return [ensure_python_tool(tool), "-m", tool]
     found = shutil.which(tool)
     if not found:
         raise CannotRun("%s is not on PATH; a repository's own descriptor runs a tool its job installs" % tool)
-    return found
+    return [found]
 
 
 def repository_path(path, repo):
@@ -258,13 +290,31 @@ def report_findings(descriptor, result, repo):
     return findings
 
 
-def judged_files(args, globs):
-    names = tracked_files(args.repo) if args.all else changed_files(args.repo, resolve_base(args.repo, args.base_ref))
-    return sorted(path for path in names if matches(path, globs))
+def judged_files(args, descriptor, base):
+    """The files the tool is given: changed since the base (every tracked one with --all) that match `files` (or the
+    run's --source globs) and none of `exclude` or the run's --exclude globs."""
+    names = tracked_files(args.repo) if args.all else changed_files(args.repo, base)
+    included, excluded = args.source or descriptor["files"], descriptor.get("exclude", []) + (args.exclude or [])
+    return sorted(path for path in names if matches(path, included) and not matches(path, excluded))
 
 
 def _dest(flag):
     return flag[2:].replace("-", "_")
+
+
+def run_tool(descriptor, args, root, files):
+    """The findings of the tool on `files` under `root`, each at its path relative to `root`, given only for those files.
+    Options come first, then `args`, then the files."""
+    passed = []
+    for flag, spec in descriptor.get("options", {}).items():
+        if getattr(args, _dest(flag)) is not None:
+            passed += [option(spec).get("to", flag), getattr(args, _dest(flag))]
+    result = subprocess.run([*resolve(descriptor["tool"]), *passed, *descriptor["args"], *files], cwd=root,
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    findings = report_findings(descriptor, result, root)
+    for finding in findings:
+        finding.path = finding.path and repository_path(finding.path, root)
+    return [finding for finding in findings if finding.path is None or finding.path in set(files)]
 
 
 def checker(gate, peeked):
@@ -272,25 +322,26 @@ def checker(gate, peeked):
     could not be read, and then it is read again here so the run says why it cannot."""
     def check(args):
         descriptor = peeked or descriptor_for(args.repo, args.base_ref, gate)
-        files = judged_files(args, descriptor["files"])
+        base = None if args.all else resolve_base(args.repo, args.base_ref)
+        files = judged_files(args, descriptor, base)
         if not files:
             return []
-        passed = [word for flag in descriptor.get("options", {}) if getattr(args, _dest(flag)) is not None
-                  for word in (flag, getattr(args, _dest(flag)))]
-        result = subprocess.run([resolve(descriptor["tool"]), *descriptor["args"], *passed, *files], cwd=args.repo,
-                                capture_output=True, text=True, encoding="utf-8", errors="replace")
-        findings = report_findings(descriptor, result, args.repo)
-        for finding in findings:
-            finding.path = finding.path and repository_path(finding.path, args.repo)
-        return [finding for finding in findings if finding.path is None or finding.path in set(files)]
+        findings = run_tool(descriptor, args, args.repo, files)
+        if base is None or "ratchet" not in descriptor:
+            return findings
+        return count_ratchet(args.repo, base, files, findings, lambda root, paths: run_tool(descriptor, args, root, paths))
     return check
 
 
 def arguments(descriptor):
     def add_arguments(parser):
         parser.add_argument("--all", action="store_true", help="judge every tracked file the descriptor's globs match")
-        for flag, text in (descriptor or {}).get("options", {}).items():
-            parser.add_argument(flag, dest=_dest(flag), metavar="VALUE", default=None, help=text)
+        parser.add_argument("--source", action="append", metavar="GLOB", help="judge these files instead of the descriptor's")
+        parser.add_argument("--exclude", action="append", metavar="GLOB", help="never judge these files (repeatable)")
+        for flag, spec in (descriptor or {}).get("options", {}).items():
+            spec = option(spec)
+            parser.add_argument(flag, dest=_dest(flag), metavar="VALUE", default=spec.get("default"),
+                                choices=spec.get("choices"), help=spec["help"])
     return add_arguments
 
 
