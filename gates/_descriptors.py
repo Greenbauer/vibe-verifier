@@ -9,7 +9,8 @@ repository's own), with exactly these keys:
     gate         the gate's name in a manifest, which is also the file's name
     description  what the gate fails on
     tool         a tool pinned in gates/_tools.py (a catalog descriptor must name one); a repository's own descriptor
-                 may name a command on PATH instead, one its job installs. A bare name, never a path
+                 may name a command on PATH instead, one its job installs. The tool itself, by a bare name: never a path, and
+                 never a launcher such as env or npx, which the duplicate check below cannot see through
     args         the tool's arguments; the judged files follow them
     files        globs of the tracked files it judges (gates/_contract.py glob_to_regex)
     output       how the report on stdout reads: {"parser": "sarif"}, or {"parser": "json", "message": TEMPLATE,
@@ -20,14 +21,15 @@ The runner owns the rest, the same for every descriptor:
 
 - the files: those the pull request added, copied, modified or renamed since the base that match `files`, or every
   tracked one with --all. With none, the gate passes and the tool never runs. A finding the tool reports on any other
-  file is dropped, so a tool that reads the whole tree still judges only these.
+  file is dropped, so a tool that reads the whole tree still judges only these; an absolute path it reports is read
+  relative to the repository first.
 - the exit contract: the tool runs in the repository. Exit 0 or 1 is a report, read whatever the exit (a SARIF tool
   often exits 0 with results); any other exit is "could not run", with its last line of stderr. A report that cannot
   be read, or exit 1 with no finding in it, is "could not run" too, never a pass.
 - the parsers: `sarif` reads SARIF 2.1.0, each result's ruleId, message and first location; a result with a
   suppression is not a finding, and one of level note or none is advisory. `json` is described above.
 
-No duplicates: a descriptor may share neither its gate name nor its tool with another descriptor or with a Python gate
+No duplicates: a descriptor may share neither its gate name nor its `tool` with another descriptor or with a Python gate
 (the tools a Python gate runs are those gates/*.py pass to gates/_tools.py's ensure, ensure_node_tool or
 ensure_python_tool). Each descriptor gate in such a conflict cannot run until one side goes.
 
@@ -229,12 +231,16 @@ def json_records(text, output, repo):
 
 
 def _sarif_path(uri, repo):
-    """A SARIF artifact URI as a repository path: percent-decoded, and relative to the repository if it is a file URI."""
-    if not uri:
-        return None
-    parsed = urllib.parse.urlparse(uri)
-    path = urllib.parse.unquote(parsed.path)
-    return os.path.relpath(path, os.path.abspath(repo)) if parsed.scheme == "file" else path
+    """A SARIF artifact URI as a path, percent-decoded; a file URI is absolute, and repository_path reads it."""
+    return urllib.parse.unquote(urllib.parse.urlparse(uri).path) if uri else None
+
+
+def repository_path(path, repo):
+    """A reported path as the repository's own: an absolute one relative to the repository, both resolved, since a
+    tool reports the real path of a repository reached through a link (macOS /tmp is /private/tmp)."""
+    if os.path.isabs(path):
+        path = os.path.relpath(os.path.realpath(path), os.path.realpath(repo))
+    return os.path.normpath(path)
 
 
 def _sarif_finding(result, repo):
@@ -281,9 +287,10 @@ def checker(gate):
             return []
         result = subprocess.run([resolve(descriptor["tool"]), *descriptor["args"], *files], cwd=args.repo,
                                 capture_output=True, text=True, encoding="utf-8", errors="replace")
-        judged = set(files)
-        return [finding for finding in report_findings(descriptor, result, args.repo)
-                if finding.path is None or os.path.normpath(finding.path) in judged]
+        findings = report_findings(descriptor, result, args.repo)
+        for finding in findings:
+            finding.path = finding.path and repository_path(finding.path, args.repo)
+        return [finding for finding in findings if finding.path is None or finding.path in set(files)]
     return check
 
 

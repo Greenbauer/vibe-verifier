@@ -30,6 +30,8 @@ if mode == "tree":  # a tool that reads the whole tree, whatever files it is giv
     files = sorted(os.path.normpath(os.path.join(d, n)) for d, _, names in os.walk(".") if ".git" not in d
                    for n in names if n.endswith(".txt"))
 bad = [f for f in files if "BAD" in open(f).read()]
+if mode == "absolute":  # reports each file by its real absolute path
+    bad, mode = [os.path.abspath(f) for f in bad], "json"
 if mode == "crash":
     sys.stderr.write("warming up\nboom\n"); sys.exit(4)
 if mode == "garbage":
@@ -102,6 +104,12 @@ class Contract(StandIn):
         result = self.run_gate(repo, "--base-ref", "HEAD~1", "--format", "json", mode="tree")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual([f["path"] for f in json.loads(result.stdout)["findings"]], ["new.txt"])
+
+    def test_an_absolute_path_it_reports_is_read_as_the_repositorys(self):
+        # The fixture lives under a linked temporary directory on macOS, so the tool's real path differs from --repo.
+        result = self.run_gate(self.repo({}, {"src/a.txt": "BAD\n"}), "--base-ref", "HEAD~1", "--format", "json", mode="absolute")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual([f["path"] for f in json.loads(result.stdout)["findings"]], ["src/a.txt"])
 
     def test_soak_reports_and_passes(self):
         result = self.run_gate(self.repo({}, {"a.txt": "BAD\n"}), "--base-ref", "HEAD~1", "--soak")

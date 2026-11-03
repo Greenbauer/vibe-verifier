@@ -791,11 +791,13 @@ run by one shared runner, [`gates/_descriptors.py`](../gates/_descriptors.py). T
   judged files follow them), `files` (globs of tracked files) and `output`. Any other key, a missing one or a gate name
   that is not the file's is exit 2.
 - **The tool.** A catalog descriptor names a tool pinned in `gates/_tools.py`, resolved on the terms above. A
-  repository's own may instead name a command on PATH, one its job installs; one that is not there is exit 2. It is a
-  bare command name, never a path, so the duplicate check below sees which tool it is.
+  repository's own may instead name a command on PATH, one its job installs; one that is not there is exit 2. It names the
+  tool itself by a bare command name: a path is exit 2, and a launcher such as `env` or `npx` with the tool in `args`
+  is not allowed either, since the duplicate check below compares `tool` and cannot see through one (review catches it).
 - **The files.** The runner passes the files the pull request added, copied, modified or renamed since the base that
   match `files`, or with `--all` every tracked one. With none, the gate passes and the tool never runs. A finding the
-  tool reports on any other file is dropped, so a tool that reads the whole tree still judges only those files.
+  tool reports on any other file is dropped, so a tool that reads the whole tree still judges only those files; an
+  absolute path it reports is read relative to the repository first.
 - **The exit contract.** The tool runs in the repository. Exit 0 or 1 is a report, read whatever the exit, since a
   SARIF tool often exits 0 with results; any other exit is exit 2, with the tool's last line of stderr. A report that
   cannot be read, or exit 1 with no finding in it, is exit 2, never a pass.
