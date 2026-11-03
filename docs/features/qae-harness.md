@@ -13,6 +13,12 @@ The QAE harness: an explorer walks a pull request's acceptance criteria (and, op
 - command: `qae-inputs`
 - command: `tool`
 - source: `harnesses/qae/**`
+- source: `bin/cli/criteria.py`
+- source: `bin/cli/qae_shards.py`
+- source: `bin/cli/qae_inputs.py`
+- source: `bin/cli/features.py`
+- source: `bin/cli/qa_review.py`
+- source: `bin/cli/qa_limit.py`
 - source: `actions/criteria/**`
 - source: `actions/features/**`
 - source: `actions/qa-review/**`

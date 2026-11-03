@@ -7,6 +7,8 @@
 - command: `run`
 - command: `list`
 - source: `bin/vibe-verifier`
+- source: `bin/cli/__init__.py`
+- source: `bin/cli/runner.py`
 - source: `actions/gates/**`
 - source: `consumer/vibe-verifier.yml`
 - source: `gates/_contract.py`

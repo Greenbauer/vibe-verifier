@@ -428,7 +428,7 @@ class Review(unittest.TestCase):
 class TurnCap(unittest.TestCase):
     """The Claude lane's --max-turns, sized by actions/qae-inputs to what the explorer walks: each criterion
     of the pull request and its ticket once per role it names and per width, plus each feature re-walk.
-    40 plus 30 a walk, never below 80 nor above 240 (bin/vibe-verifier, TURNS_BASE)."""
+    40 plus 30 a walk, never below 80 nor above 240 (bin/cli/qae_shards.py)."""
 
     def run_action(self, files, widths=None, verdict_line=""):
         manifest = verdict_line + "qae-artifacts --artifacts qae-artifacts%s\n" % (" --widths " + widths if widths else "")
