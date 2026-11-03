@@ -174,7 +174,7 @@ test("the trend panel draws one chart per timer and its buttons switch between 7
   const hits = svgFind(panel, "trend-hit");
   assert.strictEqual(hits.length, 3 * 30);
   assert.match(hits[29].text, /median 0s over 1 merged pull request$/);
-  assert.match(hits[28].text, /no merged pull requests to measure/);
+  assert.match(hits[28].text, /: no merged pull requests$/);
   const buttons = panel.find("range-buttons")[0].children;
   assert.deepStrictEqual(buttons.map(button => [button.text, button.attrs["aria-pressed"]]), [["7d", "false"], ["14d", "false"], ["30d", "true"]]);
   buttons[0].listeners.click();
@@ -184,5 +184,21 @@ test("the trend panel draws one chart per timer and its buttons switch between 7
   assert.strictEqual(svgFind(week, "burn-line").length, 3 * 2);
   // The 20-day-old merge is outside the week: the merge wait median is the last two days' only.
   assert.match(week.find("burn-card")[2].text, /Median over the range 1h 0m/);
+  trend.choose("30d");
+});
+
+test("a merge belongs to its local calendar day: the last second of yesterday is yesterday's, midnight is today's", () => {
+  const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+  const merge = (time, merge) => ({ record: { merged_at: new Date(time).toISOString() }, round: null, merge_wait_seconds: merge });
+  const firstDay = new Date(midnight); firstDay.setDate(firstDay.getDate() - 6);
+  const rows = [merge(midnight.getTime() - 1000, 10), merge(midnight.getTime(), 20), merge(firstDay.getTime(), 30), merge(firstDay.getTime() - 1000, 40)];
+  const list = trend.days(rows, 7, Date.now(), outcomes.median);
+  assert.deepStrictEqual(list.map(day => day.merge), [30, null, null, null, null, 10, 20]);
+  assert.strictEqual(list[0].start, firstDay.getTime());
+  // A day whose pull requests have no round says so instead of claiming nothing merged.
+  trend.choose("7d");
+  const svgFind = (node, name) => [...(node.attrs?.class === name ? [node] : []), ...(node.children || []).flatMap(child => svgFind(child, name))];
+  const hits = svgFind(trend.panel(rows, Date.now(), outcomes.median, () => {}), "trend-hit");
+  assert.match(hits[6].text, /1 merged pull request, none with this time to measure$/);
   trend.choose("30d");
 });

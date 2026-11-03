@@ -178,6 +178,14 @@ class Reader(unittest.TestCase):
         broken.collect([REPO])
         self.assertEqual(broken.view()["error"], "invalid_response")
 
+    def test_the_search_reads_at_most_githubs_1000_results(self):
+        page = search(node())
+        page["data"]["search"]["pageInfo"] = {"hasNextPage": True, "endCursor": "more"}
+        outcomes = reader(graphql=[copy.deepcopy(page) for _ in range(25)])
+        outcomes.collect([REPO])
+        searches = [call for call in outcomes.api.calls if isinstance(call, tuple)]
+        self.assertEqual(len(searches) * 50, 1000)
+
     def test_runs_not_all_finished_leave_no_record_and_are_read_again(self):
         items = standard_items()
         items[runs_endpoint()] = [run(2, HEAD, status="in_progress")]
@@ -311,8 +319,10 @@ class Page(unittest.TestCase):
         from dashboard.server import FILES
         index = (ROOT / "dashboard/static/index.html").read_text()
         self.assertEqual(FILES["/assets/outcomes.js"][0], "outcomes.js")
+        self.assertEqual(FILES["/assets/outcome-trend.js"][0], "outcome-trend.js")
         self.assertIn('<button data-view="outcomes">Outcomes</button>', index)
-        self.assertLess(index.index("/assets/timeline.js"), index.index("/assets/outcomes.js"))
+        order = [index.index("/assets/" + name) for name in ("charts.js", "timeline.js", "outcome-trend.js", "outcomes.js")]
+        self.assertEqual(order, sorted(order))
 
 
 if __name__ == "__main__":

@@ -36,8 +36,10 @@
 
   function tip(series, day) {
     const value = day[series.key];
-    return value == null ? `${dayLabel(day.start)}: no merged pull requests to measure`
-      : `${dayLabel(day.start)}: median ${duration(value)} over ${day.merged} merged pull ${day.merged === 1 ? "request" : "requests"}`;
+    const merged = `${day.merged} merged pull ${day.merged === 1 ? "request" : "requests"}`;
+    if (!day.merged) return `${dayLabel(day.start)}: no merged pull requests`;
+    return value == null ? `${dayLabel(day.start)}: ${merged}, none with this time to measure`
+      : `${dayLabel(day.start)}: median ${duration(value)} over ${merged}`;
   }
 
   // One timer's line: a break on a day with nothing merged, and a short stroke for a day alone.
@@ -86,7 +88,8 @@
       ...Object.keys(RANGES).map(name => el("button", { class: name === chosen ? "active" : null,
         "aria-pressed": name === chosen ? "true" : "false", onclick: () => { chosen = name; rerender(); } }, name)));
     const list = days(rows, RANGES[chosen], now, median);
-    const inRange = rows.filter(row => Date.parse(row.record.merged_at) >= list[0].start);
+    const until = midnight(now, -1);
+    const inRange = rows.filter(row => { const time = Date.parse(row.record.merged_at); return time >= list[0].start && time < until; });
     return el("section", { class: "panel outcome-trend" },
       el("div", { class: "panel-title" }, el("h2", {}, "TRENDS"), buttons),
       el("p", { class: "muted" }, `Median per day of the pull requests merged that day, last ${RANGES[chosen]} days`),
