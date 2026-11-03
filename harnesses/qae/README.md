@@ -452,7 +452,7 @@ refusal in its own text (`expected-refusal: 422 /api/profile`,
 [below](#the-adjudicator-the-artifacts-decide-not-the-prose)). The declaration counts for every criterion
 of the run, as the gate reads it: one in the pull request's own criteria also covers the ticket's criterion
 that restates it, so a plan written before its route existed needs no edit. The status and URL must still
-match exactly, and a 5xx is never excused. The same words in a step line declare
+match exactly, and a declaration never excuses a 5xx. The same words in a step line declare
 nothing, except a 400 or 422 to the step the explorer marks as its invalid-input probe while the page shows a
 handled error ([below](#an-invalid-input-refused-with-a-handled-error)). The explorer is told to prefer an invalid
 input the page refuses before sending anything, and never to navigate to a URL that neither the criterion names nor the site links to: on a consumer's live
