@@ -447,9 +447,12 @@ page. Each is a step of that criterion, with its screenshot, and any that fails 
 FAIL. They are for criteria only: a [re-walked feature](#re-walking-the-features-a-pull-request-touches)
 is checked for what its states say. No gate checks them: what counts as every control a criterion
 touches, or as a handled error, is judgment. Two structural checks still apply. A save that answered 400 or worse fails the network check,
-and so does the invalid input's request, if it reaches the server, unless the criterion declares that
+and so does the invalid input's request, if it reaches the server, unless a criterion of the run declares that
 refusal in its own text (`expected-refusal: 422 /api/profile`,
-[below](#the-adjudicator-the-artifacts-decide-not-the-prose)); the same words in a step line declare
+[below](#the-adjudicator-the-artifacts-decide-not-the-prose)). The declaration counts for every criterion
+of the run, as the gate reads it: one in the pull request's own criteria also covers the ticket's criterion
+that restates it, so a plan written before its route existed needs no edit. The status and URL must still
+match exactly, and a declaration never excuses a 5xx. The same words in a step line declare
 nothing, except a 400 or 422 to the step the explorer marks as its invalid-input probe while the page shows a
 handled error ([below](#an-invalid-input-refused-with-a-handled-error)). The explorer is told to prefer an invalid
 input the page refuses before sending anything, and never to navigate to a URL that neither the criterion names nor the site links to: on a consumer's live
