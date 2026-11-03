@@ -51,7 +51,7 @@ sys.exit(1 if bad or mode == "empty" else 0)
 
 
 def descriptor(gate_name="lint-text", tool="vv-standin", parser="json", args=None, files=None, options=None, **extra):
-    output = {"parser": parser} if parser in ("sarif", "zizmor") else {"parser": "json", "message": "{rule}: {msg} ({missing})",
+    output = {"parser": parser} if parser in ("sarif", "zizmor") else {"parser": "json", "message": "{rule}: {msg} ({missing})", "rule": "rule",
                                                               "path": "file", "line": "ln"}
     found = {"gate": gate_name, "description": "Fail on BAD.", "tool": tool, "args": args or ["--check"],
              "files": files or ["**/*.txt"], "output": output}
@@ -118,7 +118,7 @@ class Contract(StandIn):
         repo = self.repo({}, {"a.txt": "fine\n"}, options={"--level": "how strict"})
         self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1", "--level", "high").returncode, 0)
         self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1").returncode, 0)
-        self.assertEqual(self.log.read_text(), "--check --level high a.txt\n--check a.txt\n")
+        self.assertEqual(self.log.read_text(), "--level high --check a.txt\n--check a.txt\n")
         self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1", "--other", "x").returncode, 2)  # undeclared
         bad = self.repo({}, {"a.txt": "BAD\n"}, options={"--level": "how strict"})
         self.assertEqual(self.run_gate(bad, "--base-ref", "HEAD~1", "--level", "high").returncode, 1)

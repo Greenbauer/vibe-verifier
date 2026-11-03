@@ -63,6 +63,7 @@ TOOL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")  # a bare command name: a pa
 KEYS = {"gate", "description", "tool", "args", "files", "output"}
 OPTIONAL = {"options", "exclude", "ratchet"}
 OUTPUTS = {"sarif": {"parser"}, "json": {"parser", "message", "path", "line"}, "zizmor": {"parser"}, "bandit": {"parser"}}
+OUTPUT_OPTIONAL = {"json": {"rule"}}  # the record key that names each finding's rule, for the count ratchet
 RATCHETS = ("count",)
 FLAG = re.compile(r"^--[a-z][a-z0-9-]*$")
 OPTION = {"help", "to", "default", "choices"}  # an option given as an object: only `help` is required
@@ -139,9 +140,10 @@ def _output_problem(output):
     output = output if isinstance(output, dict) else {}
     parser = output.get("parser")
     wanted = OUTPUTS.get(parser) if isinstance(parser, str) else None
-    if wanted is None or set(output) != wanted or not all(isinstance(value, str) for value in output.values()):
-        return ('`output` must be {"parser": NAME} (%s) or {"parser": "json", "message": ..., "path": ..., "line": ...}'
-                % ", ".join(sorted(name for name in OUTPUTS if name != "json")))
+    if wanted is None or not wanted <= set(output) <= wanted | OUTPUT_OPTIONAL.get(parser, set()) \
+            or not all(isinstance(value, str) for value in output.values()):
+        return ('`output` must be {"parser": NAME} (%s) or {"parser": "json", "message": ..., "path": ..., "line": ...}, '
+                'optionally with "rule"' % ", ".join(sorted(name for name in OUTPUTS if name != "json")))
     return None
 
 

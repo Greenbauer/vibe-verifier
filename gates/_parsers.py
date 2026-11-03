@@ -25,8 +25,13 @@ def json_records(text, output, repo):
         return []
     if not isinstance(records, list) or not all(isinstance(record, dict) for record in records):
         raise ValueError("the report is not a list of objects")
-    return [Finding(output["message"].format_map(_Fields(record)), record.get(output["path"]) or None,
-                    _line(record.get(output["line"]))) for record in records]
+    findings = []
+    for record in records:
+        finding = Finding(output["message"].format_map(_Fields(record)), record.get(output["path"]) or None,
+                          _line(record.get(output["line"])))
+        finding.rule = record.get(output["rule"]) if "rule" in output else None
+        findings.append(finding)
+    return findings
 
 
 def _sarif_path(uri, repo):
