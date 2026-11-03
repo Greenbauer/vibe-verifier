@@ -94,7 +94,7 @@ feature-map
 ```
 
 This repository's own map, [`docs/features/`](features/README.md), is the example for a repository
-with no site: its surfaces are its gates (each `gates/*.py` declares `GATE = "<name>"`) and its
+with no site: its surfaces are its gates (each `gates/*.py` declares `GATE = "<name>"`; a tool descriptor's gate, `gates/descriptors/<gate>.json`, is owned by the feature that lists that file as a source) and its
 `bin/vibe-verifier` subcommands, and its `.vibe-verifier` carries the line that checks them.
 
 - `--surface KIND GLOB REGEX`: every match of REGEX in every tracked file GLOB matches is a surface

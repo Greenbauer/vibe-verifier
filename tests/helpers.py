@@ -83,8 +83,10 @@ def install_fixture(deps):
 
 
 def gate(name, repo, *args, env=None):
+    """Run a gate by its name: its own gates/<name>.py, else the descriptor runner with the descriptor of that name."""
     script = ROOT / "gates" / (name.replace("-", "_") + ".py")
-    return subprocess.run([sys.executable, str(script), "--repo", str(repo), *args],
+    command = [str(script)] if script.is_file() else [str(ROOT / "gates" / "_descriptors.py"), name]
+    return subprocess.run([sys.executable, *command, "--repo", str(repo), *args],
                           capture_output=True, text=True, env=clean_env(env))
 
 
