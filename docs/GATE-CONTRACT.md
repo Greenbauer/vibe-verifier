@@ -774,9 +774,8 @@ zizmor runs `--offline`. A finding a repository ignores the way the tool documen
 A gate that only runs an outside tool on the files a pull request changed is written as data, a JSON descriptor, and
 run by one shared runner, [`gates/_descriptors.py`](../gates/_descriptors.py). The catalog's are
 `gates/descriptors/<gate>.json` (`actionlint` is the first); a repository keeps its own in `.vibe-verifier-tools/<gate>.json`.
-`bin/vibe-verifier run` and `list` find them beside the Python gates, and a manifest line names one the same way. In
-this catalog's feature map a descriptor's gate is owned by the feature that lists its file as a source, which the suite
-checks (`tests/test_descriptors.py`), since feature-map's own `gate` surfaces are read from `gates/*.py`.
+`bin/vibe-verifier run` and `list` find them beside the Python gates, and a manifest line names one the same way. This
+catalog's `feature-map` line reads a descriptor's `"gate"` as a gate surface, the way it reads a Python gate's `GATE`.
 
 ```json
 {
