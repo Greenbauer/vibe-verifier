@@ -1,46 +1,33 @@
 #!/usr/bin/env python3
 """Tool descriptors: a gate that only runs an outside tool, written as data and run by this one runner.
 
-    _descriptors.py GATE [--repo DIR] [--base-ref REF] [--format text|github|json] [--soak] [--all]
+    _descriptors.py GATE [--repo DIR] [--base-ref REF] [--format F] [--soak] [--all] [--source GLOB] [--exclude GLOB]
 
 A descriptor is a JSON object in gates/descriptors/<gate>.json (the catalog's) or .vibe-verifier-tools/<gate>.json (a
-repository's own), with these keys, `options` the only optional one:
+repository's own). docs/GATE-CONTRACT.md "Tool descriptors" is the full format; in short:
 
-    gate         the gate's name in a manifest, which is also the file's name
-    description  what the gate fails on
-    tool         a tool pinned in gates/_tools.py (a catalog descriptor must name one); a repository's own descriptor
-                 may name a command on PATH instead, one its job installs. The tool itself, by a bare name: never a path, and
-                 never a launcher such as env or npx, which the duplicate check below cannot see through
-    args         the tool's arguments; the judged files follow them
-    files        globs of the tracked files it judges (gates/_contract.py glob_to_regex)
-    output       how the report on stdout reads: {"parser": "sarif"}, or {"parser": "json", "message": TEMPLATE,
-                 "path": KEY, "line": KEY} for a JSON list of objects (null is none), the message a str.format
-                 template of each object's keys (a missing key reads "?"); or a named parser for one tool's report,
-                 {"parser": "zizmor"}
-    options      {"--flag": "help"}: flags the gate takes, each with one value, passed to the tool as written
-                 (`--flag value`, before the files) when the manifest line gives them
+    gate, description   its manifest name (the file's own name) and what it fails on
+    tool                a bare name: a binary pinned in gates/_tools.py, a Python toolchain pinned in tools/<tool>/ (run
+                        as `python -m <tool>`), or, for a repository's own descriptor only, a command on PATH
+    args, files         the tool's arguments, and globs of the tracked files it judges
+    exclude             optional: globs it never judges
+    output              {"parser": NAME} (gates/_parsers.py), or {"parser": "json", "message", "path", "line", "rule"?}
+    options             optional: {"--flag": help or {"help", "to"?, "default"?, "choices"?}}, each passed to the tool
+                        as `<to or flag> value`, before `args`, when it has a value
+    ratchet             optional: "count", gates/_ratchet.py
 
-The runner owns the rest, the same for every descriptor:
-
-- the files: those the pull request added, copied, modified or renamed since the base that match `files`, or every
-  tracked one with --all. With none, the gate passes and the tool never runs. A finding the tool reports on any other
-  file is dropped, so a tool that reads the whole tree still judges only these; an absolute path it reports is read
-  relative to the repository first.
-- the exit contract: the tool runs in the repository. Exit 0 or 1 is a report, read whatever the exit (a SARIF tool
-  often exits 0 with results); any other exit is "could not run", with its last line of stderr. A report that cannot
-  be read, or exit 1 with no finding in it, is "could not run" too, never a pass.
-- the parsers (gates/_parsers.py): `sarif` reads SARIF 2.1.0, each result's ruleId, message and first location; a result with a
-  suppression is not a finding, and one of level note or none is advisory. `json` is described above. `zizmor` reads
-  zizmor's JSON report: each item not ignored, at its primary location, with its severity and confidence.
+The runner owns the rest: the files (changed since the base, or every tracked one with --all; --source replaces
+`files`, --exclude adds to `exclude`; none means a pass without running the tool, and a finding on any other file is
+dropped), and the exit contract (exit 0 or 1 is a report, read whatever the exit; any other exit, a report that cannot
+be read, or exit 1 with no finding is "could not run", never a pass).
 
 No duplicates: a descriptor may share neither its gate name nor its `tool` with another descriptor or with a Python gate
 (the tools a Python gate runs are those gates/*.py pass to gates/_tools.py's ensure, ensure_node_tool or
 ensure_python_tool). Each descriptor gate in such a conflict cannot run until one side goes.
 
 A repository's own descriptors are base-controlled, like its repo-rules files: one the base has is judged as the base
-has it, even when the pull request edits or deletes it; one the pull request adds runs at once. With no base to resolve,
-the working tree's are read. Every descriptor is read on every run, for the conflict check, so one that cannot be read
-stops every descriptor gate in that repository.
+has it, even when the pull request edits or deletes it; one the pull request adds runs at once. Every descriptor is read
+on every run, for the conflict check, so one that cannot be read stops every descriptor gate in that repository.
 """
 import argparse
 import json
