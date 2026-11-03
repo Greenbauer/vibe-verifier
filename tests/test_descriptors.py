@@ -3,7 +3,6 @@ tool, a repository's own descriptors judged from the base, and the block on two 
 own descriptor (actionlint) keeps the test cases its Python gate had, in tests/test_workflow_lint.py."""
 import json
 import os
-import re
 import shutil
 import stat
 import subprocess
@@ -191,13 +190,6 @@ class NoDuplicates(StandIn):
     def test_the_catalog_has_no_conflict(self):
         self.assertEqual(_descriptors.conflicts(_descriptors.catalog()), {})
         self.assertIn("actionlint", _descriptors.catalog_names())
-
-    def test_every_catalog_descriptor_is_owned_by_a_feature(self):
-        # feature-map's gate surfaces are gates/*.py (.vibe-verifier), so a descriptor is owned by its file instead.
-        listed = set()
-        for feature in (ROOT / "docs" / "features").glob("*.md"):
-            listed.update(re.findall(r"^- source: `(gates/descriptors/[a-z0-9-]+\.json)`$", feature.read_text(), re.M))
-        self.assertEqual(sorted(listed), ["gates/descriptors/%s.json" % name for name in _descriptors.catalog_names()])
 
     def test_the_tools_python_gates_run_are_found(self):
         tools = _descriptors.gate_tools()

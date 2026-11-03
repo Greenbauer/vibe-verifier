@@ -1,6 +1,6 @@
 # Feature map
 
-One file per feature of this catalog: its gates, its harnesses, its command-line subcommands and its runner-lane kit. The format and the rules for creating, updating and retiring a feature are in [docs/feature-map.md](../feature-map.md). The `feature-map` line in `.vibe-verifier` fails a pull request that adds a Python gate or a subcommand no feature lists (a tool descriptor no feature lists as a source fails `tests/test_descriptors.py`), lists one that no longer exists, or leaves a source glob or a test anchor dangling.
+One file per feature of this catalog: its gates, its harnesses, its command-line subcommands and its runner-lane kit. The format and the rules for creating, updating and retiring a feature are in [docs/feature-map.md](../feature-map.md). The `feature-map` line in `.vibe-verifier` fails a pull request that adds a gate (a Python gate or a tool descriptor) or a subcommand no feature lists, lists one that no longer exists, or leaves a source glob or a test anchor dangling.
 
 | Feature | Gates and subcommands |
 |---|---|
