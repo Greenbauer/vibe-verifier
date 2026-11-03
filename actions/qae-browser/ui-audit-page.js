@@ -99,11 +99,12 @@ function sameRow(a, b) {
   return /grid/.test(s.display) || (/flex/.test(s.display) && !/column/.test(s.flexDirection));
 }
 
-// A boxed track with even padding all round, holding both: a segmented toggle such as Map | List.
+// A boxed track with the same thin padding all round (6px at most), holding both: a segmented toggle such
+// as Map | List. A card's ordinary padding is wider, so buttons touching inside a card still count.
 function evenTrack(el) {
   const s = getComputedStyle(el);
   const pads = ["Top", "Right", "Bottom", "Left"].map(k => parseFloat(s["padding" + k]));
-  return pads.every(v => v > 0 && Math.abs(v - pads[0]) < 0.5) && boxed(el);
+  return pads.every(v => v > 0 && v <= 6 && Math.abs(v - pads[0]) < 0.5) && boxed(el);
 }
 
 function segmented(a, b) {
