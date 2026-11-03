@@ -59,6 +59,24 @@ def on_site(page, site):
     return page == site or page.startswith(site + "/")
 
 
+def judged(line, sites, rules, allow):
+    """Whether a record line counts: on the declared site, one of the rules asked for, and not allowed."""
+    if sites and not any(on_site(str(line.get("page", "")), site) for site in sites):
+        return False
+    if rules and line.get("rule") not in rules:
+        return False
+    return not any(pattern.search(str(line.get(key) or "")) for pattern in allow for key in ("at", "text"))
+
+
+def finding(lines):
+    """One finding for lines that differ only in which table row (nth-of-type) they are on."""
+    first = lines[0]
+    what = (first.get("text") or first.get("at")) + (" / " + first["other"] if first.get("other") else "")
+    more = " (and %d more like it)" % (len(lines) - 1) if len(lines) > 1 else ""
+    return Finding("%s on %s at %spx: %s: %s%s (%s)" % (first.get("rule"), first.get("page"), first.get("width"), what,
+                                                        first.get("detail"), more, first.get("at")))
+
+
 def check(args):
     if not os.path.isdir(args.artifacts):
         raise CannotRun("artifact directory not found: %s" % args.artifacts)
@@ -67,23 +85,10 @@ def check(args):
     allow = [re.compile(pattern) for pattern in args.allow or []]
     groups = {}
     for line in read_record(args.artifacts):
-        if sites and not any(on_site(str(line.get("page", "")), site) for site in sites):
-            continue
-        if rules and line.get("rule") not in rules:
-            continue
-        if any(pattern.search(str(line.get(key) or "")) for pattern in allow for key in ("at", "text")):
-            continue
-        key = (line.get("page"), line.get("width"), line.get("rule"), NTH.sub("", str(line.get("at"))))
-        groups.setdefault(key, []).append(line)
-    findings = []
-    for (page, width, rule, _), lines in groups.items():
-        first = lines[0]
-        what = first.get("text") or first.get("at")
-        if first.get("other"):
-            what += " / " + first["other"]
-        more = " (and %d more like it)" % (len(lines) - 1) if len(lines) > 1 else ""
-        findings.append(Finding("%s on %s at %spx: %s: %s%s (%s)" % (rule, page, width, what, first.get("detail"), more, first.get("at"))))
-    return findings
+        if judged(line, sites, rules, allow):
+            key = (line.get("page"), line.get("width"), line.get("rule"), NTH.sub("", str(line.get("at"))))
+            groups.setdefault(key, []).append(line)
+    return [finding(lines) for lines in groups.values()]
 
 
 def add_arguments(parser):
