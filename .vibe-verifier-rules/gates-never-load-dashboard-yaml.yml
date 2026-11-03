@@ -20,4 +20,4 @@ rule:
         regex: '^(run|uses|main|pre|post)$'
     - has:
         field: value
-        regex: '(^|[\s"''=]|\.\.?/|vibe-verifier/)(dashboard|lanes)/|(import|from)\s+(dashboard|lanes)(\.|\s|$)'
+        regex: '(^|[\s"''=]|\.\.?/|vibe-verifier/)(dashboard|lanes)[/@]|(import|from)\s+(dashboard|lanes)(\.|\s|$)'
