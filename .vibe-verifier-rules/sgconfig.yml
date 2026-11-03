@@ -1,0 +1,4 @@
+# bin/vibe-verifier is Python without an extension. ast-grep matches these globs against a file's
+# name, not its path, so the script is named; a new script in bin/ needs its name added here.
+languageGlobs:
+  python: ['vibe-verifier']

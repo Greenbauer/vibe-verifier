@@ -1,0 +1,23 @@
+id: gates-never-load-dashboard-yaml
+language: Yaml
+message: An action or harness step must not run or use code from dashboard/ or lanes/; move the shared code into gates/ or the action and call it from there.
+note: |
+  Outside users run the actions and harnesses without dashboard/ or lanes/, so the dependency points
+  one way only. This flags a run, uses, main, pre or post value that names a dashboard/ or lanes/ path
+  (as "$GITHUB_ACTION_PATH/../../dashboard/x.py" or "uses: Greenbauer/vibe-verifier/lanes/x@<sha>"
+  would) or imports a dashboard or lanes module.
+  docs/architecture.md, "Layer boundary", says why.
+files:
+  - gates/**
+  - harnesses/**
+  - actions/**
+  - bin/**
+rule:
+  kind: block_mapping_pair
+  all:
+    - has:
+        field: key
+        regex: '^(run|uses|main|pre|post)$'
+    - has:
+        field: value
+        regex: '(^|[\s"''=]|\.\.?/|vibe-verifier/)(dashboard|lanes)[/@]|(import|from)\s+(dashboard|lanes)(\.|\s|$)'
