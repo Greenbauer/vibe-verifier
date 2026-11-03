@@ -65,7 +65,7 @@ Without one it keeps nothing, as before. `dashboard/state_store.py` owns the fil
 | `responses` | every GitHub answer that carries an ETag and was used in the last two passes | with `reading` |
 | `usage` | the last token history and every usage record read; a record whose sample has no `cached_input_tokens` (kept before samples carried it) is dropped on restore and read again | after every usage scan that returned and did not meet lost access |
 | `usage-responses` | the usage reader's ETag answers (artifact listings) | with `usage` |
-| `outcomes` | one record per pull request merged in the last 14 days ([Outcomes view](dashboard.md#outcomes-view)); a record past the window is dropped on the next cycle | after every outcomes cycle that did not meet lost access |
+| `outcomes` | one record per pull request merged in the last 14 days ([Outcomes view](dashboard.md#outcomes-view)), when they were read and how many were left; a record past the window is dropped on the next cycle | after every outcomes cycle that did not meet lost access |
 | `outcomes-responses` | the outcomes reader's ETag answers (run and job listings) | with `outcomes` |
 
 Each document is one file, `<directory>/<owner>/<document>.json.z`: zlib-compressed JSON with the

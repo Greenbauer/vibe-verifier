@@ -253,6 +253,9 @@ class Feed(unittest.TestCase):
             self.assertEqual(len(store.load("outcomes")["records"]), 1)
             again, _ = self.feed(directory, FakeAPI({}, []))
             self.assertEqual([row["number"] for row in again.view()["pulls"]], [7])
+            # Served at once after a restart, with when it was read, not as "not read yet".
+            self.assertEqual((again.view()["available"], again.view()["sampled_at"], again.view()["pending"]),
+                             (True, "2026-11-03T15:00:00Z", 0))
             again.reader.api.graphql_values.append(ApiError("not_found"))
             again._cycle(again.reader, again._generation, (REPO,))
             self.assertEqual((again.view()["pulls"], store.load("outcomes")), ([], None))

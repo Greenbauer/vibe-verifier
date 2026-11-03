@@ -393,7 +393,7 @@ for the records when it opens and at most once a minute after.
 
 **A record is written once.** A merged pull request does not change, so its record is never read
 or updated again, and it is dropped once its merge is more than 14 days old. Records are kept across
-a restart in the state directory (`outcomes`, see [kept across a restart](dashboard-data.md#kept-across-a-restart))
+a restart in the state directory, and served at once on a start with when they were read, (`outcomes`, see [kept across a restart](dashboard-data.md#kept-across-a-restart))
 and deleted, on disk too, when a read meets lost access.
 
 `tests/test_dashboard_outcomes.py` covers the reader: the record, the branch's runs and attempts, the
