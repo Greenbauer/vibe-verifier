@@ -12,7 +12,7 @@ build-tools-in-devdependencies
 new-source-has-test
 # docs/features/: every gate (a Python gate's GATE name, a tool descriptor's "gate") and every subcommand of bin/vibe-verifier
 # is owned by a feature file.
-feature-map --surface gate 'gates/*.py' '^GATE = "([a-z0-9-]+)"$' --surface gate 'gates/descriptors/*.json' '^  "gate": "([a-z0-9-]+)",$' --surface command bin/vibe-verifier 'commands\.add_parser\("([a-z-]+)"'
+feature-map --surface gate 'gates/*.py' '^GATE = "([a-z0-9-]+)"$' --surface gate 'gates/descriptors/*.json' '"gate"\s*:\s*"([a-z0-9-]+)"' --surface command bin/vibe-verifier 'commands\.add_parser\("([a-z-]+)"'
 # repo-rules: the catalog's own typescript pack on its JavaScript (dashboard/static, actions/*, tools/*), the
 # same rules every subscribed repository runs. No finding today (--all, 2026-10-19), and it ratchets per rule and file.
 # It also runs this repository's own .vibe-verifier-rules/ (the default rule directory): code under gates/, harnesses/,
