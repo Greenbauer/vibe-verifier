@@ -4,7 +4,7 @@
     _descriptors.py GATE [--repo DIR] [--base-ref REF] [--format text|github|json] [--soak] [--all]
 
 A descriptor is a JSON object in gates/descriptors/<gate>.json (the catalog's) or .vibe-verifier-tools/<gate>.json (a
-repository's own), with exactly these keys:
+repository's own), with these keys, `options` the only optional one:
 
     gate         the gate's name in a manifest, which is also the file's name
     description  what the gate fails on
@@ -15,7 +15,10 @@ repository's own), with exactly these keys:
     files        globs of the tracked files it judges (gates/_contract.py glob_to_regex)
     output       how the report on stdout reads: {"parser": "sarif"}, or {"parser": "json", "message": TEMPLATE,
                  "path": KEY, "line": KEY} for a JSON list of objects (null is none), the message a str.format
-                 template of each object's keys (a missing key reads "?")
+                 template of each object's keys (a missing key reads "?"); or a named parser for one tool's report,
+                 {"parser": "zizmor"}
+    options      {"--flag": "help"}: flags the gate takes, each with one value, passed to the tool as written
+                 (`--flag value`, before the files) when the manifest line gives them
 
 The runner owns the rest, the same for every descriptor:
 
@@ -26,8 +29,9 @@ The runner owns the rest, the same for every descriptor:
 - the exit contract: the tool runs in the repository. Exit 0 or 1 is a report, read whatever the exit (a SARIF tool
   often exits 0 with results); any other exit is "could not run", with its last line of stderr. A report that cannot
   be read, or exit 1 with no finding in it, is "could not run" too, never a pass.
-- the parsers: `sarif` reads SARIF 2.1.0, each result's ruleId, message and first location; a result with a
-  suppression is not a finding, and one of level note or none is advisory. `json` is described above.
+- the parsers (gates/_parsers.py): `sarif` reads SARIF 2.1.0, each result's ruleId, message and first location; a result with a
+  suppression is not a finding, and one of level note or none is advisory. `json` is described above. `zizmor` reads
+  zizmor's JSON report: each item not ignored, at its primary location, with its severity and confidence.
 
 No duplicates: a descriptor may share neither its gate name nor its `tool` with another descriptor or with a Python gate
 (the tools a Python gate runs are those gates/*.py pass to gates/_tools.py's ensure, ensure_node_tool or
@@ -38,15 +42,16 @@ has it, even when the pull request edits or deletes it; one the pull request add
 the working tree's are read. Every descriptor is read on every run, for the conflict check, so one that cannot be read
 stops every descriptor gate in that repository.
 """
+import argparse
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-import urllib.parse
 
-from _contract import CannotRun, Finding, changed_files, git, in_repository, matches, resolve_base, run_gate, tracked_files
+from _contract import CannotRun, changed_files, git, in_repository, matches, resolve_base, run_gate, tracked_files
+from _parsers import PARSERS
 from _tools import TOOLS, ensure
 
 GATES = os.path.dirname(os.path.abspath(__file__))
@@ -55,7 +60,10 @@ REPOSITORY = ".vibe-verifier-tools"
 NAME = re.compile(r"^[a-z0-9-]+$")
 TOOL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")  # a bare command name: a path would dodge the duplicate check
 KEYS = {"gate", "description", "tool", "args", "files", "output"}
-OUTPUTS = {"sarif": {"parser"}, "json": {"parser", "message", "path", "line"}}
+OPTIONAL = {"options"}
+OUTPUTS = {"sarif": {"parser"}, "json": {"parser", "message", "path", "line"}, "zizmor": {"parser"}}
+FLAG = re.compile(r"^--[a-z][a-z0-9-]*$")
+RESERVED = {"--repo", "--base-ref", "--format", "--soak", "--all", "--help", "--artifacts"}  # read by every gate (_contract.run_gate)
 # A tool a Python gate runs: the literal, or a constant of that file, it passes to one of gates/_tools.py's resolvers.
 ENSURED = re.compile(r'\bensure(?:_node_tool|_python_tool)?\(\s*(?:"([^"]+)"|([A-Z_]+)\b)')
 CONSTANT = re.compile(r'^([A-Z_]+) = "([^"]+)"$', re.M)
@@ -96,8 +104,8 @@ def _strings(value):
 
 def _problem(descriptor, origin, pinned):
     """What is wrong with a parsed descriptor, or None."""
-    if not isinstance(descriptor, dict) or set(descriptor) != KEYS:
-        return "a descriptor has exactly the keys %s" % ", ".join(sorted(KEYS))
+    if not isinstance(descriptor, dict) or not KEYS <= set(descriptor) <= KEYS | OPTIONAL:
+        return "a descriptor has the keys %s, and may have %s" % (", ".join(sorted(KEYS)), ", ".join(sorted(OPTIONAL)))
     stem = os.path.basename(origin)[:-len(".json")]
     if descriptor["gate"] != stem or not NAME.match(stem):
         return "`gate` must be the file's own name, in lowercase letters, digits and dashes"
@@ -107,13 +115,30 @@ def _problem(descriptor, origin, pinned):
         return "`tool` must be a bare command name, not a path"
     if not (_strings(descriptor["args"]) and _strings(descriptor["files"]) and descriptor["files"]):
         return "`args` must be a list of strings and `files` a non-empty one"
-    output = descriptor["output"] if isinstance(descriptor["output"], dict) else {}
+    problem = _output_problem(descriptor["output"]) or _options_problem(descriptor.get("options", {}))
+    if problem:
+        return problem
+    if pinned and descriptor["tool"] not in TOOLS:
+        return "a catalog descriptor runs a tool pinned in gates/_tools.py, and %r is not" % descriptor["tool"]
+    return None
+
+
+def _output_problem(output):
+    output = output if isinstance(output, dict) else {}
     parser = output.get("parser")
     wanted = OUTPUTS.get(parser) if isinstance(parser, str) else None
     if wanted is None or set(output) != wanted or not all(isinstance(value, str) for value in output.values()):
-        return '`output` must be {"parser": "sarif"} or {"parser": "json", "message": ..., "path": ..., "line": ...}'
-    if pinned and descriptor["tool"] not in TOOLS:
-        return "a catalog descriptor runs a tool pinned in gates/_tools.py, and %r is not" % descriptor["tool"]
+        return ('`output` must be {"parser": "sarif"}, {"parser": "zizmor"} or '
+                '{"parser": "json", "message": ..., "path": ..., "line": ...}')
+    return None
+
+
+def _options_problem(options):
+    if not isinstance(options, dict) or not all(isinstance(text, str) and text for text in options.values()):
+        return "`options` must map each flag to its help text"
+    taken = [flag for flag in options if not FLAG.match(flag) or flag in RESERVED]
+    if taken:
+        return "`options` cannot declare %s: a flag is --lowercase-words, and not one every gate has" % ", ".join(taken)
     return None
 
 
@@ -211,53 +236,12 @@ def resolve(tool):
     return found
 
 
-class _Fields(dict):
-    def __missing__(self, key):
-        return "?"
-
-
-def _line(value):
-    return value if isinstance(value, int) and value > 0 else None
-
-
-def json_records(text, output, repo):
-    records = json.loads(text) if text.strip() else None
-    if records is None:
-        return []
-    if not isinstance(records, list) or not all(isinstance(record, dict) for record in records):
-        raise ValueError("the report is not a list of objects")
-    return [Finding(output["message"].format_map(_Fields(record)), record.get(output["path"]) or None,
-                    _line(record.get(output["line"]))) for record in records]
-
-
-def _sarif_path(uri, repo):
-    """A SARIF artifact URI as a path, percent-decoded; a file URI is absolute, and repository_path reads it."""
-    return urllib.parse.unquote(urllib.parse.urlparse(uri).path) if uri else None
-
-
 def repository_path(path, repo):
     """A reported path as the repository's own: an absolute one relative to the repository, both resolved, since a
     tool reports the real path of a repository reached through a link (macOS /tmp is /private/tmp)."""
     if os.path.isabs(path):
         path = os.path.relpath(os.path.realpath(path), os.path.realpath(repo))
     return os.path.normpath(path)
-
-
-def _sarif_finding(result, repo):
-    location = ((result.get("locations") or [{}])[0] or {}).get("physicalLocation") or {}
-    rule, message = result.get("ruleId"), (result.get("message") or {}).get("text") or "?"
-    return Finding("%s: %s" % (rule, message) if rule else message,
-                   _sarif_path((location.get("artifactLocation") or {}).get("uri"), repo),
-                   _line((location.get("region") or {}).get("startLine")), advisory=result.get("level") in ("note", "none"))
-
-
-def sarif(text, output, repo):
-    report = json.loads(text) if text.strip() else {"runs": []}
-    return [_sarif_finding(result, repo) for run in report["runs"] for result in run.get("results") or []
-            if not result.get("suppressions")]
-
-
-PARSERS = {"json": json_records, "sarif": sarif}
 
 
 def report_findings(descriptor, result, repo):
@@ -279,13 +263,21 @@ def judged_files(args, globs):
     return sorted(path for path in names if matches(path, globs))
 
 
-def checker(gate):
+def _dest(flag):
+    return flag[2:].replace("-", "_")
+
+
+def checker(gate, peeked):
+    """The check of one descriptor gate: `peeked` is the descriptor read before the flags were parsed, or None when it
+    could not be read, and then it is read again here so the run says why it cannot."""
     def check(args):
-        descriptor = descriptor_for(args.repo, args.base_ref, gate)
+        descriptor = peeked or descriptor_for(args.repo, args.base_ref, gate)
         files = judged_files(args, descriptor["files"])
         if not files:
             return []
-        result = subprocess.run([resolve(descriptor["tool"]), *descriptor["args"], *files], cwd=args.repo,
+        passed = [word for flag in descriptor.get("options", {}) if getattr(args, _dest(flag)) is not None
+                  for word in (flag, getattr(args, _dest(flag)))]
+        result = subprocess.run([resolve(descriptor["tool"]), *descriptor["args"], *passed, *files], cwd=args.repo,
                                 capture_output=True, text=True, encoding="utf-8", errors="replace")
         findings = report_findings(descriptor, result, args.repo)
         for finding in findings:
@@ -294,18 +286,25 @@ def checker(gate):
     return check
 
 
-def add_arguments(parser):
-    parser.add_argument("--all", action="store_true", help="judge every tracked file the descriptor's globs match")
+def arguments(descriptor):
+    def add_arguments(parser):
+        parser.add_argument("--all", action="store_true", help="judge every tracked file the descriptor's globs match")
+        for flag, text in (descriptor or {}).get("options", {}).items():
+            parser.add_argument(flag, dest=_dest(flag), metavar="VALUE", default=None, help=text)
+    return add_arguments
 
 
-def description(gate):
-    path = os.path.join(CATALOG, gate + ".json")
-    if os.path.isfile(path):
-        try:
-            return json.loads(read(path)).get("description")
-        except (ValueError, AttributeError):
-            return None
-    return "a repository's own tool descriptor, %s/%s.json" % (REPOSITORY, gate)
+def peek(gate, argv):
+    """The descriptor this run judges with, read before its flags are parsed so that its options can be declared; None
+    when it cannot be read yet."""
+    early = argparse.ArgumentParser(add_help=False)
+    early.add_argument("--repo", default=".")
+    early.add_argument("--base-ref", default=None)
+    known, _ = early.parse_known_args(argv)
+    try:
+        return descriptor_for(known.repo, known.base_ref, gate)
+    except CannotRun:
+        return None
 
 
 if __name__ == "__main__":
@@ -314,4 +313,6 @@ if __name__ == "__main__":
               file=sys.stderr)
         sys.exit(2)
     name = sys.argv.pop(1)
-    run_gate(name, description(name), checker(name), add_arguments)
+    found = peek(name, sys.argv[1:])
+    run_gate(name, (found or {}).get("description") or "the tool descriptor %s (gates/_descriptors.py)" % name,
+             checker(name, found), arguments(found))

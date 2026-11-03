@@ -1,0 +1,12 @@
+{
+  "gate": "zizmor",
+  "description": "Fail when a workflow this pull request added or changed has a zizmor finding (zizmor is pinned in gates/_tools.py): template injection, unpinned actions, persisted credentials, excessive permissions. Only the workflows changed since the base are judged; --all judges every tracked workflow. It runs --offline, so the audits that need GitHub are skipped and the verdict is the same on a laptop and on a runner. A finding the repository has ignored the way zizmor documents (a `# zizmor: ignore[...]` comment or zizmor.yml) is not a finding here.",
+  "tool": "zizmor",
+  "args": ["--format", "json", "--offline", "--no-exit-codes"],
+  "files": [".github/workflows/**/*.yml", ".github/workflows/**/*.yaml"],
+  "output": {"parser": "zizmor"},
+  "options": {
+    "--min-severity": "passed to zizmor (unknown, informational, low, medium, high)",
+    "--min-confidence": "passed to zizmor (unknown, low, medium, high)"
+  }
+}
