@@ -6,6 +6,7 @@ A gate that only runs an outside tool is a JSON descriptor (command, file globs,
 
 - source: `gates/_descriptors.py`
 - source: `gates/_parsers.py`
+- source: `gates/_ratchet.py`
 
 ## Reach
 
@@ -22,6 +23,9 @@ Write `.vibe-verifier-tools/<gate>.json` in the repository and add `<gate>` to `
 - `tests/test_descriptors.py::test_a_descriptor_named_like_a_python_gate_cannot_run`
 - `tests/test_descriptors.py::test_the_runner_runs_a_repositorys_own_descriptor`
 - `tests/test_descriptors.py::test_a_declared_option_is_passed_to_the_tool_only_when_given`
+- `tests/test_descriptors.py::test_an_option_spec_maps_the_flag_with_its_default_and_choices`
+- `tests/test_descriptors.py::test_a_rule_only_blocks_a_file_where_its_count_rose`
+- `tests/test_descriptors.py::test_a_new_file_with_a_finding_blocks_and_a_moved_one_does_not`
 
 ## Gotchas
 

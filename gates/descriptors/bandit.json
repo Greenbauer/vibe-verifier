@@ -1,0 +1,14 @@
+{
+  "gate": "bandit",
+  "description": "Fail when a Python file this pull request changed has a Bandit security finding it did not have at the base. Bandit, Python's static security analyser, is pinned in tools/bandit (every wheel digest in the committed requirements file). A ratchet per check: a file is a finding when it has more results of one Bandit check (B602, subprocess with shell=True, say) than at the merge base, or is new and has any; every result of that check in the file is listed. --all reports every result in every tracked Python file, for an audit. Only results at or above --severity and --confidence count (default medium for both). Tests are not read: Bandit flags every assert. The repository's Bandit config files are not read; a line judged safe is marked `# nosec <check id>`. A file Bandit cannot parse is exit 2, never a pass. --source and --exclude change which files count.",
+  "tool": "bandit",
+  "args": ["--format", "json", "--quiet", "--"],
+  "files": ["**/*.py"],
+  "exclude": ["**/conftest.py", "**/test_*.py", "**/*_test.py", "**/test-*.py", "**/*-test.py", "**/*.test.py"],
+  "output": {"parser": "bandit"},
+  "ratchet": "count",
+  "options": {
+    "--severity": {"help": "lowest severity that counts (default medium)", "to": "--severity-level", "default": "medium", "choices": ["low", "medium", "high"]},
+    "--confidence": {"help": "lowest confidence that counts (default medium)", "to": "--confidence-level", "default": "medium", "choices": ["low", "medium", "high"]}
+  }
+}

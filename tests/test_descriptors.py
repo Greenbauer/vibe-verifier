@@ -11,11 +11,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, clean_env, commit, gate, make_repo, runner
+from helpers import ROOT, clean_env, commit, gate, git, make_repo, runner
 
 sys.path.insert(0, str(ROOT / "gates"))
 import _descriptors  # noqa: E402
 import _parsers  # noqa: E402
+import _ratchet  # noqa: E402
+from _contract import Finding  # noqa: E402
 
 sys.path.remove(str(ROOT / "gates"))
 
@@ -44,17 +46,18 @@ if mode == "sarif":
                                                          "region": {"startLine": 1}}}]}, **extra)
     results = [result(f) for f in bad] + [result(f, level="note") for f in files] + [result(f, suppressions=[{"kind": "inSource"}]) for f in files]
     print(json.dumps({"version": "2.1.0", "runs": [{"results": results}]})); sys.exit(0)
-print(json.dumps([{"msg": "holds BAD", "rule": "no-bad", "file": f, "ln": 1} for f in bad]))
+print(json.dumps([{"msg": "holds BAD", "rule": "no-bad", "file": f, "ln": n} for f in bad
+                  for n, text in enumerate(open(f).read().splitlines(), 1) if "BAD" in text]))
 sys.exit(1 if bad or mode == "empty" else 0)
 '''
 
 
-def descriptor(gate_name="lint-text", tool="vv-standin", parser="json", args=None, files=None, options=None):
-    output = {"parser": parser} if parser in ("sarif", "zizmor") else {"parser": "json", "message": "{rule}: {msg} ({missing})",
+def descriptor(gate_name="lint-text", tool="vv-standin", parser="json", args=None, files=None, options=None, **extra):
+    output = {"parser": parser} if parser in ("sarif", "zizmor") else {"parser": "json", "message": "{rule}: {msg} ({missing})", "rule": "rule",
                                                               "path": "file", "line": "ln"}
     found = {"gate": gate_name, "description": "Fail on BAD.", "tool": tool, "args": args or ["--check"],
              "files": files or ["**/*.txt"], "output": output}
-    return json.dumps(dict(found, options=options) if options else found)
+    return json.dumps(dict(found, **extra, **({"options": options} if options else {})))
 
 
 class StandIn(unittest.TestCase):
@@ -117,7 +120,7 @@ class Contract(StandIn):
         repo = self.repo({}, {"a.txt": "fine\n"}, options={"--level": "how strict"})
         self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1", "--level", "high").returncode, 0)
         self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1").returncode, 0)
-        self.assertEqual(self.log.read_text(), "--check --level high a.txt\n--check a.txt\n")
+        self.assertEqual(self.log.read_text(), "--level high --check a.txt\n--check a.txt\n")
         self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1", "--other", "x").returncode, 2)  # undeclared
         bad = self.repo({}, {"a.txt": "BAD\n"}, options={"--level": "how strict"})
         self.assertEqual(self.run_gate(bad, "--base-ref", "HEAD~1", "--level", "high").returncode, 1)
@@ -126,6 +129,22 @@ class Contract(StandIn):
         result = self.run_gate(self.repo({}, {"a.txt": "BAD\n"}, parser="zizmor"), "--base-ref", "HEAD~1", mode="garbage")
         self.assertEqual(result.returncode, 2, result.stdout)
         self.assertIn("could not be read as zizmor", result.stderr)
+
+    def test_an_option_spec_maps_the_flag_with_its_default_and_choices(self):
+        spec = {"help": "how strict", "to": "--strict", "default": "low", "choices": ["low", "high"]}
+        repo = self.repo({}, {"a.txt": "fine\n"}, options={"--level": spec})
+        self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1").returncode, 0)
+        self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1", "--level", "high").returncode, 0)
+        self.assertEqual(self.log.read_text(), "--strict low --check a.txt\n--strict high --check a.txt\n")
+        self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1", "--level", "medium").returncode, 2)  # not a choice
+
+    def test_exclude_and_the_source_and_exclude_flags_set_the_files(self):
+        repo = self.repo({}, {"a.txt": "BAD\n", "gen/b.txt": "BAD\n", "c.md": "BAD\n"}, exclude=["gen/**"])
+        self.assertEqual([f["path"] for f in json.loads(self.run_gate(repo, "--base-ref", "HEAD~1", "--format", "json").stdout)["findings"]],
+                         ["a.txt"])
+        self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1", "--exclude", "a.txt").returncode, 0)
+        only_md = self.run_gate(repo, "--base-ref", "HEAD~1", "--source", "**/*.md", "--format", "json")
+        self.assertEqual([f["path"] for f in json.loads(only_md.stdout)["findings"]], ["c.md"])
 
     def test_soak_reports_and_passes(self):
         result = self.run_gate(self.repo({}, {"a.txt": "BAD\n"}), "--base-ref", "HEAD~1", "--soak")
@@ -182,6 +201,52 @@ class Sarif(StandIn):
         self.assertIn("1 advisory finding(s)", result.stdout)
 
 
+class CountRatchet(StandIn):
+    def test_a_findings_rule_is_its_parsers_else_its_message(self):
+        named = Finding("B602 subprocess call", "a.py", 5)
+        named.rule = "B602"
+        self.assertEqual((_ratchet.rule(named), _ratchet.rule(Finding("no rule here", "a.py", 1))), ("B602", "no rule here"))
+
+    def test_a_rule_only_blocks_a_file_where_its_count_rose(self):
+        repo = self.repo({"a.txt": "BAD\n"}, {"a.txt": "BAD\nfine\n"}, ratchet="count")
+        self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1").returncode, 0)  # touched, still one
+        commit(repo, {"a.txt": "BAD\nBAD again\n"}, "second")
+        result = self.run_gate(repo, "--base-ref", "HEAD~2", "--format", "json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        findings = json.loads(result.stdout)["findings"]
+        self.assertEqual([(f["path"], f["line"]) for f in findings], [("a.txt", 1), ("a.txt", 2)])
+        self.assertIn("(no-bad results in this file: 1 at the base, 2 now)", findings[0]["message"])
+
+    def test_a_new_file_with_a_finding_blocks_and_a_moved_one_does_not(self):
+        added = self.repo({}, {"new.txt": "BAD\n"}, ratchet="count")
+        self.assertIn("0 at the base, 1 now", self.run_gate(added, "--base-ref", "HEAD~1").stdout)
+        moved = make_repo(self, {".vibe-verifier-tools/lint-text.json": descriptor(ratchet="count"),
+                                 "old.txt": "BAD\n" + "".join("line %d\n" % i for i in range(20))})
+        git(moved, "mv", "old.txt", "new.txt")
+        git(moved, "commit", "-q", "-m", "move")
+        self.assertEqual(self.run_gate(moved, "--base-ref", "HEAD~1").returncode, 0)
+
+    def test_an_advisory_finding_is_never_counted_or_made_blocking(self):
+        notes_only = self.run_gate(self.repo({}, {"a.txt": "fine\n"}, parser="sarif", ratchet="count"), "--base-ref", "HEAD~1",
+                                   "--format", "json", mode="sarif")
+        self.assertEqual(notes_only.returncode, 0, notes_only.stdout + notes_only.stderr)
+        self.assertEqual([f["advisory"] for f in json.loads(notes_only.stdout)["findings"]], [True])
+        both = self.run_gate(self.repo({}, {"a.txt": "BAD\n"}, parser="sarif", ratchet="count"), "--base-ref", "HEAD~1",
+                             "--format", "json", mode="sarif")
+        self.assertEqual(both.returncode, 1)
+        self.assertIn("0 at the base, 1 now", [f for f in json.loads(both.stdout)["findings"] if not f["advisory"]][0]["message"])
+
+    def test_all_reports_every_finding_without_counts(self):
+        repo = self.repo({"a.txt": "BAD\n"}, {"README.md": "y\n"}, ratchet="count")
+        result = self.run_gate(repo, "--all", "--format", "json")
+        self.assertEqual([f["message"] for f in json.loads(result.stdout)["findings"]], ["no-bad: holds BAD (?)"])
+
+    def test_an_unknown_ratchet_cannot_run(self):
+        result = self.run_gate(self.repo({}, {"a.txt": "BAD\n"}, ratchet="lines"), "--base-ref", "HEAD~1")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('`ratchet` is "count"', result.stderr)
+
+
 class FromTheBase(StandIn):
     def test_a_descriptor_the_base_has_runs_as_the_base_has_it(self):
         repo = self.repo({}, {".vibe-verifier-tools/lint-text.json": descriptor(args=["--loose"], files=["nothing/*"]),
@@ -211,17 +276,17 @@ class NoDuplicates(StandIn):
 
     def test_the_tools_python_gates_run_are_found(self):
         tools = _descriptors.gate_tools()
-        self.assertTrue({"gitleaks", "bandit", "osv-scanner", "ast-grep", "vale"} <= set(tools), tools)
-        self.assertEqual(tools["bandit"], "gates/bandit.py")  # passed as the constant GATE
-        self.assertFalse({"actionlint", "zizmor"} & set(tools))  # their descriptors run them now
+        self.assertTrue({"gitleaks", "osv-scanner", "ast-grep", "vale"} <= set(tools), tools)
+        self.assertEqual(tools["osv-scanner"], "gates/osv_scanner.py")  # passed as the constant GATE
+        self.assertFalse({"actionlint", "zizmor", "bandit"} & set(tools))  # their descriptors run them now
 
     def test_every_output_has_a_parser(self):
         self.assertEqual(set(_descriptors.OUTPUTS), set(_parsers.PARSERS))
 
     def test_a_descriptor_running_a_python_gates_tool_cannot_run(self):
-        result = self.run_gate(self.repo({}, {"a.txt": "BAD\n"}, tool="bandit"), "--base-ref", "HEAD~1")
+        result = self.run_gate(self.repo({}, {"a.txt": "BAD\n"}, tool="gitleaks"), "--base-ref", "HEAD~1")
         self.assertEqual(result.returncode, 2, result.stdout)
-        self.assertIn("tool 'bandit' is in gates/bandit.py and HEAD~1:.vibe-verifier-tools/lint-text.json", result.stderr)
+        self.assertIn("tool 'gitleaks' is in gates/gitleaks.py and HEAD~1:.vibe-verifier-tools/lint-text.json", result.stderr)
 
     def test_a_descriptor_running_a_catalog_descriptors_tool_stops_both(self):
         repo = self.repo({}, {"a.txt": "BAD\n"}, tool="actionlint")
@@ -232,16 +297,16 @@ class NoDuplicates(StandIn):
                 self.assertIn("tool 'actionlint' is in", result.stderr)
 
     def test_a_descriptor_named_like_a_python_gate_cannot_run(self):
-        repo = make_repo(self, {".vibe-verifier-tools/bandit.json": descriptor(gate_name="bandit"), ".vibe-verifier": "bandit\n"})
+        repo = make_repo(self, {".vibe-verifier-tools/gitleaks.json": descriptor(gate_name="gitleaks"), ".vibe-verifier": "gitleaks\n"})
         commit(repo, {"a.txt": "BAD\n"})
-        direct = subprocess.run([sys.executable, str(ROOT / "gates" / "_descriptors.py"), "bandit", "--repo", repo,
+        direct = subprocess.run([sys.executable, str(ROOT / "gates" / "_descriptors.py"), "gitleaks", "--repo", repo,
                                  "--base-ref", "HEAD~1"], capture_output=True, text=True, env=clean_env(self.env()))
         self.assertEqual(direct.returncode, 2, direct.stdout)
-        self.assertIn("gate 'bandit' is in gates/bandit.py and HEAD~1:.vibe-verifier-tools/bandit.json", direct.stderr)
+        self.assertIn("gate 'gitleaks' is in gates/gitleaks.py and HEAD~1:.vibe-verifier-tools/gitleaks.json", direct.stderr)
         result = runner("run", "--repo", repo, "--manifest", os.path.join(repo, ".vibe-verifier"), "--base-ref", "HEAD~1",
                         env=self.env())
         self.assertEqual(result.returncode, 2, result.stdout)
-        self.assertIn(".vibe-verifier-tools/bandit.json names the catalog's gate 'bandit'", result.stderr)
+        self.assertIn(".vibe-verifier-tools/gitleaks.json names the catalog's gate 'gitleaks'", result.stderr)
 
 
 if __name__ == "__main__":
