@@ -50,7 +50,7 @@ sys.exit(1 if bad or mode == "empty" else 0)
 
 
 def descriptor(gate_name="lint-text", tool="vv-standin", parser="json", args=None, files=None, options=None):
-    output = {"parser": "sarif"} if parser == "sarif" else {"parser": "json", "message": "{rule}: {msg} ({missing})",
+    output = {"parser": parser} if parser in ("sarif", "zizmor") else {"parser": "json", "message": "{rule}: {msg} ({missing})",
                                                               "path": "file", "line": "ln"}
     found = {"gate": gate_name, "description": "Fail on BAD.", "tool": tool, "args": args or ["--check"],
              "files": files or ["**/*.txt"], "output": output}
@@ -119,6 +119,13 @@ class Contract(StandIn):
         self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1").returncode, 0)
         self.assertEqual(self.log.read_text(), "--check --level high a.txt\n--check a.txt\n")
         self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1", "--other", "x").returncode, 2)  # undeclared
+        bad = self.repo({}, {"a.txt": "BAD\n"}, options={"--level": "how strict"})
+        self.assertEqual(self.run_gate(bad, "--base-ref", "HEAD~1", "--level", "high").returncode, 1)
+
+    def test_a_named_parser_that_cannot_read_the_report_cannot_run(self):
+        result = self.run_gate(self.repo({}, {"a.txt": "BAD\n"}, parser="zizmor"), "--base-ref", "HEAD~1", mode="garbage")
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("could not be read as zizmor", result.stderr)
 
     def test_soak_reports_and_passes(self):
         result = self.run_gate(self.repo({}, {"a.txt": "BAD\n"}), "--base-ref", "HEAD~1", "--soak")
@@ -146,6 +153,7 @@ class Contract(StandIn):
         for text, why in ((descriptor(gate_name="other"), "`gate` must be the file's own name"),
                           (descriptor(tool="/opt/homebrew/bin/zizmor"), "a bare command name, not a path"),
                           (descriptor(options={"--soak": "x"}), "`options` cannot declare --soak"),
+                          (descriptor(options={"--artifacts": "x"}), "`options` cannot declare --artifacts"),
                           (json.dumps({"gate": "lint-text"}), "a descriptor has the keys"),
                           ("{", "is not JSON")):
             with self.subTest(why=why):

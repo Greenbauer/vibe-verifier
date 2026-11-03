@@ -63,7 +63,7 @@ KEYS = {"gate", "description", "tool", "args", "files", "output"}
 OPTIONAL = {"options"}
 OUTPUTS = {"sarif": {"parser"}, "json": {"parser", "message", "path", "line"}, "zizmor": {"parser"}}
 FLAG = re.compile(r"^--[a-z][a-z0-9-]*$")
-RESERVED = {"--repo", "--base-ref", "--format", "--soak", "--all", "--help"}  # the flags every descriptor gate has
+RESERVED = {"--repo", "--base-ref", "--format", "--soak", "--all", "--help", "--artifacts"}  # read by every gate (_contract.run_gate)
 # A tool a Python gate runs: the literal, or a constant of that file, it passes to one of gates/_tools.py's resolvers.
 ENSURED = re.compile(r'\bensure(?:_node_tool|_python_tool)?\(\s*(?:"([^"]+)"|([A-Z_]+)\b)')
 CONSTANT = re.compile(r'^([A-Z_]+) = "([^"]+)"$', re.M)

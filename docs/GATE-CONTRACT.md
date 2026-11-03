@@ -793,7 +793,7 @@ catalog's `feature-map` line reads a descriptor's `"gate"` as a gate surface, th
   missing one or a gate name that is not the file's is exit 2.
 - **Options.** `options` maps each flag the gate takes to its help text, such as zizmor's
   `{"--min-severity": "...", "--min-confidence": "..."}`. A flag is `--lowercase-words` and none of the flags every
-  gate has (`--repo`, `--base-ref`, `--format`, `--soak`, `--all`). Each takes one value, and the runner passes it to
+  gate has or the contract reads (`--repo`, `--base-ref`, `--format`, `--soak`, `--all`, `--artifacts`). Each takes one value, and the runner passes it to
   the tool as written, `--flag value` after `args` and before the files, only when the manifest line gives it; an
   undeclared flag on the line is exit 2.
 - **The tool.** A catalog descriptor names a tool pinned in `gates/_tools.py`, resolved on the terms above. A
