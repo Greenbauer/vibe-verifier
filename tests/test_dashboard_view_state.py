@@ -34,12 +34,12 @@ console.log(JSON.stringify({saved,restored:restore(JSON.stringify(saved)),
     def test_url_hash_names_every_view_and_rejects_anything_else(self):
         result = self.node(r'''
 const {parseRoute:parse,routeHash:hash}=require('./dashboard/static/helpers.js');
-const routes=[{view:'prs'},{view:'usage'},{view:'capacity'}];
+const routes=[{view:'prs'},{view:'outcomes'},{view:'usage'},{view:'capacity'}];
 console.log(JSON.stringify({hashes:routes.map(hash),round:routes.map(route=>parse(hash(route))),routes,
   invalid:['','#','#/','#/other','#usage','#/usage/x','#/pr/Greenbauer/vibe-verifier/12','#/pr/a/b','#/pr/a/b/c',
     '#/pr/a/b/1/2','#/pr/a%2Fb/c/1','#/pr/<x>/b/1',null,undefined].map(parse)}));
 ''')
-        self.assertEqual(result['hashes'], ['#/prs', '#/usage', '#/capacity'])
+        self.assertEqual(result['hashes'], ['#/prs', '#/outcomes', '#/usage', '#/capacity'])
         self.assertEqual(result['round'], result['routes'])
         self.assertTrue(all(row == {'view': 'prs'} for row in result['invalid']))
 

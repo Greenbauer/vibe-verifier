@@ -192,6 +192,18 @@ test("a wait of exactly 30 seconds is GitHub's normal pickup; one second more is
   assert.deepStrictEqual(bars.map(bar => bar.attrs.title), ["b: waited 31s for a runner, ran 4m 29s"]);
 });
 
+test("the Outcomes split counts the waits this timeline draws, on the chain that set the round's length", () => {
+  // a waited 30 seconds (not drawn, not counted); b, created when a finished, waited 31 (drawn and counted).
+  const chain = { statuses: [], checks: [check(1, "a", "success"), check(2, "b", "success")],
+    runs: [{ id: 1, name: "CI", jobs: [job(1, "a", at(0), at(0, 30), at(5)), job(2, "b", at(5), at(5, 31), at(10))] }] };
+  assert.deepStrictEqual(timeline.mini(chain, NOW).find("tl-dim").map(bar => bar.attrs.title), ["b: waited 31s for a runner, ran 4m 29s"]);
+  assert.deepStrictEqual(timeline.split(chain), { start: Date.parse(at(0)), ended: Date.parse(at(10)), wait_seconds: 31, running_seconds: 569 });
+  // Only the latest round counts, as the timeline draws only it; a head with no Actions job has none.
+  const rounds = { ...chain, runs: [{ id: 1, name: "CI", jobs: [job(1, "a", at(-60), at(-50), at(-40)), job(2, "b", at(0), at(1), at(3))] }] };
+  assert.deepStrictEqual([timeline.split(rounds).wait_seconds, timeline.split(rounds).running_seconds], [60, 120]);
+  assert.strictEqual(timeline.split({ statuses: pull.statuses, checks: [], runs: [] }), null);
+});
+
 test("another app's queued check says queued, never a runner wait", () => {
   const external = { statuses: [], runs: [], checks: [{ id: 40, name: "ext-ci", category: "pending", status: "queued", started_at: at(40) }] };
   const lane = timeline.timeline(external, NOW).lanes[0];

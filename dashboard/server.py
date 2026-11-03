@@ -24,6 +24,7 @@ FILES = {
     "/assets/capacity.js": ("capacity.js", "text/javascript; charset=utf-8"),
     "/assets/timeline.js": ("timeline.js", "text/javascript; charset=utf-8"),
     "/assets/prs.js": ("prs.js", "text/javascript; charset=utf-8"),
+    "/assets/outcomes.js": ("outcomes.js", "text/javascript; charset=utf-8"),
 }
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
@@ -133,9 +134,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path is None:
             self._deny(400, "invalid path")
             return
-        if path == "/api/dashboard":
+        if path in ("/api/dashboard", "/api/outcomes"):
             try:
-                body = safe_json(self.server.service.snapshot())
+                service = self.server.service
+                body = safe_json(service.snapshot() if path == "/api/dashboard" else service.outcome_view())
             except Exception:
                 self._deny(503, "dashboard source unavailable")
                 return

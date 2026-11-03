@@ -2,7 +2,7 @@
 
 The dashboard is an optional, read-only companion. It shows open pull requests from one configured
 GitHub owner, current-head checks and Actions jobs, explicit bot workflow history, optional local
-usage/capacity telemetry, and optional [work queues](#work-view). It does not change the existing Vibe Verifier runner or gates.
+usage/capacity telemetry, optional [work queues](#work-view), and the [outcomes](#outcomes-view) of recently merged pull requests. It does not change the existing Vibe Verifier runner or gates.
 
 The static view adapts the compact layout, CSS structure, and pure interaction patterns from the
 operator-approved local dashboard prototype dated 2026-09-30. Its synthetic preview records were not
@@ -10,7 +10,7 @@ copied into the live dashboard. Live mode has no built-in data.
 
 ## Navigation, back/forward, and refresh
 
-The current view lives in the URL hash: `#/prs`, `#/work`, `#/usage`, or `#/capacity`. Every view change adds
+The current view lives in the URL hash: `#/prs`, `#/work`, `#/outcomes`, `#/usage`, or `#/capacity`. Every view change adds
 a browser history entry, so the back and forward buttons move between views, and refreshing or
 opening a copied link lands on the same view. An empty or unknown hash, including an older
 `#/pr/<owner>/<repo>/<number>` link, shows pull requests and is rewritten to `#/prs` in place. The
@@ -347,6 +347,57 @@ says so. `tests/test_dashboard_work.py` covers the configuration, the key file, 
 kinds, the columns, failure handling, and that a redirect never carries a key to its target; `tests/test_dashboard_work_todos.py` covers the
 `supabase-todos` kind, including that its key never reaches the page.
 
+## Outcomes view
+
+`#/outcomes` shows where merged pull requests' time went and which checks held the runners
+(`dashboard/static/outcomes.js`). It measures whether hardening the gates works, so it reads only
+pull requests that merged, never the open ones the Pull requests view shows. Top to bottom:
+
+- **Four cards** for pull requests merged in the last 7 days, each with the same number for the 7
+  days before: how many merged, and the median of each part of a pull request's time below.
+- **Merged pull requests**, newest first, each split three ways:
+  - **Waiting for a runner** (or a QA slot) and **checks running** split its merged head's latest
+    round of CI, with the [CI timeline](#ci-timeline)'s own rules (`split` in `timeline.js`, the
+    one place they live): the round is the timeline's, the waits are those of the jobs on its
+    critical path that waited over 30 seconds, and checks running is the rest of the round. A head
+    that ran no Actions job says `No CI`.
+  - **Waiting on the merge** runs from when the pull request was merge-ready, the later of its
+    round finishing and it leaving draft (its last ready-for-review event, or its opening when it
+    never was a draft), to its merge.
+- **Runner time by check**: the time each job held a runner, summed per check (`Workflow / Job`)
+  over every attempt of every run on each pull request's branch while it was open (a job a later
+  attempt lists again counts once), largest first,
+  with the time on self-hosted runners (jobs that asked for the `self-hosted` label: the owner's own
+  fixed pools) and each check's share. A skipped job, which never held a runner, is left out. At
+  most 50 checks are listed.
+
+What it does not count: the operator's own actions on a pull request. Every agent on the operator's
+machine comments, pushes and merges under the operator's GitHub login, so GitHub cannot tell them
+apart; counting them needs agents to have their own GitHub identity first.
+
+**How it reads.** `dashboard/outcomes.py` searches the owner's pull requests merged in the last 14
+days (one GraphQL search, up to ten pages of 50), keeps those in the configured repositories, and
+reads each one that has no record yet, newest first: the Actions runs on its head branch created
+between its opening and its merge, from its own repository (one listing), and the jobs of every
+attempt of each run. A finished run's jobs that the Pull requests view already read are taken from
+its cache instead of asking again. A pull request whose runs are not all finished gets no record and
+is read on a later cycle. A cycle starts at most every five minutes, while the page is open or
+not, and spends at most 60 requests; one that runs out stops and the next goes on where it left
+off. No cycle starts while less than half of the token's hourly REST counter is left, so the open
+pull requests always come first; the page says so while it waits. The page asks `GET /api/outcomes`
+for the records when it opens and at most once a minute after.
+
+**A record is written once.** A merged pull request does not change, so its record is never read
+or updated again, and it is dropped once its merge is more than 14 days old. Records are kept across
+a restart in the state directory (`outcomes`, see [kept across a restart](dashboard-data.md#kept-across-a-restart))
+and deleted, on disk too, when a read meets lost access.
+
+`tests/test_dashboard_outcomes.py` covers the reader: the record, the branch's runs and attempts, the
+live cache, the budget, the window, the counter reserve, failures, the restart and lost access. It
+runs `dashboard/static/outcomes.test.js`: the split, the merge wait, the medians, runner time per
+check, and the view in each state. `timeline.test.js` checks that the split counts exactly the waits
+the timeline draws.
+
 ## Capacity view
 
 `#/capacity` shows what each of the owner's runners is doing now and how busy the lane has been
@@ -560,7 +611,8 @@ suite ID, selects the greatest run attempt for each run ID, and loads jobs from 
 When several runs of one workflow exist on the head (each triggering event starts its own run), only
 the newest copy of each job and check counts toward check totals and attention.
 It re-reads the PR head after collection; a race drops the collected evidence instead of attaching
-it to the new revision. Commit statuses and third-party checks remain separate evidence rows.
+it to the new revision. The [Outcomes view](#outcomes-view) reads merged pull requests on a budget of
+its own and pauses while the token's hourly REST counter is below half. Commit statuses and third-party checks remain separate evidence rows.
 
 GitHub lists a check the base branch requires as "Expected" without creating a check run for it.
 The dashboard reads the rulesets for each pull request's base branch, and the branch's classic
@@ -738,6 +790,9 @@ them under the meter, across both columns.
 - Telemetry: created and atomically replaced by an optional collector, read only by this process,
   bounded to a current snapshot plus seven days of samples, and
   unavailable when deleted.
+- Outcomes: one record per pull request merged in the last 14 days, created once its runs have all
+  finished, never updated, and deleted once the merge is 14 days old or access is lost. Kept in the
+  state directory when there is one (`outcomes`, `outcomes-responses`), otherwise only in memory.
 - Work queues: read from each source at most every five minutes while viewed, held only in memory,
   replaced by the next reading, forgotten when the source refuses the key, and gone when the process
   stops. The key file is the operator's: create it, replace it to rotate the key, delete it (and the
@@ -753,6 +808,7 @@ current-head suite/run/attempt joins, race handling, expected required checks an
 status/step categories, pagination, rate limits,
 and subscription uncertainty. `test_dashboard_bot_history.py` covers bounded history and workflow
 discovery; `test_dashboard_service.py` covers source timestamps and refresh caching.
+`test_dashboard_outcomes.py` covers the Outcomes view's reader and runs its node tests.
 `test_dashboard_state_store.py` covers the files kept across a restart: their mode, the atomic
 replace, the size and age limits, and every file that is refused and deleted.
 `test_dashboard_restart.py` covers what a restart serves and marks old, which failures keep the
