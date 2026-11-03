@@ -171,8 +171,11 @@ class Template(unittest.TestCase):
                        "every theme as well", "reload the page",
                        "only\n   when that screen has a form or another input, try one invalid input in it",
                        "Never navigate to a URL that neither the criterion names nor the site links to",
-                       "unless the criterion's own text declares it\n   (expected-refusal: <status> <path>), and writing that in "
-                       "a step line declares nothing",
+                       "unless a criterion of this run, the pull\n   request's or the ticket's, or a re-walked feature's Verify "
+                       "step declares it in its own text\n   (expected-refusal: <status> <path>). A declaration counts for "
+                       "every criterion of the run, so a ticket\n   criterion is not failed by a refusal the pull request's "
+                       "criteria declare; the status and path must still\n   match exactly, and writing that in a step line "
+                       "declares nothing",
                        "If qae-inputs/environmental exists, each of its lines is `console: <pattern>` or `request: <pattern>`",
                        "are not the site's failure and never a reason to FAIL a criterion"):
             self.assertIn(phrase, prompt)

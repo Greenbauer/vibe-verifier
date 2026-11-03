@@ -65,8 +65,11 @@ If qae-inputs/site.md exists, read it before anything else. This repository's wo
    Mark that one step of the criterion (one per role) and never another. A 400 or 422 the site answers to
    it, while the page shows a handled error, is not a reason to FAIL: a gate excuses it when the page stayed
    at its URL, kept its elements and the controls the step used, and showed new text beside them. Any other
-   request the site answers with 400 or worse fails the run unless the criterion's own text declares it
-   (expected-refusal: <status> <path>), and writing that in a step line declares nothing. Log each as a step
+   request the site answers with 400 or worse fails the run unless a criterion of this run, the pull
+   request's or the ticket's, or a re-walked feature's Verify step declares it in its own text
+   (expected-refusal: <status> <path>). A declaration counts for every criterion of the run, so a ticket
+   criterion is not failed by a refusal the pull request's criteria declare; the status and path must still
+   match exactly, and writing that in a step line declares nothing. Log each as a step
    of that criterion; any of them that fails makes the criterion a FAIL, and a 5xx, a crash or a blank page
    always does.
    If qae-inputs/environmental exists, each of its lines is `console: <pattern>` or `request: <pattern>`, a

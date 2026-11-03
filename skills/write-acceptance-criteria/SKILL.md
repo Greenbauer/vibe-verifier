@@ -43,6 +43,7 @@ other pull request.
   workflow that passes its roles to the criteria job fails any other role there, before a walk.
 - **Expected errors are declared.** A criterion that expects the server to refuse something says so in
   its own text: `expected-refusal: 422 /api/profile`. Otherwise the refused request fails the check.
+  The declaration counts for the whole run, so this also covers a plan's criterion that expects that refusal.
 - **Keep data local to the criterion.** Explorers may run in parallel on one preview. A criterion that
   uses what another one created says so with `[after: AC2]`, so one explorer walks both in order (a
   plain `AC2` in the wording chains too, but the marker survives rewording). Otherwise each criterion
