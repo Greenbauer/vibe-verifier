@@ -116,15 +116,16 @@ test("the view loads from /api/outcomes and shows the week against the week befo
   assert.deepStrictEqual(checks, ["CI / build 4 40m 0s 40m 0s 50%", "QA / explore 2 40m 0s 0s 50%"]);
 });
 
-test("its timers take the Pull requests view's colors: an hour yellow and three hours red, a counted runner wait yellow", async () => {
-  const quick = { runs: [{ id: 1, name: "CI", jobs: [job(11, "build", at(0), at(0, 10), at(10))] }] };
+test("its timers take the Pull requests view's CI-time colors: yellow after an hour, red after three", async () => {
+  // A 70-minute runner wait, then a 4-hour run.
+  const slow = { runs: [{ id: 1, name: "CI", jobs: [job(11, "build", at(0), at(70), at(310))] }], ready: at(0), merged: at(320) };
   const { content } = await rendered({ available: true, window_days: 14, sampled_at: at(500), pending: 0, error: null,
-    pulls: [record(6, { merged: at(400) }), record(1), record(7, { ...quick, merged: at(15) })] });
+    pulls: [record(6, { merged: at(400) }), record(1), record(8, slow)] });
   const tones = content.find("outcome-pulls").slice(1).map(row => row.children.slice(2).map(cell => cell.children[0].className || "none"));
-  // 10-minute wait, 30m 12s running; merge waits of 6h, 1h 19m and 0s.
-  assert.deepStrictEqual(tones, [["age-yellow", "none", "age-red"], ["age-yellow", "none", "age-yellow"], ["none", "none", "none"]]);
+  // 10-minute waits and 30m 12s runs stay plain; merge waits of 6h, 1h 19m and 10m are red, yellow, plain.
+  assert.deepStrictEqual(tones, [["none", "none", "age-red"], ["none", "none", "age-yellow"], ["age-yellow", "age-red", "none"]]);
   const cards = content.find("capacity-card").map(card => card.children[1].className || "none");
-  assert.deepStrictEqual(cards, ["none", "age-yellow", "none", "age-yellow"]);
+  assert.deepStrictEqual(cards, ["none", "none", "none", "age-yellow"]);
 });
 
 test("the view says what it is still reading, why reading paused, and when nothing is read yet", async () => {

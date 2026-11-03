@@ -45,15 +45,10 @@
 
   const shown = value => (value == null ? "None" : duration(value));
 
-  // The colors the Pull requests view gives the same times: CI time, and the idle time after CI
-  // finished, turn yellow after an hour and red after three; a runner wait is yellow once counted
-  // (over 30 seconds, as the CI timeline draws it) and red past the same three hours.
-  const TONES = {
-    wait: seconds => secondsClass(seconds, "ci") || (seconds > 0 ? "age-yellow" : null),
-    running: seconds => secondsClass(seconds, "ci"),
-    merge: seconds => secondsClass(seconds, "ci"),
-  };
-  const timer = (seconds, kind) => el("span", { class: TONES[kind](seconds) }, duration(seconds));
+  // The colors the Pull requests view gives the same times: its CI time ("CI waiting", "CI took")
+  // and its idle time after CI turn yellow after an hour and red after three.
+  const tone = seconds => secondsClass(seconds, "ci");
+  const timer = seconds => el("span", { class: tone(seconds) }, duration(seconds));
 
   function card(label, value, before, tone = null) {
     return el("div", { class: "capacity-card" }, el("span", { class: "muted" }, label), el("b", { class: tone }, value),
@@ -62,7 +57,7 @@
 
   function cards(recent, before) {
     const timed = (label, kind) => card(`${label} (median)`, shown(recent[kind]), shown(before[kind]),
-      recent[kind] == null ? null : TONES[kind](recent[kind]));
+      recent[kind] == null ? null : tone(recent[kind]));
     return el("div", { class: "capacity-cards outcome-cards" },
       card("Merged pull requests", String(recent.count), String(before.count)),
       timed("Waiting for a runner", "wait"), timed("Checks running", "running"), timed("Waiting on the merge", "merge"));
@@ -106,9 +101,9 @@
       el("span", { role: "cell" }, link(`${row.record.repository.split("/").pop()}#${row.record.number}`, row.record.url, owner),
         el("small", { class: "muted outcome-title" }, row.record.title)),
       el("span", { role: "cell" }, formatTime(row.record.merged_at)),
-      el("span", { role: "cell" }, row.round ? timer(row.round.wait_seconds, "wait") : "No CI"),
-      el("span", { role: "cell" }, row.round ? timer(row.round.running_seconds, "running") : "No CI"),
-      el("span", { role: "cell" }, timer(row.merge_wait_seconds, "merge"))));
+      el("span", { role: "cell" }, row.round ? timer(row.round.wait_seconds) : "No CI"),
+      el("span", { role: "cell" }, row.round ? timer(row.round.running_seconds) : "No CI"),
+      el("span", { role: "cell" }, timer(row.merge_wait_seconds))));
     return el("section", { class: "panel" }, el("div", { class: "panel-title" }, el("h2", {}, "MERGED PULL REQUESTS"),
       el("span", { class: "muted" }, "Last 7 days, newest first")),
     table("Merged pull requests", ["Pull request", "Merged", "Waiting for a runner", "Checks running", "Waiting on the merge"],

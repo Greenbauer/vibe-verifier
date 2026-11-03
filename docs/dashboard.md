@@ -364,10 +364,9 @@ pull requests that merged, never the open ones the Pull requests view shows. Top
   - **Waiting on the merge** runs from when the pull request was merge-ready, the later of its
     round finishing and it leaving draft (its last ready-for-review event, or its opening when it
     never was a draft), to its merge.
-  - The times take the colors the Pull requests view gives the same times: checks running and
-    waiting on the merge, like CI time and the idle time after CI, turn yellow after an hour and
-    red after three hours. A runner wait is yellow once it counts at all (over 30 seconds, as the
-    CI timeline draws it) and red after three hours. The cards' medians follow the same rules.
+  - The times take the colors the Pull requests view gives CI time and the idle time after CI:
+    each turns yellow after an hour and red after three hours. The cards' medians follow the same
+    rule.
 - **Runner time by check**: the time each job held a runner, summed per check (`Workflow / Job`)
   over every attempt of every run on each pull request's branch while it was open (a job a later
   attempt lists again counts once), largest first,
