@@ -3,7 +3,7 @@
 // pull request merged (GET /api/outcomes), split with the CI timeline's own rules (VVTimeline.split).
 (function () {
   "use strict";
-  const { element: el, duration, formatTime, link } = VV;
+  const { element: el, duration, formatTime, link, secondsClass } = VV;
   const timeline = typeof module === "object" && module.exports ? require("./timeline.js") : window.VVTimeline;
   const WEEK = 7 * 24 * 3600 * 1000;
   // Read again at most this often while the view is open; the server reads GitHub every five minutes.
@@ -45,17 +45,27 @@
 
   const shown = value => (value == null ? "None" : duration(value));
 
-  function card(label, value, before) {
-    return el("div", { class: "capacity-card" }, el("span", { class: "muted" }, label), el("b", {}, value),
+  // The colors the Pull requests view gives the same times: CI time, and the idle time after CI
+  // finished, turn yellow after an hour and red after three; a runner wait is yellow once counted
+  // (over 30 seconds, as the CI timeline draws it) and red past the same three hours.
+  const TONES = {
+    wait: seconds => secondsClass(seconds, "ci") || (seconds > 0 ? "age-yellow" : null),
+    running: seconds => secondsClass(seconds, "ci"),
+    merge: seconds => secondsClass(seconds, "ci"),
+  };
+  const timer = (seconds, kind) => el("span", { class: TONES[kind](seconds) }, duration(seconds));
+
+  function card(label, value, before, tone = null) {
+    return el("div", { class: "capacity-card" }, el("span", { class: "muted" }, label), el("b", { class: tone }, value),
       el("small", { class: "muted" }, `Previous 7 days: ${before}`));
   }
 
   function cards(recent, before) {
+    const timed = (label, kind) => card(`${label} (median)`, shown(recent[kind]), shown(before[kind]),
+      recent[kind] == null ? null : TONES[kind](recent[kind]));
     return el("div", { class: "capacity-cards outcome-cards" },
       card("Merged pull requests", String(recent.count), String(before.count)),
-      card("Waiting for a runner (median)", shown(recent.wait), shown(before.wait)),
-      card("Checks running (median)", shown(recent.running), shown(before.running)),
-      card("Waiting on the merge (median)", shown(recent.merge), shown(before.merge)));
+      timed("Waiting for a runner", "wait"), timed("Checks running", "running"), timed("Waiting on the merge", "merge"));
   }
 
   // Runner time per check over the week's merged pull requests, largest first, with its share of the
@@ -96,9 +106,9 @@
       el("span", { role: "cell" }, link(`${row.record.repository.split("/").pop()}#${row.record.number}`, row.record.url, owner),
         el("small", { class: "muted outcome-title" }, row.record.title)),
       el("span", { role: "cell" }, formatTime(row.record.merged_at)),
-      el("span", { role: "cell" }, row.round ? duration(row.round.wait_seconds) : "No CI"),
-      el("span", { role: "cell" }, row.round ? duration(row.round.running_seconds) : "No CI"),
-      el("span", { role: "cell" }, duration(row.merge_wait_seconds))));
+      el("span", { role: "cell" }, row.round ? timer(row.round.wait_seconds, "wait") : "No CI"),
+      el("span", { role: "cell" }, row.round ? timer(row.round.running_seconds, "running") : "No CI"),
+      el("span", { role: "cell" }, timer(row.merge_wait_seconds, "merge"))));
     return el("section", { class: "panel" }, el("div", { class: "panel-title" }, el("h2", {}, "MERGED PULL REQUESTS"),
       el("span", { class: "muted" }, "Last 7 days, newest first")),
     table("Merged pull requests", ["Pull request", "Merged", "Waiting for a runner", "Checks running", "Waiting on the merge"],
