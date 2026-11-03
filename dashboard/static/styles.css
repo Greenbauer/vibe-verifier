@@ -345,6 +345,8 @@ button.timeline-name { min-height: 0; padding: 0; border: 0; background: transpa
 .outcome-pulls { grid-template-columns: minmax(0, 2fr) 150px repeat(3, minmax(70px, .7fr)); }
 .outcome-checks { grid-template-columns: minmax(0, 2.4fr) 50px repeat(2, minmax(70px, .7fr)) 50px; }
 .outcome-title { display: block; overflow: hidden; text-overflow: ellipsis; }
+.outcome-table .age-yellow, .outcome-cards .age-yellow { color: var(--yellow); }
+.outcome-table .age-red, .outcome-cards .age-red { color: var(--red); }
 
 /* The pull-request row's columns never add up to more than the panel. Wide minimums need about
    1080px with the sidebar beside the list; below that, these fit down to 651px (the sidebar moves

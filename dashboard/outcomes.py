@@ -250,16 +250,22 @@ class OutcomesReader:
 
     def state(self) -> dict:
         with self._lock:
-            records = copy.deepcopy(list(self.records.values()))
-        return dict(zip(DOCUMENTS, ({"records": records}, self.api.export_cache())))
+            records, kept = copy.deepcopy(list(self.records.values())), {"sampled_at": self.sampled_at, "pending": self.pending}
+        return dict(zip(DOCUMENTS, ({"records": records, **kept}, self.api.export_cache())))
 
     def restore(self, store) -> bool:
-        """Take back the records and answers state() wrote. True when any record came back."""
+        """Take back the records and answers state() wrote, and when they were read, so a restart
+        serves them at once. True when any record came back."""
         kept = store.load(DOCUMENTS[0])
-        rows = kept.get("records") if isinstance(kept, dict) else None
+        kept = kept if isinstance(kept, dict) else {}
+        rows = kept.get("records")
         found = {(row["repository"], row["number"]): row for row in (rows if isinstance(rows, list) else []) if _valid_record(row)}
+        sampled, pending = kept.get("sampled_at"), kept.get("pending")
         with self._lock:
             self.records.update(found)
+            if found and parse_time(sampled) is not None:
+                self.sampled_at = iso_time(parse_time(sampled))
+                self.pending = pending if isinstance(pending, int) and not isinstance(pending, bool) and pending >= 0 else 0
         self.api.import_cache(store.load(DOCUMENTS[1]))
         return bool(found)
 

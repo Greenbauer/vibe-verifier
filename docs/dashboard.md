@@ -364,6 +364,9 @@ pull requests that merged, never the open ones the Pull requests view shows. Top
   - **Waiting on the merge** runs from when the pull request was merge-ready, the later of its
     round finishing and it leaving draft (its last ready-for-review event, or its opening when it
     never was a draft), to its merge.
+  - The times take the colors the Pull requests view gives CI time and the idle time after CI:
+    each turns yellow after an hour and red after three hours. The cards' medians follow the same
+    rule.
 - **Runner time by check**: the time each job held a runner, summed per check (`Workflow / Job`)
   over every attempt of every run on each pull request's branch while it was open (a job a later
   attempt lists again counts once), largest first,
@@ -389,8 +392,9 @@ for the records when it opens and at most once a minute after.
 
 **A record is written once.** A merged pull request does not change, so its record is never read
 or updated again, and it is dropped once its merge is more than 14 days old. Records are kept across
-a restart in the state directory (`outcomes`, see [kept across a restart](dashboard-data.md#kept-across-a-restart))
-and deleted, on disk too, when a read meets lost access.
+a restart in the state directory (`outcomes`, see [kept across a restart](dashboard-data.md#kept-across-a-restart)),
+so a start serves them at once with when they were read, and they are deleted, on disk too, when a
+read meets lost access.
 
 `tests/test_dashboard_outcomes.py` covers the reader: the record, the branch's runs and attempts, the
 live cache, the budget, the window, the counter reserve, failures, the restart and lost access. It
