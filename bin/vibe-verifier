@@ -207,7 +207,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "gates"))
-sys.path.insert(0, os.path.join(ROOT, "bin"))  # each subcommand's module is in bin/cli/ (bin/cli/__init__.py)
+sys.path.insert(0, os.path.join(ROOT, "bin"))  # bin/cli/: every subcommand but the three run from gates/ below
 import _affected_tests  # noqa: E402
 import _merge_grant_cli  # noqa: E402
 import _proof_audit  # noqa: E402
