@@ -24,11 +24,12 @@ from .github import GitHubCollector, _endpoint, _newest_attempts, job_row
 from .head_state import OWNER, owner_kind
 from .util import github_url, iso_time, parse_time
 
-OUTCOME_DAYS = 14
+OUTCOME_DAYS = 30
 REFRESH_SECONDS = 300
 MAX_CALLS = 60
 SEARCH_PAGE = 50
-SEARCH_PAGES = 10
+# GitHub's search returns at most 1000 results.
+SEARCH_PAGES = 20
 DOCUMENTS = ("outcomes", "outcomes-responses")
 # What the page needs of a merged head's job to draw its round; the rest of a job row is left out.
 HEAD_JOB_KEYS = ("id", "name", "status", "conclusion", "category", "created_at", "started_at", "completed_at")

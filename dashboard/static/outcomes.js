@@ -4,7 +4,9 @@
 (function () {
   "use strict";
   const { element: el, duration, formatTime, link, secondsClass } = VV;
-  const timeline = typeof module === "object" && module.exports ? require("./timeline.js") : window.VVTimeline;
+  const node = typeof module === "object" && module.exports;
+  const timeline = node ? require("./timeline.js") : window.VVTimeline;
+  const trend = node ? require("./outcome-trend.js") : window.VVOutcomeTrend;
   const WEEK = 7 * 24 * 3600 * 1000;
   // Read again at most this often while the view is open; the server reads GitHub every five minutes.
   const REFETCH = 60 * 1000;
@@ -118,12 +120,12 @@
     return notes;
   }
 
-  function draw(content, view, owner, { empty, sourceBanner }, now) {
+  function draw(content, view, owner, { empty, sourceBanner, rerender }, now) {
     content.append(...notice(view, sourceBanner));
     const rows = view.pulls.map(outcome);
     const recent = rows.filter(row => now - at(row.record.merged_at) <= WEEK);
     const before = rows.filter(row => now - at(row.record.merged_at) > WEEK && now - at(row.record.merged_at) <= 2 * WEEK);
-    content.append(cards(measures(recent), measures(before)));
+    content.append(cards(measures(recent), measures(before)), trend.panel(rows, now, median, rerender));
     if (!recent.length) { content.append(empty("No merged pull requests in the last 7 days", `Read ${formatTime(view.sampled_at)}.`)); return; }
     content.append(pullTable(recent, owner), checkTable(recent),
       el("p", { class: "muted coverage-note" }, `Read ${formatTime(view.sampled_at)}. Each pull request is read once after it merges.`));

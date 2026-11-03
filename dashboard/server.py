@@ -25,6 +25,7 @@ FILES = {
     "/assets/timeline.js": ("timeline.js", "text/javascript; charset=utf-8"),
     "/assets/prs.js": ("prs.js", "text/javascript; charset=utf-8"),
     "/assets/outcomes.js": ("outcomes.js", "text/javascript; charset=utf-8"),
+    "/assets/outcome-trend.js": ("outcome-trend.js", "text/javascript; charset=utf-8"),
 }
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")

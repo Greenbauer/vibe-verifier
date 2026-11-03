@@ -205,7 +205,8 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
         html = (ROOT / "dashboard/static/index.html").read_text()
         self.assertNotIn("innerHTML", app + helpers + (ROOT / "dashboard/static/capacity.js").read_text()
                          + (ROOT / "dashboard/static/timeline.js").read_text() + (ROOT / "dashboard/static/prs.js").read_text()
-                         + (ROOT / "dashboard/static/outcomes.js").read_text())
+                         + (ROOT / "dashboard/static/outcomes.js").read_text()
+                         + (ROOT / "dashboard/static/outcome-trend.js").read_text())
         for color in ("#090909", "#111111", "#282828"):
             self.assertIn(color, css)
         for color in ("#809cff", "#50d6e8"):
