@@ -1,0 +1,36 @@
+name: Vibe Verifier first-use walk prompt
+description: >-
+  Write the first-use walk's prompt (harnesses/first-use/prompt.md) from the task the pull request body's
+  `## First-use task` section states and the site under test, for a QAE session given nothing else
+  (harnesses/first-use/README.md). Its `walk` output is true only when the body states a task: a workflow runs the
+  walk's session (actions/qae-codex with `artifacts: qae-first-use`) only then, and the verify job's first-use-walk
+  gate decides whether a pull request needed one.
+inputs:
+  body:
+    description: The pull request body, written by the workflow (never read from the checkout).
+    required: true
+  site:
+    description: The URL under test, as the site step declared it.
+    required: true
+  out:
+    description: Where to write the prompt.
+    default: qae-inputs/first-use-prompt.md
+outputs:
+  walk:
+    description: true when the body states a first-use task and the prompt was written, else false.
+    value: ${{ steps.prompt.outputs.walk }}
+runs:
+  using: composite
+  steps:
+    - name: Write the first-use walk's prompt
+      id: prompt
+      shell: bash
+      env:
+        BODY: ${{ inputs.body }}
+        SITE: ${{ inputs.site }}
+        OUT: ${{ inputs.out }}
+      run: |
+        set -euo pipefail
+        rm -f "$OUT"
+        python3 -I "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" first-use-prompt --body "$BODY" --site "$SITE" --out "$OUT"
+        if [ -s "$OUT" ]; then echo "walk=true" >> "$GITHUB_OUTPUT"; else echo "walk=false" >> "$GITHUB_OUTPUT"; fi

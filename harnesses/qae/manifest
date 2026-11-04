@@ -32,6 +32,11 @@ ui-audit --artifacts qae-artifacts --site-file qae-inputs/site-url --soak
 # (explore-codex.yml) has the grade step, so uncomment it there: without grades the gate cannot run.
 # copy-audit --artifacts qae-artifacts --site-file qae-inputs/site-url --soak
 
+# The first-use walk: a second session given only the body's `## First-use task` and the site, which must do the task
+# and get back to where it started (harnesses/first-use/README.md). Its job is a wrapper's for now: the templates
+# have none, so uncomment this only where the workflow runs it and places its artifact at qae-artifacts/first-use/.
+# first-use-walk --artifacts qae-artifacts --body qae-inputs/pr-body.md --soak
+
 # Trace every linked requirement to HEAD proof or an owner that accepted it at the merge base.
 # actions/criteria also runs this line before any browser skip; its job needs a full-history checkout.
 ticket-coverage --body qae-inputs/pr-body.md
