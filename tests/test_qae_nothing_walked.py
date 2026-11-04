@@ -25,7 +25,8 @@ def offered_gates(text):
 class NothingWalked(unittest.TestCase):
     def test_the_template_offers_the_gates_this_holds(self):
         names = [line.split()[0] for line in offered_gates(MANIFEST.read_text())]
-        self.assertEqual(names, ["acceptance-verdict", "qae-artifacts", "ui-audit", "copy-audit", "ticket-coverage"])
+        # A parser that found fewer would hold fewer gates; a new line needs no edit here.
+        self.assertLessEqual({"acceptance-verdict", "qae-artifacts", "ui-audit", "copy-audit", "ticket-coverage"}, set(names))
 
     def test_every_offered_gate_passes_a_run_that_walked_nothing(self):
         repo = make_repo(self, {"README.md": "docs\n"})

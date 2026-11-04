@@ -26,7 +26,7 @@ def jobs(text):
     """{job: [step text, ...]} of a workflow, in order."""
     body = text[text.index("\njobs:\n"):]
     found = {}
-    for job in re.split(r"\n(?=  [\w-]+:\n)", body)[1:]:
+    for job in re.split(r"\n(?=  [\w-]+:[ \t]*(?:#.*)?\n)", body)[1:]:
         found[job.split(":", 1)[0].strip()] = re.split(r"\n(?=      - )", job)[1:]
     return found
 
@@ -44,7 +44,7 @@ def defaults(root, action):
     inputs = text[text.index("\ninputs:\n"):]
     inputs = inputs[:re.search(r"\n\S", inputs[1:]).start() + 1]
     found = {}
-    for name, block in re.findall(r"^  ([\w-]+):\n((?:    .*\n)*)", inputs + "\n", re.MULTILINE):
+    for name, block in re.findall(r"^  ([\w-]+):[ \t]*(?:#.*)?\n((?:    .*\n|[ \t]*\n)*)", inputs + "\n", re.MULTILINE):
         default = re.search(r"^    default: (.*)$", block, re.MULTILINE)
         found[name] = value(default.group(1)) if default else ""
     return found
@@ -98,14 +98,16 @@ class JobContract(unittest.TestCase):
         (tree / "actions" / "grade").mkdir(parents=True)
         (tree / "actions" / "grade" / "action.yml").write_text(
             "name: g\ninputs:\n  out:\n    default: qae-inputs/grades\n"
-            "  site-file:\n    description: d\n    default: qae-inputs/site-url\nruns:\n  using: composite\n")
+            "  site-file:  # read\n    description: >-\n      d\n\n      e\n    default: qae-inputs/site-url\n"
+            "runs:\n  using: composite\n")
         (tree / "harnesses" / "qae").mkdir(parents=True)
         (tree / "harnesses" / "qae" / "manifest").write_text("")
         (tree / "harnesses" / "qae" / "t.yml").write_text(
-            "on: x\njobs:\n  explore:\n    steps:\n      - name: Grade\n"
-            "        uses: Greenbauer/vibe-verifier/actions/grade@0\n"
-            "  verify:\n    steps:\n      - name: Write\n        run: |\n          printf x > qae-inputs/site-url\n"
-            "      - name: Grade\n        uses: Greenbauer/vibe-verifier/actions/grade@0\n")
+            # The verify job first: an explore job read as part of it would see verify's write.
+            "on: x\njobs:\n  verify:\n    steps:\n      - name: Write\n        run: |\n          printf x > qae-inputs/site-url\n"
+            "      - name: Grade\n        uses: Greenbauer/vibe-verifier/actions/grade@0\n"
+            "  explore:  # a separate job\n    steps:\n      - name: Grade\n"
+            "        uses: Greenbauer/vibe-verifier/actions/grade@0\n")
         self.assertEqual(unwritten_reads(tree, "t.yml"), [("explore", "grade", "site-file", "qae-inputs/site-url")])
 
 
