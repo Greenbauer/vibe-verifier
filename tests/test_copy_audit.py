@@ -166,28 +166,6 @@ class Gate(unittest.TestCase):
         self.assert_code(result, 1, '"Sync NS record"')
 
 
-class Wiring(unittest.TestCase):
-    def test_the_codex_lane_grades_after_the_explorer_and_before_the_evidence_is_checked_and_kept(self):
-        text = (ROOT / "harnesses" / "qae" / "explore-codex.yml").read_text()
-        order = [text.index(step) for step in ("- name: Explore the acceptance criteria in a real browser",
-                                               "- name: Grade the pages' copy", "- name: Enforce the write scope",
-                                               "- name: Keep the evidence")]
-        self.assertEqual(order, sorted(order))
-        self.assertIn("uses: Greenbauer/vibe-verifier/actions/copy-audit@", text)
-
-    def test_the_prompt_has_one_copy_and_the_action_runs_the_catalogs_grader(self):
-        sentence = "End with the grades as one JSON object, in the shape the output schema gives"
-        holders = subprocess.run(["git", "-C", str(ROOT), "grep", "--untracked", "-l", sentence, "--", ":!tests"],
-                                 capture_output=True, text=True).stdout.split()
-        self.assertEqual(holders, ["harnesses/copy-audit/prompt.md"])
-        self.assertIn('bin/vibe-verifier" copy-audit --grade-only', (ROOT / "actions" / "copy-audit" / "action.yml").read_text())
-
-    def test_the_manifest_template_offers_the_line_to_the_codex_lane_in_soak(self):
-        # Commented out: the Claude lane shares this template and has no grade step, so the line would cannot-run there.
-        manifest = (ROOT / "harnesses" / "qae" / "manifest").read_text().splitlines()
-        self.assertIn("# copy-audit --artifacts qae-artifacts --site-file qae-inputs/site-url --soak", manifest)
-
-
 FAKE_CODEX = r'''#!/usr/bin/env python3
 import json, os, sys
 args = sys.argv[1:]

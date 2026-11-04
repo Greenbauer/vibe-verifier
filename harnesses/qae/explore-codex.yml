@@ -408,8 +408,13 @@ jobs:
         # plain English, on this runner's Codex login, and writes copy-grades.json beside it, after the explorer so
         # it cannot change them. The copy-audit line of the QAE manifest judges them (harnesses/copy-audit/README.md).
         # Only this lane has the step: the Claude lane's runner holds no Codex login.
+        # The site step's URL and origins, as the verify job declares them to the gate: no qae-inputs/site-url exists here.
         if: ${{ !cancelled() }}
         uses: Greenbauer/vibe-verifier/actions/copy-audit@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
+        with:
+          site: |
+            ${{ steps.site.outputs.url }}
+            ${{ steps.site.outputs.origins }}
       - name: Enforce the write scope
         # The prompt says "write only under qae-artifacts/", and a prompt is a suggestion. Anything
         # else that changed on the runner, tracked or untracked, fails the job here so it can never

@@ -8,9 +8,14 @@ inputs:
   artifacts:
     description: The explorer's artifact directory, where actions/qae-browser's hook wrote copy.jsonl.
     default: qae-artifacts
+  site:
+    description: >-
+      The URLs the site step declared, one a line (its `url` and any `origins`); only pages under them are graded. The
+      explore job has no qae-inputs/site-url: the verify job writes that file, after this step.
+    default: ""
   site-file:
-    description: The URLs the site step declared, one a line; only pages under them are graded. Empty grades every page.
-    default: qae-inputs/site-url
+    description: A file of those URLs, one a line, used when `site` is empty. Both empty grades every page.
+    default: ""
   codex-home:
     description: The Codex home holding the runner's login, as actions/qae-codex's. Empty means $HOME/.codex-qae.
     default: ""
@@ -36,6 +41,7 @@ runs:
       shell: bash
       env:
         VV_ARTIFACTS: ${{ inputs.artifacts }}
+        VV_SITE: ${{ inputs.site }}
         VV_SITE_FILE: ${{ inputs.site-file }}
         VV_CODEX_HOME: ${{ inputs.codex-home }}
         VV_MODEL: ${{ inputs.model }}
@@ -45,6 +51,10 @@ runs:
       run: |
         set -euo pipefail
         site=()
+        if [ -n "${VV_SITE//[[:space:]]/}" ]; then
+          VV_SITE_FILE="$RUNNER_TEMP/copy-audit-site-url"
+          printf '%s\n' "$VV_SITE" > "$VV_SITE_FILE"
+        fi
         if [ -n "$VV_SITE_FILE" ]; then site=(--site-file "$VV_SITE_FILE"); fi
         code=0
         python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" copy-audit --grade-only --artifacts "$VV_ARTIFACTS" "${site[@]}" \
