@@ -10,6 +10,7 @@ import sys
 from _acceptance import (annotations, baseline_problems, body_criteria as read_criteria, carried, declares_none,
                          NO_CRITERIA, no_criteria_message, not_required, split_ticket, ticket_items)
 import qae_artifacts
+from _qae_rules import ENVIRONMENTAL
 from cli.qae_shards import shard_plan
 from cli.runner import GATES, fail, judged_entries, read_text
 
@@ -116,8 +117,8 @@ def manifest_artifacts_options(args):
         return None
     parser = argparse.ArgumentParser(prog="qae-artifacts", add_help=False)
     parser.add_argument("--widths", type=qae_artifacts.width_list, default=None)
-    parser.add_argument("--allow-console", action="append", default=[])
-    parser.add_argument("--allow-request", action="append", default=[])
+    for _, option, _ in ENVIRONMENTAL:
+        parser.add_argument(option, action="append", default=[])
     try:
         return parser.parse_known_args(lines[0])[0]
     except SystemExit:
@@ -136,8 +137,8 @@ def manifest_environmental(args):
     options = manifest_artifacts_options(args)
     if not options:
         return []
-    return (["console: %s" % pattern for pattern in options.allow_console]
-            + ["request: %s" % pattern for pattern in options.allow_request])
+    return ["%s: %s" % (kind, pattern) for kind, option, _ in ENVIRONMENTAL
+            for pattern in getattr(options, option[2:].replace("-", "_"))]
 
 
 def add_arguments(parser):
