@@ -88,27 +88,37 @@ def outcome_findings(verdict, lines):
     return found
 
 
+def shots(calls, k):
+    """The indexes of the calls that saved step k's screenshot."""
+    return [i for i, (name, args, _) in enumerate(calls)
+            if name == "browser_take_screenshot" and re.search(r"(^|/)step-%s\.png$" % k, saved_to(args))]
+
+
+def not_a_person(name, args):
+    return name in NOT_A_PERSON or (name == "browser_tabs" and '"new"' in args)
+
+
+def page_at(calls, index):
+    """The page the browser was on at call `index`: the last Page URL a call up to it reported."""
+    urls = [url for _, _, result in calls[:index + 1] for url in page_urls(result)]
+    return page(urls[-1]) if urls else ""
+
+
 def session_findings(walk, last):
     """What the session log shows from step 1's screenshot to the last step's: calls no person makes, and the page
     the walk ended on when it is not the page it started on."""
     calls = [call for session in session_calls(walk) for call in session]
     if not calls:
         raise CannotRun("first-use/ holds no session log (session-*/session.md): playwright-mcp ran without --save-session")
-    shots = {k: [i for i, (name, args, _) in enumerate(calls)
-                 if name == "browser_take_screenshot" and re.search(r"(^|/)step-%s\.png$" % k, saved_to(args))]
-             for k in ("1", last)}
-    if not shots["1"] or not shots[last]:
+    first, final = shots(calls, "1"), shots(calls, last)
+    if not first or not final:
         return [Finding("the first-use walk's session log has no screenshot of step 1 and of step %s" % last)]
-    start, end, found = shots["1"][0], shots[last][-1], []
-    for name, args, _ in calls[start:end]:
-        if name in NOT_A_PERSON or (name == "browser_tabs" and '"new"' in args):
-            found.append(Finding("after it started, the first-use walk called %s, which no person can do with the page "
-                                 "in front of them" % name))
-    def at(index):
-        urls = [url for _, _, result in calls[:index + 1] for url in page_urls(result)]
-        return page(urls[-1]) if urls else ""
-    if at(start) != at(end):
-        found.append(Finding("the first-use walk ended on %s, not where it started (%s)" % (at(end) or "no page", at(start))))
+    start, end = first[0], final[-1]
+    found = [Finding("after it started, the first-use walk called %s, which no person can do with the page in front "
+                     "of them" % name) for name, args, _ in calls[start:end] if not_a_person(name, args)]
+    if page_at(calls, start) != page_at(calls, end):
+        found.append(Finding("the first-use walk ended on %s, not where it started (%s)" % (
+            page_at(calls, end) or "no page", page_at(calls, start))))
     return found
 
 
