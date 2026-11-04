@@ -1,0 +1,64 @@
+{
+ "about": "The site record.py serves while it records, and what each scenario's pages did (the ground truth the recorded output is read against). {SITE}, {OTHER} and {CLOSED} are the fixed local origins, {SOCKET} is {CLOSED} as a ws: URL. requests: every request the explorer's network record lists (static: false), with the status the page got or FAILED and Chromium's reason. hidden: requests it leaves out, which static: true lists. answered: requests the page record must hold as answered below 400, static ones included. console: [kind, text the entry starts with or holds] per distinct error the console log holds; pages: the page record's URL for each.",
+ "pages": {
+  "/errors": "<title>errors</title><h1>Errors</h1><input type='password' aria-label='Loose password'><script>\nconst quiet = request => request.catch(() => {});\nconsole.error('site error');\nquiet(fetch('/api/missing')); quiet(fetch('/api/private')); quiet(fetch('/api/boom'));\nquiet(fetch('{OTHER}/api/data')); quiet(fetch('{OTHER}/api/boom')); quiet(fetch('{CLOSED}/api/down'));\nnew WebSocket('{SOCKET}/socket');\nconst img = new Image(); img.src = '/img/never.svg'; document.body.append(img); setTimeout(() => { img.removeAttribute('src'); img.remove(); }, 200);\nPromise.reject('rejected string');\nsetTimeout(() => { throw new Error('boom'); }, 50);\n</script>",
+  "/shop": "<title>shop</title><h1>Shop</h1><a id='pay' target='_blank' href='{OTHER}/checkout?session=1'>Pay</a>",
+  "/dashboard": "<title>dashboard</title><h1>Dashboard</h1><img src='/img/logo.svg' alt='logo'><script>fetch('/api/items')</script>",
+  "/developers": "<title>developers</title><h1>Developers</h1><script>\nconst quiet = request => request.catch(() => {});\nconst img = new Image(); img.src = '/img/logo.svg'; document.body.append(img); setTimeout(() => { img.removeAttribute('src'); img.remove(); }, 200);\nfor (const path of ['/api/items', '/api/slow']) { const stop = new AbortController(); quiet(fetch(path, { signal: stop.signal })); setTimeout(() => stop.abort(), 100); }\n</script>",
+  "/form": "<title>order</title><main><h1>Order</h1><form><label>Quantity <input name='quantity'></label><button>Save</button></form></main><script>\ndocument.querySelector('form').addEventListener('submit', async event => { event.preventDefault();\n  const answer = await fetch('/api/quantity', { method: 'POST', body: JSON.stringify({ quantity: event.target.quantity.value }) });\n  if (!answer.ok) event.target.insertAdjacentHTML('beforeend', '<p>Quantity must be a positive number</p>'); });\n</script>",
+  "/orders": "<title>orders</title><h1>Orders</h1><p id='state'>loading</p><script>fetch('/api/orders').then(answer => { document.getElementById('state').textContent = answer.ok ? '2 orders' : 'Something went wrong'; })</script>",
+  "/login": "<title>login</title><h1>Welcome back</h1><form><label>Email address <input type='email'></label><label>Password <input type='password'></label><button>Sign in</button></form><p role='status'></p><script>\nlet signedIn = 0;\ndocument.querySelector('form').addEventListener('submit', async event => { event.preventDefault();\n  const password = document.querySelector('input[type=password]').value;\n  const answer = await fetch('/auth/token', { method: 'POST', body: JSON.stringify({ password }) });\n  document.querySelector('[role=status]').textContent = answer.ok ? 'Signed in (' + ++signedIn + ')' : 'Invalid login'; });\n</script>"
+ },
+ "other_pages": {
+  "/checkout": "<title>checkout</title><h1>Hosted checkout</h1><script>console.error('checkout error'); throw new Error('checkout boom');</script>"
+ },
+ "truth": {
+  "errors": {
+   "requests": [["GET", "{SITE}/api/missing", "404"], ["GET", "{SITE}/api/private", "401"], ["GET", "{SITE}/api/boom", "500"],
+                ["GET", "{OTHER}/api/data", "200"], ["GET", "{OTHER}/api/boom", "500"],
+                ["GET", "{CLOSED}/api/down", "FAILED net::ERR_CONNECTION_REFUSED"],
+                ["GET", "{SITE}/img/never.svg", "FAILED net::ERR_ABORTED"]],
+   "hidden": [["GET", "{SITE}/errors", "200"]],
+   "answered": ["GET {SITE}/errors", "GET {OTHER}/api/data"],
+   "console": [["console error", "site error @ {SITE}/errors:"],
+               ["console error", "Failed to load resource: the server responded with a status of 404 (Not Found) @ {SITE}/api/missing:"],
+               ["console error", "Failed to load resource: the server responded with a status of 401 (Unauthorized) @ {SITE}/api/private:"],
+               ["console error", "Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ {SITE}/api/boom:"],
+               ["console error", "Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ {OTHER}/api/boom:"],
+               ["console error", "Failed to load resource: net::ERR_CONNECTION_REFUSED @ {CLOSED}/api/down:"],
+               ["console error", "WebSocket connection to '{SOCKET}/socket' failed"],
+               ["uncaught exception", "rejected string"],
+               ["uncaught exception", "Error: boom\n    at {SITE}/errors:"]],
+   "pages": ["{SITE}/errors"]
+  },
+  "cancel": {
+   "requests": [["GET", "{SITE}/api/items", "200"], ["GET", "{SITE}/img/logo.svg", "FAILED net::ERR_ABORTED"],
+                ["GET", "{SITE}/api/items", "FAILED net::ERR_ABORTED"], ["GET", "{SITE}/api/slow", "FAILED net::ERR_ABORTED"]],
+   "hidden": [["GET", "{SITE}/dashboard", "200"], ["GET", "{SITE}/img/logo.svg", "200"], ["GET", "{SITE}/developers", "200"]],
+   "answered": ["GET {SITE}/dashboard", "GET {SITE}/img/logo.svg", "GET {SITE}/api/items", "GET {SITE}/developers"],
+   "console": [], "pages": []
+  },
+  "tab": {
+   "requests": [], "hidden": [["GET", "{SITE}/shop", "200"]], "answered": ["GET {SITE}/shop", "GET {OTHER}/checkout?session=1"],
+   "console": [["console error", "checkout error @ {OTHER}/checkout?session=1:"],
+               ["uncaught exception", "Error: checkout boom\n    at {OTHER}/checkout?session=1:"]],
+   "pages": ["{OTHER}/checkout"]
+  },
+  "probe": {
+   "requests": [["POST", "{SITE}/api/quantity", "422"]], "hidden": [["GET", "{SITE}/form", "200"]], "answered": ["GET {SITE}/form"],
+   "console": [["console error", "Failed to load resource: the server responded with a status of 422 (Unprocessable Content) @ {SITE}/api/quantity:"]],
+   "pages": ["{SITE}/form"]
+  },
+  "retry": {
+   "requests": [["GET", "{SITE}/api/orders", "500"], ["GET", "{SITE}/api/orders", "200"]], "hidden": [["GET", "{SITE}/orders", "200"]],
+   "answered": ["GET {SITE}/orders", "GET {SITE}/api/orders"],
+   "console": [["console error", "Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ {SITE}/api/orders:"]],
+   "pages": ["{SITE}/orders"]
+  },
+  "secrets": {
+   "requests": [["POST", "{SITE}/auth/token", "200"], ["POST", "{SITE}/auth/token", "200"], ["POST", "{SITE}/auth/token", "200"]],
+   "hidden": [["GET", "{SITE}/login", "200"]], "answered": ["GET {SITE}/login", "POST {SITE}/auth/token"],
+   "console": [], "pages": []
+  }
+ }
+}

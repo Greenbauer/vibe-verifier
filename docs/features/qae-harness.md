@@ -41,6 +41,7 @@ The QAE harness: an explorer walks a pull request's acceptance criteria (and, op
 - source: `gates/_refusals.py`
 - source: `tools/qae-browser/**`
 - source: `tools/codex/**`
+- source: `tests/fixtures/playwright-mcp/**`
 
 ## Reach
 
@@ -146,6 +147,19 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_qae_prompt_rules.py::test_the_verdict_lines_the_prompt_shows_pass_the_gate`
 - `tests/test_qae_prompt_rules.py::test_the_marked_steps_are_the_gates_markers`
 - `tests/test_qae_prompt_rules.py::test_a_step_logged_and_shot_where_the_prompt_says_is_a_step_the_gates_count`
+- `tests/test_qae_recorded.py::test_the_fixtures_were_recorded_with_the_pinned_toolchain`
+- `tests/test_qae_recorded.py::test_the_fixtures_were_recorded_with_each_lanes_arguments`
+- `tests/test_qae_recorded.py::test_every_failure_on_the_errors_page_is_one_finding`
+- `tests/test_qae_recorded.py::test_a_cancelled_request_is_excused_only_by_its_own_answer`
+- `tests/test_qae_recorded.py::test_a_tab_a_link_opened_logs_its_own_errors_and_only_the_page_record_says_whose`
+- `tests/test_qae_recorded.py::test_the_forms_422_to_the_marked_probe_is_excused`
+- `tests/test_qae_recorded.py::test_a_step_retried_after_a_500_counts_once_the_changed_paths_are_known`
+- `tests/test_qae_recorded.py::test_no_spelling_of_a_secret_the_recording_holds_survives_the_codex_lanes_redaction`
+- `tests/test_qae_recorded_parsers.py::test_every_line_of_every_network_record_is_a_request_the_page_made_or_says_what_it_is`
+- `tests/test_qae_recorded_parsers.py::test_the_entries_group_into_the_errors_each_page_had_and_name_what_they_are_about`
+- `tests/test_qae_recorded_parsers.py::test_every_call_is_listed_as_made_with_what_it_saved_where_it_was_and_what_it_logged`
+- `tests/test_qae_recorded_parsers.py::test_every_snapshot_line_naming_an_element_parses`
+- `tests/test_qae_recorded_parsers.py::test_it_names_the_page_of_every_console_error_and_holds_every_answer`
 
 ## Gotchas
 
@@ -172,4 +186,5 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - The evidence artifact is `qae-artifacts-<run_attempt>` (`-<n>` appended for an explorer past the first), and the verify job downloads every attempt's and takes each explorer's newest, so one failed explorer can be run again alone. It fails when the explore job's `attempt` output is newer than any evidence. A consumer copy that still names it `qae-artifacts` in both jobs hands a re-run's verify job whichever attempt's artifact GitHub returns.
 - A step the explorer retried after an environment error counts only on the evidence `gates/_retry.py` names: it is step k+1, makes the last of step k's page-changing calls again with the same arguments but snapshot refs and descriptions (per the session log; read-only tools left out, from the pinned playwright-mcp's own list), the log numbers no step twice, no other step takes its action, and step k's own network or console record, saved by its tool after step k's screenshot and before the retry changes the page, showing a 5xx, a failed connection or websocket on a URL no changed path names, or Vercel's deployment protection (read from the page URL playwright-mcp reports, since the network record hides its redirects), and nothing of that kind on a URL a changed path does name. Which URL a changed path names is a word match, so it errs toward no retry, and a retry that does not count fails `qae-artifacts`. Whether the retried step then held is still the explorer's verdict: a counted retry excuses a repeat of the same error, by status and URL anywhere in the run, so a FAIL after it rests on acceptance-verdict alone. A consumer manifest without `--changed-files` on its `qae-artifacts` line counts only the protection class.
 - The explorer's invalid-input probe, the step it logs `invalid input:` (one per criterion and role), excuses a 400 or 422 only on the evidence `gates/_probe.py` names: Chromium's console line for the answer is the only 400 or 422 the step's calls logged, logged by its last page-changing call or a read after it (the call's `events` field), with no script run in the step; the network records list it only to a write; and the whole-page snapshot a call of the step wrote right before that action (never one of an earlier step) and the last one after the answer (never a script's result; `gates/_snapshot.py` compares them) show the same URL, 90% of the elements and every control the step used still under the same ref, role and name (a control named by a selector cannot be checked, so is not excused), and an element's own text the page did not show before, holding no value typed in the session, under a new ref, at most four levels above a used control that is not the page's top and holds no landmark. The excuse is by status and URL, so it is withdrawn when the same answer came to another step: a console line no counted probe logged, or more request numbers in the network records than lines. A 5xx, another status or an unmarked step is never excused. Whether the new text is an error message, and which write the form sent, are not read: the explorer's verdict still judges the criterion. A walk whose sending step took no whole-page snapshot of its own right before the action (one that entered the value in an earlier step and only saved in this one, say) is not excused, so consumers benefit once their prompt copy is refreshed.
+- The gate's tests read what the pinned playwright-mcp really wrote, recorded in `tests/fixtures/playwright-mcp/` with each lane's own arguments ([harnesses/qae/README.md](../../harnesses/qae/README.md#what-the-pinned-build-writes-recorded)). A pull request that bumps `tools/qae-browser/` or changes a lane's playwright-mcp arguments (`harnesses/qae/explore.yml`'s `--mcp-config`, `actions/qae-codex`'s `args`) fails `tests/test_qae_recorded.py` until it runs `python3 tests/fixtures/playwright-mcp/record.py` (node on PATH; it installs the toolchain and its chromium) and commits what that writes. A format the new build changed then fails the recorded tests in the same pull request. The recordings cannot see a change the hooks make inside the browser (`secret-names.js` resolving a name): those stay with the `QA browser tests` job.
 - `actions/qae-browser` reads the names of the missing system packages from the pinned Playwright's `install-deps --dry-run` report. A Playwright bump that changes that report fails the step (never reads as nothing missing), and the catalog's `QA browser tests` CI job is where that shows first.

@@ -1,0 +1,661 @@
+{
+ "lanes": {
+  "claude": [
+   "--browser",
+   "chromium",
+   "--headless",
+   "--isolated",
+   "--output-dir",
+   "qae-artifacts",
+   "--save-session",
+   "--viewport-size",
+   "1280x800",
+   "--init-page",
+   "console-pages.js",
+   "--init-page",
+   "ui-audit.js"
+  ],
+  "codex": [
+   "--browser",
+   "chromium",
+   "--headless",
+   "--isolated",
+   "--output-dir",
+   "qae-artifacts",
+   "--save-session",
+   "--viewport-size",
+   "1280x800",
+   "--init-page",
+   "console-pages.js",
+   "--init-page",
+   "ui-audit.js",
+   "--storage-state",
+   "<storage-state>",
+   "--config",
+   "<config>",
+   "--init-page",
+   "secret-names.js"
+  ]
+ },
+ "lockfile_sha256": "76ddb69893f29f99968e6c2db4611b299caf023c65a6b7f45e1cb80dd0b6d8f5",
+ "origins": {
+  "closed": "http://127.0.0.1:47813",
+  "other": "http://127.0.0.1:47812",
+  "site": "http://127.0.0.1:47811",
+  "socket": "ws://127.0.0.1:47813"
+ },
+ "record": "python3 tests/fixtures/playwright-mcp/record.py",
+ "scenarios": {
+  "cancel": {
+   "answered": [
+    "GET http://127.0.0.1:47811/dashboard",
+    "GET http://127.0.0.1:47811/img/logo.svg",
+    "GET http://127.0.0.1:47811/api/items",
+    "GET http://127.0.0.1:47811/developers"
+   ],
+   "calls": [
+    [
+     "browser_navigate",
+     ""
+    ],
+    [
+     "browser_wait_for",
+     ""
+    ],
+    [
+     "browser_take_screenshot",
+     "qae-artifacts/qae/AC1-step-1.png"
+    ],
+    [
+     "browser_network_requests",
+     "qae-artifacts/qae/AC1-network-dashboard.txt"
+    ],
+    [
+     "browser_navigate",
+     ""
+    ],
+    [
+     "browser_wait_for",
+     ""
+    ],
+    [
+     "browser_take_screenshot",
+     "qae-artifacts/qae/AC1-step-2.png"
+    ],
+    [
+     "browser_network_requests",
+     "qae-artifacts/qae/AC1-network-developers.txt"
+    ],
+    [
+     "browser_close",
+     ""
+    ]
+   ],
+   "console": [],
+   "cookie": false,
+   "hidden": [
+    [
+     "GET",
+     "http://127.0.0.1:47811/dashboard",
+     "200"
+    ],
+    [
+     "GET",
+     "http://127.0.0.1:47811/img/logo.svg",
+     "200"
+    ],
+    [
+     "GET",
+     "http://127.0.0.1:47811/developers",
+     "200"
+    ]
+   ],
+   "lane": "claude",
+   "pages": [],
+   "requests": [
+    [
+     "GET",
+     "http://127.0.0.1:47811/api/items",
+     "200"
+    ],
+    [
+     "GET",
+     "http://127.0.0.1:47811/img/logo.svg",
+     "FAILED net::ERR_ABORTED"
+    ],
+    [
+     "GET",
+     "http://127.0.0.1:47811/api/items",
+     "FAILED net::ERR_ABORTED"
+    ],
+    [
+     "GET",
+     "http://127.0.0.1:47811/api/slow",
+     "FAILED net::ERR_ABORTED"
+    ]
+   ],
+   "screenshots": [
+    "qae/AC1-step-1.png",
+    "qae/AC1-step-2.png"
+   ],
+   "served": [
+    "GET http://127.0.0.1:47811/api/items 200",
+    "GET http://127.0.0.1:47811/api/items 200",
+    "GET http://127.0.0.1:47811/api/slow 200",
+    "GET http://127.0.0.1:47811/dashboard 200",
+    "GET http://127.0.0.1:47811/developers 200",
+    "GET http://127.0.0.1:47811/favicon.ico 200",
+    "GET http://127.0.0.1:47811/favicon.ico 200",
+    "GET http://127.0.0.1:47811/img/logo.svg 200",
+    "GET http://127.0.0.1:47811/img/logo.svg 200"
+   ]
+  },
+  "errors": {
+   "answered": [
+    "GET http://127.0.0.1:47811/errors",
+    "GET http://127.0.0.1:47812/api/data"
+   ],
+   "calls": [
+    [
+     "browser_navigate",
+     ""
+    ],
+    [
+     "browser_wait_for",
+     ""
+    ],
+    [
+     "browser_take_screenshot",
+     "qae-artifacts/qae/AC1-step-1.png"
+    ],
+    [
+     "browser_network_requests",
+     ""
+    ],
+    [
+     "browser_network_requests",
+     ""
+    ],
+    [
+     "browser_network_requests",
+     "qae-artifacts/qae/AC1-network.txt"
+    ],
+    [
+     "browser_console_messages",
+     ""
+    ],
+    [
+     "browser_console_messages",
+     "qae-artifacts/qae/AC1-step-1-console.txt"
+    ],
+    [
+     "browser_close",
+     ""
+    ]
+   ],
+   "console": [
+    [
+     "console error",
+     "site error @ http://127.0.0.1:47811/errors:"
+    ],
+    [
+     "console error",
+     "Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:47811/api/missing:"
+    ],
+    [
+     "console error",
+     "Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://127.0.0.1:47811/api/private:"
+    ],
+    [
+     "console error",
+     "Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:47811/api/boom:"
+    ],
+    [
+     "console error",
+     "Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:47812/api/boom:"
+    ],
+    [
+     "console error",
+     "Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:47813/api/down:"
+    ],
+    [
+     "console error",
+     "WebSocket connection to 'ws://127.0.0.1:47813/socket' failed"
+    ],
+    [
+     "uncaught exception",
+     "rejected string"
+    ],
+    [
+     "uncaught exception",
+     "Error: boom\n    at http://127.0.0.1:47811/errors:"
+    ]
+   ],
+   "cookie": false,
+   "hidden": [
+    [
+     "GET",
+     "http://127.0.0.1:47811/errors",
+     "200"
+    ]
+   ],
+   "lane": "claude",
+   "pages": [
+    "http://127.0.0.1:47811/errors"
+   ],
+   "requests": [
+    [
+     "GET",
+     "http://127.0.0.1:47811/api/missing",
+     "404"
+    ],
+    [
+     "GET",
+     "http://127.0.0.1:47811/api/private",
+     "401"
+    ],
+    [
+     "GET",
+     "http://127.0.0.1:47811/api/boom",
+     "500"
+    ],
+    [
+     "GET",
+     "http://127.0.0.1:47812/api/data",
+     "200"
+    ],
+    [
+     "GET",
+     "http://127.0.0.1:47812/api/boom",
+     "500"
+    ],
+    [
+     "GET",
+     "http://127.0.0.1:47813/api/down",
+     "FAILED net::ERR_CONNECTION_REFUSED"
+    ],
+    [
+     "GET",
+     "http://127.0.0.1:47811/img/never.svg",
+     "FAILED net::ERR_ABORTED"
+    ]
+   ],
+   "screenshots": [
+    "qae/AC1-step-1.png"
+   ],
+   "served": [
+    "GET http://127.0.0.1:47811/api/boom 500",
+    "GET http://127.0.0.1:47811/api/missing 404",
+    "GET http://127.0.0.1:47811/api/private 401",
+    "GET http://127.0.0.1:47811/errors 200",
+    "GET http://127.0.0.1:47811/favicon.ico 200",
+    "GET http://127.0.0.1:47811/img/never.svg 200",
+    "GET http://127.0.0.1:47812/api/boom 500",
+    "GET http://127.0.0.1:47812/api/data 200"
+   ]
+  },
+  "probe": {
+   "answered": [
+    "GET http://127.0.0.1:47811/form"
+   ],
+   "calls": [
+    [
+     "browser_navigate",
+     ""
+    ],
+    [
+     "browser_take_screenshot",
+     "qae-artifacts/qae/AC1-step-1.png"
+    ],
+    [
+     "browser_snapshot",
+     ""
+    ],
+    [
+     "browser_type",
+     ""
+    ],
+    [
+     "browser_snapshot",
+     ""
+    ],
+    [
+     "browser_click",
+     ""
+    ],
+    [
+     "browser_wait_for",
+     ""
+    ],
+    [
+     "browser_snapshot",
+     ""
+    ],
+    [
+     "browser_take_screenshot",
+     "qae-artifacts/qae/AC1-step-2.png"
+    ],
+    [
+     "browser_network_requests",
+     ""
+    ],
+    [
+     "browser_console_messages",
+     ""
+    ],
+    [
+     "browser_close",
+     ""
+    ]
+   ],
+   "console": [
+    [
+     "console error",
+     "Failed to load resource: the server responded with a status of 422 (Unprocessable Content) @ http://127.0.0.1:47811/api/quantity:"
+    ]
+   ],
+   "cookie": false,
+   "hidden": [
+    [
+     "GET",
+     "http://127.0.0.1:47811/form",
+     "200"
+    ]
+   ],
+   "lane": "claude",
+   "pages": [
+    "http://127.0.0.1:47811/form"
+   ],
+   "requests": [
+    [
+     "POST",
+     "http://127.0.0.1:47811/api/quantity",
+     "422"
+    ]
+   ],
+   "screenshots": [
+    "qae/AC1-step-1.png",
+    "qae/AC1-step-2.png"
+   ],
+   "served": [
+    "GET http://127.0.0.1:47811/favicon.ico 200",
+    "GET http://127.0.0.1:47811/form 200",
+    "POST http://127.0.0.1:47811/api/quantity 422"
+   ]
+  },
+  "retry": {
+   "answered": [
+    "GET http://127.0.0.1:47811/orders",
+    "GET http://127.0.0.1:47811/api/orders"
+   ],
+   "calls": [
+    [
+     "browser_navigate",
+     ""
+    ],
+    [
+     "browser_wait_for",
+     ""
+    ],
+    [
+     "browser_take_screenshot",
+     "qae-artifacts/qae/AC1-step-1.png"
+    ],
+    [
+     "browser_network_requests",
+     "qae-artifacts/qae/AC1-step-1-network.txt"
+    ],
+    [
+     "browser_console_messages",
+     "qae-artifacts/qae/AC1-step-1-console.txt"
+    ],
+    [
+     "browser_navigate",
+     ""
+    ],
+    [
+     "browser_wait_for",
+     ""
+    ],
+    [
+     "browser_take_screenshot",
+     "qae-artifacts/qae/AC1-step-2.png"
+    ],
+    [
+     "browser_network_requests",
+     ""
+    ],
+    [
+     "browser_close",
+     ""
+    ]
+   ],
+   "console": [
+    [
+     "console error",
+     "Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:47811/api/orders:"
+    ]
+   ],
+   "cookie": false,
+   "hidden": [
+    [
+     "GET",
+     "http://127.0.0.1:47811/orders",
+     "200"
+    ]
+   ],
+   "lane": "claude",
+   "pages": [
+    "http://127.0.0.1:47811/orders"
+   ],
+   "requests": [
+    [
+     "GET",
+     "http://127.0.0.1:47811/api/orders",
+     "500"
+    ],
+    [
+     "GET",
+     "http://127.0.0.1:47811/api/orders",
+     "200"
+    ]
+   ],
+   "screenshots": [
+    "qae/AC1-step-1.png",
+    "qae/AC1-step-2.png"
+   ],
+   "served": [
+    "GET http://127.0.0.1:47811/api/orders 200",
+    "GET http://127.0.0.1:47811/api/orders 500",
+    "GET http://127.0.0.1:47811/favicon.ico 200",
+    "GET http://127.0.0.1:47811/favicon.ico 200",
+    "GET http://127.0.0.1:47811/orders 200",
+    "GET http://127.0.0.1:47811/orders 200"
+   ]
+  },
+  "secrets": {
+   "answered": [
+    "GET http://127.0.0.1:47811/login",
+    "POST http://127.0.0.1:47811/auth/token"
+   ],
+   "calls": [
+    [
+     "browser_navigate",
+     ""
+    ],
+    [
+     "browser_type",
+     ""
+    ],
+    [
+     "browser_type",
+     ""
+    ],
+    [
+     "browser_click",
+     ""
+    ],
+    [
+     "browser_wait_for",
+     ""
+    ],
+    [
+     "browser_fill_form",
+     ""
+    ],
+    [
+     "browser_click",
+     ""
+    ],
+    [
+     "browser_wait_for",
+     ""
+    ],
+    [
+     "browser_run_code_unsafe",
+     ""
+    ],
+    [
+     "browser_run_code_unsafe",
+     ""
+    ],
+    [
+     "browser_evaluate",
+     ""
+    ],
+    [
+     "browser_take_screenshot",
+     "qae-artifacts/qae/AC1-step-1.png"
+    ],
+    [
+     "browser_network_requests",
+     ""
+    ],
+    [
+     "browser_console_messages",
+     ""
+    ],
+    [
+     "browser_close",
+     ""
+    ]
+   ],
+   "console": [],
+   "cookie": true,
+   "hidden": [
+    [
+     "GET",
+     "http://127.0.0.1:47811/login",
+     "200"
+    ]
+   ],
+   "lane": "codex",
+   "pages": [],
+   "requests": [
+    [
+     "POST",
+     "http://127.0.0.1:47811/auth/token",
+     "200"
+    ],
+    [
+     "POST",
+     "http://127.0.0.1:47811/auth/token",
+     "200"
+    ],
+    [
+     "POST",
+     "http://127.0.0.1:47811/auth/token",
+     "200"
+    ]
+   ],
+   "screenshots": [
+    "qae/AC1-step-1.png"
+   ],
+   "served": [
+    "GET http://127.0.0.1:47811/favicon.ico 200",
+    "GET http://127.0.0.1:47811/login 200",
+    "POST http://127.0.0.1:47811/auth/token 200",
+    "POST http://127.0.0.1:47811/auth/token 200",
+    "POST http://127.0.0.1:47811/auth/token 200"
+   ]
+  },
+  "tab": {
+   "answered": [
+    "GET http://127.0.0.1:47811/shop",
+    "GET http://127.0.0.1:47812/checkout?session=1"
+   ],
+   "calls": [
+    [
+     "browser_navigate",
+     ""
+    ],
+    [
+     "browser_click",
+     ""
+    ],
+    [
+     "browser_wait_for",
+     ""
+    ],
+    [
+     "browser_take_screenshot",
+     "qae-artifacts/qae/AC1-step-1.png"
+    ],
+    [
+     "browser_network_requests",
+     ""
+    ],
+    [
+     "browser_console_messages",
+     ""
+    ],
+    [
+     "browser_close",
+     ""
+    ]
+   ],
+   "console": [
+    [
+     "console error",
+     "checkout error @ http://127.0.0.1:47812/checkout?session=1:"
+    ],
+    [
+     "uncaught exception",
+     "Error: checkout boom\n    at http://127.0.0.1:47812/checkout?session=1:"
+    ]
+   ],
+   "cookie": false,
+   "hidden": [
+    [
+     "GET",
+     "http://127.0.0.1:47811/shop",
+     "200"
+    ]
+   ],
+   "lane": "claude",
+   "pages": [
+    "http://127.0.0.1:47812/checkout"
+   ],
+   "requests": [],
+   "screenshots": [
+    "qae/AC1-step-1.png"
+   ],
+   "served": [
+    "GET http://127.0.0.1:47811/favicon.ico 200",
+    "GET http://127.0.0.1:47811/shop 200",
+    "GET http://127.0.0.1:47812/checkout 200",
+    "GET http://127.0.0.1:47812/favicon.ico 200"
+   ]
+  }
+ },
+ "secret": {
+  "cookie": "fixture-cookie-0123456789",
+  "name": "QAE_PASSWORD",
+  "value": "fixture'tick`quote\"slash\\-0123456789"
+ },
+ "versions": {
+  "@playwright/mcp": "0.0.81",
+  "playwright": "1.64.0-alpha-2026-09-14",
+  "playwright-core": "1.64.0-alpha-2026-09-14"
+ }
+}

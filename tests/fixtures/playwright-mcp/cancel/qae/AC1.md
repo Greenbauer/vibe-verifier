@@ -1,0 +1,2 @@
+- step 1: opened /dashboard -> saw the logo
+- step 2: opened /developers -> saw the heading
