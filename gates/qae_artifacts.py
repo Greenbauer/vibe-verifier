@@ -115,9 +115,11 @@ import urllib.parse
 
 from _acceptance import body_criteria, declares_none, named_references, png_size, split_ticket, ticket_items
 from _contract import CannotRun, Finding, run_gate
-from _features import add_selection_arguments, parse, selection
+from _features import add_selection_arguments
 from _page_record import digest, harness_refusals, isolation_findings, page_record
 from _probe import probe_excuses
+from _qae_rules import ENVIRONMENTAL
+from _refusals import declared_refusals, read, refusal_expected
 from _retry import REQUEST, console_excused, exact, retry_checks
 from _session_log import SAVED_TO, TOOL_CALL, evidence_path
 
@@ -134,18 +136,11 @@ STACK_FRAME = re.compile(r"^\s+at\s.*?(?P<url>https?://[^\s)]+)")
 # The page's own cancellation of a request: it aborted its fetch, for whatever reason. A request
 # still pending when a document unloads is recorded with no failure at all, so this is never that.
 CANCELLED = "net::ERR_ABORTED"
-REFUSAL = re.compile(r"expected-refusal:[ \t]*(?P<status>[^\s`]+)[ \t]+(?P<target>[^\s`)]+)", re.IGNORECASE)
-REFUSABLE = ("400", "401", "403", "404", "409", "422")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 # Chromium's line for a response it refused to load, as playwright-mcp saves it: `<text> @ <url>:<line>`.
 RESOURCE_ERROR = re.compile(r"^Failed to load resource: the server responded with a status of (?P<status>[0-9]{3})\b.* @ (?P<url>\S+):[0-9]+$")
 # Where any console line says its error is: the script or resource, as ` @ <url>:<line>` at its end.
 LOCATION = re.compile(r" @ (?P<url>\S*):[0-9]+$")
-
-
-def read(path):
-    with open(path, encoding="utf-8", errors="replace") as handle:
-        return handle.read()
 
 
 def relative(path, root):
@@ -228,36 +223,6 @@ def width_list(text):
     if not widths or any(width < 1 for width in widths):
         raise argparse.ArgumentTypeError("widths are positive whole numbers of pixels, comma-separated: %r" % text)
     return list(dict.fromkeys(widths))
-
-
-def refusal_pattern(target):
-    """The exact URL a declaration names; each `{id}` is one path segment a run mints (no `/`, `?`, `#`)."""
-    return re.compile("[^/?#]+".join(re.escape(part) for part in exact(target).split("{id}")))
-
-
-def refusal_expected(expected, status, url):
-    return any(status == want and pattern.fullmatch(exact(url)) for want, pattern in expected)
-
-
-def expected_refusals(items, sites):
-    """The (status, URL pattern) pairs the criteria `items` ((id, wording) pairs) declare expected, and findings
-    for any declaration that cannot be honoured as written."""
-    expected, findings = set(), []
-    for ac, wording in items:
-        for match in REFUSAL.finditer(wording):
-            status, target = match.group("status"), match.group("target").rstrip(".,;:")
-            if status not in REFUSABLE:
-                findings.append(Finding("%s declares expected-refusal %s: only a handled refusal (%s) can be expected"
-                                        % (ac, status, ", ".join(REFUSABLE))))
-            elif urllib.parse.urlsplit(target).scheme in ("http", "https"):
-                expected.add((status, refusal_pattern(target)))
-            elif target.startswith("/") and sites:
-                expected.add((status, refusal_pattern(urllib.parse.urljoin(sites[0], target))))
-                expected.update((status, refusal_pattern(origin.rstrip("/") + target)) for origin in sites[1:])
-            else:
-                findings.append(Finding("%s declares expected-refusal at %s: write a path starting with / (resolved against "
-                                        "the site under test, which needs --site or --site-file) or an http(s) URL" % (ac, target)))
-    return expected, findings
 
 
 def judged(url, sites):
@@ -440,20 +405,6 @@ def read_declared(path, label):
     return read(path)
 
 
-def feature_steps(args):
-    """(label, line) for each numbered Verify step of every feature the re-walk selected, as the pull
-    request's copy of its file has it with HTML comments removed: the steps the explorer was handed."""
-    if not args.features:
-        return []
-    chosen, features = selection(args.repo, args, args.base_ref)
-    steps = []
-    for fid, _ in chosen.selected:
-        path = features[fid].path
-        feature = parse(HTML_COMMENT.sub("", read(os.path.join(args.repo, path))), fid, path)
-        steps += [("%s step %s" % (path, number), line) for number, line in feature.steps]
-    return steps
-
-
 def check(args):
     root = args.artifacts
     if not root or not os.path.isdir(root):
@@ -469,8 +420,7 @@ def check(args):
     sites = declared_sites(args.site_file) if args.site_file else [args.site] if args.site else []
     console_allow = [re.compile(pattern) for pattern in (args.allow_console or [])]
     request_allow = [re.compile(pattern) for pattern in (args.allow_request or [])]
-    items = ([] if reason else body_criteria(HTML_COMMENT.sub("", body))) + ticket + feature_steps(args)
-    expected, declared = expected_refusals(items, sites)
+    expected, declared = declared_refusals(args, [] if reason else body_criteria(HTML_COMMENT.sub("", body)), ticket, sites)
     expected.add(harness_refusals(root))
     retried, excused = retry_checks(root, args.changed_files)
     expected.update(excused + probe_excuses(root))
@@ -484,8 +434,8 @@ def check(args):
 def add_arguments(parser):
     parser.add_argument("--artifacts", metavar="DIR", required=True)
     parser.add_argument("--criteria", metavar="FILE", default=None)
-    parser.add_argument("--allow-console", action="append", metavar="REGEX")
-    parser.add_argument("--allow-request", action="append", metavar="REGEX")
+    for _, option, _ in ENVIRONMENTAL:
+        parser.add_argument(option, action="append", metavar="REGEX")
     parser.add_argument("--widths", metavar="N[,N...]", type=width_list, default=None)
     parser.add_argument("--ticket", metavar="FILE", default=None)
     site = parser.add_mutually_exclusive_group()

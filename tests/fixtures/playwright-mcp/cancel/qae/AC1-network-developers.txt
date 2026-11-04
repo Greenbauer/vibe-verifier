@@ -1,0 +1,5 @@
+2. [GET] http://127.0.0.1:47811/img/logo.svg => [FAILED] net::ERR_ABORTED
+3. [GET] http://127.0.0.1:47811/api/items => [FAILED] net::ERR_ABORTED
+4. [GET] http://127.0.0.1:47811/api/slow => [FAILED] net::ERR_ABORTED
+
+Note: 1 static request not shown, run with "static" option to see it.

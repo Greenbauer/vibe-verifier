@@ -44,7 +44,8 @@ explore, `criteria@`, `qa-limit@`, `gates@` and `qa-review@` in verify) are inve
    references the site step supplied into the evidence, installs the browser, and runs
    `claude-code-action` with [`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) as its browser,
    under a [turn cap](#the-turn-cap) sized to the run. The prompt
-   ([`prompt.md`](prompt.md)) tells the model to walk each criterion under the PR body's
+   ([`prompt.md`](prompt.md), rendered from [`prompt.in.md`](prompt.in.md) and the rules the gates hold
+   as data by `python3 gates/_qae_prompt.py`) tells the model to walk each criterion under the PR body's
    `## Acceptance criteria` heading, append one line per action to `qae-artifacts/qae/ACn.md`
    (`- step k: <what you did> -> <what you saw>`), save a screenshot per step, then write
    `qae-artifacts/verdict.md` with one `acceptance-check: ACn -- PASS|FAIL -- ... (qae/ACn.md::<step line>)`
@@ -1350,6 +1351,31 @@ refusal happens, and a reviewer reads the allowance as part of the spec. An HTML
 declare anything. A [re-walked feature](#re-walking-the-features-a-pull-request-touches)'s Verify
 step declares the same way on its own line, so a refusal the feature walks by design is written once
 in its file rather than in every pull request that touches it.
+
+### What the pinned build writes, recorded
+
+Every rule above reads a file playwright-mcp writes, and most of a dozen fixes to them came from a
+format a real run showed was not what the gate assumed (a cancelled request's line, a negative console
+offset, an exception with no level tag, a network record saved to a file, a secret escaped twice).
+So the gate's tests read real output: `tests/fixtures/playwright-mcp/` holds what the pinned build
+wrote, with each lane's own arguments, walking a local site whose pages fail in known ways (a 404, a
+401, a 500 on the site and on a further origin, a refused connection and websocket, a cancelled
+fetch and image, an uncaught exception and rejection, a third-party tab, a form answered 422, a 500
+that answers on the retry, three sign-ins by a secret's name). Its `manifest.json` names the
+toolchain and arguments it was recorded with and what each page did, `secrets-redact.json` holds the
+map of typed values the Codex lane hands its redaction step, and
+`tests/test_qae_recorded.py` and `tests/test_qae_recorded_parsers.py` hold the gate and its parsers to
+that, with no browser. Bumping `tools/qae-browser/` or changing a lane's playwright-mcp arguments
+fails `tests/test_qae_recorded.py` until the fixtures are recorded again, once, on a machine with node:
+
+```
+python3 tests/fixtures/playwright-mcp/record.py
+```
+
+Then run the tests: a format the new build writes differently fails them, here, before a consumer's
+run does. The site listens on fixed local ports (47811 to 47813), so a recording's URLs never change;
+what does (a session folder's epoch, the timestamps in log names) is replaced with fixed text, and
+screenshots are not kept.
 
 ### An uncaught exception
 

@@ -1,0 +1,1 @@
+- step 1: signed in with the password typed, filled and entered by a snippet -> saw Signed in (3)

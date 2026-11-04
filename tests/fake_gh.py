@@ -9,6 +9,8 @@ directory instead of GitHub and records every call, so a test can assert what wa
     FAKE_GH_ROOT/<owner>/<name>/.open-prs.json  the open pull requests, a JSON list, served to a pulls query
                                          with no head (closing one with `gh pr close` is recorded as CLOSE)
     FAKE_GH_ROOT/<owner>/<name>/.pull-<n>.json  pull request <n>, as `pulls/<n>` answers it
+    FAKE_GH_ROOT/<owner>/<name>/.no-checks  a token without checks or statuses read: a commit's `check-runs`
+                                         and `status` answer HTTP 403 (present or not, they list nothing)
     FAKE_GH_ROOT/<owner>/<name>/.runs.json  workflow runs, {"recent": [...], "queued": [...], "in_progress": [...]}:
                                          `actions/runs?created=...` answers recent, `?status=<s>` that status
     FAKE_GH_ROOT/<owner>/<name>/.native  JSON overriding that repository's native enforcement:
@@ -177,6 +179,12 @@ if argv[:1] == ["api"]:
     if "/check-runs/" in endpoint and endpoint.split("?")[0].endswith("/annotations"):
         path = os.path.join(root, repo, ".annotations", endpoint.split("/check-runs/")[1].split("/")[0] + ".json")
         print(json.dumps(served(path, [])))
+        sys.exit(0)
+    if "/commits/" in endpoint and endpoint.split("?")[0].rsplit("/", 1)[-1] in ("check-runs", "status"):
+        if os.path.exists(os.path.join(root, repo, ".no-checks")):
+            print("gh: Resource not accessible by integration (HTTP 403)", file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps({"check_runs": [], "statuses": []}))
         sys.exit(0)
     if "/git/ref/heads/" in endpoint:
         print(json.dumps({"object": {"sha": "a" * 40}}))

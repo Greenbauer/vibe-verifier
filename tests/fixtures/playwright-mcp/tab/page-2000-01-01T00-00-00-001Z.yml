@@ -1,0 +1,4 @@
+- generic [active] [ref=e1]:
+  - heading "Shop" [level=1] [ref=e2]
+  - link "Pay" [ref=e3] [cursor=pointer]:
+    - /url: http://127.0.0.1:47812/checkout?session=1
