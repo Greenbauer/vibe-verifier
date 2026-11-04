@@ -33,6 +33,11 @@ EXIT_CANNOT_RUN = 2
 # The file a runner names for a gate to leave a note in when its pass checked less than it could.
 QUALIFIER = "VIBE_VERIFIER_QUALIFIER"
 
+# The file a job names for every gate run under --soak to append the findings it reported but did not block on, one
+# JSON object a line ({"gate", "message", "path", "line"}): the QA review lists them, so a soak gate's findings reach the
+# people who read the pull request and not only the job log (actions/gates, actions/qa-review).
+SOAK_FINDINGS = "VIBE_VERIFIER_SOAK_FINDINGS"
+
 
 def qualify(note):
     """Mark this run's pass as partial. The runner's summary then reads `PASS (<note>)` instead of a
@@ -210,7 +215,19 @@ def report(gate, findings, fmt, soak):
         print(json.dumps({"gate": gate, "status": status, "findings": [f.as_dict() for f in findings]}, indent=2))
     else:
         _print_lines(gate, findings, blocking, fmt, soak)
+    if soak and blocking:
+        # After printing, flushed first, so a gate stopped mid-record has every finding in the job log.
+        sys.stdout.flush()
+        _record_soak(gate, blocking)
     return EXIT_PASS if (soak or not blocking) else EXIT_VIOLATIONS
+
+
+def _record_soak(gate, findings):
+    path = os.environ.get(SOAK_FINDINGS)
+    if path:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.writelines(json.dumps({"gate": gate, "message": f.message, "path": f.path, "line": f.line}) + "\n"
+                              for f in findings)
 
 
 def _print_lines(gate, findings, blocking, fmt, soak):

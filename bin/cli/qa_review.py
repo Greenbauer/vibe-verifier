@@ -3,6 +3,7 @@ the workflow's jobs and gates concluded, never from the explorer's prose."""
 import argparse
 import json
 import os
+import re
 import sys
 
 from _acceptance import (body_criteria as read_criteria, check_lines, declares_none, said, ticket_items, ticket_proofs,
@@ -11,6 +12,7 @@ from _contract import CannotRun, resolve_base
 from _features import map_directory
 from _pin_bump import CannotRead, gh_json
 from _probe import probes
+from _proof_audit import cell
 from _retry import retries
 from _verify_edits import verify_edits
 from cli.features import selection_options
@@ -190,7 +192,44 @@ def walked_lines(state, args, head):
     verdict = read_text(args.verdict) if args.verdict and os.path.isfile(args.verdict) else ""
     ticket = read_text(args.ticket) if args.ticket and os.path.isfile(args.ticket) else ""
     edits = feature_edits(args, list(check_lines(verdict, "regression-check")))
-    return lines + review_criteria(read_text(args.criteria), verdict, ticket, edits, retry_notes(args))
+    return (lines + review_criteria(read_text(args.criteria), verdict, ticket, edits, retry_notes(args))
+            + soak_lines(args.soak_findings))
+
+
+def soak_lines(path):
+    """Each finding a gate under --soak reported without failing, from the file the gates step of this job wrote
+    (_contract.SOAK_FINDINGS): written for the builder and the reviewer, who read this comment, not the job log."""
+    if not path or not os.path.isfile(path):
+        return []
+    found, unreadable = [], 0
+    for line in read_text(path).splitlines():
+        try:
+            item = json.loads(line) if line.strip() else None
+        except ValueError:
+            item = None
+        if isinstance(item, dict) and item.get("gate") and item.get("message"):
+            found.append(item)
+        elif line.strip():
+            unreadable += 1  # a gate stopped mid-record; it printed its findings to the job log first (_contract.report)
+    if not found and not unreadable:
+        return []
+    lines = ["", "**Not yet blocking.** These gates run in soak, so their findings do not fail this check yet. A gate "
+             "that compares with the base lists only what this pull request added; any other lists everything it "
+             "found on the pages or files it read. Fix the ones this pull request added before asking for review.", ""]
+    lines += ["- `%s`: %s" % (item["gate"], soak_text(item)) for item in found]
+    if unreadable:
+        lines.append("- %d record line(s) could not be read; the job log has every soak finding." % unreadable)
+    return lines
+
+
+def soak_text(item):
+    """A finding as a person reads it: a page by its path, not the preview's address. A gate's count of the other
+    pages or rows a finding was also on is dropped: the comment lists findings, and the run's evidence (the gate's
+    record) has each place."""
+    text = re.sub(r"https?://[^/\s\"'()]+(/[^\s\"'()]*)?", lambda m: m.group(1) or "/", item["message"])
+    text = re.sub(r" \(and (?:on )?\d+ more(?: page\(s\)| like it)?\)", "", text)
+    where = item["path"] + (":%d" % item["line"] if item.get("line") else "") + ": " if item.get("path") else ""
+    return cell(where + text)
 
 
 def review_comment_ids(repo, pr):
@@ -239,5 +278,7 @@ def add_arguments(parser):
     parser.add_argument("--artifacts", default="qae-artifacts", metavar="DIR", help="the run's evidence: a step the "
                         "explorer retried after an environment error is named on its criterion's row")
     parser.add_argument("--run-id", default="", metavar="ID", help="the workflow run's id, named in a limited head's record")
+    parser.add_argument("--soak-findings", default="", metavar="FILE", help="the findings the gates step's soak gates "
+                        "reported without failing (one JSON object a line); listed under Not yet blocking")
     parser.add_argument("--limits", default="", metavar="JSON", help="the qa-limit step's limits: when it found every "
                         "explorer hit its model usage limit, the review says the walk did not run and when each resets")

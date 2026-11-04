@@ -16,12 +16,13 @@ if str(ROOT / "gates") not in sys.path:
 import _local_only  # noqa: E402  (gates/ is not a package)
 
 CI_VARIABLES = ("GITHUB_BASE_REF", "GITHUB_HEAD_REF", "GITHUB_REF_NAME", "GITHUB_REF_TYPE", "GITHUB_EVENT_PATH",
-                "VIBE_VERIFIER_BASE_REF", "GITHUB_STEP_SUMMARY", "VIBE_VERIFIER_MANIFEST", "VIBE_VERIFIER_QUALIFIER")
+                "VIBE_VERIFIER_BASE_REF", "GITHUB_STEP_SUMMARY", "VIBE_VERIFIER_MANIFEST", "VIBE_VERIFIER_QUALIFIER",
+                "VIBE_VERIFIER_SOAK_FINDINGS")
 
 
 def clean_env(extra=None):
-    """CI sets these for the repository under test, and the runner sets the last two for the gate that runs
-    this suite (coverage-not-lost, regression-test-fails-on-base); a temp repo, or a gate a test runs, must
+    """CI sets these for the repository under test, the gates action sets the last one, and the runner sets the two
+    before it for the gate that runs this suite (coverage-not-lost, regression-test-fails-on-base); a temp repo, or a gate a test runs, must
     not inherit them. Nor this machine's own credentials (a variable gates/_local_only.py refuses): the gates
     that run a project's tests refuse to start with one, and a test that means to pass one says so in `extra`."""
     env = {key: value for key, value in os.environ.items()
