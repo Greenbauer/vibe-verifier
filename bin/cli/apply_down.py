@@ -119,7 +119,10 @@ def apply_down(args):
     if code is not None:
         return code
     # Before the plan, so a bump merged here is on the base the plan reads, and one opened below waits for its checks.
-    merged = _pin_merge.merge_pass(args._repos, _pin_merge.pinned_from(args.source, target, wrapper)) if args.auto and args.act and args.merge else 0
+    merged = 0
+    if args.auto and args.merge:
+        merged = (_pin_merge.merge_pass(args._repos, _pin_merge.pinned_from(args.source, target, wrapper)) if args.act
+                  else _pin_merge.probe(args._repos))
     return max(merged, plan_and_open(args, target, wrapper))
 
 

@@ -4,7 +4,8 @@ inputs:
   token:
     description: >-
       A GitHub App or bot token with contents, pull requests and workflows write in every repository listed (actions read
-      too with lane), allowed to merge into each one's default branch when merge is true. Not the workflow's
+      too with lane); when merge is true, checks and statuses read as well, and allowed to merge into each one's default
+      branch. Not the workflow's
       GITHUB_TOKEN: it cannot write workflow files, and a pull request it opens starts no workflow.
     required: true
   repositories:
