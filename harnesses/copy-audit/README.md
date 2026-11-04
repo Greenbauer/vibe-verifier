@@ -39,7 +39,15 @@ that already holds the explorer's Codex login:
       - name: Grade the pages' copy
         if: ${{ !cancelled() }}
         uses: Greenbauer/vibe-verifier/actions/copy-audit@<sha>
+        with:
+          site: |
+            ${{ steps.site.outputs.url }}
+            ${{ steps.site.outputs.origins }}
 ```
+
+`site` is the site step's URL and further origins, the ones the verify job later writes to `qae-inputs/site-url` for
+the gate. That file does not exist yet in the explore job, so a step that names it as `site-file` grades nothing
+(every consumer's first run at 94ee932).
 
 With several explorers each grades its own record; the evidence step moves both files under `shard-<n>/`, and the
 gate judges each record with its own grades. The Claude lane (`explore.yml`) has no Codex login on its runner: add

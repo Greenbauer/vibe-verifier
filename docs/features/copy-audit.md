@@ -33,7 +33,9 @@ Drop `--soak` once ten pull requests in a row raised no false finding. `--allow 
 - `tests/test_copy_audit.py::test_the_model_gets_each_distinct_on_site_block_once_in_an_empty_directory`
 - `tests/test_copy_audit.py::test_the_record_holds_the_pages_copy_and_leaves_out_values_code_and_hidden_text`
 - `tests/test_copy_audit.py::test_the_model_fails_each_bad_block_and_passes_the_same_screens_written_plainly`
-- `tests/test_copy_audit.py::test_the_codex_lane_grades_after_the_explorer_and_before_the_evidence_is_checked_and_kept`
+- `tests/test_copy_audit_wiring.py::test_the_codex_lane_grades_after_the_explorer_and_before_the_evidence_is_checked_and_kept`
+- `tests/test_copy_audit_wiring.py::test_the_codex_lane_grades_the_pages_of_the_site_its_site_step_declared`
+- `tests/test_copy_audit_wiring.py::test_the_action_hands_the_declared_site_to_the_grader_as_a_site_file`
 - `actions/qae-browser/ui-audit.test.js::a dialog opening is read half a second later, with its copy, and a clean start leaves an empty copy record`
 
 ## Gotchas
@@ -41,4 +43,5 @@ Drop `--soak` once ten pull requests in a row raised no false finding. `--allow 
 - The model test (`Model`) needs a Codex login, so CI's unit job skips it; run it with `COPY_AUDIT_CODEX_HOME=~/.codex` and the browser toolchain before changing the prompt ([harnesses/copy-audit/README.md](../../harnesses/copy-audit/README.md), "Changing the prompt").
 - A block that is a value the application shows (a name, an amount, a date, text a person typed) passes; table cells, code and fields a person types into are never recorded.
 - "The pull request adds it" is four consecutive whole words of the block on an added line of `git diff <base>...HEAD`, or, for a shorter label, the whole label as a string, an element's text or an added line of its own (`"Save"`, `>Save<`, JSX text on its own line), after decoding HTML entities and straightening quotes. A label's word inside code (`unsaved`, `row.quote_status`) is not the label. A code line that is nothing but a word equal to an existing failing label (a SQL column alone on its line) does count, so that label is reported as the pull request's. Copy assembled from fragments shorter than that, or from a translation file the diff does not touch, counts as existing.
+- The grade step takes the site as `site:` from the site step's outputs, not `site-file: qae-inputs/site-url`: the verify job writes that file, after the explore job, so naming it there graded nothing ("site file not found").
 - A shard the model could not grade (a usage limit, a timeout) cannot run, in soak too, as every gate's could-not-run does; the explore job's step only warns, so the walk's own check stays its own.
