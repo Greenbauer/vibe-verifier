@@ -22,6 +22,7 @@ What is not ready yet is left, or moved on:
   held for a person, and the run exits 1.
 
 It runs before the plan, so a bump opened in this run is judged on a later one, after its checks have registered.
+A dry run with --merge only probes that the token can read what a merge reads (probe).
 """
 import base64
 import functools
@@ -57,6 +58,23 @@ def merge_pass(repos, on_main):
                 held, what = 2, "failed: %s" % error
             print("%-32s #%d %s" % (repo, number, what))
             code = max(code, held)
+    return code
+
+
+def probe(repos):
+    """What a dry run with --merge does instead of merging: the reads a merge needs that planning does not, the
+    checks and commit statuses of each repository's default branch, so a token without checks: read or statuses:
+    read fails the run that proves the workflow (a pull_request run), not the first scheduled one. Returns 2
+    when a read failed, else 0."""
+    code = 0
+    for repo in repos:
+        try:
+            branch = quote(_pin_bump.gh_json("repos/%s" % repo)["default_branch"], safe="")
+            for listing in ("check-runs", "status"):
+                _pin_bump.gh_json("repos/%s/commits/%s/%s?per_page=1" % (repo, branch, listing))
+        except CannotRead as error:
+            print("%-32s cannot read its checks (merging needs checks: read and statuses: read): %s" % (repo, error))
+            code = 2
     return code
 
 

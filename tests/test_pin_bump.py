@@ -260,6 +260,25 @@ class PinBump(unittest.TestCase):
         # The fake still lists #3 after it is closed, so the new bump's supersede closes it a second time.
         self.assertEqual([c["method"] for c in self.calls() if c["method"] in ("CLOSE", "PR")], ["CLOSE", "PR", "CLOSE"])
 
+    def test_a_dry_run_with_merge_fails_when_the_token_cannot_read_checks(self):
+        # A merge reads each head's check runs and statuses; a caller's token minted without checks or statuses read
+        # must fail the dry run a pull request to its workflow makes, not the first scheduled run.
+        (Path(self.fixtures) / "acme/app/.no-checks").write_text("")
+        self.assertEqual(self.bump("--now").returncode, 0, "without --merge nothing reads checks")
+        result = self.bump("--now", "--merge")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("acme/app                         cannot read its checks (merging needs checks: read and "
+                      "statuses: read): gh: Resource not accessible by integration (HTTP 403)", result.stdout)
+        self.assertEqual(self.writes(), [])
+        (Path(self.fixtures) / "calls.log").unlink()
+        self.bump("--act", "--now", "--merge")  # a real run merges instead: no open bump, so it reads no checks
+        self.assertFalse([c for c in self.calls() if "/commits/main/" in c["endpoint"]])
+        (Path(self.fixtures) / "acme/app/.no-checks").unlink()
+        (Path(self.fixtures) / "calls.log").unlink()
+        self.assertEqual(self.bump("--now", "--merge").returncode, 0)
+        read = [c["endpoint"] for c in self.calls() if "/commits/main/" in c["endpoint"]]
+        self.assertEqual(read, ["repos/acme/app/commits/main/check-runs?per_page=1", "repos/acme/app/commits/main/status?per_page=1"])
+
     def test_a_bumps_pins_are_judged_against_the_main_its_level_pins_from(self):
         on_main = _pin_merge.pinned_from(self.source, self.new, None)
         catalog = on_main("ci/vibe-verifier-pin-")

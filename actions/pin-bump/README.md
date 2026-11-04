@@ -89,6 +89,8 @@ jobs:
           permission-pull-requests: write
           permission-workflows: write
           permission-actions: read
+          permission-checks: read
+          permission-statuses: read
       - uses: Greenbauer/vibe-verifier/actions/pin-bump@<sha>
         with:
           token: ${{ steps.app.outputs.token }}
@@ -102,8 +104,13 @@ For a wrapper, check the wrapper out with its whole history (`fetch-depth: 0`) a
 instead of `repositories`.
 
 The token needs contents, pull requests and workflows write (a pin lives in a workflow file) in every
-repository listed, and actions read for `lane`. To merge, it must also be allowed to merge into each default
-branch: a branch that restricts who can push lists the app there, or every merge fails and the run is red
-naming GitHub's refusal. Set `merge: false` to leave the bumps for a person. Not the job's `GITHUB_TOKEN`: it cannot write a workflow
-file, and a pull request it opens starts no workflow, so the bump's own checks would never run. The
-action's own pin in the calling workflow is a catalog pin like any other, so it bumps itself.
+repository listed, and actions read for `lane`. To merge, it also needs checks and statuses read (a bump
+merges only once every check on its head passed), so the app itself must be granted Checks and Commit statuses
+read (a mint asking for a permission its installation lacks fails: "permissions requested are not granted"),
+and must be allowed to merge into each default branch: a branch that restricts who can push lists the app
+there, or every merge fails and the run is red naming GitHub's refusal. A dry run with `merge` reads each
+default branch's checks and statuses the same way, so a pull request that changes the calling workflow goes
+red when the token lacks either. Set `merge: false` to leave the bumps for a person. Not the job's
+`GITHUB_TOKEN`: it cannot write a workflow file, and a pull request it opens starts no workflow, so the bump's
+own checks would never run. The action's own pin in the calling workflow is a catalog pin like any other, so
+it bumps itself.
