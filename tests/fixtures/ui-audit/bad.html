@@ -1,0 +1,30 @@
+<!doctype html><meta charset=utf-8>
+<!-- One defect per ui-audit rule, as the screens that prompted them had it (tests/test_qae_ui_audit.py). --><style>
+body{background:#111;color:#eee;font:14px sans-serif;padding:20px}
+.card{border:1px solid #333;border-radius:8px;padding:16px;margin:12px 0}
+.row{display:flex;align-items:flex-start;gap:12px}
+.pill{display:flex;gap:8px;align-items:center;border:1px solid #333;border-radius:8px;padding:10px 12px}
+button{border:1px solid #444;background:#222;color:#eee;border-radius:8px;padding:6px 12px;font:14px sans-serif}
+.grid{display:grid;grid-template-columns:repeat(3,200px);gap:12px;align-items:end}
+input{border:1px solid #444;background:#1a1a1a;color:#eee;border-radius:6px;padding:6px;height:28px}
+.flush{border:1px solid #333;border-radius:8px;padding:0}
+.spin{display:inline-block;width:10px;height:10px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:s 1s linear infinite;vertical-align:top;position:relative;top:5px}
+@keyframes s{to{transform:rotate(1turn)}}
+</style>
+<div class=card><div class=row><label class=pill><input type=checkbox> Active only</label><button>Apply filters</button></div></div>
+<div class=card><div class=grid>
+<div><label>AMOUNT</label><br><input><div style="height:30px">Inherited from the default</div></div>
+<div><label>OVERRIDE</label><br><input placeholder=Optional></div>
+<div><label>TOTAL</label><br><input></div></div></div>
+<div class=card><div style="display:flex"><button>Activate</button><button>Open</button></div></div>
+<div class=flush><button>Flush</button> text here</div>
+<div class=card><button style="height:40px"><span class=spin></span> Saving</button></div>
+<p>This is a long paragraph that keeps going on and on about the configuration of the account and the many many things that a person would need to understand in order to make sense of what the system is doing with their totals, including the inheritance rules, the overrides, and the way totals are derived from the base amount, the taxes, the discounts and the rounding.</p>
+<span>Status: in_review</span>
+<span>Owner: [object Object]</span>
+<table><tr><th>undefined</th><td><button>3f2b1c4d-1111-4abc-9def-0123456789ab</button></td></tr></table>
+<div style="display:flex;border:1px solid #333;padding:16px"><button>Save</button><button>Cancel</button></div>
+<div class=card><div style="display:flex"><button style="border-radius:0">Square</button><button>Pair</button></div></div>
+<div style="width:80px;overflow:hidden;white-space:nowrap">A label far too long for its box</div>
+<select style="width:90px"><option>A long option label here</option></select>
+<div class=card><div class=row style="align-items:flex-start"><button style="margin-top:10px">Left</button><button style="height:60px">Tall</button></div></div>

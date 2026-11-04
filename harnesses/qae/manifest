@@ -20,6 +20,10 @@ acceptance-verdict --criteria qae-inputs/pr-body.md --verdict qae-inputs/verdict
 # URL none of the pull request's changed paths name (harnesses/qae/README.md). Without it only Vercel's protection does.
 qae-artifacts --artifacts qae-artifacts --criteria qae-inputs/pr-body.md --site-file qae-inputs/site-url --ticket qae-inputs/ticket.md --changed-files qae-inputs/changed-files
 
+# Layout and copy defects the harness's browser measured on every page the explorer opened (docs/features/ui-audit.md).
+# --soak reports without failing; drop it once ten pull requests in a row raised no false finding.
+ui-audit --artifacts qae-artifacts --site-file qae-inputs/site-url --soak
+
 # Trace every linked requirement to HEAD proof or an owner that accepted it at the merge base.
 # actions/criteria also runs this line before any browser skip; its job needs a full-history checkout.
 ticket-coverage --body qae-inputs/pr-body.md

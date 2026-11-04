@@ -131,7 +131,9 @@ runs:
           # request a page got an answer below 400 for, to $ARTIFACTS/console-pages.jsonl, so the
           # qae-artifacts gate can tell a third-party page's own error from the site's, and find the
           # answer to a request a page cancelled even when the explorer's network record left it out.
-          args="\"$MCP\",\"--browser\",\"chromium\",\"--headless\",\"--isolated\",\"--output-dir\",\"$ARTIFACTS\",\"--save-session\",\"--viewport-size\",\"1280x800\",\"--init-page\",\"$GITHUB_ACTION_PATH/../qae-browser/console-pages.js\""
+          # And its layout record (ui-audit.js), which measures every page the explorer opens and writes
+          # $ARTIFACTS/ui-audit.jsonl for the ui-audit gate.
+          args="\"$MCP\",\"--browser\",\"chromium\",\"--headless\",\"--isolated\",\"--output-dir\",\"$ARTIFACTS\",\"--save-session\",\"--viewport-size\",\"1280x800\",\"--init-page\",\"$GITHUB_ACTION_PATH/../qae-browser/console-pages.js\",\"--init-page\",\"$GITHUB_ACTION_PATH/../qae-browser/ui-audit.js\""
           if [ -n "$STORAGE_STATE" ]; then
             # playwright-mcp's --storage-state loads the file into the isolated browser context, and
             # the `secrets` of its --config file replace each listed value with <secret>NAME</secret>

@@ -178,11 +178,11 @@ class StorageState(unittest.TestCase):
         result = self.run_step()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         args = self.browser_args()
-        self.assertEqual(args[:-1], ["/opt/mcp/cli.js", "--browser", "chromium", "--headless", "--isolated",
+        self.assertEqual(args[:-3], ["/opt/mcp/cli.js", "--browser", "chromium", "--headless", "--isolated",
                                      "--output-dir", "qae-artifacts", "--save-session", "--viewport-size",
                                      "1280x800", "--init-page"])
         # The page record of the same catalog commit: which page logged each console error.
-        self.assertEqual(Path(args[-1]).resolve(), Path(ROOT, "actions", "qae-browser", "console-pages.js"))
+        self.assertEqual(Path(args[-3]).resolve(), Path(ROOT, "actions", "qae-browser", "console-pages.js"))
         usage = json.loads(Path(self.temp, "vv-usage", "usage.json").read_text())
         self.assertEqual((usage["status"], usage["status_reason"]), ("unavailable", "no_final_usage"))
 
@@ -201,7 +201,7 @@ class StorageState(unittest.TestCase):
         result = self.run_step({"cookies": [COOKIE, other], "origins": []})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         config = os.path.join(self.temp, "qae-codex-mcp.json")
-        self.assertEqual(self.browser_args()[12:-1], ["--storage-state", os.path.realpath(os.path.join(self.work, "state.json")),
+        self.assertEqual(self.browser_args()[14:-1], ["--storage-state", os.path.realpath(os.path.join(self.work, "state.json")),
                                                      "--config", config, "--init-page"])
         self.assert_secret_names_hook()
         self.assertEqual(json.loads(Path(config).read_text()),
@@ -321,7 +321,7 @@ class StorageState(unittest.TestCase):
         result = self.run_step()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("--config", self.browser_args())
-        self.assertEqual(self.browser_args().count("--init-page"), 1)
+        self.assertEqual(self.browser_args().count("--init-page"), 2)
         redacted = self.redact()
         self.assertEqual((redacted.returncode, redacted.stdout), (0, ""))
 

@@ -1,0 +1,275 @@
+// The layout audit itself. ui-audit.js runs this file inside a page as one script (its `script`),
+// and `audit()` measures what is rendered now, returning one finding per defect a person sees at a
+// glance and a screenshot diff never flags, because the baseline already had it:
+//
+//     row-stagger         two controls side by side whose tops, middles and bottoms all differ
+//     row-height          two controls side by side, one taller, so their middles differ
+//     field-stagger       cells of one form row whose fields start at different heights (a cell
+//                         with a hint or a second input above its field pushes it down)
+//     touching            two bordered or filled controls less than 4px apart, side by side or
+//                         stacked, that are not one segmented group (which squares the corners
+//                         where they meet on both, sits in one evenly padded track, or shares a
+//                         role=group, tablist, radiogroup or toolbar)
+//     edge                a bordered or filled control less than 4px from the inside edge of a bordered or filled
+//                         container on some sides but not all (a pill track with even padding all
+//                         round, and a bar whose segments span it, are designs; a button flush
+//                         with a card's right edge is not)
+//     spinner-off-center  a spinner in a button more than 1.5px off the button's middle
+//     text-wall           more than 60 words in one paragraph of the page's own copy (a table
+//                         cell holds a record, not copy, so it is not judged)
+//     long-sentence       a sentence of more than 32 words
+//     raw-value           text a person should never read: undefined, null, NaN, [object Object],
+//                         a snake_case identifier, an ISO timestamp or a UUID, outside code
+//     clipped-text        text its box cuts off with no ellipsis
+//     clipped-value       a select's option, or a read-only, disabled or number field's value,
+//                         wider than the field shows (a field a person types into scrolls)
+//
+// Side by side means laid out by one flex or grid row within four levels of both, so a header's
+// button and a search field in the page below it are never compared. A control is measured as
+// the box a person sees: a checkbox inside a bordered label is the label, and a fixed or sticky bar
+// never shares a row with what scrolls under it.
+//
+// A finding is {rule, at, text, other, detail}: `at` a CSS path to the element, `text` what it
+// shows (never a password field's value), `other` the neighbour or container it was measured
+// against. Every measure is a rendered rectangle or computed style, so it needs a real browser: the
+// catalog's `QA browser tests` CI job runs it on tests/fixtures/ui-audit/ (tests/test_qae_ui_audit.py).
+const TOL = 2;   // px two edges may differ before a person sees it
+const GAP = 4;   // px two boxed controls, or a control and its container's edge, need between them
+const CLEAR = /rgba\(\d+, \d+, \d+, 0\)|transparent/;
+const CONTROL = 'button, input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea, [role=button], [role=combobox], a[class*="btn"], a[class*="button"]';
+const FIELD = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea, [role=combobox]";
+const GROUP = "[role=group], [role=tablist], [role=radiogroup], [role=toolbar]";
+const RAW = /\b(undefined|null|NaN)\b|\[object Object\]|\b[a-z]+_[a-z_]+\b|\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/;
+
+function cssPath(el) {
+  const parts = [];
+  for (let n = el; n && n.nodeType === 1 && parts.length < 5; n = n.parentElement) {
+    if (n.id) { parts.unshift(n.tagName.toLowerCase() + "#" + n.id); break; }
+    const test = n.getAttribute("data-testid");
+    const same = n.parentElement ? [...n.parentElement.children].filter(c => c.tagName === n.tagName) : [];
+    parts.unshift(n.tagName.toLowerCase() + (test ? `[data-testid="${test}"]` : "") + (same.length > 1 ? `:nth-of-type(${same.indexOf(n) + 1})` : ""));
+  }
+  return parts.join(" > ");
+}
+
+function shown(el) {
+  const value = el.type === "password" ? "" : el.value;
+  return (el.getAttribute("aria-label") || el.innerText || value || el.placeholder || "").replace(/\s+/g, " ").trim().slice(0, 60);
+}
+
+function visible(el) {
+  const r = el.getBoundingClientRect();
+  const s = getComputedStyle(el);
+  return r.width >= 2 && r.height >= 2 && s.visibility !== "hidden" && s.display !== "none" && parseFloat(s.opacity) > 0.05;
+}
+
+function behind(el) {
+  for (let n = el; n; n = n.parentElement) {
+    const color = getComputedStyle(n).backgroundColor;
+    if (!CLEAR.test(color)) return color;
+  }
+  return "rgb(255, 255, 255)";
+}
+
+// A box a person sees as one: a border all round, a shadow, or a fill unlike what is behind it. A row with
+// only a divider under it is not a box.
+function boxed(el) {
+  const s = getComputedStyle(el);
+  const border = ["Top", "Right", "Bottom", "Left"].every(k => parseFloat(s["border" + k + "Width"]) > 0 && !CLEAR.test(s["border" + k + "Color"]));
+  const fill = !CLEAR.test(s.backgroundColor) && s.backgroundColor !== behind(el.parentElement);
+  return border || fill || s.boxShadow !== "none";
+}
+
+function asSeen(el) {
+  if (!el.matches("input[type=checkbox], input[type=radio]")) return el;
+  const wrapper = el.closest("label");
+  return wrapper && boxed(wrapper) ? wrapper : null;
+}
+
+function layer(el) {
+  for (let n = el; n; n = n.parentElement) if (/fixed|sticky/.test(getComputedStyle(n).position)) return n;
+  return null;
+}
+
+function sameRow(a, b) {
+  let n = a.parentElement;
+  for (let up = 0; n && up < 4 && !n.contains(b); up++) n = n.parentElement;
+  if (!n || !n.contains(b)) return false;
+  const s = getComputedStyle(n);
+  return /grid/.test(s.display) || (/flex/.test(s.display) && !/column/.test(s.flexDirection));
+}
+
+// A boxed track with the same thin padding all round (6px at most), holding both: a segmented toggle such
+// as Map | List. A card's ordinary padding is wider, so buttons touching inside a card still count.
+function evenTrack(el) {
+  const s = getComputedStyle(el);
+  const pads = ["Top", "Right", "Bottom", "Left"].map(k => parseFloat(s["padding" + k]));
+  return pads.every(v => v > 0 && v <= 6 && Math.abs(v - pads[0]) < 0.5) && boxed(el);
+}
+
+function segmented(a, b) {
+  const group = a.closest(GROUP);
+  if (group && group === b.closest(GROUP)) return true;
+  let track = a.parentElement;
+  for (let up = 0; track && up < 3 && !track.contains(b); up++) track = track.parentElement;
+  if (track && track.contains(b) && evenTrack(track)) return true;
+  return parseFloat(getComputedStyle(a).borderTopRightRadius) < 1 && parseFloat(getComputedStyle(b).borderTopLeftRadius) < 1;
+}
+
+const overlap = (a1, a2, b1, b2) => Math.min(a2, b2) - Math.max(a1, b1);
+
+// The control nearest to the right of `a` in its row, or null.
+function rightOf(a, ra, controls, rect) {
+  let right = null;
+  for (const b of controls) {
+    const rb = rect.get(b);
+    const gap = rb.left - ra.right;
+    if (a === b || gap < -0.5 || gap > 240 || overlap(ra.top, ra.bottom, rb.top, rb.bottom) <= 0) continue;
+    if (layer(a) !== layer(b) || !sameRow(a, b)) continue;
+    if (!right || rb.left < rect.get(right).left) right = b;
+  }
+  return right;
+}
+
+function rowRules(add, controls, rect) {
+  for (const a of controls) {
+    const ra = rect.get(a), right = rightOf(a, ra, controls, rect);
+    if (!right) continue;
+    const rr = rect.get(right);
+    const middles = Math.abs((ra.top + ra.bottom) / 2 - (rr.top + rr.bottom) / 2);
+    if (middles > TOL && Math.abs(ra.top - rr.top) > TOL && Math.abs(ra.bottom - rr.bottom) > TOL) {
+      add("row-stagger", a, `${Math.round(middles)}px off the middle of the control beside it`, right);
+    } else if (middles > TOL && Math.abs(ra.height - rr.height) > TOL) {
+      add("row-height", a, `${Math.round(ra.height)}px tall beside a ${Math.round(rr.height)}px control`, right);
+    }
+    const gap = rr.left - ra.right;
+    if (gap < GAP && boxed(a) && boxed(right) && !segmented(a, right)) add("touching", a, `${Math.max(0, Math.round(gap))}px from the control beside it`, right);
+  }
+}
+
+function stackRules(add, controls, rect) {
+  for (const a of controls) {
+    const ra = rect.get(a);
+    for (const b of controls) {
+      const rb = rect.get(b), gap = rb.top - ra.bottom;
+      if (a === b || gap < -0.5 || gap >= GAP || overlap(ra.left, ra.right, rb.left, rb.right) <= 0.5 * Math.min(ra.width, rb.width)) continue;
+      if (layer(a) === layer(b) && boxed(a) && boxed(b) && !segmented(a, b)) add("touching", a, `${Math.max(0, Math.round(gap))}px above the control below it`, b);
+    }
+  }
+}
+
+// The first fields of two side-by-side cells of `row` that start furthest apart: [offset, a, b].
+function worstFieldPair(row) {
+  const cells = [...row.children].filter(visible)
+    .map(cell => [cell.getBoundingClientRect(), cell.matches(FIELD) ? cell : [...cell.querySelectorAll(FIELD)].find(visible)])
+    .filter(([, field]) => field);
+  let worst = [0];
+  cells.forEach(([ra, fa], i) => cells.slice(i + 1).forEach(([rb, fb]) => {
+    if (overlap(ra.top, ra.bottom, rb.top, rb.bottom) <= 0 || overlap(ra.left, ra.right, rb.left, rb.right) > 0) return;
+    const qa = fa.getBoundingClientRect(), qb = fb.getBoundingClientRect();
+    if (Math.abs(qa.height - qb.height) <= 4 && Math.abs(qa.top - qb.top) > worst[0]) worst = [Math.abs(qa.top - qb.top), fa, fb];
+  }));
+  return worst;
+}
+
+function fieldRules(add) {
+  for (const row of document.querySelectorAll("*")) {
+    const s = getComputedStyle(row);
+    if (!/grid|flex/.test(s.display) || (/flex/.test(s.display) && /column/.test(s.flexDirection))) continue;
+    const [worst, a, b] = worstFieldPair(row);
+    if (worst > TOL) add("field-stagger", a, `fields in one row start up to ${Math.round(worst)}px apart`, b);
+  }
+}
+
+// The sides of `container` that `r` sits less than GAP inside, or [] when the inset is a design.
+function nearSides(r, container, controls) {
+  const pr = container.getBoundingClientRect(), s = getComputedStyle(container);
+  if (evenTrack(container)) return [];
+  const border = k => parseFloat(s["border" + k + "Width"]);
+  const bar = controls.filter(c => container.contains(c)).length > 1;
+  if (bar && (r.width >= pr.width - border("Left") - border("Right") - 1 || r.height >= pr.height - border("Top") - border("Bottom") - 1)) return [];
+  return [["left", r.left - pr.left - border("Left")], ["right", pr.right - border("Right") - r.right],
+    ["top", r.top - pr.top - border("Top")], ["bottom", pr.bottom - border("Bottom") - r.bottom]].filter(([, d]) => d > -0.5 && d < GAP);
+}
+
+function edgeRules(add, controls, rect) {
+  for (const el of controls.filter(boxed)) {   // text alone against an edge is aligned, not cramped
+    const r = rect.get(el);
+    let container = el.parentElement;
+    for (let up = 0; container && container !== document.body && up < 6 && !boxed(container); up++) container = container.parentElement;
+    if (!container || container === document.body || !boxed(container)) continue;
+    const pr = container.getBoundingClientRect();
+    if (pr.width - r.width < 1 && pr.height - r.height < 1) continue;   // a wrapper the size of the control
+    const near = nearSides(r, container, controls);
+    if (near.length && near.length < 4) add("edge", el, near.map(([side, d]) => `${side} ${Math.max(0, Math.round(d))}px`).join(", ") + " from its container's edge", container);
+  }
+}
+
+function spins(n) {
+  return visible(n) && (getComputedStyle(n).animationName !== "none" || /spin|loader|loading/i.test(n.getAttribute("class") || "") || n.getAttribute("role") === "progressbar");
+}
+
+function spinnerRules(add) {
+  for (const button of document.querySelectorAll("button, [role=button]")) {
+    const spinner = visible(button) && [...button.querySelectorAll("*")].find(spins);
+    if (!spinner) continue;
+    const rb = button.getBoundingClientRect(), rs = spinner.getBoundingClientRect();
+    const off = Math.abs((rs.top + rs.bottom) / 2 - (rb.top + rb.bottom) / 2);
+    if (off > 1.5) add("spinner-off-center", spinner, `${off.toFixed(1)}px off the button's middle`, button);
+  }
+}
+
+function copyRules(add) {
+  const blocks = [...document.querySelectorAll("p, li, dd, td, th, label, span, div, h1, h2, h3, h4, h5, h6, a, button, strong, b, em, small")]
+    .filter(el => visible(el) && [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()));
+  for (const el of blocks) {
+    const own = [...el.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(" ");
+    const text = (el.matches("p, li, dd") ? el.innerText : own).replace(/\s+/g, " ").trim();
+    const words = text.split(" ").filter(Boolean).length;
+    if (el.matches("p, li, dd, div") && !el.closest("td, th, [contenteditable], textarea") && words > 60) add("text-wall", el, `${words} words in one block`);
+    const longest = Math.max(...text.split(/(?<=[.!?])\s+/).map(sentence => sentence.split(" ").filter(Boolean).length));
+    if (longest > 32) add("long-sentence", el, `a ${longest}-word sentence`);
+    const raw = own.match(RAW);
+    if (raw && !el.closest("code, pre, kbd, samp")) add("raw-value", el, `shows "${raw[0]}"`);
+    const s = getComputedStyle(el);
+    if (el.scrollWidth > el.clientWidth + 1 && /hidden|clip/.test(s.overflowX) && s.textOverflow !== "ellipsis") add("clipped-text", el, `${el.scrollWidth - el.clientWidth}px of text cut off`);
+  }
+}
+
+function clippedValueRules(add) {
+  const measure = document.createElement("canvas").getContext("2d");
+  const fields = document.querySelectorAll("input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=password]), select");
+  for (const el of fields) {
+    const typed = el.tagName === "INPUT" && !el.readOnly && !el.disabled && el.type !== "number";   // it scrolls
+    const text = el.tagName === "SELECT" ? (el.selectedOptions[0] || {}).text : el.value;
+    if (typed || !text || el === document.activeElement || !visible(el)) continue;
+    const s = getComputedStyle(el);
+    measure.font = s.font;
+    const room = el.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight) - (el.tagName === "SELECT" && s.appearance !== "none" ? 20 : 0);
+    const need = measure.measureText(text).width;
+    if (need > room + 1) add("clipped-value", el, `"${text.slice(0, 30)}" needs ${Math.ceil(need)}px, the field shows ${Math.floor(room)}px`);
+  }
+}
+
+function audit() {
+  const findings = [], seen = new Set();
+  const add = (rule, el, detail, other) => {
+    const key = [rule, cssPath(el), other ? cssPath(other) : ""].join("|");
+    if (seen.has(key)) return;
+    seen.add(key);
+    findings.push({ rule, at: cssPath(el), text: shown(el), other: other ? shown(other) : undefined, detail });
+  };
+  const all = [...document.querySelectorAll(CONTROL + ", input[type=checkbox], input[type=radio]")].map(asSeen);
+  const controls = [...new Set(all)].filter(el => el && visible(el) && !el.parentElement.closest(CONTROL));   // a control inside a control is part of it
+  const rect = new Map(controls.map(el => [el, el.getBoundingClientRect()]));
+  rowRules(add, controls, rect);
+  stackRules(add, controls, rect);
+  fieldRules(add);
+  edgeRules(add, controls, rect);
+  spinnerRules(add);
+  copyRules(add);
+  clippedValueRules(add);
+  return findings;
+}
+
+if (typeof module !== "undefined") module.exports = audit;

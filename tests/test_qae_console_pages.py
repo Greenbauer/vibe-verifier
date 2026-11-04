@@ -43,7 +43,7 @@ class Hook(unittest.TestCase):
         # without the argument writes no record, and the gate then judges every console error.
         template = (ROOT / "harnesses" / "qae" / "explore.yml").read_text()
         self.assertIn('"--output-dir","qae-artifacts","--save-session","--viewport-size","1280x800",'
-                      '"--init-page","${{ steps.browser.outputs.console-pages }}"]', template)
+                      '"--init-page","${{ steps.browser.outputs.console-pages }}"', template)
 
 
 class Server:
