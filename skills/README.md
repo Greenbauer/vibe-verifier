@@ -9,6 +9,7 @@ the rules (`bin/vibe-verifier rules-doc`), and a mistake that repeats becomes a 
 |---|---|
 | [`follow-repo-rules`](follow-repo-rules/SKILL.md) | Before editing and before pushing: read the generated rules block, run the gates, fix each finding the way its message says, never suppress one without a reason, extend the established helper rather than add a second way. |
 | [`encode-a-lesson`](encode-a-lesson/SKILL.md) | When the same mistake happens a second time: encode it as a type, a rule, a helper or a runtime check, in that order; for a rule, test it with the real bad code and its fix, replay recent history for false alarms, regenerate the block and delete the prose it replaces. |
+| [`design-a-ui`](design-a-ui/SKILL.md) | Before building or changing a page, form, dialog, list or flow, when planning one, and when reviewing one: write the five-line UI brief (user, task, main action, where it lives, closest existing screen), build to the placement, task, state and control rules, then walk it as each role, there and back without typing a URL. |
 | [`write-acceptance-criteria`](write-acceptance-criteria/SKILL.md) | When opening a pull request, editing its description, or when QAE fails: write `## Acceptance criteria` the explorer can check on the preview, check the section with `bin/vibe-verifier criteria` before pushing, and re-run QAE after a description edit instead of pushing. |
 
 Each is one `SKILL.md` with YAML frontmatter holding `name` (lowercase letters, digits and hyphens,
