@@ -7,6 +7,7 @@ import os
 import re
 
 import _pin_bump
+import _pin_merge
 from _pin_bump import CannotRead, gh_json, open_bump
 from cli.consumers import PIN_LINE, RELEASE_PATHS, STUB_PATH, gh_file, pin_status, source_git, source_repo, stub_status, workflow_texts
 from cli.runner import ROOT, fail
@@ -117,6 +118,13 @@ def apply_down(args):
     target, code = bump_target(args, wrapper)
     if code is not None:
         return code
+    # Before the plan, so a bump merged here is on the base the plan reads, and one opened below waits for its checks.
+    merged = _pin_merge.merge_pass(args._repos, _pin_merge.pinned_from(args.source, target, wrapper)) if args.auto and args.act and args.merge else 0
+    return max(merged, plan_and_open(args, target, wrapper))
+
+
+def plan_and_open(args, target, wrapper):
+    """The plan printed, and written when confirmed; the exit code."""
     planned, moves, held, unread = plan_bumps(args, target, wrapper)
     if not planned and not moves:
         print("\nnothing to bump")
