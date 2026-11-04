@@ -58,6 +58,7 @@ pattern: the same site step (by YAML anchor) with its own login suffix, then
           storage-state: ${{ steps.site.outputs.storage-state }}
           secrets-file: ${{ steps.site.outputs.secrets-file }}
           shard: first-use
+          disabled-tools: browser_run_code_unsafe,browser_evaluate
 ```
 
 then the write-scope step (with `qae-first-use/` in scope) and an upload of `qae-first-use/` as
@@ -80,6 +81,11 @@ email guard itself; the menu and test-copy sentences in step 2 and 3 are what re
 second place for one job added (a placement rule a separate blind backtest graded on 41 past pull requests: 3
 of the 4 placement complaints caught, 1 false alarm in the 31 nobody complained about), the walk as first built named all four of that pull request's problems,
 "two buttons have the same Send invite label" among them, and the fixed walk still had none.
+
+`disabled-tools` keeps the walk's session from scripting the page at all. playwright-mcp writes no session-log line
+for a call whose handler throws, so a `browser_run_code_unsafe` that navigated and then threw would move the page
+with no trace for the gate (a cold audit's live probe, 2026-11-04). Checked on the pinned Codex CLI: with the setting,
+the model reports the tool as not available and never calls it; `browser_navigate` still works.
 
 ## Limits
 
