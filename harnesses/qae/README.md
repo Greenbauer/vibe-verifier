@@ -1362,7 +1362,8 @@ wrote, with each lane's own arguments, walking a local site whose pages fail in 
 401, a 500 on the site and on a further origin, a refused connection and websocket, a cancelled
 fetch and image, an uncaught exception and rejection, a third-party tab, a form answered 422, a 500
 that answers on the retry, three sign-ins by a secret's name). Its `manifest.json` names the
-toolchain and arguments it was recorded with and what each page did, and
+toolchain and arguments it was recorded with and what each page did, `secrets-redact.json` holds the
+map of typed values the Codex lane hands its redaction step, and
 `tests/test_qae_recorded.py` and `tests/test_qae_recorded_parsers.py` hold the gate and its parsers to
 that, with no browser. Bumping `tools/qae-browser/` or changing a lane's playwright-mcp arguments
 fails `tests/test_qae_recorded.py` until the fixtures are recorded again, once, on a machine with node:
