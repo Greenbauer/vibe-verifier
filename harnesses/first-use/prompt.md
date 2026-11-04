@@ -17,14 +17,15 @@ TASK
    what is on screen. For every step, first save a screenshot to qae-first-use/step-k.png, then append one line
    to qae-first-use/walk.md of the form
      - step k: <what you did> -> <what you saw>
-   Never write a step line without its screenshot. From step 1 on, never type an address into the browser, never
-   use the browser's Back or Forward, never open, switch or close a tab, and never run a script in the page: a
-   person uses what the page shows, and a gate fails the walk on any of those calls. Where the task needs a value
-   (an email address, a name), use the kind a real person doing this task would type, never an address a test
-   environment would accept and that person would not use. Where a page answers with an error, read what it says as
-   that person would: does it say what went wrong and what to do? A test copy of a site may refuse a value a real
-   one takes (an outside email address, a real card). When the page says so and says what it does take, try once
-   more with a value it says it takes: that is not a snag. When it refuses without saying why, that is a snag.
+   Never write a step line without its screenshot. From step 1 on, never type an address into the browser, never use
+   the browser's Back or Forward, never open, switch or close a tab, and never run a script in the page or call a
+   tool it offers programs: a person uses what the page shows, and a gate fails the walk on any of those calls. Where
+   the task needs a value (an email address, a name), use the kind a real person doing this task would type, never an
+   address a test environment would accept and that person would not use. Where a page answers with an error, read
+   what it says as that person would: does it say what went wrong and what to do? A test copy of a site may refuse a
+   value a real one takes (an outside email address, a real card). When the page says so and says what it does take,
+   try once more with a value it says it takes: that is not a snag. When it refuses without saying why, that is a
+   snag.
 3. When the task is done, or you cannot go any further, go back to the page you started on the way you came:
    page by page, using what each page itself shows (a breadcrumb, a back link, a Cancel or Close button), not
    the site's main menu, the browser's Back or a typed address. A page the main menu links to is one a person

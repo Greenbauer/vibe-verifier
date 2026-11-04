@@ -13,7 +13,8 @@ per step and verdict.md. Its prose is checked, never trusted:
 - A task and no walk.md, verdict.md or session log cannot run: the walk did not run, or did not finish.
 - Every step line has its screenshot; step 1 is the `start:` and the last step the `back:`.
 - The session log holds each step's screenshot in walk.md's order. From step 1's screenshot to the log's end it
-  holds no call a person cannot make (a typed address, Back or Forward, a script); the whole log holds no move
+  holds no call a person cannot make (a typed address, Back or Forward, a script, a call to a tool the page offers
+  programs); the whole log holds no move
   between tabs (opening, switching or closing one); and the page
   at the last step's screenshot, and at the log's last call, is the page at step 1's.
 - verdict.md has one `first-use:` and one `first-use-back:` line, DONE or STUCK, each anchored to a step line that is
@@ -37,10 +38,12 @@ OUTCOME = re.compile(r"^[ \t]*first-use(?P<back>-back)?:[ \t]*(?P<state>DONE|STU
                      r"[ \t]*\(walk\.md::(?P<step>step [0-9]+:.*)\)[ \t]*$", re.IGNORECASE)
 SNAG = re.compile(r"^[ \t]*first-use-snag:[ \t]*(?P<said>.*?)[ \t]*\(walk\.md::(?P<step>step [0-9]+:.*)\)[ \t]*$",
                   re.IGNORECASE)
-# What a person cannot do with the page in front of them. browser_tabs is one whatever it does but list, anywhere in
-# the log: a walk that opened a second tab before its start could do the task there and switch back to the first.
+# What a person cannot do with the page in front of them, of the tools the pinned playwright-mcp (0.0.81) lists with
+# the harness's flags (no --caps): go to an address, Back or Forward, run a script, or call a tool the page offers
+# programs (WebMCP). browser_tabs is one whatever it does but list, anywhere in the log: a walk that opened a second
+# tab before its start could do the task there and switch back to the first.
 NOT_A_PERSON = frozenset("""browser_navigate browser_navigate_back browser_navigate_forward browser_evaluate
-    browser_run_code_unsafe""".split())
+    browser_run_code_unsafe browser_webmcp_call""".split())
 
 
 def read(path):
@@ -97,10 +100,6 @@ def shots(calls, k):
             if name == "browser_take_screenshot" and re.search(r"(^|/)step-%s\.png$" % k, saved_to(args))]
 
 
-def not_a_person(name, args):
-    return name in NOT_A_PERSON
-
-
 def tab_moves(calls):
     """Every browser_tabs call whose action is not a listing, anywhere in the session log, by its parsed arguments:
     an argument the tool ignores (a `url` of "list") must not pass for the action."""
@@ -144,7 +143,7 @@ def session_findings(walk, steps):
         return [Finding("the first-use walk's session log has no screenshot of step %s after the step before it" % missing)]
     start, last = shots(calls, steps[0])[0], shots(calls, steps[-1])[-1]
     found = [Finding("after it started, the first-use walk called %s, which no person can do with the page in front "
-                     "of them" % name) for name, args, _ in calls[start:] if not_a_person(name, args)]
+                     "of them" % name) for name, _, _ in calls[start:] if name in NOT_A_PERSON]
     found += [Finding("the first-use walk moved between tabs (browser_tabs %s): its page is then not the one its steps "
                       "walked" % args.replace("\n", " ")) for _, args, _ in tab_moves(calls)]
     for end in sorted({last, len(calls) - 1}):

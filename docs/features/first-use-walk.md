@@ -32,6 +32,8 @@ The catalog's templates (`harnesses/qae/explore.yml`, `explore-codex.yml`) do no
 - `tests/test_first_use_walk.py::test_the_prompt_holds_the_task_and_the_site_and_nothing_of_the_criteria`
 - `tests/test_first_use_walk.py::test_a_walk_back_by_the_cards_breadcrumb_passes`
 - `tests/test_first_use_walk.py::test_a_card_left_by_the_browsers_back_fails`
+- `tests/test_first_use_action.py::test_a_task_writes_the_prompt_says_walk_and_takes_the_body_away`
+- `tests/test_first_use_action.py::test_no_task_writes_no_prompt_says_no_walk_and_still_takes_the_body_away`
 
 ## Gotchas
 
