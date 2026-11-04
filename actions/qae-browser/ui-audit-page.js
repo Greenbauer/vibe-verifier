@@ -23,6 +23,10 @@
 //     clipped-text        text its box cuts off with no ellipsis
 //     clipped-value       a select's option, or a read-only, disabled or number field's value,
 //                         wider than the field shows (a field a person types into scrolls)
+//     glyph-off-center    the mark inside a badge, avatar or check circle (a count, initials, an
+//                         icon, or a CSS-drawn tick) more than 1px off the circle's middle; the mark
+//                         is measured by its ink, not its line box, since a digit sits above the
+//                         descender space its line box keeps
 //
 // Side by side means laid out by one flex or grid row within four levels of both, so a header's
 // button and a search field in the page below it are never compared. A control is measured as
@@ -269,6 +273,7 @@ function audit() {
   spinnerRules(add);
   copyRules(add);
   clippedValueRules(add);
+  glyphRules(add);
   return findings;
 }
 
