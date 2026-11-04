@@ -50,4 +50,4 @@ For each block give:
 
 Grade every block listed, each exactly once, and no other.
 
-Your final message is the JSON object the output schema describes, and nothing else.
+End with the grades as one JSON object, in the shape the output schema gives, and nothing else.

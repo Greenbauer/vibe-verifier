@@ -165,6 +165,13 @@ class Wiring(unittest.TestCase):
         self.assertEqual(order, sorted(order))
         self.assertIn("uses: Greenbauer/vibe-verifier/actions/copy-audit@", text)
 
+    def test_the_prompt_has_one_copy_and_the_action_runs_the_catalogs_grader(self):
+        sentence = "End with the grades as one JSON object, in the shape the output schema gives"
+        holders = subprocess.run(["git", "-C", str(ROOT), "grep", "--untracked", "-l", sentence, "--", ":!tests"],
+                                 capture_output=True, text=True).stdout.split()
+        self.assertEqual(holders, ["harnesses/copy-audit/prompt.md"])
+        self.assertIn('bin/vibe-verifier" copy-audit --grade-only', (ROOT / "actions" / "copy-audit" / "action.yml").read_text())
+
     def test_the_manifest_template_offers_the_line_to_the_codex_lane_in_soak(self):
         # Commented out: the Claude lane shares this template and has no grade step, so the line would cannot-run there.
         manifest = (ROOT / "harnesses" / "qae" / "manifest").read_text().splitlines()

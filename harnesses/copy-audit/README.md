@@ -70,7 +70,7 @@ The fixtures `tests/fixtures/copy-audit/bad.html` (one block per rule, plus text
 
 ```bash
 QAE_MCP=$(python3 bin/vibe-verifier tool qae-browser)/node_modules/@playwright/mcp/cli.js QAE_CHANNEL=chrome \
-  COPY_AUDIT_CODEX_HOME=~/.codex python3 -m unittest discover -s tests -p test_copy_audit.py -k Model
+  COPY_AUDIT_CODEX_HOME=~/.codex python3 -I -m unittest discover -s tests -p test_copy_audit.py -k Model
 ```
 
 Every bad block must fail and every good one pass. Run it three times: a rule a model reads two ways shows up as a
