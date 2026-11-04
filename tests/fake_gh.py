@@ -8,6 +8,7 @@ directory instead of GitHub and records every call, so a test can assert what wa
     FAKE_GH_ROOT/<owner>/<name>/.ref-exists  the bump branch already exists: creating it answers HTTP 422
     FAKE_GH_ROOT/<owner>/<name>/.open-prs.json  the open pull requests, a JSON list, served to a pulls query
                                          with no head (closing one with `gh pr close` is recorded as CLOSE)
+    FAKE_GH_ROOT/<owner>/<name>/.pull-<n>.json  pull request <n>, as `pulls/<n>` answers it
     FAKE_GH_ROOT/<owner>/<name>/.runs.json  workflow runs, {"recent": [...], "queued": [...], "in_progress": [...]}:
                                          `actions/runs?created=...` answers recent, `?status=<s>` that status
     FAKE_GH_ROOT/<owner>/<name>/.native  JSON overriding that repository's native enforcement:
@@ -186,6 +187,13 @@ if argv[:1] == ["api"]:
         status = endpoint.split("status=")[1].split("&")[0] if "status=" in endpoint else "recent"
         listed = runs.get(status, [])
         print(json.dumps({"total_count": len(listed), "workflow_runs": listed}))
+        sys.exit(0)
+    if endpoint.split("?")[0].rsplit("/", 1)[-1].isdigit() and "/pulls/" in endpoint:
+        path = os.path.join(root, repo, ".pull-%s.json" % endpoint.split("?")[0].rsplit("/", 1)[-1])
+        if not os.path.exists(path):
+            print("gh: Not Found (HTTP 404)", file=sys.stderr)
+            sys.exit(1)
+        print(open(path).read())
         sys.exit(0)
     if "/pulls" in endpoint and "head=" not in endpoint:
         path = os.path.join(root, repo, ".open-prs.json")

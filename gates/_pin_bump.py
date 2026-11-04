@@ -1,11 +1,12 @@
 """What `apply-down` writes, and what `apply-down --auto` decides before it writes.
 
 `open_bump` opens one pin-bump pull request and `supersede` closes the older bumps it replaces, so a
-repository has at most one open bump of each level. `--auto` is the scheduled form (actions/pin-bump):
-it holds a repository whose bump would move a tool version, and bumps the rest only when it is time,
-the rule a wrapper's ruleset pin mover can use for its own pins: on demand (`--now`), once the
-oldest release commit waiting has waited `--overdue-hours`, or when the runner lane the bumps' checks
-run on is quiet. It confirms its own plan's digest, so what it writes is what it printed.
+repository has at most one open bump of each level; `--merge` merges them once they are ready (_pin_merge.py).
+`--auto` is the scheduled form (actions/pin-bump): it holds a repository whose bump would move a tool
+version, and bumps the rest only when it is time, the rule a wrapper's ruleset pin mover can use for its
+own pins: on demand (`--now`), once the oldest release commit waiting has waited `--overdue-hours`, or
+when the runner lane the bumps' checks run on is quiet. It confirms its own plan's digest, so what it
+writes is what it printed.
 """
 import base64
 import json
@@ -53,6 +54,8 @@ def add_arguments(parser):
     parser.add_argument("--now", action="store_true", help="with --auto: bump without waiting for a quiet lane")
     parser.add_argument("--lane", metavar="LABEL", help="with --auto: the runner label the bumps' checks run on; "
                         "wait until it is quiet (without it, never wait)")
+    parser.add_argument("--merge", action="store_true", help="with --auto --act: first squash-merge each open bump that "
+                        "is merge-ready, and close one that conflicts or has nothing left to change (gates/_pin_merge.py)")
     parser.add_argument("--overdue-hours", type=float, default=6, help="with --auto: bump once the oldest release "
                         "commit waiting is this old, quiet or not (default 6)")
 
@@ -294,13 +297,17 @@ def supersede(repo, branch, url, older):
         ref = head.get("ref", "")
         if (ref.startswith(prefix) and ref != branch and (head.get("repo") or {}).get("full_name") == repo
                 and older(ref[len(prefix):])):
-            result = subprocess.run(["gh", "pr", "close", str(pull["number"]), "--repo", repo, "--delete-branch",  # nosec B603 B607
-                                     "--comment", "Superseded by %s, which moves the same pins to a newer commit." % url],
-                                    capture_output=True, text=True)
-            if result.returncode != 0:
-                raise CannotRead((result.stderr.strip() or "gh pr close failed").splitlines()[-1])
+            close(repo, pull["number"], "Superseded by %s, which moves the same pins to a newer commit." % url)
             closed.append(pull.get("html_url", "#%s" % pull["number"]))
     return closed
+
+
+def close(repo, number, comment):
+    """Close a bump with `comment`, and delete its branch."""
+    result = subprocess.run(["gh", "pr", "close", str(number), "--repo", repo, "--delete-branch",  # nosec B603 B607
+                             "--comment", comment], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise CannotRead((result.stderr.strip() or "gh pr close failed").splitlines()[-1])
 
 
 def open_pulls(repo):

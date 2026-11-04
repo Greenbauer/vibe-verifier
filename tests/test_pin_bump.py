@@ -12,6 +12,7 @@ from pathlib import Path
 from helpers import ROOT, commit, make_repo, runner
 from test_apply_down import stub_pinned_to
 import _pin_bump  # noqa: E402  (gates/ is on the path through helpers)
+import _pin_merge  # noqa: E402
 
 LANE = "example-ci"
 
@@ -243,16 +244,42 @@ class PinBump(unittest.TestCase):
         self.assertFalse(planted.exists())
         self.assertFalse(_pin_bump.older_than(self.source, self.new)("--output=x"))
 
-    def test_the_action_is_a_dry_run_unless_act_is_true_and_never_merges(self):
+    def test_with_merge_open_bumps_are_judged_before_the_plan_and_only_when_it_acts(self):
+        # gates/_pin_merge.py's own tests hold each decision; this one holds where the command runs it.
+        self.serve("acme/app", ".open-prs.json", [{"number": 3, "head": {"ref": "ci/vibe-verifier-pin-" + self.old[:10],
+                                                                          "repo": {"full_name": "acme/app"}}}])
+        self.serve("acme/app", ".pull-3.json", {"head": {"sha": "3" * 40, "ref": "ci/vibe-verifier-pin-" + self.old[:10]},
+                                                "base": {"ref": "main"}, "title": "t", "changed_files": 0})
+        for args in (["--now", "--merge"], ["--act", "--now"]):
+            self.assertEqual(self.bump(*args).returncode, 0)
+            self.assertNotIn("pulls/3", " ".join(c["endpoint"] for c in self.calls()), args)
+        (Path(self.fixtures) / "calls.log").unlink()
+        result = self.bump("--act", "--now", "--merge")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("acme/app                         #3 closed: Nothing left to change", result.stdout)
+        # The fake still lists #3 after it is closed, so the new bump's supersede closes it a second time.
+        self.assertEqual([c["method"] for c in self.calls() if c["method"] in ("CLOSE", "PR")], ["CLOSE", "PR", "CLOSE"])
+
+    def test_a_bumps_pins_are_judged_against_the_main_its_level_pins_from(self):
+        on_main = _pin_merge.pinned_from(self.source, self.new, None)
+        catalog = on_main("ci/vibe-verifier-pin-")
+        self.assertTrue(catalog(self.new) and catalog(self.old) and catalog(self.old[:10]))
+        self.assertFalse(catalog("f" * 40))
+        commit(self.source, {"gates/a.py": "3"}, "past the target")
+        self.assertFalse(catalog(self.head()), "a commit past the target is not one this run pins to")
+        self.assertFalse(on_main("ci/wrapper-pin-")(self.new), "a wrapper bump, with no wrapper checkout to judge it")
+
+    def test_the_action_is_a_dry_run_unless_act_is_true_and_merges_only_with_merge(self):
         action = (ROOT / "actions" / "pin-bump" / "action.yml").read_text()
         self.assertIn('[ "$ACT" = true ] && args+=(--act)', action)
+        self.assertIn('[ "$MERGE" = true ] && args+=(--merge)', action)
+        self.assertIn('leaves them for a person.\n    default: "true"', action)  # merging is on unless a caller turns it off
         self.assertIn("apply-down --auto", action)
         self.assertNotIn("--confirm", action)
         self.assertIn('overdue-hours:\n    description: Bump once the oldest release commit waiting is this old, quiet or not.\n'
                       '    default: "6"', action)
-        for text in (action, (ROOT / "gates" / "_pin_bump.py").read_text()):
-            self.assertNotIn('"merge"', text)
-            self.assertNotIn("pr merge", text)
+        for text in (action, (ROOT / "gates" / "_pin_bump.py").read_text(), (ROOT / "gates" / "_pin_merge.py").read_text()):
+            self.assertNotIn("--admin", text)
         self.bump("--act", "--now")
         self.assertEqual({c["method"] for c in self.writes()}, {"POST", "PUT", "PR"})
 
