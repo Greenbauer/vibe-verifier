@@ -1351,6 +1351,30 @@ declare anything. A [re-walked feature](#re-walking-the-features-a-pull-request-
 step declares the same way on its own line, so a refusal the feature walks by design is written once
 in its file rather than in every pull request that touches it.
 
+### What the pinned build writes, recorded
+
+Every rule above reads a file playwright-mcp writes, and twelve fixes to them came from a format a
+real run showed was not what the gate assumed (a cancelled request's line, a negative console
+offset, an exception with no level tag, a network record saved to a file, a secret escaped twice).
+So the gate's tests read real output: `tests/fixtures/playwright-mcp/` holds what the pinned build
+wrote, with each lane's own arguments, walking a local site whose pages fail in known ways (a 404, a
+401, a 500 on the site and on a further origin, a refused connection and websocket, a cancelled
+fetch and image, an uncaught exception and rejection, a third-party tab, a form answered 422, a 500
+that answers on the retry, three sign-ins by a secret's name). Its `manifest.json` names the
+toolchain and arguments it was recorded with and what each page did, and
+`tests/test_qae_recorded.py` and `tests/test_qae_recorded_parsers.py` hold the gate and its parsers to
+that, with no browser. Bumping `tools/qae-browser/` or changing a lane's playwright-mcp arguments
+fails `tests/test_qae_recorded.py` until the fixtures are recorded again, once, on a machine with node:
+
+```
+python3 tests/fixtures/playwright-mcp/record.py
+```
+
+Then run the tests: a format the new build writes differently fails them, here, before a consumer's
+run does. The site listens on fixed local ports (47811 to 47813), so a recording's URLs never change;
+what does (a session folder's epoch, the timestamps in log names) is replaced with fixed text, and
+screenshots are not kept.
+
 ### An uncaught exception
 
 A script that throws, and a promise rejected with no handler, are the page's `pageerror`, and

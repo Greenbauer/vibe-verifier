@@ -1,0 +1,9 @@
+2. [GET] http://127.0.0.1:47811/api/missing => [404] Not Found
+3. [GET] http://127.0.0.1:47811/api/private => [401] Unauthorized
+4. [GET] http://127.0.0.1:47811/api/boom => [500] Internal Server Error
+5. [GET] http://127.0.0.1:47812/api/data => [200] OK
+6. [GET] http://127.0.0.1:47812/api/boom => [500] Internal Server Error
+7. [GET] http://127.0.0.1:47813/api/down => [FAILED] net::ERR_CONNECTION_REFUSED
+8. [GET] http://127.0.0.1:47811/img/never.svg => [FAILED] net::ERR_ABORTED
+
+Note: 1 static request not shown, run with "static" option to see it.

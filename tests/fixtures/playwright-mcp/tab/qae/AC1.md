@@ -1,0 +1,1 @@
+- step 1: opened /shop and followed Pay -> saw the hosted checkout
