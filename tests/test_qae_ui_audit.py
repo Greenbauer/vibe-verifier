@@ -175,8 +175,8 @@ class Browser(unittest.TestCase):
                          "touching: Activate", "touching: Square", "touching: Save"):
             self.assertIn(expected, measured["bad-details"])
         # A count badge's digit, an svg check, a CSS-drawn tick and avatar initials, each off its circle's middle. good.html has them
-        # centered, a tick sized content-box and one placed by the translate and rotate properties, a switch's knob and an
-        # avatar's status dot (fills, not marks) and tabular digits, and none is flagged.
+        # centered, ticks sized content-box, placed by the translate and rotate properties or with a margin, a switch's knob
+        # and an empty avatar's status dot (fills, not marks) and large tabular digits, and none is flagged.
         self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("glyph-off-center")),
                          ["glyph-off-center: ", "glyph-off-center: 6", "glyph-off-center: LT", "glyph-off-center: Pick"])
         record = [json.loads(x) for x in Path(out, "ui-audit.jsonl").read_text().splitlines()]
