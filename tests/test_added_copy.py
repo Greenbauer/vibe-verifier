@@ -14,7 +14,7 @@ class AddedCopy(unittest.TestCase):
         self.assertFalse(added_by_pull_request("You can resend the invite from the list.", added))
 
     def test_a_short_label_counts_only_whole_as_a_string_an_elements_text_or_a_line_of_its_own(self):
-        for line in ("[AddUserMode.INVITE, 'Send invite'],", "<Button>Send invite</Button>", "  Send invite"):
+        for line in ("[Mode.INVITE, 'Send invite'],", "<Button>Send invite</Button>", "  Send invite"):
             self.assertTrue(added_by_pull_request("Send invite", normal(line)), line)
         for line in ("const sendInvite = invite;", "<Button>Send invites</Button>", "return row.send_invite;"):
             self.assertFalse(added_by_pull_request("Send invite", normal(line)), line)

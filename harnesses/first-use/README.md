@@ -28,15 +28,17 @@ The first-use walk is that requester. A second Codex session is given only the t
    `first-use: DONE|STUCK` line, one `first-use-back: DONE|STUCK` line, and a `first-use-snag:` line for each thing a
    person new to the site would trip on.
 3. **Judge.** The verify job puts the walk's artifact at `qae-artifacts/first-use/`, and the
-   [`first-use-walk`](../../gates/first_use_walk.py) gate, deterministic, checks it: every step has its screenshot;
-   from step 1's screenshot on, the session log holds no typed address, Back or Forward, script or hand-opened tab;
-   the page at the last step's screenshot is the page at step 1's; every verdict line cites a step `walk.md` has.
+   [`first-use-walk`](../../gates/first_use_walk.py) gate, deterministic, checks it: every step has its screenshot,
+   in walk.md's order in the session log; from step 1's screenshot on, the log holds no typed address, Back or
+   Forward, script or hand-opened tab; the page at the last step's screenshot, and at the log's last call, is the
+   page at step 1's; every verdict line cites a step `walk.md` has.
    A STUCK line and every snag are findings. A pull request with acceptance criteria and no task is a finding too.
 
 ## In a QAE workflow
 
-A job of its own beside the explore job, so the walk never sees the criteria and runs in parallel on another QAE
-slot. The wrapper's `Acceptance criteria: main walk` job is the pattern: the same site step (by YAML anchor) with its
+A job of its own beside the explore job, so the walk's session is never handed the explorer's prompt and runs in
+parallel on another QAE slot. `actions/first-use` removes the body once it has read the task, so the session, which
+has the workspace, cannot read the criteria there either. The wrapper's `Acceptance criteria: main walk` job is the pattern: the same site step (by YAML anchor) with its
 own login suffix, then
 
 ```yaml
@@ -75,8 +77,8 @@ Create choice that changed nothing, and the record page with no way back to its 
 error that says which addresses a test copy accepts) was DONE with no snag, after one retry with an address the
 error named. The first version of the prompt also flagged list pages the main menu links to, and the test copy's
 email guard itself; the menu and test-copy sentences in step 2 and 3 are what removed those. With the snag for a
-second place for one job added (a placement rule backtested on 41 past pull requests: 3 of the 4 placement
-complaints caught, 1 false alarm in 31), the walk as first built named all four of that pull request's problems,
+second place for one job added (a placement rule a separate blind backtest graded on 41 past pull requests: 3
+of the 4 placement complaints caught, 1 false alarm in the 31 nobody complained about), the walk as first built named all four of that pull request's problems,
 "two buttons have the same Send invite label" among them, and the fixed walk still had none.
 
 ## Limits

@@ -12,8 +12,9 @@ per step and verdict.md. Its prose is checked, never trusted:
   One with none to walk (`- None: <why>`, or no criteria) needs no walk.
 - A task and no walk.md, verdict.md or session log cannot run: the walk did not run, or did not finish.
 - Every step line has its screenshot; step 1 is the `start:` and the last step the `back:`.
-- From step 1's screenshot on, the session log holds no call a person cannot make (a typed address, Back or
-  Forward, a script, a tab opened by hand), and the page at the last step's screenshot is the page at step 1's.
+- The session log holds each step's screenshot in walk.md's order. From step 1's screenshot to the log's end it
+  holds no call a person cannot make (a typed address, Back or Forward, a script, a tab opened by hand), and the page
+  at the last step's screenshot, and at the log's last call, is the page at step 1's.
 - verdict.md has one `first-use:` and one `first-use-back:` line, DONE or STUCK, each anchored to a step line that is
   in walk.md word for word. A STUCK line is a finding, and so is every `first-use-snag:` line.
 
@@ -104,21 +105,34 @@ def page_at(calls, index):
     return page(urls[-1]) if urls else ""
 
 
-def session_findings(walk, last):
-    """What the session log shows from step 1's screenshot to the last step's: calls no person makes, and the page
-    the walk ended on when it is not the page it started on."""
+def out_of_order(calls, steps):
+    """The first step whose screenshot the session log does not hold after the screenshot of the step before it."""
+    after = -1
+    for k in steps:
+        later = [i for i in shots(calls, k) if i > after]
+        if not later:
+            return k
+        after = later[0]
+    return None
+
+
+def session_findings(walk, steps):
+    """What the session log shows from step 1's screenshot to its end: each step's screenshot in the order walk.md
+    gives, no call a person cannot make, and the walk ending, at its last screenshot and at its last call, on the page
+    it started on."""
     calls = [call for session in session_calls(walk) for call in session]
     if not calls:
         raise CannotRun("first-use/ holds no session log (session-*/session.md): playwright-mcp ran without --save-session")
-    first, final = shots(calls, "1"), shots(calls, last)
-    if not first or not final:
-        return [Finding("the first-use walk's session log has no screenshot of step 1 and of step %s" % last)]
-    start, end = first[0], final[-1]
+    missing = out_of_order(calls, steps)
+    if missing:
+        return [Finding("the first-use walk's session log has no screenshot of step %s after the step before it" % missing)]
+    start, last = shots(calls, steps[0])[0], shots(calls, steps[-1])[-1]
     found = [Finding("after it started, the first-use walk called %s, which no person can do with the page in front "
-                     "of them" % name) for name, args, _ in calls[start:end] if not_a_person(name, args)]
-    if page_at(calls, start) != page_at(calls, end):
-        found.append(Finding("the first-use walk ended on %s, not where it started (%s)" % (
-            page_at(calls, end) or "no page", page_at(calls, start))))
+                     "of them" % name) for name, args, _ in calls[start:] if not_a_person(name, args)]
+    for end in sorted({last, len(calls) - 1}):
+        if page_at(calls, start) != page_at(calls, end):
+            found.append(Finding("the first-use walk ended on %s, not where it started (%s)" % (
+                page_at(calls, end) or "no page", page_at(calls, start))))
     return found
 
 
@@ -139,7 +153,7 @@ def check(args):
     if not steps:
         return [Finding("the first-use walk logged no step")]
     return (step_findings(walk, steps) + outcome_findings(verdict, set(steps.values()))
-            + session_findings(walk, list(steps)[-1]))
+            + session_findings(walk, list(steps)))
 
 
 def add_arguments(parser):

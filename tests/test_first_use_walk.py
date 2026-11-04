@@ -117,6 +117,20 @@ class Gate(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("ended on %s/customers, not where it started (%s)" % (SITE, SITE), result.stdout)
 
+    def test_a_back_shot_taken_early_or_a_move_after_the_last_shot_fails(self):
+        # The back step's screenshot first, then the task, ending on the record with a typed address: no step order.
+        log = DONE_STEPS[0][2] + shot(1) + shot(6) + "".join(action + shot(k) for k, (_, _, action) in enumerate(DONE_STEPS[1:5], 2))
+        self.evidence(DONE_STEPS, DONE_VERDICT, session=log + at("/customers/7", "browser_navigate", url=SITE + "/customers/7"))
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("no screenshot of step 6 after the step before it", result.stdout)
+        # In order, then a click away after the last screenshot.
+        log = "".join(action + shot(k) for k, (_, _, action) in enumerate(DONE_STEPS, 1)) + at("/customers/7")
+        self.evidence(DONE_STEPS, DONE_VERDICT, session=log)
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ended on %s/customers/7, not where it started" % SITE, result.stdout)
+
     def test_a_verdict_must_cite_a_step_the_walk_has_and_name_each_outcome_once(self):
         self.evidence(DONE_STEPS, DONE_VERDICT.replace(DONE_STEPS[3][0], "step 4: invited Dana"))
         result = self.run_gate()

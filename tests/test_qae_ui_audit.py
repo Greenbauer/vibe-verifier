@@ -38,8 +38,8 @@ def pull_request(test, files=None):
 
 # A subscribed app's add-someone dialog as the hook recorded it: the "Send invite" choice, pressed, and the "Send invite"
 # submit (actions/qae-browser/name-page.js), on the lines its pull request added.
-DIALOG = {"src/AddPortalUserBranch.tsx": "[AddUserMode.INVITE, 'Send invite'],\n[AddUserMode.CREATE_ACCOUNT, 'Create account now'],\n",
-          "src/AddPortalUserModal.tsx": "const CONFIRM_LABEL = {\n  [AddUserMode.INVITE]: 'Send invite',\n};\n"}
+DIALOG = {"src/AddSomeoneChoice.tsx": "[Mode.INVITE, 'Send invite'],\n[Mode.CREATE, 'Create account now'],\n",
+          "src/AddSomeoneDialog.tsx": "const SUBMIT = {\n  [Mode.INVITE]: 'Send invite',\n};\n"}
 SAME_NAME = {"rule": "duplicate-name", "page": "https://site.test/customers/7", "width": 1280,
              "at": "div#headlessui-dialog-panel-3 > div > div:nth-of-type(2) > button:nth-of-type(1)", "text": "Send invite",
              "other": "Send invite",

@@ -7,7 +7,7 @@ description: >-
   gate decides whether a pull request needed one.
 inputs:
   body:
-    description: The pull request body, written by the workflow (never read from the checkout).
+    description: The pull request body, written by the workflow (never read from the checkout). Removed once the prompt is written, so the walk's session cannot read the criteria in it.
     required: true
   site:
     description: The URL under test, as the site step declared it.
@@ -33,4 +33,6 @@ runs:
         set -euo pipefail
         rm -f "$OUT"
         python3 -I "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" first-use-prompt --body "$BODY" --site "$SITE" --out "$OUT"
+        # The session runs with full access to the workspace: the body, which holds the criteria, leaves it.
+        rm -f "$BODY"
         if [ -s "$OUT" ]; then echo "walk=true" >> "$GITHUB_OUTPUT"; else echo "walk=false" >> "$GITHUB_OUTPUT"; fi
