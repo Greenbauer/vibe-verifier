@@ -1,7 +1,8 @@
 """The explorer prompt states the rules the gates judge by. The rules a gate holds as data are rendered into it from
 that data (gates/_qae_prompt.py), so a gate that changes one changes the prompt (#218, #280); and every line form the
-prompt shows, a step line, a record's file name or a verdict line, written the way it says, is read by the gate pattern
-or gate run that reads it (#244). Rules that live only in the prompt's prose are not held here."""
+prompt shows (a step line, where a step log or screenshot goes, a record's file name, a verdict line), written the way
+it says, is read by the gate pattern or gate run that reads it (#244). Rules only the prompt's prose states are not held
+here."""
 import argparse
 import os
 import re
@@ -65,7 +66,7 @@ class Rendered(unittest.TestCase):
 
 def fill(form):
     """A step line or file name the prompt shows, for AC1's step 1 (a retry is step 2), as admin, of reference home."""
-    for name, value in (("ACn", "AC1"), ("step m", "step 2"), ("step k", "step 1"), ("step-k", "step-1"), ("<role>", "admin"), ("<key>", "home")):
+    for name, value in (("ACn", "AC1"), ("step m", "step 2"), ("step k", "step 1"), ("step-k", "step-1"), ("<role>", "admin"), ("<key>", "home"), ("<id>", "auth")):
         form = form.replace(name, value)
     return PLACEHOLDER.sub("seen", form.strip())
 
@@ -95,6 +96,29 @@ class StepForms(unittest.TestCase):
         self.assertEqual(_retry.RETRY.match(self.said("- step m: retry of step k:")).group("k"), "1")
         self.assertEqual(REFERENCE_NAMED.search(self.said("- step k: compared with reference")).group("key"), "home")
         self.assertRegex(shown(self.prompt, "- step k: as <role>:"), acceptance_verdict.STEP + r"[ \t]*as[ \t]+admin[ \t]*:")
+
+    def written(self, pattern, line="- step 1: seen -> seen\n"):
+        """Write a step log and its screenshot where the prompt's `pattern` says (groups: log, screenshot) in a fresh
+        qae-artifacts directory, returned."""
+        named = re.search(pattern, " ".join(self.prompt.split()))
+        self.assertIsNotNone(named, pattern)
+        root = tempfile.mkdtemp(prefix="vv-steps-")
+        self.addCleanup(shutil.rmtree, root, True)
+        log, shot = (fill(path)[len("qae-artifacts/"):] for path in named.group("log", "shot"))
+        write(root, {log: line})
+        Path(root, shot).write_bytes(png(1280))
+        return root
+
+    def test_a_step_logged_and_shot_where_the_prompt_says_is_a_step_the_gates_count(self):
+        line = shown(self.prompt, "- step k: <what you did>") + "\n"
+        root = self.written(r"save a screenshot to (?P<shot>qae-artifacts/\S+?\.png), then append one line to "
+                            r"(?P<log>qae-artifacts/\S+?\.md)", line)
+        self.assertEqual(qae_artifacts.steps_have_screenshots(root), [])
+        os.remove(os.path.join(root, "qae", "AC1-step-1.png"))
+        self.assertNotEqual(qae_artifacts.steps_have_screenshots(root), [], "the check reads the screenshot")
+        root = self.written(r"step log is (?P<log>qae-artifacts/\S+?\.md) and each step's screenshot "
+                            r"(?P<shot>qae-artifacts/\S+?\.png)", line)
+        self.assertEqual(acceptance_verdict.walked_steps(root, "auth"), 1)
 
     def test_a_record_saved_by_the_name_the_prompt_gives_is_the_one_the_retry_reads(self):
         prompt = " ".join(self.prompt.split())
@@ -147,9 +171,13 @@ class Followed(RegressionWalk):
                 + follow(form["regression-skip: <id>"], "projects", ""))
 
     def test_the_verdict_lines_the_prompt_shows_pass_the_gate(self):
-        write(self.work, {"qae-artifacts/qae/features/base/auth.md": "- step 1: signed in as the test user -> an error page\n"})
-        Path(self.work, "qae-artifacts", "qae", "features", "base", "auth-step-1.png").write_bytes(png(1280))
-        result = self.rewalk(self.verdict_as_the_prompt_says(Path(_qae_prompt.PROMPT).read_text()))
+        prompt = Path(_qae_prompt.PROMPT).read_text()
+        # The base branch's walk, logged and shot where the prompt says.
+        base = re.search(r"log those steps in (\S+) with screenshots (\S+?\.png)", " ".join(prompt.split()))
+        log, shot = (fill(path)[len("qae-artifacts/"):] for path in base.groups())
+        write(os.path.join(self.work, "qae-artifacts"), {log: "- step 1: signed in as the test user -> an error page\n"})
+        Path(self.work, "qae-artifacts", shot).write_bytes(png(1280))
+        result = self.rewalk(self.verdict_as_the_prompt_says(prompt))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("advisory: auth fails the same way on the base branch", result.stdout)
         self.assertIn("projects: states not walked, as the explorer reports: seen", result.stdout)
