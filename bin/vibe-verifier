@@ -193,6 +193,12 @@ the model the body, then runs the proof-audit gate on the grades and exits with 
 schema and gate the QAE verify job runs, so a session can see the verdict before it pushes. `--plan OUT` and
 `--requirements PLAN --shard K` are CI's two halves of it (harnesses/proof-audit/README.md).
 
+`copy-audit --artifacts DIR [--site-file FILE] [--grade-only] [--all]` grades, with a model on the same Codex
+CLI and login, whether each sentence and label in the copy record the QAE browser hook wrote (DIR/copy.jsonl,
+or `node actions/qae-browser/ui-audit.js --copy DIR/copy.jsonl URL...` from a shell) is plain English, writes
+copy-grades.json beside it, then runs the copy-audit gate and exits with its code. `--grade-only` is the explore
+job's half (harnesses/copy-audit/README.md).
+
 `affected-tests [--base-ref REF] [--tests GLOB] [--exclude GLOB] [--always GLOB] [--all-on GLOB] [--report RESULTS]` prints the
 test files a pull request's changes can affect, one per line, or `ALL`, with a summary on stderr, for the
 repository's own test job to run (gates/_affected_tests.py has the rule). It is not a gate: exit 0 with a
@@ -209,6 +215,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "gates"))
 sys.path.insert(0, os.path.join(ROOT, "bin"))  # bin/cli/: every subcommand but the three run from gates/ below
 import _affected_tests  # noqa: E402
+import _copy_audit  # noqa: E402
 import _merge_grant_cli  # noqa: E402
 import _proof_audit  # noqa: E402
 from cli import apply_down, consumers, criteria, features, qa_limit, qa_review, qae_inputs, rules_doc, runner  # noqa: E402
@@ -225,6 +232,7 @@ COMMANDS = {
     "rules-doc": rules_doc.rules_doc_command,
     "affected-tests": _affected_tests.command,
     "proof-audit": _proof_audit.command,
+    "copy-audit": _copy_audit.command,
     "merge-grant": _merge_grant_cli.command,
     "qa-review": qa_review.qa_review_command,
     "qa-limit": qa_limit.qa_limit_command,
@@ -257,6 +265,9 @@ def main():
     _proof_audit.add_arguments(commands.add_parser("proof-audit", help="grade, with a model on the Codex CLI, whether "
                                                    "the tests prove each requirement a pull request's Ticket sections "
                                                    "or stored plan define, then run the proof-audit gate on it"))
+    _copy_audit.add_arguments(commands.add_parser("copy-audit", help="grade, with a model on the Codex CLI, whether each "
+                                                  "sentence and label in a QAE run's copy record is plain English, then "
+                                                  "run the copy-audit gate on it"))
     _merge_grant_cli.add_arguments(commands.add_parser("merge-grant", help="whether a merge policy lets an agent merge a "
                                                        "pull request without a human review: prints `eligible: <grant>` "
                                                        "or `not eligible: <reason>` (via gh)"))

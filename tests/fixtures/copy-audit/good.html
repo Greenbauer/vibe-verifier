@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- bad.html's screens written plainly: the copy auditor passes every block here (tests/test_copy_audit.py). -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Copy audit: good</title>
+<style>body { font: 14px/1.4 sans-serif; margin: 24px; } dialog { position: static; display: block; }</style></head>
+<body>
+  <h1>Quote status</h1>
+  <dialog open aria-label="Add user">
+    <h2>Add a user</h2>
+    <p>We'll email them an invite. They join Acme when they set a password. The invite works for 24 hours, and you can <a href="#">send it again</a>.</p>
+    <label for="who">Email</label> <input id="who" placeholder="Customer number">
+    <button>Refresh details</button>
+  </dialog>
+  <section>
+    <p>To change your billing details, ask your organization's admin.</p>
+    <p>Send your request with the form below before the deadline.</p>
+    <div role="status">No customers yet.</div>
+  </section>
+  <!-- The trade's own words pass: these pages serve shippers and accountants. -->
+  <dl><dt>HBL</dt><dd>TAO29292071</dd><dt>Port of discharge</dt><dd>Long Beach</dd><dt>GL account</dt><dd>5100 Freight in</dd></dl>
+  <table>
+    <tr><th>Customer</th><th>Balance</th></tr>
+    <tr><td>Acme Corp</td><td><span>$1,200.00</span></td></tr>
+  </table>
+</body>
+</html>

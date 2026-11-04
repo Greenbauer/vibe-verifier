@@ -177,6 +177,16 @@ jobs:
         run: |
           test -f "$QAE_MCP" && test -f "$QAE_UI_AUDIT"
           python3 -m unittest discover -s tests -p 'test_qae_ui_audit.py' -v
+      - name: Read the copy record, with the Playwright it installed
+        # The copy finder groups a page's text into the blocks a person reads: tests/fixtures/copy-audit/bad.html's
+        # sentences and labels must be read whole, and its values, code and hidden text left out. Skips without
+        # QAE_MCP, so the file is checked first: a skip here must not read as a pass. The model's own grades of
+        # these fixtures need a Codex login, which this job does not hold (harnesses/copy-audit/README.md).
+        env:
+          QAE_MCP: ${{ steps.browser.outputs.mcp }}
+        run: |
+          test -f "$QAE_MCP"
+          python3 -m unittest discover -s tests -p 'test_copy_audit.py' -k Browser -v
       - name: Type a secret's value for its name however it is entered, with the playwright-mcp it installed
         # The secret names hook wraps that build's own Frame, ElementHandle and Keyboard classes, so
         # a pin bump that renames one shows here. The test signs in to a site on a local port the way

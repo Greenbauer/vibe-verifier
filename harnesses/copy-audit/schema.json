@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "copy-audit grades",
+  "description": "One grade per block of UI copy the grader was given. gates/copy_audit.py checks every FAIL's quote against the copy record; this file is also the output schema the Codex run is held to (strict: every key required, no others).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["blocks"],
+  "properties": {
+    "blocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "verdict", "rule", "quote", "rewrite"],
+        "properties": {
+          "id": {"type": "string", "description": "The block's ID exactly as given."},
+          "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+          "rule": {"type": "string", "enum": ["none", "answer-first", "short", "everyday-words", "no-system-terms"],
+                   "description": "The rule a FAIL breaks most; none for a PASS."},
+          "quote": {"type": "string", "description": "For a FAIL, the sentence or phrase that breaks it, copied exactly from the block's text; empty for a PASS."},
+          "rewrite": {"type": "string", "description": "For a FAIL, the whole block rewritten to pass, keeping every fact; empty for a PASS."}
+        }
+      }
+    }
+  }
+}

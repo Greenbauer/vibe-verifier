@@ -1,0 +1,57 @@
+name: Vibe Verifier copy audit
+description: >-
+  Grade, with a model on the Codex CLI, whether each sentence and label the QAE explorer's pages showed is plain
+  English (harnesses/copy-audit/README.md). Runs in the explore job, after the explorer and before the evidence is
+  uploaded, on the runner that holds the explorer's ChatGPT-managed Codex login. It writes copy-grades.json beside
+  each copy.jsonl the browser hook wrote; the verify job's copy-audit gate judges them.
+inputs:
+  artifacts:
+    description: The explorer's artifact directory, where actions/qae-browser's hook wrote copy.jsonl.
+    default: qae-artifacts
+  site-file:
+    description: The URLs the site step declared, one a line; only pages under them are graded. Empty grades every page.
+    default: qae-inputs/site-url
+  codex-home:
+    description: The Codex home holding the runner's login, as actions/qae-codex's. Empty means $HOME/.codex-qae.
+    default: ""
+  model:
+    description: The Codex model. Empty preserves the runner's model selection.
+    default: ""
+  reasoning-effort:
+    description: low, medium, high, xhigh, max or ultra. Empty preserves the runner's selection.
+    default: ""
+  timeout:
+    description: The seconds one shard of at most 120 blocks may take before it is stopped and recorded as not graded.
+    default: "1500"
+  sandbox:
+    description: >-
+      Codex's sandbox: danger-full-access (the default, as actions/qae-codex and the proof audit run, since a Linux
+      runner in an unprivileged container cannot start Codex's read-only sandbox) or read-only. The model is given an
+      empty directory and only the text to grade.
+    default: danger-full-access
+runs:
+  using: composite
+  steps:
+    - name: Grade the pages' copy
+      shell: bash
+      env:
+        VV_ARTIFACTS: ${{ inputs.artifacts }}
+        VV_SITE_FILE: ${{ inputs.site-file }}
+        VV_CODEX_HOME: ${{ inputs.codex-home }}
+        VV_MODEL: ${{ inputs.model }}
+        VV_EFFORT: ${{ inputs.reasoning-effort }}
+        VV_TIMEOUT: ${{ inputs.timeout }}
+        VV_SANDBOX: ${{ inputs.sandbox }}
+      run: |
+        set -euo pipefail
+        site=()
+        if [ -n "$VV_SITE_FILE" ]; then site=(--site-file "$VV_SITE_FILE"); fi
+        code=0
+        python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" copy-audit --grade-only --artifacts "$VV_ARTIFACTS" "${site[@]}" \
+          --codex-home "${VV_CODEX_HOME:-$HOME/.codex-qae}" --model="$VV_MODEL" --reasoning-effort="$VV_EFFORT" \
+          --timeout "$VV_TIMEOUT" --sandbox "$VV_SANDBOX" || code=$?
+        # 2 is a shard the model did not grade (a usage limit, a timeout): its error is in copy-grades.json, where the
+        # verify job's gate reports it as could not run. Failing here as well would turn the walk's own check red for
+        # a grade, and tell actions/qa-limit the explorer failed. Anything else is this step broken.
+        if [ "$code" = 2 ]; then echo "::warning title=copy-audit::a shard was not graded; the copy-audit gate reports it"; exit 0; fi
+        exit "$code"

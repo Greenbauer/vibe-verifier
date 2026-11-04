@@ -27,6 +27,7 @@ One file per feature of this catalog: its gates, its harnesses, its command-line
 | [Proof audit](proof-audit.md) | `proof-audit` (gate and command: a model grades whether the tests prove each requirement, the gate checks its quotes) |
 | [Feature map drift](feature-map.md) | `feature-map` |
 | [Layout and copy audit](ui-audit.md) | `ui-audit` |
+| [Plain-English copy audit](copy-audit.md) | `copy-audit` (gate and command: a model grades each sentence and label the QAE pages showed, the gate checks its quotes) |
 | [Browser acceptance verification (QAE)](qae-harness.md) | `acceptance-verdict`, `qae-artifacts`, `criteria`, `features`, `qae-inputs`, `qa-review`, `qa-limit`, `tool` |
 | [Revision-bound AI review](review-harness.md) | `review-receipt` |
 | [Pull request sync](pull-sync.md) | none: `actions/pull-sync` is an action a workflow runs |

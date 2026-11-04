@@ -115,14 +115,14 @@ def tree_state(repo, grades):
                           capture_output=True).stdout
 
 
-def codex_command(args, prompt, last):
+def codex_command(args, prompt, last, schema=SCHEMA):
     codex = args.codex
     if not codex:
         from _tools import ensure_node_tool
         codex = os.path.join(ensure_node_tool("codex"), "node_modules", ".bin", "codex")
     command = [codex, "exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
                "--sandbox", args.sandbox, "-c", 'approval_policy="never"', "-c", 'cli_auth_credentials_store="file"',
-               "--cd", os.path.abspath(args.repo), "--output-schema", SCHEMA, "-o", last]
+               "--cd", os.path.abspath(args.repo), "--output-schema", schema, "-o", last]
     if args.model:
         command += ["--model", args.model]
     if args.reasoning_effort:
@@ -130,8 +130,9 @@ def codex_command(args, prompt, last):
     return command + [prompt]
 
 
-def run_codex(args, prompt, work):
-    """(output, error, seconds): the model's final message parsed as JSON, or the reason there is none."""
+def run_codex(args, prompt, work, schema=SCHEMA):
+    """(output, error, seconds): the model's final message parsed as JSON, or the reason there is none. The copy
+    audit's grader (gates/_copy_audit.py) runs its own prompt through this with its own `schema`."""
     last = os.path.join(work, "last.json")
     errors = os.path.join(work, "stderr.log")
     home = args.codex_home or os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
@@ -139,7 +140,7 @@ def run_codex(args, prompt, work):
     env.pop("VV_PLANS_TOKEN", None)  # the plan store's token is the plan step's and the gate's, never the model's
     before, started = tree_state(args.repo, args.grades), time.monotonic()
     with open(errors, "wb") as stderr:
-        child = subprocess.Popen(codex_command(args, prompt, last), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        child = subprocess.Popen(codex_command(args, prompt, last, schema), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                  stderr=stderr, env=env, start_new_session=True)
         expired = threading.Event()
 

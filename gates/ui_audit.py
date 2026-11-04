@@ -32,25 +32,34 @@ RECORD = "ui-audit.jsonl"
 NTH = re.compile(r":nth-of-type\(\d+\)")
 
 
-def read_record(root):
-    """Every line of the record: at the root for one explorer, under shard-<n>/ for each of several, where the
-    workflow step that merges their evidence moves it (harnesses/qae/README.md)."""
-    paths = sorted(glob.glob(os.path.join(root, RECORD)) + glob.glob(os.path.join(root, "shard-*", RECORD)))
+def record_paths(root, name=RECORD):
+    """Each copy of one of the hook's records: at the root for one explorer, under shard-<n>/ for each of several,
+    where the workflow step that merges their evidence moves it (harnesses/qae/README.md). Step logs and no record
+    cannot run: the hook was not loaded. The copy-audit gate reads its record (copy.jsonl) the same way."""
+    paths = sorted(glob.glob(os.path.join(root, name)) + glob.glob(os.path.join(root, "shard-*", name)))
     if not paths:
         steps = os.path.join(root, "qae")
-        if os.path.isdir(steps) and any(name.endswith(".md") for name in os.listdir(steps)):
+        if os.path.isdir(steps) and any(entry.endswith(".md") for entry in os.listdir(steps)):
             raise CannotRun("%s holds step logs and no %s: load actions/qae-browser/ui-audit.js into playwright-mcp "
-                            "with --init-page (harnesses/qae/README.md)" % (root, RECORD))
-        return []
+                            "with --init-page (harnesses/qae/README.md)" % (root, name))
+    return paths
+
+
+def read_lines(path, root):
+    """The JSON lines of one record; a line that is not JSON cannot run."""
     lines = []
-    for path in paths:
-        with open(path, encoding="utf-8") as handle:
-            for number, line in enumerate(handle, 1):
-                try:
-                    lines.append(json.loads(line))
-                except ValueError:
-                    raise CannotRun("%s line %d is not JSON" % (os.path.relpath(path, root), number))
+    with open(path, encoding="utf-8") as handle:
+        for number, line in enumerate(handle, 1):
+            try:
+                lines.append(json.loads(line))
+            except ValueError:
+                raise CannotRun("%s line %d is not JSON" % (os.path.relpath(path, root), number))
     return lines
+
+
+def read_record(root):
+    """Every line of the layout record, from every explorer."""
+    return [line for path in record_paths(root) for line in read_lines(path, root)]
 
 
 def on_site(page, site):
