@@ -38,15 +38,15 @@ The first-use walk is that requester. A second Codex session is given only the t
 
 A job of its own beside the explore job, so the walk's session is never handed the explorer's prompt and runs in
 parallel on another QAE slot. `actions/first-use` removes the body once it has read the task, so the session, which
-has the workspace, cannot read the criteria there either. The wrapper's `Acceptance criteria: main walk` job is the pattern: the same site step (by YAML anchor) with its
-own login suffix, then
+has the workspace, cannot read the criteria there either. The wrapper's `Acceptance criteria: main walk` job is the
+pattern: the same site step (by YAML anchor) with its own login suffix, then
 
 ```yaml
       - name: Write the first-use walk's prompt
         id: task
         uses: Greenbauer/vibe-verifier/actions/first-use@<sha>
         with:
-          body: qae-inputs/pr-body.md
+          body: ${{ runner.temp }}/pr-body.md   # outside the workspace the session can read
           site: ${{ steps.site.outputs.url }}
       - name: Walk the task as a person new to the site
         if: steps.task.outputs.walk == 'true'

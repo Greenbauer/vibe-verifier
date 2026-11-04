@@ -140,10 +140,12 @@ def check(args):
     body = read(args.body)
     if body is None:
         raise CannotRun("body file not found: %s" % args.body)
+    if not needs_walk(body):
+        return []   # a workflow walks nothing for a body with nothing to walk, whatever task it states
     if not task(body):
         return [Finding("the pull request lists acceptance criteria and no `## First-use task`: say in the requester's "
                         "words what a person uses this change to get done, and a QAE session walks it cold "
-                        "(harnesses/first-use/README.md)")] if needs_walk(body) else []
+                        "(harnesses/first-use/README.md)")]
     walk = os.path.join(args.artifacts, "first-use")
     log, verdict = read(os.path.join(walk, "walk.md")), read(os.path.join(walk, "verdict.md"))
     if log is None or verdict is None:

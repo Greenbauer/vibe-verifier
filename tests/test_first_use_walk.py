@@ -147,12 +147,13 @@ class Gate(unittest.TestCase):
         self.assertIn("step 1 is not its start", result.stdout)
         self.assertIn("last step is not its way back", result.stdout)
 
-    def test_criteria_and_no_task_is_a_finding_and_nothing_to_walk_needs_none(self):
+    def test_criteria_and_no_task_is_a_finding_and_nothing_to_walk_needs_no_walk_even_with_a_task(self):
         self.evidence(DONE_STEPS, DONE_VERDICT, body=BODY.replace("## First-use task\n\n%s\n\n" % TASK, ""))
         result = self.run_gate()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("no `## First-use task`", result.stdout)
-        for body in ("## Acceptance criteria\n\n- None: a pin bump\n", "Bumps a dependency.\n"):
+        for body in ("## Acceptance criteria\n\n- None: a pin bump\n", "Bumps a dependency.\n",
+                     "## First-use task\n\n%s\n\n## Acceptance criteria\n\n- None: a pin bump\n" % TASK):
             Path(self.work, "pr-body.md").write_text(body)
             self.assertEqual(self.run_gate().returncode, 0, body)
 
