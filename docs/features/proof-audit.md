@@ -23,6 +23,10 @@ In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one s
 ## Verify
 
 - `tests/test_proof_audit.py::test_a_valid_run_passes_and_lists_every_id`
+- `tests/test_proof_audit_clear_choice.py::test_the_recorded_grade_of_same_named_buttons_picked_by_position_is_unproven`
+- `tests/test_proof_audit_clear_choice.py::test_the_recorded_grade_of_the_radio_choice_passes_and_does_not_pass_on_the_other_tree`
+- `tests/test_proof_audit_clear_choice.py::test_the_old_prompts_grade_passed_the_gate_because_its_quotes_are_real`
+- `tests/test_proof_audit_clear_choice.py::test_the_prompt_says_a_positional_pick_never_proves_a_clear_choice`
 - `tests/test_proof_audit.py::test_a_fabricated_quote_is_unproven`
 - `tests/test_proof_audit.py::test_a_missing_test_title_or_file_is_unproven`
 - `tests/test_proof_audit.py::test_an_unproven_id_fails_with_what_is_missing`
