@@ -6,7 +6,7 @@
     {
       "name": "vibe-verifier-skills",
       "source": ".",
-      "description": "write-acceptance-criteria, follow-repo-rules and encode-a-lesson: how to write criteria QAE can check, follow a repository's executable rules, and turn a repeated mistake into a rule"
+      "description": "write-acceptance-criteria, follow-repo-rules, encode-a-lesson and design-a-ui: how to write criteria QAE can check, follow a repository's executable rules, turn a repeated mistake into a rule, and plan and build a screen people can use"
     }
   ]
 }
