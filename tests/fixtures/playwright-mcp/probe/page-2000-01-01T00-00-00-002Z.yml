@@ -1,0 +1,7 @@
+- main [ref=e2]:
+  - heading "Order" [level=1] [ref=e3]
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - text: Quantity
+      - textbox "Quantity" [ref=e6]
+    - button "Save" [ref=e7]

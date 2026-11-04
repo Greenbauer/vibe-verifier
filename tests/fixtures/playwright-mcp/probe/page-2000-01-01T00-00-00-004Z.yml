@@ -1,0 +1,8 @@
+- main [ref=e2]:
+  - heading "Order" [level=1] [ref=e3]
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - text: Quantity
+      - textbox "Quantity" [ref=e6]: "-1"
+    - button "Save" [active] [ref=e7]
+    - paragraph [ref=e8]: Quantity must be a positive number
