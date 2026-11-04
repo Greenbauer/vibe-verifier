@@ -98,14 +98,16 @@ screens this pull request adds or changes, and list the rest in the body.
 ## Where these rules come from
 
 - [NN/g, complex application design](https://www.nngroup.com/articles/complex-application-design/):
-  R1 to R6, R10.
+  R5, R6, R10.
 - [Nielsen's ten usability heuristics](https://www.nngroup.com/articles/ten-usability-heuristics/):
   R2, R8, R9, R12 to R14.
 - [Vercel Web Interface Guidelines](https://vercel.com/design/guidelines): R9, R11, R15.
+- R1, R3, R4, R7, R16 and R17 are this catalog's own, written from agent-built screens that confused
+  people, and tested by the backtest below.
 - Backtest, 2026-11-04: R1 to R16 were graded blind, from code, against 41 past UI pull requests in two
   private repositories, 10 of which people had found confusing. They flagged every clearly confusing one
   but named the actual complaint in only one of four, and flagged 9 of 31 that drew no complaint (several
-  looked like real problems nobody had reported). R17 was added after: it caught three of the four
+  looked like real problems nobody had reported). R17 was added after: it flagged three of the four
   clearly confusing pull requests, all placement complaints, and flagged 1 of 31.
 
 Building a new site or app with no design system yet? A visual-direction skill such as Anthropic's
