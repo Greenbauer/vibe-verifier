@@ -18,8 +18,8 @@ from helpers import ROOT, gate, make_repo
 
 HOOK = ROOT / "actions" / "qae-browser" / "ui-audit.js"
 FIXTURES = ROOT / "tests" / "fixtures" / "ui-audit"
-RULES = ["clipped-text", "clipped-value", "edge", "field-stagger", "long-sentence", "raw-value", "row-height",
-         "row-stagger", "spinner-off-center", "text-wall", "touching"]
+RULES = ["clipped-text", "clipped-value", "edge", "field-stagger", "glyph-off-center", "long-sentence", "raw-value",
+         "row-height", "row-stagger", "spinner-off-center", "text-wall", "touching"]
 
 
 def line(rule, at="td > div > button", page="https://site.test/quotes", width=1280, **extra):
@@ -130,7 +130,7 @@ const hook = require(process.env.HOOK);
     await page.goto("file://" + process.env.FIXTURES + "/" + name + ".html");
     const found = await page.evaluate(hook.script);
     out[name] = [...new Set(found.map(f => f.rule))].sort();
-    out[name + "-details"] = found.filter(f => ["raw-value", "touching"].includes(f.rule)).map(f => f.rule + ": " + f.text);
+    out[name + "-details"] = found.filter(f => ["raw-value", "touching", "glyph-off-center"].includes(f.rule)).map(f => f.rule + ": " + f.text);
     await page.close();
   }
   // The hook in a real page: it measures after the load, and again the moment a button gains a spinner.
@@ -147,7 +147,11 @@ const hook = require(process.env.HOOK);
     spinner.style.cssText = "display:inline-block;width:10px;height:10px;position:relative;top:8px";
     button.prepend(spinner);
   });
-  await page.waitForTimeout(500);
+  // The spinner's measure starts at once but may queue behind the load's: wait for its line, not a fixed time.
+  const recorded = require("path").join(process.env.OUT, "ui-audit.jsonl");
+  for (let waited = 0; waited < 5000 && !require("fs").readFileSync(recorded, "utf8").includes("spinner-off-center"); waited += 100) {
+    await page.waitForTimeout(100);
+  }
   await browser.close();
   console.log(JSON.stringify(out));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -170,6 +174,11 @@ class Browser(unittest.TestCase):
         for expected in ("raw-value: undefined", "raw-value: 3f2b1c4d-1111-4abc-9def-0123456789ab", "raw-value: Status: in_review", "raw-value: Owner: [object Object]",
                          "touching: Activate", "touching: Square", "touching: Save"):
             self.assertIn(expected, measured["bad-details"])
+        # A count badge's digit, an svg check, a CSS-drawn tick and avatar initials, each off its circle's middle. good.html has them
+        # centered, ticks sized content-box, placed by the translate and rotate properties or with a margin, a switch's knob
+        # and an empty avatar's status dot (fills, not marks) and large tabular digits, and none is flagged.
+        self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("glyph-off-center")),
+                         ["glyph-off-center: ", "glyph-off-center: 6", "glyph-off-center: LT", "glyph-off-center: Pick"])
         record = [json.loads(x) for x in Path(out, "ui-audit.jsonl").read_text().splitlines()]
         self.assertEqual([x["rule"] for x in record], ["spinner-off-center"])
         self.assertTrue(record[0]["page"].endswith("/good.html"))

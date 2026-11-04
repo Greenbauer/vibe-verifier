@@ -128,6 +128,8 @@ test("the audit is self-contained: run as the page script on an empty page, it n
   const vm = require("node:vm");
   const page = { querySelectorAll: () => [], createElement: () => ({ getContext: () => ({ measureText: () => ({ width: 0 }) }) }) };
   assert.strictEqual(typeof require("./ui-audit-page.js"), "function");
+  assert.strictEqual(typeof require("./glyph-page.js"), "function");
+  assert.ok(hook.script.includes("function glyphRules("));   // the badge rule runs in the same script
   assert.strictEqual(JSON.stringify(vm.runInNewContext(hook.script, { document: page, getComputedStyle: () => ({}) })), "[]");
 });
 
