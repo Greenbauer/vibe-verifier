@@ -10,6 +10,12 @@ input{border:1px solid #444;background:#1a1a1a;color:#eee;border-radius:6px;padd
 .seg{display:inline-flex}.seg button{border-radius:0}.seg button:first-child{border-radius:8px 0 0 8px}.seg button:last-child{border-radius:0 8px 8px 0}
 .spin{display:inline-block;width:10px;height:10px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:s 1s linear infinite}
 @keyframes s{to{transform:rotate(1turn)}}
+.badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;border-radius:10px;background:#e55;color:#fff;font:12px sans-serif}
+.av{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;border:2px solid #e77;color:#eee;font:600 13px sans-serif}
+.chk{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#f80}
+.tick{appearance:none;width:24px;height:24px;border-radius:50%;background:#f80;border:1px solid #f80;position:relative;margin:0}
+.tick::after{content:"";position:absolute;box-sizing:border-box;border:2px solid #fff;border-left:0;border-top:0;top:50%;width:7px;height:12px}
+.t-ok::after{left:50%;transform:translate(-50%,-62%) rotate(45deg)}
 </style>
 <div class=card><div class=row><label class=pill><input type=checkbox> Active only</label><button>Apply filters</button></div></div>
 <div class=card><div class=grid>
@@ -25,3 +31,6 @@ input{border:1px solid #444;background:#1a1a1a;color:#eee;border-radius:6px;padd
 <div style="width:80px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">A label far too long for its box</div>
 <select style="width:200px"><option>A long option label here</option></select>
 <input placeholder="Type a long name" value="A value much longer than this narrow field can show" style="width:90px">
+<div class=card><span class=badge>6</span> <span class=av>PP</span>
+<span class=chk><svg width=14 height=14 viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" stroke=#fff fill=none stroke-width=3 /></svg></span>
+<input type=checkbox class="tick t-ok" checked aria-label="Pick"></div>

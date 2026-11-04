@@ -18,8 +18,8 @@ from helpers import ROOT, gate, make_repo
 
 HOOK = ROOT / "actions" / "qae-browser" / "ui-audit.js"
 FIXTURES = ROOT / "tests" / "fixtures" / "ui-audit"
-RULES = ["clipped-text", "clipped-value", "edge", "field-stagger", "long-sentence", "raw-value", "row-height",
-         "row-stagger", "spinner-off-center", "text-wall", "touching"]
+RULES = ["clipped-text", "clipped-value", "edge", "field-stagger", "glyph-off-center", "long-sentence", "raw-value",
+         "row-height", "row-stagger", "spinner-off-center", "text-wall", "touching"]
 
 
 def line(rule, at="td > div > button", page="https://site.test/quotes", width=1280, **extra):
@@ -130,7 +130,7 @@ const hook = require(process.env.HOOK);
     await page.goto("file://" + process.env.FIXTURES + "/" + name + ".html");
     const found = await page.evaluate(hook.script);
     out[name] = [...new Set(found.map(f => f.rule))].sort();
-    out[name + "-details"] = found.filter(f => ["raw-value", "touching"].includes(f.rule)).map(f => f.rule + ": " + f.text);
+    out[name + "-details"] = found.filter(f => ["raw-value", "touching", "glyph-off-center"].includes(f.rule)).map(f => f.rule + ": " + f.text);
     await page.close();
   }
   // The hook in a real page: it measures after the load, and again the moment a button gains a spinner.
@@ -170,6 +170,9 @@ class Browser(unittest.TestCase):
         for expected in ("raw-value: undefined", "raw-value: 3f2b1c4d-1111-4abc-9def-0123456789ab", "raw-value: Status: in_review", "raw-value: Owner: [object Object]",
                          "touching: Activate", "touching: Square", "touching: Save"):
             self.assertIn(expected, measured["bad-details"])
+        # A count badge's digit, an svg check and a CSS-drawn tick, each off its circle's middle; centered, all three pass.
+        self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("glyph-off-center")),
+                         ["glyph-off-center: ", "glyph-off-center: 6", "glyph-off-center: Pick"])
         record = [json.loads(x) for x in Path(out, "ui-audit.jsonl").read_text().splitlines()]
         self.assertEqual([x["rule"] for x in record], ["spinner-off-center"])
         self.assertTrue(record[0]["page"].endswith("/good.html"))
