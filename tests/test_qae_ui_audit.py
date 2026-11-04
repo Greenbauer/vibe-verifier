@@ -147,7 +147,11 @@ const hook = require(process.env.HOOK);
     spinner.style.cssText = "display:inline-block;width:10px;height:10px;position:relative;top:8px";
     button.prepend(spinner);
   });
-  await page.waitForTimeout(500);
+  // The spinner's measure starts at once but may queue behind the load's: wait for its line, not a fixed time.
+  const recorded = require("path").join(process.env.OUT, "ui-audit.jsonl");
+  for (let waited = 0; waited < 5000 && !require("fs").readFileSync(recorded, "utf8").includes("spinner-off-center"); waited += 100) {
+    await page.waitForTimeout(100);
+  }
   await browser.close();
   console.log(JSON.stringify(out));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -170,9 +174,11 @@ class Browser(unittest.TestCase):
         for expected in ("raw-value: undefined", "raw-value: 3f2b1c4d-1111-4abc-9def-0123456789ab", "raw-value: Status: in_review", "raw-value: Owner: [object Object]",
                          "touching: Activate", "touching: Square", "touching: Save"):
             self.assertIn(expected, measured["bad-details"])
-        # A count badge's digit, an svg check and a CSS-drawn tick, each off its circle's middle; centered, all three pass.
+        # A count badge's digit, an svg check, a CSS-drawn tick and avatar initials, each off its circle's middle. good.html has them
+        # centered, a tick sized content-box and one placed by the translate and rotate properties, a switch's knob and an
+        # avatar's status dot (fills, not marks) and tabular digits, and none is flagged.
         self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("glyph-off-center")),
-                         ["glyph-off-center: ", "glyph-off-center: 6", "glyph-off-center: Pick"])
+                         ["glyph-off-center: ", "glyph-off-center: 6", "glyph-off-center: LT", "glyph-off-center: Pick"])
         record = [json.loads(x) for x in Path(out, "ui-audit.jsonl").read_text().splitlines()]
         self.assertEqual([x["rule"] for x in record], ["spinner-off-center"])
         self.assertTrue(record[0]["page"].endswith("/good.html"))

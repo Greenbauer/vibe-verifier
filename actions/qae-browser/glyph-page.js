@@ -22,7 +22,7 @@ function textInk(node, measure) {
   const s = getComputedStyle(node.parentElement), range = document.createRange();
   range.selectNodeContents(node);
   const at = range.getBoundingClientRect();
-  measure.font = s.font;
+  measure.font = [s.fontStyle, s.fontWeight, s.fontSize, s.fontFamily].join(" ");   // s.font is "" when a font-variant is set
   measure.letterSpacing = s.letterSpacing === "normal" ? "0px" : s.letterSpacing;
   let text = node.textContent.trim();
   if (s.textTransform === "uppercase") text = text.toUpperCase();
@@ -41,52 +41,77 @@ function svgInk(svg) {
   return box(Math.min(p.x, q.x), Math.min(p.y, q.y), Math.max(p.x, q.x), Math.max(p.y, q.y));
 }
 
-// The ink of a ::before or ::after drawn with borders or a fill (a CSS tick is a rotated corner of two
-// borders): the drawn strips, through the pseudo's transform, in the page.
+// The pseudo's whole 2D transform: CSS applies translate, rotate and scale, then transform. Null for a 3D one.
+function pseudoMatrix(s, w, h) {
+  const m = new DOMMatrix(), len = (v, of) => v.endsWith("%") ? parseFloat(v) / 100 * of : parseFloat(v);
+  if (s.translate !== "none") { const [x, y = "0px"] = s.translate.split(" "); m.translateSelf(len(x, w), len(y, h)); }
+  if (s.rotate !== "none") { if (!/^-?[\d.]+deg$/.test(s.rotate)) return null; m.rotateSelf(parseFloat(s.rotate)); }
+  if (s.scale !== "none") { const [x, y = x] = s.scale.split(" ").map(parseFloat); m.scaleSelf(x, y); }
+  return s.transform === "none" ? m : m.multiplySelf(new DOMMatrix(s.transform));
+}
+
+// The ink of a CSS-drawn tick: a ::before or ::after with no fill and a border on two adjacent sides only (a
+// rotated corner), through the pseudo's transform, in the page. A knob or a status dot is a fill, not a mark.
 function pseudoInk(el, which) {
   const s = getComputedStyle(el, which);
-  if (s.content === "none" || s.position !== "absolute" || !/px$/.test(s.left) || !/px$/.test(s.top)) return null;
-  const w = parseFloat(s.width), h = parseFloat(s.height), side = k => !CLEAR.test(s["border" + k + "Color"]) ? parseFloat(s["border" + k + "Width"]) : 0;
-  const strips = !CLEAR.test(s.backgroundColor) ? [[0, 0, w, h]] : [];
-  if (side("Top")) strips.push([0, 0, w, side("Top")]);
-  if (side("Right")) strips.push([w - side("Right"), 0, w, h]);
-  if (side("Bottom")) strips.push([0, h - side("Bottom"), w, h]);
-  if (side("Left")) strips.push([0, 0, side("Left"), h]);
-  if (!strips.length || !w || !h) return null;
-  const host = el.getBoundingClientRect(), hs = getComputedStyle(el);
-  const x0 = host.left + parseFloat(hs.borderLeftWidth) + parseFloat(s.left), y0 = host.top + parseFloat(hs.borderTopWidth) + parseFloat(s.top);
-  const m = new DOMMatrix(s.transform === "none" ? undefined : s.transform), [ox, oy] = s.transformOrigin.split(" ").map(parseFloat);
-  const points = strips.flatMap(([a, b, c, d]) => [[a, b], [c, b], [a, d], [c, d]])
+  if (s.content === "none" || s.position !== "absolute" || !/px$/.test(s.left) || !/px$/.test(s.top) || !CLEAR.test(s.backgroundColor)) return null;
+  const side = k => !CLEAR.test(s["border" + k + "Color"]) && s["border" + k + "Style"] !== "none" ? parseFloat(s["border" + k + "Width"]) : 0;
+  const [t, r, b, l] = ["Top", "Right", "Bottom", "Left"].map(side);
+  if ([t, r, b, l].filter(Boolean).length !== 2 || (t && b) || (l && r)) return null;
+  const pad = k => parseFloat(s["padding" + k]);
+  const content = s.boxSizing !== "border-box";
+  const w = parseFloat(s.width) + (content ? pad("Left") + pad("Right") + l + r : 0);
+  const h = parseFloat(s.height) + (content ? pad("Top") + pad("Bottom") + t + b : 0);
+  if (!w || !h) return null;
+  const strips = [t && [0, 0, w, t], r && [w - r, 0, w, h], b && [0, h - b, w, h], l && [0, 0, l, h]].filter(Boolean);
+  const m = pseudoMatrix(s, w, h);
+  if (!m) return null;
+  const host = el.getBoundingClientRect(), hs = getComputedStyle(el), [ox, oy] = s.transformOrigin.split(" ").map(parseFloat);
+  const x0 = host.left + parseFloat(hs.borderLeftWidth) + parseFloat(s.left) + parseFloat(s.marginLeft);
+  const y0 = host.top + parseFloat(hs.borderTopWidth) + parseFloat(s.top) + parseFloat(s.marginTop);
+  const points = strips.flatMap(([a, c, d, e]) => [[a, c], [d, c], [a, e], [d, e]])
     .map(([x, y]) => { const p = m.transformPoint(new DOMPoint(x - ox, y - oy)); return [x0 + ox + p.x, y0 + oy + p.y]; });
   const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
   return box(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys));
 }
 
 // The one mark inside a badge, and what it is: its own short text, a lone svg or img (through wrappers that
-// draw nothing), or a pseudo-element drawn with borders or a fill. Anything else is not a badge's mark.
+// draw nothing), or a CSS-drawn tick. Anything else is not a badge's mark.
 function mark(el, measure) {
   let n = el;
   for (let up = 0; up < 3; up++) {
     const text = [...n.childNodes].filter(c => c.nodeType === 3 && c.textContent.trim());
     const kids = [...n.children].filter(visible);
-    if (text.length === 1 && !kids.length) return text[0].textContent.trim().length <= 3 ? textInk(text[0], measure) : null;
-    if (text.length || kids.length > 1) return null;
-    if (!kids.length) return n === el ? pseudoInk(el, "::after") || pseudoInk(el, "::before") : null;
+    if (text.length || kids.length !== 1) return ownMark(el, n, text, kids, measure);
     n = kids[0];
-    if (n.tagName === "svg" || n.tagName === "SVG") return svgInk(n);
-    if (n.tagName === "IMG") return n.getBoundingClientRect();
-    if (boxed(n)) return null;   // a badge inside a badge is judged on its own
+    const icon = iconInk(n);
+    if (icon !== undefined) return icon;
   }
   return null;
 }
 
+// `n`'s own mark when it does not hold exactly one element: its short text, or, on the badge itself, a tick.
+function ownMark(el, n, text, kids, measure) {
+  if (text.length === 1 && !kids.length) return text[0].textContent.trim().length <= 3 ? textInk(text[0], measure) : null;
+  if (text.length || kids.length) return null;
+  return n === el ? pseudoInk(el, "::after") || pseudoInk(el, "::before") : null;
+}
+
+// An svg's or img's ink; null for a badge inside the badge (judged on its own); undefined for a wrapper to look into.
+function iconInk(n) {
+  if (n.tagName.toLowerCase() === "svg") return svgInk(n);
+  if (n.tagName === "IMG") return n.getBoundingClientRect();
+  return boxed(n) ? null : undefined;
+}
+
 function glyphRules(add) {
   const measure = document.createElement("canvas").getContext("2d");
+  if (!measure) return;
   for (const el of document.querySelectorAll("body *")) {
-    if (el.tagName === "svg" || el.closest("svg") || !visible(el)) continue;
-    const r = el.getBoundingClientRect();
-    if (!badge(el, r)) continue;
-    const ink = mark(el, measure);
+    const r = el.getBoundingClientRect();   // size first: it is the cheap test, and most elements fail it
+    if (r.height < 10 || r.height > 64 || r.width > 3 * r.height || el.closest("svg") || !visible(el) || !badge(el, r)) continue;
+    let ink = null;
+    try { ink = mark(el, measure); } catch (e) { continue; }   // one odd element never costs the page's other findings
     if (!ink) continue;
     const s = getComputedStyle(el);
     const cx = (r.left + r.right) / 2 + (parseFloat(s.borderLeftWidth) - parseFloat(s.borderRightWidth)) / 2;
@@ -98,3 +123,5 @@ function glyphRules(add) {
     add("glyph-off-center", el, `its mark sits ${off.join(" and ")} of the circle's middle`);
   }
 }
+
+if (typeof module !== "undefined") module.exports = glyphRules;
