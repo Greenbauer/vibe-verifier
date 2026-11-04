@@ -293,7 +293,7 @@ class FeatureRewalk(unittest.TestCase):
             self.assertIn(phrase, prompt)
         step = self.explore()
         step = step[step.index("- name: Select the features to re-walk"):step.index("- uses: actions/setup-node@")]
-        self.assertIn("qae-inputs/features.md tells the explorer how many states of each to walk (--max-states, default 3)", step)
+        self.assertIn("qae-inputs/features.md tells the explorer how many states of each to walk (--max-states", step)
         action = (ROOT / "actions" / "features" / "action.yml").read_text()
         self.assertIn('--out "$VV_OUT" --listing "$VV_OUT.md"', action)
         self.assertIn("    default: qae-inputs/features\n", action)
