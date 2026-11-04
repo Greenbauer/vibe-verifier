@@ -55,7 +55,8 @@ def add_arguments(parser):
     parser.add_argument("--lane", metavar="LABEL", help="with --auto: the runner label the bumps' checks run on; "
                         "wait until it is quiet (without it, never wait)")
     parser.add_argument("--merge", action="store_true", help="with --auto --act: first squash-merge each open bump that "
-                        "is merge-ready, and close one that conflicts or has nothing left to change (gates/_pin_merge.py)")
+                        "is merge-ready, and close one that conflicts or has nothing left to change (gates/_pin_merge.py); "
+                        "with --auto alone, check the token can read the checks a merge reads")
     parser.add_argument("--overdue-hours", type=float, default=6, help="with --auto: bump once the oldest release "
                         "commit waiting is this old, quiet or not (default 6)")
 

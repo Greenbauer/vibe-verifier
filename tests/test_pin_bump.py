@@ -270,9 +270,14 @@ class PinBump(unittest.TestCase):
         self.assertIn("acme/app                         cannot read its checks (merging needs checks: read and "
                       "statuses: read): gh: Resource not accessible by integration (HTTP 403)", result.stdout)
         self.assertEqual(self.writes(), [])
+        (Path(self.fixtures) / "calls.log").unlink()
+        self.bump("--act", "--now", "--merge")  # a real run merges instead: no open bump, so it reads no checks
+        self.assertFalse([c for c in self.calls() if "/commits/main/" in c["endpoint"]])
         (Path(self.fixtures) / "acme/app/.no-checks").unlink()
+        (Path(self.fixtures) / "calls.log").unlink()
         self.assertEqual(self.bump("--now", "--merge").returncode, 0)
-        self.assertIn("repos/acme/app/commits/main/status?per_page=1", [c["endpoint"] for c in self.calls()])
+        read = [c["endpoint"] for c in self.calls() if "/commits/main/" in c["endpoint"]]
+        self.assertEqual(read, ["repos/acme/app/commits/main/check-runs?per_page=1", "repos/acme/app/commits/main/status?per_page=1"])
 
     def test_a_bumps_pins_are_judged_against_the_main_its_level_pins_from(self):
         on_main = _pin_merge.pinned_from(self.source, self.new, None)
