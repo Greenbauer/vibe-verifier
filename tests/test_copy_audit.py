@@ -83,6 +83,16 @@ class Gate(unittest.TestCase):
         result = self.run_gate([block("Users")], [envelope([failing("Users")])])
         self.assert_code(result, 0, "no-system-terms, existing copy on https://site.test/users")
 
+    def test_a_label_on_an_added_line_of_its_own_is_the_pull_requests(self):
+        # The base has the button; the pull request changes only its text, on a line of its own, as Prettier formats JSX.
+        git(self.repo, "checkout", "-q", "main")
+        commit(self.repo, {"src/sync.tsx": "<Button onClick={sync}>\n  Save\n</Button>\n"})
+        git(self.repo, "checkout", "-q", "feat/invite")
+        git(self.repo, "merge", "-q", "--no-edit", "main")
+        commit(self.repo, {"src/sync.tsx": "<Button onClick={sync}>\n  Refresh NS row\n</Button>\n"})
+        result = self.run_gate([block("Refresh NS row", kind="label")], [envelope([failing("Refresh NS row")])])
+        self.assert_code(result, 1, '"Refresh NS row"')
+
     def test_a_labels_word_inside_code_the_pull_request_adds_is_not_the_label(self):
         commit(self.repo, {"src/row.ts": "const unsaved = true;\nreturn { status: row.quote_status, a: 1 };\n"})
         record = [block("Save", kind="label"), block("quote_status", kind="label")]

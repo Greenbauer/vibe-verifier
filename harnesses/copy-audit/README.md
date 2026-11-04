@@ -23,7 +23,7 @@ The copy audit reads it the way a person would, and holds that reading to the re
    declared site was graded in a shard that ran, and that each FAIL's quote is in that block's text as the page
    showed it (a block the model graded twice fails when either grade does). A FAIL whose quote is not there is dropped, and the gate says how many. A counted FAIL
    blocks only when the pull request adds that copy (four consecutive whole words of it on an added line of the
-   diff, or a shorter label whole, as a string or an element's text);
+   diff, or a shorter label whole, as a string, an element's text or a line of its own);
    otherwise it is listed as existing copy, without blocking.
 
 The rules, in the prompt's words: answer first, one to three short sentences, everyday words, and no words from

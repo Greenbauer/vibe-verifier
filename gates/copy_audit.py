@@ -14,7 +14,8 @@ beside it (gates/_copy_audit.py). The model's grade is checked, never trusted:
 - A FAIL counts only when its quote is in that block's text as the page showed it. A FAIL whose quote is not
   there is dropped, and said so: a fabricated quote is not evidence.
 - A counted FAIL blocks only when the pull request adds that copy: four consecutive whole words of the block are on
-  a line `git diff <base>...HEAD` adds, or, for a shorter label, the whole label as a string or an element's text. A failing block the base already had is
+  a line `git diff <base>...HEAD` adds, or, for a shorter label, the whole label as a string, an element's text or a
+  line of its own. A failing block the base already had is
   listed as advisory, so a cleanup pull request can work from the list; --all makes every one block.
 
     --artifacts DIR     the run's artifact directory (required)
@@ -107,11 +108,12 @@ def added_text(args):
 
 def added_by_pull_request(text, added):
     """Whether an added line holds four consecutive whole words of the block, or, for a shorter label, the whole label
-    as a string or an element's text (`"Save"`, `>Save<`): a label's word inside code (`unsaved`, `row.quote_status`)
-    is not the label."""
+    as a string, an element's text or a line of its own (`"Save"`, `>Save<`, JSX text on its own line): a label's
+    word inside code (`unsaved`, `row.quote_status`) is not the label."""
     words = normal(text).split()
     if len(words) < RUN:
-        return re.search(r"""[>"'`]\s*%s\s*[<"'`]""" % re.escape(" ".join(words)), added) is not None
+        label = re.escape(" ".join(words))
+        return re.search(r"""(?:[>"'`]\s*|^[ \t]*)%s(?:\s*[<"'`]|[ \t]*$)""" % label, added, re.M) is not None
     return any(re.search(r"(?<!\w)%s(?!\w)" % re.escape(" ".join(words[at:at + RUN])), added)
                for at in range(len(words) - RUN + 1))
 
