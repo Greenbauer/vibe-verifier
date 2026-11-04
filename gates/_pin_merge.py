@@ -24,6 +24,7 @@ What is not ready yet is left, or moved on:
 It runs before the plan, so a bump opened in this run is judged on a later one, after its checks have registered.
 """
 import base64
+import functools
 import re
 from urllib.parse import quote
 
@@ -126,20 +127,24 @@ def not_pins(repo, compare, head, branch, on_main):
         return "%s is not a commit on the main it pins from" % named
     target = (r"[\w.-]+/vibe-verifier/actions/" if prefix == BRANCH_PREFIXES[0]
               else r"%s/[\w.-]+/\.github/workflows/" % re.escape(repo.split("/")[0]))
-    for changed in files:
-        path = changed.get("filename", "")
-        if changed.get("status") != "modified" or not WORKFLOW.fullmatch(path):
-            return "%s is %s, not a workflow whose pins moved" % (path, changed.get("status"))
-        old, new = (text(repo, path, ref) for ref in (compare["merge_base_commit"]["sha"], head))
-        if old is None or new is None:
-            return "%s could not be read" % path
-        old, new = old.split("\n"), new.split("\n")
-        if len(old) != len(new):
-            return "%s adds or removes lines" % path
-        for before, after in zip(old, new):
-            if before != after and not moved_pin(before, after, target, named, pinned_from):
-                return "%s changes a line that is not a pin to %s: %s" % (path, named, after.strip()[:80])
-    return None
+    pin = functools.partial(moved_pin, target=target, named=named, pinned_from=pinned_from)
+    refs = (compare["merge_base_commit"]["sha"], head)
+    return next(filter(None, (file_not_pins(repo, changed, refs, pin, named) for changed in files)), None)
+
+
+def file_not_pins(repo, changed, refs, pin, named):
+    """Why one changed file of not_pins is not a workflow whose changed lines all `pin`, or None."""
+    path = changed.get("filename", "")
+    if changed.get("status") != "modified" or not WORKFLOW.fullmatch(path):
+        return "%s is %s, not a workflow whose pins moved" % (path, changed.get("status"))
+    old, new = (text(repo, path, ref) for ref in refs)
+    if old is None or new is None:
+        return "%s could not be read" % path
+    old, new = old.split("\n"), new.split("\n")
+    if len(old) != len(new):
+        return "%s adds or removes lines" % path
+    other = next((after for before, after in zip(old, new) if before != after and not pin(before, after)), None)
+    return None if other is None else "%s changes a line that is not a pin to %s: %s" % (path, named, other.strip()[:80])
 
 
 def moved_pin(before, after, target, named, pinned_from):
@@ -159,10 +164,7 @@ def text(repo, path, ref):
 def checks(repo, head, gated):
     """(exit code, why) while a check on `head` is running, failed, or the gate job (when `gated`) has not passed;
     None when every check passed."""
-    runs = paged("repos/%s/commits/%s/check-runs" % (repo, head), "check_runs")
-    statuses = paged("repos/%s/commits/%s/status" % (repo, head), "statuses")
-    results = [(run.get("name"), run.get("conclusion") if run.get("status") == "completed" else None) for run in runs]
-    results += [(status.get("context"), None if status.get("state") == "pending" else status.get("state")) for status in statuses]
+    results = check_results(repo, head)
     failed = sorted({name for name, result in results if result and result not in PASSED})
     if failed:
         return 1, "held: %s failed on its head" % ", ".join(failed)
@@ -174,6 +176,15 @@ def checks(repo, head, gated):
     if not any(result == "success" for _, result in results):
         return 1, "held: no check passed on its head"
     return None
+
+
+def check_results(repo, head):
+    """[(name, conclusion or None while running)] of every check run and commit status on `head`."""
+    runs = paged("repos/%s/commits/%s/check-runs" % (repo, head), "check_runs")
+    statuses = paged("repos/%s/commits/%s/status" % (repo, head), "statuses")
+    results = [(run.get("name"), run.get("conclusion") if run.get("status") == "completed" else None) for run in runs]
+    return results + [(status.get("context"), None if status.get("state") == "pending" else status.get("state"))
+                      for status in statuses]
 
 
 def reviews(repo, number):
