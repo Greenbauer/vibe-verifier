@@ -36,6 +36,7 @@ import json
 import os
 import re
 
+from _qae_rules import PROBE_STATUSES
 from _retry import STEP, exact, shown
 from _snapshot import KEPT, elements, kept, new_text
 from _session_log import READS, REF_ID, TARGETS, console_lines, network_texts, page_urls, read, saved_to, session_calls, \
@@ -45,8 +46,8 @@ PROBE = re.compile(r"^(?P<role>(?:[ \t]*as[ \t]+[^:>]+:)?)[ \t]*invalid[ \t]+inp
 # A console log entry: its offset, then its text; an uncaught exception's has no level tag (gates/qae_artifacts.py).
 ENTRY = re.compile(r"^\[\s*-?[0-9]+ms\]\s+(?P<text>.*)$")
 LEVEL = re.compile(r"^\[[A-Z]+\]\s")
-REFUSED = re.compile(r"^\[ERROR\] Failed to load resource: the server responded with a status of (?P<status>400|422)\b"
-                     r".* @ (?P<url>\S+):[0-9]+$")
+REFUSED = re.compile((r"^\[ERROR\] Failed to load resource: the server responded with a status of (?P<status>%s)\b"
+                      r".* @ (?P<url>\S+):[0-9]+$") % "|".join(PROBE_STATUSES))
 # An Args key that names the element a call acts on, at any depth: a snapshot ref (REF_ID), or else a selector.
 TARGET = re.compile(r'"(?:%s)":\s*"(?P<target>(?:[^"\\]|\\.)*)"' % "|".join(TARGETS))
 # What a call typed, filled or selected, at any depth of its Args: never a message the page put up.
