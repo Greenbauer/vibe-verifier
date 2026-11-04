@@ -11,8 +11,9 @@ const hook = require("./ui-audit.js");
 const finding = (rule, at, detail = "d") => ({ rule, at, text: "Open", detail });
 
 // A tab showing `url` whose audit returns each of `answers` in turn (an Error is a measure the
-// tab's navigation interrupted); `fire` runs its listeners, `lines` reads back the record.
-function tab(url, answers, width = 1280) {
+// tab's navigation interrupted), and whose copy finder returns each of `copies`; `fire` runs its
+// listeners, `lines` and `copy` read back the two records.
+function tab(url, answers, width = 1280, copies = []) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vv-ui-audit-"));
   const listeners = {};
   let binding;
@@ -23,8 +24,8 @@ function tab(url, answers, width = 1280) {
     on: (event, listener) => { listeners[event] = listener; },
     exposeBinding: async (name, fn) => { binding = fn; },
     addInitScript: async () => {},
-    evaluate: async () => {
-      const answer = answers.shift() || [];
+    evaluate: async script => {
+      const answer = (script === hook.copyScript ? copies : answers).shift() || [];
       if (answer instanceof Error) throw answer;
       return answer;
     },
@@ -36,15 +37,17 @@ function tab(url, answers, width = 1280) {
       process.argv = ["node", "cli.js", "--output-dir", dir];
       try { await hook.default({ page }); } finally { process.argv = argv; }
     },
-    spinner: () => binding(),
+    spinner: () => binding({}, 0),
+    message: () => binding({}, 500),
     fire: event => listeners[event](event === "framenavigated" ? "main" : undefined),
     exists: () => fs.existsSync(path.join(dir, "ui-audit.jsonl")),
-    lines: () => {
-      const file = path.join(dir, "ui-audit.jsonl");
-      return fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map(JSON.parse) : [];
-    },
+    lines: () => read(path.join(dir, "ui-audit.jsonl")),
+    copy: () => read(path.join(dir, "copy.jsonl")),
+    copyExists: () => fs.existsSync(path.join(dir, "copy.jsonl")),
   };
 }
+const read = file => fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map(JSON.parse) : [];
+const block = (text, kind = "sentence") => ({ kind, text, at: "div > p" });
 const settle = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 test("a finding is recorded once per page, width, rule and element, with the page's query dropped", async () => {
@@ -87,6 +90,38 @@ test("a spinner appearing is measured at once, not a second later", async () => 
   t.spinner();
   await settle(50);
   assert.deepStrictEqual(t.lines().map(line => line.rule), ["spinner-off-center"]);
+});
+
+test("the copy record keeps each text once per page, at the width it was first read", async () => {
+  const written = [];
+  const copied = new Set();
+  const at = (url, width, blocks) => ({ url: () => url, viewportSize: () => ({ width }), evaluate: async () => blocks });
+  await hook.recordCopy(at("https://site.test/users?tab=2", 1280, [block("Invite a user."), block("Save", "label")]), line => written.push(line), copied);
+  await hook.recordCopy(at("https://site.test/users", 375, [block("Invite a user."), block("Cancel", "label")]), line => written.push(line), copied);
+  await hook.recordCopy(at("https://site.test/team", 1280, [block("Save", "label")]), line => written.push(line), copied);
+  assert.deepStrictEqual(written.map(line => [line.page, line.width, line.text]), [
+    ["https://site.test/users", 1280, "Invite a user."], ["https://site.test/users", 1280, "Save"],
+    ["https://site.test/users", 375, "Cancel"], ["https://site.test/team", 1280, "Save"]]);
+});
+
+test("a dialog opening is read half a second later, with its copy, and a clean start leaves an empty copy record", async () => {
+  const t = tab("https://site.test/users", [[], []], 1280, [[], [block("They get an invite email.")]]);
+  await t.start();
+  await settle(1100);
+  assert.ok(t.copyExists());
+  assert.deepStrictEqual(t.copy(), []);
+  t.message();
+  await settle(200);
+  assert.deepStrictEqual(t.copy(), []);
+  await settle(450);
+  assert.deepStrictEqual(t.copy().map(line => line.text), ["They get an invite email."]);
+});
+
+test("the copy finder is self-contained: run as the page script on an empty page, it finds nothing", () => {
+  const vm = require("node:vm");
+  const page = { body: {}, querySelectorAll: () => [], createTreeWalker: () => ({ nextNode: () => null }) };
+  assert.strictEqual(typeof require("./copy-page.js"), "function");
+  assert.strictEqual(JSON.stringify(vm.runInNewContext(hook.copyScript, { document: page, NodeFilter: { SHOW_TEXT: 4 } })), "[]");
 });
 
 test("the audit is self-contained: run as the page script on an empty page, it needs only the DOM and finds nothing", () => {

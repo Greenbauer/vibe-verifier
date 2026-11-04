@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- One block per plain-English rule the copy auditor grades (harnesses/copy-audit/prompt.md), modelled on copy
+     that passed word counts and still read badly, and text the copy record must leave out. good.html is the same
+     screens written plainly. tests/test_copy_audit.py reads both. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Copy audit: bad</title>
+<style>body { font: 14px/1.4 sans-serif; margin: 24px; } dialog { position: static; display: block; } .hidden { display: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }</style></head>
+<body>
+  <h1>quote_status</h1>
+  <dialog open aria-label="Add user">
+    <h2>Add a user</h2>
+    <p>They get the portal's invite email and join Acme as User when they set a password. The link lasts 24 hours; you can <a href="#">resend it</a>.</p>
+    <label for="who">Email</label> <input id="who" placeholder="Enter customer_id">
+    <button>Sync NS record</button>
+  </dialog>
+  <section>
+    <p>If you would like to make changes to the billing information that is associated with this account, you will need to contact the administrator of your organization, who can update it for you from the settings page.</p>
+    <p>Please utilize the form below in order to facilitate the submission of your request prior to the deadline.</p>
+    <div role="status">No rows returned from the customers table.</div>
+  </section>
+  <table>
+    <tr><th>Customer</th><th>Balance</th></tr>
+    <tr><td>Acme Corp</td><td><span>$1,200.00</span></td></tr>
+  </table>
+  <p><code>npm install</code></p>
+  <div>support@acme.test</div>
+  <div class="hidden">This hidden menu is not on the page.</div>
+  <span class="sr-only">Only a screen reader reads this.</span>
+</body>
+</html>

@@ -20,7 +20,8 @@ outputs:
       The harness's layout record, for a second playwright-mcp --init-page. It measures every page the
       explorer opens (rows that do not line up, controls touching, a spinner off its button's middle,
       walls of text, raw values, text cut off) and writes ui-audit.jsonl in the output directory, which
-      the ui-audit gate reads.
+      the ui-audit gate reads, and every sentence and label the pages show to copy.jsonl beside it, which
+      actions/copy-audit grades.
     value: ${{ steps.install.outputs.ui-audit }}
 runs:
   using: composite

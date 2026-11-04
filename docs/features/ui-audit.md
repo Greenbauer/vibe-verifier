@@ -36,5 +36,6 @@ Add a line to the QAE manifest (`.vibe-verifier-qae`), after `qae-artifacts`:
 
 - The rules and their thresholds are in the header of `actions/qae-browser/ui-audit-page.js`. Each was checked against two subscribed apps' real screens (a quote builder, lists, dashboards, a people page, an add-user dialog, 2026-11-03) and narrowed where it flagged a design: a pill track with even padding, a tab toggle whose idle tab has no border, a map's zoom bar, a header button beside a search field in the page below, a list row with only a divider under it.
 - A spinner shows only while something loads, so the hook also measures the moment a button gains an element whose class names a spinner or loader, or a `role=progressbar`.
+- A dialog opens with no load or navigation, so the hook also measures half a second after a dialog, alert or status message appears. At each measure it also writes the page's copy record, `copy.jsonl`, for the [copy audit](copy-audit.md).
 - The record holds what the page shows, as the screenshots do, never a password field's value.
 - A run with step logs and no record cannot run: the hook was not loaded, and a clean soak and a broken one would otherwise look the same.

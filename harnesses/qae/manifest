@@ -24,6 +24,13 @@ qae-artifacts --artifacts qae-artifacts --criteria qae-inputs/pr-body.md --site-
 # --soak reports without failing; drop it once ten pull requests in a row raised no false finding.
 ui-audit --artifacts qae-artifacts --site-file qae-inputs/site-url --soak
 
+# Plain-English copy: a model graded every sentence and label those pages showed, in the explore job's copy-audit
+# step (harnesses/copy-audit/README.md); this holds each failing grade's quote to the record. Only copy the pull
+# request adds blocks; failing copy the base already had is listed, for a cleanup pull request. --all blocks on both.
+# --soak reports without failing; drop it once ten pull requests in a row raised no false finding. Only the Codex lane
+# (explore-codex.yml) has the grade step, so uncomment it there: without grades the gate cannot run.
+# copy-audit --artifacts qae-artifacts --site-file qae-inputs/site-url --soak
+
 # Trace every linked requirement to HEAD proof or an owner that accepted it at the merge base.
 # actions/criteria also runs this line before any browser skip; its job needs a full-history checkout.
 ticket-coverage --body qae-inputs/pr-body.md
