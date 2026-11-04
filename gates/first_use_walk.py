@@ -13,7 +13,8 @@ per step and verdict.md. Its prose is checked, never trusted:
 - A task and no walk.md, verdict.md or session log cannot run: the walk did not run, or did not finish.
 - Every step line has its screenshot; step 1 is the `start:` and the last step the `back:`.
 - The session log holds each step's screenshot in walk.md's order. From step 1's screenshot to the log's end it
-  holds no call a person cannot make (a typed address, Back or Forward, a script, a tab opened by hand), and the page
+  holds no call a person cannot make (a typed address, Back or Forward, a script); the whole log holds no move
+  between tabs (opening, switching or closing one); and the page
   at the last step's screenshot, and at the log's last call, is the page at step 1's.
 - verdict.md has one `first-use:` and one `first-use-back:` line, DONE or STUCK, each anchored to a step line that is
   in walk.md word for word. A STUCK line is a finding, and so is every `first-use-snag:` line.
@@ -35,8 +36,8 @@ OUTCOME = re.compile(r"^[ \t]*first-use(?P<back>-back)?:[ \t]*(?P<state>DONE|STU
                      r"[ \t]*\(walk\.md::(?P<step>step [0-9]+:.*)\)[ \t]*$", re.IGNORECASE)
 SNAG = re.compile(r"^[ \t]*first-use-snag:[ \t]*(?P<said>.*?)[ \t]*\(walk\.md::(?P<step>step [0-9]+:.*)\)[ \t]*$",
                   re.IGNORECASE)
-# What a person cannot do with the page in front of them. browser_tabs is one only when it opens a tab: switching to
-# a tab a link opened is a person's click.
+# What a person cannot do with the page in front of them. browser_tabs is one whatever it does but list, anywhere in
+# the log: a walk that opened a second tab before its start could do the task there and switch back to the first.
 NOT_A_PERSON = frozenset("""browser_navigate browser_navigate_back browser_navigate_forward browser_evaluate
     browser_run_code_unsafe""".split())
 
@@ -96,7 +97,12 @@ def shots(calls, k):
 
 
 def not_a_person(name, args):
-    return name in NOT_A_PERSON or (name == "browser_tabs" and '"new"' in args)
+    return name in NOT_A_PERSON
+
+
+def tab_moves(calls):
+    """Every browser_tabs call that opens, selects or closes a tab, anywhere in the session log."""
+    return [call for call in calls if call[0] == "browser_tabs" and '"list"' not in call[1]]
 
 
 def page_at(calls, index):
@@ -129,6 +135,8 @@ def session_findings(walk, steps):
     start, last = shots(calls, steps[0])[0], shots(calls, steps[-1])[-1]
     found = [Finding("after it started, the first-use walk called %s, which no person can do with the page in front "
                      "of them" % name) for name, args, _ in calls[start:] if not_a_person(name, args)]
+    found += [Finding("the first-use walk moved between tabs (browser_tabs %s): its page is then not the one its steps "
+                      "walked" % args.replace("\n", " ")) for _, args, _ in tab_moves(calls)]
     for end in sorted({last, len(calls) - 1}):
         if page_at(calls, start) != page_at(calls, end):
             found.append(Finding("the first-use walk ended on %s, not where it started (%s)" % (

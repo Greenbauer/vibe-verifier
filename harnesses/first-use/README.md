@@ -30,7 +30,7 @@ The first-use walk is that requester. A second Codex session is given only the t
 3. **Judge.** The verify job puts the walk's artifact at `qae-artifacts/first-use/`, and the
    [`first-use-walk`](../../gates/first_use_walk.py) gate, deterministic, checks it: every step has its screenshot,
    in walk.md's order in the session log; from step 1's screenshot on, the log holds no typed address, Back or
-   Forward, script or hand-opened tab; the page at the last step's screenshot, and at the log's last call, is the
+   Forward or script, and nowhere a move between tabs; the page at the last step's screenshot, and at the log's last call, is the
    page at step 1's; every verdict line cites a step `walk.md` has.
    A STUCK line and every snag are findings. A pull request with acceptance criteria and no task is a finding too.
 

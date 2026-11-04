@@ -18,9 +18,9 @@ TASK
    to qae-first-use/walk.md of the form
      - step k: <what you did> -> <what you saw>
    Never write a step line without its screenshot. From step 1 on, never type an address into the browser, never
-   use the browser's Back or Forward, never open a new tab yourself, and never run a script in the page: a person
-   uses what the page shows, and a gate fails the walk on any of those calls. Where the task needs a value (an
-   email address, a name), use the kind a real person doing this task would type, never an address a test
+   use the browser's Back or Forward, never open, switch or close a tab, and never run a script in the page: a
+   person uses what the page shows, and a gate fails the walk on any of those calls. Where the task needs a value
+   (an email address, a name), use the kind a real person doing this task would type, never an address a test
    environment would accept and that person would not use. Where a page answers with an error, read what it says as
    that person would: does it say what went wrong and what to do? A test copy of a site may refuse a value a real
    one takes (an outside email address, a real card). When the page says so and says what it does take, try once

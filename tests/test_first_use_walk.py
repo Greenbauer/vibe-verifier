@@ -131,6 +131,18 @@ class Gate(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("ended on %s/customers/7, not where it started" % SITE, result.stdout)
 
+    def test_a_walk_that_switches_tabs_anywhere_fails(self):
+        # A second tab opened before the start, the task done there, then back to the untouched first tab.
+        for move in ("select", "close"):
+            log = (DONE_STEPS[0][2] + call("browser_tabs", {"action": "new"}, {"result": "- 1: (current)"})
+                   + DONE_STEPS[0][2] + shot(1) + "".join(action + shot(k) for k, (_, _, action) in enumerate(STUCK_STEPS[1:5], 2))
+                   + call("browser_tabs", {"action": move, "index": 0}, {"result": "- 0: (current)"}) + at("/", "browser_snapshot") + shot(6))
+            self.evidence(DONE_STEPS, DONE_VERDICT, session=log)
+            result = self.run_gate()
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("moved between tabs (browser_tabs", result.stdout)
+            self.assertIn('"action": "%s"' % move, result.stdout)
+
     def test_a_verdict_must_cite_a_step_the_walk_has_and_name_each_outcome_once(self):
         self.evidence(DONE_STEPS, DONE_VERDICT.replace(DONE_STEPS[3][0], "step 4: invited Dana"))
         result = self.run_gate()
