@@ -163,6 +163,10 @@ def allowed(text, seen, allow):
 def check(args):
     if not os.path.isdir(args.artifacts):
         raise CannotRun("artifact directory not found: %s" % args.artifacts)
+    # Resolved only once there is a record to judge: a pull request that declares None runs no explorer, so its site
+    # file is empty, and that must not fail it (qae_artifacts.check does the same).
+    if not record_paths(args.artifacts, RECORD):
+        return []
     sites = declared_sites(args.site_file) if args.site_file else [args.site] if args.site else []
     allow = [re.compile(pattern) for pattern in args.allow or []]
     failing, pages, dropped = judged(args.artifacts, sites)
