@@ -103,12 +103,16 @@ class Gate(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_back_or_a_typed_address_after_the_start_fails_though_the_verdict_says_done(self):
-        typed = [(line, path, at(path, "browser_navigate_back") if k == 6 else action)
-                 for k, (line, path, action) in enumerate(DONE_STEPS, 1)]
-        self.evidence(typed, DONE_VERDICT)
-        result = self.run_gate()
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("called browser_navigate_back, which no person can do", result.stdout)
+        # Each call of the pinned playwright-mcp a person cannot make, in place of the walk's way back: a typed address,
+        # Back, Forward, a script, a call to a tool the page offers programs. Step 1's sign-in typed an address before
+        # its screenshot, which is the start, and passes.
+        for name in ("browser_navigate", "browser_navigate_back", "browser_navigate_forward", "browser_evaluate",
+                     "browser_run_code_unsafe", "browser_webmcp_call"):
+            typed = [(line, path, at(path, name) if k == 6 else action) for k, (line, path, action) in enumerate(DONE_STEPS, 1)]
+            self.evidence(typed, DONE_VERDICT)
+            result = self.run_gate()
+            self.assertEqual(result.returncode, 1, name + ": " + result.stdout + result.stderr)
+            self.assertIn("called %s, which no person can do" % name, result.stdout)
 
     def test_a_walk_that_ends_away_from_its_start_fails_though_the_verdict_says_done(self):
         steps = DONE_STEPS[:5] + [("step 6: back: clicked Customers -> the customer list", "/customers", at("/customers"))]
