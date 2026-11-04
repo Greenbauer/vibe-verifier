@@ -14,11 +14,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, gate, make_repo
+from helpers import ROOT, commit, gate, git, make_repo
 
 HOOK = ROOT / "actions" / "qae-browser" / "ui-audit.js"
 FIXTURES = ROOT / "tests" / "fixtures" / "ui-audit"
-RULES = ["clipped-text", "clipped-value", "edge", "field-stagger", "glyph-off-center", "long-sentence", "raw-value",
+RULES = ["clipped-text", "clipped-value", "duplicate-name", "edge", "field-stagger", "glyph-off-center", "long-sentence", "raw-value",
          "row-height", "row-stagger", "spinner-off-center", "text-wall", "touching"]
 
 
@@ -27,22 +27,62 @@ def line(rule, at="td > div > button", page="https://site.test/quotes", width=12
             "detail": "0px from the control beside it", **extra}
 
 
+def pull_request(test, files=None):
+    """A repository whose branch adds `files` over main: by default the screen the record's lines name (Activate
+    beside Open), so its findings are the pull request's."""
+    repo = make_repo(test, {"README.md": "x\n", "src/people.tsx": "<Button>Send invite</Button>\n"})
+    git(repo, "checkout", "-q", "-b", "change")
+    commit(repo, files or {"src/quotes.tsx": "<td><div><Button>Activate</Button><Button>Open</Button></div></td>\n"})
+    return repo
+
+
+# A subscribed app's add-someone dialog as the hook recorded it: the "Send invite" choice, pressed, and the "Send invite"
+# submit (actions/qae-browser/name-page.js), on the lines its pull request added.
+DIALOG = {"src/AddPortalUserBranch.tsx": "[AddUserMode.INVITE, 'Send invite'],\n[AddUserMode.CREATE_ACCOUNT, 'Create account now'],\n",
+          "src/AddPortalUserModal.tsx": "const CONFIRM_LABEL = {\n  [AddUserMode.INVITE]: 'Send invite',\n};\n"}
+SAME_NAME = {"rule": "duplicate-name", "page": "https://site.test/customers/7", "width": 1280,
+             "at": "div#headlessui-dialog-panel-3 > div > div:nth-of-type(2) > button:nth-of-type(1)", "text": "Send invite",
+             "other": "Send invite",
+             "detail": "\"Send invite\" and \"Send invite\" in one dialog: a person cannot tell which button does what"}
+
+
 class Gate(unittest.TestCase):
-    def run_gate(self, lines, *args, steps=True):
-        repo = make_repo(self, {"README.md": "x\n"})
+    def run_gate(self, lines, *args, steps=True, repo=None):
+        repo = repo or pull_request(self)
         artifacts = Path(repo) / "qae-artifacts"
         (artifacts / "qae").mkdir(parents=True)
         if steps:
             (artifacts / "qae" / "AC1.md").write_text("step 1: opened /quotes\n")
         if lines is not None:
             (artifacts / "ui-audit.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
-        return gate("ui-audit", repo, "--artifacts", str(artifacts), *args)
+        return gate("ui-audit", repo, "--base-ref", "main", "--artifacts", str(artifacts), *args)
 
     def test_a_measured_defect_fails_and_names_the_page_width_rule_and_element(self):
         result = self.run_gate([line("touching")])
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("touching on https://site.test/quotes at 1280px: Activate / Open: 0px from the control beside it "
                       "(td > div > button)", result.stdout)
+
+    def test_a_defect_on_a_screen_the_base_already_had_is_listed_and_does_not_block(self):
+        result = self.run_gate([line("touching", text="Send invite", other="Cancel")])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("advisory: touching, existing on https://site.test/quotes", result.stdout)
+        # --all makes it block, and so does a pull request that adds the neighbour it touches.
+        self.assertEqual(self.run_gate([line("touching", text="Send invite", other="Cancel")], "--all").returncode, 1)
+        self.assertEqual(self.run_gate([line("touching", text="Send invite", other="Open")]).returncode, 1)
+
+    def test_a_defect_on_an_element_that_shows_no_text_does_not_block(self):
+        result = self.run_gate([line("glyph-off-center", text="", other=None)])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("advisory: glyph-off-center, existing", result.stdout)
+
+    def test_two_buttons_of_one_name_the_pull_request_adds_block(self):
+        result = self.run_gate([SAME_NAME], repo=pull_request(self, DIALOG))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('duplicate-name on https://site.test/customers/7 at 1280px: Send invite / Send invite: "Send invite" '
+                      'and "Send invite" in one dialog', result.stdout)
+        # The same two buttons on a screen the pull request does not touch are the base's.
+        self.assertEqual(self.run_gate([SAME_NAME]).returncode, 0)
 
     def test_a_clean_record_passes(self):
         result = self.run_gate([])
@@ -80,12 +120,12 @@ class Gate(unittest.TestCase):
         self.assertIn("load actions/qae-browser/ui-audit.js", result.stdout + result.stderr)
 
     def test_each_explorers_record_is_read_from_its_shard(self):
-        repo = make_repo(self, {"README.md": "x\n"})
+        repo = pull_request(self)
         artifacts = Path(repo) / "qae-artifacts"
         for n, rule in ((1, "edge"), (2, "touching")):
             (artifacts / ("shard-%d" % n)).mkdir(parents=True)
             (artifacts / ("shard-%d" % n) / "ui-audit.jsonl").write_text(json.dumps(line(rule)) + "\n")
-        result = gate("ui-audit", repo, "--artifacts", str(artifacts))
+        result = gate("ui-audit", repo, "--base-ref", "main", "--artifacts", str(artifacts))
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("edge on", result.stdout)
         self.assertIn("touching on", result.stdout)
@@ -130,7 +170,7 @@ const hook = require(process.env.HOOK);
     await page.goto("file://" + process.env.FIXTURES + "/" + name + ".html");
     const found = await page.evaluate(hook.script);
     out[name] = [...new Set(found.map(f => f.rule))].sort();
-    out[name + "-details"] = found.filter(f => ["raw-value", "touching", "glyph-off-center"].includes(f.rule)).map(f => f.rule + ": " + f.text);
+    out[name + "-details"] = found.filter(f => ["raw-value", "touching", "glyph-off-center", "duplicate-name"].includes(f.rule)).map(f => f.rule + ": " + f.text + (f.rule === "duplicate-name" ? " / " + f.other : ""));
     await page.close();
   }
   // The hook in a real page: it measures after the load, and again the moment a button gains a spinner.
@@ -179,6 +219,11 @@ class Browser(unittest.TestCase):
         # and an empty avatar's status dot (fills, not marks) and large tabular digits, and none is flagged.
         self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("glyph-off-center")),
                          ["glyph-off-center: ", "glyph-off-center: 6", "glyph-off-center: LT", "glyph-off-center: Pick"])
+        # The subscribed app's dialog: a pressed "Send invite" choice and the "Send invite" submit, and a form whose two buttons
+        # differ by an added word. good.html makes the choice a pair of radios, and its rows' Remove buttons, told apart
+        # by their rows, and a disabled twin are not flagged.
+        self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("duplicate-name")),
+                         ["duplicate-name: Create account / Create account now", "duplicate-name: Send invite / Send invite"])
         record = [json.loads(x) for x in Path(out, "ui-audit.jsonl").read_text().splitlines()]
         self.assertEqual([x["rule"] for x in record], ["spinner-off-center"])
         self.assertTrue(record[0]["page"].endswith("/good.html"))
