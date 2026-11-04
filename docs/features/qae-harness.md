@@ -137,9 +137,12 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_qae_probe.py::test_an_answer_no_call_of_the_step_logged_is_not_the_probes`
 - `tests/test_qae_probe_steps.py::test_the_excuse_does_not_reach_the_same_answer_to_another_step`
 - `tests/test_qae_probe.py::test_the_review_says_what_the_probe_excused_and_why_not`
+- `tests/test_qae_job_contract.py::test_every_file_a_template_step_hands_an_action_is_written_earlier_in_its_job`
+- `tests/test_qae_nothing_walked.py::test_every_offered_gate_passes_a_run_that_walked_nothing`
 
 ## Gotchas
 
+- Jobs share no workspace: a `qae-inputs/` file one job writes does not exist in another. Every such file a template step hands an action, by its `with:` or the action's default, and every one the manifest template's gate lines name, is written earlier in the same job, except the design references directory a site step may leave unwritten (`tests/test_qae_job_contract.py`). A gate line added to the manifest template must pass a run that walked nothing, on the files the verify job writes for a `- None:` pull request (`tests/test_qae_nothing_walked.py`).
 - A carried walk is found by its artifact, so a consumer whose explore job uploads no `qae-artifacts-*` artifact, or keeps artifacts for less time than its pull requests stay open, never carries. The criteria job also needs `actions: read`; without it the facts read fails, a warning says so, and the run walks as before. The verify job reads no facts of its own: it decides on the criteria job's `carry` output.
 - The Codex action accepts optional `model` and `reasoning-effort` inputs; empty preserves the runner defaults. The action validates identifiers and effort values before invoking Codex, passes settings as separate arguments, and logs only the configured values. Selection does not guarantee a complete walk or a truthful verdict.
 - The Codex CLI is locked to `0.162.0`, including its platform binaries. Model availability can be client-version filtered; verify the chosen model and effort with the pinned client and the actual runner account, not another client's catalog.
