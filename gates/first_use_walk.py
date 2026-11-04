@@ -22,6 +22,7 @@ per step and verdict.md. Its prose is checked, never trusted:
     --artifacts DIR     the run's artifact directory (required); the walk is DIR/first-use/
     --body FILE         the pull request body the task was read from (required)
 """
+import json
 import os
 import re
 
@@ -101,8 +102,17 @@ def not_a_person(name, args):
 
 
 def tab_moves(calls):
-    """Every browser_tabs call that opens, selects or closes a tab, anywhere in the session log."""
-    return [call for call in calls if call[0] == "browser_tabs" and '"list"' not in call[1]]
+    """Every browser_tabs call whose action is not a listing, anywhere in the session log, by its parsed arguments:
+    an argument the tool ignores (a `url` of "list") must not pass for the action."""
+    return [call for call in calls if call[0] == "browser_tabs" and action(call[1]) != "list"]
+
+
+def action(args):
+    try:
+        given = json.loads(args)
+    except ValueError:
+        return None
+    return given.get("action") if isinstance(given, dict) else None
 
 
 def page_at(calls, index):
