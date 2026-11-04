@@ -1,11 +1,11 @@
 name: Vibe Verifier pin bump
-description: Open the pin-bump pull requests apply-down would, on a schedule, when the lane is quiet or the bump is overdue. A dry run unless act is true. Never merges.
+description: Open the pin-bump pull requests apply-down would, on a schedule, when the lane is quiet or the bump is overdue, and squash-merge each once its checks pass. A dry run unless act is true.
 inputs:
   token:
     description: >-
       A GitHub App or bot token with contents, pull requests and workflows write in every repository listed (actions read
-      too with lane). Not the workflow's GITHUB_TOKEN: it cannot write workflow files, and a pull request it opens
-      starts no workflow.
+      too with lane), allowed to merge into each one's default branch when merge is true. Not the workflow's
+      GITHUB_TOKEN: it cannot write workflow files, and a pull request it opens starts no workflow.
     required: true
   repositories:
     description: The repositories to bump, owner/name, separated by spaces or new lines. Empty with wrapper bumps only the wrapper.
@@ -22,6 +22,12 @@ inputs:
   lane:
     description: The runner label the bumps' checks run on; the bump waits until it is quiet. Empty never waits.
     default: ""
+  merge:
+    description: >-
+      With act, first squash-merge each open bump whose diff is pin lines only and whose checks all passed (merging in
+      its base first when it is behind), and close one that conflicts or has nothing left to change. Anything but true
+      leaves them for a person.
+    default: "true"
   overdue-hours:
     description: Bump once the oldest release commit waiting is this old, quiet or not.
     default: "6"
@@ -36,6 +42,7 @@ runs:
         WRAPPER: ${{ inputs.wrapper }}
         ACT: ${{ inputs.act }}
         NOW: ${{ inputs.now }}
+        MERGE: ${{ inputs.merge }}
         LANE: ${{ inputs.lane }}
         OVERDUE_HOURS: ${{ inputs.overdue-hours }}
       run: |
@@ -50,11 +57,12 @@ runs:
         [ -n "$LANE" ] && args+=(--lane "$LANE")
         [ "$NOW" = true ] && args+=(--now)
         [ "$ACT" = true ] && args+=(--act)
+        [ "$MERGE" = true ] && args+=(--merge)
         set -f   # the list is split on spaces and new lines, never expanded as file names
         for repo in $REPOS; do args+=(--repo "$repo"); done
         status=0
         python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}" > "$RUNNER_TEMP/pin-bump.txt" || status=$?
         cat "$RUNNER_TEMP/pin-bump.txt"
         { echo '### Pin bump'; echo; echo '```'; cat "$RUNNER_TEMP/pin-bump.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-        # 0: did what the plan said (bumped, waiting, or nothing to bump); 1: a bump is held for a person; 2: failed.
+        # 0: did what the plan said (merged, bumped, waiting, or nothing to do); 1: a bump is held for a person; 2: failed.
         exit "$status"

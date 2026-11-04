@@ -6,7 +6,7 @@ A wired gate over the directory the explore job uploads (harnesses/qae/). The ha
 explorer opens, at every width it uses, and writes ui-audit.jsonl there; the explorer never sees it.
 Its rules are listed in actions/qae-browser/ui-audit-page.js: controls in one row that do not line
 up, bordered controls touching each other or their container's edge, a spinner off its button's
-middle, walls of text, raw values such as `in_review` or `undefined`, and text or values cut off.
+middle, a badge's count, initials or check off its circle's middle, walls of text, raw values such as `in_review` or `undefined`, and text or values cut off.
 
     --artifacts DIR     the run's artifact directory (required)
     --site-file FILE    judge only pages under the URLs the explore job's site step declared (one a line)

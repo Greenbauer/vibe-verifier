@@ -62,13 +62,14 @@ reusable workflow is listed even with no manifest.
 `apply-down` bumps stale pins, and nothing else. It is two-stage on purpose: with no
 `--confirm` it reads the same inventory and prints a plan plus a digest of exactly what
 it would write; `--confirm <digest>` opens one pull request per repository, changing only
-pin lines (one commit per workflow file). It never merges, never touches a repository whose
-stub has drifted, and never opens a second pull request for a bump that is already open; an open
+pin lines (one commit per workflow file). It never touches a repository whose stub has drifted,
+and never opens a second pull request for a bump that is already open; an open
 bump to an older commit is closed as superseded by the new one. A plan whose digest no longer
 matches is refused rather than applied, so a bump is reviewed as the thing it was. `--auto` is the
 scheduled form (actions/pin-bump, gates/_pin_bump.py): it holds a repository whose bump moves a tool
 version or drops an input a workflow passes (exit 1), moves no ruleset, and confirms its own digest only with `--act` and when it is
-time: `--now`, the oldest waiting release commit `--overdue-hours` old, or a quiet `--lane`. With `--wrapper PATH` it bumps both levels in the same plan: the wrapper's
+time: `--now`, the oldest waiting release commit `--overdue-hours` old, or a quiet `--lane`. With `--act --merge` it first squash-merges each open bump that is
+merge-ready (gates/_pin_merge.py has the rules). With `--wrapper PATH` it bumps both levels in the same plan: the wrapper's
 catalog pins in a pull request to the wrapper, each caller's pins of wrapper workflows in a pull
 request of its own, and each ruleset's pins with a PUT of that ruleset's rules, where only the
 stale entries' `sha` moves to the wrapper's head. A ruleset moves to what is on the wrapper's

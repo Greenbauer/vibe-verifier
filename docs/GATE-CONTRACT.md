@@ -130,8 +130,8 @@ skipped required check as satisfied.
 `bin/vibe-verifier apply-down` bumps stale pins and nothing else: the stub's, and every catalog
 pin in any other workflow under `.github/workflows/` (a harness copy such as `qae-explore.yml` pins
 `gates@` and `criteria@`). With no `--confirm` it prints a plan and a digest; `--confirm <digest>`
-opens one pull request per repository changing only pin lines, one commit per file. It never
-merges, skips a repository whose stub has drifted, and returns an already-open bump instead of
+opens one pull request per repository changing only pin lines, one commit per file. By hand it
+never merges, skips a repository whose stub has drifted, and returns an already-open bump instead of
 opening a second; an open bump to an older commit is closed, with a comment naming the one that
 replaces it. A digest that no longer matches is refused, so what is applied is what was read.
 
@@ -140,7 +140,9 @@ Pins do not wait for someone to run it: [`actions/pin-bump`](../actions/pin-bump
 on that owner's own runner lane. It bumps when the lane the bumps' checks run on is quiet (the
 rule the first wrapper's ruleset pin mover uses: at most 6 unscheduled runs started in the last hour, then no job waiting and at most 2
 running), when the oldest release commit waiting is six hours old, or when dispatched with `now`, and
-confirms its own plan's digest. It never merges; a pin-only bump merges like any other pull request.
+confirms its own plan's digest. Before planning, it squash-merges each open bump whose diff is pin
+lines only, once the gate job and every other check on its head passed and it is not behind its base
+(merging the base in first), and closes one that conflicts or has nothing left to change.
 
 Before bumping a pin that moves a tool version (`gates/_tools.py`, or a `tools/<name>/` lockfile),
 run that gate with `--all` on every consumer and land the cleanups with the bump. `zizmor` adds

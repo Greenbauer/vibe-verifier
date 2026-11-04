@@ -1,6 +1,6 @@
 # Layout and copy audit
 
-`ui-audit` fails a QAE run whose browser measured a layout or copy defect on the site under test: controls in one row that do not line up, bordered controls touching each other or their container's edge, a spinner off its button's middle, a wall of text or a very long sentence, a raw value such as `in_review` or `undefined`, and text or a value its box cuts off. The QAE explorer never judges these: the harness's layout hook measures every page the explorer opens, at every width it uses, from rendered rectangles and computed styles, and writes `ui-audit.jsonl` beside the run's other evidence. A screenshot diff cannot catch them, because a baseline that already has the defect passes forever.
+`ui-audit` fails a QAE run whose browser measured a layout or copy defect on the site under test: controls in one row that do not line up, bordered controls touching each other or their container's edge, a spinner off its button's middle, a count, initials or check mark off its circle's middle, a wall of text or a very long sentence, a raw value such as `in_review` or `undefined`, and text or a value its box cuts off. The QAE explorer never judges these: the harness's layout hook measures every page the explorer opens, at every width it uses, from rendered rectangles and computed styles, and writes `ui-audit.jsonl` beside the run's other evidence. A screenshot diff cannot catch them, because a baseline that already has the defect passes forever.
 
 The same audit runs from a shell before a push: `node actions/qae-browser/ui-audit.js [--width N]... [--storage-state FILE] [--channel chrome] URL...` prints one line per finding at 1280 and 375 pixels by default and exits 1 when there is one.
 
@@ -10,6 +10,7 @@ The same audit runs from a shell before a push: `node actions/qae-browser/ui-aud
 - source: `gates/ui_audit.py`
 - source: `actions/qae-browser/ui-audit.js`
 - source: `actions/qae-browser/ui-audit-page.js`
+- source: `actions/qae-browser/glyph-page.js`
 
 ## Reach
 
@@ -37,6 +38,7 @@ Add a line to the QAE manifest (`.vibe-verifier-qae`), after `qae-artifacts`:
 
 - A run with no record to judge (a pull request that declares `- None:` runs no explorer) passes before the site file is read: the verify job writes that file empty then.
 - The rules and their thresholds are in the header of `actions/qae-browser/ui-audit-page.js`. Each was checked against two subscribed apps' real screens (a quote builder, lists, dashboards, a people page, an add-user dialog, 2026-11-03) and narrowed where it flagged a design: a pill track with even padding, a tab toggle whose idle tab has no border, a map's zoom bar, a header button beside a search field in the page below, a list row with only a divider under it.
+- A badge's mark is measured by its ink, not its line box: a digit has no descender, so text centered by its line box (`line-height` equal to the height, or flex centering) sits high when the font's ascent and descent are uneven. A CSS-drawn tick (a `::before` or `::after` with two borders, rotated) is measured through its transform. Checked on a subscribed app's notification count and request tab badge, with its own font (each 1.1 to 1.4px high), and its circle checks (2026-11-04).
 - A spinner shows only while something loads, so the hook also measures the moment a button gains an element whose class names a spinner or loader, or a `role=progressbar`.
 - A dialog opens with no load or navigation, so the hook also measures half a second after a dialog, alert or status message appears. At each measure it also writes the page's copy record, `copy.jsonl`, for the [copy audit](copy-audit.md).
 - The record holds what the page shows, as the screenshots do, never a password field's value.

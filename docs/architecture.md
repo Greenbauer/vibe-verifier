@@ -144,9 +144,9 @@ Consumers run released catalog code by commit, not by a floating branch or tag.
 
 `bin/vibe-verifier consumers` reports stale or drifted subscriptions. `bin/vibe-verifier apply-down` computes the exact pin changes it would make and prints a digest. No write occurs until the same plan is rerun with `--confirm <digest>`.
 
-When confirmed, it opens pull requests that change the planned workflow pin lines. With `--wrapper`, the plan can also include direct updates to organization ruleset pins after the wrapper revision is on its default branch. It never merges the update pull requests. The consumer's own CI run checks whether the new catalog revision works there.
+When confirmed, it opens pull requests that change the planned workflow pin lines. With `--wrapper`, the plan can also include direct updates to organization ruleset pins after the wrapper revision is on its default branch. By hand it never merges them. The consumer's own CI run checks whether the new catalog revision works there.
 
-[`actions/pin-bump`](../actions/pin-bump/README.md) runs the same plan on a schedule (`apply-down --auto`) from each owner's own CI repository, with that owner's own app token: it confirms its own digest when the owner's runner lane is quiet, when the oldest release commit waiting is six hours old, or on demand, and holds a bump that would move a tool version for the sweep a person does first.
+[`actions/pin-bump`](../actions/pin-bump/README.md) runs the same plan on a schedule (`apply-down --auto`) from each owner's own CI repository, with that owner's own app token: it confirms its own digest when the owner's runner lane is quiet, when the oldest release commit waiting is six hours old, or on demand, and holds a bump that would move a tool version for the sweep a person does first. On each run it first squash-merges the bumps already open whose diff is pin lines only and whose checks all passed on a head that is not behind its base (`gates/_pin_merge.py`).
 
 ### 7. Read-only observability
 
