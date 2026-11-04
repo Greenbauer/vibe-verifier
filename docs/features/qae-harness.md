@@ -51,6 +51,10 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 
 ## Verify
 
+- `tests/test_qa_review.py::test_a_soak_gates_findings_are_listed_as_not_yet_blocking`
+- `tests/test_qa_review.py::test_no_soak_findings_no_section`
+- `tests/test_qa_review.py::test_a_finding_with_a_file_names_it`
+- `tests/test_qa_review.py::test_a_line_a_gate_left_half_written_is_counted_not_fatal`
 - `tests/test_acceptance.py::test_one_anchored_pass_per_criterion_passes`
 - `tests/test_qae_explore.py::test_the_explorer_may_post_nothing`
 - `tests/test_comments.py::test_every_state_follows_the_rules`
@@ -163,6 +167,7 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 
 ## Gotchas
 
+- The QA review lists every finding a gate of the verify job's gates step reported under `--soak` ("Not yet blocking"), read from the file `actions/gates` names in the job's `RUNNER_TEMP` ([docs/GATE-CONTRACT.md](../GATE-CONTRACT.md)). A soak gate run in another job (a repository's own `.vibe-verifier` gates job, which posts no comment) is not listed: `RUNNER_TEMP` is per job. A gate with no base comparison (`ui-audit`) lists everything it found on the walked pages; the section says so.
 - Jobs share no workspace: a `qae-inputs/` file one job writes does not exist in another. Every such file a template step hands an action, by its `with:` or the action's default, and every one the manifest template's gate lines name, is written earlier in the same job, except the design references directory a site step may leave unwritten (`tests/test_qae_job_contract.py`). A gate line added to the manifest template must pass a run that walked nothing, on the files the verify job writes for a `- None:` pull request (`tests/test_qae_nothing_walked.py`).
 - A carried walk is found by its artifact, so a consumer whose explore job uploads no `qae-artifacts-*` artifact, or keeps artifacts for less time than its pull requests stay open, never carries. The criteria job also needs `actions: read`; without it the facts read fails, a warning says so, and the run walks as before. The verify job reads no facts of its own: it decides on the criteria job's `carry` output.
 - The Codex action accepts optional `model` and `reasoning-effort` inputs; empty preserves the runner defaults. The action validates identifiers and effort values before invoking Codex, passes settings as separate arguments, and logs only the configured values. Selection does not guarantee a complete walk or a truthful verdict.

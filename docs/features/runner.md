@@ -26,6 +26,7 @@ Write `.vibe-verifier` with one gate per line and run `bin/vibe-verifier run --r
 - `tests/test_runner.py::test_a_branch_cannot_loosen_one_of_two_lines`
 - `tests/test_gates_action.py::test_entries_are_never_judged_from_the_base`
 - `tests/test_gates.py::test_soak_never_masks_could_not_run`
+- `tests/test_gates.py::test_a_soak_gate_records_what_it_reported_for_the_qa_review`
 
 ## Gotchas
 
