@@ -1,0 +1,2 @@
+- step 1: opened /form -> saw the order form
+- step 2: invalid input: typed -1 in Quantity and saved -> the form said the quantity must be a positive number

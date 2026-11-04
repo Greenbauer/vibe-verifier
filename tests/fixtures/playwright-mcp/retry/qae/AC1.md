@@ -1,0 +1,2 @@
+- step 1: opened /orders -> saw Something went wrong
+- step 2: retry of step 1: opened /orders -> saw 2 orders

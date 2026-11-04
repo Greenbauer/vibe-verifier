@@ -1,0 +1,3 @@
+[     -11ms] [ERROR] checkout error @ http://127.0.0.1:47812/checkout?session=1:0
+[     125ms] Error: checkout boom
+    at http://127.0.0.1:47812/checkout?session=1:1:95

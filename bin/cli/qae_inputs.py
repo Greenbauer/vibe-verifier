@@ -7,9 +7,10 @@ import os
 import shutil
 
 from _acceptance import REFERENCE_KEY, body_criteria as read_criteria, declares_none, png_size, split_ticket, ticket_items
+from _qae_rules import MAX_STATES
 from cli.criteria import manifest_environmental, manifest_widths
 from cli.features import selection_options
-from cli.qae_shards import STATES_PER_WALK, explorer_isolation, explorer_share, explorer_tag, explorer_turns, rewalk_walks
+from cli.qae_shards import explorer_isolation, explorer_share, explorer_tag, explorer_turns, rewalk_walks
 from cli.runner import fail, read_text
 
 
@@ -57,7 +58,7 @@ def explorer_inputs(args, widths):
     names = os.listdir(args.features) if os.path.isdir(args.features) else []
     features = len([name for name in names if name.endswith(".md")])
     options = selection_options(args) if args.manifest and features else None
-    states = options.max_states if options else STATES_PER_WALK
+    states = options.max_states if options else MAX_STATES
     tag = explorer_tag(args.run, args.shard) or "qae-e%d" % args.shard
     everything = items
     items, share = explorer_share(items, widths, args.shard, args.shards, rewalk_walks(features, states), tag)

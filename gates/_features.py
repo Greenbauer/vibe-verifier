@@ -44,6 +44,7 @@ from typing import NamedTuple
 
 from _acceptance import parse_anchor
 from _contract import CannotRun, glob_to_regex, resolve_base
+from _qae_rules import MAX_STATES
 
 SECTION = re.compile(r"^##[ \t]+(?P<name>\S.*?)[ \t]*$")
 SURFACE = re.compile(r"^- (?P<kind>[a-z][a-z0-9-]*): `(?P<value>[^`]+)`[ \t]*$")
@@ -275,8 +276,8 @@ def add_selection_arguments(parser):
                         help="re-walk at most this many features (default: 3)")
     parser.add_argument("--shared-over", metavar="N", type=int, default=2,
                         help="a changed file more than N features list is shared and selects none (default: 2)")
-    parser.add_argument("--max-states", metavar="N", type=int, default=3,
-                        help="the explorer walks at most this many of each feature's Verify states (default: 3)")
+    parser.add_argument("--max-states", metavar="N", type=int, default=MAX_STATES,
+                        help="the explorer walks at most this many of each feature's Verify states (default: %d)" % MAX_STATES)
 
 
 def selection(repo, args, base_ref=None):

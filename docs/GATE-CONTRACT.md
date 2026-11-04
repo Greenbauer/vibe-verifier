@@ -851,7 +851,10 @@ install that fails, is exit 2. The first is `tools/cognitive-complexity/` (eslin
 eslint-plugin-sonarjs, the TypeScript parser, typescript). The second is `tools/qae-browser/`
 (playwright-mcp and the Playwright build it pins), which the QAE harness installs through
 `actions/qae-browser` (`bin/vibe-verifier tool qae-browser`, then that Playwright's chromium) instead
-of resolving them from the registry in the job that holds the account-level token. The third is
+of resolving them from the registry in the job that holds the account-level token. The qae-artifacts
+gate's tests read recordings of what that build writes (`tests/fixtures/playwright-mcp/`), so a change
+to its lockfile is recorded again in the same pull request
+([harnesses/qae/README.md](../harnesses/qae/README.md#what-the-pinned-build-writes-recorded)). The third is
 `tools/codex/` (the Codex CLI and its platform binary), which `actions/qae-codex` installs for the
 QAE harness's Codex lane (`harnesses/qae/explore-codex.yml`); that lane holds no model token at all,
 because the login lives on the runner (see the harness README). The fourth is
