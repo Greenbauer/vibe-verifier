@@ -31,9 +31,11 @@ Add a line to the QAE manifest (`.vibe-verifier-qae`), after `qae-artifacts`:
 - `tests/test_qae_ui_audit.py::test_both_lanes_load_the_hook`
 - `tests/test_qae_ui_audit.py::test_the_hooks_node_tests_pass`
 - `actions/qae-browser/ui-audit.test.js::a clean tab still leaves a record, empty, so the gate can tell clean pages from a hook never loaded`
+- `tests/test_qae_ui_audit.py::test_a_run_that_walked_nothing_passes_on_the_empty_site_file_a_none_declaration_leaves`
 
 ## Gotchas
 
+- A run with no record to judge (a pull request that declares `- None:` runs no explorer) passes before the site file is read: the verify job writes that file empty then.
 - The rules and their thresholds are in the header of `actions/qae-browser/ui-audit-page.js`. Each was checked against two subscribed apps' real screens (a quote builder, lists, dashboards, a people page, an add-user dialog, 2026-11-03) and narrowed where it flagged a design: a pill track with even padding, a tab toggle whose idle tab has no border, a map's zoom bar, a header button beside a search field in the page below, a list row with only a divider under it.
 - A spinner shows only while something loads, so the hook also measures the moment a button gains an element whose class names a spinner or loader, or a `role=progressbar`.
 - A dialog opens with no load or navigation, so the hook also measures half a second after a dialog, alert or status message appears. At each measure it also writes the page's copy record, `copy.jsonl`, for the [copy audit](copy-audit.md).

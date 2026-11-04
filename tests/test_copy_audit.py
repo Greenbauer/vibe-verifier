@@ -156,6 +156,12 @@ class Gate(unittest.TestCase):
     def test_a_run_that_walked_nothing_passes(self):
         self.assert_code(self.run_gate(None, None, steps=False), 0)
 
+    def test_a_run_that_walked_nothing_passes_on_the_empty_site_file_a_none_declaration_leaves(self):
+        # A pull request that declares `- None:` runs no explorer, so the verify job writes an empty site file.
+        site = Path(self.repo) / "site-url"
+        site.write_text("\n")
+        self.assert_code(self.run_gate(None, None, "--site-file", str(site), steps=False), 0)
+
     def test_a_page_off_the_declared_site_needs_no_grade_and_is_not_judged(self):
         record = [block("Sync NS record", page="https://login.other.test/")]
         self.assert_code(self.run_gate(record, [], "--site", "https://site.test"), 0)

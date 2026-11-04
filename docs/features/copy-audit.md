@@ -37,9 +37,11 @@ Drop `--soak` once ten pull requests in a row raised no false finding. `--allow 
 - `tests/test_copy_audit_wiring.py::test_the_codex_lane_grades_the_pages_of_the_site_its_site_step_declared`
 - `tests/test_copy_audit_wiring.py::test_the_action_hands_the_declared_site_to_the_grader_as_a_site_file`
 - `actions/qae-browser/ui-audit.test.js::a dialog opening is read half a second later, with its copy, and a clean start leaves an empty copy record`
+- `tests/test_copy_audit.py::test_a_run_that_walked_nothing_passes_on_the_empty_site_file_a_none_declaration_leaves`
 
 ## Gotchas
 
+- A run with no record to judge (a pull request that declares `- None:` runs no explorer) passes before the site file is read: the verify job writes that file empty then.
 - The model test (`Model`) needs a Codex login, so CI's unit job skips it; run it with `COPY_AUDIT_CODEX_HOME=~/.codex` and the browser toolchain before changing the prompt ([harnesses/copy-audit/README.md](../../harnesses/copy-audit/README.md), "Changing the prompt").
 - A block that is a value the application shows (a name, an amount, a date, text a person typed) passes; table cells, code and fields a person types into are never recorded.
 - "The pull request adds it" is four consecutive whole words of the block on an added line of `git diff <base>...HEAD`, or, for a shorter label, the whole label as a string, an element's text or an added line of its own (`"Save"`, `>Save<`, JSX text on its own line), after decoding HTML entities and straightening quotes. A label's word inside code (`unsaved`, `row.quote_status`) is not the label. A code line that is nothing but a word equal to an existing failing label (a SQL column alone on its line) does count, so that label is reported as the pull request's. Copy assembled from fragments shorter than that, or from a translation file the diff does not touch, counts as existing.

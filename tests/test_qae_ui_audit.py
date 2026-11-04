@@ -8,6 +8,7 @@ needs the installed toolchain, so it runs where QAE_MCP names the playwright-mcp
 and no Playwright chromium."""
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -92,6 +93,17 @@ class Gate(unittest.TestCase):
     def test_a_run_that_walked_nothing_passes(self):
         result = self.run_gate(None, steps=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_run_that_walked_nothing_passes_on_the_empty_site_file_a_none_declaration_leaves(self):
+        # A pull request that declares `- None:` runs no explorer, so the verify job writes an empty site file.
+        site = Path(tempfile.mkdtemp(prefix="vv-ui-site-")) / "site-url"
+        self.addCleanup(shutil.rmtree, site.parent)
+        site.write_text("\n")
+        result = self.run_gate(None, "--site-file", str(site), steps=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # A clean walk still leaves a record, empty, and that one is judged against the site it declared.
+        result = self.run_gate([], "--site-file", str(site), steps=False)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
 
     def test_the_hooks_node_tests_pass(self):
         result = subprocess.run(["node", "--test", "--test-reporter=tap", str(HOOK.with_suffix(".test.js"))],
