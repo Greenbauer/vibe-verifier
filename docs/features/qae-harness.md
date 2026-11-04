@@ -145,6 +145,7 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_qae_prompt_rules.py::test_the_prompt_and_each_lanes_copy_are_rendered_from_the_gates`
 - `tests/test_qae_prompt_rules.py::test_the_verdict_lines_the_prompt_shows_pass_the_gate`
 - `tests/test_qae_prompt_rules.py::test_the_marked_steps_are_the_gates_markers`
+- `tests/test_qae_prompt_rules.py::test_a_step_logged_and_shot_where_the_prompt_says_is_a_step_the_gates_count`
 
 ## Gotchas
 

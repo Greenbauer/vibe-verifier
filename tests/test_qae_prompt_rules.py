@@ -94,6 +94,9 @@ class StepForms(unittest.TestCase):
         self.assertTrue(_probe.PROBE.match(self.said("- step k: invalid input:")))
         self.assertTrue(_probe.PROBE.match(" as admin:" + self.said("- step k: invalid input:")))
         self.assertEqual(_retry.RETRY.match(self.said("- step m: retry of step k:")).group("k"), "1")
+        # A retry counts only when it repeats its step's action, which the gate reads as the text before "->".
+        plain = self.said("- step k: <what you did>").replace("seen", "opened the cart", 1)
+        self.assertEqual(_retry.action(plain), "opened the cart")
         self.assertEqual(REFERENCE_NAMED.search(self.said("- step k: compared with reference")).group("key"), "home")
         self.assertRegex(shown(self.prompt, "- step k: as <role>:"), acceptance_verdict.STEP + r"[ \t]*as[ \t]+admin[ \t]*:")
 
