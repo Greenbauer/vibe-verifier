@@ -44,7 +44,8 @@ explore, `criteria@`, `qa-limit@`, `gates@` and `qa-review@` in verify) are inve
    references the site step supplied into the evidence, installs the browser, and runs
    `claude-code-action` with [`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) as its browser,
    under a [turn cap](#the-turn-cap) sized to the run. The prompt
-   ([`prompt.md`](prompt.md)) tells the model to walk each criterion under the PR body's
+   ([`prompt.md`](prompt.md), rendered from [`prompt.in.md`](prompt.in.md) and the rules the gates hold
+   as data by `python3 gates/_qae_prompt.py`) tells the model to walk each criterion under the PR body's
    `## Acceptance criteria` heading, append one line per action to `qae-artifacts/qae/ACn.md`
    (`- step k: <what you did> -> <what you saw>`), save a screenshot per step, then write
    `qae-artifacts/verdict.md` with one `acceptance-check: ACn -- PASS|FAIL -- ... (qae/ACn.md::<step line>)`

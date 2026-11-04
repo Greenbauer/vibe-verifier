@@ -36,6 +36,9 @@ The QAE harness: an explorer walks a pull request's acceptance criteria (and, op
 - source: `gates/_probe.py`
 - source: `gates/_snapshot.py`
 - source: `gates/_session_log.py`
+- source: `gates/_qae_rules.py`
+- source: `gates/_qae_prompt.py`
+- source: `gates/_refusals.py`
 - source: `tools/qae-browser/**`
 - source: `tools/codex/**`
 
@@ -139,6 +142,10 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_qae_probe.py::test_the_review_says_what_the_probe_excused_and_why_not`
 - `tests/test_qae_job_contract.py::test_every_file_a_template_step_hands_an_action_is_written_earlier_in_its_job`
 - `tests/test_qae_nothing_walked.py::test_every_offered_gate_passes_a_run_that_walked_nothing`
+- `tests/test_qae_prompt_rules.py::test_the_prompt_and_each_lanes_copy_are_rendered_from_the_gates`
+- `tests/test_qae_prompt_rules.py::test_the_verdict_lines_the_prompt_shows_pass_the_gate`
+- `tests/test_qae_prompt_rules.py::test_the_marked_steps_are_the_gates_markers`
+- `tests/test_qae_prompt_rules.py::test_a_step_logged_and_shot_where_the_prompt_says_is_a_step_the_gates_count`
 
 ## Gotchas
 
@@ -148,6 +155,7 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - The Codex CLI is locked to `0.162.0`, including its platform binaries. Model availability can be client-version filtered; verify the chosen model and effort with the pinned client and the actual runner account, not another client's catalog.
 
 - The explore templates must stay byte-identical outside the explorer block, and the inline prompts must equal prompt.md.
+- Edit the explorer prompt in `harnesses/qae/prompt.in.md`, never `prompt.md`, then run `python3 gates/_qae_prompt.py`: it renders `prompt.md` and both lanes' inline copies. A rule a gate holds as data (who may declare an expected refusal and with which status, what the invalid-input probe may be answered with, what the manifest declares environmental, how many states a re-walk covers) is a slot the gate's own value fills (`gates/_qae_rules.py`), and `tests/test_qae_prompt_rules.py` fails while the prompt is not the render. The line forms the prompt shows (each step line form, where step logs and screenshots go, the record file names, every verdict line) are held another way: written as the prompt says, each must be read by the gate pattern or gate run that reads it. Prose rules no gate holds as data (that a declaration counts for the whole run, which criteria to walk) are neither.
 - A console line names the resource an error is about, never the page that logged it. The page comes from `console-pages.jsonl`, which `actions/qae-browser/console-pages.js` writes through playwright-mcp's `--init-page`. The same record holds every request a page got an answer below 400 for, static ones included, which is the answer a request the page cancelled is matched against: the explorer's own network record leaves out a successful image, font, script or stylesheet. A consumer copy of the Claude lane without that argument writes no record, so every console error is judged as before and a cancelled static request is excused only by a network record. The hook depends on the pinned build, and the catalog's `QA browser tests` CI job runs it in the real browser.
 - A credential reaches the explorer as a NAME (`secrets-file` on the Codex lane). playwright-mcp types its value for the name in `browser_fill_form` and `browser_type` only; `actions/qae-browser/secret-names.js`, a second `--init-page` hook `actions/qae-codex` loads whenever it writes secrets, does the same in every Playwright text-entry call, so a sign-in through `browser_run_code_unsafe` no longer sends the name and fails the run on the site's 400. It wraps classes of the pinned build, and the catalog's `QA browser tests` CI job runs it in the real browser. A failed call's error names the secret it was typing, never the value. A field set by a script inside the page, a name pressed key by key, or text dropped onto the page is still the name.
 - The verdict is the file each explorer left in the run's own evidence (`verdicts/<n>.md`, copied there by a workflow step after the explorer). No pull request comment is read, and the explorer posts none: the verify job's QA review is the one comment ([docs/comments.md](../comments.md)). A consumer copy made before that still reads the newest comment from the workflow's identity.
