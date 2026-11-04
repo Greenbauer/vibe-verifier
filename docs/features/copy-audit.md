@@ -8,6 +8,7 @@ A model on the Codex CLI grades, cold, every sentence and label the QAE explorer
 - command: `copy-audit`
 - source: `gates/copy_audit.py`
 - source: `gates/_copy_audit.py`
+- source: `gates/_added_copy.py`
 - source: `actions/qae-browser/copy-page.js`
 - source: `harnesses/copy-audit/**`
 - source: `actions/copy-audit/**`

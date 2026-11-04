@@ -64,6 +64,7 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_qae_codex_settings.py::test_empty_inputs_preserve_runner_selection`
 - `tests/test_qae_codex_settings.py::test_explicit_settings_are_independent_arguments`
 - `tests/test_qae_codex_settings.py::test_invalid_settings_fail_before_codex_without_echoing_them`
+- `tests/test_qae_codex_settings.py::test_disabled_tools_are_kept_from_the_browser_server_and_only_tool_names_pass`
 - `tests/test_qae_codex.py::test_the_locked_cli_supports_current_explicit_models_on_every_platform`
 - `tests/test_qae_artifacts.py::test_a_step_without_a_screenshot_fails`
 - `tests/test_qae_planted_evidence.py::test_a_committed_evidence_file_is_never_evidence`
@@ -171,6 +172,7 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - Jobs share no workspace: a `qae-inputs/` file one job writes does not exist in another. Every such file a template step hands an action, by its `with:` or the action's default, and every one the manifest template's gate lines name, is written earlier in the same job, except the design references directory a site step may leave unwritten (`tests/test_qae_job_contract.py`). A gate line added to the manifest template must pass a run that walked nothing, on the files the verify job writes for a `- None:` pull request (`tests/test_qae_nothing_walked.py`).
 - A carried walk is found by its artifact, so a consumer whose explore job uploads no `qae-artifacts-*` artifact, or keeps artifacts for less time than its pull requests stay open, never carries. The criteria job also needs `actions: read`; without it the facts read fails, a warning says so, and the run walks as before. The verify job reads no facts of its own: it decides on the criteria job's `carry` output.
 - The Codex action accepts optional `model` and `reasoning-effort` inputs; empty preserves the runner defaults. The action validates identifiers and effort values before invoking Codex, passes settings as separate arguments, and logs only the configured values. Selection does not guarantee a complete walk or a truthful verdict.
+- The Codex action's optional `disabled-tools` (comma separated playwright-mcp tool names) becomes Codex's `disabled_tools` for the browser server, so the model never sees those tools; it applies only when `mcp` is set, and a name that is not `browser_...` fails before Codex starts. The first-use walk passes its script tools ([harnesses/first-use/README.md](../../harnesses/first-use/README.md)); the explorer passes none.
 - The Codex CLI is locked to `0.162.0`, including its platform binaries. Model availability can be client-version filtered; verify the chosen model and effort with the pinned client and the actual runner account, not another client's catalog.
 
 - The explore templates must stay byte-identical outside the explorer block, and the inline prompts must equal prompt.md.

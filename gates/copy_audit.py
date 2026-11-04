@@ -28,28 +28,21 @@ beside it (gates/_copy_audit.py). The model's grade is checked, never trusted:
 Step logs and no copy.jsonl cannot run (the hook was not loaded), and so does a record with no copy-grades.json
 beside it (the grade step did not run). The same text on several pages is one finding.
 """
-import html
 import json
 import os
 import re
 
-from _contract import CannotRun, Finding, git, resolve_base, run_gate
+from _added_copy import added_by_pull_request, added_text, normal
+from _contract import CannotRun, Finding, run_gate
 from _copy_audit import GRADES, RECORD, SCHEMA, blocks
 from _schema_subset import schema_problem
 from qae_artifacts import declared_sites
 from ui_audit import on_site, read_lines, record_paths
 
 GATE = "copy-audit"
-RUN = 4  # consecutive words of a block on an added line that make it the pull request's copy
-QUOTES = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', " ": " "})
 ENVELOPE = {"type": "object", "required": ["shard", "ids", "error", "output", "seconds"],
             "properties": {"shard": {"type": "integer"}, "ids": {"type": "array", "items": {"type": "string"}},
                            "error": {"type": ["string", "null"]}, "output": {}, "seconds": {}}}
-
-
-def normal(text):
-    """Text as a diff line and a page both can hold it: entities decoded, curly quotes straight, one space, lower case."""
-    return " ".join(html.unescape(text).translate(QUOTES).split()).lower()
 
 
 def schema():
@@ -98,24 +91,6 @@ def grades_of(folder, root, ids):
     if missing:
         raise CannotRun("%s has no grade for %d block(s) of the record (%s)" % (where, len(missing), ", ".join(missing[:5])))
     return graded
-
-
-def added_text(args):
-    """Every line the pull request adds, normalized, one per line."""
-    diff = git(args.repo, "diff", "--unified=0", "--no-color", "--no-ext-diff", resolve_base(args.repo, args.base_ref) + "...HEAD")
-    return "\n".join(normal(line[1:]) for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
-
-
-def added_by_pull_request(text, added):
-    """Whether an added line holds four consecutive whole words of the block, or, for a shorter label, the whole label
-    as a string, an element's text or a line of its own (`"Save"`, `>Save<`, JSX text on its own line): a label's
-    word inside code (`unsaved`, `row.quote_status`) is not the label."""
-    words = normal(text).split()
-    if len(words) < RUN:
-        label = re.escape(" ".join(words))
-        return re.search(r"""(?:[>"'`]\s*|^[ \t]*)%s(?:\s*[<"'`]|[ \t]*$)""" % label, added, re.M) is not None
-    return any(re.search(r"(?<!\w)%s(?!\w)" % re.escape(" ".join(words[at:at + RUN])), added)
-               for at in range(len(words) - RUN + 1))
 
 
 def on_declared(line, sites):

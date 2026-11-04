@@ -36,6 +36,13 @@ inputs:
       holds none in those spellings. A malformed file fails the step
       before the model runs. Empty (the default) adds nothing.
     default: ""
+  disabled-tools:
+    description: >-
+      playwright-mcp tools the session is not given, comma separated (`browser_run_code_unsafe,browser_evaluate`), as
+      Codex's `disabled_tools` for the playwright server: the model never sees them. The first-use walk passes its
+      script tools here, since playwright-mcp writes no session-log line for a call that throws, so a script could move
+      the page and leave no trace for the gate (harnesses/first-use/README.md). Empty (the default) gives every tool.
+    default: ""
   usage-account-alias:
     description: Optional caller-owned logical alias for the Codex subscription. Empty stays unmapped.
     default: ""
@@ -97,6 +104,7 @@ runs:
         STORAGE_STATE: ${{ inputs.storage-state }}
         SECRETS_FILE: ${{ inputs.secrets-file }}
         USAGE_ACCOUNT_ALIAS: ${{ inputs.usage-account-alias }}
+        DISABLED_TOOLS: ${{ inputs.disabled-tools }}
         VV_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
         set -euo pipefail
@@ -221,6 +229,14 @@ runs:
             args+=",\"--config\",\"$config\",\"--init-page\",\"$GITHUB_ACTION_PATH/../qae-browser/secret-names.js\""
           fi
           browser=(-c 'mcp_servers.playwright.command="node"' -c "mcp_servers.playwright.args=[$args]")
+          if [ -n "${DISABLED_TOOLS:-}" ]; then
+            names=""
+            for tool in ${DISABLED_TOOLS//,/ }; do
+              [[ "$tool" =~ ^browser_[a-z_]+$ ]] || { echo "::error::disabled-tools names $tool, not a playwright-mcp tool (browser_...)"; exit 2; }
+              names+="${names:+,}\"$tool\""
+            done
+            browser+=(-c "mcp_servers.playwright.disabled_tools=[$names]")
+          fi
         fi
         python3 "$GITHUB_ACTION_PATH/../usage/collect.py" \
           --output "$RUNNER_TEMP/vv-usage/usage.json" \

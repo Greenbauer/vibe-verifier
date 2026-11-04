@@ -23,11 +23,11 @@ class Settings(unittest.TestCase):
         self.codex.chmod(0o755)
         (self.work / "prompt.md").write_text("prompt\n")
 
-    def run_step(self, model="", effort=""):
+    def run_step(self, model="", effort="", mcp="", disabled=""):
         script = run_script(ACTION.read_text(), "- name: Explore the acceptance criteria in a real browser",
                             "- name: Redact the secrets from the artifacts")
         return subprocess.run(["bash", "-c", script], cwd=self.work, capture_output=True, text=True,
-                              env=clean_env({"CODEX": str(self.codex), "PROMPT_FILE": "prompt.md", "MCP": "",
+                              env=clean_env({"CODEX": str(self.codex), "PROMPT_FILE": "prompt.md", "MCP": mcp, "DISABLED_TOOLS": disabled,
                                              "ARTIFACTS": "qae-artifacts", "STORAGE_STATE": "", "SECRETS_FILE": "",
                                              "MODEL": model, "REASONING_EFFORT": effort,
                                              "RUNNER_TEMP": str(self.temp), "GITHUB_ACTION_PATH": str(ACTION.parent),
@@ -44,6 +44,18 @@ class Settings(unittest.TestCase):
         self.assertIn("configured model=runner-default reasoning_effort=runner-default", result.stdout)
         self.assertIn("--ephemeral", argv)
         self.assertIn('approval_policy="never"', argv)
+
+    def test_disabled_tools_are_kept_from_the_browser_server_and_only_tool_names_pass(self):
+        result = self.run_step(mcp="/tools/cli.js", disabled="browser_run_code_unsafe,browser_evaluate")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        argv = json.loads((self.work / "argv.json").read_text())
+        self.assertIn('mcp_servers.playwright.disabled_tools=["browser_run_code_unsafe","browser_evaluate"]', argv)
+        self.run_step(mcp="/tools/cli.js")
+        self.assertFalse(any("disabled_tools" in arg for arg in json.loads((self.work / "argv.json").read_text())))
+        for bad in ('browser_x"]', "shell", "browser_evaluate,rm -rf"):
+            result = self.run_step(mcp="/tools/cli.js", disabled=bad)
+            self.assertEqual(result.returncode, 2, bad)
+            self.assertIn("not a playwright-mcp tool", result.stdout)
 
     def test_explicit_settings_are_independent_arguments(self):
         for model, effort in [("gpt-6.1-sol", ""), ("", "high")] + [("gpt-6.1-sol", effort) for effort in ("low", "medium", "high", "xhigh", "max", "ultra")]:

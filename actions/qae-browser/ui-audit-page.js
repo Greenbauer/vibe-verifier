@@ -27,6 +27,9 @@
 //                         icon, or a CSS-drawn tick) more than 1px off the circle's middle; the mark
 //                         is measured by its ink, not its line box, since a digit sits above the
 //                         descender space its line box keeps
+//     duplicate-name      two buttons a person can press in one dialog or form whose names are the same,
+//                         or one the other with words added (name-page.js); buttons of different rows
+//                         of one list or table are told apart by their rows
 //
 // Side by side means laid out by one flex or grid row within four levels of both, so a header's
 // button and a search field in the page below it are never compared. A control is measured as
@@ -274,6 +277,7 @@ function audit() {
   copyRules(add);
   clippedValueRules(add);
   glyphRules(add);
+  nameRules(add);
   return findings;
 }
 

@@ -197,6 +197,15 @@ jobs:
         run: |
           test -f "$QAE_MCP"
           python3 -m unittest discover -s tests -p 'test_qae_secret_names.py' -v
+      - name: Walk a site as the first-use walk does, with the playwright-mcp it installed
+        # The first-use-walk gate reads that build's session log: the page each call reports and the file each
+        # screenshot saved to. The test walks a site on a local port back by its breadcrumb (passes) and by the
+        # browser's Back (fails), and runs the gate on what that left. Skips without QAE_MCP, so the file is checked first.
+        env:
+          QAE_MCP: ${{ steps.browser.outputs.mcp }}
+        run: |
+          test -f "$QAE_MCP"
+          python3 -m unittest discover -s tests -p 'test_first_use_walk.py' -k Live -v
       - name: Render the dashboard's pull-request rows at every window width, with the chromium it installed
         # The dashboard's other tests use a fake DOM with no layout, so only a real browser sees a row cell
         # end outside its row or a list scroll sideways. It skips without VV_PLAYWRIGHT_DIR, so the

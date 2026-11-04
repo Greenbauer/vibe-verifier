@@ -6,7 +6,8 @@ A wired gate over the directory the explore job uploads (harnesses/qae/). The ha
 explorer opens, at every width it uses, and writes ui-audit.jsonl there; the explorer never sees it.
 Its rules are listed in actions/qae-browser/ui-audit-page.js: controls in one row that do not line
 up, bordered controls touching each other or their container's edge, a spinner off its button's
-middle, a badge's count, initials or check off its circle's middle, walls of text, raw values such as `in_review` or `undefined`, and text or values cut off.
+middle, a badge's count, initials or check off its circle's middle, walls of text, raw values such as `in_review` or `undefined`,
+text or values cut off, and two buttons in one dialog or form a person cannot tell apart by name.
 
     --artifacts DIR     the run's artifact directory (required)
     --site-file FILE    judge only pages under the URLs the explore job's site step declared (one a line)
@@ -14,6 +15,11 @@ middle, a badge's count, initials or check off its circle's middle, walls of tex
     --rules R[,R...]    judge only these rules (default: all)
     --allow REGEX       skip a finding whose element path or text matches (repeatable): for a design the
                         repository chose, named in its own QAE manifest
+    --all               every finding blocks, not only those on copy the pull request adds
+
+A finding blocks only when the pull request adds the text of the element it names, or of the neighbour it was
+measured against, as copy-audit decides it (gates/_added_copy.py): a defect on a screen the base already had, or on
+an element that shows no text, is listed as advisory, so a cleanup pull request can work from the list.
 
 A run with step logs and no ui-audit.jsonl cannot run: the hook was not loaded, and a silent pass would
 look like a clean page. Rows of one table repeat a defect, so findings that differ only in which row
@@ -24,6 +30,7 @@ import json
 import os
 import re
 
+from _added_copy import added_by_pull_request, added_text
 from _contract import CannotRun, Finding, run_gate
 from qae_artifacts import declared_sites
 
@@ -77,13 +84,16 @@ def judged(line, sites, rules, allow):
     return not any(pattern.search(str(line.get(key) or "")) for pattern in allow for key in ("at", "text"))
 
 
-def finding(lines):
-    """One finding for lines that differ only in which table row (nth-of-type) they are on."""
+def finding(lines, added, blocking_all):
+    """One finding for lines that differ only in which table row (nth-of-type) they are on: blocking when the pull
+    request adds the text of the element or of its neighbour, or with --all."""
     first = lines[0]
     what = (first.get("text") or first.get("at")) + (" / " + first["other"] if first.get("other") else "")
     more = " (and %d more like it)" % (len(lines) - 1) if len(lines) > 1 else ""
-    return Finding("%s on %s at %spx: %s: %s%s (%s)" % (first.get("rule"), first.get("page"), first.get("width"), what,
-                                                        first.get("detail"), more, first.get("at")))
+    new = any(text and added_by_pull_request(str(text), added) for text in (first.get("text"), first.get("other")))
+    return Finding("%s%s on %s at %spx: %s: %s%s (%s)" % (
+        first.get("rule"), "" if new else ", existing", first.get("page"), first.get("width"), what, first.get("detail"),
+        more, first.get("at")), advisory=not (new or blocking_all))
 
 
 def check(args):
@@ -102,7 +112,8 @@ def check(args):
         if judged(line, sites, rules, allow):
             key = (line.get("page"), line.get("width"), line.get("rule"), NTH.sub("", str(line.get("at"))))
             groups.setdefault(key, []).append(line)
-    return [finding(lines) for lines in groups.values()]
+    added = added_text(args) if groups and not args.all else ""
+    return [finding(lines, added, args.all) for lines in groups.values()]
 
 
 def add_arguments(parser):
@@ -112,6 +123,7 @@ def add_arguments(parser):
     site.add_argument("--site-file", metavar="FILE", default=None)
     parser.add_argument("--rules", metavar="R[,R...]", default=None)
     parser.add_argument("--allow", action="append", metavar="REGEX")
+    parser.add_argument("--all", action="store_true")
 
 
 if __name__ == "__main__":

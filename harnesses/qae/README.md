@@ -602,7 +602,7 @@ that included the line. Two rules keep an explorer off another's records:
 The browser also measures every page the explorer opens. The [layout record](../../actions/qae-browser/ui-audit.js),
 a second `--init-page` in both lanes, runs the layout audit a second after each load and navigation and at once
 when a button gains a spinner, and appends each finding to `ui-audit.jsonl`: rows that do not line up, controls
-touching, a spinner off its button's middle, a badge's mark off its circle's middle, walls of text, raw values, text cut off. With several explorers the
+touching, a spinner off its button's middle, a badge's mark off its circle's middle, walls of text, raw values, text cut off, two buttons in one dialog or form with the same name. With several explorers the
 step above moves each one's record under `shard-<n>/`, where the [ui-audit gate](../../gates/ui_audit.py) reads it
 ([docs/features/ui-audit.md](../../docs/features/ui-audit.md)). The explorer never sees the record. The same hook
 also reads again half a second after a dialog, alert or status message appears, and writes every sentence and label
@@ -1247,6 +1247,11 @@ same. What differs, and why:
   client or account does not prove the chosen model is available to this invocation.
   This fixes reproducibility of selection, not incomplete walks or inaccurate evidence:
   the explorer can still finish before the job timeout, and every acceptance gate still applies.
+- **Tools the session is not given.** `actions/qae-codex`'s optional `disabled-tools` (comma separated
+  playwright-mcp tool names) becomes Codex's `disabled_tools` for the browser server, so the model never sees
+  them; a name that is not `browser_...` fails before Codex starts. The first-use walk passes its script tools,
+  since playwright-mcp logs no line for a call that throws ([harnesses/first-use/README.md](../first-use/README.md)).
+  The explorer passes none: it may sign in through a script.
 - **Three settings a non-interactive Codex run needs**, each found on the first spike (2026-09-23,
   zack.land on a laptop): `--sandbox danger-full-access`, because under `workspace-write` Codex
   cancels the browser's navigate and run-code calls client-side while screenshots and snapshots still
