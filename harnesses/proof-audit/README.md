@@ -288,6 +288,19 @@ holds the PROVEN grade to the unfixed tree, where its quote is not there. With a
 `VV_PROOF_AUDIT_LIVE=1` (optionally `VV_PROOF_AUDIT_MODEL`, `VV_PROOF_AUDIT_EFFORT`) runs the real
 grader on both trees: `python3 -m unittest tests.test_proof_audit.Replay` from the catalog root.
 
+## The clear-choice replay
+
+[`tests/fixtures/proof-audit/d2`](../../tests/fixtures/proof-audit/d2) is a dialog whose plan line says it
+"makes clear which is about to happen", with a "Send invite" choice next to a "Send invite" submit. Its test tells
+them apart with `.first()` and `.last()` and asserts the choice is pressed. On the prompt before this case the real
+grader graded it PROVEN on those assertions (`old-prompt-grades/1.json`; the gate passes it, since its quotes are real), which is how a consumer's pull request passed with a dialog its requester
+then misread (2026-11-04). The prompt now says a case worded as a person's judgment of a screen needs an assertion on
+what makes it so, and that a test picking same-named controls by position never proves it: the real grader then graded
+it UNPROVEN ("the current test distinguishes two Send invite buttons by position"), kept in
+`grades/1.json`, and graded
+`proven/` (a radio choice and one submit that names its outcome) PROVEN. `tests/test_proof_audit_clear_choice.py`
+replays both; `VV_PROOF_AUDIT_LIVE=1` reruns the real grader.
+
 ## Limits
 
 - Whether an assertion exercises a case is the model's judgment. The gate proves the quotes are real,

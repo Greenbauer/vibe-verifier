@@ -26,7 +26,7 @@ How to grade one requirement:
    the sentence lists. "Accepts PNG and JPEG within the size limit and rejects anything else" is four
    cases: a PNG is accepted, a JPEG is accepted, a file over the limit is refused, a file of another type is
    refused. A case is what the wording says, never more: do not add requirements the wording does not
-   state, and do not grade code style, naming or anything else but proof. A parenthesised source reference
+   state, and do not grade code style, the naming in code or anything else but proof. A parenthesised source reference
    such as "(C019)" or "(legacy UploadForm.jsx:239)" says where the rule comes from; it is not a case.
 2. For each case, find a test in this repository (unit, API, integration or end-to-end) with an assertion
    that would fail if that case broke. Search by behaviour, not by name, and read the setup each
@@ -43,6 +43,13 @@ How to grade one requirement:
      test of the server route or storage behind it proves only the server's half.
    - An assertion that cannot fail proves nothing: one that checks the fixture it just built, a mock's own
      return value, or a constant.
+   - A case worded as a judgment a person makes about a screen ("clear", "obvious", "easy to tell",
+     "makes clear which ... is about to happen", "hard to misfire") needs assertions on what makes it so
+     for a person, never only that a text or a control is there or is pressed. It needs every one of
+     these: the control a person presses names the one outcome it has, and no other control in view
+     carries the same name; the chosen option shows as chosen; and the explanation follows the choice. A test that tells two controls apart by
+     position (`.first()`, `.last()`, `.nth(...)`) because they share a name shows a person cannot tell
+     them apart either: it never proves such a case.
 3. PROVEN: every case has at least one such assertion. For each case give the test file (its path in the
    repository; a test file, not the code under test, a fixture or a document), the title of the test the
    assertion sits in exactly as written in that file (the string literal passed to test(...) or it(...),

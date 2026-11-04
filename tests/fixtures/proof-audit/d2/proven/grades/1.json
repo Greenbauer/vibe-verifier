@@ -1,0 +1,118 @@
+{
+  "shard": 1,
+  "ids": [
+    "D-2"
+  ],
+  "error": null,
+  "output": {
+    "requirements": [
+      {
+        "id": "D-2",
+        "status": "PROVEN",
+        "cases": [
+          {
+            "case": "An unknown email offers Send invite.",
+            "proof": [
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 9,
+                "assertion": "await expect(dialog).toContainText('No account uses new.person@example.com');"
+              },
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 13,
+                "assertion": "await expect(dialog.getByRole('button', { name: 'Send invite' })).toBeVisible();"
+              }
+            ]
+          },
+          {
+            "case": "Send invite is selected first.",
+            "proof": [
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 11,
+                "assertion": "await expect(dialog.getByRole('radio', { name: 'Email them an invite' })).toBeChecked();"
+              }
+            ]
+          },
+          {
+            "case": "An unknown email offers Create account now.",
+            "proof": [
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 16,
+                "assertion": "await expect(dialog.getByRole('radio', { name: 'Make the account now' })).toBeChecked();"
+              },
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 18,
+                "assertion": "await expect(dialog.getByRole('button', { name: 'Create account' })).toBeVisible();"
+              }
+            ]
+          },
+          {
+            "case": "The dialog makes clear which action is about to happen.",
+            "proof": [
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 11,
+                "assertion": "await expect(dialog.getByRole('radio', { name: 'Email them an invite' })).toBeChecked();"
+              },
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 12,
+                "assertion": "await expect(dialog.getByRole('button')).toHaveCount(1);"
+              },
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 13,
+                "assertion": "await expect(dialog.getByRole('button', { name: 'Send invite' })).toBeVisible();"
+              },
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 14,
+                "assertion": "await expect(dialog).toContainText('They get an invite email');"
+              },
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 16,
+                "assertion": "await expect(dialog.getByRole('radio', { name: 'Make the account now' })).toBeChecked();"
+              },
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 17,
+                "assertion": "await expect(dialog.getByRole('button')).toHaveCount(1);"
+              },
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 18,
+                "assertion": "await expect(dialog.getByRole('button', { name: 'Create account' })).toBeVisible();"
+              },
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 19,
+                "assertion": "await expect(dialog).toContainText('The account is created now');"
+              }
+            ]
+          }
+        ],
+        "exclusion": null,
+        "missing": ""
+      }
+    ]
+  },
+  "seconds": 26.0
+}

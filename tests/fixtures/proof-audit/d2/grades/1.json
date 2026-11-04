@@ -1,0 +1,50 @@
+{
+  "shard": 1,
+  "ids": [
+    "D-2"
+  ],
+  "error": null,
+  "output": {
+    "requirements": [
+      {
+        "id": "D-2",
+        "status": "UNPROVEN",
+        "cases": [
+          {
+            "case": "An unknown email offers Send invite, selected first.",
+            "proof": [
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 10,
+                "assertion": "await expect(dialog.getByRole('button', { name: 'Send invite' }).first()).toHaveAttribute('aria-pressed', 'true');"
+              }
+            ]
+          },
+          {
+            "case": "An unknown email offers Create account now.",
+            "proof": [
+              {
+                "file": "web/src/AddUserDialog.spec.ts",
+                "test": "an unknown address offers invite or create",
+                "line": 11,
+                "assertion": "await expect(dialog.getByRole('button', { name: 'Create account now' })).toBeVisible();"
+              }
+            ]
+          },
+          {
+            "case": "The dialog makes clear that Send invite is about to happen.",
+            "proof": []
+          },
+          {
+            "case": "The dialog makes clear that Create account now is about to happen.",
+            "proof": []
+          }
+        ],
+        "exclusion": null,
+        "missing": "For Send invite, add a dialog test asserting that the action button uniquely names its outcome, the invite option is selected, and the explanation matches that choice; the current test distinguishes two Send invite buttons by position. For Create account now, assert that the action button uniquely names its outcome and no other visible control shares that name, alongside the existing selected-option and matching-explanation assertions."
+      }
+    ]
+  },
+  "seconds": 16.5
+}
