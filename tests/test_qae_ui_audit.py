@@ -101,6 +101,9 @@ class Gate(unittest.TestCase):
         site.write_text("\n")
         result = self.run_gate(None, "--site-file", str(site), steps=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # A clean walk still leaves a record, empty, and that one is judged against the site it declared.
+        result = self.run_gate([], "--site-file", str(site), steps=False)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
 
     def test_the_hooks_node_tests_pass(self):
         result = subprocess.run(["node", "--test", "--test-reporter=tap", str(HOOK.with_suffix(".test.js"))],
