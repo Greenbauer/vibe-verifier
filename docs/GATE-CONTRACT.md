@@ -37,6 +37,14 @@ anything. A gate that cannot run has produced no signal, and a soak that is sile
 exactly like a soak that is clean. A mutation-testing soak in a sibling project produced no score
 for five days before anyone noticed. A broken gate gets fixed or unsubscribed, never ignored.
 
+**A soak gate's findings reach the pull request.** When `VIBE_VERIFIER_SOAK_FINDINGS` names a file
+(`actions/gates` sets it to one in the job's `RUNNER_TEMP`), every gate run under `--soak` appends
+each finding it did not block on, one JSON object a line (`gate`, `message`, `path`, `line`;
+`report` in [`gates/_contract.py`](../gates/_contract.py)). Advisory findings, and a blocking gate's,
+are not written. The QA review later in the same job lists them under "Not yet blocking", because a
+log warning is read by nobody: on a consumer's pull request (2026-11-04) `copy-audit` found its dialog's copy unclear
+in soak and only the job log said so, until the requester found the same screens confusing.
+
 ## Base ref resolution
 
 An explicit `--base-ref` must resolve, or the gate exits 2: falling back silently would check the

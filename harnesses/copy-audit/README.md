@@ -55,6 +55,8 @@ the same step there only on a runner that has one. Then the QAE manifest line, a
 
     copy-audit --artifacts qae-artifacts --site-file qae-inputs/site-url --soak
 
+In soak its findings fail nothing; the QA review lists the ones the pull request added under Not yet blocking.
+
 A shard the model did not grade (a usage limit, a timeout, output that is not the schema) is recorded with the
 CLI's own error. The step only warns, so the walk's check is not turned red by a grade and `actions/qa-limit`
 never reads it as the explorer's failure; the gate then cannot run, in soak too.

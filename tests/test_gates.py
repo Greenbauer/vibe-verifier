@@ -1,5 +1,6 @@
 import json
 import unittest
+from pathlib import Path
 
 from helpers import commit, gate, git, make_repo
 
@@ -23,6 +24,18 @@ class Contract(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("lib/a.ts", result.stdout)
         self.assertIn("reported only", result.stdout)
+
+    def test_a_soak_gate_records_what_it_reported_for_the_qa_review(self):
+        # The file the gates action names (actions/gates); the QA review lists it under Not yet blocking.
+        repo = self.untested_source_on_branch()
+        record = Path(make_repo(self, {"a.txt": "x"})) / "soak.jsonl"
+        self.assertEqual(gate("new-source-has-test", repo, "--soak", env={"VIBE_VERIFIER_SOAK_FINDINGS": str(record)}).returncode, 0)
+        found = [json.loads(line) for line in record.read_text().splitlines()]
+        self.assertEqual([(f["gate"], f["path"]) for f in found], [("new-source-has-test", "lib/a.ts")])
+        record.unlink()
+        # A blocking gate's findings fail its check instead, so they are not listed again.
+        self.assertEqual(gate("new-source-has-test", repo, env={"VIBE_VERIFIER_SOAK_FINDINGS": str(record)}).returncode, 1)
+        self.assertFalse(record.exists())
 
     def test_soak_never_masks_could_not_run(self):
         repo = make_repo(self, {"a.txt": "x"}, initial_branch="trunk")

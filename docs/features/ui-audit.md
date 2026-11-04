@@ -18,7 +18,7 @@ Add a line to the QAE manifest (`.vibe-verifier-qae`), after `qae-artifacts`:
 
     ui-audit --artifacts qae-artifacts --site-file qae-inputs/site-url --soak
 
-`--soak` reports without failing; drop it once ten pull requests in a row raised no false finding. `--rules R[,R...]` judges only some rules, and `--allow REGEX` (repeatable) skips a finding whose element path or text matches, for a design the repository chose. Both QAE lanes load the hook: `harnesses/qae/explore.yml` passes `actions/qae-browser`'s `ui-audit` output as a second `--init-page`, and `actions/qae-codex` passes the file itself. A repository with its own copy of `explore.yml` needs that second `--init-page` in its copy before it adds the manifest line: without the hook there is no record, and the gate cannot run.
+`--soak` reports without failing (in the job log and under Not yet blocking in the QA review); drop it once ten pull requests in a row raised no false finding. `--rules R[,R...]` judges only some rules, and `--allow REGEX` (repeatable) skips a finding whose element path or text matches, for a design the repository chose. Both QAE lanes load the hook: `harnesses/qae/explore.yml` passes `actions/qae-browser`'s `ui-audit` output as a second `--init-page`, and `actions/qae-codex` passes the file itself. A repository with its own copy of `explore.yml` needs that second `--init-page` in its copy before it adds the manifest line: without the hook there is no record, and the gate cannot run.
 
 ## Verify
 

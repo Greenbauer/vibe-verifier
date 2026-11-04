@@ -60,4 +60,6 @@ runs:
         if [ -n "$VV_VERDICT" ]; then args+=(--verdict "$VV_VERDICT"); fi
         if [ -n "$VV_TICKET" ]; then args+=(--ticket "$VV_TICKET"); fi
         if [ -n "$VV_LIMITS" ]; then args+=(--limits "$VV_LIMITS"); fi
+        # What the gates step of this job found under --soak (actions/gates writes it); absent, the review lists nothing.
+        if [ -n "${RUNNER_TEMP:-}" ]; then args+=(--soak-findings "$RUNNER_TEMP/vibe-verifier-soak-findings.jsonl"); fi
         python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}"

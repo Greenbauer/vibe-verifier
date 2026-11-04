@@ -22,6 +22,9 @@ runs:
         VV_MANIFEST: ${{ inputs.manifest }}
         VV_ENTRIES: ${{ inputs.entries }}
         VV_BASE_REF: ${{ inputs.base-ref }}
+        # Where each gate run under --soak appends what it found without failing; a QA review later in the same job
+        # lists it (actions/qa-review). RUNNER_TEMP is the job's own, so a run never reads another job's.
+        VIBE_VERIFIER_SOAK_FINDINGS: ${{ runner.temp }}/vibe-verifier-soak-findings.jsonl
       run: |
         set -euo pipefail
         manifest="$VV_MANIFEST"

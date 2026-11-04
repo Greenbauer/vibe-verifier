@@ -1,11 +1,13 @@
 """`vibe-verifier qa-review` and actions/qa-review: the QAE's one review comment on a pull request,
 driven through the command line (and the action's own script) against a fake `gh` that records writes."""
+import json
 import re
 import subprocess
 import unittest
 from pathlib import Path
 
 from helpers import ROOT, clean_env
+from test_comments import problems
 from qa_review_fixture import BOT, HEAD, MARKER, RUN, VERDICT, GhFixture
 
 COMMIT = "[this commit](https://github.com/acme/site/commit/%s)" % HEAD
@@ -180,6 +182,48 @@ class QaReview(GhFixture):
         self.assertIn("could not post the QA review", result.stderr)
         self.assertEqual(self.writes(), [])
 
+    # A consumer's pull request, 2026-11-04: copy-audit, in soak, found its dialog's copy unclear and only the job log said so.
+    SOAK = [{"gate": "copy-audit", "path": None, "line": None,
+             "message": 'everyday-words on https://site-abc.vercel.app/accounts/36: "One send a minute.". '
+                        'Try: "You can send one invite per minute." (div > p)'},
+            {"gate": "copy-audit", "path": None, "line": None,
+             "message": 'no-system-terms on https://site-abc.vercel.app/accounts/36 (and on 2 more page(s)): '
+                        '"as User". Try: "with read access" (div > p)'},
+            {"gate": "ui-audit", "path": None, "line": None,
+             "message": "touching on https://site-abc.vercel.app/accounts at 375px: Save / Cancel: 2px apart "
+                        "(and 3 more like it) (div > button)"}]
+
+    def soak(self, findings):
+        return self.file("soak.jsonl", "".join(json.dumps(f) + "\n" for f in findings))
+
+    def test_a_soak_gates_findings_are_listed_as_not_yet_blocking(self):
+        body = self.posted(extra=("--soak-findings", self.soak(self.SOAK)))
+        self.assertIn("**Not yet blocking.** These gates run in soak", body)
+        self.assertIn('- `copy-audit`: everyday-words on /accounts/36: "One send a minute.". Try: "You can send one '
+                      'invite per minute." (div > p)\n', body)
+        self.assertIn('no-system-terms on /accounts/36: "as User". Try: "with read access" (div > p)\n', body)
+        self.assertIn("- `ui-audit`: touching on /accounts at 375px: Save / Cancel: 2px apart (div > button)\n", body)
+        self.assertIn("A gate that compares with the base lists only what this pull request added", body)
+        self.assertLess(body.index("Not yet blocking"), body.index("[The run and its evidence]"))
+        self.assertEqual(problems(body), [], body)
+        # A failed walk lists them too: they are the same findings either way.
+        self.assertIn("Not yet blocking", self.posted(gates="failure", extra=("--soak-findings", self.soak(self.SOAK))))
+
+    def test_no_soak_findings_no_section(self):
+        for extra in ((), ("--soak-findings", self.soak([])), ("--soak-findings", self.file("absent", "") + ".gone")):
+            self.assertNotIn("Not yet blocking", self.posted(extra=extra), extra)
+
+    def test_a_line_a_gate_left_half_written_is_counted_not_fatal(self):
+        record = self.file("soak.jsonl", json.dumps(self.SOAK[0]) + "\n" + '{"gate": "ui-au')
+        body = self.posted(extra=("--soak-findings", record))
+        self.assertIn('everyday-words on /accounts/36: "One send a minute."', body)
+        self.assertIn("- 1 record line(s) could not be read; the job log has every soak finding.", body)
+
+    def test_a_finding_with_a_file_names_it(self):
+        body = self.posted(extra=("--soak-findings", self.soak([{"gate": "new-source-has-test", "path": "lib/a.ts",
+                                                                 "line": 3, "message": "no test imports this file"}])))
+        self.assertIn("- `new-source-has-test`: lib/a.ts:3: no test imports this file\n", body)
+
     # The composite action is what a consumer pins: its script passes every input through.
 
     def test_the_action_posts_with_the_run_it_belongs_to(self):
@@ -190,12 +234,14 @@ class QaReview(GhFixture):
         env = clean_env(dict(self.env, GITHUB_ACTION_PATH=str(action_path), GH_TOKEN="x", VV_REPO="acme/site",
                              VV_PR="7", VV_HEAD=HEAD, VV_RUN=RUN, VV_CRITERIA=self.criteria, VV_VERDICT=self.verdict,
                              VV_TICKET="", VV_EXPLORE="success", VV_GATES="failure", VV_NOT_REQUIRED="", VV_CARRIED="",
-                             VV_RUN_ID="42", VV_MANIFEST=".vibe-verifier-qae", VV_LIMITS=""))
+                             VV_RUN_ID="42", VV_MANIFEST=".vibe-verifier-qae", VV_LIMITS="", RUNNER_TEMP=self.fixtures))
+        (Path(self.fixtures) / "vibe-verifier-soak-findings.jsonl").write_text(json.dumps(self.SOAK[0]) + "\n")
         result = subprocess.run(["bash", "-e", "-c", script], capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         body = self.writes()[0]["body"]["body"]
         self.assertIn("changes needed", body)
         self.assertIn("- AC2, explorer says FAIL: The menu opens\n", body)
+        self.assertIn('everyday-words on /accounts/36: "One send a minute."', body)
         for wired in ("${{ github.event.pull_request.head.sha }}", "${{ inputs.not-required }}", "${{ inputs.gates-outcome }}",
                       "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
                       "VV_RUN_ID: ${{ github.run_id }}", '--run-id "$VV_RUN_ID"',

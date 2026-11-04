@@ -853,7 +853,10 @@ the base as the gate's line is), so the row says what the gate decided. A re-wal
 edited the steps that judged it (or that it added the feature), comparing the map the QAE manifest's
 `acceptance-verdict` line names in the job's checkout with the merge base; the action's `manifest`
 input names that manifest (default `.vibe-verifier-qae`). A checkout with no base history gets a line
-saying the edit could not be read. It edits only a comment posted by
+saying the edit could not be read. After the rows, a passed or changes-needed review lists under **Not yet blocking** every
+finding a gate of this job's gates step reported under `--soak` (`copy-audit`, `ui-audit`), read from the file
+`actions/gates` names in the job's `RUNNER_TEMP` ([docs/GATE-CONTRACT.md](../../docs/GATE-CONTRACT.md)), so the
+people reading the pull request see what the soak gates found and not only the job log. It edits only a comment posted by
 `github-actions[bot]` that starts with the marker. The explorer posts no comment of its own: the gate's
 input is the verdict file in the run's evidence, and this comment is the only one a run leaves. How
 it is worded follows the catalog's [comment rules](../../docs/comments.md). On a pull request from a fork the workflow token is
