@@ -25,10 +25,13 @@ The catalog's templates (`harnesses/qae/explore.yml`, `explore-codex.yml`) do no
 - `tests/test_first_use_walk.py::test_the_same_task_on_the_fixed_screens_passes`
 - `tests/test_first_use_walk.py::test_back_or_a_typed_address_after_the_start_fails_though_the_verdict_says_done`
 - `tests/test_first_use_walk.py::test_a_walk_that_ends_away_from_its_start_fails_though_the_verdict_says_done`
+- `tests/test_first_use_walk.py::test_a_back_shot_taken_early_or_a_move_after_the_last_shot_fails`
+- `tests/test_first_use_walk.py::test_a_walk_that_switches_tabs_anywhere_fails`
 - `tests/test_first_use_walk.py::test_a_verdict_must_cite_a_step_the_walk_has_and_name_each_outcome_once`
 - `tests/test_first_use_walk.py::test_a_step_without_its_screenshot_and_a_walk_without_start_or_back_fail`
 - `tests/test_first_use_walk.py::test_criteria_and_no_task_is_a_finding_and_nothing_to_walk_needs_no_walk_even_with_a_task`
 - `tests/test_first_use_walk.py::test_a_task_with_no_walk_or_no_session_log_cannot_run`
+- `tests/test_first_use_walk.py::test_the_task_is_the_sections_text_up_to_the_next_heading_without_comments`
 - `tests/test_first_use_walk.py::test_the_prompt_holds_the_task_and_the_site_and_nothing_of_the_criteria`
 - `tests/test_first_use_walk.py::test_a_walk_back_by_the_cards_breadcrumb_passes`
 - `tests/test_first_use_walk.py::test_a_card_left_by_the_browsers_back_fails`
