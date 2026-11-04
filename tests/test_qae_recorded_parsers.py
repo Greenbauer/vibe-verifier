@@ -1,5 +1,6 @@
-"""Every parser of what playwright-mcp writes, fed every file the pinned build wrote in tests/fixtures/playwright-mcp/,
-and held to what the pages did (its manifest.json). How the fixtures are made, and when to make them again:
+"""The gate's parsers of what playwright-mcp writes (not the shard split's rewrite of session.md, nor the page
+record's isolation lines, which no recording here covers), fed every file the pinned build wrote in
+tests/fixtures/playwright-mcp/, and held to what the pages did (its manifest.json). How the fixtures are made, and when to make them again:
 tests/test_qae_recorded.py, which also runs the gate on them. No browser, no network."""
 import json
 import os

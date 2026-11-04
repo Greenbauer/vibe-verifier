@@ -3,7 +3,7 @@
 tests/fixtures/playwright-mcp/ holds one recording per scenario, made by its record.py with each lane's own
 playwright-mcp arguments against a local site whose pages fail in known ways. Its manifest.json says what the fixtures
 were recorded with and what each page did. These tests need no browser and no network: each copies a recording into a
-temporary qae-artifacts/ and runs the gate, or the lane's step, on it. Every parser fed every recorded file is
+temporary qae-artifacts/ and runs the gate, or the lane's step, on it. The parsers fed every recorded file are in
 tests/test_qae_recorded_parsers.py. `Recording` fails when the pinned toolchain or a lane's arguments change and the
 fixtures were not recorded again, so a format a new build writes differently shows here, not in a consumer's run."""
 import importlib.util

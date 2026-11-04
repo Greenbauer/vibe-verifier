@@ -1353,8 +1353,8 @@ in its file rather than in every pull request that touches it.
 
 ### What the pinned build writes, recorded
 
-Every rule above reads a file playwright-mcp writes, and twelve fixes to them came from a format a
-real run showed was not what the gate assumed (a cancelled request's line, a negative console
+Every rule above reads a file playwright-mcp writes, and most of a dozen fixes to them came from a
+format a real run showed was not what the gate assumed (a cancelled request's line, a negative console
 offset, an exception with no level tag, a network record saved to a file, a secret escaped twice).
 So the gate's tests read real output: `tests/fixtures/playwright-mcp/` holds what the pinned build
 wrote, with each lane's own arguments, walking a local site whose pages fail in known ways (a 404, a
