@@ -302,16 +302,20 @@ def record(name, lane, walk, origins):
         shutil.rmtree(work, True)
 
 
-def normalize(target, work):
-    """Replace the epoch milliseconds and timestamps that name files, in the names and in every file, and the
-    recording's own directory, with fixed text in the order recorded."""
-    files = sorted(path for path in target.rglob("*") if path.is_file())
-    names = [str(path.relative_to(target)) for path in files]
+def fixed_texts(names, work):
+    """{what varies run to run: its fixed text}: the timestamps and epoch milliseconds that name files, in the order
+    recorded, and the recording's own directory."""
     found = sorted({stamp for name in names for stamp in STAMP.findall(name)})
     epochs = sorted({epoch for name in names for epoch in EPOCH.findall(name)})
-    texts = {**{stamp: "2000-01-01T00-00-00-%03dZ" % n for n, stamp in enumerate(found, 1)},
-             **{"session-" + epoch: "session-%d" % (946684800000 + n) for n, epoch in enumerate(epochs, 1)},
-             work: "/tmp/vv-record"}
+    return {**{stamp: "2000-01-01T00-00-00-%03dZ" % n for n, stamp in enumerate(found, 1)},
+            **{"session-" + epoch: "session-%d" % (946684800000 + n) for n, epoch in enumerate(epochs, 1)},
+            work: "RECORDING"}
+
+
+def normalize(target, work):
+    """Replace what varies run to run (fixed_texts) with fixed text, in the names and in every file."""
+    files = sorted(path for path in target.rglob("*") if path.is_file())
+    texts = fixed_texts([str(path.relative_to(target)) for path in files], work)
     for path in files:
         text = path.read_text()
         for old, new in texts.items():
@@ -343,6 +347,8 @@ def main():
                 "secret": {"name": NAME, "value": VALUE, "cookie": COOKIE},
                 "scenarios": {name: record(name, lane, walk, origins) for name, (lane, walk) in SCENARIOS.items()}}
     (HERE / "manifest.json").write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+    # What the Codex lane's explore step hands its redaction step: every value it typed, by name.
+    (HERE / "secrets-redact.json").write_text(json.dumps({"VV_COOKIE_1": COOKIE, NAME: VALUE}) + "\n")
     print("recorded %s with @playwright/mcp %s" % (", ".join(SCENARIOS), versions["@playwright/mcp"]))
 
 

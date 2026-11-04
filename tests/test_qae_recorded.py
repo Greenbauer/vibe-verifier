@@ -136,7 +136,7 @@ class Redaction(unittest.TestCase):
         self.assertIn(json.dumps(json.dumps(secret["value"]))[1:-1], log.read_text())
         self.assertTrue(any(part in path.read_bytes() for path in Path(root).glob("page-*.yml")))
         work = os.path.dirname(root)
-        Path(work, "qae-codex-redact.json").write_text(json.dumps({"VV_COOKIE_1": secret["cookie"], secret["name"]: secret["value"]}))
+        shutil.copyfile(FIXTURES / "secrets-redact.json", os.path.join(work, "qae-codex-redact.json"))
         script = run_script(ACTION.read_text(), "- name: Redact the secrets from the artifacts")
         result = subprocess.run(["bash", "-c", script], cwd=work, capture_output=True, text=True,
                                 env=clean_env({"ARTIFACTS": "qae-artifacts", "RUNNER_TEMP": work}))
