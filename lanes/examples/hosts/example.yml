@@ -40,7 +40,8 @@ lanes:
     runner_group: acme-ci
     repos: [webapp, docs]
     labels: {ci: acme-ci, qae: acme-qae}
-    # Jobs that only wait for another job's result take these slots, never the ci ones:
+    # Jobs that only wait for another job's result, and bookkeeping jobs of seconds (no install,
+    # build, test or inner container), take these slots, never the ci ones:
     # `runs-on: [self-hosted, acme-wait]`.
     wait: {label: acme-wait, slots: 2, memory: 1g}
     app: {id: 1000002, installation_id: 20000002, key_file: /etc/acme-ci/app.pem, login: acme-lane-app}

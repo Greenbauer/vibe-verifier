@@ -107,8 +107,15 @@ a lock while holding another, so no wait can deadlock.
 
 **Waiting jobs.** An org lane with a `wait` block (`{label, slots, memory}`) also has a `wait` kind,
 for jobs that only poll for another job's result (a required check waiting for a preview sync that
-runs on the same lane). Those jobs take `runs-on: [self-hosted, <wait.label>]` and never a `ci`
-slot: the kind has its own scale set, slot template `<name>-wait@.service`, `wait.slots` instances
+runs on the same lane), and for bookkeeping jobs: seconds of API calls and scripts, a checkout at
+most, and no dependency install, build, test run or inner container (a resolver that decides whether a suite
+runs, a job that posts a commit status, a merge judge, an aggregate of other jobs' results, a pin
+bump). On a `ci` slot a bookkeeping job queues behind suites: on one lane with 11 `ci` slots, a
+10-second resolver waited a median 6 minutes, p75 31 and up to 51, for a slot (40 runs, 2026-11),
+and a replay of two days of that lane's jobs put moving them, with the wait slots doubled to 16,
+at 2.4 to 5.3 minutes saved per push, against 7.9 for unlimited slots. Those jobs take
+`runs-on: [self-hosted, <wait.label>]` and never a `ci` slot: the kind has its own scale set, slot
+template `<name>-wait@.service`, `wait.slots` instances
 that never count against `slots`, and a `docker --memory` of `wait.memory` in place of
 `container.memory`. Without it a queue of pollers could hold every `ci` slot while the job they
 waited for queued behind them. The template is the `ci` one in every other respect (image,
@@ -318,7 +325,7 @@ lanes:
     repos: [..]                        # org only, required: the runner group's expected repositories
     exclude: [..]                      # user only, required, may be empty
     labels: {ci: <label>, qae: <label>}   # qae optional
-    wait: {label: <label>, slots: <int>, memory: <docker size>}   # org only, optional: jobs that only wait
+    wait: {label: <label>, slots: <int>, memory: <docker size>}   # org only, optional: jobs that only wait, and bookkeeping jobs of seconds
     app: {id: <int>, installation_id: <int>, key_file: /abs, login: <App bot login>}
     codex_store: /abs                  # with labels.qae: QAE instance 1's Codex store; instance n's is <codex_store>-<n>
     slots: <int>
