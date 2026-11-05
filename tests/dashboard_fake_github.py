@@ -164,58 +164,65 @@ class FakeGitHub:
             return 200, {"version_id": 2, "state": {"rules": [{"type": "workflows", "parameters": {"workflows": [GATE]}}]}}
         return None
 
+    # One route per kind of repository read: (pattern after `repos/<owner>/<name>/`, answer).
+    def _pulls(self, match, query):
+        closed = [self._pull(100 + index, "closed") for index in range(self.closed_pulls)]
+        return 200, [self._pull()] if query.get("state", "open") == "open" else closed
+
+    def _check_listing(self, match, query):
+        suite = match.group("suite")
+        rows = [row for row in self.check_runs(query) if not suite or row["check_suite"]["id"] == int(suite)]
+        return 200, {"total_count": len(rows), "check_runs": rows}
+
+    def _jobs(self, match, query):
+        jobs = [self._job(run) for run in self._runs if run["id"] == int(match.group(1))]
+        return 200, {"total_count": len(jobs), "jobs": jobs}
+
+    def _workflows(self, match, query):
+        rows = [{"id": 500 + index, "name": path[:-4], "path": ".github/workflows/" + path, "state": "active"}
+                for index, path in enumerate(["ci.yml", *BOT_WORKFLOWS])]
+        return 200, {"total_count": len(rows), "workflows": rows}
+
+    def _workflow_file_runs(self, match, query):
+        name = match.group(1)
+        files = {"500": "ci.yml", "501": "review.yml", "502": "explore.yml"}
+        return 200, self._workflow_runs(query, name if name.endswith(".yml") else files.get(name))
+
+    def _protection_read(self, match, query):
+        status, body = self.protection()
+        if status == 200 and match.group(1):
+            body = body["required_status_checks"]
+        return status, body
+
+    ROUTES = (
+        (r"pulls", _pulls),
+        (r"pulls/3", lambda self, match, query: (200, self._pull())),
+        (r"(?:commits/[0-9a-f]{40}|check-suites/(?P<suite>\d+))/check-runs", _check_listing),
+        (r"commits/[0-9a-f]{40}/check-suites", lambda self, match, query: (200, self._suites())),
+        (r"commits/[0-9a-f]{40}/status", lambda self, match, query: (200, {"state": "success", "statuses": []})),
+        (r"actions/runs", lambda self, match, query: (200, self._workflow_runs(query, None))),
+        (r"actions/runs/(\d+)(?:/attempts/\d+)?/jobs", _jobs),
+        (r"actions/workflows", _workflows),
+        (r"actions/workflows/([\w.-]+)/runs", _workflow_file_runs),
+        (r"actions/required_workflows", lambda self, match, query: (200, {"total_count": 0, "required_workflows": []})),
+        (r"rules/branches/main", lambda self, match, query: (200, self.rules())),
+        (r"branches/main/protection(/required_status_checks)?", _protection_read),
+        (r"actions/artifacts", lambda self, match, query: (200, {"total_count": 0, "artifacts": []})),
+    )
+
     def _answer(self, endpoint: str) -> tuple[int, object]:
         parts = urlsplit(endpoint)
         path, query = parts.path.strip("/"), dict(parse_qsl(parts.query))
-        for sibling in self.siblings:
-            if path.startswith("repos/%s/" % sibling.repo):
-                return sibling._answer(endpoint)
-        owned = self._owner_answer(path)
-        if owned:
-            return owned
+        owner = [fake for fake in self.siblings if path.startswith("repos/%s/" % fake.repo)]
+        if owner:
+            return owner[0]._answer(endpoint)
         prefix = "repos/%s/" % self.repo
         if not path.startswith(prefix):
-            return 404, {"message": "Not Found"}
-        rest, head = path[len(prefix):], "commits/%s/" % self.sha
-        if rest == "pulls":
-            closed = [self._pull(100 + index, "closed") for index in range(self.closed_pulls)]
-            return 200, [self._pull()] if query.get("state", "open") == "open" else closed
-        if rest == "pulls/3":
-            return 200, self._pull()
-        match = re.fullmatch(r"check-suites/(\d+)/check-runs", rest)
-        if match or rest == head + "check-runs":
-            rows = [row for row in self.check_runs(query) if not match or row["check_suite"]["id"] == int(match.group(1))]
-            return 200, {"total_count": len(rows), "check_runs": rows}
-        if rest == head + "check-suites":
-            return 200, self._suites()
-        if rest == head + "status":
-            return 200, {"state": "success", "statuses": [], "sha": self.sha}
-        if rest == "actions/runs":
-            return 200, self._workflow_runs(query, None)
-        match = re.fullmatch(r"actions/runs/(\d+)(?:/attempts/\d+)?/jobs", rest)
-        if match:
-            jobs = [self._job(run) for run in self._runs if run["id"] == int(match.group(1))]
-            return 200, {"total_count": len(jobs), "jobs": jobs}
-        if rest == "actions/workflows":
-            rows = [{"id": 500 + index, "name": path[:-4], "path": ".github/workflows/" + path, "state": "active"}
-                    for index, path in enumerate(["ci.yml", *BOT_WORKFLOWS])]
-            return 200, {"total_count": len(rows), "workflows": rows}
-        match = re.fullmatch(r"actions/workflows/([\w.-]+)/runs", rest)
-        if match:
-            name = match.group(1)
-            return 200, self._workflow_runs(query, name if name.endswith(".yml") else
-                                            {"500": "ci.yml", "501": "review.yml", "502": "explore.yml"}.get(name))
-        if rest == "actions/required_workflows":
-            return 200, {"total_count": 0, "required_workflows": []}
-        if rest == "rules/branches/main":
-            return 200, self.rules()
-        if rest.startswith("branches/main/protection"):
-            status, body = self.protection()
-            if status == 200 and rest.endswith("/required_status_checks"):
-                body = body["required_status_checks"]
-            return status, body
-        if rest == "actions/artifacts":
-            return 200, {"total_count": 0, "artifacts": []}
+            return self._owner_answer(path) or (404, {"message": "Not Found"})
+        for pattern, route in self.ROUTES:
+            match = re.fullmatch(pattern, path[len(prefix):])
+            if match:
+                return route(self, match, query)
         return 404, {"message": "Not Found"}
 
     # -- the CLI ------------------------------------------------------------------------------
@@ -238,20 +245,19 @@ class FakeGitHub:
             stderr = "gh: API rate limit exceeded for user ID 1. (HTTP 403)"
         return self._respond(status, {"message": stderr}, headers, stderr)
 
-    def __call__(self, command, capture_output=True, text=True, timeout=None, **_):
-        args = list(command)
-        self._include = "--include" in args or "-i" in args
-        if "graphql" in args:
-            query = next(arg[len("query="):] for arg in args if arg.startswith("query="))
-            variables = dict(args[index + 1].partition("=")[::2] for index, arg in enumerate(args[:-1])
-                             if arg in ("-f", "-F", "--raw-field", "--field") and not args[index + 1].startswith("query="))
-            if "graphql" in self.refuse:
-                self.log.append(Read("graphql", "graphql", REFUSALS[self.refuse["graphql"]][0]))
-                return self._refusal(self.refuse["graphql"], True)
-            cost = graphql_cost(query, variables)
-            self.log.append(Read("graphql", "graphql", 200, cost))
-            body = graphql_answer([self, *self.siblings], query, variables, cost)
-            return self._respond(200, body, {"x-ratelimit-resource": "graphql"})
+    def _graphql_call(self, args: list[str]) -> subprocess.CompletedProcess:
+        query = next(arg[len("query="):] for arg in args if arg.startswith("query="))
+        variables = dict(args[index + 1].partition("=")[::2] for index, arg in enumerate(args[:-1])
+                         if arg in ("-f", "-F", "--raw-field", "--field") and not args[index + 1].startswith("query="))
+        if "graphql" in self.refuse:
+            self.log.append(Read("graphql", "graphql", REFUSALS[self.refuse["graphql"]][0]))
+            return self._refusal(self.refuse["graphql"], True)
+        cost = graphql_cost(query, variables)
+        self.log.append(Read("graphql", "graphql", 200, cost))
+        return self._respond(200, graphql_answer([self, *self.siblings], query, variables, cost),
+                             {"x-ratelimit-resource": "graphql"})
+
+    def _rest_call(self, args: list[str]) -> subprocess.CompletedProcess:
         endpoint = next(arg for arg in args[2:] if not arg.startswith("-") and ":" not in arg)
         kind = family(endpoint)
         if kind in self.refuse:
@@ -259,10 +265,17 @@ class FakeGitHub:
             return self._refusal(self.refuse[kind], False)
         status, body = self._answer(endpoint)
         # GitHub sends no ETag for its rate limit, which is never the same twice.
-        etag = '"%s"' % hashlib.sha1(json.dumps(body, sort_keys=True).encode()).hexdigest() if kind != "rate_limit" else None
+        etag = None
+        if status == 200 and kind != "rate_limit":
+            etag = '"%s"' % hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
         asked = [args[index + 1] for index, arg in enumerate(args[:-1]) if arg in ("--header", "-H")]
-        if status == 200 and etag and "If-None-Match: %s" % etag in asked:
+        if etag and "If-None-Match: %s" % etag in asked:
             self.log.append(Read(kind, endpoint, 304))
             return self._respond(304, "", {"etag": etag})
         self.log.append(Read(kind, endpoint, status))
-        return self._respond(status, body, {"etag": etag} if status == 200 and etag else {})
+        return self._respond(status, body, {"etag": etag} if etag else {})
+
+    def __call__(self, command, capture_output=True, text=True, timeout=None, **_):
+        args = list(command)
+        self._include = "--include" in args or "-i" in args
+        return self._graphql_call(args) if "graphql" in args else self._rest_call(args)
