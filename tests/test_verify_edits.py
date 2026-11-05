@@ -93,25 +93,23 @@ class Review(GhFixture):
     def rows(self, checkout, manifest):
         self.verdict = self.file("verdict.md", AC + REWALKS)
         body = self.posted(extra=["--manifest", manifest, "--checkout", checkout])
-        return [line for line in body.splitlines() if line.startswith("- Feature") or line.startswith("- Whether")]
+        return [line for line in body.splitlines() if line.startswith("| ✅ | `") or line.startswith("Whether")]
 
     def test_each_re_walked_row_says_whether_the_pull_request_changed_its_verify_section(self):
         repo = branch(self, TEST + "\n" + EDITED)
         self.assertEqual(self.rows(repo, os.path.join(repo, ".vibe-verifier-qae")), [
-            "- Feature `auth` re-walked, explorer says PASS",
-            "- Feature `projects` re-walked, explorer says PASS. Note: this pull request changed its Verify section: "
-            "1 line added, 1 removed",
-            "- Feature `search` re-walked, explorer says PASS. Note: this pull request added this feature, so its "
-            "Verify section (2 lines) is its own"])
+            "| ✅ | `auth` | fine |  |",
+            "| ✅ | `projects` | fine. Note: this pull request changed its Verify section: 1 line added, 1 removed |  |",
+            "| ✅ | `search` | fine. Note: this pull request added this feature, so its Verify section (2 lines) is its own |  |"])
 
     def test_no_note_without_a_qae_manifest_and_a_reason_when_the_base_cannot_be_read(self):
         repo = branch(self, TEST + "\n" + EDITED)
         self.assertEqual(self.rows(repo, os.path.join(repo, "missing")), [
-            "- Feature `%s` re-walked, explorer says PASS" % fid for fid in ("auth", "projects", "search")])
+            "| ✅ | `%s` | fine |  |" % fid for fid in ("auth", "projects", "search")])
         bare = os.path.join(self.fixtures, "export")  # the files, with no git history to find a base in
         for path in ("docs/features/projects.md", "docs/features/search.md", "docs/features/auth.md", ".vibe-verifier-qae"):
             write(bare, {path: Path(repo, path).read_text()})
         rows = self.rows(bare, os.path.join(bare, ".vibe-verifier-qae"))
-        self.assertEqual(rows[:3], ["- Feature `%s` re-walked, explorer says PASS" % fid for fid in ("auth", "projects", "search")])
-        self.assertRegex(rows[3], r"^- Whether this pull request changed the Verify section of a re-walked feature could "
+        self.assertEqual(rows[:3], ["| ✅ | `%s` | fine |  |" % fid for fid in ("auth", "projects", "search")])
+        self.assertRegex(rows[3], r"^Whether this pull request changed the Verify section of a re-walked feature could "
                                   r"not be read: .*no base ref")

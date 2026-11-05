@@ -264,9 +264,9 @@ class ProbeInTheReview(GhFixture):
         write(root, {"qae/AC1.md": STEPS, "console-1.log": refused(400)[0], "session-1/session.md": session()})
         manifest = self.file("manifest", "qae-artifacts --artifacts qae-artifacts\n")
         body = self.posted(extra=("--artifacts", root, "--manifest", manifest))
-        self.assertIn("- AC1, explorer says PASS (step 2, the invalid-input probe, was answered 400 /api/quotes/1/lines "
-                      "while the page kept the controls it used and showed new text: excused as a handled refusal): "
-                      "The home page loads\n", body)
+        self.assertIn("| ✅ | **AC1** · The home page loads | loaded (step 2, the invalid-input probe, was answered 400 "
+                      "/api/quotes/1/lines while the page kept the controls it used and showed new text: excused as a "
+                      "handled refusal) |\n", body)
         write(root, {"session-1/session.md": session(save(state=FORM))})
         body = self.posted(extra=("--artifacts", root, "--manifest", manifest))
         self.assertIn("(step 2, the invalid-input probe, was answered 400 /api/quotes/1/lines, not excused: the snapshot "

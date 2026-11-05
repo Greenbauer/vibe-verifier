@@ -17,6 +17,9 @@ coordinates.
   addresses or bare URLs in the text.
 - **Plain words.** No em dashes, no @-mention of an account or a bot, and every item written out:
   never "and 3 more" or "not shown".
+- **A table for results, never checkboxes.** One row per item with a status emoji, and the detail a
+  reviewer needs only sometimes (which step showed it) collapsed under `<details>`. Anyone who can write
+  to the repository can tick a checkbox, which edits the comment and can make a failed item look done.
 
 ## What other jobs read
 
@@ -39,6 +42,6 @@ review lists the criteria), so a receipt inside one is never read.
 audit state, each receipt mode) and fails on any rule above that a deterministic check can see. Text a
 model writes reaches a pull request in three places, and each model's prompt carries the rules: the
 reviewer's inline findings ([`harnesses/review/prompt.md`](../harnesses/review/prompt.md)), the
-explorer's sentences the QA review quotes for a re-walked feature
+explorer's sentences the QA review quotes for each criterion and re-walked feature
 ([`harnesses/qae/prompt.md`](../harnesses/qae/prompt.md)), and the grader's `missing` text and case
 names in the proof audit ([`harnesses/proof-audit/prompt.md`](../harnesses/proof-audit/prompt.md)).

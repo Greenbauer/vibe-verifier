@@ -253,9 +253,9 @@ class RetryInTheReview(GhFixture):
         # The review reads the changed paths the manifest's qae-artifacts line gives the gate, so the two agree.
         manifest = self.file("manifest", "qae-artifacts --artifacts qae-artifacts --changed-files %s\n" % changed)
         body = self.posted(extra=("--artifacts", root, "--manifest", manifest))
-        self.assertIn("- AC1, explorer says PASS (step 1 retried once as step 2 after an environment error: POST "
-                      "/api/dashboard answered 500): The home page loads\n", body)
-        self.assertIn("- AC2, explorer says FAIL: The menu opens\n", body)
+        self.assertIn("| ✅ | **AC1** · The home page loads | loaded (step 1 retried once as step 2 after an environment "
+                      "error: POST /api/dashboard answered 500) |\n", body)
+        self.assertIn("| ❌ | **AC2** · The menu opens | the menu stayed shut |\n", body)
         # An error whose request the run never shows answered stays a finding of the gate, and the row says so.
         write(root, {"session-1/session.md": session(NETWORK, requests=(FIVE_HUNDRED,))})
         body = self.posted(extra=("--artifacts", root, "--manifest", manifest))
@@ -264,7 +264,7 @@ class RetryInTheReview(GhFixture):
         # A line without them counts no URL as the environment, in the gate and in the review alike.
         self.file("manifest", "qae-artifacts --artifacts qae-artifacts\n")
         body = self.posted(extra=("--artifacts", root, "--manifest", manifest))
-        self.assertIn("- AC1, explorer says PASS (step 1 retried as step 2, which does not count: step 1's records show "
+        self.assertIn("| ✅ | **AC1** · The home page loads | loaded (step 1 retried as step 2, which does not count: step 1's records show "
                       "POST /api/dashboard answered 500, and without the pull request's changed paths", body)
 
 

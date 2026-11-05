@@ -280,7 +280,7 @@ selected feature whose Verify section differs from the merge base of the base an
 
 ```
 acceptance-verdict: re-walk: sign-in (2 changed files); this pull request changed its Verify section: 1 line added, 1 removed
-- Feature `sign-in` re-walked, explorer says PASS. Note: this pull request changed its Verify section: 1 line added, 1 removed
+| ✅ | `sign-in` | still signs in. Note: this pull request changed its Verify section: 1 line added, 1 removed |  |
 ```
 
 A feature the pull request adds says `this pull request added this feature, so its Verify section (N
