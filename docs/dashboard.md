@@ -821,7 +821,8 @@ and subscription uncertainty. `test_dashboard_bot_history.py` covers bounded his
 discovery; `test_dashboard_service.py` covers source timestamps and refresh caching.
 `test_dashboard_refusal_scope.py`, `test_dashboard_call_cost.py` and `test_dashboard_verdict.py` run
 the real collector against a simulated GitHub behind a fake `gh` (`tests/dashboard_fake_github.py`):
-a refused or failed read of any kind costs only what that read carries, a refresh's cost follows what
+a refused or failed read costs only what that read carries (a 403 on a pull request's own evidence is
+lost access, which deletes it by design), a refresh's cost follows what
 is open and not how much history there is, and a pull request row lists exactly what GitHub's own
 pull request page lists for its head. Each fails on the parent of the fixes it stands for.
 `test_dashboard_outcomes.py` covers the Outcomes view's reader and runs its node tests.

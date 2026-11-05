@@ -1,19 +1,19 @@
 """A refused or failed GitHub read costs only what that read carries.
 
 The real collector and service run against tests/dashboard_fake_github.py, and every kind of read
-the collector makes is refused in turn:
+the collector makes is refused in turn, and each subtest checks that its refusal was really served:
 
 - a family whose own hourly counter is spent (GraphQL: refused with points still left) pauses only
-  that family, so the next pass still reads the others;
+  that family, so the other families can still be read;
 - a 403 on a read that only adds to a pull request (branch rules, protection, ruleset history,
-  GraphQL signals, bot history, the subscription files) leaves the pull request and its checks on
-  the page;
-- a 502 on any read leaves the last sample on the page.
+  GraphQL signals, bot history) leaves the pull request and its checks on the page;
+- a 502 on a read that a later pass makes again leaves the last sample on the page.
 
 The reads that make a pull request's own evidence (CORE), and the subscription files every token may
 read, are exempt from the 403 rule: a 403 there is lost access, which deletes what was read before
-by design. Any kind of read added later is
-covered without a change here, because the families come from what the collector asked for."""
+by design. Reads a later pass answers from what it kept (a ruleset's history, a finished run's jobs)
+cannot fail then, so the 502 rule skips them. Any kind of read added later is covered without a
+change here, because the families come from what the collector asked for."""
 
 import unittest
 
@@ -58,6 +58,20 @@ def families():
     return sorted({read.family for read in fake.log} - GLOBAL)
 
 
+def repeated():
+    """The families a second pass reads again, with nothing refused."""
+    fake = FakeGitHub()
+    page = service(fake)
+    page.snapshot(force=True)
+    fake.log.clear()
+    page.snapshot(force=True)
+    return sorted({read.family for read in fake.log} - GLOBAL)
+
+
+def refused(fake, kind, status):
+    return any(read.family == kind and read.status == status for read in fake.log)
+
+
 def endpoints():
     """One endpoint the collector read, per REST family."""
     fake = FakeGitHub()
@@ -85,10 +99,14 @@ class RefusalScope(unittest.TestCase):
         for kind in families():
             with self.subTest(family=kind):
                 fake = FakeGitHub()
-                reader = collector(fake)
-                reader.collect()
                 fake.refuse[kind] = "spent"
-                reader.collect()
+                reader = collector(fake)
+                for _ in range(2):
+                    try:
+                        reader.collect()
+                    except ApiError:
+                        pass  # a pass the pause stops before it starts; the reads below say what it paused
+                self.assertTrue(refused(fake, kind, 403), "%s was never read" % kind)
                 reader.api.begin()
                 for other, endpoint in reads.items():
                     if other == kind:
@@ -112,17 +130,21 @@ class RefusalScope(unittest.TestCase):
                     # refusal that cleared what was kept.
                     for _ in range(2):
                         row = pull(page.snapshot(force=True)["github"])
+                        self.assertTrue(any(refused(fake, name, 403) for name in fake.refuse), "%s was never read" % kind)
                         self.assertEqual(row.get("number"), 3, "a %s on %s dropped the pull request" % (refusal, kind))
                         self.assertEqual(check_names(row), CHECKS)
 
     def test_a_failed_read_keeps_the_last_sample(self):
-        for kind in [*GLOBAL, *families()]:
+        again = repeated()
+        self.assertGreaterEqual(len(set(again) & CORE), 5, again)
+        for kind in [*GLOBAL, *again]:
             with self.subTest(family=kind):
                 fake = FakeGitHub()
                 page = service(fake)
                 before = pull(page.snapshot(force=True)["github"])
                 fake.refuse[kind] = "unavailable"
                 after = pull(page.snapshot(force=True)["github"])
+                self.assertTrue(refused(fake, kind, 502), "%s was not read again" % kind)
                 self.assertEqual(check_names(before), CHECKS)
                 self.assertEqual(after.get("number"), 3, "a 502 on %s dropped the pull request" % kind)
                 self.assertEqual(check_names(after), CHECKS)

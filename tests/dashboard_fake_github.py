@@ -246,7 +246,7 @@ class FakeGitHub:
             variables = dict(args[index + 1].partition("=")[::2] for index, arg in enumerate(args[:-1])
                              if arg in ("-f", "-F", "--raw-field", "--field") and not args[index + 1].startswith("query="))
             if "graphql" in self.refuse:
-                self.log.append(Read("graphql", "graphql", 403))
+                self.log.append(Read("graphql", "graphql", REFUSALS[self.refuse["graphql"]][0]))
                 return self._refusal(self.refuse["graphql"], True)
             cost = graphql_cost(query, variables)
             self.log.append(Read("graphql", "graphql", 200, cost))

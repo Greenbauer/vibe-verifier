@@ -5,7 +5,8 @@ open work stays the same (one pull request, one head):
 
 - more check suites on the head, and a longer week of bot runs, add no first-page reads of any
   kind (a later page of the same listing is GitHub's paging, not a new read);
-- a refresh with nothing changed is answered from kept responses: every REST read is a 304;
+- a refresh with nothing changed is answered from kept responses: no REST read is answered in full
+  again (each is a 304, or the same 404 as before);
 - no GraphQL query costs more than 2 points (GitHub's own formula) with one pull request open.
 
 The explorer bot names a job that never runs, so bot history has to stop looking for it."""
@@ -18,6 +19,7 @@ from dashboard.gh_api import GitHubAPI
 from dashboard.github import GitHubCollector
 
 from dashboard_fake_github import NOW, REPO, FakeGitHub
+from dashboard_fake_graphql import graphql_cost
 
 
 def config():
@@ -73,6 +75,15 @@ class CallCost(unittest.TestCase):
                        if read.family not in ("graphql", "rate_limit") and read.status == 200})
         self.assertGreater(len(first), 10)
         self.assertEqual(full, [], "an unchanged refresh read these again in full")
+
+    def test_the_fake_prices_a_query_as_github_did(self):
+        # The pull-signals query before #118 asked for 50 pull requests, 100 threads (1 comment each) and
+        # 20 commits (1 parent each); GitHub charged it 61 points on 2026-10-07. One pull request costs 1.
+        query = ("query($count: Int!) { repository(owner: \"o\", name: \"r\") { pullRequests(first: $count) { nodes {"
+                 " reviewThreads(first: 100) { nodes { comments(first: 1) { totalCount } } }"
+                 " commits(last: 20) { nodes { commit { parents(first: 1) { totalCount } } } } } } } }")
+        self.assertEqual(graphql_cost(query, {"count": "50"}), 61)
+        self.assertEqual(graphql_cost(query, {"count": "1"}), 1)
 
     def test_no_graphql_query_costs_more_than_two_points_with_one_pull_request_open(self):
         fake = FakeGitHub(closed_pulls=30)
