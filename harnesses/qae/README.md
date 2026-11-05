@@ -1245,8 +1245,16 @@ same. What differs, and why:
   Effort accepts `low`, `medium`, `high`, `xhigh`, `max` or `ultra`; choose a value advertised
   by the selected model. Invalid values fail before Codex starts. The action passes each
   setting as its own argv value and prints only the validated configured settings in the
-  workflow log. For example, a consumer can add `model: gpt-6.1-sol` and
-  `reasoning-effort: high` to the action's `with:` block after checking its CLI model metadata.
+  workflow log. The template's explorer names `model: gpt-6.1-terra` and `reasoning-effort: low`.
+  Before 2026-11-05 it named neither, and the runners' logins defaulted to `gpt-6.1-sol` at `low`
+  (read from live explorers), so a change of that default would have changed QAE with no commit.
+  Terra was chosen on a replay of 31 walks from real pull requests, run through a consumer's own
+  site step and the gates (75 criteria, 6 of them planted false claims, every disagreement judged
+  from the step logs): 73 of 75 right against Sol's 74, no missed defect for either, faster on 25 of
+  the 31 (median walk 2.5 minutes against 3.1), and about half the Codex credits per walk (OpenAI's
+  Codex rate card prices Terra at half Sol per token). `gpt-6-luna`, cheaper still, was slower than
+  Sol and skipped evidence in a first round, so it was dropped. A consumer may name another model
+  after checking its CLI model metadata.
   The CLI is locked to `0.162.0`. Check availability using that version and the runner's
   account: older clients can receive a filtered model catalog, and metadata from another
   client or account does not prove the chosen model is available to this invocation.
