@@ -18,6 +18,7 @@ The QAE harness: an explorer walks a pull request's acceptance criteria (and, op
 - source: `bin/cli/qae_inputs.py`
 - source: `bin/cli/features.py`
 - source: `bin/cli/qa_review.py`
+- source: `bin/cli/qa_review_rows.py`
 - source: `bin/cli/qa_limit.py`
 - source: `actions/criteria/**`
 - source: `actions/features/**`
@@ -85,6 +86,8 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_features.py::test_a_branch_that_predates_the_map_is_not_re_walked_and_not_failed`
 - `tests/test_features.py::test_a_pull_request_that_removes_the_map_cannot_be_re_walked`
 - `tests/test_qa_review.py::test_changes_needed_lists_each_criterion_as_the_explorer_judged_it`
+- `tests/test_qa_review_rows.py::test_a_line_that_is_not_one_clear_verdict_says_no_verdict`
+- `tests/test_qa_review_rows.py::test_a_pass_with_no_sentence_or_a_loose_anchor_still_reads`
 - `tests/test_qa_limit.py::test_a_usage_limit_on_every_explorer_passes_with_a_warning`
 - `tests/test_qa_limit.py::test_a_usage_limit_on_only_some_explorers_stays_red`
 - `tests/test_qa_limit.py::test_any_other_explore_failure_stays_red`
