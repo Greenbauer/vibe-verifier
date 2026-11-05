@@ -848,13 +848,17 @@ qa-review`) keeps one comment on the pull request, edited in place on every run,
 | `## QA review: changes needed ❌` | the gates refused |
 
 Earlier rows win. The state comes from the jobs' and the gates' outcomes, never from the explorer's
-prose: under it the comment lists each criterion with the word the explorer wrote for it (PASS, FAIL,
-or no verdict), links the head commit it judged, and links the run. A criterion with a step the explorer
-retried after an environment error says so on its row, with what the gate found: `explorer says PASS (step 5
+prose: under it the comment has a table with one row per criterion (✅ PASS, ❌ FAIL, ⚠️ no verdict, 🧪 a ticket
+criterion the pull request proves with a test) and the sentence the explorer wrote of what the browser showed, then
+a table of re-walked features with the states each left unwalked, then, collapsed, the step each sentence was
+anchored to. A changes-needed review opens with a GitHub alert saying what to do next. It links the head commit it
+judged and the run. A criterion with a step the explorer
+retried after an environment error says so on its row, with what the gate found: `(step 5
 retried once as step 6 after an environment error: POST /api/dashboard answered 500)`, or why the retry did not
 count ([below](#a-step-retried-after-an-environment-error)); the action's run reads `qae-artifacts/` in the verify
 job's workspace and the changed paths the manifest's `qae-artifacts` line gives the gate (`--changed-files`, read from
-the base as the gate's line is), so the row says what the gate decided. A re-walked feature's row adds
+the base as the gate's line is), so the row says what the gate decided. Rows use no checkboxes: anyone who can
+write to the repository can tick one, which would edit the comment. A re-walked feature's row adds
 `Note: this pull request changed its Verify section: N lines added, M removed` when the pull request
 edited the steps that judged it (or that it added the feature), comparing the map the QAE manifest's
 `acceptance-verdict` line names in the job's checkout with the merge base; the action's `manifest`

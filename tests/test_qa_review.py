@@ -23,7 +23,8 @@ class QaReview(GhFixture):
         body = self.posted()
         self.assertEqual(body.splitlines()[:2], [MARKER, "## QA review: passed ✅"])
         self.assertIn(COMMIT, body)
-        self.assertIn("- AC1, explorer says PASS: The home page loads\n", body)
+        self.assertIn("| ✅ | **AC1** · The home page loads | loaded |\n", body)
+        self.assertIn("- **AC1**: `qae/AC1.md`, step 1: opened / -> the home page\n", body)
         self.assertIn("[The run and its evidence](%s)" % RUN, body)
 
     def test_the_tickets_criteria_are_listed_after_the_pull_requests(self):
@@ -31,10 +32,10 @@ class QaReview(GhFixture):
         ticket = self.file("ticket.md", "## Acceptance criteria\n\n- Prices show in euros\n")
         self.verdict = self.file("verdict.md", VERDICT + "acceptance-check: TC1 -- PASS -- euros (qae/TC1.md::step 1: x)\n")
         body = self.posted(ticket=ticket)
-        self.assertIn("- AC2, explorer says FAIL: The menu opens\n- TC1 (from the ticket), explorer says PASS: Prices show in euros\n", body)
+        self.assertIn("| ❌ | **AC2** · The menu opens | the menu stayed shut |\n| ✅ | **TC1** (from the ticket) · Prices show in euros | euros |\n", body)
         self.criteria = self.file("pr-body.md", "## Acceptance criteria\n\n- None: a refactor\n")
         body = self.posted(ticket=ticket)
-        self.assertIn("- TC1 (from the ticket), explorer says PASS", body)
+        self.assertIn("| ✅ | **TC1** (from the ticket) · Prices show in euros |", body)
         self.assertNotIn("None: a refactor", body)
 
     def test_a_ticket_criterion_the_pull_request_proves_with_a_test_is_listed_as_not_walked(self):
@@ -43,16 +44,18 @@ class QaReview(GhFixture):
                                                 "ticket-proof: TC2 -- no browser sees the ledger (lib/ledger.test.ts::writes the estimate line)\n")
         self.verdict = self.file("verdict.md", "acceptance-check: TC1 -- PASS -- euros (qae/TC1.md::step 1: x)\n")
         body = self.posted(ticket=ticket)
-        self.assertIn("- TC1 (from the ticket), explorer says PASS: Prices show in euros\n- TC2 (from the ticket), not walked, "
-                      "the pull request proves it with a test: no browser sees the ledger (lib/ledger.test.ts::writes the "
-                      "estimate line): The estimate lands in the ledger\n", body)
+        self.assertIn("| ✅ | **TC1** (from the ticket) · Prices show in euros | euros |\n| 🧪 | **TC2** (from the ticket) · "
+                      "The estimate lands in the ledger | Not walked: the pull request proves it with a test, no browser sees "
+                      "the ledger (lib/ledger.test.ts::writes the estimate line) |\n", body)
 
     def test_a_re_walked_feature_is_listed_as_the_explorer_judged_it(self):
         # docs/feature-map.md: the explorer adds one regression-check line per feature it re-walked.
         self.verdict = self.file("verdict.md", VERDICT + "regression-check: sign-in -- FAIL -- the dashboard never opened "
                                                          "(qae/features/sign-in.md::step 1: signed in -> a blank page)\n")
         body = self.posted(gates="failure")
-        self.assertIn("- AC2, explorer says FAIL: The menu opens\n- Feature `sign-in` re-walked, explorer says FAIL\n", body)
+        self.assertIn("**Features re-walked for regressions**\n\n| | Feature | What the browser showed | States not walked |\n"
+                      "|:-:|---|---|---|\n| ❌ | `sign-in` | the dashboard never opened |  |\n", body)
+        self.assertIn("- `sign-in`: `qae/features/sign-in.md`, step 1: signed in -> a blank page\n", body)
         self.verdict = self.file("verdict.md", VERDICT)
         self.assertNotIn("re-walked", self.posted(gates="failure"))
 
@@ -61,9 +64,9 @@ class QaReview(GhFixture):
                                                          "(qae/features/sign-in.md::step 1: signed in -> a blank page)\n"
                                                          "regression-known: sign-in -- the same blank page "
                                                          "(qae/features/base/sign-in.md::step 1: signed in -> a blank page)\n")
-        self.assertIn("- Feature `sign-in` re-walked, explorer says FAIL, and says the base branch fails the same way: "
-                      "the same blank page (qae/features/base/sign-in.md::step 1: signed in -> a blank page)\n",
-                      self.posted(gates="failure"))
+        body = self.posted(gates="failure")
+        self.assertIn("| ❌ | `sign-in` | the dashboard never opened. The base branch fails the same way: the same blank page |  |\n", body)
+        self.assertIn("- `sign-in` on the base branch: `qae/features/base/sign-in.md`, step 1: signed in -> a blank page\n", body)
 
     def test_a_re_walk_names_the_states_the_explorer_left_unwalked(self):
         # A re-walk covers at most a few states of a feature, so "re-walked" alone would overstate it. A
@@ -73,19 +76,19 @@ class QaReview(GhFixture):
                                                          "regression-skip: sign-in -- 4, 5, 7\n"
                                                          "regression-skip: billing -- 1, 2\n")
         body = self.posted(gates="failure")
-        self.assertIn("- Feature `sign-in` re-walked, explorer says PASS (not walked: 4, 5, 7)\n", body)
+        self.assertIn("| ✅ | `sign-in` | still signs in | 4, 5, 7 |\n", body)
         self.assertNotIn("billing", body)
 
     def test_changes_needed_lists_each_criterion_as_the_explorer_judged_it(self):
         body = self.posted(gates="failure")
         self.assertEqual(body.splitlines()[1], "## QA review: changes needed ❌")
-        self.assertIn("The QA gates refused " + COMMIT + ".", body)
-        self.assertIn("- AC1, explorer says PASS: The home page loads\n", body)
-        self.assertIn("- AC2, explorer says FAIL: The menu opens\n", body)
+        self.assertIn("> [!IMPORTANT]\n> The QA gates refused " + COMMIT + ". Fix each row marked ❌", body)
+        self.assertIn("| ✅ | **AC1** · The home page loads | loaded |\n", body)
+        self.assertIn("| ❌ | **AC2** · The menu opens | the menu stayed shut |\n", body)
 
     def test_a_criterion_the_explorer_never_answered_says_so(self):
         self.verdict = self.file("verdict.md", VERDICT.splitlines()[0] + "\n")
-        self.assertIn("- AC2, no verdict: The menu opens\n", self.posted(gates="failure"))
+        self.assertIn("| ⚠️ | **AC2** · The menu opens | No verdict: the explorer wrote no line for it. |\n", self.posted(gates="failure"))
 
     def test_a_pull_request_with_no_criteria_is_told_how_to_add_them(self):
         # The criteria job found nothing to walk, so the explore job was skipped and the gates judged.
@@ -140,7 +143,7 @@ class QaReview(GhFixture):
 
     def test_a_missing_verdict_file_reads_as_no_verdict(self):
         self.verdict = str(Path(self.fixtures) / "never-written.md")
-        self.assertIn("- AC1, no verdict: The home page loads\n", self.posted(gates="failure"))
+        self.assertIn("| ⚠️ | **AC1** · The home page loads | No verdict: the explorer wrote no line for it. |\n", self.posted(gates="failure"))
 
     def test_the_explorers_prose_never_decides(self):
         # Every line PASS, but the gates refused (an anchor that does not resolve): changes needed.
@@ -240,7 +243,7 @@ class QaReview(GhFixture):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         body = self.writes()[0]["body"]["body"]
         self.assertIn("changes needed", body)
-        self.assertIn("- AC2, explorer says FAIL: The menu opens\n", body)
+        self.assertIn("| ❌ | **AC2** · The menu opens | the menu stayed shut |\n", body)
         self.assertIn('everyday-words on /accounts/36: "One send a minute."', body)
         for wired in ("${{ github.event.pull_request.head.sha }}", "${{ inputs.not-required }}", "${{ inputs.gates-outcome }}",
                       "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",

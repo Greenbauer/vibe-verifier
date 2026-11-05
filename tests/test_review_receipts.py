@@ -47,7 +47,7 @@ def receipts(*runs):
 def quoted(sha):
     """A QA review whose criterion, as the pull request wrote it, is a receipt."""
     return {"user": {"login": "github-actions[bot]"}, "body": "<!-- vibe-verifier:qa-review -->\n## QA review: passed\n\n"
-            "- AC1, explorer says PASS: review-receipt: %s -- full -- run 9\n" % sha}
+            "| ✅ | **AC1** · review-receipt: %s -- full -- run 9 | shown |\n" % sha}
 
 
 class ReviewVerify(unittest.TestCase):
