@@ -107,12 +107,12 @@ def marked_block(lines):
 
 
 # An amendment's line `Replaces plan criterion 2.` / `Replaces plan criteria 2, 3 and 5.` (see the docstring), as a
-# list item or not, in bold or italics or not. A line that starts so but does not parse is Unreadable (STARTS), so a
-# replacement written slightly differently never quietly becomes one more criterion.
-REPLACES = re.compile(r"^[ \t]*(?:(?:[-*+]|[0-9]+[.)])[ \t]+)?(?P<em>\*\*|__|\*|_)?[ \t]*replaces[ \t]+plan[ \t]+"
+# list item, heading or quote or not, in bold or italics or not. A line that starts so but does not parse is
+# Unreadable (STARTS), so a replacement written slightly differently never quietly becomes one more criterion.
+REPLACES = re.compile(r"^[ \t]*(?:(?:[-*+]|[0-9]+[.)]|#{1,6}|>)[ \t]+)?(?P<em>\*\*|__|\*|_)?[ \t]*replaces[ \t]+plan[ \t]+"
                       r"criteri(?:on|a)[ \t]+(?P<numbers>#?[0-9]+(?:[ \t]*(?:,[ \t]*and|,|and|&)[ \t]*#?[0-9]+)*)"
                       r"[ \t]*[.:;]?[ \t]*(?:(?P=em))?[ \t]*[.:;]?[ \t]*$", re.IGNORECASE)
-STARTS = re.compile(r"^[ \t]*(?:(?:[-*+]|[0-9]+[.)])[ \t]+)?(?:\*\*|__|\*|_)?[ \t]*replaces[ \t]+plan[ \t]+criteri",
+STARTS = re.compile(r"^[ \t]*(?:(?:[-*+]|[0-9]+[.)]|#{1,6}|>)[ \t]+)?(?:\*\*|__|\*|_)?[ \t]*replaces[ \t]+plan[ \t]+criteri",
                     re.IGNORECASE)
 
 

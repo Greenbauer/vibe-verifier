@@ -175,7 +175,8 @@ class PlanStore(unittest.TestCase):
             "- Amendment 3: An example: ``` Replaces plan criterion 4. ```"])
 
     def test_a_replacement_written_as_a_list_item_or_in_bold_is_read_and_a_garbled_one_fails(self):
-        for line in ("- Replaces plan criterion 2.", "**Replaces plan criterion 2.**", "Replaces plan criterion #2:"):
+        for line in ("- Replaces plan criterion 2.", "**Replaces plan criterion 2.**", "Replaces plan criterion #2:",
+                     "## Replaces plan criterion 2", "> Replaces plan criterion 2."):
             body = "%s\n\n**Acceptance criteria**\n- One total.\n" % line
             self.plans[PLAN_ID] = {"planMarkdown": STORED_PLAN, "amendments": [{"body": body}]}
             result, text = self.run_ticket(BODY, title="[plan:%s]" % PLAN_ID)
