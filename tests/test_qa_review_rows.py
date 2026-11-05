@@ -25,6 +25,9 @@ class Rows(GhFixture):
         self.assertIn("| ✅ | **AC1** · The home page loads | The explorer gave no sentence. |\n", body)
         self.assertIn("| ❌ | **AC2** · The menu opens | stayed shut |\n", body)
         self.assertIn("- **AC2**: `qae/AC2.md`\n", body)
+        # A sentence with no anchor keeps its own ending.
+        self.verdict = self.file("verdict.md", "acceptance-check: AC1 -- PASS -- Saw the page...\n")
+        self.assertIn("| ✅ | **AC1** · The home page loads | Saw the page... |\n", self.posted(gates="failure"))
 
 
 if __name__ == "__main__":

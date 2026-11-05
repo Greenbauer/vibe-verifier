@@ -108,11 +108,11 @@ def then(text, more):
 
 def split_anchor(text):
     """`<sentence> (qae/<file>::<step line>)` as (sentence, anchor); a sentence with no trailing anchor has none."""
-    text = text.rstrip(". ")  # a full stop the explorer put after its anchor
     at = text.rfind("(qae/")
-    if at < 0 or not text.endswith(")"):
+    end = text.rstrip(". ")  # a full stop the explorer put after its anchor
+    if at < 0 or not end.endswith(")"):
         return text, None
-    return text[:at].rstrip(), text[at + 1:-1]
+    return text[:at].rstrip(), end[at + 1:-1]
 
 
 def source_line(name, anchor):
