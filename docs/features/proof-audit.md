@@ -78,6 +78,10 @@ In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one s
 - `tests/test_proof_audit_split.py::test_an_excluded_grade_on_a_stored_requirement_is_unproven`
 - `tests/test_proof_audit_split.py::test_a_store_the_gate_cannot_read_cannot_run`
 - `tests/test_proof_audit_split.py::test_the_verify_step_reports_only_under_soak_but_fails_a_gate_that_cannot_run`
+- `tests/test_proof_audit_ast_truth.py::test_an_assertion_line_in_a_test_is_proof_for_that_test_at_its_line`
+- `tests/test_proof_audit_ast_truth.py::test_an_assertion_cited_a_few_lines_off_is_proof_where_it_sits`
+- `tests/test_proof_audit_ast_truth.py::test_an_assertion_in_a_helper_or_hook_after_a_test_is_never_that_tests_proof`
+- `tests/test_proof_audit_ast_truth.py::test_the_corpus_has_every_shape`
 
 ## Gotchas
 
@@ -87,3 +91,4 @@ In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one s
 - The model never sees the body: keep a local `--body` file outside the repository, which the model reads.
 - The grades stay in the runner's temporary directory from the grade job's write to the verify job's read. The gate judges none of them when the checkout supplied any: a path the branch tracks at, under or on the way to `--grades`, or a symbolic link in it (`planted` in `gates/_contract.py`). A consumer copy made before that keeps them in the checkout: refresh the copy, not only its pins.
 - A grade is for the tree it was given. Grades recorded on another commit fail their quotes, as they should.
+- The gate reads test files line by line, not with a parser. `tests/test_proof_audit_ast_truth.py` holds that reading to Python's own parser on every tracked Python test file: when the gate misreads a Python shape, add the shape to `tests/fixtures/proof-audit/python-shapes/shapes_test.py`, never the answer. JavaScript and TypeScript have no such check (no parser ships with the catalog's Python); their shapes are the hand-written cases in `tests/test_proof_audit_quotes.py` and `tests/test_proof_audit_body*.py`.
