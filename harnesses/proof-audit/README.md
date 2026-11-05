@@ -332,9 +332,5 @@ replays both; `VV_PROOF_AUDIT_LIVE=1` reruns the real grader.
   regex after `)` or `await`, holding a backtick or `/*` reads as opening a template or comment, so the body runs to
   the end of the file and a hook after it passes. Code after the `{` on a JS declaration's own line that ends in `)` or `);` can end the
   body early and turn away an assertion in it.
-  For Python the reading is held to Python's own parser: `tests/test_proof_audit_ast_truth.py` cites every
-  assertion line of every tracked Python test file at its line and a few lines off, with the title of the test
-  `ast` puts it in, and every assertion line of a helper or hook after a test with that test's title, and the gate
-  must accept the first two and refuse the third. JavaScript and TypeScript have no such check.
 - The grade artifacts are named by shard. A re-run whose plan has fewer shards than the first attempt's
   finds the extra shard's grades, and the gate cannot run (never passes) until the next push.

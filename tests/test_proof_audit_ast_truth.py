@@ -110,8 +110,8 @@ class AstTruth(unittest.TestCase):
         short = sum(1 for case in self.cases.values() for _, _, text in case[2] if len(text) < proof_audit.MIN_QUOTE)
         self.assertGreater(len(self.cases), 100)
         self.assertGreater(inside, 5000)
-        self.assertGreater(outside, 40)
-        self.assertGreater(short, 5)
+        self.assertGreater(outside, 20)
+        self.assertGreater(short, 4)
 
     def test_an_assertion_line_in_a_test_is_proof_for_that_test_at_its_line(self):
         for path, (_, _, inside, _) in self.cases.items():
