@@ -37,7 +37,7 @@ A PR links each section it implements with `Ticket: docs/plans/plan.md#heading-a
 
 The body cannot claim an ID no linked section defines. No Ticket line is a qualified pass, `no ticket linked`. A linked section without IDs is a qualified pass, `ticket section has no requirement IDs; nothing traced`. A malformed link, a file absent at the merge base or an unknown anchor is exit 2, even under soak.
 
-`actions/ticket` also reads a plan kept in a plan store, outside the repository, when the consumer passes `plans-endpoint` and `plans-token`: a `[plan:<id>]` marker in the title or body names it, and its Acceptance sections' items (its whole wording when no Acceptance heading has a list item), then each amendment's, become ticket criteria (harnesses/qae/README.md, "The ticket's criteria"). Such a plan carries no requirement IDs, so `ticket-coverage` does not trace it: the [proof audit](proof-audit.md) grades its whole wording instead, cut into IDs `PL-1`, `AM1-1`, ... when its steps are given the same store, and a criterion of it no browser can check is proven by a `ticket-proof:` line. A marker on a `Split off: <IDs> -> <owner>` line (a list item or not) names the plan that takes some of its requirements, not one this pull request implements, so neither step reads it.
+`actions/ticket` also reads a plan kept in a plan store, outside the repository, when the consumer passes `plans-endpoint` and `plans-token`: a `[plan:<id>]` marker in the title or body names it, and its Acceptance sections' items (its whole wording when no Acceptance heading has a list item), then each amendment's, become ticket criteria (harnesses/qae/README.md, "The ticket's criteria"). An amendment with a `Replaces plan criterion 2.` line stands in place of the criteria it names instead of adding to them, so the requester's newer wording is graded and later criteria keep their numbers; only the store's amendments carry it, never the pull request body. Such a plan carries no requirement IDs, so `ticket-coverage` does not trace it: the [proof audit](proof-audit.md) grades its whole wording instead, cut into IDs `PL-1`, `AM1-1`, ... when its steps are given the same store, and a criterion of it no browser can check is proven by a `ticket-proof:` line. A marker on a `Split off: <IDs> -> <owner>` line (a list item or not) names the plan that takes some of its requirements, not one this pull request implements, so neither step reads it.
 
 The QAE template includes the body subscription. Its full-history criteria checkout and both `actions/criteria` manifest inputs run coverage before any browser skip or carried walk. A consumer with an older template copies those changes too; a wrapper supplies the same line through `entries:`. The regular QA gate run also reads the body when a browser check is needed. No consumer repository is changed by adding this catalog gate.
 
@@ -47,6 +47,11 @@ The QAE template includes the body subscription. Its full-history criteria check
 - `tests/test_qae_plan_store.py::test_a_plan_with_no_acceptance_heading_is_walked_on_its_whole_wording`
 - `tests/test_qae_plan_store.py::test_a_plan_the_step_cannot_read_fails`
 - `tests/test_qae_plan_store.py::test_a_split_off_lines_plan_is_another_owners_and_not_read`
+- `tests/test_qae_plan_store.py::test_an_amendment_that_replaces_a_plan_criterion_is_graded_in_its_place`
+- `tests/test_qae_plan_store.py::test_the_newest_amendment_to_replace_a_criterion_wins_and_a_fenced_line_replaces_nothing`
+- `tests/test_qae_plan_store.py::test_a_replacement_written_as_a_list_item_or_in_bold_is_read_and_a_garbled_one_fails`
+- `tests/test_qae_plan_store.py::test_an_amendment_that_replaces_a_criterion_the_plan_lacks_fails`
+- `tests/test_qae_plan_store.py::test_a_replaces_line_in_the_pull_request_body_retires_nothing`
 
 - `tests/test_ticket_coverage.py::test_tagged_requirements_with_own_criteria_pass`
 - `tests/test_ticket_coverage.py::test_untagged_requirement_names_its_file_line_and_text`

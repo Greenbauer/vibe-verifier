@@ -174,6 +174,35 @@ class PlanStore(unittest.TestCase):
             "- Amendment 1, in place of plan criterion 3: Prices show in euros or pounds.", "- A refund shows in euros",
             "- Amendment 3: An example: ``` Replaces plan criterion 4. ```"])
 
+    def test_a_replacement_written_as_a_list_item_or_in_bold_is_read_and_a_garbled_one_fails(self):
+        for line in ("- Replaces plan criterion 2.", "**Replaces plan criterion 2.**", "Replaces plan criterion #2:"):
+            body = "%s\n\n**Acceptance criteria**\n- One total.\n" % line
+            self.plans[PLAN_ID] = {"planMarkdown": STORED_PLAN, "amendments": [{"body": body}]}
+            result, text = self.run_ticket(BODY, title="[plan:%s]" % PLAN_ID)
+            self.assertEqual(result.returncode, 0, line + result.stderr)
+            self.assertEqual(self.criteria(text)[1], "- Amendment 1, in place of plan criterion 2: One total.", line)
+            self.assertEqual(len(self.criteria(text)), 4, line)
+        # Two at once, with an Oxford comma; the line alone retires what it names.
+        self.plans[PLAN_ID] = {"planMarkdown": STORED_PLAN,
+                               "amendments": [{"body": "Replaces plan criteria 1, 2, and 3.\n\n**Acceptance criteria**\n"
+                                                       "- One price line.\n"}, {"body": "Replaces plan criterion 4."}]}
+        result, text = self.run_ticket(BODY, title="[plan:%s]" % PLAN_ID)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.criteria(text), ["- Amendment 1, in place of plan criteria 1 and 2 and 3: One price line."])
+        self.plans[PLAN_ID] = {"planMarkdown": STORED_PLAN,
+                               "amendments": [{"body": "Replaces plan criterion two.\n\n- One total."}]}
+        result, text = self.run_ticket(BODY, title="[plan:%s]" % PLAN_ID)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("amendment 1: its line `Replaces plan criterion two.` names no plan criterion", result.stderr)
+        self.assertIsNone(text)
+
+    def test_a_replaces_line_in_the_pull_request_body_retires_nothing(self):
+        self.plans[PLAN_ID] = {"planMarkdown": STORED_PLAN, "amendments": []}
+        result, text = self.run_ticket(BODY + "\nReplaces plan criterion 2.\n", title="[plan:%s]" % PLAN_ID)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("- The checkout total matches the cart, tax included.", self.criteria(text))
+        self.assertIn("ticket: 4 criteria", result.stdout)
+
     def test_an_amendment_that_replaces_a_criterion_the_plan_lacks_fails(self):
         self.plans[PLAN_ID] = {"planMarkdown": STORED_PLAN, "amendments": [{"body": "Replaces plan criterion 9.\n\n- x"}]}
         result, text = self.run_ticket(BODY, title="[plan:%s]" % PLAN_ID)

@@ -334,9 +334,10 @@ now reads the ticket by default, and the harness holds the pull request to its c
   own "Acceptance criteria" heading or bold line, or, when it has none, the whole amendment as one
   criterion. An amendment that changes a plan criterion instead of adding one says so on a line of its
   own, `Replaces plan criterion 2.` (or `Replaces plan criteria 2 and 5.`, the plan's own criteria
-  numbered from 1): its criteria stand where the first one it names stood and the ones it names are
-  dropped, so QAE grades the requester's newer wording, the newest amendment to name a criterion wins
-  it, and a number the plan has no criterion for fails the step. Only the store's amendments carry it,
+  numbered from 1; a list item or bold reads alike): its criteria stand where the first criterion it
+  still holds stood and the ones it names are dropped, so QAE grades the requester's newer wording. The
+  line alone retires them, the newest amendment to name a criterion wins it, and a number the plan has
+  no criterion for, or a line starting "Replaces plan criteri" that does not parse, fails the step. Only the store's amendments carry it,
   so a pull request cannot retire a criterion; the proof audit still grades the plan's whole wording. They follow any `Ticket:` section's criteria, and the step's job summary numbers them
   all, TC1, TC2, ..., so an author knows which number a `ticket-proof:` line names. The store is read
   on every run, so an amendment added while the pull request is open is graded on its next run. A plan
