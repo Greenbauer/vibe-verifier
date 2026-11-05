@@ -395,10 +395,10 @@ jobs:
         # (harnesses/qae/README.md, "A preview behind Vercel SSO"). A site step that gives the
         # explorer a login declares its `secrets-file` the same way (README, "A preview behind a login").
         # The model is named, not left to the login's default, so a default change cannot move QAE; Terra at
-        # low matched Sol on a replay of real walks at about half the credits (README, "Caller-owned model settings").
+        # low left form steps unfinished on full runs, so Sol it is (README, "Caller-owned model settings").
         uses: Greenbauer/vibe-verifier/actions/qae-codex@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
         with:
-          model: gpt-6.1-terra
+          model: gpt-6.1-sol
           reasoning-effort: low
           prompt-file: qae-inputs/prompt.md
           mcp: ${{ steps.browser.outputs.mcp }}
