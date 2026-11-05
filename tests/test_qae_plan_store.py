@@ -146,6 +146,41 @@ class PlanStore(unittest.TestCase):
             "- Amendment 1: Also show the currency code beside every total."])
         self.assertIn("ticket: 5 criteria", result.stdout)
 
+    def test_an_amendment_that_replaces_a_plan_criterion_is_graded_in_its_place(self):
+        # 2026-11-05: a consumer's requester asked for one invite form in place of the plan's "invite or create
+        # account" choice, and with amendments only adding criteria, QAE kept failing the overridden one.
+        replacing = {"body": "Show one total, not two.\n\nReplaces plan criterion 2.\n\n**Acceptance criteria**\n"
+                             "- The checkout shows one total, tax included.\n"}
+        self.plans[PLAN_ID] = {"planMarkdown": STORED_PLAN, "amendments": [replacing, PLAIN_AMENDMENT]}
+        result, text = self.run_ticket(BODY, title="[plan:%s]" % PLAN_ID, summary=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.criteria(text), [
+            "- Prices show in euros on the shop page.",
+            "- Amendment 1, in place of plan criterion 2: The checkout shows one total, tax included.",
+            "- Unit tests cover the euro formatter.", "- A refund shows in euros",
+            "- Amendment 2: Also show the currency code beside every total."])
+        self.assertIn("- TC3: Unit tests cover the euro formatter.\n", Path(self.work, "summary.md").read_text())
+
+    def test_the_newest_amendment_to_replace_a_criterion_wins_and_a_fenced_line_replaces_nothing(self):
+        older = {"body": "Replaces plan criteria 1 and 3.\n\n**Acceptance criteria**\n- Prices show in euros or pounds."}
+        newer = {"body": "replaces plan criterion 1\n\nPrices show in the shopper's currency."}
+        fenced = {"body": "An example:\n\n```\nReplaces plan criterion 4.\n```\n"}
+        self.plans[PLAN_ID] = {"planMarkdown": STORED_PLAN, "amendments": [older, newer, fenced]}
+        result, text = self.run_ticket(BODY, title="[plan:%s]" % PLAN_ID)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.criteria(text), [
+            "- Amendment 2, in place of plan criterion 1: Prices show in the shopper's currency.",
+            "- The checkout total matches the cart, tax included.",
+            "- Amendment 1, in place of plan criterion 3: Prices show in euros or pounds.", "- A refund shows in euros",
+            "- Amendment 3: An example: ``` Replaces plan criterion 4. ```"])
+
+    def test_an_amendment_that_replaces_a_criterion_the_plan_lacks_fails(self):
+        self.plans[PLAN_ID] = {"planMarkdown": STORED_PLAN, "amendments": [{"body": "Replaces plan criterion 9.\n\n- x"}]}
+        result, text = self.run_ticket(BODY, title="[plan:%s]" % PLAN_ID)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("amendment 1 replaces plan criterion 9, and the plan has 4", result.stderr)
+        self.assertIsNone(text)
+
     def test_a_plan_the_step_cannot_read_fails(self):
         self.plans[PLAN_ID] = {"planMarkdown": "# A plan\n\n## Background\n\n- an aside only\n", "amendments": []}
         other = "a8f1bf53-0a04-4d73-8ebd-57bffa15257d"

@@ -332,7 +332,12 @@ now reads the ticket by default, and the harness holds the pull request to its c
   carried one, gives its whole wording instead, every list item and paragraph outside its title and
   asides, cut as the proof audit cuts it), then each amendment's, oldest first: the items under its
   own "Acceptance criteria" heading or bold line, or, when it has none, the whole amendment as one
-  criterion. They follow any `Ticket:` section's criteria, and the step's job summary numbers them
+  criterion. An amendment that changes a plan criterion instead of adding one says so on a line of its
+  own, `Replaces plan criterion 2.` (or `Replaces plan criteria 2 and 5.`, the plan's own criteria
+  numbered from 1): its criteria stand where the first one it names stood and the ones it names are
+  dropped, so QAE grades the requester's newer wording, the newest amendment to name a criterion wins
+  it, and a number the plan has no criterion for fails the step. Only the store's amendments carry it,
+  so a pull request cannot retire a criterion; the proof audit still grades the plan's whole wording. They follow any `Ticket:` section's criteria, and the step's job summary numbers them
   all, TC1, TC2, ..., so an author knows which number a `ticket-proof:` line names. The store is read
   on every run, so an amendment added while the pull request is open is graded on its next run. A plan
   with nothing to walk at all, a store that does not answer 200, or a marker with no token fails the
