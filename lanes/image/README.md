@@ -9,7 +9,7 @@ pulls nothing. The store is not in the image: it is a directory on the lane's st
 (`/var/lib/<lane name>/store/golden-<tag>`), and every job runs on its own snapshot of it, mounted
 on the container's `/var/lib/docker`: a reflink copy on an XFS store, a btrfs snapshot on a btrfs
 one, where `golden-<tag>` is a subvolume (the kit's `README.md`, one directory up, "Disk"). A job
-of the wait kind, which only polls for another job's result, gets an empty directory there instead:
+of the wait kind, which only polls for another job's result or does seconds of bookkeeping, gets an empty directory there instead:
 the job mode of the entrypoint reads nothing from the store, and the inner dockerd starts on an
 empty data root.
 
