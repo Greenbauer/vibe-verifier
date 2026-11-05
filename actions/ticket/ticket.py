@@ -36,7 +36,16 @@ following no redirect. Its criteria are the list items under each plan heading t
 list item under such a heading, the plan's whole wording as the proof audit cuts it: every list item and paragraph
 outside its title and asides), then, for each amendment in order, the items under its own "Acceptance criteria"
 heading or bold line, or, when it has none, the whole amendment as one criterion: an amendment is a requirement
-however it is written. They follow any `Ticket:` section's criteria. A plan with nothing to walk at all, a store
+however it is written. An amendment that changes what the plan asked, rather than adding to it, says so on a line of
+its own, `Replaces plan criterion 2.` (or `Replaces plan criteria 2 and 5.`; a list item, bold or `#2` read alike),
+numbering the plan's own criteria as listed above, 1 first: its criteria then stand where the first criterion it still
+holds stood, and every criterion it names is dropped, so the requester's newer wording is graded instead of the one it
+overrides and the later criteria keep their numbers when it replaces one with one. An amendment of that line alone
+retires them. The newest amendment to name a criterion wins it, and an amendment whose every named criterion a newer
+one took is dropped with them. Only the plan store's amendments carry the line, never the pull request: the requester
+changes the requirement, the author cannot. A number the plan has no criterion for, or a line that starts "Replaces
+plan criteri" but does not parse, exits 2.
+They follow any `Ticket:` section's criteria. A plan with nothing to walk at all, a store
 that does not answer 200, or a marker with no token exits 2: a plan the step could not read never reads as "no
 ticket". The store is read when the step runs, so a plan amended later is graded on the next run.
 """
@@ -97,6 +106,35 @@ def marked_block(lines):
     return block
 
 
+# An amendment's line `Replaces plan criterion 2.` / `Replaces plan criteria 2, 3 and 5.` (see the docstring), as a
+# list item, heading or quote or not, in bold or italics or not. A line that starts so but does not parse is
+# Unreadable (STARTS), so a replacement written slightly differently never quietly becomes one more criterion.
+REPLACES = re.compile(r"^[ \t]*(?:(?:[-*+]|[0-9]+[.)]|#{1,6}|>)[ \t]+)?(?P<em>\*\*|__|\*|_)?[ \t]*replaces[ \t]+plan[ \t]+"
+                      r"criteri(?:on|a)[ \t]+(?P<numbers>#?[0-9]+(?:[ \t]*(?:,[ \t]*and|,|and|&)[ \t]*#?[0-9]+)*)"
+                      r"[ \t]*[.:;]?[ \t]*(?:(?P=em))?[ \t]*[.:;]?[ \t]*$", re.IGNORECASE)
+STARTS = re.compile(r"^[ \t]*(?:(?:[-*+]|[0-9]+[.)]|#{1,6}|>)[ \t]+)?(?:\*\*|__|\*|_)?[ \t]*replaces[ \t]+plan[ \t]+criteri",
+                    re.IGNORECASE)
+
+
+def replaced(body):
+    """(the plan criteria, numbered from 1, an amendment's `Replaces plan criterion N.` lines name, its body without
+    those lines). A line in a code fence is an example, not a replacement; one that starts like a replacement but does
+    not parse is Unreadable."""
+    lines = body.splitlines()
+    outside = dict(unfenced(lines))
+    numbers, kept = [], []
+    for index, line in enumerate(lines):
+        match = REPLACES.match(line) if index in outside else None
+        if match:
+            numbers += [int(number) for number in re.findall(r"[0-9]+", match.group("numbers"))]
+        elif index in outside and STARTS.match(line):
+            raise Unreadable("its line `%s` names no plan criterion this step can read: write "
+                             "`Replaces plan criterion 2.` or `Replaces plan criteria 2 and 5.`" % line.strip())
+        else:
+            kept.append(line)
+    return numbers, "\n".join(kept)
+
+
 def amendment_items(number, body):
     """An amendment's criteria: the items its marker introduces, else the whole amendment as one criterion."""
     block = marked_block(body.splitlines())
@@ -104,14 +142,49 @@ def amendment_items(number, body):
     return items or ["Amendment %d: %s" % (number, " ".join(body.split()))]
 
 
+def read_amendments(plan, count):
+    """([(number, the plan criteria it names, its criteria)] of a plan's amendments, oldest first, {index of a plan
+    criterion: the number of the newest amendment that replaces it}), for a plan with `count` criteria."""
+    owners, amendments = {}, []
+    for number, amendment in enumerate(plan.get("amendments") or [], 1):
+        try:
+            names, body = replaced(str(amendment.get("body", "")))
+        except Unreadable as error:
+            raise Unreadable("amendment %d: %s" % (number, error))
+        for name in names:
+            if not 1 <= name <= count:
+                raise Unreadable("amendment %d replaces plan criterion %d, and the plan has %d" % (number, name, count))
+            owners[name - 1] = number
+        # The line alone retires the criteria it names: nothing stands in their place.
+        amendments.append((number, names, amendment_items(number, body) if body.strip() or not names else []))
+    return amendments, owners
+
+
+def in_place(number, names, found, owners):
+    """An amendment's criteria where it replaces the plan's, each saying which plan criteria it still holds."""
+    held = [str(name) for name in sorted(set(names)) if owners[name - 1] == number]
+    whole = "Amendment %d: " % number
+    return ["Amendment %d, in place of plan %s %s: %s"
+            % (number, "criteria" if len(held) > 1 else "criterion", " and ".join(held),
+               text[len(whole):] if text.startswith(whole) else text) for text in found]
+
+
 def plan_items(plan_id, plan):
-    """A plan's criteria: its Acceptance sections' items, then each amendment's, oldest first."""
+    """A plan's criteria: its Acceptance sections' items, each in place of the plan criteria an amendment replaces,
+    then each other amendment's, oldest first."""
     items = plan_body_items(plan["planMarkdown"])
     if not items:
         raise Unreadable("plan %s has no Acceptance item, list item or paragraph to walk" % plan_id)
-    for number, amendment in enumerate(plan.get("amendments") or [], 1):
-        items += amendment_items(number, str(amendment.get("body", "")))
-    return items
+    amendments, owners = read_amendments(plan, len(items))
+    criteria, placed = [], set()
+    for index, item in enumerate(items):
+        owner = owners.get(index)
+        if owner is None:
+            criteria.append(item)
+        elif owner not in placed:
+            placed.add(owner)
+            criteria += in_place(*amendments[owner - 1], owners)
+    return criteria + [text for _, names, found in amendments if not names for text in found]
 
 
 def plan_criteria(body, title, endpoint, token):
