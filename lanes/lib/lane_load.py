@@ -52,9 +52,9 @@ LANE_KEYS = {
 }
 SCOPE_KEYS = {"org": {"runner_group", "repos", "min_runners"}, "user": {"exclude"}}
 QAE_KEYS = {"codex_store", "qae_concurrency"}
-# The optional wait kind (an org lane's only): jobs that only poll for another job's result take its
-# slots, which have a budget of their own and a smaller container, so a queue of them can never hold
-# the ci slots the awaited job needs (listener/README.md, "Budget and admission").
+# The optional wait kind (an org lane's only): pollers and jobs of seconds take its slots, a budget
+# of their own and a smaller container, so a queue of them never holds the ci slots the awaited job
+# needs (listener/README.md, "Budget and admission").
 WAIT_KEYS = {"label", "slots", "memory"}
 # Keys a lane may leave out, with the value an absent one takes. warm_max_age_sec is how long a warm
 # slot's unit may stay active before the listener recycles it (listener/README.md, "Warm recycle").
