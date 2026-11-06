@@ -7,15 +7,17 @@ the collector makes is refused in turn, and each subtest checks that its refusal
   that family, so the other families can still be read;
 - a 403 on a read that only adds to a pull request (branch rules, protection, ruleset history,
   GraphQL signals, bot history) leaves the pull request and its checks on the page;
-- a 502 on a read that a later pass makes again leaves the last sample on the page.
+- a 502 on a read that a pass two hours later makes again leaves the last sample on the page.
 
 The reads that make a pull request's own evidence (CORE), and the subscription files every token may
 read, are exempt from the 403 rule: a 403 there is lost access, which deletes what was read before
-by design. Reads a later pass answers from what it kept (a ruleset's history, a finished run's jobs)
-cannot fail then, so the 502 rule skips them. Any kind of read added later is covered without a
-change here, because the families come from what the collector asked for."""
+by design. Reads a later pass answers from what it kept (a ruleset's history while its pin holds,
+a finished run's jobs) cannot fail then, so the 502 rule skips them. Any kind of read added later is
+covered without a change here, because the families come from what the collector asked for (for
+the 502 rule: what it asks for again two hours on)."""
 
 import unittest
+from datetime import timedelta
 
 from dashboard.config import BotDefinition, Config
 from dashboard.gh_api import ApiError, GitHubAPI
@@ -44,12 +46,22 @@ def config():
                                        "explorer": BotDefinition("explore.yml", ("explore",))}, None)
 
 
-def collector(fake):
-    return GitHubCollector(config(), GitHubAPI(runner=fake, clock=lambda: NOW.timestamp()), clock=lambda: NOW)
+# Moved forward between passes, so a later pass outlives every five-minute cache (inventory, workflow list).
+LATER = timedelta(hours=2)
 
 
-def service(fake):
-    return DashboardService(config(), collector(fake), monotonic=lambda: 0, wall_clock=lambda: NOW)
+def collector(fake, clock=lambda: NOW):
+    return GitHubCollector(config(), GitHubAPI(runner=fake, clock=lambda: clock().timestamp()), clock=clock)
+
+
+def service(fake, shift=None):
+    shift = shift if shift is not None else [timedelta(0)]
+
+    def clock():
+        return NOW + shift[0]
+
+    return DashboardService(config(), collector(fake, clock), monotonic=lambda: shift[0].total_seconds(),
+                            wall_clock=clock)
 
 
 def families():
@@ -59,11 +71,12 @@ def families():
 
 
 def repeated():
-    """The families a second pass reads again, with nothing refused."""
-    fake = FakeGitHub()
-    page = service(fake)
+    """The families a pass two hours later reads again, with nothing refused."""
+    fake, shift = FakeGitHub(), [timedelta(0)]
+    page = service(fake, shift)
     page.snapshot(force=True)
     fake.log.clear()
+    shift[0] = LATER
     page.snapshot(force=True)
     return sorted({read.family for read in fake.log} - GLOBAL)
 
@@ -139,10 +152,11 @@ class RefusalScope(unittest.TestCase):
         self.assertGreaterEqual(len(set(again) & CORE), 5, again)
         for kind in [*GLOBAL, *again]:
             with self.subTest(family=kind):
-                fake = FakeGitHub()
-                page = service(fake)
+                fake, shift = FakeGitHub(), [timedelta(0)]
+                page = service(fake, shift)
                 before = pull(page.snapshot(force=True)["github"])
                 fake.refuse[kind] = "unavailable"
+                shift[0] = LATER
                 after = pull(page.snapshot(force=True)["github"])
                 self.assertTrue(refused(fake, kind, 502), "%s was not read again" % kind)
                 self.assertEqual(check_names(before), CHECKS)

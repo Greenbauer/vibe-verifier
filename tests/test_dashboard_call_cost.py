@@ -78,7 +78,7 @@ class CallCost(unittest.TestCase):
 
     def test_the_fake_prices_a_query_as_github_did(self):
         # The pull-signals query before #118 asked for 50 pull requests, 100 threads (1 comment each) and
-        # 20 commits (1 parent each); GitHub charged it 61 points on 2026-10-07. One pull request costs 1.
+        # 20 commits (1 parent each); GitHub charged it 61 points (#118). One pull request costs 1.
         query = ("query($count: Int!) { repository(owner: \"o\", name: \"r\") { pullRequests(first: $count) { nodes {"
                  " reviewThreads(first: 100) { nodes { comments(first: 1) { totalCount } } }"
                  " commits(last: 20) { nodes { commit { parents(first: 1) { totalCount } } } } } } } }")
