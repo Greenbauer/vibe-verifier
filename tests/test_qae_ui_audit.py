@@ -19,7 +19,7 @@ from helpers import ROOT, commit, gate, git, make_repo
 HOOK = ROOT / "actions" / "qae-browser" / "ui-audit.js"
 FIXTURES = ROOT / "tests" / "fixtures" / "ui-audit"
 RULES = ["clipped-text", "clipped-value", "duplicate-name", "edge", "field-stagger", "glyph-off-center", "long-sentence", "raw-value",
-         "row-height", "row-stagger", "spinner-off-center", "table-scroll", "text-wall", "touching", "wrapped-label"]
+         "row-height", "row-stagger", "spinner-off-center", "table-scroll", "text-wall", "touching", "uneven-gutter", "wrapped-label"]
 
 
 def line(rule, at="td > div > button", page="https://site.test/quotes", width=1280, **extra):
@@ -171,12 +171,15 @@ const hook = require(process.env.HOOK);
     const found = await page.evaluate(hook.script);
     out[name] = [...new Set(found.map(f => f.rule))].sort();
     out[name + "-table-scroll"] = found.filter(f => f.rule === "table-scroll").length;
+    out[name + "-uneven-gutter"] = found.filter(f => f.rule === "uneven-gutter").length;
     out[name + "-details"] = found.filter(f => ["raw-value", "touching", "glyph-off-center", "duplicate-name", "wrapped-label"].includes(f.rule)).map(f => f.rule + ": " + f.text + (f.rule === "duplicate-name" ? " / " + f.other : ""));
     await page.close();
     // At a phone's width a wide table has no room to take, so it may scroll.
     const phone = await browser.newPage({ viewport: { width: 375, height: 800 } });
     await phone.goto("file://" + process.env.FIXTURES + "/" + name + ".html");
-    out[name + "-375-table-scroll"] = (await phone.evaluate(hook.script)).filter(f => f.rule === "table-scroll").length;
+    const small = await phone.evaluate(hook.script);
+    out[name + "-375-table-scroll"] = small.filter(f => f.rule === "table-scroll").length;
+    out[name + "-375-uneven-gutter"] = small.filter(f => f.rule === "uneven-gutter").length;
     await phone.close();
   }
   // The hook in a real page: it measures after the load, and again the moment a button gains a spinner.
@@ -237,6 +240,14 @@ class Browser(unittest.TestCase):
         # A table that scrolls beside 890px of empty card is flagged; good.html's tables wider than the page, beside a card that fills
         # the row (in a flex row, or a display:contents wrapper in a grid), in a dialog's panel, or in a box that scrolls for a log
         # line beside a table that fits, are not, and at a phone's width nothing is.
+        # A rate page's header 32px in above its matrix 16px in, a dashboard's bot strip 10px in under a header 18px in.
+        # good.html's page bands share a 16px gutter beside what is no gutter: a full-bleed strip, a centered note and row,
+        # a card with its own padding, bands 4px apart, a badge set out of the flow, a 12px band, a first-line indent, a
+        # chart's own labels, and a table's header cells padded wider than its rows.
+        # Two more: a toolbar a 16px page container holds under a 32px header, and a right-aligned row 32px in under one 16px in.
+        self.assertEqual(measured["bad-uneven-gutter"], 4)
+        # At a phone's width good.html's paragraphs wrap, justified text included: a ragged right is not a gutter.
+        self.assertEqual(measured["good-375-uneven-gutter"], 0)
         # bad.html's three: in a card, behind a narrow first table in the same box, and in an app's fixed main region.
         self.assertEqual(measured["bad-table-scroll"], 3)
         self.assertEqual((measured["bad-375-table-scroll"], measured["good-375-table-scroll"]), (0, 0))

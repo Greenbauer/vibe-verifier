@@ -34,6 +34,9 @@
 //                         line (wrap-page.js); a pill's icon above its text counts, a button's does not
 //     table-scroll        a table that scrolls sideways while a box around it, within the page's main region,
 //                         has room beside it for all of it (scroll-page.js)
+//     uneven-gutter       two page bands stacked across the same column (a header, a toolbar, a table) whose content
+//                         starts, or whose boxes end, more than 4px apart from the edge they share, both within 48px
+//                         of it (gutter-page.js); a card holds its own padding and is not a band
 //
 // Side by side means laid out by one flex or grid row within four levels of both, so a header's
 // button and a search field in the page below it are never compared. A control is measured as
@@ -284,6 +287,7 @@ function audit() {
   nameRules(add);
   wrapRules(add);
   scrollRules(add);
+  gutterRules(add);
   return findings;
 }
 

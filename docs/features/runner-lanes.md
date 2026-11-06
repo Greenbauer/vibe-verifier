@@ -19,7 +19,6 @@ On an Ubuntu 24.04 machine, clone this catalog to `/opt/runner-lanes` and your p
 - `lanes/tests/provision-host-test.sh::the gate names the values repository by the origin of the machine's values checkout, and where that checkout is`
 - `lanes/tests/provision-lane-test.sh::the slot template has no restart delay and no [Install]: nothing but the listener starts it`
 - `lanes/tests/provision-lane-test.sh::adoption keeps every unit name: nothing added, nothing renamed`
-- `lanes/tests/provision-lane-plan-test.sh::every recorded run is unchanged: exit code, output, stubbed commands and files left`
 - `lanes/tests/lane-slot-test.sh::prepare refuses, touching nothing, when the listener wrote no job for the instance`
 - `lanes/tests/lane-slot-test.sh::cleanup renames the job's store copy into the trash instead of deleting it: whole, under a name that carries the second and the instance`
 - `lanes/tests/lane-slot-test.sh::a wait slot's prepare makes no copy of the preloaded store: its store is an empty directory, mode 0700, and the store's room is never read for it`
@@ -40,7 +39,6 @@ On an Ubuntu 24.04 machine, clone this catalog to `/opt/runner-lanes` and your p
 ## Gotchas
 
 - The kit is Linux-only: its tests need GNU userland, bash 5 and util-linux `flock`, so on a Mac run `lanes/tests/run-all.sh` in an Ubuntu container. The catalog's own `python3 -m unittest discover -s tests` does not run them; the CI checks `Lane kit tests` and `Lane listener tests` (jobs `lanes` and `lanes-listener`) do.
-- `lanes/bin/provision-lane.sh` is the entry point and its parts are in `lanes/lib/provision-lane/`. A btrfs lane's store mount unit still says its options are explained "at store_mount_options in bin/provision-lane.sh" (the function is in `lib/provision-lane/render.sh` now): new text would rewrite every btrfs lane's mount unit on its next pull.
 - The names under "Legacy names" in the manual (the `KNOWN_CI_` environment prefix, the in-image paths, the firewall comment, the image label) are a contract with machines already running. Renaming one is a migration, not a refactor.
 - A machine fast-forwards its engine checkout to this catalog's `main` within five minutes of every merge, and applies when the merge changed anything under `lanes/` (the trigger is that directory's tree id, not the commit). A change under `lanes/` reaches every machine that runs the kit that way, without a release step; a change anywhere else applies nothing.
 - The slot units run `lanes/bin/lane-slot.sh` straight from the engine checkout, so a change to it is live for the next job the moment a machine pulls it, before `provision-lane.sh` has applied the same merge (and for as long as that apply fails). A helper change must work with the units, environment and directories the previous kit left: the store trash is made by the helper when it is missing, and a reaper unit it cannot start is a log line, not a failure. A process that outlives a pull is the other half: the store reaper never ends on a busy lane, so it replaces itself with the helper on disk after five minutes of work.

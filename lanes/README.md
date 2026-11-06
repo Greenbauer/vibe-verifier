@@ -31,7 +31,6 @@ they start with `/`.
 | `lib/provision.sh` | what the provisioners share (logging, dry-run, file convergence, the Sysbox pin) |
 | `bin/provision-host.sh` | converges what a machine's lanes share, once per machine |
 | `bin/provision-lane.sh` | converges one lane |
-| `lib/provision-lane/` | the parts `bin/provision-lane.sh` sources: what its phases read (`reads.sh`) and render (`render.sh`), `--apply`'s phases A0 to I (`apply.sh`) and J to N with the gates (`apply-listener.sh`), `--remove` (`remove.sh`), `--convert-store` (`convert.sh`) and `--check` (`check.sh`) |
 | `bin/lane-slot.sh` | a slot unit's per-job prepare and cleanup, the lane's store reaper (`reap`), and a QAE lane's Codex login keepalive |
 | `bin/lane-firewall.sh` | asserts a lane's two firewall rules |
 | `bin/lane-smoke.sh` | the in-container proofs `provision-lane.sh --check` runs |
@@ -42,7 +41,7 @@ they start with `/`.
 | `bin/runners-pull.sh` | the machine's self-update: fast-forward both checkouts to `origin/main`, then converge |
 | `listener/` | the scale-set listener (Go); its contract is `listener/README.md` |
 | `image/` | the runner image every lane builds under its own name; `image/README.md` |
-| `tests/` | hermetic tests; `tests/run-all.sh` runs them. `tests/fixtures/hosts/vps-1.yml` is a second made-up host file the tests read, and `tests/fixtures/provision-lane/` holds `provision-lane.sh`'s recorded runs |
+| `tests/` | hermetic tests; `tests/run-all.sh` runs them. `tests/fixtures/hosts/vps-1.yml` is a second made-up host file the tests read |
 
 ## How a lane works
 
@@ -733,12 +732,8 @@ docker run --rm --platform linux/amd64 -v "$PWD":/w -w /w ubuntu:24.04 bash -c \
 ```
 
 The tests stub every system tool on PATH; nothing real is installed, mounted, started or called.
-`tests/provision-lane-plan-test.sh` compares everything `bin/provision-lane.sh` prints, runs and
-writes, in nineteen runs, with the copies in `tests/fixtures/provision-lane/`; a change that means
-to alter that records new copies with `UPDATE_PLAN_FIXTURES=1 lanes/tests/provision-lane-plan-test.sh`
-(in the container), and the fixtures' diff shows it.
 They are Linux-only, like the kit: on a Mac run them in the container above. The catalog's CI
 (`.github/workflows/ci.yml`) runs both beside the catalog's own gates: `Lane kit tests` (job `lanes`)
 on `ubuntu-24.04`, the release the machines run, and `Lane listener tests` (job `lanes-listener`). The main scripts stay
-shellcheck-clean (it reports only on the files it is given, so `lib/provision-lane/` is named too):
-`shellcheck -x lanes/bin/*.sh lanes/lib/provision.sh lanes/lib/provision-lane/*.sh lanes/image/entrypoint.sh lanes/listener/build.sh`.
+shellcheck-clean:
+`shellcheck -x lanes/bin/*.sh lanes/lib/provision.sh lanes/image/entrypoint.sh lanes/listener/build.sh`.

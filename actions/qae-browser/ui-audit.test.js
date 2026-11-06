@@ -136,7 +136,22 @@ test("the audit is self-contained: run as the page script on an empty page, it n
   assert.ok(hook.script.includes("function wrapRules("));   // and so does the wrapped-label rule
   assert.strictEqual(typeof require("./scroll-page.js"), "function");
   assert.ok(hook.script.includes("function scrollRules("));   // and so does the table-scroll rule
+  assert.strictEqual(typeof require("./gutter-page.js"), "function");
+  assert.ok(hook.script.includes("function gutterRules("));   // and so does the uneven-gutter rule
   assert.strictEqual(JSON.stringify(vm.runInNewContext(hook.script, { document: page, getComputedStyle: () => ({}) })), "[]");
+});
+
+test("the rule files run as one script, so no two declare the same top-level name", () => {
+  // A second `function lines` in gutter-page.js would have replaced wrap-page.js's, silently breaking wrapped-label.
+  const files = ["ui-audit-page.js", "glyph-page.js", "name-page.js", "wrap-page.js", "scroll-page.js", "gutter-page.js"];
+  const seen = new Map();
+  for (const file of files) {
+    for (const [, name] of fs.readFileSync(path.join(__dirname, file), "utf8").matchAll(/^(?:function|const|let)\s+([A-Za-z_$][\w$]*)/gm)) {
+      assert.ok(!seen.has(name), `${name} is declared in ${seen.get(name)} and ${file}`);
+      seen.set(name, file);
+    }
+  }
+  assert.ok(files.every(file => hook.script.includes(fs.readFileSync(path.join(__dirname, file), "utf8"))));
 });
 
 test("the shell form refuses no URL or a width that is not a number", () => {
