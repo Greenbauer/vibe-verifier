@@ -1,0 +1,111 @@
+exit 0
+--- output
+[1;36m[runners][0m host=box lane=box-ci scope=org owner=acme kinds=[ci qae] slots=2 group=box-ci repos=[alpha beta] apply=0 check=0 remove=1 convert_store=0
+[1;36m[runners][0m Remove: box-ci lane (listener, scale sets, slot units, slot images, registrations, timers, network)
+[1;36m[runners][0m DRY-RUN: systemctl disable --now box-ci-listener-health.timer
+[1;36m[runners][0m DRY-RUN: systemctl stop box-ci-listener-health.service
+[1;36m[runners][0m DRY-RUN: systemctl disable --now box-ci-listener.service
+[1;36m[runners][0m DRY-RUN: systemctl disable --now box-ci-token-refresh.timer
+[1;36m[runners][0m DRY-RUN: systemctl stop box-ci-token-refresh.service
+[1;36m[runners][0m DRY-RUN: systemctl disable --now box-ci-image-build.timer
+[1;36m[runners][0m DRY-RUN: systemctl disable --now box-ci-codex-keepalive.timer
+[1;36m[runners][0m DRY-RUN: systemctl stop box-ci-ci@1.service
+[1;36m[runners][0m DRY-RUN: docker rm -f box-ci-ci-1
+[1;36m[runners][0m DRY-RUN: rm -rf @S/state/slot-ci-1 @S/state/slot-ci-1.img @S/state/store/slot-ci-1
+[1;36m[runners][0m DRY-RUN: systemctl stop box-ci-ci@2.service
+[1;36m[runners][0m DRY-RUN: docker rm -f box-ci-ci-2
+[1;36m[runners][0m DRY-RUN: rm -rf @S/state/slot-ci-2 @S/state/slot-ci-2.img @S/state/store/slot-ci-2
+[1;36m[runners][0m DRY-RUN: systemctl stop box-ci-qae@1.service
+[1;36m[runners][0m DRY-RUN: docker rm -f box-ci-qae-1
+[1;36m[runners][0m DRY-RUN: rm -rf @S/state/slot-qae-1 @S/state/slot-qae-1.img @S/state/store/slot-qae-1
+[1;36m[runners][0m DRY-RUN: systemctl stop box-ci-qae@2.service
+[1;36m[runners][0m DRY-RUN: docker rm -f box-ci-qae-2
+[1;36m[runners][0m DRY-RUN: rm -rf @S/state/slot-qae-2 @S/state/slot-qae-2.img @S/state/store/slot-qae-2
+[1;36m[runners][0m DRY-RUN: systemctl disable --now box-ci@1.service
+[1;36m[runners][0m DRY-RUN: docker rm -f box-ci-1
+[1;36m[runners][0m DRY-RUN: rm -rf @S/state/slot-1 @S/state/slot-1.img @S/state/store/slot-1
+[1;36m[runners][0m DRY-RUN: systemctl disable --now box-ci@2.service
+[1;36m[runners][0m DRY-RUN: docker rm -f box-ci-2
+[1;36m[runners][0m DRY-RUN: rm -rf @S/state/slot-2 @S/state/slot-2.img @S/state/store/slot-2
+[1;36m[runners][0m DRY-RUN: systemctl disable --now box-ci-store-reaper.timer
+[1;36m[runners][0m DRY-RUN: systemctl stop box-ci-store-reaper.service
+[1;36m[runners][0m DRY-RUN: rm -rf @S/state/store/trash
+[1;36m[runners][0m DRY-RUN: @S/lib/box-ci/listener -delete-sets @S/etc/box-ci/listener.json
+[1;36m[runners][0m DRY-RUN: gh_lane api -X DELETE orgs/acme/actions/runners/501 --silent
+[1;36m[runners][0m DRY-RUN: gh_lane api -X DELETE orgs/acme/actions/runners/502 --silent
+[1;36m[runners][0m DRY-RUN: gh_lane api -X DELETE orgs/acme/actions/runners/503 --silent
+[1;36m[runners][0m DRY-RUN: gh_lane api -X DELETE orgs/acme/actions/runners/504 --silent
+[1;36m[runners][0m DRY-RUN: gh_lane api -X DELETE orgs/acme/actions/runners/508 --silent
+[1;36m[runners][0m DRY-RUN: gh_lane api -X DELETE orgs/acme/actions/runners/509 --silent
+[1;36m[runners][0m DRY-RUN: rm -f @S/units/box-ci-listener.service @S/units/box-ci-listener-health.service @S/units/box-ci-listener-health.timer @S/units/box-ci@.service @S/units/box-ci.slice @S/units/box-ci-token-refresh.service @S/units/box-ci-token-refresh.timer @S/units/box-ci-image-build.service @S/units/box-ci-image-build.timer @S/units/box-ci-codex-keepalive.service @S/units/box-ci-codex-keepalive.timer @S/units/box-ci-store-reaper.service @S/units/box-ci-store-reaper.timer @S/units/box.slice @S/units/box-ci-ci@.service @S/units/box-ci-qae@.service
+[1;36m[runners][0m DRY-RUN: rm -f @S/etc/box-ci/codex-config.toml
+[1;36m[runners][0m DRY-RUN: systemctl daemon-reload
+[1;36m[runners][0m DRY-RUN: rm -rf @S/run
+[1;36m[runners][0m DRY-RUN: rm -f @S/healthrun/box-ci-listener-health @S/healthrun/box-ci-listener-health.restarted
+[1;36m[runners][0m DRY-RUN: rm -f @S/lib/box-ci/listener @S/lib/box-ci/listener.sha256 @S/etc/box-ci/listener.json
+[1;36m[runners][0m DRY-RUN: docker network rm box-ci
+[1;36m[runners][0m Left in place: the host's Docker and Sysbox, @SUNIT-state-store.mount (@S/state/store.img) with its preloaded stores, the runner image, the App key (@S/etc/box-ci/app.pem), the lane user box-ci and its Codex stores @S/state/codex, and the lane firewall rules (inert without box-ci0).
+[1;36m[runners][0m done
+--- commands
+runuser -u box-ci
+gh api orgs/acme/actions/runners --paginate --jq .runners[] | select(.name | startswith("box-lane-") and (ltrimstr("box-lane-") | test("^((ci|qae|wait)-)?[0-9]+-[0-9]+$"))) | "acme \(.id) \(.name) \(.status) \(.busy)" [GH_CONFIG_DIR=@S/state/home/.config/gh GH_TOKEN=unset as=box-ci]
+docker network inspect box-ci
+--- files
+file 644 @S/units/box-ci-ci@.service
+file 644 @S/units/box-ci-codex-keepalive.service
+file 644 @S/units/box-ci-codex-keepalive.timer
+file 644 @S/units/box-ci-image-build.service
+file 644 @S/units/box-ci-image-build.timer
+file 644 @S/units/box-ci-listener-health.service
+file 644 @S/units/box-ci-listener-health.timer
+file 644 @S/units/box-ci-listener.service
+file 644 @S/units/box-ci-qae@.service
+file 644 @S/units/box-ci-store-reaper.service
+file 644 @S/units/box-ci-store-reaper.timer
+file 644 @S/units/box-ci-token-refresh.service
+file 644 @S/units/box-ci-token-refresh.timer
+file 644 @S/units/box-ci.slice
+file 644 @S/units/box.slice
+dir 775 @S/units/multi-user.target.wants
+other @S/units/multi-user.target.wants/box-ci-codex-keepalive.timer
+other @S/units/multi-user.target.wants/box-ci-image-build.timer
+other @S/units/multi-user.target.wants/box-ci-listener-health.timer
+other @S/units/multi-user.target.wants/box-ci-listener.service
+other @S/units/multi-user.target.wants/box-ci-store-reaper.timer
+other @S/units/multi-user.target.wants/box-ci-token-refresh.timer
+file 644 @S/units/@SUNIT-state-store.mount
+dir 700 @S/etc/box-ci
+file 600 @S/etc/box-ci/app.pem
+file 644 @S/etc/box-ci/codex-config.toml
+file 600 @S/etc/box-ci/listener.json
+dir 755 @S/lib/box-ci
+file 755 @S/lib/box-ci/listener
+file 664 @S/lib/box-ci/listener.sha256
+dir 700 @S/state/codex
+file 664 @S/state/codex/auth.json
+dir 775 @S/state/home
+dir 775 @S/state/home/.cache
+dir 775 @S/state/home/.cache/rosetta
+dir 775 @S/state/home/.config
+dir 775 @S/state/home/.config/gh
+file 664 @S/state/home/.config/gh/hosts.yml
+file 664 @S/state/image.env
+dir 700 @S/state/store
+file 664 @S/state/store.img
+dir 775 @S/state/store/golden-tag1
+dir 775 @S/state/store/golden-tag1/image
+dir 775 @S/state/store/golden-tag1/image/overlay2
+file 664 @S/state/store/golden-tag1/image/overlay2/repositories.json
+dir 775 @S/state/store/golden-tag1/overlay2
+dir 775 @S/state/store/golden-tag1/overlay2/l
+dir 775 @S/state/store/golden-tag1/overlay2/layer1
+dir 775 @S/state/store/golden-tag1/overlay2/layer1/diff
+dir 775 @S/state/store/golden-tag1/overlay2/layer1/diff/usr
+dir 775 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin
+file 664 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin/postgres
+dir 700 @S/state/store/trash
+dir 775 @S/run/2
+file 664 @S/run/2/name
+dir 775 @S/run/ci
+dir 775 @S/run/ci/1
+file 664 @S/run/ci/1/job

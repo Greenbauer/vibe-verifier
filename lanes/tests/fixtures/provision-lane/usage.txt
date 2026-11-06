@@ -1,0 +1,33 @@
+exit 0
+--- output
+usage: @S/repo/bin/provision-lane.sh <host> <lane> [--check | --apply | --remove [--apply] | --convert-store [--apply]]
+
+<host> names hosts/<host>.yml in the values checkout and <lane> one of its lanes. Default is dry-run
+planning. --apply converges the lane. --check is read-only (its smoke proofs start one throwaway
+container and remove it) and exits non-zero until the lane is converged. --remove plans the
+teardown; --remove --apply performs it. --convert-store plans the move of the lane's store from XFS
+to btrfs, for a lane whose host file says store_fs: btrfs; --convert-store --apply makes it, and
+the lane takes no job meanwhile.
+--- commands
+
+--- files
+dir 700 @S/etc/box-ci
+file 600 @S/etc/box-ci/app.pem
+file 664 @S/state/image.env
+dir 775 @S/state/store
+dir 775 @S/state/store/golden-tag1
+dir 775 @S/state/store/golden-tag1/image
+dir 775 @S/state/store/golden-tag1/image/overlay2
+file 664 @S/state/store/golden-tag1/image/overlay2/repositories.json
+dir 775 @S/state/store/golden-tag1/overlay2
+dir 775 @S/state/store/golden-tag1/overlay2/l
+dir 775 @S/state/store/golden-tag1/overlay2/layer1
+dir 775 @S/state/store/golden-tag1/overlay2/layer1/diff
+dir 775 @S/state/store/golden-tag1/overlay2/layer1/diff/usr
+dir 775 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin
+file 664 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin/postgres
+dir 775 @S/run/2
+file 664 @S/run/2/name
+dir 775 @S/run/ci
+dir 775 @S/run/ci/1
+file 664 @S/run/ci/1/job

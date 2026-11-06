@@ -1,0 +1,147 @@
+exit 0
+--- output
+[1;36m[runners][0m host=box lane=box-ci scope=org owner=acme kinds=[ci qae] slots=2 group=box-ci repos=[alpha beta] apply=0 check=1 remove=0 convert_store=0
+[1;36m[runners][0m Check mode: host=box lane=box-ci scope=org owner=acme kinds=[ci qae] slots=2 image=box-ci-runner
+network=box-ci bridge=box-ci0 icc=false subnet=172.20.0.0/16 gateway=172.20.0.1
+firewall docker_user_reject=present input_reject=present
+store_fs=mounted (/dev/loop8 btrfs 40G) mount_unit=enabled
+disk free=62G lane_worst_case=60G (store 40G + 2 slots x 10G, all sparse)
+store_trash=@S/state/store/trash entries=0 oldest_age_s=none
+store_reaper_timer=box-ci-store-reaper.timer active
+store_reaper=box-ci-store-reaper.service inactive
+slice=box-ci.slice MemoryMax=17179869184 MemoryHigh=15032385536 CPUQuotaPerSecUSec=8s CPUWeight=50
+parent_slice=box.slice CPUWeight=50
+template=box-ci-ci@.service current running=1
+template=box-ci-qae@.service current running=none
+always_on_template=absent
+helper=@ROOT/bin/lane-slot.sh
+app_key=@S/etc/box-ci/app.pem present mode=0600
+listener_binary=@S/lib/box-ci/listener current (source c21616a312b7c2ee2885d7093ba78425b2dbfa99ed2d8b91084b0b26f975e8dd)
+listener_config=@S/etc/box-ci/listener.json parseable
+listener=active journal_newest_line_age_s=@N
+listener_health_timer=box-ci-listener-health.timer active
+listener_health=absent (the timer has not run yet)
+warm_pool=1 slots hold a job file (min_runners 1)
+token_timer=box-ci-token-refresh.timer active
+image_build_timer=box-ci-image-build.timer active
+token_file=@S/state/home/.config/gh/hosts.yml younger than 15 minutes
+codex_config=@S/etc/box-ci/codex-config.toml current
+codex_keepalive_timer=box-ci-codex-keepalive.timer active
+codex_keepalive=box-ci-codex-keepalive.service inactive
+codex_login=@S/state/codex/auth.json present last_refresh=@TIME age_days=0.0
+image=box-ci-runner:tag1 present created=@TIME
+store=@S/state/store/golden-tag1 present size=28K
+runner_group=box-ci id=7 repositories=alpha beta
+registrations online=1 busy=1 offline=4 offline_leftovers=box-lane-1-1727000000 box-lane-ci-2-1727002100 
+smoke store_snapshot_s=@N (btrfs snapshot of @S/state/store/golden-tag1)
+smoke container-ready ok @EPOCH
+smoke net-gateway-22 ok unreachable
+smoke net-gateway-54321 ok unreachable
+smoke net-gateway-54322 ok unreachable
+smoke net-public-22 ok unreachable
+smoke net-public-54321 ok unreachable
+smoke net-public-54322 ok unreachable
+smoke net-tailnet-22 ok unreachable
+smoke net-tailnet-54321 ok unreachable
+smoke net-tailnet-54322 ok unreachable
+smoke net-metadata ok 169.254.169.254:80 unreachable
+smoke net-github ok github.com resolves and answers on 443
+smoke write-etc ok refuses uid 1001
+smoke write-usr ok refuses uid 1001
+smoke write-opt ok refuses uid 1001
+smoke write-var ok refuses uid 1001
+smoke write-root ok refuses uid 1001
+smoke write-home/runner ok writable
+smoke write-tmp ok writable
+smoke cpus ok nproc=4
+smoke tmp-exec ok a job can execute from /tmp
+smoke psql ok psql (PostgreSQL) 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)
+smoke inner-docker ok 29.5.2 overlay2
+smoke supabase-alpha ok started in 41s
+smoke inner-pulls ok 0 image pulls across 1 preloaded project(s)
+smoke container_ready_s=@N (docker run to first line; the store is mounted, so Sysbox copies nothing)
+smoke=PASS
+--- commands
+docker info --format {{json .Runtimes}}
+docker network inspect box-ci --format {{index .Options "com.docker.network.bridge.name"}} {{index .Options "com.docker.network.bridge.enable_icc"}} {{(index .IPAM.Config 0).Subnet}} {{(index .IPAM.Config 0).Gateway}}
+systemctl is-enabled @SUNIT-state-store.mount
+df @S/state
+systemctl is-active box-ci-store-reaper.timer
+systemctl is-active box-ci-store-reaper.service
+systemctl show box-ci.slice -p MemoryMax -p MemoryHigh -p CPUQuotaPerSecUSec -p CPUWeight
+systemctl show box.slice -p CPUWeight --value
+systemctl is-active box-ci-ci@1.service
+systemctl is-active box-ci-ci@2.service
+systemctl is-active box-ci-qae@1.service
+systemctl is-active box-ci-qae@2.service
+systemctl is-active box-ci-listener.service
+systemctl is-active box-ci-listener-health.timer
+systemctl is-active box-ci-token-refresh.timer
+systemctl is-active box-ci-image-build.timer
+systemctl is-active box-ci-codex-keepalive.timer
+systemctl is-active box-ci-codex-keepalive.service
+docker image inspect box-ci-runner:tag1 --format {{.Created}}
+runuser -u box-ci
+gh api orgs/acme/actions/runner-groups --paginate --jq .runner_groups[] | select(.name == "box-ci") | .id [GH_CONFIG_DIR=@S/state/home/.config/gh GH_TOKEN=unset as=box-ci]
+runuser -u box-ci
+gh api orgs/acme/actions/runner-groups/7/repositories --paginate --jq .repositories[].name [GH_CONFIG_DIR=@S/state/home/.config/gh GH_TOKEN=unset as=box-ci]
+runuser -u box-ci
+gh api orgs/acme/actions/runners --paginate --jq .runners[] | select(.name | startswith("box-lane-") and (ltrimstr("box-lane-") | test("^((ci|qae|wait)-)?[0-9]+-[0-9]+$"))) | "acme \(.id) \(.name) \(.status) \(.busy)" [GH_CONFIG_DIR=@S/state/home/.config/gh GH_TOKEN=unset as=box-ci]
+btrfs subvolume snapshot @S/state/store/golden-tag1 @S/state/store/smoke-@PID
+docker run --rm -i --runtime=sysbox-runc --network box-ci --cgroup-parent box-ci.slice --memory 4g --pids-limit 2048 --tmpfs /tmp:size=2g,exec --oom-score-adj 1000 --dns 1.1.1.1 --dns 8.8.8.8 --cpuset-cpus 0-3 -e KNOWN_CI_CPUS=4 --tmpfs /home/runner:size=1g -v @S/state/store/smoke-@PID:/var/lib/docker --name box-ci-smoke-@PID --entrypoint /bin/bash box-ci-runner:tag1 -s -- 172.20.0.1 203.0.113.7 100.64.0.9 22 54321 54322
+btrfs subvolume delete @S/state/store/smoke-@PID
+--- files
+file 644 @S/units/box-ci-ci@.service
+file 644 @S/units/box-ci-codex-keepalive.service
+file 644 @S/units/box-ci-codex-keepalive.timer
+file 644 @S/units/box-ci-image-build.service
+file 644 @S/units/box-ci-image-build.timer
+file 644 @S/units/box-ci-listener-health.service
+file 644 @S/units/box-ci-listener-health.timer
+file 644 @S/units/box-ci-listener.service
+file 644 @S/units/box-ci-qae@.service
+file 644 @S/units/box-ci-store-reaper.service
+file 644 @S/units/box-ci-store-reaper.timer
+file 644 @S/units/box-ci-token-refresh.service
+file 644 @S/units/box-ci-token-refresh.timer
+file 644 @S/units/box-ci.slice
+file 644 @S/units/box.slice
+dir 775 @S/units/multi-user.target.wants
+other @S/units/multi-user.target.wants/box-ci-codex-keepalive.timer
+other @S/units/multi-user.target.wants/box-ci-image-build.timer
+other @S/units/multi-user.target.wants/box-ci-listener-health.timer
+other @S/units/multi-user.target.wants/box-ci-listener.service
+other @S/units/multi-user.target.wants/box-ci-store-reaper.timer
+other @S/units/multi-user.target.wants/box-ci-token-refresh.timer
+file 644 @S/units/@SUNIT-state-store.mount
+dir 700 @S/etc/box-ci
+file 600 @S/etc/box-ci/app.pem
+file 644 @S/etc/box-ci/codex-config.toml
+file 600 @S/etc/box-ci/listener.json
+dir 755 @S/lib/box-ci
+file 755 @S/lib/box-ci/listener
+file 664 @S/lib/box-ci/listener.sha256
+dir 700 @S/state/codex
+file 664 @S/state/codex/auth.json
+dir 775 @S/state/home
+dir 775 @S/state/home/.cache
+dir 775 @S/state/home/.cache/rosetta
+dir 775 @S/state/home/.config
+dir 775 @S/state/home/.config/gh
+file 664 @S/state/home/.config/gh/hosts.yml
+file 664 @S/state/image.env
+dir 700 @S/state/store
+file 664 @S/state/store.img
+dir 775 @S/state/store/golden-tag1
+dir 775 @S/state/store/golden-tag1/overlay2
+dir 775 @S/state/store/golden-tag1/overlay2/layer1
+dir 775 @S/state/store/golden-tag1/overlay2/layer1/diff
+dir 775 @S/state/store/golden-tag1/overlay2/layer1/diff/usr
+dir 775 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin
+file 664 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin/postgres
+dir 700 @S/state/store/trash
+dir 775 @S/run/2
+file 664 @S/run/2/name
+dir 775 @S/run/ci
+dir 775 @S/run/ci/1
+file 664 @S/run/ci/1/job
