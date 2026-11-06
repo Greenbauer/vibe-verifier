@@ -9,6 +9,9 @@
 # A deliberate change records the new copies with UPDATE_PLAN_FIXTURES=1, and the diff of the
 # fixtures shows what changed.
 set -u
+# The modes of the files a run leaves are pinned, so they must not depend on the caller's umask: 022,
+# root's, as on the machines.
+umask 022
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=lib/provision-lane-harness.sh
 . "$ROOT/tests/lib/provision-lane-harness.sh"
@@ -120,6 +123,8 @@ plan btrfs-check run_org --check
 conversion_fixture
 plan convert-dry-run run_convert
 unset IMAGES_ABSENT
+
+[ "$fail" -eq 0 ]; expect $? "every recorded run is unchanged: exit code, output, stubbed commands and files left"
 
 echo "provision-lane-plan-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

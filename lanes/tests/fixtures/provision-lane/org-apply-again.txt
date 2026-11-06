@@ -371,7 +371,7 @@ file 644 @S/units/box.slice
   | 
   | [Slice]
   | CPUWeight=50
-dir 775 @S/units/multi-user.target.wants
+dir 755 @S/units/multi-user.target.wants
 other @S/units/multi-user.target.wants/box-ci-codex-keepalive.timer
 other @S/units/multi-user.target.wants/box-ci-image-build.timer
 other @S/units/multi-user.target.wants/box-ci-listener-health.timer
@@ -452,32 +452,32 @@ dir 755 @S/lib/box-ci
 file 755 @S/lib/box-ci/listener
   | #!/bin/bash
   | echo "listener $*" >> "$CALLLOG"
-file 664 @S/lib/box-ci/listener.sha256
+file 644 @S/lib/box-ci/listener.sha256
   | c21616a312b7c2ee2885d7093ba78425b2dbfa99ed2d8b91084b0b26f975e8dd
 dir 700 @S/state/codex
-dir 775 @S/state/home
-dir 775 @S/state/home/.cache
-dir 775 @S/state/home/.cache/rosetta
-dir 775 @S/state/home/.config
-dir 775 @S/state/home/.config/gh
-file 664 @S/state/home/.config/gh/hosts.yml
-file 664 @S/state/image.env
+dir 755 @S/state/home
+dir 755 @S/state/home/.cache
+dir 755 @S/state/home/.cache/rosetta
+dir 755 @S/state/home/.config
+dir 755 @S/state/home/.config/gh
+file 644 @S/state/home/.config/gh/hosts.yml
+file 644 @S/state/image.env
 dir 700 @S/state/store
-file 664 @S/state/store.img
-dir 775 @S/state/store/golden-tag1
-dir 775 @S/state/store/golden-tag1/image
-dir 775 @S/state/store/golden-tag1/image/overlay2
-file 664 @S/state/store/golden-tag1/image/overlay2/repositories.json
-dir 775 @S/state/store/golden-tag1/overlay2
-dir 775 @S/state/store/golden-tag1/overlay2/l
-dir 775 @S/state/store/golden-tag1/overlay2/layer1
-dir 775 @S/state/store/golden-tag1/overlay2/layer1/diff
-dir 775 @S/state/store/golden-tag1/overlay2/layer1/diff/usr
-dir 775 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin
-file 664 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin/postgres
+file 644 @S/state/store.img
+dir 755 @S/state/store/golden-tag1
+dir 755 @S/state/store/golden-tag1/image
+dir 755 @S/state/store/golden-tag1/image/overlay2
+file 644 @S/state/store/golden-tag1/image/overlay2/repositories.json
+dir 755 @S/state/store/golden-tag1/overlay2
+dir 755 @S/state/store/golden-tag1/overlay2/l
+dir 755 @S/state/store/golden-tag1/overlay2/layer1
+dir 755 @S/state/store/golden-tag1/overlay2/layer1/diff
+dir 755 @S/state/store/golden-tag1/overlay2/layer1/diff/usr
+dir 755 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin
+file 644 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin/postgres
 dir 700 @S/state/store/trash
-dir 775 @S/run/2
-file 664 @S/run/2/name
-dir 775 @S/run/ci
-dir 775 @S/run/ci/1
-file 664 @S/run/ci/1/job
+dir 755 @S/run/2
+file 644 @S/run/2/name
+dir 755 @S/run/ci
+dir 755 @S/run/ci/1
+file 644 @S/run/ci/1/job
