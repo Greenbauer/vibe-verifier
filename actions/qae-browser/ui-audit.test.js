@@ -134,6 +134,8 @@ test("the audit is self-contained: run as the page script on an empty page, it n
   assert.ok(hook.script.includes("function nameRules("));   // and so does the duplicate-name rule
   assert.strictEqual(typeof require("./wrap-page.js"), "function");
   assert.ok(hook.script.includes("function wrapRules("));   // and so does the wrapped-label rule
+  assert.strictEqual(typeof require("./scroll-page.js"), "function");
+  assert.ok(hook.script.includes("function scrollRules("));   // and so does the table-scroll rule
   assert.strictEqual(JSON.stringify(vm.runInNewContext(hook.script, { document: page, getComputedStyle: () => ({}) })), "[]");
 });
 

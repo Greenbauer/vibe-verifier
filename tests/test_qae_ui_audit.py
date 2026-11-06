@@ -19,7 +19,7 @@ from helpers import ROOT, commit, gate, git, make_repo
 HOOK = ROOT / "actions" / "qae-browser" / "ui-audit.js"
 FIXTURES = ROOT / "tests" / "fixtures" / "ui-audit"
 RULES = ["clipped-text", "clipped-value", "duplicate-name", "edge", "field-stagger", "glyph-off-center", "long-sentence", "raw-value",
-         "row-height", "row-stagger", "spinner-off-center", "text-wall", "touching", "wrapped-label"]
+         "row-height", "row-stagger", "spinner-off-center", "table-scroll", "text-wall", "touching", "wrapped-label"]
 
 
 def line(rule, at="td > div > button", page="https://site.test/quotes", width=1280, **extra):
@@ -170,8 +170,14 @@ const hook = require(process.env.HOOK);
     await page.goto("file://" + process.env.FIXTURES + "/" + name + ".html");
     const found = await page.evaluate(hook.script);
     out[name] = [...new Set(found.map(f => f.rule))].sort();
+    out[name + "-table-scroll"] = found.filter(f => f.rule === "table-scroll").length;
     out[name + "-details"] = found.filter(f => ["raw-value", "touching", "glyph-off-center", "duplicate-name", "wrapped-label"].includes(f.rule)).map(f => f.rule + ": " + f.text + (f.rule === "duplicate-name" ? " / " + f.other : ""));
     await page.close();
+    // At a phone's width a wide table has no room to take, so it may scroll.
+    const phone = await browser.newPage({ viewport: { width: 375, height: 800 } });
+    await phone.goto("file://" + process.env.FIXTURES + "/" + name + ".html");
+    out[name + "-375-table-scroll"] = (await phone.evaluate(hook.script)).filter(f => f.rule === "table-scroll").length;
+    await phone.close();
   }
   // The hook in a real page: it measures after the load, and again the moment a button gains a spinner.
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -228,6 +234,12 @@ class Browser(unittest.TestCase):
         # that ends in "Segoe UI Symbol", as Tailwind's and Bootstrap's do (no icon font). good.html keeps the pill on
         # one line, puts an upload button's icon (an svg, then an icon font's ligature) above its label by design, has a pill of a
         # sentence, which may wrap, and an icon button whose name only a screen reader reads.
+        # A table that scrolls beside 890px of empty card is flagged; good.html's tables wider than the page, beside a card that fills
+        # the row (in a flex row, or a display:contents wrapper in a grid), in a dialog's panel, or in a box that scrolls for a log
+        # line beside a table that fits, are not, and at a phone's width nothing is.
+        # bad.html's three: in a card, behind a narrow first table in the same box, and in an app's fixed main region.
+        self.assertEqual(measured["bad-table-scroll"], 3)
+        self.assertEqual((measured["bad-375-table-scroll"], measured["good-375-table-scroll"]), (0, 0))
         self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("wrapped-label")),
                          ["wrapped-label: 12.5%", "wrapped-label: Save draft"])
         record = [json.loads(x) for x in Path(out, "ui-audit.jsonl").read_text().splitlines()]
