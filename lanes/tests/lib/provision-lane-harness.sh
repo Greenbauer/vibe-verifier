@@ -90,6 +90,7 @@ setup() {
   install -d -m 0700 "$S/etc/box-ci"
   cp "$ROOT/bin/provision-lane.sh" "$ROOT/bin/lane-smoke.sh" "$ROOT/bin/lane-slot.sh" "$S/repo/bin/"
   cp "$ROOT"/lib/*.py "$ROOT/lib/provision.sh" "$S/repo/lib/"
+  cp -R "$ROOT/lib/provision-lane" "$S/repo/lib/"
   # The listener's module, as far as the build hash reads it, and a build.sh that "builds" a stand-in
   # binary which records how it was run.
   L="$S/repo/listener"
