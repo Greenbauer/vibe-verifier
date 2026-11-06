@@ -30,6 +30,8 @@
 //     duplicate-name      two buttons a person can press in one dialog or form whose names are the same,
 //                         or one the other with words added (name-page.js); buttons of different rows
 //                         of one list or table are told apart by their rows
+//     wrapped-label       a label of four words or fewer in a pill, badge, button or tab that takes more than one
+//                         line (wrap-page.js); a pill's icon above its text counts, a button's does not
 //
 // Side by side means laid out by one flex or grid row within four levels of both, so a header's
 // button and a search field in the page below it are never compared. A control is measured as
@@ -278,6 +280,7 @@ function audit() {
   clippedValueRules(add);
   glyphRules(add);
   nameRules(add);
+  wrapRules(add);
   return findings;
 }
 
