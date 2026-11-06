@@ -42,7 +42,8 @@ sort_copies() {
 }
 
 # Every file under the lane's directories: its path and mode, and with $1 = contents the content of
-# each unit, config and listener file.
+# each unit, config and listener file. A .cache directory is skipped: the script writes none, and
+# Rosetta (an amd64 container on an arm64 Mac) makes one under the lane user's home.
 files_left() {
   local dir f
   for dir in units etc lib state run healthrun; do
@@ -56,7 +57,7 @@ files_left() {
       else
         echo "other $f"
       fi
-    done < <(find "$S/$dir" -mindepth 1 | LC_ALL=C sort)
+    done < <(find "$S/$dir" -mindepth 1 -name .cache -prune -o -print | LC_ALL=C sort)
   done
 }
 

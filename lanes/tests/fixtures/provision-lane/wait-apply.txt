@@ -414,8 +414,6 @@ file 755 @S/lib/orbit-ci/listener
 file 644 @S/lib/orbit-ci/listener.sha256
   | c21616a312b7c2ee2885d7093ba78425b2dbfa99ed2d8b91084b0b26f975e8dd
 dir 755 @S/state/home
-dir 755 @S/state/home/.cache
-dir 755 @S/state/home/.cache/rosetta
 dir 755 @S/state/home/.config
 dir 755 @S/state/home/.config/gh
 file 644 @S/state/home/.config/gh/hosts.yml

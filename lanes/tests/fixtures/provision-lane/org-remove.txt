@@ -95,8 +95,6 @@ dir 755 @S/lib/box-ci
 dir 700 @S/state/codex
 file 644 @S/state/codex/auth.json
 dir 755 @S/state/home
-dir 755 @S/state/home/.cache
-dir 755 @S/state/home/.cache/rosetta
 dir 755 @S/state/home/.config
 dir 755 @S/state/home/.config/gh
 file 644 @S/state/home/.config/gh/hosts.yml
