@@ -1,0 +1,8 @@
+<!doctype html><meta charset=utf-8>
+<!-- A quote page whose two-column grid stops at 1180px: at 1280 its lane table has no room to take, at 1920 it scrolls beside 700px of empty page (tests/test_qae_ui_audit.py). --><style>
+body{margin:0;background:#111;color:#eee;font:14px sans-serif}
+main{display:block;padding:0 20px}
+.grid{max-width:1180px;display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:12px}
+.card{border:1px solid #333;border-radius:8px;padding:16px}
+</style>
+<main><div class=grid><div class=card><div style="overflow-x:auto"><table style="min-width:900px"><tr><th>Lane</th><th>Equipment</th><th>Amount</th></tr><tr><td>Dock to depot</td><td>Box</td><td>$2,228.57</td></tr></table></div></div><aside class=card>Quote total $2,228.57</aside></div></main>

@@ -201,6 +201,18 @@ const hook = require(process.env.HOOK);
   for (let waited = 0; waited < 5000 && !require("fs").readFileSync(recorded, "utf8").includes("spinner-off-center"); waited += 100) {
     await page.waitForTimeout(100);
   }
+  // A page whose table scrolls beside room only in a wide window: walked at 1280, the hook measures it again at 1920.
+  const wideOut = process.env.OUT + "-wide";
+  const narrow = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  process.argv = ["node", "cli.js", "--output-dir", wideOut];
+  await hook.default({ page: narrow });
+  await narrow.goto("file://" + process.env.FIXTURES + "/wide.html");
+  const wideRecord = require("path").join(wideOut, "ui-audit.jsonl");
+  for (let waited = 0; waited < 15000 && !require("fs").readFileSync(wideRecord, "utf8").includes("table-scroll"); waited += 200) {
+    await narrow.waitForTimeout(200);
+  }
+  out.wide = require("fs").readFileSync(wideRecord, "utf8").split("\n").filter(Boolean).map(JSON.parse).map(x => [x.rule, x.width]);
+  out.pages = browser.contexts().reduce((n, c) => n + c.pages().length, 0);
   await browser.close();
   console.log(JSON.stringify(out));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -253,6 +265,10 @@ class Browser(unittest.TestCase):
         self.assertEqual((measured["bad-375-table-scroll"], measured["good-375-table-scroll"]), (0, 0))
         self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("wrapped-label")),
                          ["wrapped-label: 12.5%", "wrapped-label: Save draft"])
+        # Walked at 1280 the wide fixture's table has no room and is clean; the hook's own 1920 window finds it, and that
+        # window is closed again: only the tabs the test opened remain.
+        self.assertEqual(measured["wide"], [["table-scroll", 1920]])
+        self.assertEqual(measured["pages"], 2)
         record = [json.loads(x) for x in Path(out, "ui-audit.jsonl").read_text().splitlines()]
         self.assertEqual([x["rule"] for x in record], ["spinner-off-center"])
         self.assertTrue(record[0]["page"].endswith("/good.html"))
