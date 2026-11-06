@@ -339,12 +339,9 @@ container_flags() {
 }
 
 # A kind's instance count and container memory: the wait kind's own (the lane's wait block, a budget
-# apart from `slots`), QAE's own (qae_concurrency, with qae_own_slots), the lane's for every other kind.
-kind_slots() {
-  if [ "$1" = wait ]; then printf '%s' "$WAIT_SLOTS"
-  elif [ "$1" = qae ] && [ -n "$QAE_OWN_SLOTS" ]; then printf '%s' "$QAE_CONCURRENCY"
-  else printf '%s' "$SLOTS"; fi
-}
+# apart from `slots`), QAE's (lib/lane_model.py kind_slots: qae_concurrency with qae_own_slots, else
+# `slots`), the lane's for every other kind.
+kind_slots() { case "$1" in wait) printf '%s' "$WAIT_SLOTS" ;; qae) printf '%s' "$QAE_SLOTS" ;; *) printf '%s' "$SLOTS" ;; esac; }
 kind_memory() { if [ "$1" = wait ]; then printf '%s' "$WAIT_MEMORY"; else printf '%s' "$CONTAINER_MEMORY"; fi; }
 
 # A job sees CPUS_PER_JOB cores, like a GitHub-hosted ubuntu runner's 4 vCPU: without a cpuset every
@@ -1567,7 +1564,7 @@ check_storage() {
   dir="$STATE_DIR"
   [ -d "$dir" ] || dir="$(dirname "$dir")"
   free="$(df -BG --output=avail "$dir" 2>/dev/null | tail -n 1 | tr -dc '0-9')"
-  local all=$(( SLOTS + WAIT_SLOTS + ${QAE_OWN_SLOTS:+QAE_CONCURRENCY} + 0 ))
+  local all=$(( SLOTS + WAIT_SLOTS + ${QAE_OWN_SLOTS:+QAE_SLOTS} + 0 ))
   worst=$(( STORE_GB + all * SLOT_GB ))
   printf 'disk free=%sG lane_worst_case=%sG (store %sG + %s slots x %sG, all sparse)\n' "${free:-?}" "$worst" "$STORE_GB" "$all" "$SLOT_GB"
   if [ -n "$free" ] && [ "$free" -lt "$worst" ]; then
@@ -1852,7 +1849,7 @@ check_smoke() {
 }
 
 check_report() {
-  log "Check mode: host=$HOST lane=$NAME scope=$SCOPE owner=$OWNER kinds=[$KINDS] slots=$SLOTS${QAE_OWN_SLOTS:+ qae_slots=$QAE_CONCURRENCY}${WAIT_LABEL:+ wait_slots=$WAIT_SLOTS} image=$IMAGE"
+  log "Check mode: host=$HOST lane=$NAME scope=$SCOPE owner=$OWNER kinds=[$KINDS] slots=$SLOTS${QAE_OWN_SLOTS:+ qae_slots=$QAE_SLOTS}${WAIT_LABEL:+ wait_slots=$WAIT_SLOTS} image=$IMAGE"
   check_network
   check_storage
   check_units
@@ -1863,7 +1860,7 @@ check_report() {
   [ "$fail" = 0 ]
 }
 
-log "host=$HOST lane=$NAME scope=$SCOPE owner=$OWNER kinds=[$KINDS] slots=$SLOTS${QAE_OWN_SLOTS:+ qae_slots=$QAE_CONCURRENCY}${WAIT_LABEL:+ wait_slots=$WAIT_SLOTS}${GROUP:+ group=$GROUP repos=[$REPOS]}${EXCLUDE:+ exclude=[$EXCLUDE]} apply=$APPLY check=$CHECK remove=$REMOVE convert_store=$CONVERT"
+log "host=$HOST lane=$NAME scope=$SCOPE owner=$OWNER kinds=[$KINDS] slots=$SLOTS${QAE_OWN_SLOTS:+ qae_slots=$QAE_SLOTS}${WAIT_LABEL:+ wait_slots=$WAIT_SLOTS}${GROUP:+ group=$GROUP repos=[$REPOS]}${EXCLUDE:+ exclude=[$EXCLUDE]} apply=$APPLY check=$CHECK remove=$REMOVE convert_store=$CONVERT"
 take_apply_lock
 repair_gh_config
 trap repair_gh_config EXIT

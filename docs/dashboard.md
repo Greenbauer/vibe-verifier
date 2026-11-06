@@ -432,7 +432,7 @@ the timeline draws.
   with no job, the dashed outline the rest (free). A red mark above a bar means jobs waited for a
   runner during it. A hatched bar had no samples (the collector was down, or the samples predate this
   history). The last bar is the period still filling. Hover a bar for its numbers.
-- **Runners now**, in two pools. **Runner slots** (`5 of 8 in use`) hold two kinds: **Build and
+- **Runners now**, in two pools (three when AI QA has slots of its own, below). **Runner slots** (`5 of 8 in use`) hold two kinds: **Build and
   test** (the repositories' CI jobs) and **AI QA** (the QA explorer against a preview; each slot has
   its own Codex login, and the line under it gives the at-most count). On a lane whose AI QA has
   slots of its own (the lane's `qae_own_slots`), **AI QA slots** (`3 of 8 in use`) is a pool of its

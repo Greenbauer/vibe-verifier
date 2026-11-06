@@ -6,7 +6,7 @@ import json
 import lane_fixtures
 from lane_fixtures import DASH, ORG, ROOT, USER, WAIT, check, host_file, without
 from lane_load import load_host
-from lane_render import collector_config, dashboard_config, dashboard_merge_policy, dashboard_settings, listener_config
+from lane_render import collector_config, dashboard_config, dashboard_merge_policy, dashboard_settings, lane_settings, listener_config
 
 org, user = load_host(host_file(ORG, USER)).lanes
 short = load_host(host_file({**ORG, "warm_max_age_sec": 600})).lanes[0]
@@ -34,6 +34,9 @@ ac = json.loads(listener_config(apart))
 check((ac["kinds"]["qae"]["slots"], len(ac["kinds"]["qae"]["requires_files"]), ac["budget"]) == (2, 2, {"slots": 3, "min_runners": 2, "qae_concurrency": 2}),
       "qae_own_slots gives the qae set its own budget, one slot per Codex store, beside the shared slots ci keeps")
 check("slots" not in oc["kinds"]["qae"], "without qae_own_slots the qae set has no budget of its own")
+box = load_host(host_file(ORG))
+check([(lane_settings(box, lane)["QAE_OWN_SLOTS"], lane_settings(box, lane)["QAE_SLOTS"]) for lane in (org, apart, ci_only)] == [("", 3), (1, 2), ("", 0)],
+      "the provisioner's qae instance count: one per shared slot, QAE's own pool with qae_own_slots, none without QAE")
 uc = json.loads(listener_config(user))
 check(uc["kinds"]["ci"]["labels"] == ["own-ci"] and uc["kinds"]["qae"]["labels"] == ["own-qae"], "a user lane's sets carry their one label each, so a bare self-hosted job matches neither")
 check(uc["repos"] == {"exclude": ["fleet"], "refresh_sec": 600} and uc["runner_group"] == "default" and uc["budget"]["min_runners"] == 0, "a user lane lists its installation every 10 minutes")

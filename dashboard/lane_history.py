@@ -176,8 +176,14 @@ def waits(previous_rows, raw_jobs, now):
 
 
 def shared_kinds(queue):
-    """The kinds in the runner slots: QAE leaves them when the listener names a QAE pool of its own."""
+    """The kinds in the runner slots: QAE leaves them when the queue names a QAE pool of its own."""
     return ("ci",) if queue and queue.get("qae_slots") else SHARED_KINDS
+
+
+def _pool(queue, previous):
+    """The queue to count the pools by; one that read none keeps the last history's QAE pool."""
+    last = (previous.get("history") or {}).get("qae_slots") if isinstance(previous.get("history"), dict) else 0
+    return queue or ({"qae_slots": last} if last else None)
 
 
 def _shared_rows(host, kinds):
@@ -187,7 +193,7 @@ def _shared_rows(host, kinds):
 
 
 def running_count(host, kinds=SHARED_KINDS):
-    """Shared-pool runners the host recorded a job on. The wait pool (and QAE's own) is not part of the budget."""
+    """Shared-pool runners the host recorded a job on; the wait pool and QAE's own are not counted."""
     return sum(1 for row in _shared_rows(host, kinds) if row.get("job_name"))
 
 
@@ -203,7 +209,7 @@ def _clean_sample(sample, cutoff):
     return {"observed_at": sample["observed_at"], "host": clean}
 
 
-def samples(previous, host, success, now, queue):
+def samples(previous, host, success, now, queue, pool=None):
     """The kept samples plus this refresh's when it succeeded, newest seven days."""
     cutoff = parse_time(now) - dt.timedelta(seconds=HISTORY_SECONDS)
     kept = []
@@ -214,7 +220,7 @@ def samples(previous, host, success, now, queue):
             continue
         if clean:
             kept.append(clean)
-    kinds = shared_kinds(queue)
+    kinds = shared_kinds(pool or queue)
     if success:
         kept.append({"observed_at": now, "host": {
             "cpu_busy_percent": host["cpu"]["busy_percent"],
@@ -349,7 +355,7 @@ def range_view(name, length, step, points, wait_rows, limit, now, occupied=(), k
             "wait": wait_summary([row for row in wait_rows if row["started_at"] >= format_time(now - dt.timedelta(seconds=length))])}
 
 
-def history(kept_samples, wait_rows, host, host_ok, queue, now_text):
+def history(kept_samples, wait_rows, host, host_ok, queue, now_text, pool=None):
     """What the dashboard reads: the shared pool's limit, the queue now, and the three ranges."""
     now = parse_time(now_text)
     slots = host.get("slots") if isinstance(host, dict) else None
@@ -361,8 +367,8 @@ def history(kept_samples, wait_rows, host, host_ok, queue, now_text):
     return {"observed_at": now_text, "limit": limit, "waiting_now": current.get("waiting"),
             "warm": queue["warm"] if queue else None, "warm_slots": current.get("warm_slots", []),
             "started": {runner: started[runner] for runner in occupied if runner in started},
-            "qae_slots": (queue or {}).get("qae_slots", 0),
-            "ranges": [range_view(name, length, step, points, wait_rows, limit, now, occupied, shared_kinds(queue))
+            "qae_slots": (pool or queue or {}).get("qae_slots", 0),
+            "ranges": [range_view(name, length, step, points, wait_rows, limit, now, occupied, shared_kinds(pool or queue))
                        for name, length, step in RANGES]}
 
 
@@ -371,6 +377,7 @@ def capture(previous, response, host, host_ok, now):
     raw = response.get("host") if host_ok and isinstance(response, dict) else None
     queue = project_queue(raw.get("queue")) if isinstance(raw, dict) else None
     previous = previous if isinstance(previous, dict) else {}
-    kept = samples(previous, host, host_ok, now, queue)
+    pool = _pool(queue, previous)
+    kept = samples(previous, host, host_ok, now, queue, pool)
     rows = waits(previous.get("waits"), raw.get("jobs") if isinstance(raw, dict) else None, parse_time(now))
-    return {"samples": kept, "waits": rows, "history": history(kept, rows, host, host_ok, queue, now)}
+    return {"samples": kept, "waits": rows, "history": history(kept, rows, host, host_ok, queue, now, pool)}

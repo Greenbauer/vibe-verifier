@@ -266,9 +266,12 @@ warm_slots      the slots the listener says the pool keeps (`ci-3`), as of its l
                 reconcile plus one collector refresh behind; empty after a failed refresh, an unread
                 queue, or from a listener that predates the list
 started         runner name to its job's start time, for the slots occupied now
-qae_slots       QAE's own pool from the queue, 0 while QAE shares the runner slots; when set, the
-                ranges' running, warm and idle time count CI's slots alone, and the Capacity view
-                shows AI QA as a pool of its own (dashboard/history_read.py reads it back)
+qae_slots       QAE's own pool, as the queue names it; a refresh that read no queue (the listener
+                writes it only after its first statistics) keeps the last history's. 0 while QAE
+                shares the runner slots. When set, every range's running, warm and idle time counts
+                CI's slots alone (so for up to a week after the change, samples from before it still
+                count QAE), and the Capacity view shows AI QA as a pool of its own
+                (dashboard/history_read.py reads it back)
 ranges[]        1h, 24h and 7d, in that order
   name, bucket_seconds (120, 1800, 10800), covered_hours
   buckets[]     30, 48 or 56 clock-aligned periods, the last one still filling: start, and when it

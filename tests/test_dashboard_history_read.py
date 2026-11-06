@@ -3,7 +3,7 @@ import json
 import unittest
 
 from dashboard import lane_history as LH
-from dashboard.collector_view import _qae_apart
+from dashboard.collector_view import _history, _qae_apart
 from dashboard.history_read import read_history
 from test_dashboard_lane_history import NOW, ago, allocated, sample, stamp
 
@@ -73,6 +73,31 @@ class QAEApart(unittest.TestCase):
                          ["on-demand-1", "on-demand-2", "on-demand-3"])
         self.assertEqual(lanes[-1], {"id": "on-demand-3", "state": "provisionable", "registered": False, "labels": []})
 
+
+    def test_a_refresh_that_read_no_queue_keeps_the_last_qae_pool(self):
+        host = {"slots": {"limit": 4, "occupied_count": 2, "remaining_on_demand": 2, "occupied": [
+            allocated("ci", 1, "a", "build"), allocated("qae", 1, "q1", "walk")]},
+            "cpu": {"busy_percent": 1}, "memory": {"available_bytes": 1}, "workspace": {"free_bytes": 1}}
+        previous = {"history": {"qae_slots": 3}}
+        state = LH.capture(previous, {"host": {"queue": None, "jobs": None}}, host, True, stamp(NOW))
+        self.assertEqual((state["history"]["qae_slots"], state["samples"][-1]["host"]["slots_occupied"]), (3, 1))
+        fresh = LH.capture({}, {"host": {"queue": None, "jobs": None}}, host, True, stamp(NOW))
+        self.assertEqual((fresh["history"]["qae_slots"], fresh["samples"][-1]["host"]["slots_occupied"]), (0, 2))
+
+    def test_a_published_qae_pool_reaches_the_view_and_free_slots_follow_the_listener(self):
+        def view(listener_state, qae_slots):
+            published = LH.history([sample(30, 1, 1)], [], {"slots": {"limit": 2, "occupied": []}}, True,
+                                   {"waiting": 0, "warm": 0, "warm_slots": [], **({"qae_slots": qae_slots} if qae_slots else {})}, stamp(NOW))
+            capacity = {"available": True, "limits": {"slots": 2}, "listener_state": listener_state,
+                        "lanes": [{"id": "qae-1", "labels": ["qae"]}]}
+            _history({"history": json.loads(json.dumps(published))}, capacity)
+            return capacity
+        shared = view("up", 0)
+        self.assertNotIn("qae_slots", shared["limits"])
+        self.assertEqual(len(shared["lanes"]), 1)
+        down = view("down", 3)
+        self.assertEqual(down["limits"]["qae_slots"], 3)
+        self.assertEqual([(lane["id"], lane["state"]) for lane in down["lanes"][1:]], [("on-demand-1", "unknown"), ("on-demand-2", "unknown")])
 
 if __name__ == "__main__":
     unittest.main()
