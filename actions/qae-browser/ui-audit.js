@@ -32,7 +32,7 @@ const path = require("path");
 // The audit as one script for page.evaluate: the file's functions inside a closure, so none of them
 // lands on the page's window, and the closure's value is the findings.
 const read = name => fs.readFileSync(path.join(__dirname, name), "utf8");
-const script = `(() => {\n${read("ui-audit-page.js")}\n${read("glyph-page.js")}\n${read("name-page.js")}\nreturn audit();\n})()`;
+const script = `(() => {\n${read("ui-audit-page.js")}\n${read("glyph-page.js")}\n${read("name-page.js")}\n${read("wrap-page.js")}\nreturn audit();\n})()`;
 // The copy record's finder, with the audit's helpers it uses (visible, cssPath) in the same closure.
 const copyScript = `(() => {\n${read("ui-audit-page.js")}\n${read("copy-page.js")}\nreturn copyBlocks();\n})()`;
 

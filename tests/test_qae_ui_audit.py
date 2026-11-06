@@ -19,7 +19,7 @@ from helpers import ROOT, commit, gate, git, make_repo
 HOOK = ROOT / "actions" / "qae-browser" / "ui-audit.js"
 FIXTURES = ROOT / "tests" / "fixtures" / "ui-audit"
 RULES = ["clipped-text", "clipped-value", "duplicate-name", "edge", "field-stagger", "glyph-off-center", "long-sentence", "raw-value",
-         "row-height", "row-stagger", "spinner-off-center", "text-wall", "touching"]
+         "row-height", "row-stagger", "spinner-off-center", "text-wall", "touching", "wrapped-label"]
 
 
 def line(rule, at="td > div > button", page="https://site.test/quotes", width=1280, **extra):
@@ -170,7 +170,7 @@ const hook = require(process.env.HOOK);
     await page.goto("file://" + process.env.FIXTURES + "/" + name + ".html");
     const found = await page.evaluate(hook.script);
     out[name] = [...new Set(found.map(f => f.rule))].sort();
-    out[name + "-details"] = found.filter(f => ["raw-value", "touching", "glyph-off-center", "duplicate-name"].includes(f.rule)).map(f => f.rule + ": " + f.text + (f.rule === "duplicate-name" ? " / " + f.other : ""));
+    out[name + "-details"] = found.filter(f => ["raw-value", "touching", "glyph-off-center", "duplicate-name", "wrapped-label"].includes(f.rule)).map(f => f.rule + ": " + f.text + (f.rule === "duplicate-name" ? " / " + f.other : ""));
     await page.close();
   }
   // The hook in a real page: it measures after the load, and again the moment a button gains a spinner.
@@ -224,6 +224,12 @@ class Browser(unittest.TestCase):
         # by their rows, and a disabled twin are not flagged.
         self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("duplicate-name")),
                          ["duplicate-name: Create account / Create account now", "duplicate-name: Send invite / Send invite"])
+        # The subscribed app's margin pill, its arrow above "12.5%", and a button whose short label wraps, in a system font stack
+        # that ends in "Segoe UI Symbol", as Tailwind's and Bootstrap's do (no icon font). good.html keeps the pill on
+        # one line, puts an upload button's icon (an svg, then an icon font's ligature) above its label by design, has a pill of a
+        # sentence, which may wrap, and an icon button whose name only a screen reader reads.
+        self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("wrapped-label")),
+                         ["wrapped-label: 12.5%", "wrapped-label: Save draft"])
         record = [json.loads(x) for x in Path(out, "ui-audit.jsonl").read_text().splitlines()]
         self.assertEqual([x["rule"] for x in record], ["spinner-off-center"])
         self.assertTrue(record[0]["page"].endswith("/good.html"))
