@@ -1,0 +1,108 @@
+exit 0
+--- output
+[1;36m[runners][0m host=box lane=box-ci scope=org owner=acme kinds=[ci qae] slots=2 group=box-ci repos=[alpha beta] apply=0 check=0 remove=0 convert_store=0
+[1;36m[runners][0m Phase A0: the lane's own user box-ci (home @S/state/home)
+[1;36m[runners][0m DRY-RUN: install -d -m 0710 @S/state
+[1;36m[runners][0m DRY-RUN: useradd --system --user-group --home-dir @S/state/home --create-home --shell /usr/sbin/nologin box-ci
+[1;36m[runners][0m DRY-RUN: chgrp box-ci @S/state
+[1;36m[runners][0m Phase A1: the App key @S/etc/box-ci/app.pem (root, 0600)
+[1;36m[runners][0m DRY-RUN: chmod 0600 @S/etc/box-ci/app.pem
+[1;36m[runners][0m DRY-RUN: chown root:root @S/etc/box-ci/app.pem
+[1;36m[runners][0m Phase A3: box-ci-token-refresh.timer writes @S/state/home/.config/gh/hosts.yml every 10 minutes
+[1;36m[runners][0m DRY-RUN: write @S/units/box-ci-token-refresh.service
+[1;36m[runners][0m DRY-RUN: write @S/units/box-ci-token-refresh.timer
+[1;36m[runners][0m DRY-RUN: systemctl daemon-reload
+[1;36m[runners][0m DRY-RUN: systemctl enable --now box-ci-token-refresh.timer
+[1;36m[runners][0m DRY-RUN: systemctl start box-ci-token-refresh.service
+[1;36m[runners][0m Phase A4: box-ci-image-build.timer rebuilds box-ci-runner weekly
+[1;36m[runners][0m DRY-RUN: write @S/units/box-ci-image-build.service
+[1;36m[runners][0m DRY-RUN: write @S/units/box-ci-image-build.timer
+[1;36m[runners][0m DRY-RUN: systemctl daemon-reload
+[1;36m[runners][0m DRY-RUN: systemctl enable --now box-ci-image-build.timer
+[1;36m[runners][0m Phase C: @S/state/store on its own 40G XFS filesystem (reflinks)
+[1;36m[runners][0m DRY-RUN: truncate -s 40G @S/state/store.img
+[1;36m[runners][0m DRY-RUN: mkfs.xfs -q -m reflink=1 @S/state/store.img
+[1;36m[runners][0m DRY-RUN: install -d -m 0700 @S/state/store
+[1;36m[runners][0m DRY-RUN: write @S/units/@SUNIT-state-store.mount
+[1;36m[runners][0m DRY-RUN: systemctl daemon-reload
+[1;36m[runners][0m   @S/state/store mounted
+[1;36m[runners][0m DRY-RUN: mount -o remount,discard @S/state/store
+[1;36m[runners][0m Phase D: @S/state/store/trash, and box-ci-store-reaper.timer deletes the store copies the slots retire there
+[1;36m[runners][0m DRY-RUN: install -d -m 0700 @S/state/store/trash
+[1;36m[runners][0m DRY-RUN: write @S/units/box-ci-store-reaper.service
+[1;36m[runners][0m DRY-RUN: write @S/units/box-ci-store-reaper.timer
+[1;36m[runners][0m DRY-RUN: systemctl daemon-reload
+[1;36m[runners][0m DRY-RUN: systemctl enable --now box-ci-store-reaper.timer
+[1;36m[runners][0m Phase F: Docker network box-ci on bridge box-ci0
+[1;36m[runners][0m DRY-RUN: docker network create --driver bridge --opt com.docker.network.bridge.name=box-ci0 --opt com.docker.network.bridge.enable_icc=false box-ci
+[1;36m[runners][0m Phase G: lane firewall rules on box-ci0
+[1;36m[runners][0m DRY-RUN: env KNOWN_CI_BRIDGE=box-ci0 @S/harden.sh
+[1;36m[runners][0m Phase H: box-ci.slice and the slot templates (box-ci-ci@.service box-ci-qae@.service)
+[1;36m[runners][0m DRY-RUN: write @S/units/box-ci.slice
+[1;36m[runners][0m DRY-RUN: write @S/units/box.slice
+[1;36m[runners][0m DRY-RUN: write @S/units/box-ci-ci@.service
+[1;36m[runners][0m DRY-RUN: write @S/units/box-ci-qae@.service
+[1;36m[runners][0m DRY-RUN: systemctl daemon-reload
+[1;36m[runners][0m   the templates carry no [Install]: the listener starts <name>-<kind>@<n> for each job, and nothing else does
+[1;36m[runners][0m DRY-RUN: install -d -m 0700 @S/state/codex
+[1;36m[runners][0m DRY-RUN: chown box-ci: @S/state/codex
+[1;36m[runners][0m DRY-RUN: write @S/etc/box-ci/codex-config.toml
+[1;36m[runners][0m Phase I: offline box-ci registrations no slot is using
+[1;36m[runners][0m DRY-RUN: gh_lane api -X DELETE orgs/acme/actions/runners/501 --silent
+[1;36m[runners][0m DRY-RUN: gh_lane api -X DELETE orgs/acme/actions/runners/509 --silent
+[1;36m[runners][0m Phase J: runner image and its preloaded store
+[1;36m[runners][0m   box-ci-runner:tag1 present, store @S/state/store/golden-tag1 present
+[1;36m[runners][0m Phase K: the listener box-ci-listener.service
+[1;36m[runners][0m DRY-RUN: build the listener (@S/repo/listener/build.sh, source c21616a312b7c2ee2885d7093ba78425b2dbfa99ed2d8b91084b0b26f975e8dd) and install it at @S/lib/box-ci/listener
+[1;36m[runners][0m DRY-RUN: write @S/etc/box-ci/listener.json
+[1;36m[runners][0m DRY-RUN: write @S/units/box-ci-listener.service
+[1;36m[runners][0m DRY-RUN: systemctl daemon-reload
+[1;36m[runners][0m DRY-RUN: systemctl enable box-ci-listener.service
+[1;36m[runners][0m DRY-RUN: systemctl start box-ci-listener.service
+[1;36m[runners][0m Phase L: retire the always-on template box-ci@.service
+[1;36m[runners][0m   none
+[1;36m[runners][0m Phase M: box-ci-listener-health.timer checks box-ci-listener.service every 5 minutes
+[1;36m[runners][0m DRY-RUN: write @S/units/box-ci-listener-health.service
+[1;36m[runners][0m DRY-RUN: write @S/units/box-ci-listener-health.timer
+[1;36m[runners][0m DRY-RUN: systemctl daemon-reload
+[1;36m[runners][0m DRY-RUN: systemctl enable --now box-ci-listener-health.timer
+[1;36m[runners][0m Phase N: box-ci-codex-keepalive.timer keeps each qae instance's Codex login fresh, daily
+[1;36m[runners][0m DRY-RUN: write @S/units/box-ci-codex-keepalive.service
+[1;36m[runners][0m DRY-RUN: write @S/units/box-ci-codex-keepalive.timer
+[1;36m[runners][0m DRY-RUN: systemctl daemon-reload
+[1;36m[runners][0m DRY-RUN: systemctl enable --now box-ci-codex-keepalive.timer
+[1;35m[OPERATOR ACTION][0m Log qae instance 1's Codex store /var/lib/box-ci/codex in once, with a login of its own (a device code opens in your browser; that instance takes no QAE job until then): sudo -u box-ci env CODEX_HOME=/var/lib/box-ci/codex HOME=@S/state/home PATH=/usr/bin:/bin codex login --device-auth
+[1;36m[runners][0m done
+--- commands
+docker info --format {{json .Runtimes}}
+systemctl is-active box-ci-store-reaper.service
+docker network inspect box-ci --format {{index .Options "com.docker.network.bridge.name"}}
+runuser -u box-ci
+gh api orgs/acme/actions/runner-groups --paginate --jq .runner_groups[] | select(.name == "box-ci") | .id [GH_CONFIG_DIR=@S/state/home/.config/gh GH_TOKEN=unset as=box-ci]
+runuser -u box-ci
+gh api orgs/acme/actions/runners --paginate --jq .runners[] | select(.name | startswith("box-lane-") and (ltrimstr("box-lane-") | test("^((ci|qae|wait)-)?[0-9]+-[0-9]+$"))) | "acme \(.id) \(.name) \(.status) \(.busy)" [GH_CONFIG_DIR=@S/state/home/.config/gh GH_TOKEN=unset as=box-ci]
+docker image inspect box-ci-runner:tag1
+systemctl is-active box-ci-listener.service
+runuser -u box-ci
+gh api orgs/acme/actions/runners --paginate --jq .runners[] | select(.name | startswith("box-lane-") and (ltrimstr("box-lane-") | test("^((ci|qae|wait)-)?[0-9]+-[0-9]+$"))) | "acme \(.id) \(.name) \(.status) \(.busy)" [GH_CONFIG_DIR=@S/state/home/.config/gh GH_TOKEN=unset as=box-ci]
+--- files
+dir 700 @S/etc/box-ci
+file 600 @S/etc/box-ci/app.pem
+file 644 @S/state/image.env
+dir 755 @S/state/store
+dir 755 @S/state/store/golden-tag1
+dir 755 @S/state/store/golden-tag1/image
+dir 755 @S/state/store/golden-tag1/image/overlay2
+file 644 @S/state/store/golden-tag1/image/overlay2/repositories.json
+dir 755 @S/state/store/golden-tag1/overlay2
+dir 755 @S/state/store/golden-tag1/overlay2/l
+dir 755 @S/state/store/golden-tag1/overlay2/layer1
+dir 755 @S/state/store/golden-tag1/overlay2/layer1/diff
+dir 755 @S/state/store/golden-tag1/overlay2/layer1/diff/usr
+dir 755 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin
+file 644 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin/postgres
+dir 755 @S/run/2
+file 644 @S/run/2/name
+dir 755 @S/run/ci
+dir 755 @S/run/ci/1
+file 644 @S/run/ci/1/job

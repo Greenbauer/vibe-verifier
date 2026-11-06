@@ -1,0 +1,342 @@
+exit 0
+--- output
+[1;36m[runners][0m host=box lane=own-ci scope=user owner=solo kinds=[ci qae] slots=2 exclude=[fleet] apply=1 check=0 remove=0 convert_store=0
+[1;36m[runners][0m Phase A0: the lane's own user own-ci (home @S/state/home)
+[1;36m[runners][0m RUN: install -d -m 0710 @S/state
+[1;36m[runners][0m RUN: useradd --system --user-group --home-dir @S/state/home --create-home --shell /usr/sbin/nologin own-ci
+[1;36m[runners][0m RUN: chgrp own-ci @S/state
+[1;36m[runners][0m Phase A1: the App key @S/etc/own-ci/app.pem (root, 0600)
+[1;36m[runners][0m RUN: install -d -m 0700 @S/etc/own-ci
+[1;36m[runners][0m   absent: the operator pipes it (see the gate below); the token and image-build timers and the listener wait for it
+[1;36m[runners][0m Phase A3: own-ci-token-refresh.timer writes @S/state/home/.config/gh/hosts.yml every 10 minutes
+[1;36m[runners][0m   not written: the App key is absent (see the gate below)
+[1;36m[runners][0m Phase A4: own-ci-image-build.timer rebuilds own-ci-runner weekly
+[1;36m[runners][0m   not written: the App key is absent (the build reads the lane's repositories with its token)
+[1;36m[runners][0m Phase C: @S/state/store on its own 20G XFS filesystem (reflinks)
+[1;36m[runners][0m RUN: truncate -s 20G @S/state/store.img
+[1;36m[runners][0m RUN: mkfs.xfs -q -m reflink=1 @S/state/store.img
+[1;36m[runners][0m RUN: install -d -m 0700 @S/state/store
+[1;36m[runners][0m wrote @S/units/@SUNIT-state-store.mount
+[1;36m[runners][0m RUN: systemctl daemon-reload
+[1;36m[runners][0m   @S/state/store mounted
+[1;36m[runners][0m RUN: mount -o remount,discard @S/state/store
+[1;36m[runners][0m Phase D: @S/state/store/trash, and own-ci-store-reaper.timer deletes the store copies the slots retire there
+[1;36m[runners][0m RUN: install -d -m 0700 @S/state/store/trash
+[1;36m[runners][0m wrote @S/units/own-ci-store-reaper.service
+[1;36m[runners][0m wrote @S/units/own-ci-store-reaper.timer
+[1;36m[runners][0m RUN: systemctl daemon-reload
+[1;36m[runners][0m RUN: systemctl enable --now own-ci-store-reaper.timer
+[1;36m[runners][0m Phase F: Docker network own-ci on bridge own-ci0
+[1;36m[runners][0m RUN: docker network create --driver bridge --opt com.docker.network.bridge.name=own-ci0 --opt com.docker.network.bridge.enable_icc=false own-ci
+[1;36m[runners][0m Phase G: lane firewall rules on own-ci0
+[1;36m[runners][0m RUN: env KNOWN_CI_BRIDGE=own-ci0 @S/harden.sh
+[1;36m[runners][0m Phase H: own-ci.slice and the slot templates (own-ci-ci@.service own-ci-qae@.service)
+[1;36m[runners][0m wrote @S/units/own-ci.slice
+[1;36m[runners][0m wrote @S/units/own.slice
+[1;36m[runners][0m wrote @S/units/own-ci-ci@.service
+[1;36m[runners][0m wrote @S/units/own-ci-qae@.service
+[1;36m[runners][0m RUN: systemctl daemon-reload
+[1;36m[runners][0m   the templates carry no [Install]: the listener starts <name>-<kind>@<n> for each job, and nothing else does
+[1;36m[runners][0m RUN: install -d -m 0700 @S/state/codex
+[1;36m[runners][0m RUN: chown own-ci: @S/state/codex
+[1;36m[runners][0m wrote @S/etc/own-ci/codex-config.toml
+[1;36m[runners][0m Phase I: offline own-ci registrations no slot is using
+[1;36m[runners][0m   skipped: no token until the App key is piped
+[1;36m[runners][0m Phase J: runner image and its preloaded store
+[1;36m[runners][0m   own-ci-runner:tag1 present, store @S/state/store/golden-tag1 present
+[1;36m[runners][0m Phase K: the listener own-ci-listener.service
+[1;36m[runners][0m   skipped: the App key @S/etc/own-ci/app.pem is absent (see the gate below)
+[1;36m[runners][0m Phase L: retire the always-on template own-ci@.service
+[1;36m[runners][0m   none
+[1;36m[runners][0m Phase M: own-ci-listener-health.timer checks own-ci-listener.service every 5 minutes
+[1;36m[runners][0m   not written: the listener is not running
+[1;36m[runners][0m Phase N: own-ci-codex-keepalive.timer keeps each qae instance's Codex login fresh, daily
+[1;36m[runners][0m wrote @S/units/own-ci-codex-keepalive.service
+[1;36m[runners][0m wrote @S/units/own-ci-codex-keepalive.timer
+[1;36m[runners][0m RUN: systemctl daemon-reload
+[1;36m[runners][0m RUN: systemctl enable --now own-ci-codex-keepalive.timer
+[1;35m[OPERATOR ACTION][0m Pipe the lane's App private key to the machine, never through chat: ssh root@box-1 'umask 077; cat > /etc/own-ci/app.pem' < key.pem  Then re-run --apply.
+[1;35m[OPERATOR ACTION][0m Log qae instance 1's Codex store /var/lib/own-ci/codex in once, with a login of its own (a device code opens in your browser; that instance takes no QAE job until then): sudo -u own-ci env CODEX_HOME=/var/lib/own-ci/codex HOME=@S/state/home PATH=/usr/bin:/bin codex login --device-auth
+[1;36m[runners][0m done
+--- commands
+docker info --format {{json .Runtimes}}
+useradd --system --user-group --home-dir @S/state/home --create-home --shell /usr/sbin/nologin own-ci
+chgrp own-ci @S/state
+truncate -s 20G @S/state/store.img
+mkfs.xfs -q -m reflink=1 @S/state/store.img
+systemctl daemon-reload
+mount -o remount,discard @S/state/store
+systemctl daemon-reload
+systemctl enable --now own-ci-store-reaper.timer
+systemctl is-active own-ci-store-reaper.service
+docker network inspect own-ci --format {{index .Options "com.docker.network.bridge.name"}}
+docker network create --driver bridge --opt com.docker.network.bridge.name=own-ci0 --opt com.docker.network.bridge.enable_icc=false own-ci
+harden bridge=own-ci0
+systemctl daemon-reload
+chown own-ci: @S/state/codex
+docker image inspect own-ci-runner:tag1
+systemctl daemon-reload
+systemctl enable --now own-ci-codex-keepalive.timer
+--- files
+dir 755 @S/units/multi-user.target.wants
+other @S/units/multi-user.target.wants/own-ci-codex-keepalive.timer
+other @S/units/multi-user.target.wants/own-ci-store-reaper.timer
+file 644 @S/units/own-ci-ci@.service
+  | # Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
+  | # One ci slot of the own-ci lane. The lane's listener (own-ci-listener.service) writes the slot's JIT
+  | # config and job file under @S/run/ci/<n>/ and starts this unit for that one job; the
+  | # container takes the job and exits, and the unit stays down until the listener starts it again.
+  | # No [Install]: an instance started at boot would have no job to run. See README.md.
+  | [Unit]
+  | Description=own-ci lane ci slot %i (one disposable Sysbox container per job)
+  | Requires=docker.service sysbox.service
+  | After=docker.service sysbox.service network-online.target
+  | Wants=network-online.target
+  | RequiresMountsFor=@S/state @S/state/store
+  | # Never refuse a start: the listener may start one instance several times a minute.
+  | StartLimitIntervalSec=0
+  | 
+  | [Service]
+  | Type=simple
+  | Slice=own-ci.slice
+  | Environment=KNOWN_CI_NAME=own-ci
+  | Environment=KNOWN_CI_SCOPE=user
+  | Environment=KNOWN_CI_SLOT_GB=6
+  | Environment=KNOWN_CI_BRIDGE=own-ci0
+  | Environment=KNOWN_CI_GH_HOSTS=@S/state/home/.config/gh/hosts.yml
+  | Environment=KNOWN_CI_STATE_DIR=@S/state
+  | Environment=KNOWN_CI_STORE_DIR=@S/state/store
+  | Environment=KNOWN_CI_RUN_DIR=@S/run
+  | # Each instance's 4-core set (systemd expands %i first, then ${KNOWN_CI_CPUSET_<n>}), so a job
+  | # sees nproc=4 like a hosted runner.
+  | Environment=KNOWN_CI_CPUSET_1=0-3
+  | Environment=KNOWN_CI_CPUSET_2=4-7
+  | # KNOWN_CI_IMAGE_TAG, written by bin/build-runner-image.sh; read at every start, so a rebuilt image
+  | # (and its preloaded store, which prepare snapshots) is picked up by the next job without touching
+  | # this unit.
+  | EnvironmentFile=@S/state/image.env
+  | ExecStartPre=+@ROOT/bin/lane-slot.sh prepare ci %i
+  | ExecStart=/usr/bin/docker run --rm --runtime=sysbox-runc --network own-ci --cgroup-parent own-ci.slice --memory 4g --pids-limit 2048 --tmpfs /tmp:size=2g,exec --oom-score-adj 1000 --dns 1.1.1.1 --dns 8.8.8.8 --cpuset-cpus ${KNOWN_CI_CPUSET_%i} -v @S/state/slot-ci-%i:/home/runner -v @S/state/store/slot-ci-%i:/var/lib/docker -v @S/run/ci/%i/jit:/run/jit:ro --name own-ci-ci-%i own-ci-runner:${KNOWN_CI_IMAGE_TAG}
+  | ExecStopPost=+@ROOT/bin/lane-slot.sh cleanup ci %i
+  | # One job per start: the listener starts the next.
+  | Restart=no
+  | # runtime_max_sec, plus warm_max_age_sec for a lane with a warm pool: systemd counts it from the
+  | # unit's start, and the listener recycles a warm slot once it has been up warm_max_age_sec, so a
+  | # job the slot takes just before still has the whole runtime_max_sec.
+  | RuntimeMaxSec=3600
+  | # The slot helper's back-off sleeps up to ten minutes inside ExecStartPre.
+  | TimeoutStartSec=15min
+  | # Also the cleanup's budget (ExecStopPost). The cleanup renames the job's store into
+  | # @S/state/store/trash for own-ci-store-reaper.service and deletes nothing of it; what can still take minutes is a
+  | # qae store's lock (120 s) and a store the trash could not take, which is deleted here. Deleting one
+  | # (270k files) took 20 to over 60 s on a loaded machine (2026-10-05), and at 60 s systemd killed 195
+  | # of 332 cleanups, whose rm kept running beside the next job's snapshot on the same store.
+  | TimeoutStopSec=300
+file 644 @S/units/own-ci-codex-keepalive.service
+  | # Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
+  | # The own-ci lane's Codex login keepalive (bin/lane-slot.sh codex-keepalive): each qae instance's
+  | # store that no job has refreshed for 10 days gets one trivial codex exec as own-ci, which makes
+  | # Codex refresh the login, and is pruned back to auth.json. A store a job holds is skipped. Exits
+  | # non-zero when a store it ran Codex on was not refreshed.
+  | [Unit]
+  | Description=own-ci lane: keep each QAE instance's Codex login fresh
+  | Wants=network-online.target
+  | After=network-online.target
+  | 
+  | [Service]
+  | Type=oneshot
+  | Environment=KNOWN_CI_NAME=own-ci
+  | Environment=KNOWN_CI_STATE_DIR=@S/state
+  | Environment=KNOWN_CI_RUN_DIR=@S/run
+  | Environment=KNOWN_CI_CODEX_STORE_1=@S/state/codex
+  | Environment=KNOWN_CI_CODEX_CONFIG=@S/etc/own-ci/codex-config.toml
+  | Environment=KNOWN_CI_CODEX_OWNER=own-ci
+  | ExecStart=@ROOT/bin/lane-slot.sh codex-keepalive
+  | # Each store's Codex run is bounded at 100 s; this bounds the whole pass.
+  | TimeoutStartSec=30min
+file 644 @S/units/own-ci-codex-keepalive.timer
+  | # Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
+  | # Daily, up to an hour late at random; Persistent= runs a day the machine was down through at its boot.
+  | [Unit]
+  | Description=own-ci lane: keep each QAE instance's Codex login fresh, daily
+  | 
+  | [Timer]
+  | OnCalendar=daily
+  | Persistent=true
+  | RandomizedDelaySec=1h
+  | 
+  | [Install]
+  | WantedBy=timers.target
+file 644 @S/units/own-ci-qae@.service
+  | # Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
+  | # One qae slot of the own-ci lane. The lane's listener (own-ci-listener.service) writes the slot's JIT
+  | # config and job file under @S/run/qae/<n>/ and starts this unit for that one job; the
+  | # container takes the job and exits, and the unit stays down until the listener starts it again.
+  | # No [Install]: an instance started at boot would have no job to run. See README.md.
+  | [Unit]
+  | Description=own-ci lane qae slot %i (one disposable Sysbox container per job)
+  | Requires=docker.service sysbox.service
+  | After=docker.service sysbox.service network-online.target
+  | Wants=network-online.target
+  | RequiresMountsFor=@S/state @S/state/store
+  | # Never refuse a start: the listener may start one instance several times a minute.
+  | StartLimitIntervalSec=0
+  | 
+  | [Service]
+  | Type=simple
+  | Slice=own-ci.slice
+  | Environment=KNOWN_CI_NAME=own-ci
+  | Environment=KNOWN_CI_SCOPE=user
+  | Environment=KNOWN_CI_SLOT_GB=6
+  | Environment=KNOWN_CI_BRIDGE=own-ci0
+  | Environment=KNOWN_CI_GH_HOSTS=@S/state/home/.config/gh/hosts.yml
+  | Environment=KNOWN_CI_STATE_DIR=@S/state
+  | Environment=KNOWN_CI_STORE_DIR=@S/state/store
+  | Environment=KNOWN_CI_RUN_DIR=@S/run
+  | # One Codex login store per qae instance, mounted into that instance's QAE jobs only: Codex
+  | # rotates a login's refresh token as a job uses it, so two concurrent jobs on one store would retire
+  | # each other's session. systemd expands %i first, then ${KNOWN_CI_CODEX_STORE_<n>}; an instance
+  | # beyond qae_concurrency has no store, and its prepare refuses. prepare resets the store to the
+  | # login and the tracked config before every job, and cleanup gives it back to own-ci.
+  | # The job holds the store's lock, @S/run/qae/<n>.codex.lock, for its whole run, as prepare and
+  | # cleanup do while they touch the store, so own-ci-codex-keepalive.service never refreshes a login a job is
+  | # using (bin/lane-slot.sh, "The Codex store lock"). flock -F executes docker run in its own place,
+  | # so the unit's main process and exit status stay docker run's; it waits at most 60 s, though only
+  | # the keepalive checking the instance (a moment) can hold the lock then.
+  | Environment=KNOWN_CI_CODEX_STORE_1=@S/state/codex
+  | Environment=KNOWN_CI_CODEX_CONFIG=@S/etc/own-ci/codex-config.toml
+  | Environment=KNOWN_CI_CODEX_OWNER=own-ci
+  | # Each instance's 4-core set (systemd expands %i first, then ${KNOWN_CI_CPUSET_<n>}), so a job
+  | # sees nproc=4 like a hosted runner.
+  | Environment=KNOWN_CI_CPUSET_1=0-3
+  | Environment=KNOWN_CI_CPUSET_2=4-7
+  | # KNOWN_CI_IMAGE_TAG, written by bin/build-runner-image.sh; read at every start, so a rebuilt image
+  | # (and its preloaded store, which prepare snapshots) is picked up by the next job without touching
+  | # this unit.
+  | EnvironmentFile=@S/state/image.env
+  | ExecStartPre=+@ROOT/bin/lane-slot.sh prepare qae %i
+  | ExecStart=/usr/bin/flock -F -w 60 @S/run/qae/%i.codex.lock /usr/bin/docker run --rm --runtime=sysbox-runc --network own-ci --cgroup-parent own-ci.slice --memory 4g --pids-limit 2048 --tmpfs /tmp:size=2g,exec --oom-score-adj 1000 --dns 1.1.1.1 --dns 8.8.8.8 --cpuset-cpus ${KNOWN_CI_CPUSET_%i} -v @S/state/slot-qae-%i:/home/runner -v @S/state/store/slot-qae-%i:/var/lib/docker -v @S/run/qae/%i/jit:/run/jit:ro -v ${KNOWN_CI_CODEX_STORE_%i}:/home/runner/.codex-qae --name own-ci-qae-%i own-ci-runner:${KNOWN_CI_IMAGE_TAG}
+  | ExecStopPost=+@ROOT/bin/lane-slot.sh cleanup qae %i
+  | # One job per start: the listener starts the next.
+  | Restart=no
+  | # runtime_max_sec, plus warm_max_age_sec for a lane with a warm pool: systemd counts it from the
+  | # unit's start, and the listener recycles a warm slot once it has been up warm_max_age_sec, so a
+  | # job the slot takes just before still has the whole runtime_max_sec.
+  | RuntimeMaxSec=3600
+  | # The slot helper's back-off sleeps up to ten minutes inside ExecStartPre.
+  | TimeoutStartSec=15min
+  | # Also the cleanup's budget (ExecStopPost). The cleanup renames the job's store into
+  | # @S/state/store/trash for own-ci-store-reaper.service and deletes nothing of it; what can still take minutes is a
+  | # qae store's lock (120 s) and a store the trash could not take, which is deleted here. Deleting one
+  | # (270k files) took 20 to over 60 s on a loaded machine (2026-10-05), and at 60 s systemd killed 195
+  | # of 332 cleanups, whose rm kept running beside the next job's snapshot on the same store.
+  | TimeoutStopSec=300
+file 644 @S/units/own-ci-store-reaper.service
+  | # Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
+  | # The own-ci lane's store reaper (bin/lane-slot.sh reap): deletes the store copies its slots retired
+  | # into @S/state/store/trash under one lock: one at a time, or a few at a time while the store is under
+  | # pressure (REAP_JOBS in that script). Every slot's cleanup starts it without waiting (systemctl
+  | # start --no-block), and own-ci-store-reaper.timer does, so no copy is left there by a start that was
+  | # missed or by a reboot. No start timeout (a oneshot has none): emptying a backlog is its job, and a
+  | # killed run would only begin again where it stopped. A run that never ends replaces itself now
+  | # and then, between deletes, with the helper on disk (REAP_MAX_SEC there), so a pulled helper
+  | # reaches it.
+  | [Unit]
+  | Description=own-ci lane: delete the store copies its slots retired
+  | RequiresMountsFor=@S/state/store
+  | # Never refuse a start: a cleanup starts it after every job, several times within seconds when jobs
+  | # end together, and a refused start would leave a copy in the trash until the timer.
+  | StartLimitIntervalSec=0
+  | 
+  | [Service]
+  | Type=oneshot
+  | Environment=KNOWN_CI_NAME=own-ci
+  | Environment=KNOWN_CI_STORE_DIR=@S/state/store
+  | ExecStart=@ROOT/bin/lane-slot.sh reap
+  | # The lowest CPU priority, so a delete yields to everything else it shares a core with. It runs
+  | # outside own-ci.slice on purpose: the lane's CPUQuota and MemoryHigh throttle what is in the slice, and
+  | # the one thing that gives the store its space back must not stall with the jobs that fill it.
+  | Nice=19
+file 644 @S/units/own-ci-store-reaper.timer
+  | # Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
+  | # A minute after boot, then every 5 minutes, counted from the reaper's last activation: the
+  | # backstop for a copy no cleanup's start reached, not the reaper's usual trigger.
+  | [Unit]
+  | Description=own-ci lane: delete retired store copies, every 5 minutes
+  | 
+  | [Timer]
+  | OnBootSec=1min
+  | OnUnitActiveSec=5min
+  | 
+  | [Install]
+  | WantedBy=timers.target
+file 644 @S/units/own-ci.slice
+  | # Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
+  | # Aggregate limits for every own-ci container (docker --cgroup-parent) and slot unit (Slice=):
+  | # whatever the per-container caps, the lane together never takes more than this from the machine.
+  | [Unit]
+  | Description=own-ci lane: aggregate limits for its disposable CI containers
+  | Before=slices.target
+  | 
+  | [Slice]
+  | MemoryMax=8G
+  | MemoryHigh=7G
+  | CPUQuota=400%
+  | CPUWeight=30
+file 644 @S/units/own.slice
+  | # Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
+  | # systemd nests slices on dashes, so own-ci.slice lives inside this one. A CPUWeight only competes with
+  | # siblings, so the lane's weight sits here too, where it ranks against system.slice.
+  | [Unit]
+  | Description=Parent of own-ci.slice
+  | Before=slices.target
+  | 
+  | [Slice]
+  | CPUWeight=30
+file 644 @S/units/@SUNIT-state-store.mount
+  | # Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
+  | # The lane's inner Docker store: golden-<tag> (the image build's preload) and one reflink snapshot
+  | # of it per running job, mounted on that job's /var/lib/docker. XFS for the reflinks; discard so a
+  | # deleted snapshot gives its blocks back to the sparse image.
+  | [Unit]
+  | Description=Preloaded inner Docker store and per-job snapshots (own-ci lane)
+  | RequiresMountsFor=@S/state
+  | 
+  | [Mount]
+  | What=@S/state/store.img
+  | Where=@S/state/store
+  | Type=xfs
+  | Options=loop,discard
+  | 
+  | [Install]
+  | WantedBy=multi-user.target
+dir 700 @S/etc/box-ci
+file 600 @S/etc/box-ci/app.pem
+  | fixture-app-key-cccc
+dir 700 @S/etc/own-ci
+file 644 @S/etc/own-ci/codex-config.toml
+  | # Managed by the runner lanes kit (bin/provision-lane.sh); do not edit on the machine.
+  | # The own-ci lane's tracked Codex config: bin/lane-slot.sh writes it into the Codex store before
+  | # every QAE job (the QAE harness's Codex action requires a file-backed login store).
+  | cli_auth_credentials_store = "file"
+dir 700 @S/state/codex
+file 644 @S/state/image.env
+dir 700 @S/state/store
+file 644 @S/state/store.img
+dir 755 @S/state/store/golden-tag1
+dir 755 @S/state/store/golden-tag1/image
+dir 755 @S/state/store/golden-tag1/image/overlay2
+file 644 @S/state/store/golden-tag1/image/overlay2/repositories.json
+dir 755 @S/state/store/golden-tag1/overlay2
+dir 755 @S/state/store/golden-tag1/overlay2/l
+dir 755 @S/state/store/golden-tag1/overlay2/layer1
+dir 755 @S/state/store/golden-tag1/overlay2/layer1/diff
+dir 755 @S/state/store/golden-tag1/overlay2/layer1/diff/usr
+dir 755 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin
+file 644 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin/postgres
+dir 700 @S/state/store/trash
+dir 755 @S/run/2
+file 644 @S/run/2/name
+dir 755 @S/run/ci
+dir 755 @S/run/ci/1
+file 644 @S/run/ci/1/job

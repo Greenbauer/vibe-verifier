@@ -1,0 +1,77 @@
+exit 0
+--- output
+[1;36m[runners][0m host=box lane=orbit-ci scope=org owner=orbit-labs kinds=[ci wait] slots=8 wait_slots=8 group=orbit-ci repos=[api ci web] apply=0 check=0 remove=0 convert_store=0
+[1;36m[runners][0m Phase A0: the lane's own user orbit-ci (home @S/state/home)
+[1;36m[runners][0m DRY-RUN: install -d -m 0710 @S/state
+[1;36m[runners][0m DRY-RUN: useradd --system --user-group --home-dir @S/state/home --create-home --shell /usr/sbin/nologin orbit-ci
+[1;36m[runners][0m DRY-RUN: chgrp orbit-ci @S/state
+[1;36m[runners][0m Phase A1: the App key @S/etc/orbit-ci/app.pem (root, 0600)
+[1;36m[runners][0m DRY-RUN: install -d -m 0700 @S/etc/orbit-ci
+[1;36m[runners][0m   absent: the operator pipes it (see the gate below); the token and image-build timers and the listener wait for it
+[1;36m[runners][0m Phase A3: orbit-ci-token-refresh.timer writes @S/state/home/.config/gh/hosts.yml every 10 minutes
+[1;36m[runners][0m   not written: the App key is absent (see the gate below)
+[1;36m[runners][0m Phase A4: orbit-ci-image-build.timer rebuilds orbit-ci-runner weekly
+[1;36m[runners][0m   not written: the App key is absent (the build reads the lane's repositories with its token)
+[1;36m[runners][0m Phase C: @S/state/store on its own 40G XFS filesystem (reflinks)
+[1;36m[runners][0m DRY-RUN: truncate -s 40G @S/state/store.img
+[1;36m[runners][0m DRY-RUN: mkfs.xfs -q -m reflink=1 @S/state/store.img
+[1;36m[runners][0m DRY-RUN: install -d -m 0700 @S/state/store
+[1;36m[runners][0m DRY-RUN: write @S/units/@SUNIT-state-store.mount
+[1;36m[runners][0m DRY-RUN: systemctl daemon-reload
+[1;36m[runners][0m   @S/state/store mounted
+[1;36m[runners][0m DRY-RUN: mount -o remount,discard @S/state/store
+[1;36m[runners][0m Phase D: @S/state/store/trash, and orbit-ci-store-reaper.timer deletes the store copies the slots retire there
+[1;36m[runners][0m DRY-RUN: install -d -m 0700 @S/state/store/trash
+[1;36m[runners][0m DRY-RUN: write @S/units/orbit-ci-store-reaper.service
+[1;36m[runners][0m DRY-RUN: write @S/units/orbit-ci-store-reaper.timer
+[1;36m[runners][0m DRY-RUN: systemctl daemon-reload
+[1;36m[runners][0m DRY-RUN: systemctl enable --now orbit-ci-store-reaper.timer
+[1;36m[runners][0m Phase F: Docker network orbit-ci on bridge orbit-ci0
+[1;36m[runners][0m DRY-RUN: docker network create --driver bridge --opt com.docker.network.bridge.name=orbit-ci0 --opt com.docker.network.bridge.enable_icc=false orbit-ci
+[1;36m[runners][0m Phase G: lane firewall rules on orbit-ci0
+[1;36m[runners][0m DRY-RUN: env KNOWN_CI_BRIDGE=orbit-ci0 @S/harden.sh
+[1;36m[runners][0m Phase H: orbit-ci.slice and the slot templates (orbit-ci-ci@.service orbit-ci-wait@.service)
+[1;36m[runners][0m DRY-RUN: write @S/units/orbit-ci.slice
+[1;36m[runners][0m DRY-RUN: write @S/units/orbit.slice
+[1;36m[runners][0m DRY-RUN: write @S/units/orbit-ci-ci@.service
+[1;36m[runners][0m DRY-RUN: write @S/units/orbit-ci-wait@.service
+[1;36m[runners][0m DRY-RUN: systemctl daemon-reload
+[1;36m[runners][0m   the templates carry no [Install]: the listener starts <name>-<kind>@<n> for each job, and nothing else does
+[1;36m[runners][0m Phase I: offline orbit-ci registrations no slot is using
+[1;36m[runners][0m   skipped: no token until the App key is piped
+[1;36m[runners][0m Phase J: runner image and its preloaded store
+[1;36m[runners][0m   orbit-ci-runner:tag1 present, store @S/state/store/golden-tag1 present
+[1;36m[runners][0m Phase K: the listener orbit-ci-listener.service
+[1;36m[runners][0m   skipped: the App key @S/etc/orbit-ci/app.pem is absent (see the gate below)
+[1;36m[runners][0m Phase L: retire the always-on template orbit-ci@.service
+[1;36m[runners][0m   none
+[1;36m[runners][0m Phase M: orbit-ci-listener-health.timer checks orbit-ci-listener.service every 5 minutes
+[1;36m[runners][0m   not written: the listener is not running
+[1;35m[OPERATOR ACTION][0m Pipe the lane's App private key to the machine, never through chat: ssh root@vps-1 'umask 077; cat > /etc/orbit-ci/app.pem' < key.pem  Then re-run --apply.
+[1;36m[runners][0m done
+--- commands
+docker info --format {{json .Runtimes}}
+systemctl is-active orbit-ci-store-reaper.service
+docker network inspect orbit-ci --format {{index .Options "com.docker.network.bridge.name"}}
+docker image inspect orbit-ci-runner:tag1
+--- files
+dir 700 @S/etc/box-ci
+file 600 @S/etc/box-ci/app.pem
+file 644 @S/state/image.env
+dir 755 @S/state/store
+dir 755 @S/state/store/golden-tag1
+dir 755 @S/state/store/golden-tag1/image
+dir 755 @S/state/store/golden-tag1/image/overlay2
+file 644 @S/state/store/golden-tag1/image/overlay2/repositories.json
+dir 755 @S/state/store/golden-tag1/overlay2
+dir 755 @S/state/store/golden-tag1/overlay2/l
+dir 755 @S/state/store/golden-tag1/overlay2/layer1
+dir 755 @S/state/store/golden-tag1/overlay2/layer1/diff
+dir 755 @S/state/store/golden-tag1/overlay2/layer1/diff/usr
+dir 755 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin
+file 644 @S/state/store/golden-tag1/overlay2/layer1/diff/usr/bin/postgres
+dir 755 @S/run/2
+file 644 @S/run/2/name
+dir 755 @S/run/ci
+dir 755 @S/run/ci/1
+file 644 @S/run/ci/1/job
