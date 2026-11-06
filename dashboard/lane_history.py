@@ -4,7 +4,9 @@ The collector calls capture() on every refresh (stdlib only; it also runs as a p
 inputs come from the lane's listener through the sampler, and both are optional:
 
 - queue: per scale set, the jobs GitHub has assigned to it and how many of those are running, and
-  the set's warm-pool size. Assigned minus running is the number of jobs waiting for a runner.
+  the set's warm-pool size. Assigned minus running is the number of jobs waiting for a runner. When
+  QAE has slots of its own it also names them (qae_slots), and the runner slots counted here are
+  then CI's alone.
 - jobs: the listener's newest started jobs with GitHub's own timestamps: assigned to the lane's
   scale set, assigned to a runner, and queued when GitHub sends it. The wait for a runner is set to
   runner; on 2026-10-14 the set time was the job's GitHub created_at to the second and no queued time
@@ -19,7 +21,7 @@ the warm pool, and when the collector was watching. See docs/dashboard-collector
 
 Three things are kept in the collector's root-only state, each pruned to seven days: samples (one
 per refresh, now with running and waiting counts), waits (one per job), and the derived history the
-dashboard reads. Only history is published; read_history() is the dashboard's reader of it.
+dashboard reads. Only history is published; history_read.read_history() is the dashboard's reader of it.
 """
 
 import datetime as dt
@@ -102,10 +104,12 @@ def project_queue(raw):
             waiting += max(0, _count(row.get("assigned")) - _count(row.get("running")))
             warm += _count(row.get("min_runners", 0))
             slots.update(_warm_slots(row))
+        qae_slots = _count(raw.get("qae_slots", 0), 64)
     except ValueError:
         return None
     # warm_slots: the slots the listener's warm pool keeps now ("ci-3"); empty from an older listener.
-    return {"waiting": waiting, "warm": warm, "warm_slots": sorted(slots)}
+    # qae_slots: QAE's own pool, named only by a listener whose QAE has one.
+    return {"waiting": waiting, "warm": warm, "warm_slots": sorted(slots), **({"qae_slots": qae_slots} if qae_slots else {})}
 
 
 def _seconds(start, end):
@@ -171,11 +175,20 @@ def waits(previous_rows, raw_jobs, now):
     return sorted(unique.values(), key=lambda row: (row["started_at"], row["runner"]))[-MAX_WAITS:]
 
 
-def running_count(host):
-    """Shared-pool runners the host recorded a job on. The wait pool is not part of the budget."""
+def shared_kinds(queue):
+    """The kinds in the runner slots: QAE leaves them when the listener names a QAE pool of its own."""
+    return ("ci",) if queue and queue.get("qae_slots") else SHARED_KINDS
+
+
+def _shared_rows(host, kinds):
     slots = host.get("slots") if isinstance(host, dict) else None
     records = slots.get("occupied") if isinstance(slots, dict) else None
-    return sum(1 for row in records or [] if row.get("kind") != "wait" and row.get("job_name"))
+    return [row for row in records or [] if row.get("kind") in kinds]
+
+
+def running_count(host, kinds=SHARED_KINDS):
+    """Shared-pool runners the host recorded a job on. The wait pool (and QAE's own) is not part of the budget."""
+    return sum(1 for row in _shared_rows(host, kinds) if row.get("job_name"))
 
 
 def _clean_sample(sample, cutoff):
@@ -201,14 +214,15 @@ def samples(previous, host, success, now, queue):
             continue
         if clean:
             kept.append(clean)
+    kinds = shared_kinds(queue)
     if success:
         kept.append({"observed_at": now, "host": {
             "cpu_busy_percent": host["cpu"]["busy_percent"],
             "memory_available_bytes": host["memory"]["available_bytes"],
             "workspace_free_bytes": host["workspace"]["free_bytes"],
-            "slots_occupied": host["slots"]["occupied_count"],
+            "slots_occupied": len(_shared_rows(host, kinds)),
             "slots_remaining_on_demand": host["slots"]["remaining_on_demand"],
-            "slots_running": running_count(host),
+            "slots_running": running_count(host, kinds),
             "jobs_waiting": queue["waiting"] if queue else None,
             "warm": queue["warm"] if queue else None}})
     unique = {sample["observed_at"]: sample for sample in kept}
@@ -233,12 +247,12 @@ def _usable(sample):
     return "slots_running" in sample["host"]
 
 
-def job_spans(wait_rows, occupied, now):
+def job_spans(wait_rows, occupied, now, kinds=SHARED_KINDS):
     """(start, end) of each shared-pool job: GitHub's runner assignment to its finish, or to now while
     its runner still holds a slot. A job with neither end adds nothing; the samples still count it."""
     spans = []
     for row in wait_rows:
-        if row.get("kind") not in SHARED_KINDS:
+        if row.get("kind") not in kinds:
             continue
         end = parse_time(row.get("finished_at")) or (now if row["runner"] in occupied else None)
         if end:
@@ -314,13 +328,13 @@ def _spans(points, now):
     return [min(SAMPLE_SPAN_SECONDS, (times[i + 1] - times[i]).total_seconds()) for i in range(len(points))]
 
 
-def range_view(name, length, step, points, wait_rows, limit, now, occupied=()):
+def range_view(name, length, step, points, wait_rows, limit, now, occupied=(), kinds=SHARED_KINDS):
     """One range's bars and totals, over the time the collector sampled. Bars are aligned to the
     clock; the last one is still filling."""
     end = dt.datetime.fromtimestamp((int(now.timestamp()) // step + 1) * step, dt.timezone.utc)
     start = end - dt.timedelta(seconds=length)
     inside = [point for point in points if parse_time(point["observed_at"]) >= start]
-    rows = _intervals(inside, job_spans(wait_rows, set(occupied), now), limit, now)
+    rows = _intervals(inside, job_spans(wait_rows, set(occupied), now, kinds), limit, now)
     slots = {}
     for row in rows:
         slots.setdefault(int((parse_time(row[0]["observed_at"]) - start).total_seconds()) // step, []).append(row)
@@ -347,7 +361,8 @@ def history(kept_samples, wait_rows, host, host_ok, queue, now_text):
     return {"observed_at": now_text, "limit": limit, "waiting_now": current.get("waiting"),
             "warm": queue["warm"] if queue else None, "warm_slots": current.get("warm_slots", []),
             "started": {runner: started[runner] for runner in occupied if runner in started},
-            "ranges": [range_view(name, length, step, points, wait_rows, limit, now, occupied)
+            "qae_slots": (queue or {}).get("qae_slots", 0),
+            "ranges": [range_view(name, length, step, points, wait_rows, limit, now, occupied, shared_kinds(queue))
                        for name, length, step in RANGES]}
 
 
@@ -359,63 +374,3 @@ def capture(previous, response, host, host_ok, now):
     kept = samples(previous, host, host_ok, now, queue)
     rows = waits(previous.get("waits"), raw.get("jobs") if isinstance(raw, dict) else None, parse_time(now))
     return {"samples": kept, "waits": rows, "history": history(kept, rows, host, host_ok, queue, now)}
-
-
-def _optional(value, reader):
-    return None if value is None else reader(value)
-
-
-def _read_bucket(row):
-    if (not isinstance(row, dict) or set(row) - {"start", "running", "warm", "reserved", "waiting"}
-            or not parse_time(row.get("start"))):
-        raise ValueError
-    clean = {"start": row["start"]}
-    if "running" in row:
-        clean.update(running=_number(row["running"], 10000), warm=_number(row.get("warm", 0), 10000),
-                     reserved=_number(row["reserved"], 10000), waiting=_optional(row.get("waiting"), _count))
-    return clean
-
-
-def _read_wait(value):
-    if not isinstance(value, dict):
-        raise ValueError
-    return {"jobs": _count(value.get("jobs"), MAX_WAITS),
-            "p50_seconds": _count(value.get("p50_seconds"), MAX_WAIT_SECONDS),
-            "p95_seconds": _count(value.get("p95_seconds"), MAX_WAIT_SECONDS),
-            "routing_seconds": _optional(value.get("routing_seconds"), lambda item: _number(item, MAX_WAIT_SECONDS))}
-
-
-def _read_range(row, expected):
-    name, length, step = expected
-    if not isinstance(row, dict) or row.get("name") != name or row.get("bucket_seconds") != step:
-        raise ValueError
-    buckets = row.get("buckets")
-    if not isinstance(buckets, list) or len(buckets) != length // step:
-        raise ValueError
-    return {"name": name, "bucket_seconds": step, "buckets": [_read_bucket(item) for item in buckets],
-            "covered_hours": _number(row.get("covered_hours"), length / 3600 + 1),
-            "busy_percent": _optional(row.get("busy_percent"), lambda item: _number(item, 100)),
-            "warm_hours": _optional(row.get("warm_hours"), lambda item: _number(item, 64 * length / 3600)),
-            "idle_hours": _optional(row.get("idle_hours"), lambda item: _number(item, 64 * length / 3600)),
-            "wait": _optional(row.get("wait"), _read_wait)}
-
-
-def read_history(value):
-    """The dashboard's check of a published history: every field bounded, or ValueError."""
-    if not isinstance(value, dict) or not parse_time(value.get("observed_at")):
-        raise ValueError
-    ranges = value.get("ranges")
-    started = value.get("started")
-    if not isinstance(ranges, list) or len(ranges) != len(RANGES) or not isinstance(started, dict) or len(started) > 256:
-        raise ValueError
-    if any(not RUNNER_RE.fullmatch(key) or not parse_time(item) for key, item in started.items()):
-        raise ValueError
-    warm_slots = value.get("warm_slots", [])
-    if (not isinstance(warm_slots, list) or len(warm_slots) > 64
-            or any(not isinstance(item, str) or not re.fullmatch(r"(ci|qae|wait)-[1-9][0-9]?", item) for item in warm_slots)):
-        raise ValueError
-    return {"observed_at": value["observed_at"], "limit": _optional(value.get("limit"), lambda item: _count(item, 64)),
-            "waiting_now": _optional(value.get("waiting_now"), _count),
-            "warm": _optional(value.get("warm"), lambda item: _count(item, 64)), "warm_slots": list(warm_slots),
-            "started": dict(started),
-            "ranges": [_read_range(row, expected) for row, expected in zip(ranges, RANGES)]}

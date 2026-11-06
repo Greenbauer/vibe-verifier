@@ -81,6 +81,10 @@ check((user.scope, user.owner, user.runner_group, user.repos, user.exclude) == (
 check((user.min_runners, user.slot_runtime_max_sec, user.kinds) == (0, 3600, ("ci", "qae")), "a user lane keeps no warm pool")
 check(load_host(host_file({**USER, "exclude": []})).lanes[0].exclude == (), "an empty exclude list is valid")
 check(load_host(host_file({**USER, "qae_concurrency": 4})).lanes[0].qae_concurrency == 4, "qae_concurrency may use every slot")
+apart = load_host(host_file({**USER, "qae_concurrency": 3, "qae_own_slots": True})).lanes[0]
+check((apart.qae_own_slots, apart.qae_concurrency, apart.kind_slots("qae"), apart.kind_slots("ci"), apart.unit("qae", 3)) == (True, 3, 3, 4, "own-ci-qae@3.service"),
+      "with qae_own_slots QAE runs qae_concurrency slots of its own, and ci keeps every shared slot")
+check((user.qae_own_slots, user.kind_slots("qae")) == (False, user.slots), "without it QAE slots are among the shared ones, as before")
 uwarm = load_host(host_file({**USER, "warm_max_age_sec": 900})).lanes[0]
 check((uwarm.warm_max_age_sec, uwarm.slot_runtime_max_sec) == (900, 3600), "a user lane's warm_max_age_sec is inert")
 

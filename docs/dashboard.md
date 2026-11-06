@@ -415,7 +415,8 @@ the timeline draws.
 (`dashboard/static/capacity.js`). Top to bottom:
 
 - **The limits, in words**: `Up to 8 runners at once (AI QA at most 4) · 8 more for jobs that only
-  wait · 10 CPU cores · 20.0 GB memory`.
+  wait · 10 CPU cores · 20.0 GB memory`. On a lane whose AI QA has slots of its own the AI QA part
+  reads `· 8 more for AI QA` instead.
 - **Five cards**: runners in use now (`5 of 8`, the runner slots only, and how many the warm pool keeps
   up on purpose); jobs waiting for a runner right now (`Unknown` when the listener's queue was not
   read); and, for the chosen range, the busy share (the share of the runner slots' time spent running
@@ -433,7 +434,9 @@ the timeline draws.
   history). The last bar is the period still filling. Hover a bar for its numbers.
 - **Runners now**, in two pools. **Runner slots** (`5 of 8 in use`) hold two kinds: **Build and
   test** (the repositories' CI jobs) and **AI QA** (the QA explorer against a preview; each slot has
-  its own Codex login, and the line under it gives the at-most count). **Waiting-job slots** hold
+  its own Codex login, and the line under it gives the at-most count). On a lane whose AI QA has
+  slots of its own (the lane's `qae_own_slots`), **AI QA slots** (`3 of 8 in use`) is a pool of its
+  own between the two, and the runner slots and the cards count Build and test only. **Waiting-job slots** hold
   jobs that only wait, such as for a preview to deploy, and bookkeeping jobs of seconds; they are cheap and not one of the runner
   slots. Each kind is a group under its title, with no description line. A row is one runner: `Build 3`, `QA 2` or `Wait 1`
   (each kind numbers its own slots; hovering says which service it is: "Service ci@3 on the runner

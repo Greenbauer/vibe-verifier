@@ -227,8 +227,17 @@ func waitConfig() *Config {
 	return c
 }
 
+// qaeOwnConfig gives QAE three slots of its own, beside the lane's three shared ones.
+func qaeOwnConfig() *Config {
+	c := orgConfig()
+	c.Budget.QAEConcurrency = 3
+	c.Kinds[kindQAE] = KindConfig{SetName: "example-qae", Labels: []string{"example-qae"}, Slots: 3,
+		RequiresFiles: []string{"/s/1/auth.json", "/s/2/auth.json", "/s/3/auth.json"}}
+	return c
+}
+
 func TestConfigValidation(t *testing.T) {
-	good := []*Config{orgConfig(), userConfig(), waitConfig()}
+	good := []*Config{orgConfig(), userConfig(), waitConfig(), qaeOwnConfig()}
 	for _, c := range good {
 		if err := c.validate(); err != nil {
 			t.Errorf("%s config refused: %v", c.Scope, err)
@@ -256,6 +265,17 @@ func TestConfigValidation(t *testing.T) {
 		},
 		"a ci kind with a budget of its own": func(c *Config) {
 			c.Kinds[kindCI] = KindConfig{SetName: "example-ci", Labels: []string{"example-ci"}, Slots: 2, ContainerMemoryBytes: gib}
+		},
+		"qae slots of its own above the shared slots": func(c *Config) {
+			*c = *qaeOwnConfig()
+			c.Budget.QAEConcurrency = 4
+			c.Kinds[kindQAE] = KindConfig{SetName: "example-qae", Labels: []string{"example-qae"}, Slots: 4}
+		},
+		"qae slots of its own that differ from its concurrency": func(c *Config) {
+			*c = *qaeOwnConfig()
+			k := c.Kinds[kindQAE]
+			k.Slots = 2
+			c.Kinds[kindQAE] = k
 		},
 		"a qae container size": func(c *Config) {
 			c.Kinds[kindQAE] = KindConfig{SetName: "example-qae", Labels: []string{"example-qae"}, ContainerMemoryBytes: gib}

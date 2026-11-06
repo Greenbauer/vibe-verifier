@@ -5,7 +5,7 @@
 // long-polls each set's message session, and when GitHub assigns a set more jobs than it has
 // runners it mints a just-in-time runner, writes the slot's run-dir files and starts the kind's
 // systemd slot unit, within one budget shared by every set (and the wait kind's own, when it is
-// configured: jobs that only wait for another job's result). The slot unit runs the container and
+// configured: jobs that only wait for another job's result; and the qae kind's own, when it has one). The slot unit runs the container and
 // exits after its one job; this program never stops a busy slot. Linux-only by design: it drives
 // systemd and reads /proc/meminfo, and runs as root on the box. With -delete-sets it instead
 // deletes every scale set the config would serve and exits (the lane provisioner's --remove).
@@ -61,10 +61,13 @@ type AppConfig struct {
 // KindConfig is one kind of slot: the scale set its jobs come through and, optionally, one file per
 // instance that must exist before that instance may start: instance n waits for RequiresFiles[n-1],
 // and a kind that lists them uses no instance beyond the list. The qae kind lists one Codex login
-// per instance, so each QAE job has a login of its own. The wait kind (and only it) instead carries
-// a budget of its own: at most Slots of its slots at once, none counted against budget.slots, each
-// container ContainerMemoryBytes for admission. Its jobs only wait for another job's result, so a
-// queue of them can never hold the shared slots the awaited job needs.
+// per instance, so each QAE job has a login of its own. The wait kind instead carries a budget of
+// its own: at most Slots of its slots at once, none counted against budget.slots, each container
+// ContainerMemoryBytes for admission. Its jobs only wait for another job's result, so a queue of
+// them can never hold the shared slots the awaited job needs. The qae kind may carry Slots too
+// (equal to budget.qae_concurrency, its containers admission's size): then its jobs run on slots of
+// their own, beside budget.slots rather than among them, and never queue behind CI for one, nor CI
+// behind them.
 type KindConfig struct {
 	SetName              string   `json:"set_name"`
 	Labels               []string `json:"labels"`
@@ -211,10 +214,15 @@ func (c *Config) validateKinds(bad func(string, ...any)) {
 			bad("kinds may only be ci, qae and wait, not %q", kind)
 			continue
 		}
-		if own := k.Slots != 0 || k.ContainerMemoryBytes != 0; own != (kind == kindWait) {
-			bad("kinds.%s: slots and container_memory_bytes belong to the wait kind, which needs both", kind)
-		} else if own && (k.Slots < 1 || k.ContainerMemoryBytes == 0) {
+		switch {
+		case kind == kindWait && (k.Slots < 1 || k.ContainerMemoryBytes == 0):
 			bad("kinds.wait needs slots >= 1 and container_memory_bytes > 0")
+		case kind == kindQAE && k.ContainerMemoryBytes != 0:
+			bad("kinds.qae: container_memory_bytes belongs to the wait kind")
+		case kind == kindQAE && k.Slots != 0 && k.Slots != c.Budget.QAEConcurrency:
+			bad("kinds.qae.slots, a budget of its own, must equal budget.qae_concurrency %d, not %d", c.Budget.QAEConcurrency, k.Slots)
+		case kind == kindCI && (k.Slots != 0 || k.ContainerMemoryBytes != 0):
+			bad("kinds.ci: slots belong to the wait and qae kinds, container_memory_bytes to the wait kind")
 		}
 		if !setNamePattern.MatchString(k.SetName) {
 			bad("kinds.%s.set_name must match %s", kind, setNamePattern)
@@ -267,7 +275,7 @@ func (c *Config) kindNames() []string {
 }
 
 // kindSlots is how many slots of a kind may hold an instance at once, so also its instance range
-// 1..n and its sets' MaxRunners: the wait kind's own budget, budget.slots for every other kind.
+// 1..n and its sets' MaxRunners: a kind's own budget (wait, and qae when it has one), else budget.slots.
 func (c *Config) kindSlots(kind string) int {
 	if n := c.Kinds[kind].Slots; n > 0 {
 		return n
@@ -275,7 +283,7 @@ func (c *Config) kindSlots(kind string) int {
 	return c.Budget.Slots
 }
 
-// ownSlots maps each kind with a budget of its own (the wait kind) to that budget.
+// ownSlots maps each kind with a budget of its own (wait, and qae when it has one) to that budget.
 func (c *Config) ownSlots() map[string]int {
 	own := map[string]int{}
 	for kind, k := range c.Kinds {
@@ -366,8 +374,12 @@ func run(args []string) int {
 	newAPI := scalesetClients(cfg, key)
 	lane := newLane(cfg, filepath.Join("/run", cfg.Name), systemctl{bin: "systemctl"},
 		hostFiles{meminfo: "/proc/meminfo"}, newAPI, log.printf)
-	log.printf("lane %s (%s scope, %s): budget %d slots, qae %d, warm pool %d, wait %d of its own; idle stop after %ds, warm recycle after %ds",
-		cfg.Name, cfg.Scope, cfg.GitHubURL, cfg.Budget.Slots, cfg.Budget.QAEConcurrency,
+	qaeBudget := "shared"
+	if cfg.Kinds[kindQAE].Slots > 0 {
+		qaeBudget = "of its own"
+	}
+	log.printf("lane %s (%s scope, %s): budget %d slots, qae %d (%s), warm pool %d, wait %d of its own; idle stop after %ds, warm recycle after %ds",
+		cfg.Name, cfg.Scope, cfg.GitHubURL, cfg.Budget.Slots, cfg.Budget.QAEConcurrency, qaeBudget,
 		cfg.Budget.MinRunners, cfg.Kinds[kindWait].Slots, cfg.IdleStopSec, cfg.WarmMaxAgeSec)
 	lane.rebuild()
 

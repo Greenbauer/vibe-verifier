@@ -24,12 +24,15 @@ LISTENER_WORK_FOLDER = "/home/runner/_work"
 def _kind_config(lane: Lane, kind: str, codex_store: str) -> dict[str, object]:
     """One kind's scale set. An org ci set carries self-hosted too, so `runs-on: [self-hosted, <label>]`
     matches; every other set carries its label alone, so a bare self-hosted job never reaches the
-    Codex login stores a qae set mounts. A qae instance waits for its own store's login."""
+    Codex login stores a qae set mounts. A qae instance waits for its own store's login, and a qae
+    set with slots of its own carries them (one per store)."""
     label = lane.label(kind)
     org_ci = lane.scope == "org" and kind == "ci"
     config: dict[str, object] = {"set_name": label, "labels": ["self-hosted", label] if org_ci else [label]}
     if kind == "qae":
         config["requires_files"] = [f"{store}/auth.json" for store in codex_stores(codex_store, lane.qae_concurrency)]
+        if lane.qae_own_slots:
+            config["slots"] = lane.qae_concurrency
     return config
 
 
@@ -105,6 +108,7 @@ def lane_settings(host: Host, lane: Lane) -> dict[str, object]:
         "SLOTS": lane.slots,
         "MIN_RUNNERS": lane.min_runners,
         "QAE_CONCURRENCY": lane.qae_concurrency,
+        "QAE_OWN_SLOTS": 1 if lane.qae_own_slots else "",
         "NAME_PREFIX": lane.name_prefix,
         "IMAGE": lane.image,
         "MEMORY_MAX": lane.memory_max,

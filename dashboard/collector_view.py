@@ -3,7 +3,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 from .collector import project_host, project_rate_limits
-from .lane_history import read_history
+from .history_read import read_history
 from .util import parse_time, iso_time
 
 
@@ -101,12 +101,25 @@ def _usage_view(account, now):
 ROOT_KEYS = {"version", "owner", "observed_at", "hosts", "accounts", "samples"}
 
 
+def _qae_apart(capacity, qae_slots):
+    """QAE on slots of its own: the runner slots are CI's alone, so a QAE runner holds none of them."""
+    capacity["limits"]["qae_slots"] = qae_slots
+    lanes = capacity["lanes"]
+    ci = sum(lane["labels"] == ["ci"] for lane in lanes)
+    free = sum(lane["id"].startswith("on-demand-") for lane in lanes)
+    state = "provisionable" if capacity["listener_state"] == "up" else "unknown"
+    for index in range(free, max(0, capacity["limits"]["slots"] - ci)):
+        lanes.append({"id": "on-demand-%s" % (index + 1), "state": state, "registered": False, "labels": []})
+
+
 def _history(value, capacity):
     """The lane's published history and each occupied runner's job start, when the collector wrote one."""
     history = read_history(value["history"]) if value.get("history") is not None else None
     if not capacity.get("available"):
         return
     capacity["history"] = history
+    if history and history["qae_slots"]:
+        _qae_apart(capacity, history["qae_slots"])
     for lane in capacity["lanes"]:
         runner = lane.pop("runner_name", None)
         started = history["started"].get(runner) if history else None

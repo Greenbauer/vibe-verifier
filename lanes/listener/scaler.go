@@ -862,7 +862,7 @@ func (l *Lane) queueRecord() queueRecord {
 		}
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
-	rec := queueRecord{Version: 1, UpdatedAt: stamp(l.now()), Sets: make([]queueSet, 0, len(keys))}
+	rec := queueRecord{Version: 1, UpdatedAt: stamp(l.now()), Sets: make([]queueSet, 0, len(keys)), QAESlots: l.cfg.Kinds[kindQAE].Slots}
 	for _, key := range keys {
 		set := *l.sets[key].stats
 		set.MinRunners = l.cfg.minRunners(key)
@@ -870,24 +870,6 @@ func (l *Lane) queueRecord() queueRecord {
 		rec.Sets = append(rec.Sets, set)
 	}
 	return rec
-}
-
-// warmInstances are the idle slots of a set its warm pool keeps: the newest minRunners in
-// planIdleStops' order (sortIdle). Called with l.mu held.
-func (l *Lane) warmInstances(key SetKey, minRunners int) []int {
-	var idle []Slot
-	for _, s := range l.slots {
-		if s.Set == key && s.Phase == PhaseIdle {
-			idle = append(idle, *s)
-		}
-	}
-	sortIdle(idle)
-	kept := []int{}
-	for _, s := range idle[max(0, len(idle)-minRunners):] {
-		kept = append(kept, s.Instance)
-	}
-	sort.Ints(kept)
-	return kept
 }
 
 func (l *Lane) setAssigned(key SetKey, n int) {
