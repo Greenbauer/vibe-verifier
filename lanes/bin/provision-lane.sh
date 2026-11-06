@@ -1564,9 +1564,8 @@ check_storage() {
   dir="$STATE_DIR"
   [ -d "$dir" ] || dir="$(dirname "$dir")"
   free="$(df -BG --output=avail "$dir" 2>/dev/null | tail -n 1 | tr -dc '0-9')"
-  local all=$(( SLOTS + WAIT_SLOTS + ${QAE_OWN_SLOTS:+QAE_SLOTS} + 0 ))
-  worst=$(( STORE_GB + all * SLOT_GB ))
-  printf 'disk free=%sG lane_worst_case=%sG (store %sG + %s slots x %sG, all sparse)\n' "${free:-?}" "$worst" "$STORE_GB" "$all" "$SLOT_GB"
+  worst=$(( STORE_GB + SLOTS_TOTAL * SLOT_GB ))
+  printf 'disk free=%sG lane_worst_case=%sG (store %sG + %s slots x %sG, all sparse)\n' "${free:-?}" "$worst" "$STORE_GB" "$SLOTS_TOTAL" "$SLOT_GB"
   if [ -n "$free" ] && [ "$free" -lt "$worst" ]; then
     warn "the lane's filesystems could grow past the free space on $STATE_DIR (${free}G < ${worst}G)"
   fi

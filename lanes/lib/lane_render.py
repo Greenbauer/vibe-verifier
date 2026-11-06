@@ -110,6 +110,8 @@ def lane_settings(host: Host, lane: Lane) -> dict[str, object]:
         "QAE_CONCURRENCY": lane.qae_concurrency,
         "QAE_OWN_SLOTS": 1 if lane.qae_own_slots else "",
         "QAE_SLOTS": lane.kind_slots("qae") if lane.qae_label else 0,
+        # Every slot the lane may run at once: the shared ones, the wait kind's and QAE's own.
+        "SLOTS_TOTAL": lane.slots + lane.wait_slots + (lane.qae_concurrency if lane.qae_own_slots else 0),
         "NAME_PREFIX": lane.name_prefix,
         "IMAGE": lane.image,
         "MEMORY_MAX": lane.memory_max,

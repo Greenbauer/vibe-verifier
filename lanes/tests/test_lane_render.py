@@ -37,6 +37,8 @@ check("slots" not in oc["kinds"]["qae"], "without qae_own_slots the qae set has 
 box = load_host(host_file(ORG))
 check([(lane_settings(box, lane)["QAE_OWN_SLOTS"], lane_settings(box, lane)["QAE_SLOTS"]) for lane in (org, apart, ci_only)] == [("", 3), (1, 2), ("", 0)],
       "the provisioner's qae instance count: one per shared slot, QAE's own pool with qae_own_slots, none without QAE")
+check([lane_settings(box, lane)["SLOTS_TOTAL"] for lane in (org, apart, waiting)] == [3, 5, 8],
+      "the disk estimate's slot count adds QAE's own pool and the wait kind's to the shared slots")
 uc = json.loads(listener_config(user))
 check(uc["kinds"]["ci"]["labels"] == ["own-ci"] and uc["kinds"]["qae"]["labels"] == ["own-qae"], "a user lane's sets carry their one label each, so a bare self-hosted job matches neither")
 check(uc["repos"] == {"exclude": ["fleet"], "refresh_sec": 600} and uc["runner_group"] == "default" and uc["budget"]["min_runners"] == 0, "a user lane lists its installation every 10 minutes")
