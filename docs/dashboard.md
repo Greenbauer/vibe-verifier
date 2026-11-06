@@ -819,6 +819,12 @@ current-head suite/run/attempt joins, race handling, expected required checks an
 status/step categories, pagination, rate limits,
 and subscription uncertainty. `test_dashboard_bot_history.py` covers bounded history and workflow
 discovery; `test_dashboard_service.py` covers source timestamps and refresh caching.
+`test_dashboard_refusal_scope.py`, `test_dashboard_call_cost.py` and `test_dashboard_verdict.py` run
+the real collector against a simulated GitHub behind a fake `gh` (`tests/dashboard_fake_github.py`):
+a refused or failed read costs only what that read carries (a 403 on a pull request's own evidence
+or on the subscription files is lost access, which deletes it by design), a refresh's cost follows what
+is open and not how much history there is, and a pull request row lists exactly what GitHub's own
+pull request page lists for its head. Each fails on the parent of the fixes it stands for.
 `test_dashboard_outcomes.py` covers the Outcomes view's reader and runs its node tests.
 `test_dashboard_state_store.py` covers the files kept across a restart: their mode, the atomic
 replace, the size and age limits, and every file that is refused and deleted.
