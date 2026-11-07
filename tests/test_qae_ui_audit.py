@@ -1,162 +1,24 @@
-"""The QAE harness's layout record (actions/qae-browser/ui-audit.js and ui-audit-page.js) and the ui-audit gate
-that judges it.
+"""The QAE harness's layout record (actions/qae-browser/ui-audit.js and the rule files it runs) in a real browser.
 
-`Gate` drives the gate on records written here. The hook's own tests are the node tests beside it. `Browser`
-measures the fixtures in tests/fixtures/ui-audit/ in a real chromium, and loads the hook into a real page: it
+`Browser` measures the fixtures in tests/fixtures/ui-audit/ in a real chromium, and loads the hook into a real page: it
 needs the installed toolchain, so it runs where QAE_MCP names the playwright-mcp entry point (the catalog's
 `qae-browser` CI job, after actions/qae-browser). QAE_CHANNEL=chrome runs it on a machine with Google Chrome
-and no Playwright chromium."""
+and no Playwright chromium. The ui-audit gate that judges the record, and the hook's node tests, are
+tests/test_ui_audit.py."""
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, commit, gate, git, make_repo
+from helpers import ROOT
 
 HOOK = ROOT / "actions" / "qae-browser" / "ui-audit.js"
 FIXTURES = ROOT / "tests" / "fixtures" / "ui-audit"
-RULES = ["clipped-text", "clipped-value", "duplicate-name", "edge", "field-stagger", "glyph-off-center", "long-sentence", "raw-value",
-         "row-height", "row-stagger", "spinner-off-center", "table-scroll", "text-wall", "touching", "uneven-gutter", "wrapped-label"]
-
-
-def line(rule, at="td > div > button", page="https://site.test/quotes", width=1280, **extra):
-    return {"page": page, "width": width, "rule": rule, "at": at, "text": "Activate", "other": "Open",
-            "detail": "0px from the control beside it", **extra}
-
-
-def pull_request(test, files=None):
-    """A repository whose branch adds `files` over main: by default the screen the record's lines name (Activate
-    beside Open), so its findings are the pull request's."""
-    repo = make_repo(test, {"README.md": "x\n", "src/people.tsx": "<Button>Send invite</Button>\n"})
-    git(repo, "checkout", "-q", "-b", "change")
-    commit(repo, files or {"src/quotes.tsx": "<td><div><Button>Activate</Button><Button>Open</Button></div></td>\n"})
-    return repo
-
-
-# A subscribed app's add-someone dialog as the hook recorded it: the "Send invite" choice, pressed, and the "Send invite"
-# submit (actions/qae-browser/name-page.js), on the lines its pull request added.
-DIALOG = {"src/AddSomeoneChoice.tsx": "[Mode.INVITE, 'Send invite'],\n[Mode.CREATE, 'Create account now'],\n",
-          "src/AddSomeoneDialog.tsx": "const SUBMIT = {\n  [Mode.INVITE]: 'Send invite',\n};\n"}
-SAME_NAME = {"rule": "duplicate-name", "page": "https://site.test/customers/7", "width": 1280,
-             "at": "div#headlessui-dialog-panel-3 > div > div:nth-of-type(2) > button:nth-of-type(1)", "text": "Send invite",
-             "other": "Send invite",
-             "detail": "\"Send invite\" and \"Send invite\" in one dialog: a person cannot tell which button does what"}
-
-
-class Gate(unittest.TestCase):
-    def run_gate(self, lines, *args, steps=True, repo=None):
-        repo = repo or pull_request(self)
-        artifacts = Path(repo) / "qae-artifacts"
-        (artifacts / "qae").mkdir(parents=True)
-        if steps:
-            (artifacts / "qae" / "AC1.md").write_text("step 1: opened /quotes\n")
-        if lines is not None:
-            (artifacts / "ui-audit.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
-        return gate("ui-audit", repo, "--base-ref", "main", "--artifacts", str(artifacts), *args)
-
-    def test_a_measured_defect_fails_and_names_the_page_width_rule_and_element(self):
-        result = self.run_gate([line("touching")])
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("touching on https://site.test/quotes at 1280px: Activate / Open: 0px from the control beside it "
-                      "(td > div > button)", result.stdout)
-
-    def test_a_defect_on_a_screen_the_base_already_had_is_listed_and_does_not_block(self):
-        result = self.run_gate([line("touching", text="Send invite", other="Cancel")])
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("advisory: touching, existing on https://site.test/quotes", result.stdout)
-        # --all makes it block, and so does a pull request that adds the neighbour it touches.
-        self.assertEqual(self.run_gate([line("touching", text="Send invite", other="Cancel")], "--all").returncode, 1)
-        self.assertEqual(self.run_gate([line("touching", text="Send invite", other="Open")]).returncode, 1)
-
-    def test_a_defect_on_an_element_that_shows_no_text_does_not_block(self):
-        result = self.run_gate([line("glyph-off-center", text="", other=None)])
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("advisory: glyph-off-center, existing", result.stdout)
-
-    def test_two_buttons_of_one_name_the_pull_request_adds_block(self):
-        result = self.run_gate([SAME_NAME], repo=pull_request(self, DIALOG))
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn('duplicate-name on https://site.test/customers/7 at 1280px: Send invite / Send invite: "Send invite" '
-                      'and "Send invite" in one dialog', result.stdout)
-        # The same two buttons on a screen the pull request does not touch are the base's.
-        self.assertEqual(self.run_gate([SAME_NAME]).returncode, 0)
-
-    def test_a_clean_record_passes(self):
-        result = self.run_gate([])
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_rows_of_one_table_are_one_finding_with_a_count(self):
-        result = self.run_gate([line("touching", "tr:nth-of-type(%d) > td > button" % n) for n in range(1, 10)])
-        self.assertEqual(result.stdout.count("touching on"), 1, result.stdout)
-        self.assertIn("(and 8 more like it)", result.stdout)
-
-    def test_each_width_is_its_own_finding(self):
-        result = self.run_gate([line("touching"), line("touching", width=375)])
-        self.assertEqual(result.stdout.count("touching on"), 2, result.stdout)
-
-    def test_a_page_off_the_declared_site_is_not_judged(self):
-        record = [line("edge", page="https://docs.other.test/help"), line("edge", page="https://site.test.other.test/")]
-        result = self.run_gate(record, "--site", "https://site.test")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_rules_and_allow_narrow_what_is_judged(self):
-        record = [line("edge"), line("raw-value", at="footer > span", text="sync_state")]
-        only = self.run_gate(record, "--rules", "raw-value", "--allow", "^footer ")
-        self.assertEqual(only.returncode, 0, only.stdout + only.stderr)
-        self.assertEqual(self.run_gate(record, "--rules", "edge").returncode, 1)
-
-    def test_soak_reports_without_failing(self):
-        result = self.run_gate([line("touching")], "--soak")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("touching on", result.stdout)
-
-    def test_step_logs_without_a_record_cannot_run(self):
-        # The hook was not loaded: passing would make a broken soak look like clean pages.
-        result = self.run_gate(None)
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("load actions/qae-browser/ui-audit.js", result.stdout + result.stderr)
-
-    def test_each_explorers_record_is_read_from_its_shard(self):
-        repo = pull_request(self)
-        artifacts = Path(repo) / "qae-artifacts"
-        for n, rule in ((1, "edge"), (2, "touching")):
-            (artifacts / ("shard-%d" % n)).mkdir(parents=True)
-            (artifacts / ("shard-%d" % n) / "ui-audit.jsonl").write_text(json.dumps(line(rule)) + "\n")
-        result = gate("ui-audit", repo, "--base-ref", "main", "--artifacts", str(artifacts))
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("edge on", result.stdout)
-        self.assertIn("touching on", result.stdout)
-
-    def test_a_run_that_walked_nothing_passes(self):
-        result = self.run_gate(None, steps=False)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_a_run_that_walked_nothing_passes_on_the_empty_site_file_a_none_declaration_leaves(self):
-        # A pull request that declares `- None:` runs no explorer, so the verify job writes an empty site file.
-        site = Path(tempfile.mkdtemp(prefix="vv-ui-site-")) / "site-url"
-        self.addCleanup(shutil.rmtree, site.parent)
-        site.write_text("\n")
-        result = self.run_gate(None, "--site-file", str(site), steps=False)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        # A clean walk still leaves a record, empty, and that one is judged against the site it declared.
-        result = self.run_gate([], "--site-file", str(site), steps=False)
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-
-    def test_the_hooks_node_tests_pass(self):
-        result = subprocess.run(["node", "--test", "--test-reporter=tap", str(HOOK.with_suffix(".test.js"))],
-                                capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertRegex(result.stdout, r"(?m)^# pass [1-9]")
-
-    def test_both_lanes_load_the_hook(self):
-        template = (ROOT / "harnesses" / "qae" / "explore.yml").read_text()
-        self.assertIn('"--init-page","${{ steps.browser.outputs.console-pages }}","--init-page",'
-                      '"${{ steps.browser.outputs.ui-audit }}"]', template)
-        codex = (ROOT / "actions" / "qae-codex" / "action.yml").read_text()
-        self.assertIn('\\"--init-page\\",\\"$GITHUB_ACTION_PATH/../qae-browser/ui-audit.js\\"', codex)
+RULES = ["clipped-text", "clipped-value", "cramped-field", "duplicate-name", "edge", "field-stagger", "glyph-off-center",
+         "icon-off-center", "long-sentence", "raw-value", "row-height", "row-stagger", "spinner-off-center", "table-scroll", "text-wall",
+         "touching", "uneven-gutter", "wrapped-label"]
 
 
 MEASURE = r"""
@@ -169,7 +31,13 @@ const hook = require(process.env.HOOK);
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await page.goto("file://" + process.env.FIXTURES + "/" + name + ".html");
     const found = await page.evaluate(hook.script);
-    out[name] = [...new Set(found.map(f => f.rule))].sort();
+    // icon-off-center reads screenshots of the window: make it as tall as the page, so every control is in it.
+    await page.setViewportSize({ width: 1280, height: await page.evaluate(() => document.documentElement.scrollHeight) });
+    const icons = [];
+    await hook.recordIcons(page, f => icons.push(f), new Set(), new Set(), Infinity);
+    out[name] = [...new Set([...found, ...icons].map(f => f.rule))].sort();
+    out[name + "-cramped-field"] = found.filter(f => f.rule === "cramped-field").map(f => f.text).sort();
+    out[name + "-icon-off-center"] = icons.map(f => f.text).sort();
     out[name + "-table-scroll"] = found.filter(f => f.rule === "table-scroll").length;
     out[name + "-uneven-gutter"] = found.filter(f => f.rule === "uneven-gutter").length;
     out[name + "-details"] = found.filter(f => ["raw-value", "touching", "glyph-off-center", "duplicate-name", "wrapped-label"].includes(f.rule)).map(f => f.rule + ": " + f.text + (f.rule === "duplicate-name" ? " / " + f.other : ""));
@@ -198,9 +66,40 @@ const hook = require(process.env.HOOK);
   });
   // The spinner's measure starts at once but may queue behind the load's: wait for its line, not a fixed time.
   const recorded = require("path").join(process.env.OUT, "ui-audit.jsonl");
-  for (let waited = 0; waited < 5000 && !require("fs").readFileSync(recorded, "utf8").includes("spinner-off-center"); waited += 100) {
-    await page.waitForTimeout(100);
-  }
+  const waitFor = async text => {
+    for (let waited = 0; waited < 5000; waited += 100) {
+      if (require("fs").readFileSync(recorded, "utf8").includes(text)) return true;
+      await page.waitForTimeout(100);
+    }
+    return false;
+  };
+  out.measured = [await waitFor("spinner-off-center")];
+  // A button whose label is swapped for a spinner of three tilted orbits: measured at once, read from its pixels.
+  await page.evaluate(() => {
+    const style = document.createElement("style");
+    style.textContent = ".loader{position:relative;display:inline-block;width:16px;height:16px;perspective:800px}" +
+      ".orbit{position:absolute;left:0;top:0;box-sizing:border-box;width:100%;height:100%;border-radius:50%}" +
+      ".o1{border-bottom:1.5px solid #fff;transform:rotateX(35deg) rotateY(-70deg) rotateZ(0deg)}" +
+      ".o2{border-right:1.5px solid #fff;transform:rotateX(50deg) rotateY(10deg) rotateZ(0deg)}" +
+      ".o3{border-top:1.5px solid #fff;transform:rotateX(35deg) rotateY(70deg) rotateZ(0deg)}";
+    document.head.append(style);
+    const open = [...document.querySelectorAll("button")].find(b => b.textContent === "Open");
+    open.style.width = open.offsetWidth + "px";
+    open.innerHTML = '<span class=loader><i class="orbit o1"></i><i class="orbit o2"></i><i class="orbit o3"></i></span>';
+  });
+  out.measured.push(await waitFor("icon-off-center"));
+  // What the explorer types, a field a ticked box shows, and a field that appears are each measured, with no load.
+  await page.fill('[aria-label="Reason code"]', "NB01, agreed with the buyer on the call");
+  out.measured.push(await waitFor('"Reason code"'));
+  await page.check("#nobid");
+  out.measured.push(await waitFor("No-bid reason, line 4"));
+  await page.evaluate(() => {
+    const field = document.createElement("input");
+    field.setAttribute("aria-label", "Comment, line 5");
+    field.style.width = "80px";
+    document.querySelector(".fields").append(field);
+  });
+  out.measured.push(await waitFor("Comment, line 5"));
   // A page whose table scrolls beside room only in a wide window: walked at 1280, the hook measures it again at 1920.
   const wideOut = process.env.OUT + "-wide";
   const narrow = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -269,8 +168,25 @@ class Browser(unittest.TestCase):
         # window is closed again: only the tabs the test opened remain.
         self.assertEqual(measured["wide"], [["table-scroll", 1920]])
         self.assertEqual(measured["pages"], 2)
+        # The reason field the subscribed app squeezed into a table column, a one-line box asking for an explanation, and a
+        # field whose value is wider than it shows. good.html's wide reason textarea, short answers in narrow fields (a
+        # 2-digit quantity, a 4-character code, a PO number, a search box), a numeric field and a url field whose names hold
+        # a free-text word, a disabled reason field, a note capped at what it shows and a one-line textarea that grows as it
+        # is typed in are clean, and bad.html's read-only note cut off is clipped-value's alone.
+        self.assertEqual(measured["bad-cramped-field"],
+                         ["A value much longer than this narrow field can show", "Explain the change", "No-bid reason, line 1"])
+        # A spinner of three tilted orbits whose ink sits right of its box's middle, an svg nudged 3px right, and a chevron
+        # 3px low in a button drawn by its shadow alone. good.html's centered icon, a ring with one bright arc and a ring
+        # with a gap (both turning), an icon beside a label, a borderless icon button and one whose only shadows are
+        # Tailwind's zero-size rings, a bell with a dot, an icon beside a drawn caret, a tab with a bar along its foot, a
+        # button under an open menu and one cut by the window's edge are not flagged.
+        self.assertEqual(measured["bad-icon-off-center"], ["Close", "Next", "Saving the quote"])
+        self.assertEqual(measured["good-icon-off-center"], [])
+        self.assertEqual(measured["measured"], [True, True, True, True, True])
         record = [json.loads(x) for x in Path(out, "ui-audit.jsonl").read_text().splitlines()]
-        self.assertEqual([x["rule"] for x in record], ["spinner-off-center"])
+        self.assertEqual([(x["rule"], x["text"]) for x in record],
+                         [("spinner-off-center", ""), ("icon-off-center", ""), ("cramped-field", "Reason code"),
+                          ("cramped-field", "No-bid reason, line 4"), ("cramped-field", "Comment, line 5")])
         self.assertTrue(record[0]["page"].endswith("/good.html"))
         self.assertEqual(record[0]["width"], 1280)
 

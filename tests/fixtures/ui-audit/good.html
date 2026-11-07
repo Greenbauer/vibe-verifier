@@ -23,6 +23,13 @@ input{border:1px solid #444;background:#1a1a1a;color:#eee;border-radius:6px;padd
 .switch{position:relative;display:inline-block;width:44px;height:24px;border-radius:12px;background:#4a4}
 .switch::before{content:"";position:absolute;left:4px;top:4px;width:16px;height:16px;border-radius:50%;background:#fff}
 .online{position:relative}.online::after{content:"";position:absolute;left:24px;top:24px;width:8px;height:8px;border-radius:50%;background:#4c4}
+.fields{display:flex;flex-direction:column;align-items:flex-start;gap:12px}
+.why{display:none}#nobid:checked+.why{display:inline-block}
+.icon{width:32px;padding:0;justify-content:center;position:relative}
+.ghost{background:none;border-color:transparent}
+.ring{width:16px;height:16px;box-sizing:border-box;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:s 1s linear infinite}
+.gap-ring{width:16px;height:16px;box-sizing:border-box;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:s .75s linear infinite}
+.caret::after{content:"";position:absolute;right:3px;top:14px;border:3px solid transparent;border-top-color:#eee}
 </style>
 <div class=card><div class=row><label class=pill><input type=checkbox> Active only</label><button>Apply filters</button></div></div>
 <div class=card><div class=grid>
@@ -37,7 +44,7 @@ input{border:1px solid #444;background:#1a1a1a;color:#eee;border-radius:6px;padd
 <input type=hidden value=foo_bar><code>in_review</code>
 <div style="width:80px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">A label far too long for its box</div>
 <select style="width:200px"><option>A long option label here</option></select>
-<input placeholder="Type a long name" value="A value much longer than this narrow field can show" style="width:90px">
+<input placeholder="Type a long name" value="Ana Ruiz" style="width:90px">
 <div class=card><span class=badge>6</span> <span class=av>PP</span>
 <span class=chk><svg width=14 height=14 viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" stroke=#fff fill=none stroke-width=3 /></svg></span>
 <input type=checkbox class="tick t-ok" checked aria-label="Pick">
@@ -66,3 +73,20 @@ input{border:1px solid #444;background:#1a1a1a;color:#eee;border-radius:6px;padd
 <div style="margin:0 -20px;position:relative;height:120px"><div style="position:relative;height:120px;padding:8px 16px">A scroller of stories</div><div style="position:relative;margin-top:-50px;height:40px;padding:8px 32px">A caption laid over it</div></div>
 <div style="margin:0 -20px"><div style="padding:8px 16px">Lanes this week</div><section style="padding:48px 32px;text-align:center"><h2 style="margin:0">Ship rates faster</h2></section><div style="padding:8px 16px">Rates this week</div><div style="padding:8px 32px;text-align:right">Total $2,228.57</div><div style="padding:8px 16px">Carriers this week</div><footer style="padding:16px;text-align:center"><img alt="" width="300" height="32" style="background:#4a4;max-width:100%"></footer><div style="padding:8px 16px">Ports this week</div><div style="padding:8px 16px"><div style="max-width:300px;margin:0 auto;border:1px solid #333">An empty state, centered</div></div></div>
 <div style="margin:0 -20px"><div style="padding:8px 16px">Notes on this lane</div><div style="padding:8px 16px 8px 64px">An indented note under it</div></div>
+<div class="card fields"><textarea aria-label="No-bid reason, line 2" rows=3 style="width:360px"></textarea>
+<input aria-label="Qty, line 1" inputmode=numeric value=12 style="width:40px"><input aria-label="Reason code" value=NB01 style="width:60px">
+<input aria-label="PO number" style="width:90px"><input type=search placeholder="Search notes" style="width:120px">
+<input aria-label="Messages a day" inputmode=numeric value=20 style="width:48px"><input type=url aria-label="Link to the description" style="width:120px">
+<input aria-label="No-bid reason, line 3" placeholder=Reason disabled style="width:90px"><input aria-label="Note" maxlength=8 style="width:90px">
+<textarea aria-label="Message" rows=1 style="width:360px;height:30px"></textarea>
+<div><input type=checkbox id=nobid aria-label="No bid, line 4"><input class=why aria-label="No-bid reason, line 4" placeholder=Reason style="width:90px"></div></div>
+<div class=card style="display:flex;flex-wrap:wrap;gap:8px"><button class=icon aria-label="Saving"><span class=ring></span></button><button class=icon aria-label="Loading"><span class=gap-ring></span></button>
+<button style="width:120px;justify-content:flex-start"><svg width=14 height=14 viewBox="0 0 14 14"><path d="M2 7h10" stroke=#eee /></svg>Save</button>
+<button class="icon ghost" aria-label="Edit"><svg width=14 height=14 viewBox="0 0 14 14" style="position:relative;left:3px"><path d="M2 12 12 2" stroke=#eee /></svg></button>
+<button class=icon aria-label="Alerts"><svg width=14 height=14 viewBox="0 0 14 14"><path d="M3 10V6a4 4 0 0 1 8 0v4z" stroke=#eee fill=none /></svg><span style="position:absolute;top:4px;right:4px;width:6px;height:6px;border-radius:50%;background:#e55"></span></button>
+<button class="icon caret" aria-label="More"><svg width=14 height=14 viewBox="0 0 14 14"><path d="M2 7h10M7 2v10" stroke=#eee /></svg></button>
+<div role=tablist style="display:inline-flex"><button role=tab aria-selected=true class=icon aria-label="Grid" style="box-shadow:inset 0 -2px 0 #4af"><svg width=14 height=14 viewBox="0 0 14 14"><path d="M2 2h4v4H2zM8 8h4v4H8z" stroke=#eee fill=none /></svg></button></div></div>
+<div style="position:fixed;right:16px;bottom:16px;width:32px;height:32px"><button class=icon aria-label="Chat"><svg width=14 height=14 viewBox="0 0 14 14"><path d="M2 2l10 10M12 2 2 12" stroke=#eee /></svg></button>
+<div role=menu style="position:absolute;inset:-8px;background:#333;border-radius:8px"><span style="position:absolute;left:28px;top:18px;width:8px;height:8px;border-radius:50%;background:#eee"></span></div></div>
+<button class=icon aria-label="Help" style="position:fixed;left:16px;bottom:-15px"><svg width=20 height=20 viewBox="0 0 20 20"><path d="M2 2l16 16M18 2 2 18" stroke=#eee /></svg></button>
+<div class=card><button class="icon ghost" aria-label="Show password" style="box-shadow:#fff 0 0 0 0,rgba(59,130,246,.5) 0 0 0 0,rgba(0,0,0,0) 0 0 0 0"><svg width=14 height=14 viewBox="0 0 14 14" style="position:relative;left:3px"><path d="M1 7q6-7 12 0q-6 7-12 0z" stroke=#eee fill=none /></svg></button></div>

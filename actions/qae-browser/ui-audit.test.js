@@ -1,5 +1,5 @@
-// The layout record's own tests, with a stand-in for the Playwright page. Run by
-// tests/test_qae_ui_audit.py, which also measures real pages where a browser is installed.
+// The layout record's own tests, with a stand-in for the Playwright page. Run by tests/test_ui_audit.py;
+// tests/test_qae_ui_audit.py measures real pages where a browser is installed.
 const assert = require("node:assert");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -12,7 +12,7 @@ const finding = (rule, at, detail = "d") => ({ rule, at, text: "Open", detail })
 
 // A tab showing `url` whose audit returns each of `answers` in turn (an Error is a measure the
 // tab's navigation interrupted), and whose copy finder returns each of `copies`; `fire` runs its
-// listeners, `lines` and `copy` read back the two records.
+// listeners, `lines` and `copy` read back the two records. Its window holds no control with only an icon.
 function tab(url, answers, width = 1280, copies = []) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vv-ui-audit-"));
   const listeners = {};
@@ -25,6 +25,7 @@ function tab(url, answers, width = 1280, copies = []) {
     exposeBinding: async (name, fn) => { binding = fn; },
     addInitScript: async () => {},
     evaluate: async script => {
+      if (script === hook.iconScript) return [];
       const answer = (script === hook.copyScript ? copies : answers).shift() || [];
       if (answer instanceof Error) throw answer;
       return answer;
@@ -92,6 +93,64 @@ test("a spinner appearing is measured at once, not a second later", async () => 
   assert.deepStrictEqual(t.lines().map(line => line.rule), ["spinner-off-center"]);
 });
 
+// A page whose window holds the icon controls of each list in `looks` in turn (the last repeated), and whose
+// screenshots answer `frames` in turn; `shots` counts them.
+function iconTab(looks, frames) {
+  const queue = [...frames], page = { shots: 0 };
+  let look = 0;
+  return Object.assign(page, {
+    url: () => "https://site.test/quotes?id=4",
+    viewportSize: () => ({ width: 1280 }),
+    evaluate: async script => (script === hook.iconScript ? looks[Math.min(look++, looks.length - 1)] : []),
+    screenshot: async () => { page.shots++; return queue.shift(); },
+  });
+}
+// A 16px control at (x, 0) and a screenshot of it: white, with a 4px square of ink whose left edge is at `left`, so
+// its middle sits left + 2 - 8 px right of the control's.
+const control = (at, x = 0) => ({ at, text: at, clip: { x, y: 0, width: 16, height: 16 }, center: { x: x + 8, y: 8 },
+  scan: { left: x + 1, top: 1, right: x + 15, bottom: 15, radius: [0, 0, 0, 0] } });
+function shot(left) {
+  const zlib = require("node:zlib");
+  const chunk = (kind, body) => {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(body.length);
+    head.write(kind, 4, "latin1");
+    return Buffer.concat([head, body, Buffer.alloc(4)]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(16);
+  header.writeUInt32BE(16, 4);
+  header[8] = 8;
+  header[9] = 2;
+  const rows = [...Array(16).keys()].map(y => Buffer.from([0, ...[...Array(16).keys()].flatMap(x => (x >= left && x < left + 4 && y >= 6 && y < 10 ? [0, 0, 0] : [255, 255, 255]))]));
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", header),
+    chunk("IDAT", zlib.deflateSync(Buffer.concat(rows))), chunk("IEND", Buffer.alloc(0))]);
+}
+const OFF = 9, MIDDLE = 6;   // a square 3px right of the middle, and one on it
+
+test("an icon off its control's middle in every frame is recorded, once per page, width and control", async () => {
+  // Frames are taken a control at a time: save, close, save, close, save, close. Close is on the middle once.
+  const page = iconTab([[control("button.save"), control("button.close", 20)]], [OFF, OFF, OFF, MIDDLE, OFF, OFF].map(shot));
+  const written = [], sampled = new Set();
+  await hook.recordIcons(page, line => written.push(line), new Set(), sampled);
+  assert.deepStrictEqual(written.map(line => [line.page, line.width, line.rule, line.at]), [["https://site.test/quotes", 1280, "icon-off-center", "button.save"]]);
+  assert.match(written[0].detail, /in each of 3 frames: 3\.0px right; 3\.0px right; 3\.0px right$/);
+  // Both are sampled: a second measure takes no screenshot and writes nothing more.
+  await hook.recordIcons(page, line => written.push(line), new Set(), sampled);
+  assert.deepStrictEqual([page.shots, written.length], [6, 1]);
+});
+
+test("a control that moves while it is sampled is left for a later measure, and a measure samples at most four", async () => {
+  const moved = { ...control("button.save"), clip: { x: 1, y: 0, width: 16, height: 16 } };
+  const page = iconTab([[control("button.save")], [moved]], [OFF, OFF, OFF].map(shot));
+  const written = [], sampled = new Set();
+  await hook.recordIcons(page, line => written.push(line), new Set(), sampled);
+  assert.deepStrictEqual([written, sampled.size], [[], 0]);
+  const many = iconTab([[1, 2, 3, 4, 5].map(n => control("button.n" + n, n * 20))], []);
+  await hook.recordIcons(many, () => {}, new Set(), new Set());
+  assert.strictEqual(many.shots, 12);
+});
+
 test("the copy record keeps each text once per page, at the width it was first read", async () => {
   const written = [];
   const copied = new Set();
@@ -126,7 +185,8 @@ test("the copy finder is self-contained: run as the page script on an empty page
 
 test("the audit is self-contained: run as the page script on an empty page, it needs only the DOM and finds nothing", () => {
   const vm = require("node:vm");
-  const page = { querySelectorAll: () => [], createElement: () => ({ getContext: () => ({ measureText: () => ({ width: 0 }) }) }) };
+  const page = { querySelectorAll: () => [], createElement: () => ({ getContext: () => ({ measureText: () => ({ width: 0 }) }) }),
+    documentElement: { clientWidth: 1280, clientHeight: 900 } };
   assert.strictEqual(typeof require("./ui-audit-page.js"), "function");
   assert.strictEqual(typeof require("./glyph-page.js"), "function");
   assert.ok(hook.script.includes("function glyphRules("));   // the badge rule runs in the same script
@@ -138,12 +198,18 @@ test("the audit is self-contained: run as the page script on an empty page, it n
   assert.ok(hook.script.includes("function scrollRules("));   // and so does the table-scroll rule
   assert.strictEqual(typeof require("./gutter-page.js"), "function");
   assert.ok(hook.script.includes("function gutterRules("));   // and so does the uneven-gutter rule
+  assert.strictEqual(typeof require("./field-page.js"), "function");
+  assert.ok(hook.script.includes("function crampedRules("));   // and so does the cramped-field rule
   assert.strictEqual(JSON.stringify(vm.runInNewContext(hook.script, { document: page, getComputedStyle: () => ({}) })), "[]");
+  // The controls icon-off-center screenshots are found by a script of the same files.
+  assert.strictEqual(typeof require("./icon-page.js"), "function");
+  assert.ok(hook.iconScript.includes("function iconControls("));
+  assert.strictEqual(JSON.stringify(vm.runInNewContext(hook.iconScript, { document: page, getComputedStyle: () => ({}) })), "[]");
 });
 
 test("the rule files run as one script, so no two declare the same top-level name", () => {
   // A second `function lines` in gutter-page.js would have replaced wrap-page.js's, silently breaking wrapped-label.
-  const files = ["ui-audit-page.js", "glyph-page.js", "name-page.js", "wrap-page.js", "scroll-page.js", "gutter-page.js"];
+  const files = ["ui-audit-page.js", "glyph-page.js", "name-page.js", "wrap-page.js", "scroll-page.js", "gutter-page.js", "field-page.js", "icon-page.js"];
   const seen = new Map();
   for (const file of files) {
     for (const [, name] of fs.readFileSync(path.join(__dirname, file), "utf8").matchAll(/^(?:function|const|let)\s+([A-Za-z_$][\w$]*)/gm)) {

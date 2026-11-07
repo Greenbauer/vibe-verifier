@@ -2,10 +2,10 @@
 //
 // As playwright-mcp's --init-page hook it runs the layout audit (ui-audit-page.js) on every page
 // the explorer opens: a second after each load and each navigation of the tab, half a second after a
-// dialog, alert or status message appears, and at once when a button gains a spinner, so a state the
-// explorer only passes through is measured too. Each finding is appended once per page, viewport
-// width, rule and element to ui-audit.jsonl in the run's output directory, which the ui-audit gate
-// reads:
+// dialog, alert, status message or text field appears, 0.6 seconds after the explorer last typed into a
+// field or ticked a box, and at once when a button gains a spinner, so a state the explorer only passes
+// through is measured too. Each finding is appended once per page, viewport width, rule and element to
+// ui-audit.jsonl in the run's output directory, which the ui-audit gate reads:
 //
 //     {"page": "<URL, query and fragment dropped>", "width": 1280, "rule": "touching",
 //      "at": "<CSS path>", "text": "...", "other": "...", "detail": "..."}
@@ -15,6 +15,11 @@
 // gate judges:
 //
 //     {"page": "...", "width": 1280, "kind": "sentence", "text": "...", "at": "<CSS path>"}
+//
+// An icon or spinner off its control's middle (icon-off-center) shows only in pixels: a CSS-drawn mark or a spinner
+// tilted in 3D draws its ink away from the boxes the DOM reports. So at each measure the hook also screenshots up to
+// ICONS controls in the window whose only content is one mark (icon-page.js finds them), three frames FRAME_GAP ms
+// apart, and finds the ink in each (ink.js). Each control is sampled once per page and width.
 //
 // The explorer never sees it and cannot change it: the hook runs in the harness's Node process.
 //
@@ -38,7 +43,12 @@ const path = require("path");
 // The audit as one script for page.evaluate: the file's functions inside a closure, so none of them
 // lands on the page's window, and the closure's value is the findings.
 const read = name => fs.readFileSync(path.join(__dirname, name), "utf8");
-const script = `(() => {\n${read("ui-audit-page.js")}\n${read("glyph-page.js")}\n${read("name-page.js")}\n${read("wrap-page.js")}\n${read("scroll-page.js")}\n${read("gutter-page.js")}\nreturn audit();\n})()`;
+const RULES = ["ui-audit-page.js", "glyph-page.js", "name-page.js", "wrap-page.js", "scroll-page.js", "gutter-page.js", "field-page.js", "icon-page.js"];
+const rules = RULES.map(read).join("\n");
+const script = `(() => {\n${rules}\nreturn audit();\n})()`;
+// The controls icon-off-center screenshots, found by the same rule files.
+const iconScript = `(() => {\n${rules}\nreturn iconControls();\n})()`;
+const { decodePng, inkOffset, offCenter } = require("./ink.js");
 // The copy record's finder, with the audit's helpers it uses (visible, cssPath) in the same closure.
 const copyScript = `(() => {\n${read("ui-audit-page.js")}\n${read("copy-page.js")}\nreturn copyBlocks();\n})()`;
 
@@ -46,6 +56,9 @@ const RECORD = "ui-audit.jsonl";
 const WIDE = 1920;   // px: a common desktop window, where a capped layout leaves room beside its tables
 const WIDE_RULES = ["table-scroll"];   // the rules whose defect needs room to show
 const COPY = "copy.jsonl";
+const ICONS = 4;          // controls icon-off-center screenshots per measure, each FRAMES times: the rest wait for the next
+const FRAMES = 3;         // a spinner turns, so a control is judged off-center only when every frame is
+const FRAME_GAP = 120;    // ms between frames
 
 function pageOf(url) {
   try {
@@ -103,6 +116,38 @@ async function recordWide(page, write, written, measured) {
   }
 }
 
+// Screenshots up to `most` controls whose only content is one mark, not sampled on this page at this width before,
+// FRAMES times, and hands an icon-off-center finding for each whose ink sat off its middle in every frame to `write`.
+// A control that moved or went while it was sampled (the explorer scrolled, the spinner stopped) is left for a later
+// measure. Never the explorer's problem: a failure here costs only this sample.
+async function recordIcons(page, write, written, sampled, most = ICONS) {
+  try {
+    const where = pageOf(page.url()), width = (page.viewportSize() || {}).width || null;
+    const id = control => JSON.stringify([where, width, control.at]);
+    const controls = (await page.evaluate(iconScript)).filter(control => !sampled.has(id(control))).slice(0, most);
+    if (!controls.length) return;
+    const samples = controls.map(() => []);
+    for (let frame = 0; frame < FRAMES; frame++) {
+      if (frame) await new Promise(resolve => setTimeout(resolve, FRAME_GAP));
+      for (const [i, control] of controls.entries()) {
+        samples[i].push(inkOffset(decodePng(await page.screenshot({ clip: control.clip, caret: "initial", timeout: 5000 })), control));
+      }
+    }
+    const still = new Set((await page.evaluate(iconScript)).map(control => control.at + JSON.stringify(control.clip)));
+    if (pageOf(page.url()) !== where) return;
+    for (const [i, control] of controls.entries()) {
+      if (!still.has(control.at + JSON.stringify(control.clip))) continue;
+      sampled.add(id(control));
+      const detail = offCenter(samples[i]), key = JSON.stringify([where, width, "icon-off-center", control.at]);
+      if (!detail || written.has(key)) continue;
+      written.add(key);
+      write({ page: where, width, rule: "icon-off-center", at: control.at, text: control.text, detail });
+    }
+  } catch {
+    // the tab navigated or closed mid-sample, or a screenshot failed: the next measure samples again
+  }
+}
+
 // Runs the copy finder on the page and hands each block of text not written for this page before to `write`.
 async function recordCopy(page, write, written) {
   let found;
@@ -130,12 +175,12 @@ exports.default = async ({ page }) => {
   fs.appendFileSync(copyFile, "");
   const write = line => fs.appendFileSync(file, JSON.stringify(line) + "\n");
   const writeCopy = line => fs.appendFileSync(copyFile, JSON.stringify(line) + "\n");
-  const written = new Set(), copied = new Set(), measuredWide = new Set();
+  const written = new Set(), copied = new Set(), measuredWide = new Set(), sampled = new Set();
   let timer;
   const soon = ms => {
     clearTimeout(timer);
-    timer = setTimeout(() => record(page, write, written).then(() => recordCopy(page, writeCopy, copied))
-      .then(() => recordWide(page, write, written, measuredWide)), ms);
+    timer = setTimeout(() => record(page, write, written).then(() => recordIcons(page, write, written, sampled))
+      .then(() => recordCopy(page, writeCopy, copied)).then(() => recordWide(page, write, written, measuredWide)), ms);
   };
   page.on("load", () => soon(1000));
   page.on("framenavigated", frame => { if (frame === page.mainFrame()) soon(1000); });
@@ -143,6 +188,8 @@ exports.default = async ({ page }) => {
   await page.exposeBinding("__vibeVerifierMeasure", (source, ms) => soon(ms));
   await page.addInitScript(() => {
     const MESSAGE = "dialog, [role=dialog], [role=alertdialog], [role=alert], [role=status], [aria-live]";
+    const FIELD = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea";
+    const field = node => node.nodeType === 1 && (node.matches(FIELD) || Boolean(node.querySelector(FIELD)));
     const spinning = node => node.nodeType === 1 && node.closest("button, [role=button]")
       && (/spin|loader|loading/i.test(node.getAttribute("class") || "") || node.getAttribute("role") === "progressbar");
     const message = node => {
@@ -152,14 +199,21 @@ exports.default = async ({ page }) => {
     new MutationObserver(changes => {
       const added = changes.flatMap(change => [...change.addedNodes]);
       if (added.some(spinning)) window.__vibeVerifierMeasure(0);
-      else if (added.some(message) || changes.some(change => change.attributeName === "open")) window.__vibeVerifierMeasure(500);
+      else if (added.some(message) || added.some(field) || changes.some(change => change.attributeName === "open")) window.__vibeVerifierMeasure(500);
     }).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
+    // What a person typed is in a field's value, which no mutation shows: measure once the typing stops. Ticking a box,
+    // which can show a field by CSS alone, is an input too.
+    let typing;
+    const typed = () => { clearTimeout(typing); typing = setTimeout(() => window.__vibeVerifierMeasure(0), 600); };
+    addEventListener("input", typed, true);
   });
   soon(1000);
 };
 exports.record = record;
 exports.recordCopy = recordCopy;
 exports.recordWide = recordWide;
+exports.recordIcons = recordIcons;
+exports.iconScript = iconScript;
 exports.pageOf = pageOf;
 exports.script = script;
 exports.copyScript = copyScript;
@@ -202,10 +256,13 @@ async function main(argv) {
           continue;
         }
         await page.waitForTimeout(1500);
-        await record(page, line => {
+        const print = line => {
           count++;
           console.log(`${line.page} @${line.width}px ${line.rule}: ${line.text || line.at}${line.other ? ` / ${line.other}` : ""}: ${line.detail}`);
-        }, new Set());
+        };
+        const written = new Set();
+        await record(page, print, written);
+        await recordIcons(page, print, written, new Set(), Infinity);
         if (copy) await recordCopy(page, line => fs.appendFileSync(copy, JSON.stringify(line) + "\n"), copied);
       }
       await context.close();
