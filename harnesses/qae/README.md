@@ -666,9 +666,9 @@ pull request, split or not.
   exist only on a large pull request, so no
   branch rule can name them. On a split run the verify job fails unless every explorer's job
   succeeded, after its gates have run.
-- **Tell the dashboard.** A [dashboard](../../docs/dashboard.md) that lists the explorer's job names
-  lists the extra ones too (`Acceptance criteria: walk (2)`, ...), or it does not see those jobs, and
-  while copies of both names run, both. Each explorer's
+- **The dashboard needs nothing new.** A [dashboard](../../docs/dashboard.md) that lists
+  `Acceptance criteria: walk` counts the extra explorers (`Acceptance criteria: walk (2)`, ...) as
+  that job; while copies of an old and a new name run, it lists both. Each explorer's
   usage artifact is read by its own name ([`docs/USAGE-CONTRACT.md`](../../docs/USAGE-CONTRACT.md)).
 
 A consumer's copy made before the split keeps working after a pin bump: `actions/criteria` and
