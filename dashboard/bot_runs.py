@@ -20,6 +20,18 @@ def runner_name(value: object) -> str | None:
     return None
 
 
+# GitHub names each job of a matrix `<job> (<values>)`, as a split walk's `Acceptance criteria: walk (7)`.
+MATRIX_JOB = re.compile(r"(?P<job>.+) \([^()]*\)\Z")
+
+
+def job_named(name: object, names) -> bool:
+    """The job is one of names, by its own name or as one job of that name's matrix."""
+    if not isinstance(name, str):
+        return False
+    match = MATRIX_JOB.fullmatch(name)
+    return name in names or bool(match and match.group("job") in names)
+
+
 def bot_job_ran(job: dict) -> bool:
     """A job counts as a bot run when it had a runner and was not skipped."""
     return bool(job.get("runner_name")) and job.get("conclusion") != "skipped"
@@ -55,7 +67,7 @@ def _pull_jobs(repository: str, pull: dict, by_file: dict, bots: dict) -> list[t
         for job in run.get("jobs") or []:
             if bot_job_ran(job):
                 found.extend((repository, role, run, job)
-                             for role in roles if job.get("name") in bots[role].jobs)
+                             for role in roles if job_named(job.get("name"), bots[role].jobs))
     return found
 
 

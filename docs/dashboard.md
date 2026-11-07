@@ -187,10 +187,9 @@ roster shows no invented agents. See
 }
 ```
 
-A bot's `jobs` are exact job names. A QAE workflow that splits a large pull request across
-explorers runs the extra ones as `<job> (2)`, `<job> (3)`, ..., so list those too
-(`"jobs": ["Acceptance criteria: walk", "Acceptance criteria: walk (2)"]`), or their runs are not
-shown. While a job is being renamed ([check names](check-names.md)), list both names, as the example
+A bot's `jobs` are job names. A matrix job, which GitHub names `<job> (<values>)`, counts as its
+job: a QAE workflow that splits a large pull request across explorers runs them as `<job>`,
+`<job> (2)`, `<job> (3)`, ..., and listing `Acceptance criteria: walk` covers them all. While a job is being renamed ([check names](check-names.md)), list both names, as the example
 does: the catalog's harnesses now name their jobs as above, and a repository's copy made before the
 rename still runs under the old name (`review`, `qae-explore`, `qae-verify`) until it takes the new one.
 

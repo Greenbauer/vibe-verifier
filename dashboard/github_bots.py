@@ -9,7 +9,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
-from .bot_runs import bot_job_ran, pulls_bot_jobs, recent_bot_runs
+from .bot_runs import bot_job_ran, job_named, pulls_bot_jobs, recent_bot_runs
 from .config import BOT_KEYS
 from .gh_api import ApiError
 from .github import JOB_CACHE_AGE, MAX_WORKERS, _endpoint, _time_key
@@ -73,7 +73,7 @@ class BotHistory:
     def _add_bot_job(self, rows: dict, phase: str, role_jobs: dict, repository: str, run: dict, job: dict) -> None:
         """Add the job under phase for every role that names it."""
         for role, names in role_jobs.items():
-            if job["name"] in names:
+            if job_named(job["name"], names):
                 rows[role][phase].append(self._bot_row(repository, role, run, job))
 
     def _active_bot_jobs(self, repository: str, base: str, role_jobs: dict, rows: dict) -> None:
