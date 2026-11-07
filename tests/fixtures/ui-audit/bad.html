@@ -23,6 +23,7 @@ input{border:1px solid #444;background:#1a1a1a;color:#eee;border-radius:6px;padd
 .o1{border-bottom:1.5px solid #fff;transform:rotateX(35deg) rotateY(-70deg) rotateZ(0deg)}
 .o2{border-right:1.5px solid #fff;transform:rotateX(50deg) rotateY(10deg) rotateZ(0deg)}
 .o3{border-top:1.5px solid #fff;transform:rotateX(35deg) rotateY(70deg) rotateZ(0deg)}
+.box{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:32px;height:32px;border:1px solid #444;border-radius:8px;background:#222}
 </style>
 <div class=card><div class=row><label class=pill><input type=checkbox> Active only</label><button>Apply filters</button></div></div>
 <div class=card><div class=grid>
@@ -64,3 +65,12 @@ input{border:1px solid #444;background:#1a1a1a;color:#eee;border-radius:6px;padd
 <div class=card><button class="icon primary" aria-label="Saving the quote"><span class=loader><i class="orbit o1"></i><i class="orbit o2"></i><i class="orbit o3"></i></span></button>
 <button class=icon aria-label="Close"><svg width=14 height=14 viewBox="0 0 14 14" style="position:relative;left:3px"><path d="M2 2l10 10M12 2 2 12" stroke=#eee /></svg></button></div>
 <div class=card><button class=icon aria-label="Next" style="border-color:transparent;background:none;box-shadow:0 1px 3px rgba(255,255,255,.4)"><svg width=14 height=14 viewBox="0 0 14 14" style="position:relative;top:3px"><path d="M5 2l5 5-5 5" stroke=#eee fill=none /></svg></button></div>
+<div class=card style="display:flex;flex-direction:column;align-items:flex-start;gap:12px"><input aria-label="Reason for the change" style="width:180px;font-size:18px">
+<div><label for=f-label>Why is this late?</label> <input id=f-label style="width:90px"></div><input id=f-placeholder placeholder="Add a note" style="width:90px">
+<input id=f-title title="Describe the damage" style="width:90px"><div><span id=f-named>Feedback</span> <input id=f-labelledby aria-labelledby=f-named style="width:90px"></div>
+<input id=f-n name=deliveryInstructions style="width:90px"><input id=no_bid_reason_2 style="width:90px"><input type=search placeholder="Explain what you looked for" style="width:90px"></div>
+<div class=card style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"><a href="#edit" class=box aria-label="Edit"><svg width=14 height=14 viewBox="0 0 14 14" style="position:relative;left:3px"><path d="M2 2l10 10M12 2 2 12" stroke=#eee /></svg></a>
+<div role=tablist style="display:inline-flex"><span role=tab tabindex=0 aria-selected=true class=box aria-label="Map"><svg width=14 height=14 viewBox="0 0 14 14" style="position:relative;left:3px"><path d="M2 2l10 10M12 2 2 12" stroke=#eee /></svg></span></div>
+<div role=radiogroup style="display:inline-flex"><span role=radio tabindex=0 aria-checked=true class=box aria-label="List"><svg width=14 height=14 viewBox="0 0 14 14" style="position:relative;left:3px"><path d="M2 2l10 10M12 2 2 12" stroke=#eee /></svg></span></div>
+<div role=button tabindex=0 class=box aria-label="Expand"><svg width=14 height=14 viewBox="0 0 14 14" style="position:relative;left:3px"><path d="M2 2l10 10M12 2 2 12" stroke=#eee /></svg></div><label class="btn box" aria-label="Upload"><input type=file hidden><svg width=14 height=14 viewBox="0 0 14 14" style="position:relative;left:3px"><path d="M2 2l10 10M12 2 2 12" stroke=#eee /></svg></label>
+<button class=icon aria-label="Add"><span class=material-icons style="font:16px monospace;position:relative;left:3px">+</span></button></div>

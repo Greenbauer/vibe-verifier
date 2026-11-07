@@ -107,7 +107,7 @@ function iconTab(looks, frames) {
 }
 // A 16px control at (x, 0) and a screenshot of it: white, with a 4px square of ink whose left edge is at `left`, so
 // its middle sits left + 2 - 8 px right of the control's.
-const control = (at, x = 0) => ({ at, text: at, clip: { x, y: 0, width: 16, height: 16 }, center: { x: x + 8, y: 8 },
+const control = (at, x = 0) => ({ at, mark: "svg.", text: at, clip: { x, y: 0, width: 16, height: 16 }, center: { x: x + 8, y: 8 },
   scan: { left: x + 1, top: 1, right: x + 15, bottom: 15, radius: [0, 0, 0, 0] } });
 function shot(left) {
   const zlib = require("node:zlib");
@@ -138,6 +138,10 @@ test("an icon off its control's middle in every frame is recorded, once per page
   // Both are sampled: a second measure takes no screenshot and writes nothing more.
   await hook.recordIcons(page, line => written.push(line), new Set(), sampled);
   assert.deepStrictEqual([page.shots, written.length], [6, 1]);
+  // The same control showing another mark (its icon swapped for a spinner) is sampled again.
+  const swapped = iconTab([[{ ...control("button.save"), mark: "span.spinner" }]], [OFF, OFF, OFF].map(shot));
+  await hook.recordIcons(swapped, line => written.push(line), new Set(), sampled);
+  assert.strictEqual(swapped.shots, 3);
 });
 
 test("a control that moves while it is sampled is left for a later measure, and a measure samples at most four", async () => {

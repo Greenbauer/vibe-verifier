@@ -63,26 +63,30 @@ function inkBoxes(el, r) {
   return { clip: { x, y, width: Math.ceil(r.right) - x, height: Math.ceil(r.bottom) - y }, scan, center };
 }
 
-// Whether `el` is a control whose only content is one mark, drawn in a box a person sees, whole in the window and not
-// under anything: a screenshot of the window is what the hook reads.
-function iconControl(el, r, room) {
+// The one mark of `el`, named by its tag and class or its pseudo-element (so an icon swapped for a spinner is sampled
+// again), when `el` is a control whose only content is one mark, drawn in a box a person sees, whole in the window and
+// not under anything: a screenshot of the window is what the hook reads. Else null.
+function iconMark(el, r, room) {
   // In the window first: it is the cheap test, and most of a long page's links and buttons fail it.
-  if (r.left < 0 || r.top < 0 || Math.ceil(r.right) > room.width || Math.ceil(r.bottom) > room.height) return false;
-  if (!visible(el) || !boxed(el) || labelled(el)) return false;
-  const marks = (loneMark(el) ? 1 : 0) + ["::before", "::after"].filter(which => drawnPseudo(el, which)).length;
-  const top = marks === 1 && document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
-  return Boolean(top) && (top === el || el.contains(top));
+  if (r.left < 0 || r.top < 0 || Math.ceil(r.right) > room.width || Math.ceil(r.bottom) > room.height) return null;
+  if (!visible(el) || !boxed(el) || labelled(el)) return null;
+  const lone = loneMark(el), pseudos = ["::before", "::after"].filter(which => drawnPseudo(el, which));
+  if ((lone ? 1 : 0) + pseudos.length !== 1) return null;
+  const top = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+  if (!top || !(top === el || el.contains(top))) return null;
+  return lone ? lone.tagName.toLowerCase() + "." + (lone.getAttribute("class") || "") : pseudos[0];
 }
 
 // Every control in the window whose only content is one icon, svg, glyph or spinner, for the hook to screenshot:
-// {at, text, clip, scan, center}. A box with no border, fill or shadow has no middle a person sees, so it is not judged.
+// {at, mark, text, clip, scan, center}. A box with no border, fill or shadow has no middle a person sees, so it is not judged.
 function iconControls() {
   const room = { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight };
   const out = [];
   for (const el of document.querySelectorAll(PRESS)) {
     try {   // one odd element never costs the page's other controls
       const r = el.getBoundingClientRect();
-      if (iconControl(el, r, room)) out.push({ at: cssPath(el), text: shown(el), ...inkBoxes(el, r) });
+      const mark = iconMark(el, r, room);
+      if (mark) out.push({ at: cssPath(el), mark, text: shown(el), ...inkBoxes(el, r) });
     } catch (e) { continue; }
   }
   return out;

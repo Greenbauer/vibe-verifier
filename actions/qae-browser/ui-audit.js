@@ -19,7 +19,7 @@
 // An icon or spinner off its control's middle (icon-off-center) shows only in pixels: a CSS-drawn mark or a spinner
 // tilted in 3D draws its ink away from the boxes the DOM reports. So at each measure the hook also screenshots up to
 // ICONS controls in the window whose only content is one mark (icon-page.js finds them), three frames FRAME_GAP ms
-// apart, and finds the ink in each (ink.js). Each control is sampled once per page and width.
+// apart, and finds the ink in each (ink.js). Each control is sampled once per page, width and mark.
 //
 // The explorer never sees it and cannot change it: the hook runs in the harness's Node process.
 //
@@ -116,14 +116,14 @@ async function recordWide(page, write, written, measured) {
   }
 }
 
-// Screenshots up to `most` controls whose only content is one mark, not sampled on this page at this width before,
+// Screenshots up to `most` controls whose only content is one mark, not sampled with that mark on this page at this width,
 // FRAMES times, and hands an icon-off-center finding for each whose ink sat off its middle in every frame to `write`.
 // A control that moved or went while it was sampled (the explorer scrolled, the spinner stopped) is left for a later
 // measure. Never the explorer's problem: a failure here costs only this sample.
 async function recordIcons(page, write, written, sampled, most = ICONS) {
   try {
     const where = pageOf(page.url()), width = (page.viewportSize() || {}).width || null;
-    const id = control => JSON.stringify([where, width, control.at]);
+    const id = control => JSON.stringify([where, width, control.at, control.mark]);
     const controls = (await page.evaluate(iconScript)).filter(control => !sampled.has(id(control))).slice(0, most);
     if (!controls.length) return;
     const samples = controls.map(() => []);

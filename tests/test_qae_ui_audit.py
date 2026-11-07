@@ -36,7 +36,8 @@ const hook = require(process.env.HOOK);
     const icons = [];
     await hook.recordIcons(page, f => icons.push(f), new Set(), new Set(), Infinity);
     out[name] = [...new Set([...found, ...icons].map(f => f.rule))].sort();
-    out[name + "-cramped-field"] = found.filter(f => f.rule === "cramped-field").map(f => f.text).sort();
+    out[name + "-cramped-field"] = found.filter(f => f.rule === "cramped-field").map(f => f.text || f.at).sort();
+    out[name + "-cramped-labels"] = found.filter(f => f.rule === "cramped-field" && f.other).map(f => f.other).sort();
     out[name + "-icon-off-center"] = icons.map(f => f.text).sort();
     out[name + "-table-scroll"] = found.filter(f => f.rule === "table-scroll").length;
     out[name + "-uneven-gutter"] = found.filter(f => f.rule === "uneven-gutter").length;
@@ -168,19 +169,28 @@ class Browser(unittest.TestCase):
         # window is closed again: only the tabs the test opened remain.
         self.assertEqual(measured["wide"], [["table-scroll", 1920]])
         self.assertEqual(measured["pages"], 2)
-        # The reason field the subscribed app squeezed into a table column, a one-line box asking for an explanation, and a
-        # field whose value is wider than it shows. good.html's wide reason textarea, short answers in narrow fields (a
-        # 2-digit quantity, a 4-character code, a PO number, a search box), a numeric field and a url field whose names hold
-        # a free-text word, a disabled reason field, a note capped at what it shows and a one-line textarea that grows as it
-        # is typed in are clean, and bad.html's read-only note cut off is clipped-value's alone.
+        # The reason field the subscribed app squeezed into a table column, a one-line box asking for an explanation, a
+        # field whose value is wider than it shows, a 180px reason field in an 18px font, and narrow free-text fields named
+        # by each other source: a label, a placeholder, a title, aria-labelledby, a name and an id (camelCase and
+        # snake_case), and a search box. good.html's wide reason textarea, the same 180px reason field in an 11px font,
+        # short answers in narrow fields (a 2-digit quantity, a 4-character code, a PO number, a search box), a numeric
+        # field and a url field whose names hold a free-text word, a disabled reason field, a note capped at what it shows
+        # and a one-line textarea sized by script (its height set inline, as autosize scripts do) are clean, and bad.html's
+        # read-only note cut off is clipped-value's alone. A finding names the label too, so the gate can tell a pull
+        # request that adds it.
         self.assertEqual(measured["bad-cramped-field"],
-                         ["A value much longer than this narrow field can show", "Explain the change", "No-bid reason, line 1"])
-        # A spinner of three tilted orbits whose ink sits right of its box's middle, an svg nudged 3px right, and a chevron
-        # 3px low in a button drawn by its shadow alone. good.html's centered icon, a ring with one bright arc and a ring
-        # with a gap (both turning), an icon beside a label, a borderless icon button and one whose only shadows are
-        # Tailwind's zero-size rings, a bell with a dot, an icon beside a drawn caret, a tab with a bar along its foot, a
-        # button under an open menu and one cut by the window's edge are not flagged.
-        self.assertEqual(measured["bad-icon-off-center"], ["Close", "Next", "Saving the quote"])
+                         ["A value much longer than this narrow field can show", "Add a note", "Explain the change",
+                          "Explain what you looked for", "No-bid reason, line 1", "Reason for the change", "input#f-label",
+                          "input#f-labelledby", "input#f-n", "input#f-title", "input#no_bid_reason_2"])
+        self.assertEqual(measured["bad-cramped-labels"], ["Feedback", "Why is this late?"])
+        # A spinner of three tilted orbits whose ink sits right of its box's middle, an svg nudged 3px right in a button, a
+        # button-styled link, a tab, a radio segment, a role=button, a label styled as a button, an icon font's glyph nudged
+        # the same, and a chevron 3px low in a button drawn by its shadow alone. good.html's centered icon, a play icon
+        # centered in a content box padded 4px on its left (the middle is the content box's, not the border box's), a ring
+        # with one bright arc and a ring with a gap (both turning), an icon beside a label, a borderless icon button and one
+        # whose only shadows are Tailwind's zero-size rings, a bell with a dot, an icon beside a drawn caret, a tab with a
+        # bar along its foot, a button under an open menu and one cut by the window's edge are not flagged.
+        self.assertEqual(measured["bad-icon-off-center"], ["Add", "Close", "Edit", "Expand", "List", "Map", "Next", "Saving the quote", "Upload"])
         self.assertEqual(measured["good-icon-off-center"], [])
         self.assertEqual(measured["measured"], [True, True, True, True, True])
         record = [json.loads(x) for x in Path(out, "ui-audit.jsonl").read_text().splitlines()]

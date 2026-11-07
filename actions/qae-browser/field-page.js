@@ -13,8 +13,9 @@
 // ("Reason code", "Note title", "Search comments").
 const FREE_TEXT = /\b(reasons?|notes?|comments?|descriptions?|describe|explain|explanation|why|messages?|details|feedback|summary|instructions?|memo|remarks?)\b/i;
 const SHORT_ANSWER = /\b(name|title|subject|code|number|id|email|phone|city|zip|postcode|search|qty|quantity|amount|price|date|sku)\b/i;
-// Five words of everyday English (4.7 letters and a space each): the shortest reason a person writes ("Out of stock
-// until next month" is 29 characters) has to be readable while it is typed.
+// Five words of everyday English (4.7 letters and a space each), so a person can read back the phrase they are typing.
+// Measured 2026-11-07: the reason field that set this off shows 16 (its copy in tests/fixtures/ui-audit/bad.html), and a
+// subscribed app's contact form shows 36 in its message box at a phone's width and 99 at 1280.
 const ROOM = 30;
 const SAMPLE = "the supplier is out of stock until next month";   // what an average character of the field's font is measured on
 const FREE_TYPES = ["text", "search"];   // the input types a sentence goes in; a missing or unknown type reads as "text"
@@ -29,6 +30,9 @@ function asksFor(el) {
     .filter(Boolean).join(" ").trim();
   return (said || [el.name, el.id].join(" ")).replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_\-.[\]:]+/g, " ");
 }
+
+// The element that names the field, if one does: a finding names it too, so a pull request that adds a label is told.
+const labelOf = el => (el.labels && el.labels[0]) || document.getElementById((el.getAttribute("aria-labelledby") || "").split(/\s+/)[0]) || undefined;
 
 // A textarea that grows with what is typed: an autosize script sets its height inline, or CSS sizes it to its content.
 const grows = (el, s) => Boolean(el.style.height) || s.fieldSizing === "content";
@@ -59,7 +63,7 @@ function crampedRules(add) {
     try {   // one odd element never costs the page's other findings
       const over = el.value ? el.scrollWidth - el.clientWidth : 0;
       const why = over > 1 ? `what it holds is ${over}px wider than it shows, so part of it is out of view` : tooSmall(el, area, measure);
-      if (why) add("cramped-field", el, why);
+      if (why) add("cramped-field", el, why, labelOf(el));
     } catch (e) { continue; }
   }
 }
