@@ -11,6 +11,7 @@ import re
 
 import yaml
 
+from lane_fields import _absolute_path, _exact_keys, _int_between, _matching, _positive_int
 from lane_model import DOCKER_SIZE, Dashboard, Host, Lane
 
 
@@ -31,9 +32,6 @@ REPO_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 # systemd's size suffixes (MemoryMax=16G); docker's are lane_model.DOCKER_SIZE.
 UNIT_SIZE = re.compile(r"^[1-9][0-9]*[KMGT]?$")
 CPU_QUOTA = re.compile(r"^[1-9][0-9]*%$")
-# An absolute path made of plain components: no spaces, nothing a unit file or a shell line could
-# misread. A `..` component is refused separately.
-ABS_PATH = re.compile(r"^(?:/[A-Za-z0-9._-]+)+$")
 # The kernel's interface name limit; a lane's bridge is <name>0.
 BRIDGE_MAX = 15
 
@@ -52,6 +50,10 @@ LANE_KEYS = {
 }
 SCOPE_KEYS = {"org": {"runner_group", "repos", "min_runners"}, "user": {"exclude"}}
 QAE_KEYS = {"codex_store", "qae_concurrency"}
+# qae_own_slots: true gives QAE jobs qae_concurrency slots of their own, none counted against
+# `slots` (listener/README.md, `kinds.qae.slots`), so QAE never queues behind CI for one, nor CI
+# behind QAE.
+QAE_OPTIONAL_KEYS = {"qae_own_slots"}
 # The optional wait kind (an org lane's only): pollers and jobs of seconds take its slots, a budget
 # of their own and a smaller container, so a queue of them never holds the ci slots the awaited job
 # needs (listener/README.md, "Budget and admission").
@@ -78,37 +80,6 @@ def _construct_mapping(loader: _UniqueKeyLoader, node: yaml.MappingNode, deep: b
 
 
 _UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_mapping)
-
-
-def _positive_int(value: object, field: str, block: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError(f"{block}.{field} must be a positive integer")
-    return value
-
-
-def _int_between(value: object, low: int, high: int, field: str, block: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
-        raise ValueError(f"{block}.{field} must be an integer in {low}..{high}")
-    return value
-
-
-def _matching(value: object, pattern: re.Pattern[str], field: str, block: str) -> str:
-    if not isinstance(value, str) or not pattern.fullmatch(value):
-        raise ValueError(f"{block}.{field} must match {pattern.pattern}")
-    return value
-
-
-def _absolute_path(value: object, field: str, block: str) -> str:
-    path = _matching(value, ABS_PATH, field, block)
-    if ".." in path.split("/"):
-        raise ValueError(f"{block}.{field} must not contain a .. component")
-    return path
-
-
-def _exact_keys(value: object, keys: set[str], field: str, block: str) -> dict:
-    if not isinstance(value, dict) or set(value) != keys:
-        raise ValueError(f"{block}.{field} must declare exactly {', '.join(sorted(keys))}")
-    return value
 
 
 def _repo_list(value: object, field: str, block: str, *, empty_ok: bool) -> tuple[str, ...]:
@@ -233,12 +204,12 @@ def _lane_keys(raw: dict, scope: str, qae: bool, block: str) -> None:
     misplaced = sorted(set(raw) & SCOPE_KEYS[other])
     if misplaced:
         raise ValueError(f"{block}: {', '.join(misplaced)} belong to {other} lanes only")
-    if not qae and set(raw) & QAE_KEYS:
-        raise ValueError(f"{block}: codex_store and qae_concurrency come with labels.qae")
+    if not qae and set(raw) & (QAE_KEYS | QAE_OPTIONAL_KEYS):
+        raise ValueError(f"{block}: codex_store, qae_concurrency and qae_own_slots come with labels.qae")
     if scope == "user" and "wait" in raw:
         raise ValueError(f"{block}: wait belongs to org lanes only")
     required = LANE_KEYS | SCOPE_KEYS[scope] | (QAE_KEYS if qae else set())
-    optional = set(LANE_OPTIONAL_KEYS) | ({"wait"} if scope == "org" else set())
+    optional = set(LANE_OPTIONAL_KEYS) | ({"wait"} if scope == "org" else set()) | (QAE_OPTIONAL_KEYS if qae else set())
     if not required <= set(raw) <= required | optional:
         raise ValueError(
             f"{block} must declare exactly " + ", ".join(sorted(required))
@@ -289,6 +260,9 @@ def _load_lane(raw: object, index: int) -> Lane:
     runtime_max_sec = _positive_int(raw["runtime_max_sec"], "runtime_max_sec", block)
     min_runners = _int_between(raw["min_runners"], 0, slots, "min_runners", block) if scope == "org" else 0
     wait_label, wait_slots, wait_memory = _wait(raw.get("wait"), ci_label, qae_label, block)
+    qae_own_slots = raw.get("qae_own_slots", False)
+    if not isinstance(qae_own_slots, bool):
+        raise ValueError(f"{block}.qae_own_slots must be true or false")
     return Lane(
         name=name,
         scope=scope,
@@ -306,6 +280,7 @@ def _load_lane(raw: object, index: int) -> Lane:
         slots=slots,
         min_runners=min_runners,
         qae_concurrency=_int_between(raw["qae_concurrency"], 1, slots, "qae_concurrency", block) if qae_label else 0,
+        qae_own_slots=qae_own_slots,
         name_prefix=_matching(raw["name_prefix"], NAME_PREFIX, "name_prefix", block),
         image=_matching(raw["image"], IMAGE_NAME, "image", block),
         preload=_preload(raw["preload"], scope, repos, block),

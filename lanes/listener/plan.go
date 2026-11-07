@@ -79,8 +79,8 @@ type PlanInput struct {
 	ContainerBytes uint64
 	ReserveBytes   uint64
 	MemAvailable   uint64
-	// OwnSlots maps a kind with a budget of its own (the wait kind) to it: at most that many of its
-	// slots at once, on instances 1..n, none of them counted against Slots.
+	// OwnSlots maps a kind with a budget of its own (wait, and qae when it has one) to it: at most
+	// that many of its slots at once, on instances 1..n, none of them counted against Slots.
 	OwnSlots map[string]int
 	// KindContainerBytes maps a kind whose container is not ContainerBytes to its size.
 	KindContainerBytes map[string]uint64
@@ -147,7 +147,7 @@ func (in PlanInput) bytesOf(kind string) uint64 {
 // goes to the set with the fewest active slots (ties in key order), so neither a warm pool nor the
 // set whose key sorts first takes every freed slot. A set refused once gets no more starts this
 // round. Every start keeps: the occupied instances of every kind without a budget of
-// its own <= slots, and a kind with one (wait) within it; qae slots <= qae_concurrency; a free
+// its own <= slots, and a kind with one (wait, or qae with one) within it; qae slots <= qae_concurrency; a free
 // instance of the kind in its range whose required file is present (the lowest such); and
 // MemAvailable, less one container of its kind per slot still starting and per start already
 // planned this round, at least one container of the kind plus the reserve.
@@ -341,6 +341,24 @@ func planRecycles(in PlanInput, idleStops []Slot) []Slot {
 		}
 	}
 	return recycles
+}
+
+// warmInstances are the idle slots of a set its warm pool keeps: the newest minRunners in
+// planIdleStops' order (sortIdle). Called with l.mu held.
+func (l *Lane) warmInstances(key SetKey, minRunners int) []int {
+	var idle []Slot
+	for _, s := range l.slots {
+		if s.Set == key && s.Phase == PhaseIdle {
+			idle = append(idle, *s)
+		}
+	}
+	sortIdle(idle)
+	kept := []int{}
+	for _, s := range idle[max(0, len(idle)-minRunners):] {
+		kept = append(kept, s.Instance)
+	}
+	sort.Ints(kept)
+	return kept
 }
 
 func activeSlots(occupied []Slot, key SetKey) int {

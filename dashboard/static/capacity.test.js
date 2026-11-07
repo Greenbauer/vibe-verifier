@@ -131,6 +131,21 @@ test("runners are grouped by kind in plain words, named by kind and slot, with f
   assert.deepStrictEqual(content.find("runner-head")[0].children.map(cell => cell.text.trim()), ["Runner", "State", "Job", "Repository", "Time"]);
 });
 
+test("AI QA with slots of its own gets its own pool, and the shared runner slots count build and test only", () => {
+  const value = snapshot(history());
+  const capacity = value.telemetry.capacity;
+  capacity.limits = { ...capacity.limits, qae_slots: 3, qae_concurrency: 3 };
+  capacity.lanes.splice(1, 0, { id: "qae-1", state: "busy", registered: null, labels: ["qae"], allocated_at: at(4),
+    job: job("Acceptance criteria: walk", null, 41) });
+  const content = render(value);
+  assert.deepStrictEqual(content.find("runner-pool").map(pool => pool.children[0].text.trim()),
+    ["Runner slots: 3 of 4 in use", "AI QA slots: 1 of 3 in use", "Waiting-job slots: 1 of 2 in use"]);
+  assert.match(content.find("runner-pool")[1].text, /QA 1\s+Running\s+Acceptance criteria: walk.*2 free\s+Not counted in the runner slots above\./s);
+  assert.doesNotMatch(content.find("runner-pool")[0].text, /AI QA/);
+  assert.match(content.find("capacity-card")[0].text, /Runners in use now.*3 of 4/s);
+  assert.match(content.find("lane-limits")[0].text, /^\s*Up to 4 runners at once · 3 more for AI QA · 2 more for jobs that only wait/);
+});
+
 test("only runners the listener names read kept warm, and only while they have no job", () => {
   const value = snapshot(history());
   value.telemetry.capacity.history.warm_slots = [];

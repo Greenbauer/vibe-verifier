@@ -6,7 +6,7 @@ import json
 import lane_fixtures
 from lane_fixtures import DASH, ORG, ROOT, USER, WAIT, check, host_file, without
 from lane_load import load_host
-from lane_render import collector_config, dashboard_config, dashboard_merge_policy, dashboard_settings, listener_config
+from lane_render import collector_config, dashboard_config, dashboard_merge_policy, dashboard_settings, lane_settings, listener_config
 
 org, user = load_host(host_file(ORG, USER)).lanes
 short = load_host(host_file({**ORG, "warm_max_age_sec": 600})).lanes[0]
@@ -14,6 +14,7 @@ uwarm = load_host(host_file({**USER, "warm_max_age_sec": 900})).lanes[0]
 ci_only = load_host(host_file(without({**ORG, "labels": {"ci": "box-ci"}}, "codex_store", "qae_concurrency"))).lanes[0]
 waiting = load_host(host_file({**ORG, "wait": WAIT})).lanes[0]
 three = load_host(host_file({**USER, "qae_concurrency": 3})).lanes[0]
+apart = load_host(host_file({**ORG, "qae_concurrency": 2, "qae_own_slots": True})).lanes[0]
 
 # ---- the listener config ----------------------------------------------------------------------------
 check(json.loads(listener_config(short))["warm_max_age_sec"] == 600, "a declared warm_max_age_sec reaches the listener's config")
@@ -29,6 +30,15 @@ check(wc["kinds"]["wait"] == {"set_name": "box-wait", "labels": ["self-hosted", 
       "an org wait set carries self-hosted and its label, and its own budget and container size, in that key order")
 check(wc["budget"] == oc["budget"] and "slots" not in wc["kinds"]["ci"] and wc["admission"] == oc["admission"], "the wait kind leaves budget.slots and the ci admission as they were")
 check("wait" not in oc["kinds"], "a lane without a wait block has no wait kind in its listener config")
+ac = json.loads(listener_config(apart))
+check((ac["kinds"]["qae"]["slots"], len(ac["kinds"]["qae"]["requires_files"]), ac["budget"]) == (2, 2, {"slots": 3, "min_runners": 2, "qae_concurrency": 2}),
+      "qae_own_slots gives the qae set its own budget, one slot per Codex store, beside the shared slots ci keeps")
+check("slots" not in oc["kinds"]["qae"], "without qae_own_slots the qae set has no budget of its own")
+box = load_host(host_file(ORG))
+check([(lane_settings(box, lane)["QAE_OWN_SLOTS"], lane_settings(box, lane)["QAE_SLOTS"]) for lane in (org, apart, ci_only)] == [("", 3), (1, 2), ("", 0)],
+      "the provisioner's qae instance count: one per shared slot, QAE's own pool with qae_own_slots, none without QAE")
+check([lane_settings(box, lane)["SLOTS_TOTAL"] for lane in (org, apart, waiting)] == [3, 5, 8],
+      "the disk estimate's slot count adds QAE's own pool and the wait kind's to the shared slots")
 uc = json.loads(listener_config(user))
 check(uc["kinds"]["ci"]["labels"] == ["own-ci"] and uc["kinds"]["qae"]["labels"] == ["own-qae"], "a user lane's sets carry their one label each, so a bare self-hosted job matches neither")
 check(uc["repos"] == {"exclude": ["fleet"], "refresh_sec": 600} and uc["runner_group"] == "default" and uc["budget"]["min_runners"] == 0, "a user lane lists its installation every 10 minutes")

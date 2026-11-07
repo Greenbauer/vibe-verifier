@@ -46,7 +46,8 @@
   function limitsLine(limits) {
     if (!limits) return null;
     const parts = [`Up to ${limits.slots} runners at once`];
-    if (limits.qae_concurrency) parts[0] += ` (AI QA at most ${limits.qae_concurrency})`;
+    if (limits.qae_slots) parts.push(`${limits.qae_slots} more for AI QA`);
+    else if (limits.qae_concurrency) parts[0] += ` (AI QA at most ${limits.qae_concurrency})`;
     if (limits.wait_slots) parts.push(`${limits.wait_slots} more for jobs that only wait`);
     if (Number.isFinite(limits.cpu_quota_cores)) parts.push(`${limits.cpu_quota_cores} CPU cores`);
     if (Number.isFinite(limits.memory_max_bytes)) parts.push(`${bytes(limits.memory_max_bytes)} memory`);
@@ -68,8 +69,11 @@
       `${label}: ${duration(wait.p95_seconds)} for the slowest 5% of ${wait.jobs} jobs.${routing}`];
   }
 
+  // Whether a slot is in the shared runner pool: not a waiting-job slot, nor AI QA's with a pool of its own.
+  const inSharedPool = (lane, limits) => kindOf(lane) !== "wait" && !(limits?.qae_slots && kindOf(lane) === "qae");
+
   function summary(capacity, range) {
-    const shared = capacity.lanes.filter(lane => kindOf(lane) !== "wait");
+    const shared = capacity.lanes.filter(lane => inSharedPool(lane, capacity.limits));
     const limit = capacity.limits?.slots ?? shared.length;
     const inUse = shared.filter(lane => !isFree(lane) && KINDS[kindOf(lane)]).length;
     const history = capacity.history;
@@ -178,8 +182,9 @@
       el("span", { class: "muted runner-free-note", role: "cell" }, text));
   }
 
-  // One section per kind of slot. Build-and-test and AI QA share the runner slots; waiting jobs have
-  // a pool of their own. Free slots are not runners yet, so each pool shows them as one count.
+  // One section per kind of slot. Build-and-test and AI QA share the runner slots, unless the lane gives
+  // AI QA a pool of its own; waiting jobs have one. Free slots are not runners yet, so each pool shows
+  // them as one count.
   function runnerTable(capacity, owner, now) {
     const used = capacity.lanes.filter(lane => !isFree(lane));
     const byKind = kind => used.filter(lane => kindOf(lane) === kind);
@@ -188,19 +193,27 @@
     const sharedFree = capacity.lanes.filter(isFree).length;
     // With the listener down a slot's state is unknown and names no kind; say so rather than drop it.
     const unknown = capacity.lanes.filter(lane => !isFree(lane) && !KINDS[kindOf(lane)]).length;
-    const sharedLimit = limits.slots ?? (byKind("ci").length + byKind("qae").length + sharedFree);
+    const qaeApart = Boolean(limits.qae_slots);
+    const sharedUsed = byKind("ci").length + (qaeApart ? 0 : byKind("qae").length);
+    const sharedLimit = limits.slots ?? (sharedUsed + sharedFree);
     const header = el("div", { class: "runner-row runner-head muted", role: "row" },
       ...["Runner", "State", "Job", "Repository", "Time"].map(name => el("span", { role: "columnheader" }, name)));
     const shared = el("div", { class: "runner-pool" },
-      el("h3", {}, `Runner slots: ${byKind("ci").length + byKind("qae").length} of ${sharedLimit} in use`),
+      el("h3", {}, `Runner slots: ${sharedUsed} of ${sharedLimit} in use`),
       group("ci", byKind("ci"), stateOf, owner, now),
-      group("qae", byKind("qae"), stateOf, owner, now, limits.qae_concurrency ?
+      qaeApart ? null : group("qae", byKind("qae"), stateOf, owner, now, limits.qae_concurrency ?
         el("p", { class: "muted runner-none" }, `At most ${limits.qae_concurrency} at once.`) : null),
       sharedFree ? freeRow(sharedFree, "A runner starts in a free slot when a job arrives.") : null,
       unknown ? el("div", { class: "runner-row state-unknown", role: "row" }, el("span", { role: "cell" }, `${unknown} unknown`),
         el("span", { class: "muted runner-free-note", role: "cell" }, "The runner listener is not answering, so these slots' state is not known.")) : null);
     const waiting = byKind("wait");
     const pools = [shared];
+    if (qaeApart) {
+      const qae = byKind("qae");
+      pools.push(el("div", { class: "runner-pool" }, el("h3", {}, `AI QA slots: ${qae.length} of ${limits.qae_slots} in use`),
+        group("qae", qae, stateOf, owner, now),
+        limits.qae_slots > qae.length ? waitRest(limits.qae_slots - qae.length, capacity.listener_state) : null));
+    }
     if (limits.wait_slots || waiting.length) {
       const waitLimit = limits.wait_slots ?? waiting.length;
       pools.push(el("div", { class: "runner-pool" }, el("h3", {}, `Waiting-job slots: ${waiting.length} of ${waitLimit} in use`),

@@ -1,4 +1,4 @@
-"""The lane history behind the Capacity view: queue, job waits, samples, bars and the dashboard's reader."""
+"""The lane history behind the Capacity view: queue, job waits, samples and bars (the dashboard's reader: test_dashboard_history_read.py)."""
 import json
 import tempfile
 import unittest
@@ -312,33 +312,6 @@ class Speed(unittest.TestCase):
         started = time.monotonic()
         LH.history(points, rows, {"slots": {"limit": 8, "occupied": []}}, True, None, stamp(NOW))
         self.assertLess(time.monotonic() - started, 10)
-
-
-class Reader(unittest.TestCase):
-    def published(self):
-        rows = [{"runner": "now", "kind": "ci", "started_at": ago(60), "wait_seconds": 10, "routing_seconds": 4}]
-        return LH.history([sample(30, 3, 2, 1)], rows, {"slots": {"limit": 8, "occupied": [{"runner_name": "now"}]}},
-                          True, {"waiting": 1, "warm": 0}, stamp(NOW))
-
-    def test_a_published_history_reads_back_unchanged(self):
-        value = json.loads(json.dumps(self.published()))
-        self.assertEqual(LH.read_history(value), value)
-
-    def test_a_history_out_of_its_bounds_is_refused(self):
-        def broken(change):
-            value = json.loads(json.dumps(self.published()))
-            change(value)
-            return value
-        for label, change in (("bars", lambda v: v["ranges"][0]["buckets"].pop()),
-                              ("order", lambda v: v["ranges"].reverse()),
-                              ("busy", lambda v: v["ranges"][0].update(busy_percent=101)),
-                              ("runner", lambda v: v["started"].update({"bad name": ago(1)})),
-                              ("extra", lambda v: v["ranges"][0]["buckets"][-1].update(note="x")),
-                              ("negative", lambda v: v["ranges"][0]["buckets"][-1].update(running=-1)),
-                              ("wait", lambda v: v["ranges"][0]["wait"].update(p50_seconds="1")),
-                              ("warm slot", lambda v: v.update(warm_slots=["ci-0"]))):
-            with self.subTest(label), self.assertRaises((ValueError, TypeError, AttributeError)):
-                LH.read_history(broken(change))
 
 
 class EndToEnd(unittest.TestCase):

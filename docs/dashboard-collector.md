@@ -123,7 +123,8 @@ GitHub job. An older listener that does not write `assignment` is that fallback.
 
 The sampler also reads two files the lane's listener keeps directly in `/run/<lane>/`
 ([run-dir contract](../lanes/listener/README.md#the-run-dir-contract)): `queue.json`, each scale
-set's assigned and running job counts, warm-pool size and the idle slots the pool keeps, and `jobs.json`, the newest jobs with
+set's assigned and running job counts, warm-pool size and the idle slots the pool keeps (and `qae_slots`,
+QAE's own pool, when the lane gives QAE slots of its own), and `jobs.json`, the newest jobs with
 GitHub's queued, scale-set-assigned and runner-assigned times, and the finish time once the listener
 heard the job complete (a completion it never saw start adds the job too). Each is read through the same
 no-symlink, regular-file reader, at most 1 MiB, and only the newest 100 jobs are returned. A missing
@@ -230,7 +231,8 @@ Before a source has ever succeeded, its unavailable data objects and `observed_a
 
 Each `samples` entry contains only its UTC observation time and numeric host values: CPU busy
 percent, available memory, workspace free bytes, occupied slots, remaining on-demand slots, running
-slots (`slots_running`: shared-pool slots whose job the host recorded), jobs waiting for a runner
+slots (`slots_running`: shared-pool slots whose job the host recorded; occupied and running count
+CI alone when the queue names `qae_slots`), jobs waiting for a runner
 (`jobs_waiting`) and the warm pool's size (`warm`), the last two null when the listener's queue was not
 read. Samples written before these existed are kept without them. Entries older than seven days are pruned. The file also keeps at most
 20,160 samples, so intervals shorter than 30 seconds retain less than seven days. Failed
@@ -264,6 +266,12 @@ warm_slots      the slots the listener says the pool keeps (`ci-3`), as of its l
                 reconcile plus one collector refresh behind; empty after a failed refresh, an unread
                 queue, or from a listener that predates the list
 started         runner name to its job's start time, for the slots occupied now
+qae_slots       QAE's own pool, as the queue names it; a refresh that read no queue (the listener
+                writes it only after its first statistics) keeps the last history's. 0 while QAE
+                shares the runner slots. When set, every range's running, warm and idle time counts
+                CI's slots alone (so for up to a week after the change, samples from before it still
+                count QAE), and the Capacity view shows AI QA as a pool of its own
+                (dashboard/history_read.py reads it back)
 ranges[]        1h, 24h and 7d, in that order
   name, bucket_seconds (120, 1800, 10800), covered_hours
   buckets[]     30, 48 or 56 clock-aligned periods, the last one still filling: start, and when it

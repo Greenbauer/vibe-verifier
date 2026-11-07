@@ -51,6 +51,8 @@ class Lane:
     wait_label: str | None = None
     wait_slots: int = 0
     wait_memory: str | None = None
+    # QAE's qae_concurrency slots are its own, not among `slots` (lane_load.py, QAE_OPTIONAL_KEYS).
+    qae_own_slots: bool = False
     # The filesystem of the lane's store (README.md, "Disk"): xfs, where a job's store is a reflink
     # copy of the preloaded one, or btrfs, where it is a snapshot of it.
     store_fs: str = "xfs"
@@ -94,9 +96,12 @@ class Lane:
         return f"{self.name}-{kind}@.service"
 
     def kind_slots(self, kind: str) -> int:
-        """How many slots of a kind may run at once: the wait kind's own budget, else `slots`."""
+        """How many slots of a kind may run at once: the wait kind's own budget, QAE's when it has
+        one (qae_concurrency), else `slots`."""
         self.label(kind)
-        return self.wait_slots if kind == "wait" else self.slots
+        if kind == "wait":
+            return self.wait_slots
+        return self.qae_concurrency if kind == "qae" and self.qae_own_slots else self.slots
 
     def unit(self, kind: str, slot: int) -> str:
         slots = self.kind_slots(kind)

@@ -69,6 +69,9 @@ type queueRecord struct {
 	Version   int        `json:"version"`
 	UpdatedAt string     `json:"updated_at"`
 	Sets      []queueSet `json:"sets"`
+	// QAESlots is the qae kind's own budget (kinds.qae.slots), absent while QAE shares budget.slots,
+	// so the dashboard can count the shared slots without QAE.
+	QAESlots int `json:"qae_slots,omitempty"`
 }
 
 type queueSet struct {

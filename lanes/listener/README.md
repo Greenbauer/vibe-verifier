@@ -114,13 +114,14 @@ adds `"repos": {"exclude": ["some-repo"], "refresh_sec": 600}`.
 | `kinds.<kind>.set_name` | The scale set's name, unique within its runner group (per repository for a user lane). |
 | `kinds.<kind>.labels` | The set's labels, exactly. A job reaches the set when all its `runs-on` labels are among them. |
 | `kinds.<kind>.requires_files` | Optional list of absolute paths, one per instance: instance `n` of the kind starts only while the `n`-th path exists, and the kind uses no instance beyond the list. For `qae` it lists exactly `qae_concurrency` paths, each instance's own Codex login (`<store>/auth.json`), so an instance whose login is not seeded yet never takes a job, and another instance whose login is takes it instead. The `wait` kind lists none. |
-| `kinds.wait.slots` | Required for `wait`, refused for every other kind: the wait kind's own budget. At most this many of its slots at once, on instances `1..slots`, and its set's `MaxRunners`; none of them counts against `budget.slots`. Its jobs only wait for another job's result (a required check polling for the preview sync), so a queue of them can never hold the shared slots the awaited job needs. |
+| `kinds.qae.slots` | Optional for `qae`: QAE's own budget, equal to `budget.qae_concurrency` (so at most `budget.slots`). At most this many QAE slots at once, on instances `1..slots` (one `requires_files` path each), and its set's `MaxRunners`; none of them counts against `budget.slots`, so QAE jobs never queue behind CI for a shared slot, nor CI behind them. Its containers are `admission.container_memory_bytes`, so admission still holds every QAE start to the machine's memory. Absent, QAE slots are among `budget.slots`. |
+| `kinds.wait.slots` | Required for `wait`, refused for `ci` (and `qae` may carry `slots`, above): the wait kind's own budget. At most this many of its slots at once, on instances `1..slots`, and its set's `MaxRunners`; none of them counts against `budget.slots`. Its jobs only wait for another job's result (a required check polling for the preview sync), so a queue of them can never hold the shared slots the awaited job needs. |
 | `kinds.wait.container_memory_bytes` | Required for `wait`, refused for every other kind: one wait container's memory limit, used by admission in place of `admission.container_memory_bytes`. |
 | `repos.exclude` | User lane only: repository names never served (compared without case). |
 | `repos.refresh_sec` | User lane only: how often the installation's repositories are listed. |
-| `budget.slots` | The most slots (units holding an instance) at once, across every set of every kind but `wait`; also those sets' `MaxRunners`, and the instance range `1..slots` of each of those kinds without `requires_files`. |
+| `budget.slots` | The most slots (units holding an instance) at once, across every set of every kind without a budget of its own (`wait`, and `qae` with `kinds.qae.slots`); also those sets' `MaxRunners`, and the instance range `1..slots` of each of those kinds without `requires_files`. |
 | `budget.min_runners` | The warm pool: idle slots the org lane's `ci` set keeps registered. Must be 0 for a user lane. |
-| `budget.qae_concurrency` | The most `qae` slots at once, lane-wide. At least 1 when the `qae` kind is configured, and at most `slots`. |
+| `budget.qae_concurrency` | The most `qae` slots at once, lane-wide. At least 1 when the `qae` kind is configured, and at most `slots` (equal to `kinds.qae.slots` when QAE has a budget of its own). |
 | `admission.container_memory_bytes` | One slot container's memory limit. |
 | `admission.reserve_bytes` | Memory the host keeps beyond the lane's containers. |
 | `runner.name_prefix` | JIT runners are named `<name_prefix>-<kind>-<n>-<unix time>`. See the runner-name contract below. |
@@ -154,7 +155,7 @@ as year 1.
 
 | File | Written | Content |
 |---|---|---|
-| `queue.json` | On every statistics message for a set the listener serves, and at the end of every reconcile (each message, each empty long poll, and the 5 s tick) whose content, `updated_at` aside, differs from the last file written. Nothing is written before the first statistics. | `{"version":1,"updated_at":…,"sets":[…]}`: one entry per served set that has had statistics, sorted by set key (`<target> <kind>`), each `kind`, `assigned` (GitHub's assigned jobs), `running` (its running jobs), `min_runners` (the set's warm pool, 0 for every set but the org lane's `ci`) and `warm_instances` (the set's idle slots the pool keeps, as instance numbers in ascending order: the newest `min_runners` idle slots by `sortIdle`, the ones idle stops do not take; as of the write, so at most one reconcile behind a start finishing, an idle stop, a recycle or a runner taking a job; after a restart, a slot adopted while its job runs counts as idle until that job completes). `assigned` and `running` are GitHub's latest statistics, as old as the last statistics message. Nothing names the target, the set or its id. |
+| `queue.json` | On every statistics message for a set the listener serves, and at the end of every reconcile (each message, each empty long poll, and the 5 s tick) whose content, `updated_at` aside, differs from the last file written. Nothing is written before the first statistics. | `{"version":1,"updated_at":…,"sets":[…]}`, plus `"qae_slots":<n>` (`kinds.qae.slots`) when QAE has a budget of its own, so the dashboard counts the shared slots without it: one entry per served set that has had statistics, sorted by set key (`<target> <kind>`), each `kind`, `assigned` (GitHub's assigned jobs), `running` (its running jobs), `min_runners` (the set's warm pool, 0 for every set but the org lane's `ci`) and `warm_instances` (the set's idle slots the pool keeps, as instance numbers in ascending order: the newest `min_runners` idle slots by `sortIdle`, the ones idle stops do not take; as of the write, so at most one reconcile behind a start finishing, an idle stop, a recycle or a runner taking a job; after a restart, a slot adopted while its job runs counts as idle until that job completes). `assigned` and `running` are GitHub's latest statistics, as old as the last statistics message. Nothing names the target, the set or its id. |
 | `jobs.json` | On every JobStarted and JobCompleted for a slot the listener started, including one heard after reconcile forgot the slot (GitHub can deliver a short job's events after its unit has exited), when that was within the last 15 minutes. | `{"version":1,"jobs":[…]}`, in order of last change (an entry a finish or a late start updates moves to the end, so the newest 100 the dashboard reads carry every recent finish), at most 500 (the oldest dropped): `kind`, `instance`, `runner_name`; `repository` and `name` when `assignment` would accept them, with `run_id` and `job_id` when both can link the job; `queued_at`, `scale_set_assigned_at`, `runner_assigned_at` as GitHub sent them; `started_at`, the listener's clock when it handled JobStarted; `finished_at`, set by JobCompleted on the runner's newest entry: GitHub's finish time, or the listener's clock when GitHub sent none, and absent while the job runs. A JobCompleted for a runner with no recorded JobStarted (both in one late batch, or a restart between them) adds the entry itself, with `started_at` GitHub's `runner_assigned_at`, else its finish time, else the listener's clock (never after the finish); a JobStarted heard for a runner whose entry already has `finished_at` (a JIT runner runs one job, so it is that job's late start) fills the entry in rather than adding a second, also after a restart. A late event for a forgotten slot's runner (kept for 15 minutes, at most 256 runners, in memory only, so not across a restart) writes only this file, never `assignment`, and takes `kind` and `instance` from the forgotten slot; its JobStarted's `started_at` is GitHub's `runner_assigned_at` (the listener's clock without it), since the job is over by then. An event for a runner the listener never started, or forgot longer ago, is logged and not recorded. All times are UTC, whole seconds. At start the listener takes up the file it finds, so a restart keeps the history; a symlink, a file over 1 MiB or one that does not parse as version 1 is ignored (logged) and replaced by the next job. |
 
 A write that fails is logged and never stops the listener.
@@ -179,8 +180,9 @@ cleared by the listener (runner removed, files deleted).
 
 ## Budget and admission
 
-Per set, **desired = min(slots, min_runners + TotalAssignedJobs)**, where `slots` is
-`kinds.wait.slots` for the wait kind and `budget.slots` for every other, and `min_runners` is the
+Per set, **desired = min(slots, min_runners + TotalAssignedJobs)**, where `slots` is the kind's
+own budget (`kinds.wait.slots`, and `kinds.qae.slots` when QAE has one) and `budget.slots` for every
+other, and `min_runners` is the
 configured warm pool for the org lane's `ci` set and 0 for every other set. Its demand is desired
 minus its active slots (starting, idle or busy). Demand for assigned jobs, min(slots,
 TotalAssignedJobs) minus the active slots, is met across all sets before any warm-pool demand (the
@@ -191,8 +193,9 @@ rule gets no more starts that round. Every start must keep all of:
 
 1. a free instance of the kind whose `requires_files` entry is present (a kind without the list
    requires nothing);
-2. all occupied instances of every kind but `wait` within `budget.slots`, and a wait start's
-   within `kinds.wait.slots` (a completed slot holds its instance until its unit is gone);
+2. all occupied instances of every kind without a budget of its own within `budget.slots`, and a
+   start of a kind with one (`wait`, or `qae` with `kinds.qae.slots`) within that budget (a completed
+   slot holds its instance until its unit is gone);
 3. `qae` slots within `qae_concurrency`;
 4. a free instance of the kind in its range (`1..len(requires_files)`, else `1..slots`, else
    `1..kinds.wait.slots` for `wait`); the start takes the lowest one rule 1 allows, so a `qae` job
@@ -211,8 +214,8 @@ admission rule), at most once a minute per set and rule, and met by a later roun
 Plain `<UTC stamp> <message>` lines on stdout: each start, failed start and removal, idle stop,
 warm recycle, job started and completed, finished slot, set created, updated or deleted, session
 opened, refused or closed, refusal, one line per message with the set's statistics, and a heartbeat every
-minute (`heartbeat: <n> scale sets served, <n> of <slots> slots in use`, then `, <n> of <n> wait
-slots` when the wait kind is configured), because an idle lane logs
+minute (`heartbeat: <n> scale sets served, <n> of <slots> slots in use`, then `, <n> of <n> <kind>
+slots` for each kind with a budget of its own, `qae` before `wait`), because an idle lane logs
 nothing else for hours and the lane provisioner's `--check` fails a journal silent for three
 minutes. The App key, tokens and JIT configs never reach a log line.
 

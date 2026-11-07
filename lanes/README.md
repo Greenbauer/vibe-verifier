@@ -331,6 +331,7 @@ lanes:
     slots: <int>
     min_runners: <0..slots>            # org only, required: the warm pool
     qae_concurrency: <1..slots>        # with labels.qae: QAE jobs at once, each on its own Codex store and login
+    qae_own_slots: true | false        # with labels.qae, optional, false when absent: QAE's qae_concurrency slots are its own, not among slots
     name_prefix: <runner registration prefix>
     image: <image name>
     preload: {<repo>: <supabase dir> | "-"}   # may be {}
@@ -354,7 +355,8 @@ dashboards:                            # optional: the Vibe Verifier dashboards 
 
 - every key is the scope's: no unknown key, no `min_runners`, `runner_group` or `repos` on a user
   lane, no `exclude` on an org lane, no `wait` on a user lane, and `codex_store` and
-  `qae_concurrency` exactly when `labels.qae` is set; a key given twice is refused;
+  `qae_concurrency` exactly when `labels.qae` is set (and `qae_own_slots` only then, a boolean); a
+  key given twice is refused;
 - `name` is `[a-z][a-z0-9]*(-[a-z0-9]+)*` and its bridge `<name>0` fits the kernel's 15
   characters; labels are `[a-z0-9]+(-[a-z0-9]+)*`, outside the repository-runner routing labels
   (`ci-*`, `vps`, `vps-N`), and `ci`, `qae` and `wait.label` differ from each other;
@@ -556,7 +558,11 @@ A lane runs `qae_concurrency` QAE jobs at once, each on its own Codex store. To 
    journal), and while the keepalive timer is not active.
 
 Every QAE job is a slot like any other: it counts against `slots` and the listener's memory
-admission. The listener gives a job the lowest instance whose store is logged in, so a higher
+admission. With `qae_own_slots: true` the QAE slots are a budget of their own instead, the
+`qae_concurrency` of them (the listener's `kinds.qae.slots`, still at most `slots`): a QAE job never
+waits behind CI for one of `slots`, nor a CI job behind QAE, and memory admission still holds every
+start to what the machine has free. The machine then runs up to `slots + qae_concurrency` containers
+(plus the wait kind's), so size the slice and `cpu_quota` for that. The listener gives a job the lowest instance whose store is logged in, so a higher
 instance runs only while QAE jobs overlap. That is why the keepalive exists ("Codex logins between
 jobs" above): a store whose instance rarely runs is refreshed by the timer, not left to age until
 its next job. Lowering `qae_concurrency` leaves the higher stores in place, logged in and unused, as
