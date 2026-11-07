@@ -22,7 +22,7 @@
 //                         a snake_case identifier, an ISO timestamp or a UUID, outside code
 //     clipped-text        text its box cuts off with no ellipsis
 //     clipped-value       a select's option, or a read-only, disabled or number field's value,
-//                         wider than the field shows (a field a person types into scrolls)
+//                         wider than the field shows (a field a person types into is cramped-field's)
 //     glyph-off-center    the mark inside a badge, avatar or check circle (a count, initials, an
 //                         icon, or a CSS-drawn tick) more than 1px off the circle's middle; the mark
 //                         is measured by its ink, not its line box, since a digit sits above the
@@ -37,6 +37,14 @@
 //     uneven-gutter       two page bands stacked across the same column (a header, a toolbar, a table) whose content
 //                         starts, or whose boxes end, more than 4px apart from the edge they share, both within 48px
 //                         of it (gutter-page.js); a card holds its own padding and is not a band
+//     cramped-field       a field too small for what it asks (field-page.js): one whose name, label or placeholder asks
+//                         for free text (a reason, a note, a comment) and shows fewer than 30 average characters of its
+//                         font, or a textarea under two lines; or any field a person types into whose value is wider
+//                         than it shows
+//     icon-off-center     a button, tab, segment or button-styled link whose only content is one icon, svg, glyph or
+//                         spinner, its ink more than 1.5px off the content box's middle in each of three frames
+//                         (icon-page.js finds them; the hook reads their screenshots, ink.js), so a spinner tilted
+//                         in 3D that inline-flex centers by its box is measured where it draws
 //
 // Side by side means laid out by one flex or grid row within four levels of both, so a header's
 // button and a search field in the page below it are never compared. A control is measured as
@@ -91,7 +99,14 @@ function boxed(el) {
   const s = getComputedStyle(el);
   const border = ["Top", "Right", "Bottom", "Left"].every(k => parseFloat(s["border" + k + "Width"]) > 0 && !CLEAR.test(s["border" + k + "Color"]));
   const fill = !CLEAR.test(s.backgroundColor) && s.backgroundColor !== behind(el.parentElement);
-  return border || fill || s.boxShadow !== "none";
+  return border || fill || shadowed(s);
+}
+
+// Whether a box shadow draws: one of its layers has a colour and an offset, blur or spread. Tailwind's ring and shadow
+// utilities leave layers of size 0 (`0 0 #0000`, or a ring colour at 0px) on elements that draw no shadow at all.
+function shadowed(s) {
+  return s.boxShadow !== "none" && s.boxShadow.split(/,(?![^(]*\))/)
+    .some(layer => !CLEAR.test(layer) && /[1-9]/.test(layer.replace(/[a-z-]+\([^)]*\)/g, "")));
 }
 
 function asSeen(el) {
@@ -288,6 +303,7 @@ function audit() {
   wrapRules(add);
   scrollRules(add);
   gutterRules(add);
+  crampedRules(add);
   return findings;
 }
 
