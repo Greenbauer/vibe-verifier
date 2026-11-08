@@ -129,6 +129,8 @@ class Browser(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         measured = json.loads(run.stdout.strip().splitlines()[-1])
         self.assertEqual(measured["bad"], RULES)
+        # good.html's two-column dashboard, each column a stack of titled cards, holds a select a card down on the left and a
+        # field in the first card on the right: a page section, not one form row, so field-stagger does not compare them.
         self.assertEqual(measured["good"], [])
         # A raw value in a heading cell or a button counts; a square button touching a rounded one is no segmented group,
         # and neither is a padded card holding two buttons.
