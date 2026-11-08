@@ -5,7 +5,8 @@
 //     row-stagger         two controls side by side whose tops, middles and bottoms all differ
 //     row-height          two controls side by side, one taller, so their middles differ
 //     field-stagger       cells of one form row whose fields start at different heights (a cell
-//                         with a hint or a second input above its field pushes it down)
+//                         with a hint or a second input above its field pushes it down); a cell
+//                         whose field follows a heading in it is a page section, not judged
 //     touching            two bordered or filled controls less than 4px apart, side by side or
 //                         stacked, that are not one segmented group (which squares the corners
 //                         where they meet on both, sits in one evenly padded track, or shares a
@@ -187,11 +188,18 @@ function stackRules(add, controls, rect) {
   }
 }
 
+// A heading in `cell` above `field`: the cell is a section of the page (a dashboard column of
+// titled cards), not a cell of one form row, whose caption is a label.
+function underHeading(cell, field) {
+  return [...cell.querySelectorAll("h1, h2, h3, h4, h5, h6, [role=heading]")]
+    .some(h => visible(h) && h.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING);
+}
+
 // The first fields of two side-by-side cells of `row` that start furthest apart: [offset, a, b].
 function worstFieldPair(row) {
   const cells = [...row.children].filter(visible)
-    .map(cell => [cell.getBoundingClientRect(), cell.matches(FIELD) ? cell : [...cell.querySelectorAll(FIELD)].find(visible)])
-    .filter(([, field]) => field);
+    .map(cell => [cell.getBoundingClientRect(), cell.matches(FIELD) ? cell : [...cell.querySelectorAll(FIELD)].find(visible), cell])
+    .filter(([, field, cell]) => field && !underHeading(cell, field));
   let worst = [0];
   cells.forEach(([ra, fa], i) => cells.slice(i + 1).forEach(([rb, fb]) => {
     if (overlap(ra.top, ra.bottom, rb.top, rb.bottom) <= 0 || overlap(ra.left, ra.right, rb.left, rb.right) > 0) return;
