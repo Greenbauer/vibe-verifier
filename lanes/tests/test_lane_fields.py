@@ -38,7 +38,7 @@ check([_npm_registry(url, "lanes.box") for url in ("https://registry.yarnpkg.com
       == ["https://registry.yarnpkg.com", "https://registry.yarnpkg.com", "https://npm.example.com:8443/repository/npm"],
       "npm_registry is kept without its trailing slash, with a port and a path when it has them")
 for bad in ("http://registry.yarnpkg.com", "registry.yarnpkg.com", "https://user:pw@registry.example.com/", "https://registry.example.com/?x=1",
-            "https://registry.example.com/ -e X=1", "", True, ["https://registry.yarnpkg.com"]):
+            "https://registry.example.com/ -e X=1", "https://registry.yarnpkg.com/\n", "", True, ["https://registry.yarnpkg.com"]):
     check(refusal(lambda: _npm_registry(bad, "lanes.box")) == NPM_REFUSAL, f"npm_registry {bad!r} is refused")
 check(load_host(host_file({**ORG, "npm_registry": "https://registry.yarnpkg.com/"})).lanes[0].npm_registry == "https://registry.yarnpkg.com"
       and load_host(host_file(ORG)).lanes[0].npm_registry is None, "a host file's npm_registry reaches the lane; without it the lane has none")

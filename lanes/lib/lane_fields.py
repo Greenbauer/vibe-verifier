@@ -63,6 +63,6 @@ def _npm_registry(value: object, block: str) -> str | None:
     """npm_registry without its trailing slash, or None when absent (README.md, "The npm registry")."""
     if value is None:
         return None
-    if not isinstance(value, str) or not NPM_REGISTRY.match(value):
+    if not isinstance(value, str) or not NPM_REGISTRY.fullmatch(value):
         raise ValueError(f"{block}.npm_registry must be an https URL with no query, credentials or spaces")
     return value.rstrip("/")

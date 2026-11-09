@@ -222,8 +222,9 @@ Each lane's assertion replaces only its own bridge's rules.
 
 **The npm registry.** A lane with `npm_registry: <https URL>` gives every job container
 `npm_config_registry=<URL>/` (read by npm, pnpm, yarn 1 and bun) and `COREPACK_NPM_REGISTRY=<URL>`
-(read by corepack, which downloads pnpm itself). The runner and every step inherit them, so a job
-installs from that registry without a change to its workflow. A lockfile that names no registry
+(read by corepack, which downloads pnpm itself). The runner and every step it runs inherit them,
+actions' own install steps included, so a job installs from that registry without a change to its
+workflow. A job's own `container:` and its service containers do not inherit them. A lockfile that names no registry
 (pnpm, bun) or names `registry.npmjs.org` (npm rewrites it to the configured one) installs the
 same packages, checked against the same integrity hashes. A repository's own `.npmrc` registry, or
 a step's own environment, still wins. Without the key the package managers use their default.
