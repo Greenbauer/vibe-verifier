@@ -186,12 +186,15 @@ class Browser(unittest.TestCase):
         # short answers in narrow fields (a 2-digit quantity, a 4-character code, a PO number, a search box), a numeric
         # field and a url field whose names hold a free-text word, a disabled reason field, a note capped at what it shows
         # and a one-line textarea sized by script (its height set inline, as autosize scripts do) are clean, and bad.html's
-        # read-only note cut off is clipped-value's alone. A finding names the label too, so the gate can tell a pull
-        # request that adds it.
+        # read-only note cut off is clipped-value's alone. A long name cut off in a third of a row, or in a box centered at
+        # 300px, is flagged; the same name in a box as wide as it can be (good.html: it fills its containers up to the page,
+        # 115px in from the window through padding and px margins, and a box fixed 32px in from the window's sides) has no
+        # room to show more and is not, where a 240px panel fixed to the window is. A finding names the label too, so the
+        # gate can tell a pull request that adds it.
         self.assertEqual(measured["bad-cramped-field"],
                          ["A value much longer than this narrow field can show", "Add a note", "Explain the change",
-                          "Explain what you looked for", "No-bid reason, line 1", "Reason for the change", "input#f-label",
-                          "input#f-labelledby", "input#f-n", "input#f-title", "input#no_bid_reason_2"])
+                          "Explain what you looked for", "Lane title", "No-bid reason, line 1", "Profile name", "Reason for the change", "Sheet name",
+                          "input#f-label", "input#f-labelledby", "input#f-n", "input#f-title", "input#no_bid_reason_2"])
         self.assertEqual(measured["bad-cramped-labels"], ["Feedback", "Why is this late?"])
         # A spinner of three tilted orbits whose ink sits right of its box's middle, an svg nudged 3px right in a button, a
         # button-styled link, a tab, a radio segment, a role=button, a label styled as a button, an icon font's glyph nudged
