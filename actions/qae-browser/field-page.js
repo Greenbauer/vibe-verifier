@@ -57,18 +57,29 @@ function tooSmall(el, area, measure) {
 }
 
 // Whether `el` is as wide as it can be: it fills its container's content box, and so does each container up to the
-// main region (or the body), whatever their padding. A box in a table cell, a grid column, a sidebar or a centered
-// dialog stops short somewhere on the way up, so there is room to widen it.
+// main region (or the body), whatever their padding or side margins in px. A box in a table cell, a grid column, a
+// sidebar, or one centered at a fixed size (side margins written `auto`) stops short somewhere on the way up, so there
+// is room to widen it. A box fixed to the window (a dialog) fills it when it leaves no more than a gutter on each side.
 const boxless = e => getComputedStyle(e).display === "contents";   // laid out as its children, with no box of its own
+const WINDOW_GUTTER = 48;   // px a dialog may leave on each side of the window and still be as wide as it can be
+
+// The px of `el`'s side margins: none for a margin written `auto`, which is room the box was not given.
+function sideMargins(el, s) {
+  const m = el.computedStyleMap && el.computedStyleMap();
+  const side = k => (m && String(m.get("margin-" + k)) === "auto" ? 0 : Math.max(0, parseFloat(s["margin" + k[0].toUpperCase() + k.slice(1)]) || 0));
+  return side("left") + side("right");
+}
 
 function fillsColumn(el) {
   for (let n = el; n.parentElement; n = n.parentElement) {
     if (n.matches("main, [role=main], body")) return true;
     if (boxless(n)) continue;
+    const own = getComputedStyle(n), wide = n.getBoundingClientRect().width;
+    if (own.position === "fixed") return wide >= window.innerWidth - 2 * WINDOW_GUTTER;
     let p = n.parentElement;
     while (p.parentElement && boxless(p)) p = p.parentElement;
     const s = getComputedStyle(p);
-    if (n.getBoundingClientRect().width < p.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight) - 2) return false;
+    if (wide + sideMargins(n, own) < p.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight) - 2) return false;
   }
   return true;
 }
