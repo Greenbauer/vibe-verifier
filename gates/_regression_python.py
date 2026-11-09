@@ -105,8 +105,8 @@ def globals_read(code, line):
 
 
 def held(error):
-    """The first stand-in the traceback of `error` holds: a local of a function frame it passes through
-    (assertRaises's expected exception), or a global a frame's code loads on its failing line. Read without using it.
+    """The first stand-in the traceback of `error` holds: a local of a frame it passes through,
+    other than a module's (assertRaises's expected exception), or a global a frame's code loads on its failing line. Read without using it.
     A module frame's locals are its globals, every name the file imported, so only its failing line counts there."""
     trace = getattr(error, "__traceback__", None)
     while trace is not None:
