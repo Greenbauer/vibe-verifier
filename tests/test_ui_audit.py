@@ -139,7 +139,7 @@ class Gate(unittest.TestCase):
 
     def test_the_hooks_node_tests_pass(self):
         result = subprocess.run(["node", "--test", "--test-reporter=tap", str(HOOK.with_suffix(".test.js")),
-                                 str(HOOK.parent / "ink.test.js")],
+                                 str(HOOK.parent / "ink.test.js"), str(HOOK.parent / "modal-dismiss.test.js")],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertRegex(result.stdout, r"(?m)^# pass [1-9]")

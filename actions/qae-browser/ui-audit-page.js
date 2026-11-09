@@ -49,6 +49,11 @@
 //                         spinner, its ink more than 1.5px off the content box's middle in each of three frames
 //                         (icon-page.js finds them; the hook reads their screenshots, ink.js), so a spinner tilted
 //                         in 3D that inline-flex centers by its box is measured where it draws
+//     modal-dismiss       a modal laid over the page (a role=dialog or alertdialog with aria-modal, a <dialog> opened
+//                         with showModal(), or a dialog over a full-window backdrop) that pressing Escape leaves open,
+//                         or, unless it is an alertdialog, a click on its backdrop at least 24px outside it; one holding
+//                         edited input, or an aria-modal card in the page's flow, is not judged (modal-page.js finds
+//                         them; the hook replays each in a window of its own, modal-dismiss.js)
 //
 // Side by side means laid out by one flex or grid row within four levels of both, so a header's
 // button and a search field in the page below it are never compared; a row whose two controls each

@@ -1,0 +1,157 @@
+<!doctype html><meta charset=utf-8>
+<!-- Modals for the modal-dismiss rule (tests/test_qae_ui_audit_modal.py), one per address; the query says which.
+name= its heading. later=N shows it N ms after the load. escape=1 closes it on Escape, backdrop=1 on a click on its
+backdrop outside it, each after a 300ms exit animation; enter=N ignores both for an N ms entrance animation once it
+shows. role=alertdialog.
+opener=1 opens it from "Edit lane", which also posts and opens a websocket, and the page registers a service worker on
+load: a window of the hook's own must do none of these. It is added to the page when opened, or, with kept=1, kept
+hidden from the load and made aria-modal when opened. native=1 makes it a <dialog>
+kept from the load and opened with showModal(), which Escape closes by itself. overlay=0 sets it over a panel of the page in a box
+that is no backdrop. margin=N leaves N px of backdrop around it. wrap=1 puts its role on the full-window backdrop holding
+its card; root=1 on a root of no size whose backdrop and scrolling box are fixed inside it, the card in the box.
+flow=1 puts it, aria-modal, in the page's flow, as a sign-in card marked as a dialog. shell=1 puts it, with no
+aria-modal, in an app laid out in a fixed full-window box; decor=1 sets it, with no aria-modal,
+over a fixed background behind an empty page. sibling=1 sets it, with no aria-modal, over a fixed full-window backdrop
+beside it. keep=1 keeps a native <dialog> open on Escape (its cancel event is prevented, which a press before allows).
+unnamed=1 leaves out its aria-labelledby, so its heading names it. Its fields are at their defaults: selects with no
+option marked, with their second marked, with their first disabled, with none at all, of several lines and of several
+choices, sliders whose step rounds their value, with no value under a set maximum, and with a value past the default
+maximum, a colour, a date and emails the browser reads differently from their markup, a text box with text, and a box
+not ticked;
+edited=1 fills its text field by script, edited=range moves its slider, edited=color its colour, edited=select its
+first select, edited=days its select of several choices, edited=box ticks its box. -->
+<style>
+body{margin:0;font:14px sans-serif}
+header{display:flex;gap:16px;padding:12px 16px;border-bottom:1px solid #ddd}
+main{position:relative;padding:16px;min-height:640px}
+.backdrop{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
+.card{width:400px;padding:20px;border-radius:8px;background:#fff}
+.float{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.sheet{position:absolute;inset:0;background:#f6f6f6}
+.inset{position:fixed;width:auto}
+.shell{position:fixed;inset:0;overflow:auto;background:#fafafa}
+.fill{position:fixed;inset:0;background:#eef}
+.decor{position:fixed;inset:0;z-index:-1;background:linear-gradient(#ddf,#fdd)}
+.decor ~ header,.decor ~ main{display:none}
+.dim{position:fixed;inset:0;background:rgba(0,0,0,.5)}
+.scroll{position:fixed;inset:0;overflow-y:auto}
+.middle{display:flex;min-height:100%;align-items:center;justify-content:center}
+.centered{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%)}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+</style>
+<header><a href="#lanes">Lanes</a><a href="#quotes">Quotes</a><button>Account</button></header>
+<main><h1>Lanes</h1><p>Every lane this team quotes, with its equipment and last rate.</p>
+<table><tr><td>Dock to depot</td><td><button>Edit</button></td></tr><tr><td>Depot to dock</td><td><button>Edit</button></td></tr></table>
+<form><input name=q aria-label="Lane name"><button>Save lane</button></form>
+<section><div><div><div><div><button>More</button></div></div></div></div></section>
+<section><div><div><div><div><button>More</button></div></div></div></div></section>
+<p>Rates refresh every night from the carrier's sheet.</p></main>
+<script>
+const q = new URLSearchParams(location.search), name = q.get("name") || "Welcome", native = q.has("native");
+const plain = q.has("shell") || q.has("decor") || q.has("sibling");   // no aria-modal: a modal, if at all, by its backdrop
+const main = document.querySelector("main");
+const leave = el => { el.style.transition = "opacity .3s"; el.style.opacity = "0"; setTimeout(() => el.remove(), 300); };
+const outside = (e, r) => e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+
+// The dialog, added to the page open (`shown`), or kept closed for open() below: its holder is what closing removes.
+function build(shown) {
+  const el = document.createElement(native ? "dialog" : "div");
+  if (!native) el.setAttribute("role", q.get("role") || "dialog");
+  if (!native && !plain && shown) el.setAttribute("aria-modal", "true");
+  if (!q.has("unnamed")) el.setAttribute("aria-labelledby", "title");
+  el.className = "card";
+  el.innerHTML = '<h2 id=title></h2><p>A short note about this step.</p><label>Notes <input name=notes></label> ' +
+    '<select aria-label=Equipment><option>Box</option><option>Flatbed</option></select> ' +
+    '<select aria-label=Mode><option>Road</option><option selected>Rail</option></select> ' +
+    '<select aria-label=Carrier><option disabled>Pick one</option><option>Any</option></select> <select aria-label=Empty></select> ' +
+    '<select aria-label=Lanes size=2><option>A</option><option>B</option></select> ' +
+    '<select aria-label=Days multiple><option>Mon</option><option>Tue</option></select> ' +
+    '<input type=range aria-label=Weight min=0 max=40 step=5 value=12> <input type=range aria-label=Load max=40> ' +
+    '<input type=range aria-label=Volume min=0 max=1000 value=500> <input type=color aria-label=Colour> ' +
+    '<input type=datetime-local aria-label=Pickup value="2020-01-01T10:00:00"> <input type=email aria-label=Contact value=" a@b.test"> ' +
+    '<input type=email aria-label=Copies multiple value=" a@b.test, c@d.test"> <textarea aria-label=Comment>Leave at the door</textarea> ' +
+    '<label><input type=checkbox> Remember</label> <button type=button>Done</button>';
+  el.querySelector("h2").textContent = name;
+  const edits = { range: ["[type=range]", "70"], color: ["[type=color]", "#ff0000"], select: ["select", "Flatbed"], 1: ["input", "Draft text"] };
+  const [field, value] = edits[q.get("edited")] || [];
+  if (field) el.querySelector(field).value = value;
+  if (q.get("edited") === "days") el.querySelector("select[multiple]").options[1].selected = true;
+  if (q.get("edited") === "box") el.querySelector("[type=checkbox]").checked = true;
+  let holder = el;
+  if (native) {
+    document.body.append(el);
+    if (q.has("margin")) el.style.cssText = `inset:${q.get("margin")}px;margin:0;max-width:none;max-height:none;width:auto;height:auto`;
+    if (q.has("keep")) el.addEventListener("cancel", e => e.preventDefault());
+    el.addEventListener("click", e => { if (q.has("backdrop") && outside(e, el.getBoundingClientRect())) el.close(); });
+  } else if (q.has("shell")) {
+    document.body.prepend(Object.assign(document.createElement("div"), { className: "fill" }));
+    holder = Object.assign(document.createElement("div"), { className: "shell" });
+    el.classList.add("centered");
+    holder.append(document.querySelector("header"), main, el);
+    document.body.append(holder);
+  } else if (q.has("decor")) {
+    document.body.prepend(Object.assign(document.createElement("div"), { className: "decor" }));
+    el.classList.add("centered");
+    document.body.append(el);
+  } else if (q.has("sibling")) {
+    document.body.append(Object.assign(document.createElement("div"), { className: "dim" }));
+    el.classList.add("centered");
+    document.body.append(el);
+  } else if (q.has("flow")) {
+    main.append(el);
+  } else if (q.has("root")) {
+    holder = document.createElement("div");
+    holder.innerHTML = "<div class=dim></div><div class=scroll><div class=middle></div></div>";
+    holder.querySelector(".middle").append(el);
+    document.body.append(holder);
+  } else if (q.get("overlay") === "0") {
+    holder = Object.assign(document.createElement("div"), { className: "float" });
+    holder.append(el);
+    main.append(Object.assign(document.createElement("div"), { className: "sheet" }), holder);
+  } else {
+    holder = Object.assign(document.createElement("div"), { className: "backdrop" });
+    if (q.has("margin")) el.classList.add("inset"), el.style.inset = q.get("margin") + "px";
+    holder.append(el);
+    holder.addEventListener("click", e => { if (q.has("backdrop") && e.target === holder && !holder.dataset.entering) leave(holder); });
+    document.body.append(holder);
+  }
+  if (q.has("wrap") || q.has("root")) {
+    for (const name of ["role", "aria-modal", "aria-labelledby"]) holder.setAttribute(name, el.getAttribute(name)), el.removeAttribute(name);
+  }
+  if (!shown && !native) holder.style.display = "none";
+  if (shown && native) el.showModal();
+  el.querySelector("button").onclick = () => holder.remove();
+  addEventListener("keydown", e => { if (e.key === "Escape" && q.has("escape") && !holder.dataset.entering) leave(holder); });
+  if (shown) enter(holder);
+  return { el, holder };
+}
+
+// A kept dialog opens by an attribute alone: `open` (showModal) or aria-modal.
+function open({ el, holder }) {
+  if (native) return el.showModal();
+  el.setAttribute("aria-modal", "true");
+  holder.style.display = "";
+  enter(holder);
+}
+
+function enter(holder) {
+  if (!q.has("enter")) return;
+  holder.dataset.entering = "1";
+  setTimeout(() => delete holder.dataset.entering, Number(q.get("enter")));
+}
+
+if (q.has("opener")) {
+  const kept = native || q.has("kept") ? build(false) : null;
+  const opener = Object.assign(document.createElement("button"), { id: "opener", textContent: "Edit lane" });
+  opener.onclick = () => {
+    fetch("posted", { method: "POST", body: "lane" }).catch(() => {});
+    try { new WebSocket(location.origin.replace(/^http/, "ws") + "/socket"); } catch {}
+    if (kept) open(kept);
+    else build(true);
+  };
+  main.prepend(opener);
+  if (navigator.serviceWorker) navigator.serviceWorker.register("modal-sw.js").catch(() => {});
+} else {
+  setTimeout(() => build(true), Number(q.get("later")) || 0);
+}
+</script>
