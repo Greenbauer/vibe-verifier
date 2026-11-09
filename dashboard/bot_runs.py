@@ -32,6 +32,15 @@ def job_named(name: object, names) -> bool:
     return name in names or bool(match and match.group("job") in names)
 
 
+def job_roles(job: dict, role_jobs: dict) -> list[str]:
+    """The roles of one job of a bot workflow: each role that names it, or, when none does, the explorer
+    for a job that ran on a QAE lane slot, so that slot's card shows all of its work."""
+    roles = [role for role, names in role_jobs.items() if job_named(job.get("name"), names)]
+    if not roles and "explorer" in role_jobs and qae_instance(job.get("runner_name")):
+        return ["explorer"]
+    return roles
+
+
 def bot_job_ran(job: dict) -> bool:
     """A job counts as a bot run when it had a runner and was not skipped."""
     return bool(job.get("runner_name")) and job.get("conclusion") != "skipped"
@@ -67,7 +76,7 @@ def _pull_jobs(repository: str, pull: dict, by_file: dict, bots: dict) -> list[t
         for job in run.get("jobs") or []:
             if bot_job_ran(job):
                 found.extend((repository, role, run, job)
-                             for role in roles if job_named(job.get("name"), bots[role].jobs))
+                             for role in job_roles(job, {role: bots[role].jobs for role in roles}))
     return found
 
 
@@ -82,8 +91,16 @@ def qae_instance(runner_name: object) -> int | None:
 
 
 def recent_bot_runs(rows: list[dict], now: datetime, hours: int, limit: int = 5) -> list[dict]:
+    """The newest completed runs in the window, newest first: `limit` for each QAE lane slot, which
+    has a card of its own, and `limit` for the runs on any other runner."""
     cutoff = now - timedelta(hours=hours)
     complete = [row for row in rows if row.get("completed_at")
                 and cutoff <= parse_time(row["completed_at"]) <= now]
     complete.sort(key=lambda row: parse_time(row["completed_at"]), reverse=True)
-    return complete[:limit]
+    kept, per_slot = [], {}
+    for row in complete:
+        slot = qae_instance(row.get("runner_name"))
+        if per_slot.get(slot, 0) < limit:
+            per_slot[slot] = per_slot.get(slot, 0) + 1
+            kept.append(row)
+    return kept

@@ -564,7 +564,9 @@ fills with how much is in use, so a fuller bar means less headroom; disk used is
 Displayed agent state comes from an explicit identity mapping. Aggregate CI mappings use GitHub
 activity: a job that had a runner and was not skipped proves working while it is in progress, and a
 complete active scan permits idle. A mapped QAE is one card per lane instance, from the job's runner
-name and the host's `qae_concurrency`. When that count is set there is no extra plain QAE. A role's
+name and the host's `qae_concurrency`. When that count is set there is no extra plain QAE. A card is
+its lane slot: besides the explorer's own jobs it shows any other job of the explorer's workflow that
+ran on that slot (a main-branch walk, a proof audit), and it keeps five recent outcomes of its own. A role's
 runs include its workflow in every repository the dashboard covers, matched by the run path's file
 name, including a required workflow from another repository of the same owner. Jobs on open pull
 requests come from the detail already read. A workflow an organization ruleset requires is not in
@@ -648,7 +650,10 @@ other evidence.
 Direct manifest or workflow evidence reports `subscribed`. An installation subscribed only through
 an organization wrapper or ruleset reports `unknown` in this pilot, not `false`; wrapper/ruleset
 resolution is not duplicated here. Bot roles sharing a workflow share collection. Active runs are collected independently of history;
-history is inspected until the newest five outcomes are known or coverage is explicitly partial.
+history is inspected until the newest five outcomes are known or coverage is explicitly partial. A
+role with runs on QAE lane slots keeps five outcomes for each slot, and a slot not yet met may be in
+an older run, so its history reads every run up to the limit below; each completed run's jobs are
+cached, so that costs requests once per run.
 Jobs are read for at most a workflow's 50 newest completed runs, so a job name that never runs in
 that workflow reports partial history instead of reading every run of the past week.
 A refresh is capped at 200 GitHub requests that cost rate limit, counting each REST page and each GraphQL read; an unchanged REST answer (HTTP 304) is free
