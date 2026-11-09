@@ -57,26 +57,26 @@ def pulls_bot_jobs(payloads: object, bots: dict) -> list[tuple]:
     """Bot jobs already read on open pull requests. This adds no API calls."""
     if not isinstance(payloads, dict):
         return []
-    by_file: dict[str, list[str]] = {}
+    by_file: dict[str, dict] = {}
     for role, definition in bots.items():
-        by_file.setdefault(definition.workflow, []).append(role)
+        by_file.setdefault(definition.workflow, {})[role] = definition.jobs
     found = []
     for repository, payload in payloads.items():
         if not isinstance(payload, dict):
             continue
         for pull in payload.get("pulls") or []:
-            found.extend(_pull_jobs(repository, pull, by_file, bots))
+            found.extend(_pull_jobs(repository, pull, by_file))
     return found
 
 
-def _pull_jobs(repository: str, pull: dict, by_file: dict, bots: dict) -> list[tuple]:
+def _pull_jobs(repository: str, pull: dict, by_file: dict) -> list[tuple]:
+    """The bot jobs of one pull request's runs; by_file maps each workflow file to its roles' job names."""
     found = []
     for run in pull.get("runs") or []:
-        roles = by_file.get(workflow_basename(run.get("path"))) or []
+        role_jobs = by_file.get(workflow_basename(run.get("path"))) or {}
         for job in run.get("jobs") or []:
             if bot_job_ran(job):
-                found.extend((repository, role, run, job)
-                             for role in job_roles(job, {role: bots[role].jobs for role in roles}))
+                found.extend((repository, role, run, job) for role in job_roles(job, role_jobs))
     return found
 
 
