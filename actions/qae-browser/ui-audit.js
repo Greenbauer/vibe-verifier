@@ -43,7 +43,7 @@ const path = require("path");
 // The audit as one script for page.evaluate: the file's functions inside a closure, so none of them
 // lands on the page's window, and the closure's value is the findings.
 const read = name => fs.readFileSync(path.join(__dirname, name), "utf8");
-const RULES = ["ui-audit-page.js", "glyph-page.js", "name-page.js", "wrap-page.js", "scroll-page.js", "gutter-page.js", "field-page.js", "icon-page.js"];
+const RULES = ["ui-audit-page.js", "row-page.js", "glyph-page.js", "name-page.js", "wrap-page.js", "scroll-page.js", "gutter-page.js", "field-page.js", "icon-page.js"];
 const rules = RULES.map(read).join("\n");
 const script = `(() => {\n${rules}\nreturn audit();\n})()`;
 // The controls icon-off-center screenshots, found by the same rule files.

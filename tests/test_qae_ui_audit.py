@@ -143,10 +143,13 @@ class Browser(unittest.TestCase):
         self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("glyph-off-center")),
                          ["glyph-off-center: ", "glyph-off-center: 6", "glyph-off-center: LT", "glyph-off-center: Pick"])
         # A button 22px below the file input beside it, the subscribed app's Attach export, inside the page's main region:
-        # a row in one region still counts. good.html's sidebar Collapse button beside the page's Save prices, 28px off
+        # a row in one region still counts, and so does a header's nav button beside an Account button 22px lower, and a
+        # field whose hint under it pulls the button at the row's foot off the field (a hint is not a control). good.html's
+        # open form, its field over its own Exclude and Cancel, beside a Correct button, and a two-column form whose
+        # columns each stack fields, are columns of their rows, not cells, and are not lined up with the next. good.html's sidebar Collapse button beside the page's Save prices, 28px off
         # its middle, is two regions of the app shell's grid, not one row, and is not flagged.
         self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("row-stagger")),
-                         ["row-stagger: ", "row-stagger: Export file", "row-stagger: Left"])
+                         ["row-stagger: ", "row-stagger: Export file", "row-stagger: Left", "row-stagger: Reminder hours", "row-stagger: Reports"])
         # The subscribed app's dialog: a pressed "Send invite" choice and the "Send invite" submit, and a form whose two buttons
         # differ by an added word. good.html makes the choice a pair of radios, and its rows' Remove buttons, told apart
         # by their rows, and a disabled twin are not flagged.

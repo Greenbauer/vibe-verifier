@@ -2,8 +2,11 @@
 // and `audit()` measures what is rendered now, returning one finding per defect a person sees at a
 // glance and a screenshot diff never flags, because the baseline already had it:
 //
-//     row-stagger         two controls side by side whose tops, middles and bottoms all differ
-//     row-height          two controls side by side, one taller, so their middles differ
+//     row-stagger         two controls side by side (row-page.js) whose tops, middles and bottoms all differ; a
+//                         control in a column of the row (its item stacks another control above or
+//                         below it: a column of fields, an open form) is not lined up with the next
+//     row-height          two controls side by side, one taller, so their middles differ (the same
+//                         columns aside)
 //     field-stagger       cells of one form row whose fields start at different heights (a cell
 //                         with a hint or a second input above its field pushes it down); a cell
 //                         whose field follows a heading in it is a page section, not judged
@@ -47,9 +50,10 @@
 //                         (icon-page.js finds them; the hook reads their screenshots, ink.js), so a spinner tilted
 //                         in 3D that inline-flex centers by its box is measured where it draws
 //
-// Side by side means laid out by one flex or grid row within four levels of both, and in one page
-// region (aside, nav, main, header, footer or their roles), so a header's button and a search field
-// in the page below it are never compared, and nor are a sidebar's button and the page's beside it. A control is measured as
+// Side by side means laid out by one flex or grid row within four levels of both, so a header's
+// button and a search field in the page below it are never compared; a row whose two controls each
+// sit in a page region of their own under it (aside, nav, main, header, footer or their roles) is an
+// app shell's, so a sidebar's button and the page's beside it are not compared either. A control is measured as
 // the box a person sees: a checkbox inside a bordered label is the label, and a fixed or sticky bar
 // never shares a row with what scrolls under it.
 //
@@ -63,7 +67,6 @@ const CLEAR = /rgba\(\d+, \d+, \d+, 0\)|transparent/;
 const CONTROL = 'button, input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea, [role=button], [role=combobox], a[class*="btn"], a[class*="button"]';
 const FIELD = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea, [role=combobox]";
 const GROUP = "[role=group], [role=tablist], [role=radiogroup], [role=toolbar]";
-const REGION = "aside, nav, main, header, footer, [role=complementary], [role=navigation], [role=main], [role=banner], [role=contentinfo]";
 const RAW = /\b(undefined|null|NaN)\b|\[object Object\]|\b[a-z]+_[a-z_]+\b|\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/;
 
 function cssPath(el) {
@@ -123,22 +126,6 @@ function layer(el) {
   return null;
 }
 
-// Whether a page region (a sidebar, the main region, a nav, a header or footer) lies between `el` and `row`: then `el`
-// sits in that region and the row is the app shell's, laying out regions, not controls (a sidebar's Collapse
-// button and the page's Save button beside it are in no row a person sees).
-function regionBetween(el, row) {
-  for (let n = el.parentElement; n && n !== row; n = n.parentElement) if (n.matches(REGION)) return true;
-  return false;
-}
-
-function sameRow(a, b) {
-  let n = a.parentElement;
-  for (let up = 0; n && up < 4 && !n.contains(b); up++) n = n.parentElement;
-  if (!n || !n.contains(b) || regionBetween(a, n) || regionBetween(b, n)) return false;
-  const s = getComputedStyle(n);
-  return /grid/.test(s.display) || (/flex/.test(s.display) && !/column/.test(s.flexDirection));
-}
-
 // A boxed track with the same thin padding all round (6px at most), holding both: a segmented toggle such
 // as Map | List. A card's ordinary padding is wider, so buttons touching inside a card still count.
 function evenTrack(el) {
@@ -157,35 +144,6 @@ function segmented(a, b) {
 }
 
 const overlap = (a1, a2, b1, b2) => Math.min(a2, b2) - Math.max(a1, b1);
-
-// The control nearest to the right of `a` in its row, or null.
-function rightOf(a, ra, controls, rect) {
-  let right = null;
-  for (const b of controls) {
-    const rb = rect.get(b);
-    const gap = rb.left - ra.right;
-    if (a === b || gap < -0.5 || gap > 240 || overlap(ra.top, ra.bottom, rb.top, rb.bottom) <= 0) continue;
-    if (layer(a) !== layer(b) || !sameRow(a, b)) continue;
-    if (!right || rb.left < rect.get(right).left) right = b;
-  }
-  return right;
-}
-
-function rowRules(add, controls, rect) {
-  for (const a of controls) {
-    const ra = rect.get(a), right = rightOf(a, ra, controls, rect);
-    if (!right) continue;
-    const rr = rect.get(right);
-    const middles = Math.abs((ra.top + ra.bottom) / 2 - (rr.top + rr.bottom) / 2);
-    if (middles > TOL && Math.abs(ra.top - rr.top) > TOL && Math.abs(ra.bottom - rr.bottom) > TOL) {
-      add("row-stagger", a, `${Math.round(middles)}px off the middle of the control beside it`, right);
-    } else if (middles > TOL && Math.abs(ra.height - rr.height) > TOL) {
-      add("row-height", a, `${Math.round(ra.height)}px tall beside a ${Math.round(rr.height)}px control`, right);
-    }
-    const gap = rr.left - ra.right;
-    if (gap < GAP && boxed(a) && boxed(right) && !segmented(a, right)) add("touching", a, `${Math.max(0, Math.round(gap))}px from the control beside it`, right);
-  }
-}
 
 function stackRules(add, controls, rect) {
   for (const a of controls) {
