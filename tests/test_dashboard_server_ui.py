@@ -5,6 +5,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from dashboard.server import FILES
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -88,7 +90,7 @@ console.log(JSON.stringify(h.checkTotals(pull)));
 ''')
         self.assertEqual(result, {"known": True, "completed": 6, "total": 11, "remaining": 5,
                                   "counts": {"success": 3, "running": 1, "waiting": 3, "failed": 1,
-                                             "skipped": 1, "cancelled": 1, "unknown": 1}})
+                                             "draft": 0, "skipped": 1, "cancelled": 1, "unknown": 1}})
     def test_a_queued_job_with_no_steps_still_shows_the_check_line(self):
         result = self.node(r'''
 const h=require('./dashboard/static/helpers.js');
@@ -198,6 +200,12 @@ console.log(JSON.stringify({unavailable:render({}),empty:render({'qae-1':{recent
         self.assertIn('<script src="/assets/capacity.js"></script>', index)
         self.assertIn('<script src="/assets/timeline.js"></script>', index)
         self.assertIn('<script src="/assets/prs.js"></script>', index)
+        # quota.js and timeline-axis.js are read when helpers.js and timeline.js load, so they come first.
+        order = [index.index('<script src="/assets/%s"></script>' % name)
+                 for name in ("quota.js", "helpers.js", "timeline-axis.js", "timeline.js")]
+        self.assertEqual(order, sorted(order))
+        self.assertEqual([FILES["/assets/%s" % name][0] for name in ("quota.js", "timeline-axis.js")],
+                         ["quota.js", "timeline-axis.js"])
     def test_ui_uses_text_nodes_and_the_approved_local_palette(self):
         app = (ROOT / "dashboard/static/app.js").read_text()
         helpers = (ROOT / "dashboard/static/helpers.js").read_text()
