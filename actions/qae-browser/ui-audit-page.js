@@ -44,7 +44,7 @@
 //     cramped-field       a field too small for what it asks (field-page.js): one whose name, label or placeholder asks
 //                         for free text (a reason, a note, a comment) and shows fewer than 30 average characters of its
 //                         font, or a textarea under two lines; or any field a person types into whose value is wider
-//                         than it shows
+//                         than it shows, unless the field is already as wide as it can be (full width on a phone)
 //     icon-off-center     a button, tab, segment or button-styled link whose only content is one icon, svg, glyph or
 //                         spinner, its ink more than 1.5px off the content box's middle in each of three frames
 //                         (icon-page.js finds them; the hook reads their screenshots, ink.js), so a spinner tilted
