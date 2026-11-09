@@ -77,13 +77,22 @@ function backdropPoint(dialog, box) {
   return null;
 }
 
-// Whether any field of the dialog holds a value other than its default: a person's edits, which closing may lose. A
-// select's default is the option its markup marks, else its first; a box's is whether its markup ticks it.
+// Whether a select's choice differs from its markup's: the options it marks, else, in a one-line list, the first that
+// can be chosen (a list of several lines, or of several choices, chooses none).
+function selectChanged(field) {
+  const options = [...field.options];
+  if (field.multiple || field.size > 1) return options.some(o => o.selected !== o.defaultSelected);
+  const marked = options.map(o => o.defaultSelected).lastIndexOf(true);
+  return field.selectedIndex !== (marked >= 0 ? marked : options.findIndex(o => !o.disabled));
+}
+
+// Whether any field of the dialog holds a value other than its default: a person's edits, which closing may lose. A box's
+// default is whether its markup ticks it; a slider's or colour's value is never empty, so it has no default to differ from.
 function editedIn(dialog) {
   return [...dialog.querySelectorAll("input, textarea, select")].some(field =>
-    field.tagName === "SELECT" ? field.selectedIndex !== Math.max(0, [...field.options].map(o => o.defaultSelected).lastIndexOf(true))
+    field.tagName === "SELECT" ? selectChanged(field)
       : /^(checkbox|radio)$/.test(field.type) ? field.checked !== field.defaultChecked
-        : field.value !== field.defaultValue);
+        : !/^(range|color)$/.test(field.type) && field.value !== field.defaultValue);
 }
 
 // The name a person reads for the dialog: its aria-labelledby or aria-label, else its first heading, else its text.

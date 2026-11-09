@@ -11,8 +11,11 @@ that is no backdrop. margin=N leaves N px of backdrop around it. wrap=1 puts its
 its card; root=1 on a root of no size whose backdrop and scrolling box are fixed inside it, the card in the box.
 flow=1 puts it, aria-modal, in the page's flow, as a sign-in card marked as a dialog. shell=1 puts it, with no
 aria-modal, in an app laid out in a fixed full-window box; decor=1 sets it, with no aria-modal,
-over a fixed background behind an empty page. Its fields are at their defaults: a select with no option marked, one
-with its second marked, and a box not ticked. -->
+over a fixed background behind an empty page. sibling=1 sets it, with no aria-modal, over a fixed full-window backdrop
+beside it. keep=1 keeps a native <dialog> open on Escape (its cancel event is prevented, which a press before allows).
+unnamed=1 leaves out its aria-labelledby, so its heading names it. Its fields are at their defaults: selects with no
+option marked, with their second marked, with their first disabled, with none at all, of several lines and of several
+choices, a slider, a colour, and a box not ticked. -->
 <style>
 body{margin:0;font:14px sans-serif}
 header{display:flex;gap:16px;padding:12px 16px;border-bottom:1px solid #ddd}
@@ -41,7 +44,7 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 <p>Rates refresh every night from the carrier's sheet.</p></main>
 <script>
 const q = new URLSearchParams(location.search), name = q.get("name") || "Welcome", native = q.has("native");
-const plain = q.has("shell") || q.has("decor");   // no aria-modal: a modal, if at all, by its backdrop
+const plain = q.has("shell") || q.has("decor") || q.has("sibling");   // no aria-modal: a modal, if at all, by its backdrop
 const main = document.querySelector("main");
 const leave = el => { el.style.transition = "opacity .3s"; el.style.opacity = "0"; setTimeout(() => el.remove(), 300); };
 const outside = (e, r) => e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
@@ -51,17 +54,23 @@ function build(shown) {
   const el = document.createElement(native ? "dialog" : "div");
   if (!native) el.setAttribute("role", q.get("role") || "dialog");
   if (!native && !plain && shown) el.setAttribute("aria-modal", "true");
-  el.setAttribute("aria-labelledby", "title");
+  if (!q.has("unnamed")) el.setAttribute("aria-labelledby", "title");
   el.className = "card";
   el.innerHTML = '<h2 id=title></h2><p>A short note about this step.</p><label>Notes <input name=notes></label> ' +
     '<select aria-label=Equipment><option>Box</option><option>Flatbed</option></select> ' +
     '<select aria-label=Mode><option>Road</option><option selected>Rail</option></select> ' +
+    '<select aria-label=Carrier><option disabled>Pick one</option><option>Any</option></select> <select aria-label=Empty></select> ' +
+    '<select aria-label=Lanes size=2><option>A</option><option>B</option></select> ' +
+    '<select aria-label=Days multiple><option>Mon</option><option>Tue</option></select> ' +
+    '<input type=range aria-label=Weight> <input type=color aria-label=Colour> ' +
     '<label><input type=checkbox> Remember</label> <button type=button>Done</button>';
   el.querySelector("h2").textContent = name;
   if (q.has("edited")) el.querySelector("input").value = "Draft text";
   let holder = el;
   if (native) {
     document.body.append(el);
+    if (q.has("margin")) el.style.cssText = `inset:${q.get("margin")}px;margin:0;max-width:none;max-height:none;width:auto;height:auto`;
+    if (q.has("keep")) el.addEventListener("cancel", e => e.preventDefault());
     el.addEventListener("click", e => { if (q.has("backdrop") && outside(e, el.getBoundingClientRect())) el.close(); });
   } else if (q.has("shell")) {
     document.body.prepend(Object.assign(document.createElement("div"), { className: "fill" }));
@@ -71,6 +80,10 @@ function build(shown) {
     document.body.append(holder);
   } else if (q.has("decor")) {
     document.body.prepend(Object.assign(document.createElement("div"), { className: "decor" }));
+    el.classList.add("centered");
+    document.body.append(el);
+  } else if (q.has("sibling")) {
+    document.body.append(Object.assign(document.createElement("div"), { className: "dim" }));
     el.classList.add("centered");
     document.body.append(el);
   } else if (q.has("flow")) {

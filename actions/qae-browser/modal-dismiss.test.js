@@ -157,6 +157,13 @@ test("a modal an opener opens is judged after pressing it, never when it cannot 
   assert.deepStrictEqual(onLoad.windows.map(w => [w.opened, w.keys]), [[false, []]]);
 });
 
+test("the page side is self-contained: run as the page script on an empty page, it finds no modal", () => {
+  const vm = require("node:vm");
+  assert.strictEqual(typeof require("./modal-page.js"), "function");
+  assert.ok(dismiss.openScript.includes("function openModals(") && dismiss.watchScript.includes("function watchOpeners("));
+  assert.strictEqual(JSON.stringify(vm.runInNewContext(dismiss.openScript, { document: { querySelectorAll: () => [] } })), "[]");
+});
+
 test("a page that is not http, https or file, or a browser that gives no second context, is not replayed", async () => {
   const b = browser(() => [modal()]);
   assert.strictEqual(await realReplay(explorer(b, "about:blank"), "about:blank", null, false), null);

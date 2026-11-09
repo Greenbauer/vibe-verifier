@@ -36,9 +36,10 @@ const at = query => process.env.BASE + "/modal.html?" + query;
   // Modals open on load, each replayed from a tab of its own as the hook does after a measure; `entrance` is opened by
   // "Edit lane", which the tab presses and the hook notes, and ignores Escape and backdrop clicks for its entrance.
   const cases = {
-    entrance: "opener=1&enter=400&escape=1&backdrop=1&name=Entrance",
+    entrance: "opener=1&enter=400&escape=1&backdrop=1&name=Entrance", nativeFull: "opener=1&native=1&keep=1&margin=16&name=Rate+sheet",
+    sibling: "sibling=1&name=Choose+a+plan", floating: "overlay=0&name=Floating+note",
     stuck: "later=2000&name=Welcome+tour", closes: "escape=1&backdrop=1&name=Closes", alert: "role=alertdialog&escape=1&name=Discard+changes",
-    edited: "edited=1&name=Draft", native: "native=1&backdrop=1&name=Native", nativeStuck: "native=1&name=Native+stuck",
+    edited: "edited=1&name=Draft", native: "native=1&backdrop=1&name=Native", nativeStuck: "native=1&unnamed=1&name=Native+stuck",
     noBackdrop: "overlay=0&escape=1&name=No+backdrop", margin: "margin=16&escape=1&name=Full+window", shell: "shell=1&name=In+app", signIn: "flow=1&name=Log+in",
     decor: "decor=1&name=Sign+in", wrap: "wrap=1&escape=1&name=Share+quote", root: "root=1&escape=1&name=Invite+people",
   };
@@ -160,8 +161,17 @@ class Browser(unittest.TestCase):
         # <dialog> Escape closes by itself but a backdrop click does not (no handler, no closedby).
         self.assertEqual(measured["stuck"], [["modal-dismiss", "Welcome tour", "pressing Escape leaves the dialog open, and so does "
                                               "a click on the backdrop outside it (open on load)"]])
+        # Named by its heading, having no aria-labelledby.
         click = "a click on the backdrop outside it leaves the dialog open (open on load)"
         self.assertEqual(measured["nativeStuck"], [["modal-dismiss", "Native stuck", click]])
+        # Each kind of modal by itself: a dialog with no aria-modal over a backdrop beside it, judged by that backdrop; an
+        # aria-modal dialog with no backdrop, judged by Escape alone; a native <dialog> as large as the window but 16px,
+        # with no backdrop point, that Escape leaves open once a press allowed it to.
+        self.assertEqual(measured["sibling"], [["modal-dismiss", "Choose a plan", "pressing Escape leaves the dialog open, and "
+                                                "so does a click on the backdrop outside it (open on load)"]])
+        self.assertEqual(measured["floating"], [["modal-dismiss", "Floating note", "pressing Escape leaves the dialog open (open on load)"]])
+        self.assertEqual(measured["nativeFull"], [["modal-dismiss", "Rate sheet",
+                                                   'pressing Escape leaves the dialog open (opened by pressing "Edit lane")']])
         # The role on the full-window backdrop holding the card, and on a root of no size whose backdrop and scrolling box
         # are fixed inside it: the card is the box a click lands outside.
         self.assertEqual(measured["wrap"], [["modal-dismiss", "Share quote", click]])
@@ -190,9 +200,9 @@ class Browser(unittest.TestCase):
         self.assertEqual(measured["explorerStillOpen"], [True, True, True, True])
         # Every window of the hook's own is closed again: only the explorer's four tabs remain, in its one context.
         self.assertEqual((measured["tabs"], measured["contexts"]), (4, 1))
-        # Only the explorer's own four presses wrote and opened a websocket, and only its context installed the service
-        # worker: the replays did none of these, though they pressed "Edit lane" eight times and loaded the page each time.
-        self.assertEqual(server.counts, {"POST /posted": 4, "GET /socket": 4, "GET /sw-installed": 1})
+        # Only the explorer's own five presses wrote and opened a websocket, and only its context installed the service
+        # worker: the replays did none of these, though every replay window pressed "Edit lane" and loaded the page.
+        self.assertEqual(server.counts, {"POST /posted": 5, "GET /socket": 5, "GET /sw-installed": 1})
 
 if __name__ == "__main__":
     unittest.main()
