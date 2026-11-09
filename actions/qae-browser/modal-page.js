@@ -88,10 +88,10 @@ function selectChanged(field) {
 
 // Whether an input holds a value other than the one a fresh input of the same markup would: the browser's own cleanup
 // applied, so a slider's default is its middle, a colour's black, and a date or email is read as the field reads it.
-// The fresh input is never added to the page.
+// Its type is set last, so the value is cleaned once, against every limit. The fresh input is never added to the page.
 function inputChanged(field) {
   const fresh = document.createElement("input");
-  for (const name of ["type", "value", "min", "max", "step", "multiple"]) {
+  for (const name of ["value", "min", "max", "step", "multiple", "type"]) {
     if (field.hasAttribute(name)) fresh.setAttribute(name, field.getAttribute(name));
   }
   return field.value !== fresh.value;

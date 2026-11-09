@@ -40,7 +40,7 @@ const at = query => process.env.BASE + "/modal.html?" + query;
     sibling: "sibling=1&name=Choose+a+plan", floating: "overlay=0&name=Floating+note",
     stuck: "later=2000&name=Welcome+tour", closes: "escape=1&backdrop=1&name=Closes", alert: "role=alertdialog&escape=1&name=Discard+changes",
     edited: "edited=1&name=Draft", editedRange: "edited=range&name=Weight", editedColour: "edited=color&name=Colour",
-    editedSelect: "edited=select&name=Equipment", editedDays: "edited=days&name=Days", native: "native=1&backdrop=1&name=Native", nativeStuck: "native=1&unnamed=1&name=Native+stuck",
+    editedSelect: "edited=select&name=Equipment", editedDays: "edited=days&name=Days", editedBox: "edited=box&name=Remember", native: "native=1&backdrop=1&name=Native", nativeStuck: "native=1&unnamed=1&name=Native+stuck",
     noBackdrop: "overlay=0&escape=1&name=No+backdrop", margin: "margin=16&escape=1&name=Full+window", shell: "shell=1&name=In+app", signIn: "flow=1&name=Log+in",
     decor: "decor=1&name=Sign+in", wrap: "wrap=1&escape=1&name=Share+quote", root: "root=1&escape=1&name=Invite+people",
   };
@@ -179,12 +179,12 @@ class Browser(unittest.TestCase):
         self.assertEqual(measured["root"], [["modal-dismiss", "Invite people", click]])
         # Closed by both (after an exit animation); an alertdialog a backdrop click leaves open (the choice is the point);
         # dialogs that ignore both but hold edited input (text typed, a slider or colour moved, a select or a select of
-        # several choices changed); a native <dialog> closed by both; an aria-modal dialog over the page with no backdrop,
+        # several choices changed, a box ticked); a native <dialog> closed by both; an aria-modal dialog over the page with no backdrop,
         # and one leaving 16px of backdrop (under 24px, so no click). A role=dialog in a fixed full-window app, one over a
         # fixed background behind an empty page, and an aria-modal sign-in card in the page's flow (a subscribed app's
         # sign-in page marks its card so) are no modals. A modal that ignores both until its 400ms entrance ends is judged
         # once it has settled, as a person sees it.
-        for name in ("closes", "alert", "edited", "editedRange", "editedColour", "editedSelect", "editedDays", "native",
+        for name in ("closes", "alert", "edited", "editedRange", "editedColour", "editedSelect", "editedDays", "editedBox", "native",
                      "noBackdrop", "margin", "shell", "decor", "signIn", "entrance"):
             self.assertEqual(measured[name], [], name)
         # A submit button is never an opener, nor a press inside a dialog or on the page; of two Edit buttons the second is
