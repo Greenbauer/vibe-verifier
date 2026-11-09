@@ -38,9 +38,14 @@ const SETTLE = 250;   // ms after two frames: a layout that animates into place 
 // shows and floats over the page (it, or a wrapper up to FLOAT_DEPTH levels above, is positioned absolute or fixed, as
 // a dropdown's or tooltip's popper is). A menu in the page's flow (navigation marked role=menu) is not one, and neither
 // is a trigger's aria-expanded: a subscribed app's sidebar toggle says expanded for as long as the sidebar shows, and
-// read as an open popup it stopped every capture on every page (2026-11-09).
+// read as an open popup it stopped every capture on every page (2026-11-09). Neither is a menu in a header or
+// navigation landmark (a fixed header's role=menu navigation floats as a dropdown does, and is always there), nor one
+// smaller than MIN_POPUP pixels a side (a tooltip kept for screen readers): either would stop every capture too. A
+// dropdown opened from a header is portaled out of it by the common libraries, so it still counts.
 const POPUP = "[role=menu], [role=listbox], [role=tooltip]";
+const STANDING = "header, nav, [role=banner], [role=navigation], [role=menubar]";
 const FLOAT_DEPTH = 4;
+const MIN_POPUP = 8;
 
 // The widths qae-inputs/widths lists (VV_QAE_WIDTHS names another file); [] without one.
 function widths(file = process.env.VV_QAE_WIDTHS || "qae-inputs/widths") {
@@ -56,14 +61,15 @@ async function settle(page) {
 }
 
 async function popupOpen(page) {
-  return page.evaluate(([selector, depth]) => [...document.querySelectorAll(selector)].some(el => {
+  return page.evaluate(([selector, standing, depth, least]) => [...document.querySelectorAll(selector)].some(el => {
     const box = el.getBoundingClientRect(), style = getComputedStyle(el);
-    if (box.width === 0 || box.height === 0 || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+    if (box.width < least || box.height < least || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+    if (el.parentElement && el.parentElement.closest(standing)) return false;
     for (let node = el, level = 0; node && node !== document.body && level <= depth; node = node.parentElement, level++) {
       if (["absolute", "fixed"].includes(getComputedStyle(node).position)) return true;
     }
     return false;
-  }), [POPUP, FLOAT_DEPTH]);
+  }), [POPUP, STANDING, FLOAT_DEPTH, MIN_POPUP]);
 }
 
 const tree = page => page.locator("body").ariaSnapshot({ timeout: 2000 }).catch(() => "");

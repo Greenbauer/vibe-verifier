@@ -20,9 +20,11 @@ UI_AUDIT = ROOT / "actions" / "qae-browser" / "ui-audit.js"
 # the explorer's next action may use, which a resize could close. Two buttons touch: a layout finding at any width.
 # What stays on the page never stops a capture: a menu in the page's flow, a sidebar toggle that says expanded while
 # the sidebar shows (a subscribed app's), and a tooltip faded out.
-DIALOG = ("<title>site</title><main><nav role=menu><a role=menuitem href=/>Home</a></nav>"
+DIALOG = ("<title>site</title><header style='position:fixed;top:0;right:0'><nav><ul role=menu>"
+          "<li role=menuitem>Home</li></ul></nav></header><main><nav role=menu><a role=menuitem href=/>Home</a></nav>"
           "<button aria-haspopup=true aria-expanded=true>Collapse navigation</button>"
-          "<div role=tooltip style='position:absolute;opacity:0'>Collapse</div><h1>Quotes</h1>"
+          "<div role=tooltip style='position:absolute;opacity:0'>Collapse</div>"
+          "<div role=tooltip style='position:absolute;width:1px;height:1px;overflow:hidden'>Opens the menu</div><h1>Quotes</h1>"
           "<p><button id=open>Open</button><button id=menu aria-haspopup=menu aria-expanded=false>More</button></p>"
           "<dialog id=d><p>Quote Q-1</p><button id=close>Close</button></dialog>"
           "<div id=m role=menu hidden style='position:absolute'><div role=menuitem>Copy</div></div></main>"

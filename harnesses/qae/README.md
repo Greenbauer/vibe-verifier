@@ -440,10 +440,12 @@ qae-artifacts line of `.vibe-verifier-qae`.
   `widths/<digest>-<width>.png`, runs the [layout audit](../../docs/features/ui-audit.md) there, and puts the
   window back. `widths.jsonl` names each capture by the digest of the explorer's screenshot. So every step is
   seen at every width, not only a criterion's end state, and its layout is measured at each one.
-- A capture is skipped while a popup is open: a control that declares a popup says it is expanded
-  (`aria-haspopup` with `aria-expanded="true"`), a combobox is expanded, or a tooltip shows. The explorer's next
-  action may need it, and a resize can close it. A menu always on the page (navigation marked `role=menu`) has no
-  such trigger and does not stop captures. `disturbed: true` in `widths.jsonl` says the page's accessibility tree
+- A capture is skipped while a popup floats over the page: a visible, opaque menu, listbox or tooltip at least 8
+  pixels a side that is, or sits within four levels of, an element positioned absolute or fixed (a dropdown's or
+  tooltip's popper), outside any header or navigation landmark. The explorer's next action may need it, and a resize
+  can close it. A trigger's `aria-expanded` is not read: a consumer's sidebar toggle says expanded for as long as the
+  sidebar shows, and read as an open popup it stopped every capture (2026-11-09). A menu in a header or navigation,
+  fixed or not, and a tooltip kept for screen readers do not stop captures either. `disturbed: true` in `widths.jsonl` says the page's accessibility tree
   read differently after the round trip than before it.
 - A width a criterion names itself ("at 375 by 812, ...") is still the explorer's to walk: the captures stand in
   for the generic check of every criterion at every width, not for what a criterion asks.
