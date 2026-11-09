@@ -71,12 +71,33 @@ class StandIns(unittest.TestCase):
         # not "missing", so before the stand-in recorded its use, each read as the bug shown.
         uses = ["    def test_issubclass(self):\n        self.assertTrue(issubclass(PriceError, ValueError))\n",
                 "    def test_raises(self):\n        with self.assertRaises(PriceError):\n            raise PriceError('x')\n",
-                "    def test_isinstance(self):\n        self.assertFalse(isinstance(ValueError(), PriceError))\n"]
+                "    def test_isinstance(self):\n        self.assertFalse(isinstance(ValueError(), PriceError))\n",
+                # The same through a helper: the test's own code never names it.
+                "    def rejected(self):\n        with self.assertRaises(PriceError):\n            raise PriceError('x')\n\n"
+                "    def test_through_a_helper(self):\n        self.rejected()\n"]
         changed = {"shop/price.py": PY_FIX + "\n\nclass PriceError(ValueError):\n    pass\n"}
         header = HEADER.replace("discount, member_price", "discount, PriceError")
         for runner in ("unittest", "pytest"):
             with self.subTest(runner=runner):
                 self.only_missing(self.judge(runner, [UNCHANGED_TEST] + uses, None, changed, header=header), "PriceError")
+
+    def test_a_test_that_fails_through_the_old_code_before_it_reaches_the_new_name_shows_the_bug(self):
+        # It names PriceError and the module a new function sharing a method's name, but fails on the old discount
+        # first: the failure's traceback holds no stand-in, so it is the bug shown.
+        changed = {"shop/price.py": PY_FIX + "\n\nclass PriceError(ValueError):\n    pass\n\n\ndef rounded(x):\n    return x\n"}
+        header = HEADER.replace("discount, member_price", "discount, PriceError, rounded")
+        test = ("    def test_old_then_new(self):\n        self.assertEqual(self.discount(200, True), 180)\n"
+                "        with self.assertRaises(PriceError):\n            raise PriceError('x')\n\n"
+                "    def discount(self, total, member):\n        return discount(total, member)\n\n"
+                "    def rounded(self):\n        return 1\n\n"
+                "    def test_a_method_named_like_the_new_name(self):\n        self.assertEqual(self.rounded() + discount(200, True), 181)\n")
+        for runner in ("unittest", "pytest"):
+            with self.subTest(runner=runner):
+                result = self.judge(runner, [test], None, changed, header=header)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("test_old_then_new fails on the code before the fix: AssertionError: 200 != 180", result.stderr)
+                self.assertIn("test_a_method_named_like_the_new_name fails on the code before the fix: AssertionError: 201 != 181",
+                              result.stderr)
 
     def test_the_module_loads_when_the_test_file_imports_it_after_the_file_s_own_setup(self):
         # The file sets SHOP_RATE before it imports shop.price, whose old code reads it once. A stand-in that loaded

@@ -15,7 +15,9 @@ from the runner's printed output. Standard library and pytest only, Python 3.8 a
 """
 import importlib.util
 import json
+import linecache
 import os
+import re
 import sys
 import unittest
 
@@ -23,35 +25,28 @@ OUT, FILES = sys.argv[1], [os.path.realpath(path) for path in sys.argv[2:]]
 REPORT = {"files": {path: {"load_error": None, "tests": []} for path in FILES}}
 STAND_INS = json.loads(os.environ.get("VV_REGRESSION_STAND_INS") or "{}")
 ADDED = []  # [module, name] of each stand-in a module was given, for the report
-TOUCHED = []  # the error of each stand-in used since the test, or the file's load, in hand began
 
 
 class StandIn:
     """A name a test file imports that its module does not have yet on the code before the fix (the gate's
-    VV_REGRESSION_STAND_INS, {module: [name]}): the file loads and its other tests run. Using it in any way the
-    runners record (a call, an operator, isinstance, a base class, an attribute) marks the test or load in hand,
-    whose failure is then recorded as the ImportError the import would have raised, which the gate reads as that
-    name missing, whatever error the use itself raised."""
+    VV_REGRESSION_STAND_INS, {module: [name]}): the file loads and its other tests run. A call, an operator, an
+    attribute or a base class raises the ImportError the import would have raised, which the gate reads as that name
+    missing; a use that raises another error (issubclass, assertRaises) is read through the error's traceback
+    (failure)."""
 
     def __init__(self, module, name):
         object.__setattr__(self, "error", "cannot import name '%s' from '%s' (a stand-in: it does not exist before "
                                           "the fix)" % (name, module))
 
-    def touch(self):
-        TOUCHED.append(object.__getattribute__(self, "error"))
-
     def missing(self, *_args, **_kwargs):
-        StandIn.touch(self)
         raise ImportError(object.__getattribute__(self, "error"))
 
     def __getattr__(self, name):
-        StandIn.touch(self)
         if name.startswith("__") and name.endswith("__"):  # Python's own probes (issubclass reads __bases__)
             raise AttributeError(name)
         StandIn.missing(self)
 
     def __repr__(self):
-        StandIn.touch(self)
         return "<%s>" % object.__getattribute__(self, "error")
 
 
@@ -99,19 +94,28 @@ class StandInFinder:
         return None
 
 
-def names_in(code):
-    """Every global and attribute name a code object and the functions and classes inside it read."""
-    return set(code.co_names).union(*[names_in(const) for const in code.co_consts if hasattr(const, "co_names")])
+def held(error):
+    """The first stand-in the traceback of `error` holds: a local of a frame it passes through (assertRaises's
+    expected exception), or a global the frame's failing line names (not `x.name`). Read without touching it."""
+    trace = getattr(error, "__traceback__", None)
+    while trace is not None:
+        frame, line = trace.tb_frame, linecache.getline(trace.tb_frame.f_code.co_filename, trace.tb_lineno)
+        for value in list(frame.f_locals.values()):
+            if type(value) is StandIn:
+                return value
+        for name, value in list(frame.f_globals.items()):
+            if type(value) is StandIn and re.search(r"(?<![\w.])%s\b" % re.escape(name), line):
+                return value
+        trace = trace.tb_next
+    return None
 
 
-def failure(error, test=None):
-    """`Type: first line` of what stopped a test or a file's load, or a stand-in's ImportError when the test or load
-    used one, or the test's own code names one (a check such as `isinstance(x, type)` reads one without using it)."""
-    if TOUCHED:
-        return "ImportError: " + TOUCHED[0]
-    code = getattr(getattr(test, "__func__", test), "__code__", None)
-    named = sorted((name, module) for module, name in ADDED if code and name in names_in(code))
-    return "ImportError: " + StandIn(named[0][1], named[0][0]).error if named else described(error)
+def failure(error):
+    """`Type: first line` of what stopped a test or a file's load, or a stand-in's ImportError when the error's
+    traceback holds one (issubclass and assertRaises raise TypeError on it). An ImportError keeps its own: it
+    already names what is missing, and the line of a `from ... import` that failed names the stand-ins before it."""
+    stand_in = None if isinstance(error, ImportError) else held(error)
+    return described(error) if stand_in is None else "ImportError: " + object.__getattribute__(stand_in, "error")
 
 
 def described(error):
@@ -137,18 +141,8 @@ class Recorder:
     def pytest_configure(self, config):
         self.root = str(getattr(config, "rootpath", None) or config.rootdir)
 
-    def pytest_collectstart(self):
-        del TOUCHED[:]
-
-    def pytest_runtest_logstart(self):
-        del TOUCHED[:]
-
     def pytest_exception_interact(self, node, call, report):
-        try:
-            test = node.function if isinstance(node, pytest.Function) else None
-        except Exception:  # a test whose function cannot be read is judged by its error alone
-            test = None
-        self.errors.setdefault(report.nodeid, failure(call.excinfo.value, test))
+        self.errors.setdefault(report.nodeid, failure(call.excinfo.value))
 
     @staticmethod
     def crash(report):
@@ -177,11 +171,6 @@ class Recorder:
                 found(nodeid)["tests"].append([nodeid, status, self.errors.get(nodeid, fallback) if status == "failed" else ""])
 
 
-def method(test):
-    """The test method a unittest test runs, or None (a class or module fixture's error holder)."""
-    return getattr(test, getattr(test, "_testMethodName", ""), None)
-
-
 class Result(unittest.TestResult):
     def __init__(self, tests):
         super().__init__()
@@ -190,12 +179,8 @@ class Result(unittest.TestResult):
     def addSuccess(self, test):
         self.outcomes.append([test.id(), "passed", ""])
 
-    def startTest(self, test):
-        super().startTest(test)
-        del TOUCHED[:]
-
     def addFailure(self, test, err):
-        self.outcomes.append([test.id(), "failed", failure(err[1], method(test))])
+        self.outcomes.append([test.id(), "failed", failure(err[1])])
 
     addError = addFailure
 
@@ -206,7 +191,7 @@ class Result(unittest.TestResult):
         # A failed subtest fails its test, and unittest then reports nothing else for that test (no
         # addSuccess, no addFailure): it is recorded under the test's own id, with its first failure.
         if err is not None and all(row[0] != test.id() for row in self.outcomes):
-            self.outcomes.append([test.id(), "failed", failure(err[1], method(test))])
+            self.outcomes.append([test.id(), "failed", failure(err[1])])
 
 
 def with_unittest(paths):
@@ -215,7 +200,6 @@ def with_unittest(paths):
         stem = os.path.splitext(os.path.basename(path))[0]
         name = stem if stem.isidentifier() else "vv_regression_test_%d" % index
         sys.path.insert(0, os.path.dirname(path))
-        del TOUCHED[:]
         try:
             spec = importlib.util.spec_from_file_location(name, path)
             module = importlib.util.module_from_spec(spec)

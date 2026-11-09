@@ -528,8 +528,8 @@ regression-test-fails-on-base --title pr-inputs/title.txt --body pr-inputs/body.
   test does not reproduce the bug), and when the only failures there say that a module, export, file or
   script the test needs does not exist yet. A Python test file that does not load there only because a
   module that exists lacks a name it imports runs again with a stand-in for the name, added when the
-  file's own import loads the module, so its tests that do not use it are judged; one that uses it in any
-  way, or whose own code names it, fails as the name missing. On a
+  file's own import loads the module, so its tests that do not use it are judged; one whose failure comes
+  from it (the stand-in's ImportError, or a traceback that holds the stand-in) fails as the name missing. On a
   277-PR history of a private TypeScript monorepo, 14% of changed test files failed before the fix only
   that way, inside a quarter of the fixes that also had a real failure; the gate names the missing thing
   (`fails on the code before the fix only because ./mask is missing`). That case is a finding, not exit

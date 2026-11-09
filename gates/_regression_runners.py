@@ -183,7 +183,7 @@ def run_python(repo, python, paths, deadline, timeout, local_names, stand_ins=Fa
     (the run on the code before the fix), a file that did not load only because a module that exists there lacks a
     name it imports (`from shop.price import discount, member_price`, the fix adding member_price) runs again with a
     stand-in for that name (gates/_regression_python.py StandInFinder), added when the module loads, so its tests
-    that do not use the name are judged, and one that uses it fails as it missing. Again for each new name such a
+    that do not use the name are judged, and one whose failure comes from it fails as it missing. Again for each new name such a
     run turns up."""
     (runs, _), wanted = python_runs(repo, python, paths, deadline, timeout, local_names, {}), {}
     lacking = lacking_names(runs, wanted) if stand_ins else {}
