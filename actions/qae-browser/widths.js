@@ -41,7 +41,8 @@ const SETTLE = 250;   // ms after two frames: a layout that animates into place 
 // read as an open popup it stopped every capture on every page (2026-11-09). Neither is a menu in a header or
 // navigation landmark (a fixed header's role=menu navigation floats as a dropdown does, and is always there), nor one
 // smaller than MIN_POPUP pixels a side (a tooltip kept for screen readers): either would stop every capture too. A
-// dropdown opened from a header is portaled out of it by the common libraries, so it still counts.
+// dropdown a header opens still counts when its library portals it out of the header (Radix, MUI); one rendered in
+// place there (Headless UI without an anchor) is resized like the rest of the page, and `disturbed` records it.
 const POPUP = "[role=menu], [role=listbox], [role=tooltip]";
 const STANDING = "header, nav, [role=banner], [role=navigation], [role=menubar]";
 const FLOAT_DEPTH = 4;
