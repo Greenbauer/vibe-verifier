@@ -47,8 +47,9 @@
 //                         (icon-page.js finds them; the hook reads their screenshots, ink.js), so a spinner tilted
 //                         in 3D that inline-flex centers by its box is measured where it draws
 //
-// Side by side means laid out by one flex or grid row within four levels of both, so a header's
-// button and a search field in the page below it are never compared. A control is measured as
+// Side by side means laid out by one flex or grid row within four levels of both, and in one page
+// region (aside, nav, main, header, footer or their roles), so a header's button and a search field
+// in the page below it are never compared, and nor are a sidebar's button and the page's beside it. A control is measured as
 // the box a person sees: a checkbox inside a bordered label is the label, and a fixed or sticky bar
 // never shares a row with what scrolls under it.
 //
@@ -62,6 +63,7 @@ const CLEAR = /rgba\(\d+, \d+, \d+, 0\)|transparent/;
 const CONTROL = 'button, input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea, [role=button], [role=combobox], a[class*="btn"], a[class*="button"]';
 const FIELD = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea, [role=combobox]";
 const GROUP = "[role=group], [role=tablist], [role=radiogroup], [role=toolbar]";
+const REGION = "aside, nav, main, header, footer, [role=complementary], [role=navigation], [role=main], [role=banner], [role=contentinfo]";
 const RAW = /\b(undefined|null|NaN)\b|\[object Object\]|\b[a-z]+_[a-z_]+\b|\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/;
 
 function cssPath(el) {
@@ -121,10 +123,18 @@ function layer(el) {
   return null;
 }
 
+// Whether a page region (a sidebar, the main region, a nav, a header or footer) lies between `el` and `row`: then `el`
+// sits in that region and the row is the app shell's, laying out regions, not controls (a sidebar's Collapse
+// button and the page's Save button beside it are in no row a person sees).
+function regionBetween(el, row) {
+  for (let n = el.parentElement; n && n !== row; n = n.parentElement) if (n.matches(REGION)) return true;
+  return false;
+}
+
 function sameRow(a, b) {
   let n = a.parentElement;
   for (let up = 0; n && up < 4 && !n.contains(b); up++) n = n.parentElement;
-  if (!n || !n.contains(b)) return false;
+  if (!n || !n.contains(b) || regionBetween(a, n) || regionBetween(b, n)) return false;
   const s = getComputedStyle(n);
   return /grid/.test(s.display) || (/flex/.test(s.display) && !/column/.test(s.flexDirection));
 }
