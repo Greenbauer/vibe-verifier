@@ -812,6 +812,18 @@ out="$(run_org --remove --apply 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ! grep -q "listener-health\|token-refresh.timer\|image-build.timer\|codex-keepalive.timer\|store-reaper" <<< "$(grep '^systemctl \(disable\|stop\)' "$CALLLOG")" && [ "$(line_of '^systemctl disable --now box-ci-listener.service')" = 1 ] && grep -qx "docker network rm box-ci" "$CALLLOG"
 expect $? "--remove of a lane whose listener and timers never ran disables no unit file that does not exist, and runs to the end"
 
+# ---- npm_registry: every job container gets the registry ------------------------------------------
+setup
+awk '{ print } /^    store_disk_gb: 40$/ { print "    npm_registry: https://registry.yarnpkg.com/" }' "$S/host.yml" > "$S/host-npm.yml"
+out="$(HOST_YML_UNDER_TEST="$S/host-npm.yml" run_org --apply 2>&1)"; rc=$?
+npm_flags='--dns 1.1.1.1 --dns 8.8.8.8 -e npm_config_registry=https://registry.yarnpkg.com/ -e COREPACK_NPM_REGISTRY=https://registry.yarnpkg.com --cpuset-cpus'
+[ "$rc" -eq 0 ] && grep -qF -- "$npm_flags" "$S/units/box-ci-ci@.service" && grep -qF -- "$npm_flags" "$S/units/box-ci-qae@.service" \
+  && [ "$(grep -o 'npm_config_registry=' "$S/units/box-ci-ci@.service" | wc -l)" -eq 1 ]
+expect $? "npm_registry gives every slot's container npm_config_registry (with a trailing slash) and COREPACK_NPM_REGISTRY (without), once"
+run_org --apply >/dev/null 2>&1
+! grep -q "npm_config_registry\|COREPACK_NPM_REGISTRY" "$S/units/box-ci-ci@.service" "$S/units/box-ci-qae@.service"
+expect $? "without npm_registry the next apply writes the slot templates with no registry setting"
+
 # ---- qae_concurrency 2: one Codex login store per qae instance -----------------------------------
 setup
 sed 's/^    qae_concurrency: 1$/    qae_concurrency: 2/' "$S/host.yml" > "$S/host-qae2.yml"
