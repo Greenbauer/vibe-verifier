@@ -230,6 +230,19 @@ each commit status. It makes no extra GitHub call.
   its own color: dim green before a green run, dim red before a red one. Failures are drawn on top so they are never hidden. A dashed line marks now
   while anything is still open. Skipped checks and commit statuses are not drawn; the counts in the
   CI column still name them. A head whose checks have no time yet keeps the check meter.
+- **A draft's tests that have not run** are an empty gray dashed outline across the lane, labeled
+  "Not run (draft)", never red. Many workflows skip their test jobs on a draft, and the job that
+  reports "every test job succeeded" (`All tests`, or its old name `tests`, per
+  [check names](check-names.md)) fails on purpose so a draft never looks mergeable on GitHub. The
+  collector (`mark_draft_not_run` in `dashboard/draft_checks.py`) marks those runs: on a draft pull request, a
+  run where a test summary failed, at least one job was skipped, and no other job failed or was
+  cancelled has its skipped jobs and its failed summaries shown as "Not run (draft)". A job that ran
+  and failed keeps the run, and its summary, red. The row's badge and check meter say "Not run
+  (draft)" too, the pull request no longer counts as needing attention for it, and the opened view
+  says the tests run when the pull request is marked ready for review, with a link to it on GitHub.
+  Nothing changes on GitHub. Until the dashboard has read a draft's checks in detail, its badge is
+  GitHub's overall result, which is still red. Dashed, never hatched: diagonal stripes make the
+  straight bars on the lines beside them look tilted.
 - **The latest round only.** A head's checks can hold more than one round of CI: a re-run, or CI
   started again on the same commit hours later. The timeline draws the latest round, from the last
   Actions job created after no job had run or waited for 15 minutes (another app's check or a status
@@ -247,7 +260,8 @@ each commit status. It makes no extra GitHub call.
   wait, and a commit status never waits.
 - **Opened**, the timeline lists every job under its workflow's name on an axis with round-time
   ticks, with its run time (or "so far", or how long it has waited) and a Log link to the job on
-  GitHub when the job's page is under the configured owner. On a phone the time column is narrow,
+  GitHub when the job's page is under the configured owner. Every other job line has a faint stripe, across
+  workflows, and the line under the pointer lights up, so a time or Log link lines up with its job. On a phone the time column is narrow,
   so a long time such as "1h 2m so far" wraps to two lines in it rather than running into the Log
   link. A job's name opens its steps, drawn on
   that job's own scale (a note says so) because a one-minute job's steps on an hour's axis would be
@@ -263,7 +277,10 @@ each commit status. It makes no extra GitHub call.
 - A job's line is empty while it is still within its first 30 seconds of waiting, and another
   app's queued check draws nothing until it starts; the counts in the CI column include both.
 
-`tests/test_dashboard_timeline.py` runs `dashboard/static/timeline.test.js` and `dashboard/static/prs.test.js` and checks the row's
+`tests/test_dashboard_draft_not_run.py` covers which draft runs are marked and which stay red.
+The time axis (positions on the span and the ticks) is in `dashboard/static/timeline-axis.js`, loaded before
+`timeline.js`. `tests/test_dashboard_timeline.py` runs `dashboard/static/timeline.test.js`, `timeline-draft.test.js`,
+`timeline-axis.test.js`, `prs.test.js` and `quota.test.js`, and checks the row's
 swap from the meter, that there is no scale menu and each row is fit to its own timeline, the bar
 colors and box. `tests/test_dashboard_timeline_phone.py` checks that a phone wraps a long job time in
 its column.
@@ -872,7 +889,8 @@ charts' clock-hour mapping, observed and unobserved hours, usual-day averages, s
 card draws a pace in tokens. `tests/test_dashboard_pace.py` covers which plan window is paced and
 its points against an even burn, whatever the bots used.
 `tests/test_dashboard_usage_quota.py` covers the subscription bars: window labels, pace tick, color,
-reset countdown, and one block per provider. The repository's existing unittest command runs all
+reset countdown, and one block per provider. Those functions live in `dashboard/static/quota.js`, loaded before
+`helpers.js`, which hands them on under `VV`. The repository's existing unittest command runs all
 of them. Configuration tests cover the strict optional proxy origin and its immutable default.
 
 Live acceptance uses private configuration outside this repository, reconciles displayed PRs and

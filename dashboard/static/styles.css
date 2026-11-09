@@ -195,6 +195,14 @@ input[type="search"], select { background: var(--panel); border: 1px solid var(-
 .tl-waiting { background: var(--yellow); opacity: .35; }
 .tl-dim { opacity: .35; }
 .tl-cancelled, .tl-unknown { background: var(--muted); }
+/* Not run yet (a draft's tests): an empty outline across the lane. Dashed, never hatched: diagonal
+   stripes make the straight bars on the lines beside them look tilted. */
+.tl-draft { background: transparent; border: 1px dashed var(--muted); }
+.timeline-row.lane { margin: 0 -6px; padding: 1px 6px; border-radius: 3px; }
+.timeline-row.lane.alt { background: rgba(255, 255, 255, .04); }
+.timeline-row.lane:hover { background: rgba(255, 255, 255, .08); }
+.timeline-draft-note { margin: 4px 0 6px; color: var(--muted); }
+.timeline-draft-note a { color: var(--ink); }
 .timeline-detail { padding: 6px 13px 14px; background: var(--row); border-top: 1px dashed var(--line); font-size: 11px; }
 .timeline-row { display: grid; grid-template-columns: minmax(120px, 230px) minmax(0, 1fr) 84px 28px; gap: 10px; align-items: center; min-height: 20px; }
 .timeline-row .timeline-track { height: 10px; }
@@ -221,6 +229,7 @@ button.timeline-name { min-height: 0; padding: 0; border: 0; background: transpa
 .check-meter .seg-running { background: var(--yellow); }
 .check-meter .seg-waiting { background: var(--yellow); opacity: .4; }
 .check-meter .seg-failed { background: var(--red); }
+.check-meter .seg-draft { background: var(--row); border: 1px dashed var(--muted); }
 .check-meter .seg-skipped,
 .check-meter .seg-cancelled,
 .check-meter .seg-unknown { background: var(--muted); }
@@ -231,6 +240,7 @@ button.timeline-name { min-height: 0; padding: 0; border: 0; background: transpa
 .status-failed, .status-down, .status-offline { color: var(--red); }
 .status-pending, .status-working, .status-busy, .status-cancelled { color: var(--yellow); }
 .status-skipped, .status-unknown { color: var(--muted); }
+.status-draft { color: var(--muted); border-style: dashed; }
 
 .status-pr_ready, .status-merged { color: var(--green); }
 .status-blocked, .status-await_answer { color: var(--red); }

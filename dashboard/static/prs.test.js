@@ -154,6 +154,17 @@ test("the idle line counts from the last finish, says how the head's checks ende
     ["4h 30m idle since CI was cancelled", "age-red", "idle-dot tl-cancelled"]);
   assert.deepStrictEqual(idle(at => ({ checks: [done("preview", "skipped", at(59), at(59.5))] })).slice(0, 3),
     ["30s idle since CI finished", "", "idle-dot tl-cancelled"]);
+  // A draft whose tests have not run did not pass.
+  assert.deepStrictEqual(idle(at => ({ checks: [done("unit", "draft", at(58), at(58)), done("lint", "success", at(55), at(59))] })).slice(0, 3),
+    ["1m 0s idle since CI finished, tests not run (draft)", "", "idle-dot tl-draft"]);
+});
+
+test("a draft's not-run tests make a gray dashed badge and meter segment, outranked only by a failure or an open check", () => {
+  const rows = (...categories) => ({ checks: categories.map((category, id) => ({ id, name: `c${id}`, category, status: "completed" })) });
+  assert.deepStrictEqual(["success draft", "success draft skipped", "failed draft", "pending draft"].map(list =>
+    VV.combinedCategory(rows(...list.split(" ")))), ["draft", "draft", "failed", "pending"]);
+  assert.strictEqual(VV.badge("draft").text, "Not run (draft)");
+  assert.strictEqual(VV.meterLabel(VV.checkTotals(rows("success", "draft", "draft"))), "1 succeeded, 2 not run (draft) of 3 checks");
 });
 
 test("a pass in a later, separate workflow does not hide a failure, and a status that finished last sets the time", () => {

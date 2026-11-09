@@ -17,7 +17,10 @@ class Timeline(unittest.TestCase):
     def test_the_timeline_and_pull_request_views_node_tests_pass(self):
         # timeline.test.js: lanes, critical path, row lines and scale, expanded rows, steps, axis ticks.
         # prs.test.js: the whole view rendered, the Checks and CI columns, and a row opening its timeline.
-        for name in ("timeline.test.js", "prs.test.js"):
+        # timeline-draft.test.js: a draft's not-run tests, drawn as an empty outline with a note.
+        # timeline-axis.test.js: positions on the span and the axis ticks' labels.
+        # quota.test.js: quota.js alone, and helpers.js handing on every name it exports.
+        for name in ("timeline.test.js", "timeline-draft.test.js", "timeline-axis.test.js", "prs.test.js", "quota.test.js"):
             result = subprocess.run(["node", "--test", "--test-reporter=tap", str(ROOT / "dashboard/static" / name)],
                                     cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
