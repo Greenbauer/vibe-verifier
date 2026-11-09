@@ -991,7 +991,7 @@ changed-code-mutation --project apps/web --break 70 --soak
   `changed-code-mutation --source dashboard/**/*.py --python .venv-tests/bin/python`, limited to
   `dashboard/` because its gate modules are tested by running them as scripts. Its `pytest.ini` collects
   only `tests/test_dashboard_*.py`: under mutmut's coverage tracing the whole suite ran past 900 seconds.
-  The same file pilots `regression-test-fails-on-base` and `coverage-not-lost` with `--soak`, under the
+  The same file runs `regression-test-fails-on-base` (a pilot, with `--soak`) and `coverage-not-lost`, under the
   `python3` and unittest the job's test step uses, after a step that writes the pull request's title and
   body; `coverage-not-lost` runs only the dashboard tests there, and the whole suite once a night (see
   [Coverage not lost](#coverage-not-lost)). The runner judges that file from the base like any manifest in the repository. Not `entries:`: in
@@ -1209,9 +1209,10 @@ coverage-not-lost --runner node-test --soak                    # the files packa
   first, under a job timeout above `--timeout`, in a job that holds no secrets: the gate runs the pull
   request's own tests. Start with `--soak`, which prints every finding as a warning; once its record is
   clean (each finding a real weakening, or a pull request that says why), remove `--soak` on the base
-  manifest so the gate blocks. This repository pilots it two ways. Per pull request,
+  manifest so the gate blocks. This repository runs it two ways. Per pull request,
   `.vibe-verifier-tests` runs it on the dashboard tests (`-p 'test_dashboard_*.py'`, `--timeout 300`;
-  under half a minute a side). Once a night, `nightly.yml` runs it on main on the whole suite (`--soak
+  under half a minute a side), blocking since its soak there ended with no false alarm in 22 pull requests in
+  a row (#302 to #323). Once a night, report-only, `nightly.yml` runs it on main on the whole suite (`--soak
   --runner unittest --args 'discover -s tests'`), with `--base-ref` the main commit the last successful
   nightly ran on, so the gate scripts and `bin/vibe-verifier` the tests run as child processes are
   measured too. A night that could not run is not counted, so its range is judged again; until a run

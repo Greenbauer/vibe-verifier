@@ -3,9 +3,9 @@ name: Code
 # Tests every gate and the runner (on a pull request, also reporting any failed test that affected-test
 # selection would have left out), then runs this repository's own manifest through the composite action,
 # which is the only place that action executes before a consumer exists, then the gates that run this
-# repository's own tests (.vibe-verifier-tests): mutation-testing changed dashboard code, and the report-only
-# pilots of regression-test-fails-on-base and coverage-not-lost, the last on the dashboard tests only (the whole suite
-# runs once a night, .github/workflows/nightly.yml). The lanes jobs run the runner-lane kit's own suites (lanes/README.md).
+# repository's own tests (.vibe-verifier-tests): mutation-testing changed dashboard code, coverage-not-lost on the
+# dashboard tests only (the whole suite runs once a night, .github/workflows/nightly.yml), and the report-only pilot
+# of regression-test-fails-on-base. The lanes jobs run the runner-lane kit's own suites (lanes/README.md).
 
 on:
   pull_request:
