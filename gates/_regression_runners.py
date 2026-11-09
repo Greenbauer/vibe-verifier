@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 from collections import namedtuple
@@ -22,6 +23,8 @@ from _tools import run_tool
 Run = namedtuple("Run", "load_error tests")
 CONFIGS = ("vitest.config.", "vite.config.", "vitest.workspace.")
 ADVICE = "Raise --timeout on the base manifest, or split the pull request"
+# Python's message for `from module import name` when the module loaded and has no such name.
+CANNOT_IMPORT = re.compile(r"ImportError: cannot import name '(\w+)' from '([\w.]+)' \(")
 PYTHON_RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_regression_python.py")
 
 # What a failure reads like when something the test needs does not exist, one capture group naming it:
@@ -175,8 +178,30 @@ def interpreter(python, repo):
     return os.path.abspath(found)
 
 
-def run_python(repo, python, paths, deadline, timeout, local_names):
-    """The files under the project's interpreter, guarded: its pytest when installed, else unittest."""
+def run_python(repo, python, paths, deadline, timeout, local_names, stand_ins=False):
+    """The files under the project's interpreter, guarded: its pytest when installed, else unittest. With `stand_ins`
+    (the run on the code before the fix), a file that did not load only because a module that exists there lacks a
+    name it imports (`from shop.price import discount, member_price`, the fix adding member_price) runs again with a
+    stand-in for that name, so its tests that do not use the name are judged, and one that does fails as it missing.
+    Again for each new name such a run turns up."""
+    runs, wanted = python_runs(repo, python, paths, deadline, timeout, local_names, {}), {}
+    while stand_ins:
+        lacking = {path: CANNOT_IMPORT.match(run.load_error or "") for path, run in runs.items()}
+        lacking = {path: found.groups() for path, found in lacking.items()
+                   if found and found.group(1) not in wanted.get(found.group(2), [])}
+        if not lacking:
+            break
+        for path, (name, module) in sorted(lacking.items()):
+            if name not in wanted.setdefault(module, []):
+                wanted[module].append(name)
+            print("regression-test-fails-on-base: %s: on the code before the fix `%s` is not in `%s` yet, so the file ran "
+                  "again with a stand-in for it" % (path, name, module), file=sys.stderr, flush=True)
+        runs.update(python_runs(repo, python, sorted(lacking), deadline, timeout, local_names, wanted))
+    return runs
+
+
+def python_runs(repo, python, paths, deadline, timeout, local_names, wanted):
+    """One run of the files, each module in `wanted` given a stand-in for each name it lists."""
     with open(PYTHON_RUNNER, encoding="utf-8") as handle:
         source = handle.read()
     scratch, runs = tempfile.mkdtemp(prefix="vv-regression-"), {}
@@ -185,7 +210,8 @@ def run_python(repo, python, paths, deadline, timeout, local_names):
         files = [os.path.join(os.path.realpath(repo), path) for path in paths]
         with Guard("regression-test-fails-on-base", repo, local_names) as guard:
             # A .pyc written for one tree is never read for the other.
-            env = guard.env("the Python tests", extra={"PYTHONDONTWRITEBYTECODE": "1"})
+            env = guard.env("the Python tests", extra={"PYTHONDONTWRITEBYTECODE": "1",
+                                                       "VV_REGRESSION_STAND_INS": json.dumps(wanted)})
             code, output = run_tool([interpreter(python, repo), "-c", source, out, *files], repo,
                                     remaining(deadline, timeout), "the Python tests", env=env, budget=timeout, advice=ADVICE)
             try:

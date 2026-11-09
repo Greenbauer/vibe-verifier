@@ -5,7 +5,8 @@ interpreter, from the repository root, so the catalog's directory is never on th
 path and the root is, as under `python -m pytest`. With pytest importable it runs pytest on the files
 (the project's own configuration, a collection error not stopping the other files); without it, and
 for a file named with a hyphen or a dot (run by path), each file is loaded the way
-`python -m unittest discover -s <its directory>` would and run by unittest.
+`python -m unittest discover -s <its directory>` would and run by unittest. VV_REGRESSION_STAND_INS
+({module: [name]}) first gives a module a stand-in for each name it lacks (StandIn).
 
 The report: {"files": {absolute path: {"load_error": "Type: message" or null,
 "tests": [[test id, "passed" | "failed" | "skipped", "Type: message" or ""]]}}}. An error is
@@ -20,6 +21,49 @@ import unittest
 
 OUT, FILES = sys.argv[1], [os.path.realpath(path) for path in sys.argv[2:]]
 REPORT = {"files": {path: {"load_error": None, "tests": []} for path in FILES}}
+STAND_INS = json.loads(os.environ.get("VV_REGRESSION_STAND_INS") or "{}")
+
+
+class StandIn:
+    """A name a test file imports that its module does not have yet on the code before the fix (the gate's
+    VV_REGRESSION_STAND_INS, {module: [name]}): the file loads and its other tests run, and a test that uses the
+    name fails with the ImportError the import would have raised, which the gate reads as that name missing."""
+
+    def __init__(self, module, name):
+        object.__setattr__(self, "error", "cannot import name '%s' from '%s' (a stand-in: it does not exist before "
+                                          "the fix)" % (name, module))
+
+    def missing(self, *_args, **_kwargs):
+        raise ImportError(object.__getattribute__(self, "error"))
+
+    def __getattr__(self, name):
+        if name.startswith("__") and name.endswith("__"):  # a runner looking over a module's names is not a use
+            raise AttributeError(name)
+        self.missing()
+
+    def __repr__(self):
+        return "<%s>" % object.__getattribute__(self, "error")
+
+    __call__ = __getitem__ = __setitem__ = __iter__ = __len__ = __bool__ = __contains__ = __enter__ = missing
+    __eq__ = __ne__ = __lt__ = __le__ = __gt__ = __ge__ = __hash__ = missing
+
+
+def stand_in():
+    """Give each module in STAND_INS a StandIn for each name it lacks. A module loads as a test file's import finds
+    it: from the repository root, or from a test file's directory, which unittest and pytest also put on the path."""
+    added = [os.path.dirname(path) for path in FILES]
+    sys.path.extend(added)
+    try:
+        for module, names in STAND_INS.items():
+            try:
+                loaded = importlib.import_module(module)
+            except Exception:  # a module that does not load there leaves the file with the error it gave
+                continue
+            for name in names:
+                if not hasattr(loaded, name):
+                    setattr(loaded, name, StandIn(module, name))
+    finally:
+        del sys.path[len(sys.path) - len(added):]
 
 
 def described(error):
@@ -126,6 +170,7 @@ except ImportError:
     pytest = None
 # A hyphen or dot in the name (test-x.py, x.test.py) makes a file that is run by path: pytest cannot
 # import it under that name, so unittest loads it from its path, as running the script would.
+stand_in()
 by_pytest = [path for path in FILES if pytest and importable(path)]
 with_unittest([path for path in FILES if path not in by_pytest])
 if by_pytest:
