@@ -298,7 +298,8 @@ jobs:
                  controls it must not use are not shown.
                If qae-inputs/widths exists, it lists viewport widths in pixels, one per line. Walk at the browser's
                own width and do not resize it for them: each time you save a screenshot, the harness captures the
-               same screen at the other widths itself, measures its layout there, and a gate checks the captures. If
+               same screen at the other widths itself, measures its layout there, and a gate checks the captures. A
+               width or viewport a criterion names itself is still yours to walk, as the criterion says. If
                qae-inputs/site.md says the site has more than one theme (light and dark), check each end state in
                every theme as well.
                Beyond what a criterion says, on the screen it is about: use every action control the criterion
