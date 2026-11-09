@@ -4,8 +4,9 @@
 import re
 
 import lane_fixtures  # noqa: F401  (puts lib/ on the import path)
-from lane_fields import _absolute_path, _exact_keys, _int_between, _matching, _positive_int
-from lane_fixtures import check
+from lane_fields import _absolute_path, _exact_keys, _int_between, _matching, _npm_registry, _positive_int, _store_fs
+from lane_fixtures import ORG, check, host_file
+from lane_load import load_host
 
 
 def refusal(call):
@@ -27,3 +28,19 @@ check(refusal(lambda: _absolute_path("/var/lib/../etc", "codex_store", "lanes.bo
 check(refusal(lambda: _absolute_path("var/lib", "codex_store", "lanes.box")).startswith("lanes.box.codex_store must match"), "a relative path is refused")
 check(_exact_keys({"a": 1, "b": 2}, {"a", "b"}, "app", "lanes.box") == {"a": 1, "b": 2}, "a map with exactly the keys is returned")
 check(refusal(lambda: _exact_keys({"a": 1}, {"a", "b"}, "app", "lanes.box")) == "lanes.box.app must declare exactly a, b", "a missing key is refused, naming every key")
+
+check(_store_fs("btrfs", "lanes.box") == "btrfs", "store_fs btrfs is returned")
+check(refusal(lambda: _store_fs("ext4", "lanes.box")) == "lanes.box.store_fs must be one of xfs, btrfs (xfs when absent)", "another filesystem is refused")
+
+NPM_REFUSAL = "lanes.box.npm_registry must be an https URL with no query, credentials or spaces"
+check(_npm_registry(None, "lanes.box") is None, "an absent npm_registry leaves the package managers' default")
+check([_npm_registry(url, "lanes.box") for url in ("https://registry.yarnpkg.com", "https://registry.yarnpkg.com/", "https://npm.example.com:8443/repository/npm/")]
+      == ["https://registry.yarnpkg.com", "https://registry.yarnpkg.com", "https://npm.example.com:8443/repository/npm"],
+      "npm_registry is kept without its trailing slash, with a port and a path when it has them")
+for bad in ("http://registry.yarnpkg.com", "registry.yarnpkg.com", "https://user:pw@registry.example.com/", "https://registry.example.com/?x=1",
+            "https://registry.example.com/ -e X=1", "https://registry.yarnpkg.com/\n", "", True, ["https://registry.yarnpkg.com"]):
+    check(refusal(lambda: _npm_registry(bad, "lanes.box")) == NPM_REFUSAL, f"npm_registry {bad!r} is refused")
+check(load_host(host_file({**ORG, "npm_registry": "https://registry.yarnpkg.com/"})).lanes[0].npm_registry == "https://registry.yarnpkg.com"
+      and load_host(host_file(ORG)).lanes[0].npm_registry is None, "a host file's npm_registry reaches the lane; without it the lane has none")
+
+lane_fixtures.finish("test_lane_fields")

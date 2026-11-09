@@ -56,6 +56,9 @@ class Lane:
     # The filesystem of the lane's store (README.md, "Disk"): xfs, where a job's store is a reflink
     # copy of the preloaded one, or btrfs, where it is a snapshot of it.
     store_fs: str = "xfs"
+    # The npm registry every job container is pointed at, without a trailing slash, or None for the
+    # package managers' own default (README.md, "The npm registry").
+    npm_registry: str | None = None
 
     @property
     def kinds(self) -> tuple[str, ...]:

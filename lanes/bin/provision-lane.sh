@@ -332,10 +332,14 @@ EOF
 # under memory pressure; Sysbox lets a container lower its own score again, so the slice's hard cap,
 # not this flag, is what protects the rest of the machine.
 # The memory is the lane's container.memory unless a kind's is passed (the wait kind's wait.memory).
+# A lane with npm_registry sets it for the job's package managers: npm_config_registry is read by
+# npm, pnpm, yarn 1 and bun, and COREPACK_NPM_REGISTRY by corepack, which downloads pnpm itself
+# (README.md, "The npm registry"). The runner and its steps inherit the container's environment.
 container_flags() {
   printf '%s ' --runtime=sysbox-runc --network "$NAME" --cgroup-parent "$SLICE" \
     --memory "${1:-$CONTAINER_MEMORY}" --pids-limit "$PIDS" --tmpfs "/tmp:size=$TMP_SIZE,exec" \
     --oom-score-adj 1000 --dns 1.1.1.1 --dns 8.8.8.8
+  [ -z "$NPM_REGISTRY" ] || printf '%s ' -e "npm_config_registry=$NPM_REGISTRY/" -e "COREPACK_NPM_REGISTRY=$NPM_REGISTRY"
 }
 
 # A kind's instance count and container memory: the wait kind's own (the lane's wait block, a budget
