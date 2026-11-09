@@ -5,6 +5,7 @@
 (function () {
   "use strict";
   const { element: el, duration, link, checkState, checkTotals, elapsedSeconds } = VV;
+  const { percent, ticks, axis } = typeof module === "object" && module.exports ? require("./timeline-axis.js") : window.VVTimelineAxis;
   // GitHub picks up a job within seconds when a runner is free, so a shorter wait is not drawn:
   // only a wait for a busy runner is.
   const WAIT_SHOWN = 30 * 1000;
@@ -16,7 +17,6 @@
   const ROUND_GAP = 15 * 60 * 1000;
   // Drawing order of runs on a shared line, above every wait: failures on top so a red job is never hidden.
   const LAYER = { waiting: 0, success: 1, cancelled: 1, unknown: 1, running: 2, failed: 3 };
-  const TICKS = [10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400];
   const openSteps = new Set();
 
   const at = value => { const time = Date.parse(value); return Number.isFinite(time) ? time : null; };
@@ -65,7 +65,8 @@
   // job whose finish created it. Only Actions jobs are created by another's finish, so other apps'
   // checks and statuses are never on the chain.
   function markCritical(all, now) {
-    const work = all.filter(lane => lane.kind === "job");
+    // A draft's not-run job (lane state "draft") did no work, so it never sets the total time.
+    const work = all.filter(lane => lane.kind === "job" && lane.state !== "draft");
     const end = lane => lane.ended ?? now;
     let current = work.reduce((best, lane) => (!best || end(lane) > end(best) ? lane : best), null);
     const seen = new Set();
@@ -157,7 +158,6 @@
       earlier: every.filter(lane => lane.kind !== "status" && lane.queued < from).length };
   }
 
-  const percent = (ms, width) => `${(Math.min(1, Math.max(0, ms / width)) * 100).toFixed(3)}%`;
 
   function bar(from, to, state, start, width, title, dim = false) {
     return el("i", { class: `timeline-bar tl-${state}${dim ? " tl-dim" : ""}`, title,
@@ -183,6 +183,7 @@
     if (lane.state === "running") parts.push(`running ${seconds(now - lane.started)}`);
     else if (lane.started != null && lane.ended > lane.started) parts.push(`ran ${seconds(lane.ended - lane.started)}`);
     // Gray bars say why they are gray.
+    if (lane.state === "draft") return `${lane.name}: not run, this pull request is a draft. It runs when marked ready for review.`;
     if (lane.state === "cancelled") parts.push("cancelled");
     if (lane.state === "unknown") parts.push("result unknown");
     return parts.length ? `${lane.name}: ${parts.join(", ")}` : lane.name;
@@ -201,7 +202,9 @@
     return lane.started == null ? null : bar(lane.started, lane.ended ?? now, lane.state, start, width, laneTitle(lane, now));
   }
 
+  // A draft's not-run job has no run time to draw: an empty outline across its whole lane.
   function laneBars(lane, start, width, now) {
+    if (lane.state === "draft") return [bar(start, start + width, "draft", start, width, laneTitle(lane, now))];
     return [waitBar(lane, start, width, now), runBar(lane, start, width, now)].filter(Boolean);
   }
 
@@ -227,37 +230,16 @@
     const box = el("div", { class: groups.length > 16 ? "timeline-mini dense" : "timeline-mini", role: "img", "aria-label": summary(line, now) });
     groups.forEach(group => box.append(el("div", { class: "timeline-line" },
       // Every wait first, so a dim wait never covers another job's run.
-      ...[waitBar, runBar].map(draw => group.lanes.slice().sort((a, b) => LAYER[a.state] - LAYER[b.state])
+      ...group.lanes.filter(lane => lane.state === "draft").slice(0, 1).flatMap(lane => laneBars(lane, start, width, now)),
+      ...[waitBar, runBar].map(draw => group.lanes.filter(lane => lane.state !== "draft").sort((a, b) => LAYER[a.state] - LAYER[b.state])
         .map(lane => draw(lane, start, width, now)).filter(Boolean)))));
     if (line.running) box.append(el("i", { class: "timeline-now", style: `left:${percent(now - start, width)}` }));
     return box;
   }
 
-  function tickLabel(value) {
-    if (value < 60) return `${value}s`;
-    if (value < 3600) return `${value / 60}m`;
-    const hours = Math.floor(value / 3600), minutes = (value % 3600) / 60;
-    return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
-  }
-
-  // At most six ticks across the span, on round times.
-  function ticks(span) {
-    const total = span / 1000;
-    const step = TICKS.find(value => total / value <= 6) || TICKS[TICKS.length - 1];
-    const result = [];
-    for (let value = 0; value <= total; value += step) result.push(value);
-    return result;
-  }
-
-  function axis(width) {
-    return el("div", { class: "timeline-row timeline-axis", "aria-hidden": "true" }, el("span", {}),
-      el("div", { class: "timeline-track" }, ticks(width).map(value =>
-        el("span", { class: "timeline-tick", style: `left:${percent(value * 1000, width)}` }, value ? tickLabel(value) : "0"))),
-      el("span", {}), el("span", {}));
-  }
-
   function laneText(lane, now) {
     if (lane.kind === "status") return "";
+    if (lane.state === "draft") return VV.STATUS_LABELS.draft;
     if (lane.state === "waiting") return `${lane.kind === "job" ? "waiting" : "queued"} ${seconds(waited(lane, now))}`;
     if (lane.state === "running") return `${seconds(now - lane.started)} so far`;
     return lane.ended > lane.started ? seconds(lane.ended - lane.started) : "";
@@ -295,7 +277,13 @@
     const width = line.span;
     if (line.earlier) box.append(el("p", { class: "muted timeline-earlier" },
       `${line.earlier} ${line.earlier === 1 ? "check" : "checks"} from an earlier round of CI on this head ${line.earlier === 1 ? "is" : "are"} not drawn.`));
+    const draft = line.lanes.some(lane => lane.state === "draft");
+    if (draft) box.append(el("p", { class: "timeline-draft-note" },
+      "The test jobs have not run: this pull request is a draft. They run when it is marked ready for review. ",
+      link("Open on GitHub", pull.html_url, options.owner)));
     box.append(axis(width));
+    // Every other job line is striped, across workflows, so a time or Log link lines up with its job.
+    let index = 0;
     line.groups.forEach(group => {
       box.append(el("div", { class: "timeline-group" }, group.name));
       group.lanes.forEach(lane => {
@@ -311,7 +299,8 @@
             } },
             el("span", { class: "timeline-caret", "aria-hidden": "true" }, open ? "▾" : "▸"), lane.name)
           : el("span", { class: "timeline-name", title: lane.name }, lane.name);
-        box.append(el("div", { class: `timeline-row${lane.critical ? " critical" : ""}` }, name,
+        const stripe = index++ % 2 ? " alt" : "";
+        box.append(el("div", { class: `timeline-row lane${stripe}${lane.critical ? " critical" : ""}` }, name,
           el("div", { class: "timeline-track" }, laneBars(lane, line.start, width, now)),
           el("span", { class: "timeline-time", title: laneTitle(lane, now) }, laneText(lane, now)),
           link("Log", lane.url, options.owner, "timeline-link")));
@@ -322,6 +311,7 @@
       ["success", "failed", "running"].map(state => el("span", {}, el("i", { class: `tl-${state}` }), VV.STATUS_LABELS[state])),
       el("span", {}, el("i", { class: "tl-cancelled" }), "Cancelled or result unknown"),
       el("span", {}, el("i", { class: "tl-waiting" }), "Waiting for a runner (over 30s)"),
+      draft ? el("span", {}, el("i", { class: "tl-draft" }), `${VV.STATUS_LABELS.draft}: runs when marked ready`) : null,
       el("span", {}, el("i", { class: "tl-success tl-dim" }), "Waited for a runner, then ran (dim of its result)"),
       el("span", {}, el("b", {}, "Bold"), " jobs set the total time")));
     return box;

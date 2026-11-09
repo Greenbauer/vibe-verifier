@@ -70,7 +70,7 @@
     if (!ci || ci.ended == null) return null;
     const { counts } = checkTotals(pull);
     const [state, ended] = counts.failed ? ["failed", "failed"] : counts.cancelled ? ["cancelled", "was cancelled"]
-      : counts.success ? ["success", "passed"] : ["cancelled", "finished"];
+      : counts.draft ? ["draft", "finished, tests not run (draft)"] : counts.success ? ["success", "passed"] : ["cancelled", "finished"];
     const last = Math.max(ci.ended, ...[...(pull.checks || []), ...(pull.statuses || [])]
       .map(row => Date.parse(row.completed_at)).filter(Number.isFinite));
     const seconds = Math.max(0, (now - last) / 1000);

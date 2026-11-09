@@ -14,6 +14,7 @@ from .merge_grant import MergeGrants
 from .pull_signals import face_fields
 from .required_workflows import RequiredWorkflows
 from .bot_runs import runner_name
+from .draft_checks import mark_draft_not_run
 from .util import category, elapsed_seconds, github_url, iso_time, parse_time, status_category
 
 MAX_WORKERS = 4
@@ -332,6 +333,8 @@ class GitHubCollector(OwnerSet, BotHistory):
                     "attention_reason": "Head changed while GitHub evidence was loading",
                     "checks": [], "statuses": [], "expected": [], "runs": []}
         checks, runs = self._current_only(checks, runs)
+        if draft:
+            mark_draft_not_run(checks, runs)
         expected = self._expected(repository, rules, checks + statuses, runs)
         attention, reason = self._attention(checks + statuses, runs, expected)
         face = face_fields(current, signals, evidence=True, draft=draft, checks=checks, statuses=statuses,
