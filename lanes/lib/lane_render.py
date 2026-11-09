@@ -125,6 +125,7 @@ def lane_settings(host: Host, lane: Lane) -> dict[str, object]:
         "SLOT_GB": lane.slot_disk_gb,
         "STORE_GB": lane.store_disk_gb,
         "STORE_FS": lane.store_fs,
+        "NPM_REGISTRY": lane.npm_registry or "",
         "SLICE": lane.slice,
         "TOP_SLICE": lane.top_slice or "",
         "BRIDGE": lane.bridge,

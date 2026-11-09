@@ -76,4 +76,9 @@ check(dashboard_settings(box) == {"NAME": "box", "ACCOUNT": "vibe-dashboard-box"
                                   "APP_ID": 123456, "APP_INSTALLATION_ID": 7654321, "APP_KEY_FILE": "/etc/box-ci/app.pem", "APP_LOGIN": "example-bot"},
       "the provisioner's settings: the dashboard's names and its lane's App")
 
+plain = load_host(host_file(ORG))
+check(lane_settings(plain, plain.lanes[0])["NPM_REGISTRY"] == "", "a lane without npm_registry renders NPM_REGISTRY empty")
+yarn = load_host(host_file({**ORG, "npm_registry": "https://registry.yarnpkg.com/"}))
+check(lane_settings(yarn, yarn.lanes[0])["NPM_REGISTRY"] == "https://registry.yarnpkg.com", "npm_registry renders as NPM_REGISTRY, without its trailing slash")
+
 lane_fixtures.finish("test_lane_render")

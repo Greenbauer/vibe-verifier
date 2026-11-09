@@ -40,3 +40,29 @@ def _exact_keys(value: object, keys: set[str], field: str, block: str) -> dict:
     if not isinstance(value, dict) or set(value) != keys:
         raise ValueError(f"{block}.{field} must declare exactly {', '.join(sorted(keys))}")
     return value
+
+
+STORE_FILESYSTEMS = ("xfs", "btrfs")
+# An https origin with an optional path, and no query, credentials or whitespace: the provisioner
+# writes it into a systemd ExecStart= line as one word.
+NPM_REGISTRY = re.compile(r"^https://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~-]+)*/?$")
+
+
+def _store_fs(value: object, block: str) -> str:
+    """store_fs (xfs when absent): the filesystem bin/provision-lane.sh makes a new store with.
+
+    The slot helper follows the store it finds, not this key, so the key never changes how a lane
+    that is running treats its store; converting one is an explicit command (README.md).
+    """
+    if not isinstance(value, str) or value not in STORE_FILESYSTEMS:
+        raise ValueError(f"{block}.store_fs must be one of {', '.join(STORE_FILESYSTEMS)} (xfs when absent)")
+    return value
+
+
+def _npm_registry(value: object, block: str) -> str | None:
+    """npm_registry without its trailing slash, or None when absent (README.md, "The npm registry")."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not NPM_REGISTRY.match(value):
+        raise ValueError(f"{block}.npm_registry must be an https URL with no query, credentials or spaces")
+    return value.rstrip("/")

@@ -220,6 +220,17 @@ off. `bin/lane-firewall.sh` rejects, from that bridge, forwarded traffic to 10.0
 job, which also restores them after a reboot or a Docker restart, and fails closed without them.
 Each lane's assertion replaces only its own bridge's rules.
 
+**The npm registry.** A lane with `npm_registry: <https URL>` gives every job container
+`npm_config_registry=<URL>/` (read by npm, pnpm, yarn 1 and bun) and `COREPACK_NPM_REGISTRY=<URL>`
+(read by corepack, which downloads pnpm itself). The runner and every step inherit them, so a job
+installs from that registry without a change to its workflow. A lockfile that names no registry
+(pnpm, bun) or names `registry.npmjs.org` (npm rewrites it to the configured one) installs the
+same packages, checked against the same integrity hashes. A repository's own `.npmrc` registry, or
+a step's own environment, still wins. Without the key the package managers use their default.
+Why it exists: from Hetzner's Ashburn network `registry.npmjs.org` served cached tarballs at about
+90 KB/s while `registry.yarnpkg.com`, the same registry behind the same Cloudflare edge, served
+them at 44 to 148 MB/s, on two machines there (2026-11-09); every install on the lane timed out.
+
 **Disk.** A job writes only its slot image, its `/tmp` tmpfs and its store snapshot. The lane's
 store filesystem is a sparse XFS image with reflinks (`/var/lib/<name>/store.img`, mounted at
 `/var/lib/<name>/store` with `discard`, `store_disk_gb`): the image build writes the preloaded store
@@ -342,6 +353,7 @@ lanes:
     slot_disk_gb: <int>
     store_disk_gb: <int>
     store_fs: xfs | btrfs              # optional, xfs when absent: the store's filesystem ("Disk")
+    npm_registry: https://<host>[/path]   # optional: the npm registry every job uses ("The npm registry")
     check_ports: [..]                  # the host ports the smoke proves a slot cannot reach
 dashboards:                            # optional: the Vibe Verifier dashboards ("Dashboards" below)
   - name: <name>                       # the instance: account vibe-dashboard-<name>, /etc/vibe-dashboard/<name>
@@ -366,6 +378,7 @@ dashboards:                            # optional: the Vibe Verifier dashboards 
   docker's in `container`; `cpu_weight` is 1..10000; ports are 1..65535 without duplicates;
 - on a lane with a warm pool, `warm_max_age_sec` is below `runtime_max_sec`;
 - `store_fs` is `xfs` or `btrfs`;
+- `npm_registry` is an `https://` URL with no query, credentials or spaces;
 - `preload` directories are plain relative paths named `supabase`; an org lane has exactly one
   `preload` entry per repository in `repos` (`"-"` for one without a Supabase project), so a
   repository added to the lane cannot silently cold-pull;
