@@ -2,6 +2,7 @@
 screenshots to include one of each declared width, read from the PNG header, and actions/qae-inputs
 writes the same widths, from the manifest's qae-artifacts line as the base has it, to qae-inputs/widths
 for the explorer. Driven through the gate's command line, the action script and the shipped template."""
+import argparse
 import hashlib
 import json
 import os
@@ -14,6 +15,8 @@ from pathlib import Path
 from helpers import ROOT, clean_env, commit, gate, git, make_repo, png, write
 from test_qae_annotations import action_script
 from test_qae_artifacts import CLEAN_REQUESTS, session_with
+
+from _widths import width_list  # noqa: E402  (gates/, which helpers puts on the path)
 
 MANIFEST = ROOT / "harnesses" / "qae" / "manifest"
 QAE = ("acceptance-verdict --criteria qae-inputs/pr-body.md --verdict qae-inputs/verdict.md --artifacts qae-artifacts\n"
@@ -201,6 +204,22 @@ class QaeInputs(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("malformed --widths", result.stderr)
         self.assertEqual(output, "")
+
+
+class Captures(unittest.TestCase):
+    """The browser's width captures (actions/qae-browser/widths.js) and the gate module that counts them (gates/_widths.py)."""
+
+    def test_the_hooks_node_tests_pass(self):
+        result = subprocess.run(["node", "--test", "--test-reporter=tap", str(ROOT / "actions" / "qae-browser" / "widths.test.js")],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"(?m)^# pass [1-9]")
+
+    def test_the_declared_widths_are_whole_pixels_once_each(self):
+        self.assertEqual(width_list("1280,375,1280"), [1280, 375])
+        for value in ("1280,mobile", "0", ""):
+            with self.assertRaises(argparse.ArgumentTypeError):
+                width_list(value)
 
 
 class Template(unittest.TestCase):
