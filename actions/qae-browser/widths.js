@@ -3,8 +3,8 @@
 // A repository may ask for each criterion to be seen at more than one viewport width (the qae-artifacts gate's
 // --widths, which actions/qae-inputs writes to qae-inputs/widths, one per line). The explorer used to do that
 // itself: resize, reach the state again, screenshot, resize back. In 660 walked runs of the subscribed
-// repositories (2026-11-09) that was 27% of its tool calls, and of 185 distinct FAIL verdicts 2 were defects only
-// a width showed, both a page that scrolls sideways, which the layout audit measures without a model.
+// repositories (2026-11-09) that was 27% of its tool calls, and none of 185 distinct FAIL verdicts came from it: the two
+// about a width were at a width the criterion itself named, which the explorer still walks.
 //
 // So the harness does it. Every time the explorer saves a screenshot of the viewport (browser_take_screenshot,
 // which calls Page.screenshot with no clip), and before that call returns, the same page is resized in place to
@@ -22,7 +22,7 @@
 // In place, because the state a step shows (a dialog, a filled form, a selected row) is often not at any address
 // a second window could load. The explorer's own width checks resized in place too, in 72% of the 3,665 sampled.
 // A resize can change a page's state (a menu that closes, a component a breakpoint swaps), so a capture is skipped
-// while a transient popup is open (a menu, listbox or tooltip the next action may need), and `disturbed` says when
+// while a popup is open (a menu, listbox or tooltip its trigger opened, which the next action may need), and `disturbed` says when
 // the page's accessibility tree read differently after the round trip than before it. The capture runs inside
 // the explorer's own tool call, so it never races the explorer's next action.
 //
@@ -34,8 +34,10 @@ const path = require("path");
 const WRAPPED = Symbol.for("vibe-verifier.widths");
 const RECORD = "widths.jsonl";
 const SETTLE = 250;   // ms after two frames: a layout that animates into place (a drawer, a reflowing grid)
-// A popup the explorer's next action may be about to use, which a resize could close.
-const TRANSIENT = "[role=menu], [role=listbox], [role=tooltip], [role=combobox][aria-expanded=true]";
+// A popup the explorer's next action may be about to use, which a resize could close: one a trigger says it opened
+// (aria-expanded on a control that declares a popup, or an expanded combobox), and a tooltip. A menu always on the page
+// (a site's navigation marked role=menu) has no trigger that says so, and is not one.
+const TRANSIENT = "[aria-haspopup]:not([aria-haspopup=false])[aria-expanded=true], [role=combobox][aria-expanded=true], [role=tooltip]";
 
 // The widths qae-inputs/widths lists (VV_QAE_WIDTHS names another file); [] without one.
 function widths(file = process.env.VV_QAE_WIDTHS || "qae-inputs/widths") {

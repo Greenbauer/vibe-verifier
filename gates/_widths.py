@@ -2,6 +2,7 @@
 with the captures the browser's page hook took of them at the run's other widths (actions/qae-browser/widths.js), must
 include one of each width `--widths` declares. Split from qae_artifacts.py, which reads the rest of the run's evidence."""
 import argparse
+import glob
 import hashlib
 import json
 import os
@@ -20,19 +21,23 @@ def relative(path, root):
 
 def harness_captures(root):
     """{digest of an explorer screenshot: {width of each capture the harness took of it}}, from widths.jsonl
-    (actions/qae-browser/widths.js); a capture counts only when its file is a PNG that many pixels wide."""
+    (actions/qae-browser/widths.js); a capture counts only when its file, beside its record, is a PNG that many pixels
+    wide. One explorer of a split run leaves its record and captures under shard-<n>/ (the explore templates' step
+    that moves every file but a criterion's own there), and its step screenshots at the root: each record is read
+    where it is."""
     captures = {}
-    record = os.path.join(root, "widths.jsonl")
-    for line in read(record).splitlines() if os.path.isfile(record) else []:
-        try:
-            entry = json.loads(line)
-            shot, width, path = entry["shot"], int(entry["width"]), os.path.normpath(os.path.join(root, entry["file"]))
-        except (ValueError, KeyError, TypeError):
-            continue
-        inside = path.startswith(os.path.join(os.path.normpath(root), ""))
-        size = png_size(path) if inside and os.path.isfile(path) else None
-        if size and size[0] == width:
-            captures.setdefault(shot, set()).add(width)
+    for record in [os.path.join(root, "widths.jsonl")] + sorted(glob.glob(os.path.join(root, "shard-*", "widths.jsonl"))):
+        base = os.path.dirname(record)
+        for line in read(record).splitlines() if os.path.isfile(record) else []:
+            try:
+                entry = json.loads(line)
+                shot, width, path = entry["shot"], int(entry["width"]), os.path.normpath(os.path.join(base, entry["file"]))
+            except (ValueError, KeyError, TypeError):
+                continue
+            inside = path.startswith(os.path.join(os.path.normpath(root), ""))
+            size = png_size(path) if inside and os.path.isfile(path) else None
+            if size and size[0] == width:
+                captures.setdefault(shot, set()).add(width)
     return captures
 
 
@@ -63,9 +68,11 @@ def widths_findings(root, widths, logs):
         findings += unreadable
         missing = [width for width in widths if width not in seen]
         if missing:
-            findings.append(Finding("no step screenshot %s pixels wide (its widths: %s): check the criterion's end state "
-                                    "at each width in qae-inputs/widths" % (" or ".join(map(str, missing)),
-                                                                            ", ".join(map(str, sorted(seen))) or "none"),
+            findings.append(Finding("no step screenshot %s pixels wide (its widths: %s): the browser's widths hook "
+                                    "(actions/qae-browser/widths.js) captures each screenshot at the other widths in "
+                                    "qae-inputs/widths, except while a popup is open; a browser without it needs the "
+                                    "explorer to check the criterion's end state at each" % (
+                                        " or ".join(map(str, missing)), ", ".join(map(str, sorted(seen))) or "none"),
                                     relative(log, root)))
     return findings
 

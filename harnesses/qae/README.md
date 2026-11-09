@@ -440,13 +440,18 @@ qae-artifacts line of `.vibe-verifier-qae`.
   `widths/<digest>-<width>.png`, runs the [layout audit](../../docs/features/ui-audit.md) there, and puts the
   window back. `widths.jsonl` names each capture by the digest of the explorer's screenshot. So every step is
   seen at every width, not only a criterion's end state, and its layout is measured at each one.
-- A capture is skipped while a menu, listbox or tooltip is open (the explorer's next action may need it, and a
-  resize can close it), and `disturbed: true` in `widths.jsonl` says the page's accessibility tree read
-  differently after the round trip than before it.
+- A capture is skipped while a popup is open: a control that declares a popup says it is expanded
+  (`aria-haspopup` with `aria-expanded="true"`), a combobox is expanded, or a tooltip shows. The explorer's next
+  action may need it, and a resize can close it. A menu always on the page (navigation marked `role=menu`) has no
+  such trigger and does not stop captures. `disturbed: true` in `widths.jsonl` says the page's accessibility tree
+  read differently after the round trip than before it.
+- A width a criterion names itself ("at 375 by 812, ...") is still the explorer's to walk: the captures stand in
+  for the generic check of every criterion at every width, not for what a criterion asks.
 - Why the harness and not the explorer: across 660 walked runs of the subscribed repositories (2026-11-09),
-  checking widths was 27% of the explorer's tool calls, and of 185 distinct FAIL verdicts 2 were defects only a
-  width showed, both a page scrolling sideways, which the layout audit measures. The explorer's own width
-  steps resized in place in 72% of 3,665 sampled, as the hook does.
+  checking widths was 27% of the explorer's tool calls, and none of 185 distinct FAIL verdicts came from that
+  check: the two about a width were at a width the criterion named (375 in one, the default 1280 in the other).
+  The captures add the layout audit at every width on every step, which the explorer's end-state screenshots
+  never had. The explorer's own width steps resized in place in 72% of 3,665 sampled, as the hook does.
 - `qae-artifacts` refuses a criterion whose step screenshots (`qae/ACn-step-k.png`), with the harness's captures
   of them, include none of a declared width, read from each PNG's header (a browser screenshot is as wide as
   its viewport), and a step screenshot that is not a PNG. A capture counts only when its file is in the
@@ -498,8 +503,9 @@ its `max-turns` output, which the explorer step passes as `--max-turns`:
   can read. Widths are still counted, though the template's explorer no longer resizes for them (the
   harness [captures them](#viewports-themes-and-what-a-criterion-does-not-say)): a consumer copy whose prompt
   still asks the explorer to walk them runs the same pinned action, and a smaller cap would stop it short. The
-  cap is a ceiling, so the turns no longer used cost nothing; it can count one width once every consumer runs
-  the new prompt.
+  cap is a ceiling, so the turns no longer used cost nothing. [Splitting](#splitting-a-large-pull-request-across-explorers)
+  counts walks the same way, so a pull request at two widths may still start more explorers than its walks now
+  need, each with its own runner and sign-in. Both can count one width once every consumer runs the new prompt.
 - The cap is 40 plus 30 a walk, never below 80 and never above 240. Measured on that consumer, the runs
   took 18 to 39 turns for two or three criteria at one width, 44 for one criterion at two widths with a
   form, and 54 to 60 for two criteria at two widths: the cap is at least twice each, and twice the 80

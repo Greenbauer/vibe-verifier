@@ -92,6 +92,20 @@ class Gate(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("qae/AC2.md: no step screenshot 375 pixels wide (its widths: 1280)", result.stdout)
 
+    def test_a_split_runs_captures_count_from_each_explorers_folder(self):
+        # One explorer of several: the workflow moves its record and captures under shard-<n>/ and keeps the
+        # criterion's own step screenshots at the root.
+        for name in ("AC1-step-2", "AC2-step-2"):
+            Path(self.root, "qae", name + ".png").write_bytes(png(1280, 2))
+        self.harness_captured("AC1-step-1", 375)
+        self.harness_captured("AC2-step-2", 375)
+        shard = Path(self.root, "shard-2")
+        shard.mkdir()
+        Path(self.root, "widths.jsonl").rename(shard / "widths.jsonl")
+        Path(self.root, "widths").rename(shard / "widths")
+        result = self.run_gate("--widths", "1280,375")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_a_capture_of_another_screenshot_does_not_count(self):
         Path(self.root, "qae", "AC2-step-2.png").write_bytes(png(1280, 2))
         Path(self.root, "qae", "other.png").write_bytes(png(1280, 3))

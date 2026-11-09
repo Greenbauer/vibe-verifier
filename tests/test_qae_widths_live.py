@@ -18,11 +18,18 @@ from _acceptance import png_size  # noqa: E402  (gates/, which helpers puts on t
 UI_AUDIT = ROOT / "actions" / "qae-browser" / "ui-audit.js"
 # A dialog a button opens, and a menu another opens: the dialog is a state no address loads; the menu is a popup
 # the explorer's next action may use, which a resize could close. Two buttons touch: a layout finding at any width.
-DIALOG = ("<title>site</title><main><h1>Quotes</h1><p><button id=open>Open</button><button id=menu>More</button></p>"
+DIALOG = ("<title>site</title><main><nav role=menu><a role=menuitem href=/>Home</a></nav><h1>Quotes</h1>"
+          "<p><button id=open>Open</button><button id=menu aria-haspopup=menu aria-expanded=false>More</button></p>"
           "<dialog id=d><p>Quote Q-1</p><button id=close>Close</button></dialog>"
           "<div id=m role=menu hidden><div role=menuitem>Copy</div></div></main>"
           "<script>const on = (id, act) => document.getElementById(id).addEventListener('click', act);"
-          "on('open', () => d.showModal()); on('close', () => d.close()); on('menu', () => { m.hidden = false; });</script>")
+          "on('open', () => d.showModal()); on('close', () => d.close());"
+          "on('menu', () => { m.hidden = false; menu.setAttribute('aria-expanded', 'true'); });</script>")
+# Two bordered buttons side by side, 12px apart, stacked with no gap between them once the window is a phone's: a
+# layout defect only the width the explorer never uses shows.
+NARROW = ("<title>site</title><style>.row{display:flex;gap:12px;padding:24px}.row button{border:1px solid #333;"
+          "border-radius:6px;padding:8px 16px;background:#fff}@media (max-width:500px){.row{flex-direction:column;gap:0}}</style>"
+          "<main><h1>Plans</h1><div class=row><button>Monthly plan</button><button>Yearly plan</button></div></main>")
 
 
 @unittest.skipUnless(os.environ.get("QAE_MCP"), "needs the installed browser toolchain: QAE_MCP names playwright-mcp's entry point")
@@ -35,7 +42,8 @@ class Captures(unittest.TestCase):
         os.makedirs(os.path.join(self.root, "qae"))
         os.makedirs(os.path.join(self.work, "qae-inputs"))
         Path(self.work, "qae-inputs", "widths").write_text("1280\n375\n")
-        self.site = Server(self, {"/": DIALOG, "/bad": (ROOT / "tests" / "fixtures" / "ui-audit" / "bad.html").read_text()})
+        self.site = Server(self, {"/": DIALOG, "/narrow": NARROW,
+                                  "/bad": (ROOT / "tests" / "fixtures" / "ui-audit" / "bad.html").read_text()})
         self.explorer = Explorer(self, self.root, ("--init-page", os.environ.get("QAE_UI_AUDIT", str(UI_AUDIT))))
 
     def shoot(self, name):
@@ -67,6 +75,15 @@ class Captures(unittest.TestCase):
         self.assertIn(375, {line["width"] for line in audit})
         result = gate("qae-artifacts", self.repo, "--artifacts", self.root, "--site", self.site.url + "/", "--widths", "1280,375")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_defect_only_a_phone_width_shows_is_found_though_the_explorer_never_left_1280(self):
+        self.explorer.call("browser_navigate", url=self.site.url + "/narrow")
+        self.shoot("AC1-step-1")
+        self.explorer.call("browser_close")
+        self.explorer.close()
+        audit = [json.loads(line) for line in Path(self.root, "ui-audit.jsonl").read_text().splitlines()]
+        touching = {line["width"] for line in audit if line["rule"] == "touching"}
+        self.assertEqual(touching, {375}, audit)
 
     def test_an_open_menu_is_not_resized_under_the_explorer(self):
         self.explorer.call("browser_navigate", url=self.site.url + "/")
