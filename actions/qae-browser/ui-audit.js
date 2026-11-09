@@ -29,6 +29,11 @@
 // context in the same browser, from the explorer's storage state, closed after), and records that rule's findings
 // at that width. The explorer's tab list never shows it. It is a second load of the same address, as a reload is.
 //
+// A modal a person cannot close by Escape or a backdrop click (modal-dismiss) shows only when keys are pressed, which would
+// move the explorer's walk. So when a modal is open in the explorer's tab, the hook replays it in such windows of its own
+// (modal-dismiss.js): once per page, width and control the explorer pressed to open it, at most MODALS per page and width,
+// one replay at a time. The explorer's tab only gains an init script that notes what each press pressed.
+//
 // From a shell, before a push, on any page a browser can reach:
 //
 //     node actions/qae-browser/ui-audit.js [--width N]... [--storage-state FILE] [--channel chrome] [--copy FILE] URL...
@@ -49,6 +54,7 @@ const script = `(() => {\n${rules}\nreturn audit();\n})()`;
 // The controls icon-off-center screenshots, found by the same rule files.
 const iconScript = `(() => {\n${rules}\nreturn iconControls();\n})()`;
 const { decodePng, inkOffset, offCenter } = require("./ink.js");
+const modal = require("./modal-dismiss.js");
 // The copy record's finder, with the audit's helpers it uses (visible, cssPath) in the same closure.
 const copyScript = `(() => {\n${read("ui-audit-page.js")}\n${read("copy-page.js")}\nreturn copyBlocks();\n})()`;
 
@@ -59,6 +65,7 @@ const COPY = "copy.jsonl";
 const ICONS = 4;          // controls icon-off-center screenshots per measure, each FRAMES times: the rest wait for the next
 const FRAMES = 3;         // a spinner turns, so a control is judged off-center only when every frame is
 const FRAME_GAP = 120;    // ms between frames
+const MODALS = 3;         // modal replays per page and width
 
 function pageOf(url) {
   try {
@@ -113,6 +120,40 @@ async function recordWide(page, write, written, measured) {
     // explorer's widths alone
   } finally {
     if (context) await context.close().catch(() => {});
+  }
+}
+
+// Replays the modal open in the explorer's tab (modal-dismiss.js) while one is, one replay at a time, and hands a
+// modal-dismiss finding not written before to `write`. Each replay is once per page, width and opener, the control the
+// explorer pressed before a modal appeared (`state.pending`, from the tab's init script); with none it is the page's
+// load. Never the explorer's problem: a failure here leaves its walk as it was.
+async function recordModals(page, write, written, state) {
+  if (state.busy) return;
+  state.busy = true;
+  try {
+    while (await modal.anyOpen(page)) {
+      const url = page.url(), where = pageOf(url), width = (page.viewportSize() || {}).width || null;
+      const id = JSON.stringify([where, width]), done = state.pages.get(id) || { tried: new Set(), runs: 0 };
+      state.pages.set(id, done);
+      const opener = state.pending.shift() || null, key = opener ? JSON.stringify(opener) : "load";
+      if (!done.tried.has(key) && done.runs < MODALS) {
+        const loadJudged = done.tried.has("load");
+        done.tried.add(key).add("load");   // every replay loads the page, so the first judges a modal open on load
+        done.runs++;
+        const found = await modal.replay(page, url, opener, loadJudged);
+        const line = found && JSON.stringify([where, width, "modal-dismiss", found.at]);
+        if (found && !written.has(line)) {
+          written.add(line);
+          write({ page: where, width, rule: "modal-dismiss", ...found });
+        }
+      }
+      if (!state.pending.length) break;
+    }
+  } catch {
+    // the tab navigated or closed, or the browser gave no second context
+  } finally {
+    state.pending.length = 0;
+    state.busy = false;
   }
 }
 
@@ -176,16 +217,23 @@ exports.default = async ({ page }) => {
   const write = line => fs.appendFileSync(file, JSON.stringify(line) + "\n");
   const writeCopy = line => fs.appendFileSync(copyFile, JSON.stringify(line) + "\n");
   const written = new Set(), copied = new Set(), measuredWide = new Set(), sampled = new Set();
+  const modals = { pending: [], pages: new Map(), busy: false };
   let timer;
   const soon = ms => {
     clearTimeout(timer);
     timer = setTimeout(() => record(page, write, written).then(() => recordIcons(page, write, written, sampled))
-      .then(() => recordCopy(page, writeCopy, copied)).then(() => recordWide(page, write, written, measuredWide)), ms);
+      .then(() => recordCopy(page, writeCopy, copied)).then(() => recordWide(page, write, written, measuredWide))
+      .then(() => recordModals(page, write, written, modals)), ms);
   };
   page.on("load", () => soon(1000));
   page.on("framenavigated", frame => { if (frame === page.mainFrame()) soon(1000); });
   page.on("close", () => clearTimeout(timer));
   await page.exposeBinding("__vibeVerifierMeasure", (source, ms) => soon(ms));
+  await page.exposeBinding("__vibeVerifierModal", (source, opener) => {
+    if (opener) modals.pending.push(opener);
+    soon(500);
+  });
+  await page.addInitScript(modal.watchScript);
   await page.addInitScript(() => {
     const MESSAGE = "dialog, [role=dialog], [role=alertdialog], [role=alert], [role=status], [aria-live]";
     const FIELD = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea";
@@ -213,6 +261,7 @@ exports.record = record;
 exports.recordCopy = recordCopy;
 exports.recordWide = recordWide;
 exports.recordIcons = recordIcons;
+exports.recordModals = recordModals;
 exports.iconScript = iconScript;
 exports.pageOf = pageOf;
 exports.script = script;
@@ -263,6 +312,7 @@ async function main(argv) {
         const written = new Set();
         await record(page, print, written);
         await recordIcons(page, print, written, new Set(), Infinity);
+        await recordModals(page, print, written, { pending: [], pages: new Map(), busy: false });
         if (copy) await recordCopy(page, line => fs.appendFileSync(copy, JSON.stringify(line) + "\n"), copied);
       }
       await context.close();
