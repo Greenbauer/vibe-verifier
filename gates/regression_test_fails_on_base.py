@@ -18,7 +18,8 @@ passes when a test that passes at HEAD fails there, or when the file's own top-l
 assertion there before its tests run (any other error that stops it there means it did not load); it
 fails when they all pass there, which does not
 reproduce the bug, and when the only failures there are a module, export, file or script the test
-needs not existing yet, which does not show the bug either. Each runner's structured report decides
+needs not existing yet, which does not show the bug either (a Python file that only lacks a name it imports from
+a module that exists runs again with a stand-in for it, so its other tests are judged). Each runner's structured report decides
 (Vitest's JSON reporter, node:test's TAP reporter, pytest's reports, unittest's results, a Playwright
 reporter of the gate's), never an exit code.
 
@@ -138,9 +139,9 @@ def comments_only(repo, base, path):
     return code_of(path, before) == code_of(path, after)
 
 
-def run_tests(args, judged, deadline, plans):
+def run_tests(args, judged, deadline, plans, before=False):
     """{path: Run} of the judged files; `plans` is how the repository runs each node:test one, and the config that
-    runs each Playwright one, read at HEAD."""
+    runs each Playwright one, read at HEAD. `before`: the run on the code before the fix."""
     runs, local = {}, set(args.local_env or ())
     vitest = [path for path, what in judged.items() if what == "vitest"]
     python = [path for path, what in judged.items() if what == "python"]
@@ -150,7 +151,7 @@ def run_tests(args, judged, deadline, plans):
     if node:
         runs.update(run_node(args.repo, node, deadline, args.timeout, local))
     if python:
-        runs.update(run_python(args.repo, args.python, python, deadline, args.timeout, local))
+        runs.update(run_python(args.repo, args.python, python, deadline, args.timeout, local, before))
     browser = {path: plans[path] for path, what in judged.items() if what == "playwright"}
     if browser:
         runs.update(run_playwright(args.repo, browser, local, deadline, args.timeout))
@@ -276,7 +277,7 @@ def compare(args, base, changed, tests, is_test_code):
         if not passed:
             return none_ran(not_judged, unsupported)
         with code_before_the_fix(args.repo, base, [(status, path) for status, path in changed if not is_test_code(path)]):
-            base_runs = run_tests(args, {path: judged[path] for path in passed}, deadline, plans)
+            base_runs = run_tests(args, {path: judged[path] for path in passed}, deadline, plans, True)
     return verdict(args.repo, passed, base_runs)
 
 
