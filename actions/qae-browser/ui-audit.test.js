@@ -192,6 +192,8 @@ test("the audit is self-contained: run as the page script on an empty page, it n
   const page = { querySelectorAll: () => [], createElement: () => ({ getContext: () => ({ measureText: () => ({ width: 0 }) }) }),
     documentElement: { clientWidth: 1280, clientHeight: 900 } };
   assert.strictEqual(typeof require("./ui-audit-page.js"), "function");
+  assert.strictEqual(typeof require("./row-page.js"), "function");
+  assert.ok(hook.script.includes("function rowRules("));   // the row rules run in the same script
   assert.strictEqual(typeof require("./glyph-page.js"), "function");
   assert.ok(hook.script.includes("function glyphRules("));   // the badge rule runs in the same script
   assert.strictEqual(typeof require("./name-page.js"), "function");
@@ -213,7 +215,7 @@ test("the audit is self-contained: run as the page script on an empty page, it n
 
 test("the rule files run as one script, so no two declare the same top-level name", () => {
   // A second `function lines` in gutter-page.js would have replaced wrap-page.js's, silently breaking wrapped-label.
-  const files = ["ui-audit-page.js", "glyph-page.js", "name-page.js", "wrap-page.js", "scroll-page.js", "gutter-page.js", "field-page.js", "icon-page.js"];
+  const files = ["ui-audit-page.js", "row-page.js", "glyph-page.js", "name-page.js", "wrap-page.js", "scroll-page.js", "gutter-page.js", "field-page.js", "icon-page.js"];
   const seen = new Map();
   for (const file of files) {
     for (const [, name] of fs.readFileSync(path.join(__dirname, file), "utf8").matchAll(/^(?:function|const|let)\s+([A-Za-z_$][\w$]*)/gm)) {
