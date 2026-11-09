@@ -365,18 +365,6 @@ class QaeArtifacts(unittest.TestCase):
             self.assertEqual(result.returncode, 1, filename)
             self.assertIn("network record saved to %s, which the evidence does not hold" % filename, result.stdout)
 
-    def test_network_log_files_are_read_too(self):
-        write(self.root, {"network-1.log": "1. [GET] http://localhost:3000/missing => [404] Not Found\n"})
-        result = self.run_gate()
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("http://localhost:3000/missing", result.stdout)
-
-    def test_missing_network_record_fails(self):
-        write(self.root, {"session-1/session.md": SESSION.split("### Tool call: browser_network_requests")[0]})
-        result = self.run_gate()
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("no network record", result.stdout)
-
     def test_missing_session_fails_and_never_navigating_fails(self):
         shutil.rmtree(os.path.join(self.root, "session-1"))
         result = self.run_gate()

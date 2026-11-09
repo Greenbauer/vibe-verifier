@@ -57,5 +57,30 @@ class AnotherStep(ProbeFixture):
         self.not_excused("the run shows 400 /api/quotes/1/lines answered to another step too")
 
 
+class HarnessRecord(ProbeFixture):
+    """The harness's network-pages.log lists every request once under its own numbers, and the explorer's record lists
+    the same requests again under the page's: only the harness's is counted."""
+
+    def test_the_same_request_in_both_records_is_one_request(self):
+        write(self.root, {"network-pages.log": "41. [POST] %s => [400] Bad Request\n" % LINES})
+        self.excused()
+
+    def test_the_harness_record_alone_excuses_a_probe(self):
+        write(self.root, {"session-1/session.md": session().split("### Tool call: browser_network_requests")[0],
+                          "network-pages.log": "41. [POST] %s => [400] Bad Request\n" % LINES})
+        self.excused()
+
+    def test_a_second_request_in_the_harness_record_withdraws_it(self):
+        write(self.root, {"network-pages.log": "41. [POST] %s => [400] Bad Request\n42. [POST] %s => [400] Bad Request\n"
+                          % (LINES, LINES)})
+        self.not_excused("the run shows 400 /api/quotes/1/lines answered to another step too")
+
+    def test_two_explorers_records_number_their_own_requests(self):
+        # A split run: each explorer's record starts at 1, and request 41 of one is not request 41 of the other.
+        write(self.root, {"network-1-pages.log": "41. [POST] %s => [400] Bad Request\n" % LINES,
+                          "network-2-pages.log": "41. [POST] %s => [400] Bad Request\n" % LINES})
+        self.not_excused("the run shows 400 /api/quotes/1/lines answered to another step too")
+
+
 if __name__ == "__main__":
     unittest.main()

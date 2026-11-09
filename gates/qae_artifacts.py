@@ -56,10 +56,11 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    script may be the site's own doing (its content security policy, a wrong URL).
 3. The session log exists (`session-*/session.md`, written by `--save-session`) and shows the
    browser was driven: at least one `browser_navigate` call.
-4. The network record exists and is clean: at least one `browser_network_requests` result in the
-   session log (the explorer is told to call it after each criterion), and no request in any
-   such result, or in a `network-*.log` file, answered 400 or worse or failed, outside the
-   allowlist. A call may save its result to a file (its `filename` argument); the session log then
+4. The network record exists and is clean: a `network-*.log` file (the harness's own record of every
+   request of every page, written by actions/qae-browser/console-pages.js) or at least one
+   `browser_network_requests` result in the session log (what a consumer copy whose browser lacks
+   the hook still asks the explorer for), and no request in any of them answered 400 or worse or
+   failed, outside the allowlist. A call may save its result to a file (its `filename` argument); the session log then
    holds a link and no requests, so that file is read as the result. One the evidence does not hold
    is a finding: a record nobody can read is not a record. A request the page cancelled itself
    (`[FAILED] net::ERR_ABORTED`) was never answered by the site. The record cannot say why it was
@@ -97,8 +98,11 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
 6. With --widths, each criterion was checked at every declared viewport width: among the step
    screenshots of each `qae/ACn.md`, one is that many pixels wide, read from the PNG's header (a
    browser screenshot is as wide as its viewport). A step screenshot that is not a PNG is a finding.
-   The explore job writes the same widths to qae-inputs/widths for the explorer (actions/qae-inputs),
-   from this line as the base has it. Feature re-walk logs are not held to it.
+   The explore job writes the same widths to qae-inputs/widths (actions/qae-inputs), from this line as
+   the base has it, and the browser's page hook (actions/qae-browser/widths.js) captures each of the
+   explorer's screenshots at the other widths: a capture counts for the step whose screenshot has the
+   digest widths.jsonl names, when its file is a PNG that many pixels wide. A consumer copy whose
+   browser lacks the hook still has the explorer take them. Feature re-walk logs are not held to it.
 
 7. Explorers of one run keep off each other's records: gates/_page_record.py, isolation_findings, says how.
 8. A retry after an environment error counts, and excuses it, only as gates/_retry.py says; else, a finding.
@@ -122,9 +126,9 @@ from _qae_rules import ENVIRONMENTAL
 from _refusals import declared_refusals, read, refusal_expected
 from _retry import REQUEST, console_excused, exact, retry_checks
 from _session_log import SAVED_TO, TOOL_CALL, evidence_path
+from _widths import STEP_LINE, widths_findings, width_list  # noqa: F401  (width_list: bin/cli/criteria.py)
 
 GATE = "qae-artifacts"
-STEP_LINE = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):", re.IGNORECASE)
 # A console log entry: its offset, then text that may run on over the lines after it. The offset is
 # negative for what a tab a link opened logged before playwright-mcp opened its log (2026-10-08).
 CONSOLE_ENTRY = re.compile(r"^\[\s*-?[0-9]+ms\]\s+(?P<text>.*)$")
@@ -182,47 +186,6 @@ def missing_screenshot(k, line, shot):
         return "step %s has no screenshot (expected %s)" % (k, shot)
     return ("step %s, the comparison with reference %s, has no screenshot (expected %s): a comparison is a step, so "
             "save its screenshot, at the reference's width, before writing its line" % (k, ", ".join(named), shot))
-
-
-def screenshot_widths(root, log):
-    """({widths of the step screenshots of one log}, [findings for the ones that are not PNGs])."""
-    stem, seen, findings = os.path.basename(log)[:-3], set(), []
-    for k in (m.group("k") for m in map(STEP_LINE.match, read(log).splitlines()) if m):
-        shot = os.path.join(root, "qae", "%s-step-%s.png" % (stem, k))
-        if not os.path.isfile(shot) or os.path.getsize(shot) == 0:
-            continue  # already a finding: the step has no screenshot
-        size = png_size(shot)
-        if size is None:
-            findings.append(Finding("step %s's screenshot is not a PNG, so its width cannot be read" % k, relative(log, root)))
-        else:
-            seen.add(size[0])
-    return seen, findings
-
-
-def widths_findings(root, widths):
-    """A finding per criterion step log whose step screenshots miss a declared width."""
-    findings = []
-    for log in criterion_logs(root):
-        seen, unreadable = screenshot_widths(root, log)
-        findings += unreadable
-        missing = [width for width in widths if width not in seen]
-        if missing:
-            findings.append(Finding("no step screenshot %s pixels wide (its widths: %s): check the criterion's end state "
-                                    "at each width in qae-inputs/widths" % (" or ".join(map(str, missing)),
-                                                                            ", ".join(map(str, sorted(seen))) or "none"),
-                                    relative(log, root)))
-    return findings
-
-
-def width_list(text):
-    """`1280,375` as [1280, 375]: what --widths takes, also read by actions/qae-inputs from the manifest line."""
-    try:
-        widths = [int(part) for part in text.split(",")]
-    except ValueError:
-        widths = []
-    if not widths or any(width < 1 for width in widths):
-        raise argparse.ArgumentTypeError("widths are positive whole numbers of pixels, comma-separated: %r" % text)
-    return list(dict.fromkeys(widths))
 
 
 def judged(url, sites):
@@ -339,12 +302,13 @@ def session_and_network(root, allowed, sites, expected):
     findings = []
     if "browser_navigate" not in calls:
         findings.append(Finding("the browser was never navigated: no browser_navigate call in the session log"))
-    if "browser_network_requests" not in calls:
-        findings.append(Finding("no network record: the explorer must call browser_network_requests after each criterion"))
+    harness = sorted(glob.glob(os.path.join(root, "network-*.log")))
+    if not harness and "browser_network_requests" not in calls:
+        findings.append(Finding("no network record: neither the harness's network-*.log (load actions/qae-browser's "
+                                "console-pages hook) nor a browser_network_requests call"))
     saved, unreadable = saved_network_records(root, sessions)
     findings += unreadable
-    return findings + request_findings(root, sessions + saved + sorted(glob.glob(os.path.join(root, "network-*.log"))),
-                                       allowed, sites, expected)
+    return findings + request_findings(root, sessions + saved + harness, allowed, sites, expected)
 
 
 def request_findings(root, sources, allowed, sites, expected):
@@ -426,7 +390,7 @@ def check(args):
     expected.update(excused + probe_excuses(root))
     return (declared + retried
             + steps_have_screenshots(root)
-            + (widths_findings(root, args.widths) if args.widths else [])
+            + (widths_findings(root, args.widths, criterion_logs(root)) if args.widths else [])
             + console_is_clean(root, console_allow, expected, sites)
             + session_and_network(root, request_allow, sites, expected) + isolation_findings(root))
 

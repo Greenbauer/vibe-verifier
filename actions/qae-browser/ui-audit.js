@@ -182,6 +182,8 @@ exports.default = async ({ page }) => {
     timer = setTimeout(() => record(page, write, written).then(() => recordIcons(page, write, written, sampled))
       .then(() => recordCopy(page, writeCopy, copied)).then(() => recordWide(page, write, written, measuredWide)), ms);
   };
+  // The other widths the run asks for, captured after each of the explorer's screenshots (widths.js).
+  require("./widths.js").install(page, dir, measured => record(measured, write, written));
   page.on("load", () => soon(1000));
   page.on("framenavigated", frame => { if (frame === page.mainFrame()) soon(1000); });
   page.on("close", () => clearTimeout(timer));

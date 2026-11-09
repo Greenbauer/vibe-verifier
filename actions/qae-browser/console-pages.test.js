@@ -1,7 +1,6 @@
 // The page record's own tests, with a stand-in for the Playwright page. Run by
 // tests/test_qae_console_pages.py, which also drives the real browser where one is installed.
 const assert = require("node:assert");
-const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -9,48 +8,7 @@ const { test } = require("node:test");
 
 const hook = require("./console-pages.js");
 
-const message = (type, text, url = "https://cdn.example/app.js", lineNumber = 12) =>
-  ({ type: () => type, text: () => text, location: () => ({ url, lineNumber }) });
-// An uncaught exception or rejection: an Error, or any other value a page threw.
-const thrown = value => ({ thrown: value });
-const isException = logged => "thrown" in logged;
-// A request the page made, with the answer it got (`status`), or none yet.
-const request = (method, url, status) => {
-  const made = { method: () => method, url: () => url, existingResponse: () => (status ? answer : null) };
-  const answer = { status: () => status, request: () => made };
-  return made;
-};
-const digest = line => crypto.createHash("sha256").update(line).digest("hex");
-
-// The hook, run on a tab showing `url` that already logged `earlier` and made the requests `loaded`:
-// `log` is the tab logging one more message, `respond` it getting an answer to `request`, `navigate`
-// moves it to another page, `record` reads back what the hook wrote.
-async function tab(url, earlier = [], loaded = []) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vv-console-pages-"));
-  const out = path.join(dir, "not-yet-made");
-  const listeners = { console: [], pageerror: [], response: [] };
-  const page = {
-    url: () => url,
-    on: (event, listener) => listeners[event].push(listener),
-    consoleMessages: async () => earlier.filter(logged => !isException(logged)),
-    pageErrors: async () => earlier.filter(isException).map(logged => logged.thrown),
-    requests: async () => loaded,
-  };
-  const argv = process.argv;
-  process.argv = ["node", "cli.js", "--output-dir", out];
-  try {
-    await hook.default({ page });
-    return {
-      log: logged => listeners[isException(logged) ? "pageerror" : "console"].forEach(listener => listener(isException(logged) ? logged.thrown : logged)),
-      respond: made => listeners.response.forEach(listener => listener(made.existingResponse())),
-      record: () => fs.existsSync(path.join(out, "console-pages.jsonl"))
-        ? fs.readFileSync(path.join(out, "console-pages.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line)) : [],
-      navigate: next => { url = next; },
-    };
-  } finally {
-    process.argv = argv;
-  }
-}
+const { digest, message, request, tab, thrown } = require("./console-pages.stub.js");
 
 test("an error is recorded with the page that logged it and the digest of its console line", async () => {
   const opened = await tab("https://pay.example/checkout?session=secret#top");
@@ -149,7 +107,7 @@ async function guarded(rules) {
   fs.writeFileSync(file, JSON.stringify(rules));
   const out = path.join(dir, "out");
   let handler;
-  const listeners = { console: [], pageerror: [], response: [] };
+  const listeners = { console: [], pageerror: [], response: [], requestfailed: [], request: [] };
   const page = {
     url: () => "https://site.example/",
     on: (event, listener) => listeners[event].push(listener),
@@ -179,8 +137,10 @@ async function guarded(rules) {
     return did;
   };
   const created = async (url, answer) => {
-    const got = { status: () => 201, url: () => url, headers: () => answer.headers || {}, json: async () => answer.json,
-                  request: () => ({ method: () => "POST", url: () => url }) };
+    const got = { status: () => 201, statusText: () => "Created", url: () => url, headers: () => answer.headers || {},
+                  json: async () => answer.json };
+    const made = { method: () => "POST", url: () => url, existingResponse: () => got, failure: () => null };
+    got.request = () => made;
     await Promise.all(listeners.response.map(listener => listener(got)));
   };
   const record = () => fs.readFileSync(path.join(out, "console-pages.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
