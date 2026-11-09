@@ -9,7 +9,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
-from .bot_runs import bot_job_ran, job_named, pulls_bot_jobs, recent_bot_runs
+from .bot_runs import bot_job_ran, job_roles, pulls_bot_jobs, qae_instance, recent_bot_runs
 from .config import BOT_KEYS
 from .gh_api import ApiError
 from .github import JOB_CACHE_AGE, MAX_WORKERS, _endpoint, _time_key
@@ -28,12 +28,15 @@ def _same_repository(run: dict, repository: str) -> bool:
 
 def _history_done(rows: dict, run: dict, now: datetime) -> bool:
     """No later run can change any role's five newest results: every role has five, this run was
-    updated over two hours ago, and no later than each role's fifth."""
-    latest_five = [recent_bot_runs(value["completed"], now, 168) for value in rows.values()]
+    updated over two hours ago, and no later than each role's fifth. A role with runs on QAE lane
+    slots keeps five for each slot, and a slot it has not met yet may still be in a later run, so
+    its scan reads every run up to HISTORY_RUN_LIMIT (each run's jobs are cached once completed)."""
+    latest = [recent_bot_runs(value["completed"], now, 168) for value in rows.values()]
     updated = parse_time(run.get("updated_at"))
     return bool(updated and updated < now - timedelta(hours=2)
                 and all(len(recent) >= 5 and updated <= parse_time(recent[-1]["completed_at"])
-                        for recent in latest_five))
+                        and not any(qae_instance(row.get("runner_name")) for row in recent)
+                        for recent in latest))
 
 
 def _sampled_at(times: list, current: object) -> str | None:
@@ -46,9 +49,11 @@ def _role_result(value: dict, now: datetime) -> dict:
     active = sorted(value["active"], key=lambda row: _time_key(row, "started_at"), reverse=True)
     history = recent_bot_runs(value["completed"], now, 168)
     active_complete, history_complete = value["active_complete"], value["history_complete"]
+    scanned, floor = history_complete, max(value["floors"]) if value["floors"] else None
     # A scan cut short by HISTORY_RUN_LIMIT is complete for this role only when its five newest
     # results, across every repository, are all newer than the runs that scan skipped.
-    if value["floors"] and (len(history) < 5 or parse_time(history[-1]["completed_at"]) < max(value["floors"])):
+    newest = history[:5]
+    if floor and (len(newest) < 5 or parse_time(newest[-1]["completed_at"]) < floor):
         history_complete = False
     state = "working" if active else "idle" if active_complete else "unknown"
     return {"state": state, "state_source": "github_actions" if state != "unknown" else "unavailable",
@@ -56,6 +61,9 @@ def _role_result(value: dict, now: datetime) -> dict:
             "history_sampled_at": _sampled_at(value["history_at"], history_complete or history),
             "active": active, "recent_2h": recent_bot_runs(value["completed"], now, 2),
             "recent_7d": history,
+            # What a QAE card needs to judge its own slot's coverage (agents.py): whether every scan
+            # read, and the update time of the newest run the 50-run limit left unread.
+            "history_scanned": scanned, "history_floor": iso_time(floor) if floor else None,
             "latest_failure": history[0] if history and history[0]["category"] == "failed" else None,
             "coverage": {"active": "complete" if active_complete else "unavailable",
                          "history": "complete" if history_complete else "partial"}}
@@ -71,10 +79,9 @@ class BotHistory:
                 "runner_name": job.get("runner_name")}
 
     def _add_bot_job(self, rows: dict, phase: str, role_jobs: dict, repository: str, run: dict, job: dict) -> None:
-        """Add the job under phase for every role that names it."""
-        for role, names in role_jobs.items():
-            if job_named(job["name"], names):
-                rows[role][phase].append(self._bot_row(repository, role, run, job))
+        """Add the job under phase for each of its roles (bot_runs.job_roles)."""
+        for role in job_roles(job, role_jobs):
+            rows[role][phase].append(self._bot_row(repository, role, run, job))
 
     def _active_bot_jobs(self, repository: str, base: str, role_jobs: dict, rows: dict) -> None:
         """Running bot jobs of the workflow's in-progress runs. Raises ApiError."""
