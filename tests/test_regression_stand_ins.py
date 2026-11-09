@@ -82,22 +82,38 @@ class StandIns(unittest.TestCase):
                 self.only_missing(self.judge(runner, [UNCHANGED_TEST] + uses, None, changed, header=header), "PriceError")
 
     def test_a_test_that_fails_through_the_old_code_before_it_reaches_the_new_name_shows_the_bug(self):
-        # It names PriceError and the module a new function sharing a method's name, but fails on the old discount
-        # first: the failure's traceback holds no stand-in, so it is the bug shown.
-        changed = {"shop/price.py": PY_FIX + "\n\nclass PriceError(ValueError):\n    pass\n\n\ndef rounded(x):\n    return x\n"}
-        header = HEADER.replace("discount, member_price", "discount, PriceError, rounded")
-        test = ("    def test_old_then_new(self):\n        self.assertEqual(self.discount(200, True), 180)\n"
-                "        with self.assertRaises(PriceError):\n            raise PriceError('x')\n\n"
-                "    def discount(self, total, member):\n        return discount(total, member)\n\n"
-                "    def rounded(self):\n        return 1\n\n"
-                "    def test_a_method_named_like_the_new_name(self):\n        self.assertEqual(self.rounded() + discount(200, True), 181)\n")
+        # Each fails on the old discount first. The new names appear on or around the failing line only as a later
+        # statement, a method, a dict key, a message, a comment, a keyword or a local: none is the stand-in read,
+        # so each is the bug shown.
+        changed = {"shop/price.py": PY_FIX + "\n\nclass PriceError(ValueError):\n    pass\n\n\ndef rounded(x):\n    return x\n"
+                                             "\n\ndef member(total):\n    return total\n"}
+        header = HEADER.replace("discount, member_price", "discount, PriceError, member, rounded")
+        old = "self.assertEqual(discount(200, True), 180"
+        cases = {
+            "test_old_then_new": "        %s)\n        with self.assertRaises(PriceError):\n            raise PriceError('x')\n" % old,
+            "test_a_method_named_like_the_new_name": "        self.assertEqual(self.rounded() + discount(200, True), 181)\n\n"
+                                                     "    def rounded(self):\n        return 1\n",
+            "test_a_dict_key": "        self.assertEqual({'rounded': discount(200, True)}['rounded'], 180)\n",
+            "test_a_message": "        %s, 'rounded builds on it')\n" % old,
+            "test_a_comment": "        %s)  # PriceError builds on it\n" % old,
+            "test_a_keyword": "        self.assertEqual(discount(200, member=True), 180)\n",
+            "test_a_local": "        PriceError = discount(200, True)\n        self.assertEqual(PriceError, 180)\n",
+        }
+        for runner in ("unittest", "pytest"):
+            for name, body in cases.items():
+                with self.subTest(runner=runner, test=name):
+                    result = self.judge(runner, ["    def %s(self):\n%s" % (name, body)], None, changed, header=header)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("%s fails on the code before the fix: AssertionError" % name, result.stderr)
+
+    def test_top_level_code_that_fails_through_the_old_code_shows_the_bug(self):
+        # A module frame's locals are every name the file imported, the stand-in among them.
         for runner in ("unittest", "pytest"):
             with self.subTest(runner=runner):
-                result = self.judge(runner, [test], None, changed, header=header)
+                result = self.judge(runner, [UNCHANGED_TEST], None, None,
+                                    header=HEADER.replace("\n\nclass Price", "\nassert discount(200, True) == 180\n\n\nclass Price"))
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn("test_old_then_new fails on the code before the fix: AssertionError: 200 != 180", result.stderr)
-                self.assertIn("test_a_method_named_like_the_new_name fails on the code before the fix: AssertionError: 201 != 181",
-                              result.stderr)
+                self.assertIn("tests/test_price.py: its top-level code fails on the code before the fix: AssertionError", result.stderr)
 
     def test_the_module_loads_when_the_test_file_imports_it_after_the_file_s_own_setup(self):
         # The file sets SHOP_RATE before it imports shop.price, whose old code reads it once. A stand-in that loaded

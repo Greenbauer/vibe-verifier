@@ -13,11 +13,10 @@ The report: {"files": {absolute path: {"load_error": "Type: message" or null,
 the exception's class name and the first line of its message, read from the exception object, never
 from the runner's printed output. Standard library and pytest only, Python 3.8 and later.
 """
+import dis
 import importlib.util
 import json
-import linecache
 import os
-import re
 import sys
 import unittest
 
@@ -94,17 +93,28 @@ class StandInFinder:
         return None
 
 
+def globals_read(code, line):
+    """The names `code` loads as globals on `line`: no attribute, keyword, string, comment or local of that name."""
+    found, current = set(), None
+    for instruction in dis.get_instructions(code):
+        position = getattr(instruction, "positions", None)  # Python 3.11 and later; before, the line's first only
+        current = position.lineno if position is not None else (instruction.starts_line or current)
+        if current == line and instruction.opname in ("LOAD_GLOBAL", "LOAD_NAME", "LOAD_FROM_DICT_OR_GLOBALS"):
+            found.add(instruction.argval)
+    return found
+
+
 def held(error):
-    """The first stand-in the traceback of `error` holds: a local of a frame it passes through (assertRaises's
-    expected exception), or a global the frame's failing line names (not `x.name`). Read without touching it."""
+    """The first stand-in the traceback of `error` holds: a local of a function frame it passes through
+    (assertRaises's expected exception), or a global a frame's code loads on its failing line. Read without using it.
+    A module frame's locals are its globals, every name the file imported, so only its failing line counts there."""
     trace = getattr(error, "__traceback__", None)
     while trace is not None:
-        frame, line = trace.tb_frame, linecache.getline(trace.tb_frame.f_code.co_filename, trace.tb_lineno)
-        for value in list(frame.f_locals.values()):
+        frame = trace.tb_frame
+        local = [] if frame.f_locals is frame.f_globals else list(frame.f_locals.values())
+        named = [frame.f_globals.get(name) for name in sorted(globals_read(frame.f_code, trace.tb_lineno))]
+        for value in local + named:
             if type(value) is StandIn:
-                return value
-        for name, value in list(frame.f_globals.items()):
-            if type(value) is StandIn and re.search(r"(?<![\w.])%s\b" % re.escape(name), line):
                 return value
         trace = trace.tb_next
     return None
