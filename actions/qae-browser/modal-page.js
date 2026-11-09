@@ -17,8 +17,8 @@ const coversWindow = r => r.left <= 1 && r.top <= 1 && r.right >= innerWidth - 1
 const ownText = el => [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
 
 // The box a person sees as the dialog: the dialog itself, or, when its role sits on a wrapper as large as the window (a
-// backdrop holding its card) or on a root of no size (a portal's, whose backdrop and card are fixed inside it), the
-// nearest box holding everything it shows. null when it shows nothing.
+// backdrop holding its card) or on a root of no size (whose backdrop and card are fixed inside it), the nearest box
+// holding everything it shows. null when it shows nothing.
 function dialogBox(dialog) {
   if (visible(dialog) && !coversWindow(dialog.getBoundingClientRect())) return dialog;
   const shown = [...dialog.querySelectorAll("*")].filter(el => visible(el) && (el.matches(ACTIVE) || ownText(el)));
