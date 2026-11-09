@@ -1227,7 +1227,7 @@ coverage-not-lost --runner node-test --soak                    # the files packa
   the gate fills npm's cache (an `npm ci` of each test fixture), the catalog's tool cache (every pinned
   node toolchain and binary) and a directory of the wheels of every requirements file the tests and tools
   install, which the gate step points pip at (`PIP_NO_INDEX=1`, `PIP_FIND_LINKS`); `ci.yml` does the same
-  for its pilots, where the suite step has already filled the rest. On the whole suite each side took 784 to 1,030
+  for its per-pull-request gates, where the suite step has already filled the rest. On the whole suite each side took 784 to 1,030
   seconds on ubuntu-latest and ran about 11,500 lines, 4,690 of them in `gates/` (pull request #220's
   three runs; the fastest took 784 to 847 seconds a side), against 982 seconds for both sides when only
   the test process was measured. Much of the 300 to 540 seconds each side gained is starting coverage.py
