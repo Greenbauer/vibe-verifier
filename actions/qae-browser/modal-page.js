@@ -86,13 +86,24 @@ function selectChanged(field) {
   return field.selectedIndex !== (marked >= 0 ? marked : options.findIndex(o => !o.disabled));
 }
 
-// Whether any field of the dialog holds a value other than its default: a person's edits, which closing may lose. A box's
-// default is whether its markup ticks it; a slider's or colour's value is never empty, so it has no default to differ from.
+// Whether an input holds a value other than the one a fresh input of the same markup would: the browser's own cleanup
+// applied, so a slider's default is its middle, a colour's black, and a date or email is read as the field reads it.
+// The fresh input is never added to the page.
+function inputChanged(field) {
+  const fresh = document.createElement("input");
+  for (const name of ["type", "value", "min", "max", "step", "multiple"]) {
+    if (field.hasAttribute(name)) fresh.setAttribute(name, field.getAttribute(name));
+  }
+  return field.value !== fresh.value;
+}
+
+// Whether any field of the dialog holds a value other than its default: a person's edits, which closing may lose. A
+// box's default is whether its markup ticks it.
 function editedIn(dialog) {
   return [...dialog.querySelectorAll("input, textarea, select")].some(field =>
     field.tagName === "SELECT" ? selectChanged(field)
-      : /^(checkbox|radio)$/.test(field.type) ? field.checked !== field.defaultChecked
-        : !/^(range|color)$/.test(field.type) && field.value !== field.defaultValue);
+      : field.tagName === "TEXTAREA" ? field.value !== field.defaultValue
+        : /^(checkbox|radio)$/.test(field.type) ? field.checked !== field.defaultChecked : inputChanged(field));
 }
 
 // The name a person reads for the dialog: its aria-labelledby or aria-label, else its first heading, else its text.

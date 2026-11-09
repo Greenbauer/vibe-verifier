@@ -15,7 +15,10 @@ over a fixed background behind an empty page. sibling=1 sets it, with no aria-mo
 beside it. keep=1 keeps a native <dialog> open on Escape (its cancel event is prevented, which a press before allows).
 unnamed=1 leaves out its aria-labelledby, so its heading names it. Its fields are at their defaults: selects with no
 option marked, with their second marked, with their first disabled, with none at all, of several lines and of several
-choices, a slider, a colour, and a box not ticked. -->
+choices, a slider whose step rounds its value, a colour, a date and emails the browser reads differently from their
+markup, a text box with text, and a box not ticked;
+edited=1 fills its text field by script, edited=range moves its slider, edited=color its colour, edited=select its
+first select, edited=days its select of several choices. -->
 <style>
 body{margin:0;font:14px sans-serif}
 header{display:flex;gap:16px;padding:12px 16px;border-bottom:1px solid #ddd}
@@ -62,10 +65,15 @@ function build(shown) {
     '<select aria-label=Carrier><option disabled>Pick one</option><option>Any</option></select> <select aria-label=Empty></select> ' +
     '<select aria-label=Lanes size=2><option>A</option><option>B</option></select> ' +
     '<select aria-label=Days multiple><option>Mon</option><option>Tue</option></select> ' +
-    '<input type=range aria-label=Weight> <input type=color aria-label=Colour> ' +
+    '<input type=range aria-label=Weight min=0 max=40 step=5 value=12> <input type=color aria-label=Colour> ' +
+    '<input type=datetime-local aria-label=Pickup value="2020-01-01T10:00:00"> <input type=email aria-label=Contact value=" a@b.co"> ' +
+    '<input type=email aria-label=Copies multiple value=" a@b.co, c@d.co"> <textarea aria-label=Comment>Leave at the door</textarea> ' +
     '<label><input type=checkbox> Remember</label> <button type=button>Done</button>';
   el.querySelector("h2").textContent = name;
-  if (q.has("edited")) el.querySelector("input").value = "Draft text";
+  const edits = { range: ["[type=range]", "70"], color: ["[type=color]", "#ff0000"], select: ["select", "Flatbed"], 1: ["input", "Draft text"] };
+  const [field, value] = edits[q.get("edited")] || [];
+  if (field) el.querySelector(field).value = value;
+  if (q.get("edited") === "days") el.querySelector("select[multiple]").options[1].selected = true;
   let holder = el;
   if (native) {
     document.body.append(el);

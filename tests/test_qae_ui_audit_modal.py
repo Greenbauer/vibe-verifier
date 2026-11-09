@@ -39,7 +39,8 @@ const at = query => process.env.BASE + "/modal.html?" + query;
     entrance: "opener=1&enter=400&escape=1&backdrop=1&name=Entrance", nativeFull: "opener=1&native=1&keep=1&margin=16&name=Rate+sheet",
     sibling: "sibling=1&name=Choose+a+plan", floating: "overlay=0&name=Floating+note",
     stuck: "later=2000&name=Welcome+tour", closes: "escape=1&backdrop=1&name=Closes", alert: "role=alertdialog&escape=1&name=Discard+changes",
-    edited: "edited=1&name=Draft", native: "native=1&backdrop=1&name=Native", nativeStuck: "native=1&unnamed=1&name=Native+stuck",
+    edited: "edited=1&name=Draft", editedRange: "edited=range&name=Weight", editedColour: "edited=color&name=Colour",
+    editedSelect: "edited=select&name=Equipment", editedDays: "edited=days&name=Days", native: "native=1&backdrop=1&name=Native", nativeStuck: "native=1&unnamed=1&name=Native+stuck",
     noBackdrop: "overlay=0&escape=1&name=No+backdrop", margin: "margin=16&escape=1&name=Full+window", shell: "shell=1&name=In+app", signIn: "flow=1&name=Log+in",
     decor: "decor=1&name=Sign+in", wrap: "wrap=1&escape=1&name=Share+quote", root: "root=1&escape=1&name=Invite+people",
   };
@@ -176,13 +177,15 @@ class Browser(unittest.TestCase):
         # are fixed inside it: the card is the box a click lands outside.
         self.assertEqual(measured["wrap"], [["modal-dismiss", "Share quote", click]])
         self.assertEqual(measured["root"], [["modal-dismiss", "Invite people", click]])
-        # Closed by both (after an exit animation); an alertdialog a backdrop click leaves open (the choice is the point); a dialog holding edited
-        # input; a native <dialog> closed by both; an aria-modal dialog over the page with no backdrop, and one leaving 16px
-        # of backdrop (under 24px, so no click). A role=dialog in a fixed full-window app, one over a fixed background
-        # behind an empty page, and an aria-modal sign-in card in the page's flow (a subscribed app's sign-in page marks its
-        # card so) are no modals.
-        # A modal that ignores both until its 400ms entrance ends is judged once it has settled, as a person sees it.
-        for name in ("closes", "alert", "edited", "native", "noBackdrop", "margin", "shell", "decor", "signIn", "entrance"):
+        # Closed by both (after an exit animation); an alertdialog a backdrop click leaves open (the choice is the point);
+        # dialogs that ignore both but hold edited input (text typed, a slider or colour moved, a select or a select of
+        # several choices changed); a native <dialog> closed by both; an aria-modal dialog over the page with no backdrop,
+        # and one leaving 16px of backdrop (under 24px, so no click). A role=dialog in a fixed full-window app, one over a
+        # fixed background behind an empty page, and an aria-modal sign-in card in the page's flow (a subscribed app's
+        # sign-in page marks its card so) are no modals. A modal that ignores both until its 400ms entrance ends is judged
+        # once it has settled, as a person sees it.
+        for name in ("closes", "alert", "edited", "editedRange", "editedColour", "editedSelect", "editedDays", "native",
+                     "noBackdrop", "margin", "shell", "decor", "signIn", "entrance"):
             self.assertEqual(measured[name], [], name)
         # A submit button is never an opener, nor a press inside a dialog or on the page; of two Edit buttons the second is
         # found by its path, a path that names neither finds none, two More buttons at one path find none, and a descriptor
@@ -201,7 +204,7 @@ class Browser(unittest.TestCase):
         # Every window of the hook's own is closed again: only the explorer's four tabs remain, in its one context.
         self.assertEqual((measured["tabs"], measured["contexts"]), (4, 1))
         # Only the explorer's own five presses wrote and opened a websocket, and only its context installed the service
-        # worker: the replays did none of these, though every replay window pressed "Edit lane" and loaded the page.
+        # worker: the replays did none of these, though every replay window of a modal it opens pressed "Edit lane".
         self.assertEqual(server.counts, {"POST /posted": 5, "GET /socket": 5, "GET /sw-installed": 1})
 
 if __name__ == "__main__":
