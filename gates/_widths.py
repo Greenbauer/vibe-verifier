@@ -27,18 +27,25 @@ def harness_captures(root):
     where it is."""
     captures = {}
     for record in [os.path.join(root, "widths.jsonl")] + sorted(glob.glob(os.path.join(root, "shard-*", "widths.jsonl"))):
-        base = os.path.dirname(record)
-        for line in read(record).splitlines() if os.path.isfile(record) else []:
-            try:
-                entry = json.loads(line)
-                shot, width, path = entry["shot"], int(entry["width"]), os.path.normpath(os.path.join(base, entry["file"]))
-            except (ValueError, KeyError, TypeError):
-                continue
-            inside = path.startswith(os.path.join(os.path.normpath(root), ""))
-            size = png_size(path) if inside and os.path.isfile(path) else None
-            if size and size[0] == width:
-                captures.setdefault(shot, set()).add(width)
+        for shot, width in record_captures(root, record):
+            captures.setdefault(shot, set()).add(width)
     return captures
+
+
+def record_captures(root, record):
+    """(digest, width) per capture one widths.jsonl lists whose file, beside it and inside `root`, is a PNG that wide."""
+    base, found = os.path.dirname(record), []
+    for line in read(record).splitlines() if os.path.isfile(record) else []:
+        try:
+            entry = json.loads(line)
+            shot, width, path = entry["shot"], int(entry["width"]), os.path.normpath(os.path.join(base, entry["file"]))
+        except (ValueError, KeyError, TypeError):
+            continue
+        inside = path.startswith(os.path.join(os.path.normpath(root), ""))
+        size = png_size(path) if inside and os.path.isfile(path) else None
+        if size and size[0] == width:
+            found.append((shot, width))
+    return found
 
 
 def screenshot_widths(root, log, captures):
