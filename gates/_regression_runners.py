@@ -182,26 +182,35 @@ def run_python(repo, python, paths, deadline, timeout, local_names, stand_ins=Fa
     """The files under the project's interpreter, guarded: its pytest when installed, else unittest. With `stand_ins`
     (the run on the code before the fix), a file that did not load only because a module that exists there lacks a
     name it imports (`from shop.price import discount, member_price`, the fix adding member_price) runs again with a
-    stand-in for that name, so its tests that do not use the name are judged, and one that does fails as it missing.
-    Again for each new name such a run turns up."""
-    runs, wanted = python_runs(repo, python, paths, deadline, timeout, local_names, {}), {}
-    while stand_ins:
-        lacking = {path: CANNOT_IMPORT.match(run.load_error or "") for path, run in runs.items()}
-        lacking = {path: found.groups() for path, found in lacking.items()
-                   if found and found.group(1) not in wanted.get(found.group(2), [])}
-        if not lacking:
-            break
+    stand-in for that name (gates/_regression_python.py StandInFinder), added when the module loads, so its tests
+    that do not use the name are judged, and one that uses it fails as it missing. Again for each new name such a
+    run turns up."""
+    (runs, _), wanted = python_runs(repo, python, paths, deadline, timeout, local_names, {}), {}
+    lacking = lacking_names(runs, wanted) if stand_ins else {}
+    while lacking:
+        for name, module in lacking.values():
+            wanted[module] = sorted(set(wanted.get(module, [])) | {name})
+        rerun, added = python_runs(repo, python, sorted(lacking), deadline, timeout, local_names, wanted)
+        runs.update(rerun)
         for path, (name, module) in sorted(lacking.items()):
-            if name not in wanted.setdefault(module, []):
-                wanted[module].append(name)
-            print("regression-test-fails-on-base: %s: on the code before the fix `%s` is not in `%s` yet, so the file ran "
-                  "again with a stand-in for it" % (path, name, module), file=sys.stderr, flush=True)
-        runs.update(python_runs(repo, python, sorted(lacking), deadline, timeout, local_names, wanted))
+            if (module, name) in added:  # a module that did not load where the import looked got none
+                print("regression-test-fails-on-base: %s: on the code before the fix `%s` is not in `%s` yet, so the file "
+                      "ran again with a stand-in for it" % (path, name, module), file=sys.stderr, flush=True)
+        lacking = lacking_names(runs, wanted)
     return runs
 
 
+def lacking_names(runs, wanted):
+    """{path: (name, module)} of each file that did not load only because a module lacks a name it imports that
+    `wanted` ({module: [name]}) does not stand in yet."""
+    found = {path: CANNOT_IMPORT.match(run.load_error or "") for path, run in runs.items()}
+    return {path: match.groups() for path, match in found.items()
+            if match and match.group(1) not in wanted.get(match.group(2), [])}
+
+
 def python_runs(repo, python, paths, deadline, timeout, local_names, wanted):
-    """One run of the files, each module in `wanted` given a stand-in for each name it lists."""
+    """(One run of the files, {(module, name)} of the stand-ins added), each module in `wanted` given a stand-in for
+    each name it lists and lacks."""
     with open(PYTHON_RUNNER, encoding="utf-8") as handle:
         source = handle.read()
     scratch, runs = tempfile.mkdtemp(prefix="vv-regression-"), {}
@@ -225,4 +234,4 @@ def python_runs(repo, python, paths, deadline, timeout, local_names, wanted):
             guard.judge(first_failure(runs), "the Python test run")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
-    return runs
+    return runs, {tuple(pair) for pair in report.get("stand_ins", [])}
