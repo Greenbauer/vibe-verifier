@@ -91,13 +91,28 @@ def _samples_for(samples, number):
     return [sample for sample in samples if _sample_instance(sample) == number]
 
 
-def _instance_cards(agent, numbers, active, recent_2h, recent_7d, samples, coverage, known):
+def _slot_coverage(source, coverage, history, now):
+    """One slot's coverage. Its history is complete when every scan read and its five newest runs are
+    all newer than the runs the 50-run limit left unread (github_bots); its last two hours, when those
+    unread runs were all updated before them. A role-wide five says nothing about one slot."""
+    floor = parse_time(source.get("history_floor")) if source.get("history_floor") else None
+    if not source.get("history_scanned", coverage.get("history") == "complete"):
+        return {**coverage, "history": "partial", "recent": "partial"}
+    whole = floor is None or (len(history) >= 5 and parse_time(history[4]["completed_at"]) >= floor)
+    recent = floor is None or floor < now - timedelta(hours=2)
+    return {**coverage, "history": "complete" if whole else "partial", "recent": "complete" if recent else "partial"}
+
+
+def _instance_cards(agent, numbers, lists, samples, source, now, known):
+    active, recent_2h, recent_7d = lists
+    coverage = source.get("coverage") or {"history": "unavailable"}
     rows, taken = [], []
     for number in sorted(numbers):
         row_id = "%s-%s" % (agent.id, number)
+        history = _rows_named(recent_7d, number)
         rows.append(_activity(row_id, "QAE %s" % number, agent.role,
                               _rows_named(active, number), _rows_named(recent_2h, number),
-                              _rows_named(recent_7d, number), coverage, known))
+                              history, _slot_coverage(source, coverage, history, now), known))
         taken.extend(_tagged(_samples_for(samples, number), row_id))
     return rows, taken
 
@@ -115,7 +130,7 @@ def _loose_samples(samples):
     return [sample for sample in samples if _sample_instance(sample) is None]
 
 
-def _explorer_rows(agent, github, usage, concurrency):
+def _explorer_rows(agent, github, usage, concurrency, now):
     """One QAE card per reported lane instance. With no instance count, activity with no instance stays on the plain name."""
     source = github.get("bots", {}).get("roles", {}).get(agent.workflow_role, {})
     coverage = source.get("coverage") or {"history": "unavailable"}
@@ -123,7 +138,7 @@ def _explorer_rows(agent, github, usage, concurrency):
     samples = _role_samples(usage, agent.workflow_role)
     numbers = _instance_numbers(active, recent_2h, recent_7d, samples, concurrency)
     known = coverage.get("active") == "complete"
-    rows, taken = _instance_cards(agent, numbers, active, recent_2h, recent_7d, samples, coverage, known)
+    rows, taken = _instance_cards(agent, numbers, (active, recent_2h, recent_7d), samples, source, now, known)
     # A reported instance count is the whole roster. Tokens with no instance stay in the samples
     # (bot left as the workflow role) so All bots can count them without a plain QAE card.
     if concurrency:
@@ -185,7 +200,7 @@ def _configured_row(agent, github, runtime, observed, now):
 
 def _rows_for(agent, github, usage, runtime, observed, concurrency, now):
     if agent.workflow_role == "explorer":
-        return _explorer_rows(agent, github, usage, concurrency)
+        return _explorer_rows(agent, github, usage, concurrency, now)
     row = _configured_row(agent, github, runtime, observed, now)
     sample_key = agent.workflow_role or agent.id
     taken = _tagged(_role_samples(usage, sample_key), agent.id)
