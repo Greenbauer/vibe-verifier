@@ -49,10 +49,11 @@ def _role_result(value: dict, now: datetime) -> dict:
     active = sorted(value["active"], key=lambda row: _time_key(row, "started_at"), reverse=True)
     history = recent_bot_runs(value["completed"], now, 168)
     active_complete, history_complete = value["active_complete"], value["history_complete"]
+    scanned, floor = history_complete, max(value["floors"]) if value["floors"] else None
     # A scan cut short by HISTORY_RUN_LIMIT is complete for this role only when its five newest
     # results, across every repository, are all newer than the runs that scan skipped.
     newest = history[:5]
-    if value["floors"] and (len(newest) < 5 or parse_time(newest[-1]["completed_at"]) < max(value["floors"])):
+    if floor and (len(newest) < 5 or parse_time(newest[-1]["completed_at"]) < floor):
         history_complete = False
     state = "working" if active else "idle" if active_complete else "unknown"
     return {"state": state, "state_source": "github_actions" if state != "unknown" else "unavailable",
@@ -60,6 +61,9 @@ def _role_result(value: dict, now: datetime) -> dict:
             "history_sampled_at": _sampled_at(value["history_at"], history_complete or history),
             "active": active, "recent_2h": recent_bot_runs(value["completed"], now, 2),
             "recent_7d": history,
+            # What a QAE card needs to judge its own slot's coverage (agents.py): whether every scan
+            # read, and the update time of the newest run the 50-run limit left unread.
+            "history_scanned": scanned, "history_floor": iso_time(floor) if floor else None,
             "latest_failure": history[0] if history and history[0]["category"] == "failed" else None,
             "coverage": {"active": "complete" if active_complete else "unavailable",
                          "history": "complete" if history_complete else "partial"}}

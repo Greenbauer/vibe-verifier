@@ -88,7 +88,7 @@
   function recentRunLabel(value, recent) {
     if (recent[0]?.category === "failed") return "Latest run failed";
     if (recent.length) return "Last 2h";
-    return value.coverage?.history === "complete" ? "No runs in 2h" : "History incomplete";
+    return (value.coverage?.recent || value.coverage?.history) === "complete" ? "No runs in 2h" : "History incomplete";
   }
 
   function renderBots() {

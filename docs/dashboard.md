@@ -566,7 +566,8 @@ activity: a job that had a runner and was not skipped proves working while it is
 complete active scan permits idle. A mapped QAE is one card per lane instance, from the job's runner
 name and the host's `qae_concurrency`. When that count is set there is no extra plain QAE. A card is
 its lane slot: besides the explorer's own jobs it shows any other job of the explorer's workflow that
-ran on that slot (a main-branch walk, a proof audit), and it keeps five recent outcomes of its own. A role's
+ran on that slot (a main-branch walk, a proof audit), and it keeps five recent outcomes of its own,
+with coverage judged for that slot alone ([data](dashboard-data.md)). A role's
 runs include its workflow in every repository the dashboard covers, matched by the run path's file
 name, including a required workflow from another repository of the same owner. Jobs on open pull
 requests come from the detail already read. A workflow an organization ruleset requires is not in
