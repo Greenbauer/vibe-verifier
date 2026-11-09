@@ -22,7 +22,7 @@
 // In place, because the state a step shows (a dialog, a filled form, a selected row) is often not at any address
 // a second window could load. The explorer's own width checks resized in place too, in 72% of the 3,665 sampled.
 // A resize can change a page's state (a menu that closes, a component a breakpoint swaps), so a capture is skipped
-// while a popup is open (a menu, listbox or tooltip its trigger opened, which the next action may need), and `disturbed` says when
+// while a popup floats over the page (a menu, listbox or tooltip the next action may need), and `disturbed` says when
 // the page's accessibility tree read differently after the round trip than before it. The capture runs inside
 // the explorer's own tool call, so it never races the explorer's next action.
 //
@@ -34,10 +34,13 @@ const path = require("path");
 const WRAPPED = Symbol.for("vibe-verifier.widths");
 const RECORD = "widths.jsonl";
 const SETTLE = 250;   // ms after two frames: a layout that animates into place (a drawer, a reflowing grid)
-// A popup the explorer's next action may be about to use, which a resize could close: one a trigger says it opened
-// (aria-expanded on a control that declares a popup, or an expanded combobox), and a tooltip. A menu always on the page
-// (a site's navigation marked role=menu) has no trigger that says so, and is not one.
-const TRANSIENT = "[aria-haspopup]:not([aria-haspopup=false])[aria-expanded=true], [role=combobox][aria-expanded=true], [role=tooltip]";
+// A popup the explorer's next action may be about to use, which a resize could close: a menu, listbox or tooltip that
+// shows and floats over the page (it, or a wrapper up to FLOAT_DEPTH levels above, is positioned absolute or fixed, as
+// a dropdown's or tooltip's popper is). A menu in the page's flow (navigation marked role=menu) is not one, and neither
+// is a trigger's aria-expanded: a subscribed app's sidebar toggle says expanded for as long as the sidebar shows, and
+// read as an open popup it stopped every capture on every page (2026-11-09).
+const POPUP = "[role=menu], [role=listbox], [role=tooltip]";
+const FLOAT_DEPTH = 4;
 
 // The widths qae-inputs/widths lists (VV_QAE_WIDTHS names another file); [] without one.
 function widths(file = process.env.VV_QAE_WIDTHS || "qae-inputs/widths") {
@@ -53,10 +56,14 @@ async function settle(page) {
 }
 
 async function popupOpen(page) {
-  return page.evaluate(selector => [...document.querySelectorAll(selector)].some(el => {
-    const box = el.getBoundingClientRect();
-    return box.width > 0 && box.height > 0 && getComputedStyle(el).visibility !== "hidden";
-  }), TRANSIENT);
+  return page.evaluate(([selector, depth]) => [...document.querySelectorAll(selector)].some(el => {
+    const box = el.getBoundingClientRect(), style = getComputedStyle(el);
+    if (box.width === 0 || box.height === 0 || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+    for (let node = el, level = 0; node && node !== document.body && level <= depth; node = node.parentElement, level++) {
+      if (["absolute", "fixed"].includes(getComputedStyle(node).position)) return true;
+    }
+    return false;
+  }), [POPUP, FLOAT_DEPTH]);
 }
 
 const tree = page => page.locator("body").ariaSnapshot({ timeout: 2000 }).catch(() => "");

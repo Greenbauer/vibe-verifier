@@ -18,10 +18,14 @@ from _acceptance import png_size  # noqa: E402  (gates/, which helpers puts on t
 UI_AUDIT = ROOT / "actions" / "qae-browser" / "ui-audit.js"
 # A dialog a button opens, and a menu another opens: the dialog is a state no address loads; the menu is a popup
 # the explorer's next action may use, which a resize could close. Two buttons touch: a layout finding at any width.
-DIALOG = ("<title>site</title><main><nav role=menu><a role=menuitem href=/>Home</a></nav><h1>Quotes</h1>"
+# What stays on the page never stops a capture: a menu in the page's flow, a sidebar toggle that says expanded while
+# the sidebar shows (a subscribed app's), and a tooltip faded out.
+DIALOG = ("<title>site</title><main><nav role=menu><a role=menuitem href=/>Home</a></nav>"
+          "<button aria-haspopup=true aria-expanded=true>Collapse navigation</button>"
+          "<div role=tooltip style='position:absolute;opacity:0'>Collapse</div><h1>Quotes</h1>"
           "<p><button id=open>Open</button><button id=menu aria-haspopup=menu aria-expanded=false>More</button></p>"
           "<dialog id=d><p>Quote Q-1</p><button id=close>Close</button></dialog>"
-          "<div id=m role=menu hidden><div role=menuitem>Copy</div></div></main>"
+          "<div id=m role=menu hidden style='position:absolute'><div role=menuitem>Copy</div></div></main>"
           "<script>const on = (id, act) => document.getElementById(id).addEventListener('click', act);"
           "on('open', () => d.showModal()); on('close', () => d.close());"
           "on('menu', () => { m.hidden = false; menu.setAttribute('aria-expanded', 'true'); });</script>")
