@@ -1,13 +1,14 @@
 // The cramped-field rule of the layout audit (ui-audit-page.js, whose header lists every rule): a field too small for
 // what it asks. A subscribed app's quote table showed, once a row's "No bid" box was ticked, an input for the reason
 // squeezed into a column about 90px wide, so "No stock" already scrolled its start out of view (2026-11-07).
-// ui-audit.js runs this file beside ui-audit-page.js and gutter-page.js as one script, so `visible` comes from the
-// first and `pageColumns` and GUTTER from the second. A field is cramped when:
+// ui-audit.js runs this file beside ui-audit-page.js as one script, so `visible` comes from there. A field is cramped
+// when:
 // - it asks for free text (its accessible name, label, title, placeholder, or else its name or id, names a reason, a
 //   note, a comment...) and shows fewer than ROOM average characters of its own font, or is a textarea under two lines;
 // - or what it holds is wider than it shows, whatever it asks: what was typed is already cut off. The hook measures
-//   again once the explorer stops typing, and when a field appears. A field already as wide as its page column has no
-//   room to show more, so a long value in it is not judged (a 51-character name in a phone's full-width box, 2026-11-09).
+//   again once the explorer stops typing, and when a field appears. A field already as wide as it can be (it fills its
+//   container, and each container up to the main region fills its own) has no room to show more, so a long value in it
+//   is not judged: a 51-character name in a phone's full-width box (2026-11-09).
 // A read-only, disabled or number field's value cut off is clipped-value's.
 
 // Words whose answer is a phrase or a sentence. Beside a word in SHORT_ANSWER they name a short answer instead
@@ -55,26 +56,32 @@ function tooSmall(el, area, measure) {
   return null;
 }
 
-// Whether `el` spans one of the page's columns (gutter-page.js), each edge no further in than a page's gutter.
-function spansColumn(el, columns) {
-  const r = el.getBoundingClientRect();
-  return columns().some(c => {
-    const s = c.getBoundingClientRect();
-    return r.left >= s.left - 1 && r.right <= s.right + 1 && r.left - s.left <= GUTTER.max && s.right - r.right <= GUTTER.max;
-  });
+// Whether `el` is as wide as it can be: it fills its container's content box, and so does each container up to the
+// main region (or the body), whatever their padding. A box in a table cell, a grid column, a sidebar or a centered
+// dialog stops short somewhere on the way up, so there is room to widen it.
+const boxless = e => getComputedStyle(e).display === "contents";   // laid out as its children, with no box of its own
+
+function fillsColumn(el) {
+  for (let n = el; n.parentElement; n = n.parentElement) {
+    if (n.matches("main, [role=main], body")) return true;
+    if (boxless(n)) continue;
+    let p = n.parentElement;
+    while (p.parentElement && boxless(p)) p = p.parentElement;
+    const s = getComputedStyle(p);
+    if (n.getBoundingClientRect().width < p.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight) - 2) return false;
+  }
+  return true;
 }
 
 function crampedRules(add) {
   const measure = document.createElement("canvas").getContext("2d");
   if (!measure) return;
-  let found;
-  const columns = () => found || (found = pageColumns());   // read once, and only when a value is cut off
   for (const el of document.querySelectorAll("input, textarea")) {
     const area = el.tagName === "TEXTAREA";
     if (!(area || TYPED_TYPES.includes(el.type)) || el.readOnly || el.disabled || !visible(el)) continue;
     try {   // one odd element never costs the page's other findings
       const over = el.value ? el.scrollWidth - el.clientWidth : 0;
-      const why = over > 1 && !spansColumn(el, columns) ? `what it holds is ${over}px wider than it shows, so part of it is out of view` : tooSmall(el, area, measure);
+      const why = over > 1 && !fillsColumn(el) ? `what it holds is ${over}px wider than it shows, so part of it is out of view` : tooSmall(el, area, measure);
       if (why) add("cramped-field", el, why, labelOf(el));
     } catch (e) { continue; }
   }

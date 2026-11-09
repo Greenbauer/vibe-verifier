@@ -179,8 +179,8 @@ class Browser(unittest.TestCase):
         # field and a url field whose names hold a free-text word, a disabled reason field, a note capped at what it shows
         # and a one-line textarea sized by script (its height set inline, as autosize scripts do) are clean, and bad.html's
         # read-only note cut off is clipped-value's alone. A long name cut off in a third of a row is flagged; the same name
-        # in a box as wide as its column (good.html) has no room to show more and is not. A finding names the label too, so
-        # the gate can tell a pull request that adds it.
+        # in a box as wide as it can be (good.html: it fills its containers, 91px in from the window, up to the page) has no room
+        # to show more and is not. A finding names the label too, so the gate can tell a pull request that adds it.
         self.assertEqual(measured["bad-cramped-field"],
                          ["A value much longer than this narrow field can show", "Add a note", "Explain the change",
                           "Explain what you looked for", "No-bid reason, line 1", "Profile name", "Reason for the change",
