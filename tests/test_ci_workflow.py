@@ -184,6 +184,7 @@ class NightlyCoverage(unittest.TestCase):
         self.assertIsNone(re.search(r"^  coverage-not-lost:", CI.read_text(), re.MULTILINE))
         per_pull_request = gate_args(ROOT / ".vibe-verifier-tests", "coverage-not-lost")
         self.assertEqual(per_pull_request[per_pull_request.index("--args") + 1], "discover -s tests -p 'test_dashboard_*.py'")
+        self.assertNotIn("--soak", per_pull_request)  # per pull request it blocks; the nightly whole suite reports only
 
     def test_no_step_that_runs_tests_holds_a_credential(self):
         # The operator's rule: nothing this runs may reach a production database, credential, URL or person. The
