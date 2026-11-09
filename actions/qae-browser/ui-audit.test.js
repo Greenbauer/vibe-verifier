@@ -15,17 +15,16 @@ const finding = (rule, at, detail = "d") => ({ rule, at, text: "Open", detail })
 // listeners, `lines` and `copy` read back the two records. Its window holds no control with only an icon.
 function tab(url, answers, width = 1280, copies = []) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vv-ui-audit-"));
-  const listeners = {};
-  let binding;
+  const listeners = {}, bindings = {};
   const page = {
     url: () => url,
     viewportSize: () => ({ width, height: 800 }),
     mainFrame: () => "main",
     on: (event, listener) => { listeners[event] = listener; },
-    exposeBinding: async (name, fn) => { binding = fn; },
+    exposeBinding: async (name, fn) => { bindings[name] = fn; },
     addInitScript: async () => {},
     evaluate: async script => {
-      if (script === hook.iconScript) return [];
+      if (script === hook.iconScript || script === require("./modal-dismiss.js").openScript) return [];
       const answer = (script === hook.copyScript ? copies : answers).shift() || [];
       if (answer instanceof Error) throw answer;
       return answer;
@@ -38,8 +37,8 @@ function tab(url, answers, width = 1280, copies = []) {
       process.argv = ["node", "cli.js", "--output-dir", dir];
       try { await hook.default({ page }); } finally { process.argv = argv; }
     },
-    spinner: () => binding({}, 0),
-    message: () => binding({}, 500),
+    spinner: () => bindings.__vibeVerifierMeasure({}, 0),
+    message: () => bindings.__vibeVerifierMeasure({}, 500),
     fire: event => listeners[event](event === "framenavigated" ? "main" : undefined),
     exists: () => fs.existsSync(path.join(dir, "ui-audit.jsonl")),
     lines: () => read(path.join(dir, "ui-audit.jsonl")),
@@ -215,7 +214,8 @@ test("the audit is self-contained: run as the page script on an empty page, it n
 
 test("the rule files run as one script, so no two declare the same top-level name", () => {
   // A second `function lines` in gutter-page.js would have replaced wrap-page.js's, silently breaking wrapped-label.
-  const files = ["ui-audit-page.js", "row-page.js", "glyph-page.js", "name-page.js", "wrap-page.js", "scroll-page.js", "gutter-page.js", "field-page.js", "icon-page.js"];
+  // modal-page.js runs beside ui-audit-page.js and name-page.js (modal-dismiss.js), and is held to every file's names.
+  const files = ["ui-audit-page.js", "row-page.js", "glyph-page.js", "name-page.js", "wrap-page.js", "scroll-page.js", "gutter-page.js", "field-page.js", "icon-page.js", "modal-page.js"];
   const seen = new Map();
   for (const file of files) {
     for (const [, name] of fs.readFileSync(path.join(__dirname, file), "utf8").matchAll(/^(?:function|const|let)\s+([A-Za-z_$][\w$]*)/gm)) {
@@ -223,7 +223,7 @@ test("the rule files run as one script, so no two declare the same top-level nam
       seen.set(name, file);
     }
   }
-  assert.ok(files.every(file => hook.script.includes(fs.readFileSync(path.join(__dirname, file), "utf8"))));
+  assert.ok(files.slice(0, -1).every(file => hook.script.includes(fs.readFileSync(path.join(__dirname, file), "utf8"))));
 });
 
 test("the shell form refuses no URL or a width that is not a number", () => {

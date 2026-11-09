@@ -171,13 +171,15 @@ jobs:
       - name: Measure layout and copy defects, with the Playwright it installed
         # The layout audit needs rendered rectangles: every rule must find its defect in
         # tests/fixtures/ui-audit/bad.html and nothing in good.html, and the hook must write its record from a
-        # real page. Skips without QAE_MCP, so the file is checked first: a skip here must not read as a pass.
+        # real page. Its modal-dismiss rule replays each case of tests/fixtures/ui-audit/modal.html in windows of the
+        # hook's own (test_qae_ui_audit_modal.py). Skips without QAE_MCP, so the file is checked first: a skip here must
+        # not read as a pass.
         env:
           QAE_MCP: ${{ steps.browser.outputs.mcp }}
           QAE_UI_AUDIT: ${{ steps.browser.outputs.ui-audit }}
         run: |
           test -f "$QAE_MCP" && test -f "$QAE_UI_AUDIT"
-          python3 -m unittest discover -s tests -p 'test_qae_ui_audit.py' -v
+          python3 -m unittest discover -s tests -p 'test_qae_ui_audit*.py' -v
       - name: Capture each screenshot at the run's other widths, with the playwright-mcp it installed
         # The widths hook (actions/qae-browser/widths.js, installed by the ui-audit hook) wraps that build's Page
         # class: a dialog must stay open through a capture, the explorer's window must come back at its own width, an
