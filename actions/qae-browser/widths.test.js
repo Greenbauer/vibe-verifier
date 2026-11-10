@@ -111,3 +111,41 @@ test("a screenshot that comes back after the budget leaves no capture and no fur
   assert.ok(!fs.existsSync(path.join(dir, "widths")), "no capture file");
   assert.deepStrictEqual(record(dir).map(line => line.skipped), ["the capture took longer than 100 ms a width"]);
 });
+
+// A tab whose class carries Page.screenshot, as Playwright's does, so install() wraps it; it writes `path` as Playwright
+// does and reports the width it was taken at.
+function tab() {
+  class Tab {
+    async screenshot(options = {}) {
+      const data = Buffer.from(`shot at ${this.viewportSize().width}`);
+      if (options.path) fs.writeFileSync(options.path, data);
+      return data;
+    }
+  }
+  return Object.assign(new Tab(), page());
+}
+
+test("a step screenshot the explorer's own code saves to a file is captured; another file or a clip is not", async () => {
+  // An explorer walking in browser_run_code_unsafe saves each step with page.screenshot({path}); the hook skipped
+  // every screenshot with a path, so its criteria had no capture at the other width and the gate refused them.
+  const dir = temp(), list = path.join(dir, "list");
+  fs.writeFileSync(list, "1280\n375\n");
+  process.env.VV_QAE_WIDTHS = list;
+  try {
+    const one = tab();
+    widths.install(one, dir);
+    fs.mkdirSync(path.join(dir, "qae", "features"), { recursive: true });
+    await one.screenshot({ path: path.join(dir, "qae", "AC1-step-1.png"), fullPage: true });
+    await one.screenshot({ path: path.join(dir, "qae", "features", "pick-step-2.png") });
+    await one.screenshot({ path: path.join(dir, "export-row.png") });
+    await one.screenshot({ clip: { x: 0, y: 0, width: 10, height: 10 } });
+    await one.screenshot();
+    const lines = fs.readFileSync(path.join(dir, widths.RECORD), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+    // The two step files and the plain viewport screenshot, each once at 375; neither the other file nor the clip.
+    assert.deepStrictEqual(lines.map(line => [line.shot, line.width]), Array(3).fill([sha256("shot at 1280"), 375]));
+    assert.strictEqual(fs.readFileSync(path.join(dir, "qae", "AC1-step-1.png"), "utf8"), "shot at 1280", "the explorer's file is its own");
+    assert.deepStrictEqual(one.sizes, [375, 1280, 375, 1280, 375, 1280]);
+  } finally {
+    delete process.env.VV_QAE_WIDTHS;
+  }
+});
