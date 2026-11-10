@@ -442,7 +442,9 @@ qae-artifacts line of `.vibe-verifier-qae`.
   seen at every width, not only a criterion's end state, and its layout is measured at each one. After each
   resize it waits for two of the page's frames, at most a second: a page that stubs `requestAnimationFrame`
   draws none, and an unbounded wait held a consumer's explorers in their first screenshot until the job
-  timed out (2026-11-10).
+  timed out (2026-11-10). The whole capture also has a budget, 8 seconds a width: past it the window is put
+  back, the abandoned capture resizes nothing more, and `widths.jsonl` records the step as skipped, as it does
+  one a popup covers. The hook never holds the explorer.
 - A capture is skipped while a popup floats over the page: a visible, opaque menu, listbox or tooltip at least 8
   pixels a side that is, or sits within four levels of, an element positioned absolute or fixed (a dropdown's or
   tooltip's popper), outside any header or navigation landmark. The explorer's next action may need it, and a resize

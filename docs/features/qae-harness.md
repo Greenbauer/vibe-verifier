@@ -75,6 +75,7 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_qae_widths_live.py::test_a_dialog_is_captured_at_the_other_width_and_the_explorer_walks_on_at_its_own`
 - `tests/test_qae_widths_live.py::test_an_open_menu_is_not_resized_under_the_explorer`
 - `tests/test_qae_widths_live.py::test_a_page_that_draws_no_frame_is_captured_and_the_screenshot_returns`
+- `tests/test_qae_widths.py::test_a_page_that_draws_no_frame_does_not_hold_the_explorers_screenshot`
 - `tests/test_qae_widths.py::test_the_harness_captures_of_a_step_count_for_its_criterion`
 - `tests/test_qae_widths.py::test_a_capture_is_counted_only_as_wide_as_it_is_and_only_inside_the_evidence`
 - `tests/test_qae_widths.py::test_the_prompt_asks_for_no_routine_record`

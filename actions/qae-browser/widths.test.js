@@ -78,3 +78,15 @@ test("a page that draws no frame is still captured, after a bounded wait, and pu
   assert.deepStrictEqual(tab.sizes, [375, 1280]);
   assert.deepStrictEqual(record(dir).map(line => line.width), [375]);
 });
+
+test("a capture that outlasts its budget is given up: the window is put back, the step recorded as skipped", async () => {
+  const dir = temp(), tab = page();
+  const stalled = () => new Promise(() => {});   // a screenshot that never comes back
+  const started = Date.now();
+  await widths.capture(tab, stalled, {}, Buffer.from("x"), { dir, wanted: [1280, 375, 768], budget: 200 });
+  assert.ok(Date.now() - started < 2000, "given up after its budget");
+  assert.deepStrictEqual(tab.sizes, [375, 1280]);   // the first width, then put back; never the second
+  assert.deepStrictEqual(record(dir).map(line => line.skipped), ["the capture took longer than 200 ms a width"]);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.deepStrictEqual(tab.sizes, [375, 1280], "the abandoned capture resizes nothing more");
+});

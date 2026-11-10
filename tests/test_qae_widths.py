@@ -248,6 +248,26 @@ class Captures(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertRegex(result.stdout, r"(?m)^# pass [1-9]")
 
+    def test_a_page_that_draws_no_frame_does_not_hold_the_explorers_screenshot(self):
+        # Both of a consumer's explorers stubbed requestAnimationFrame (2026-11-10), and the capture waited for two
+        # frames with no bound: the screenshot call never returned. Here the page's frame wait never settles and
+        # nothing else keeps Node alive, so a capture that waits for it ends the process before "done".
+        script = """
+const fs = require("fs"), os = require("os"), path = require("path");
+const widths = require(process.argv[1]);
+let size = { width: 1280, height: 800 };
+const tab = { viewportSize: () => size, setViewportSize: async given => { size = given; },
+  evaluate: (fn, arg) => (arg !== undefined ? Promise.resolve(false) : new Promise(() => {})),
+  waitForTimeout: async () => {}, locator: () => ({ ariaSnapshot: async () => "tree" }) };
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vv-frozen-"));
+widths.capture(tab, async () => Buffer.from("png"), {}, Buffer.from("x"), { dir, wanted: [1280, 375] })
+  .then(() => console.log("done", size.width, fs.readFileSync(path.join(dir, widths.RECORD), "utf8").trim()));
+"""
+        result = subprocess.run(["node", "-e", script, str(ROOT / "actions" / "qae-browser" / "widths.js")],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r'^done 1280 \{"shot":"[0-9a-f]{64}","width":375,"file":"widths/[0-9a-f]{16}-375.png"')
+
     def test_the_declared_widths_are_whole_pixels_once_each(self):
         self.assertEqual(width_list("1280,375,1280"), [1280, 375])
         for value in ("1280,mobile", "0", ""):
