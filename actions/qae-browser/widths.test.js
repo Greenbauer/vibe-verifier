@@ -25,6 +25,8 @@ function page({ popup = false, typed = false, trees = ["tree", "tree"], frames =
     evaluate: (fn, arg) => (String(fn).includes("__vibeVerifierTyped") ? Promise.resolve(typed)
       : arg !== undefined ? Promise.resolve(popup) : frames ? Promise.resolve() : new Promise(() => {})),
     waitForTimeout: async () => {},
+    // install() adds the typing tracker to every document, as Playwright's Page allows.
+    addInitScript: async () => {},
     locator: () => ({ ariaSnapshot: async () => trees.shift() }),
     take: async function () { return Buffer.from(`shot at ${size.width}`); },
   };

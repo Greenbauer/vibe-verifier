@@ -236,8 +236,9 @@ function install(page, dir, measure) {
   wrap(page);
   pages.set(page, { dir, wanted, measure });
   // Typing is tracked from the page's first document on, and on the one already open.
-  page.addInitScript(TRACK_TYPING).catch(() => {});
-  page.evaluate(TRACK_TYPING).catch(() => {});
+  // A stand-in page without these (a test's, a scripted explorer's) is captured as before, untracked.
+  if (typeof page.addInitScript === "function") page.addInitScript(TRACK_TYPING).catch(() => {});
+  if (typeof page.evaluate === "function") Promise.resolve(page.evaluate(TRACK_TYPING)).catch(() => {});
   fs.appendFileSync(path.join(dir, RECORD), "");
 }
 
