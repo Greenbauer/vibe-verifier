@@ -833,7 +833,10 @@ catalog's `feature-map` line reads a descriptor's `"gate"` as a gate surface, th
   [`gates/_parsers.py`](../gates/_parsers.py), one function in its `PARSERS`: `{"parser": "zizmor"}` reads zizmor's
   JSON report, each item zizmor did not mark ignored, at its primary location, with its severity and confidence;
   `{"parser": "bandit"}` reads Bandit's, each result at its line with its check, severity and confidence, and a file
-  Bandit could not read is exit 2. The `json` parser's optional `rule` names the key holding each finding's rule.
+  Bandit could not read is exit 2; `{"parser": "eslint"}` reads ESLint's `--format json` report, each message at its
+  line under its rule, an error blocking and a warning advisory (as ESLint itself fails only on errors), and a message
+  with no rule (a file ESLint could not parse) blocking under the rule `parse`. The `json` parser's optional `rule`
+  names the key holding each finding's rule.
 - **The count ratchet.** `"ratchet": "count"` ([`gates/_ratchet.py`](../gates/_ratchet.py)) runs the tool a second
   time, on the judged files as the merge base has them (a file the pull request moved at its old path, one it added not
   at all). A file blocks on a rule only when it has more findings of that rule than at the merge base, and then every
