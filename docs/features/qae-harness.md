@@ -68,6 +68,15 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_qae_codex_settings.py::test_disabled_tools_are_kept_from_the_browser_server_and_only_tool_names_pass`
 - `tests/test_qae_codex.py::test_the_locked_cli_supports_current_explicit_models_on_every_platform`
 - `tests/test_qae_artifacts.py::test_a_step_without_a_screenshot_fails`
+- `tests/test_qae_network_record.py::test_the_harness_network_record_alone_is_a_record_and_is_judged`
+- `tests/test_qae_network_record.py::test_the_network_record_holds_every_pages_requests_without_a_call`
+- `actions/qae-browser/network-record.test.js::a request cancelled because the tab loaded another document is left out, one cancelled on its own page is not`
+- `tests/test_qae_probe_steps.py::test_two_explorers_records_number_their_own_requests`
+- `tests/test_qae_widths_live.py::test_a_dialog_is_captured_at_the_other_width_and_the_explorer_walks_on_at_its_own`
+- `tests/test_qae_widths_live.py::test_an_open_menu_is_not_resized_under_the_explorer`
+- `tests/test_qae_widths.py::test_the_harness_captures_of_a_step_count_for_its_criterion`
+- `tests/test_qae_widths.py::test_a_capture_is_counted_only_as_wide_as_it_is_and_only_inside_the_evidence`
+- `tests/test_qae_widths.py::test_the_prompt_asks_for_no_routine_record`
 - `tests/test_qae_planted_evidence.py::test_a_committed_evidence_file_is_never_evidence`
 - `tests/test_qae_planted_evidence.py::test_a_link_is_never_evidence`
 - `tests/test_qae_artifacts.py::test_an_error_a_third_party_page_logged_is_not_judged`
@@ -171,6 +180,7 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 
 ## Gotchas
 
+- The harness, not the explorer, saves the network record (`network-pages.log`, from `console-pages.js`) and captures the run's other widths (`widths.js`, installed by `ui-audit.js`), so a consumer gets both from the hooks its browser already loads, on a pin bump. Its prompt copy still asks the explorer to do both until the copy is refreshed from the template; the gates accept either, and the turn cap and shard sizing still count widths for that reason ([harnesses/qae/README.md](../../harnesses/qae/README.md#the-turn-cap)). A capture resizes the explorer's own page inside its screenshot call, so a page that resets on resize (a component a breakpoint swaps) shows `disturbed: true` in `widths.jsonl`; a page with a popup floating over it (a menu, a listbox or a tooltip, outside a header or navigation) is never resized. One explorer of a split run leaves its `widths.jsonl` and captures under `shard-<n>/`, where `qae-artifacts` reads them.
 - The QA review lists every finding a gate of the verify job's gates step reported under `--soak` ("Not yet blocking"), read from the file `actions/gates` names in the job's `RUNNER_TEMP` ([docs/GATE-CONTRACT.md](../GATE-CONTRACT.md)). A soak gate run in another job (a repository's own `.vibe-verifier` gates job, which posts no comment) is not listed: `RUNNER_TEMP` is per job. A gate with no base comparison (`ui-audit`) lists everything it found on the walked pages; the section says so.
 - Jobs share no workspace: a `qae-inputs/` file one job writes does not exist in another. Every such file a template step hands an action, by its `with:` or the action's default, and every one the manifest template's gate lines name, is written earlier in the same job, except the design references directory a site step may leave unwritten (`tests/test_qae_job_contract.py`). A gate line added to the manifest template must pass a run that walked nothing, on the files the verify job writes for a `- None:` pull request (`tests/test_qae_nothing_walked.py`).
 - A carried walk is found by its artifact, so a consumer whose explore job uploads no `qae-artifacts-*` artifact, or keeps artifacts for less time than its pull requests stay open, never carries. The criteria job also needs `actions: read`; without it the facts read fails, a warning says so, and the run walks as before. The verify job reads no facts of its own: it decides on the criteria job's `carry` output.

@@ -432,11 +432,33 @@ qae-artifacts line of `.vibe-verifier-qae`.
 
 - The explore job's `Prepare the explorer's references and widths` step
   ([`actions/qae-inputs`](../../actions/qae-inputs/action.yml)) reads that line as the base has it and
-  writes the widths, one per line, to `qae-inputs/widths`. The explorer checks every criterion's end
-  state at each width, with the browser resized to it, as a step with its own screenshot.
-- `qae-artifacts` refuses a criterion whose step screenshots (`qae/ACn-step-k.png`) include none of a
-  declared width, read from each PNG's header (a browser screenshot is as wide as its viewport), and a
-  step screenshot that is not a PNG. Feature re-walk logs are not held to it.
+  writes the widths, one per line, to `qae-inputs/widths`.
+- The explorer walks at the browser's own width and does not resize for them. Each time it saves a
+  screenshot of the viewport, the browser's page hook
+  ([`actions/qae-browser/widths.js`](../../actions/qae-browser/widths.js), installed by the ui-audit hook)
+  resizes the same page in place to each other width, inside the same tool call, saves a capture to
+  `widths/<digest>-<width>.png`, runs the [layout audit](../../docs/features/ui-audit.md) there, and puts the
+  window back. `widths.jsonl` names each capture by the digest of the explorer's screenshot. So every step is
+  seen at every width, not only a criterion's end state, and its layout is measured at each one.
+- A capture is skipped while a popup floats over the page: a visible, opaque menu, listbox or tooltip at least 8
+  pixels a side that is, or sits within four levels of, an element positioned absolute or fixed (a dropdown's or
+  tooltip's popper), outside any header or navigation landmark. The explorer's next action may need it, and a resize
+  can close it. A trigger's `aria-expanded` is not read: a consumer's sidebar toggle says expanded for as long as the
+  sidebar shows, and read as an open popup it stopped every capture (2026-11-09). A menu in a header or navigation,
+  fixed or not, and a tooltip kept for screen readers do not stop captures either. `disturbed: true` in `widths.jsonl` says the page's accessibility tree
+  read differently after the round trip than before it.
+- A width a criterion names itself ("at 375 by 812, ...") is still the explorer's to walk: the captures stand in
+  for the generic check of every criterion at every width, not for what a criterion asks.
+- Why the harness and not the explorer: across 660 walked runs of the subscribed repositories (2026-11-09),
+  checking widths was 27% of the explorer's tool calls, and none of 185 distinct FAIL verdicts came from that
+  check: the two about a width were at a width the criterion named (375 in one, the default 1280 in the other).
+  The captures add the layout audit at every width on every step, which the explorer's end-state screenshots
+  never had. The explorer's own width steps resized in place in 72% of 3,665 sampled, as the hook does.
+- `qae-artifacts` refuses a criterion whose step screenshots (`qae/ACn-step-k.png`), with the harness's captures
+  of them, include none of a declared width, read from each PNG's header (a browser screenshot is as wide as
+  its viewport), and a step screenshot that is not a PNG. A capture counts only when its file is in the
+  evidence and as wide as `widths.jsonl` says. A consumer copy whose prompt still asks the explorer to resize
+  passes the same way. Feature re-walk logs are not held to it.
 - The widths live in the manifest and nowhere else, so the explorer and the gate cannot disagree. The
   line is judged from the base: a pull request that adds or drops `--widths` changes the next one. The
   same step writes the line's `--allow-console` and `--allow-request` patterns for the explorer the
@@ -480,7 +502,12 @@ its `max-turns` output, which the explorer step passes as `--max-turns`:
   `qae-inputs/features/`: one walk a feature at the default `--max-states 3`, and one more for each
   three states above that. No run has measured the turns a state takes, so that proportion is a guess.
   Themes are not counted: whether a site has two is prose in `qae-inputs/site.md`, not a fact the step
-  can read.
+  can read. Widths are still counted, though the template's explorer no longer resizes for them (the
+  harness [captures them](#viewports-themes-and-what-a-criterion-does-not-say)): a consumer copy whose prompt
+  still asks the explorer to walk them runs the same pinned action, and a smaller cap would stop it short. The
+  cap is a ceiling, so the turns no longer used cost nothing. [Splitting](#splitting-a-large-pull-request-across-explorers)
+  counts walks the same way, so a pull request at two widths may still start more explorers than its walks now
+  need, each with its own runner and sign-in. Both can count one width once every consumer runs the new prompt.
 - The cap is 40 plus 30 a walk, never below 80 and never above 240. Measured on that consumer, the runs
   took 18 to 39 turns for two or three criteria at one width, 44 for one criterion at two widths with a
   form, and 54 to 60 for two criteria at two widths: the cap is at least twice each, and twice the 80
@@ -1329,8 +1356,9 @@ and refuses on structural facts:
    origins, which is judged (and skipped) like that host's request in 4, and an error only pages
    outside the site logged ([below](#an-error-a-page-outside-the-site-logged));
 3. the session log exists (`--save-session`) and shows a `browser_navigate`;
-4. a `browser_network_requests` result exists (the prompt asks for one after each criterion; a call
-   that saved its result to a file is read from that file, which must be in the evidence), and
+4. a network record exists: the harness's `network-*.log` ([below](#the-harnesss-network-record)), or, from a
+   consumer copy whose browser lacks the hook, a `browser_network_requests` result (a call that saved its result
+   to a file is read from that file, which must be in the evidence); and
    no request to the site under test (`--site-file`, the URL the explore job declared and any further
    origin after it, or a fixed `--site`) answered 400 or worse or failed, outside `--allow-request` patterns. A request the page cancelled
    itself, `net::ERR_ABORTED`, is not judged when the run also holds that request (same method and
@@ -1514,6 +1542,29 @@ which that request is answered once.
 
 A manifest copied before the site URL was declared reads `--site http://localhost:3000`, and keeps
 working: `--site` judges a fixed URL, `--site-file` the declared one, and a line takes one or the other.
+
+### The harness's network record
+
+The page hook ([`actions/qae-browser/console-pages.js`](../../actions/qae-browser/console-pages.js)) writes
+`network-pages.log`: one line per http(s) request any tab got an answer to or saw fail, static ones included, in
+the form `browser_network_requests` writes (`12. [GET] <URL> => [500] Internal Server Error`), numbered for the
+run. The explorer is no longer asked for the record. Two reasons, measured across 660 walked runs of the
+subscribed repositories (2026-11-09): saving records was 18% of the explorer's tool calls, and the tool lists
+only what the tab requested since its page last loaded, so the record covered the page the explorer was on when
+it asked, which it did on 32% of 7,485 page visits. This record holds every page's.
+
+One kind of request is left out: one the browser cancelled (`net::ERR_ABORTED`) because its tab loaded another
+document after the request was made (a framework's prefetches, an image still loading when the explorer clicked
+through). The explorer's record never listed those, since it starts over with each document, and a cancellation
+never answered is a finding ([below](#a-request-the-page-cancelled)), so writing them would fail runs the
+explorer's record passed. A cancellation on the page that made the request is written. The console is unchanged:
+playwright-mcp writes every page's `console-*.log` itself, and the explorer reads the console only to look into
+something a step showed. A step it retries still saves that step's records by filename
+([below](#a-step-retried-after-an-environment-error)).
+
+The invalid-input probe counts a refused write's requests in this record alone when there is one, under each
+file's own numbers ([below](#an-invalid-input-refused-with-a-handled-error)): the explorer's records list the same
+requests again, numbered page by page.
 
 ### A step retried after an environment error
 

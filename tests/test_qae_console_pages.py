@@ -34,9 +34,10 @@ DROPS_LOGO = ("<title>site</title><h1>Developers</h1><script>const logo = new Im
 
 class Hook(unittest.TestCase):
     def test_the_hooks_node_tests_pass(self):
-        result = subprocess.run(["node", "--test", "--test-reporter=tap", str(HOOK.with_suffix(".test.js"))], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertRegex(result.stdout, r"(?m)^# pass [1-9]")
+        for tests in (HOOK.with_suffix(".test.js"), HOOK.parent / "network-record.test.js"):
+            result = subprocess.run(["node", "--test", "--test-reporter=tap", str(tests)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertRegex(result.stdout, r"(?m)^# pass [1-9]")
 
     def test_the_claude_lane_template_loads_the_hook_the_browser_action_hands_out(self):
         # The Codex lane's action passes it itself (tests/test_qae_codex.py). A copy of this template
@@ -226,6 +227,10 @@ class Live(unittest.TestCase):
         self.assertNotIn(logo, Path(self.root, "qae", "AC1-network-dashboard.txt").read_text())
         result = self.run_gate()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # The harness's network record holds the logo's answer too (tests/test_qae_network_record.py): without it,
+        # the page record's answers alone excuse the cancellation.
+        os.remove(os.path.join(self.root, "network-pages.log"))
+        self.assertEqual(self.run_gate().returncode, 0)
         record = Path(self.root, "console-pages.jsonl")
         record.write_text("".join(line + "\n" for line in record.read_text().splitlines() if '"answered"' not in line))
         result = self.run_gate()

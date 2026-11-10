@@ -27,6 +27,27 @@
 // Digests and a URL with no query, never the text: this file must not become a second place a
 // credential can land.
 //
+// It also writes the run's network record, network-pages.log, one line per request any tab got an answer
+// to or saw fail, in the form playwright-mcp's browser_network_requests writes, so the gates read it with
+// the same pattern:
+//
+//     12. [GET] https://site.example/api/items?page=2 => [500] Internal Server Error
+//     13. [GET] https://site.example/logo.svg => [FAILED] net::ERR_ABORTED
+//
+// That tool lists only what the tab requested since its page last loaded, and only when the explorer
+// asks: in a sample of 7,485 page visits across subscribed repositories (2026-11-09), a record was taken
+// on 32% of them. This record holds every page's, static requests included, without a call. The numbers
+// count the run's requests, one process serving every tab, so no two lines of the file share one. The
+// URL is written whole, query included, as the explorer's record writes it: a declared refusal names its
+// query, and the gate matches it exactly. Only http(s) requests are written.
+//
+// One kind of line is left out: a request the browser cancelled (`net::ERR_ABORTED`) because its tab
+// loaded another document after the request was made. Leaving a page cancels what it still had in flight
+// (a framework's prefetches, an image below the fold), and the explorer's record never listed those,
+// since it starts over with each document. The gate judges a cancellation never answered as a finding,
+// so writing them would fail runs the explorer's record passed. A cancellation on the page that made the
+// request, which that record did list, is written.
+//
 // When the pull request's criteria are split across explorers, which share the site and its data,
 // it also keeps this explorer off the others' records. actions/qae-inputs writes the explorer's
 // tag and the records it must not delete to qae-inputs/isolation.json in the workspace, the
@@ -90,6 +111,22 @@ function answer(request) {
   if (!/^https?:/.test(request.url()) || answered.has(named)) return undefined;
   answered.add(named);
   return { answered: crypto.createHash("sha256").update(named).digest("hex") };
+}
+
+const NETWORK = "network-pages.log";
+let requestCount = 0;
+const listed = new WeakSet();
+
+// The line browser_network_requests would write for `request` (renderRequestLine in its bundle, @playwright/mcp
+// 0.0.81), numbered for the run; undefined for one already written, one that is not http(s), and one that has
+// neither an answer nor a failure yet.
+function networkLine(request) {
+  if (listed.has(request) || !/^https?:/.test(request.url())) return undefined;
+  const got = request.existingResponse(), failure = got ? null : request.failure();
+  if (!got && !failure) return undefined;
+  listed.add(request);
+  const outcome = got ? `[${got.status()}] ${got.statusText()}` : `[FAILED] ${failure.errorText || "Unknown error"}`;
+  return `${++requestCount}. [${request.method().toUpperCase()}] ${request.url()} => ${outcome}`;
 }
 
 // A record id as a path segment names it: a UUID, a MongoDB ObjectId (24 hex digits) or a ULID.
@@ -215,15 +252,38 @@ exports.default = async ({ page }) => {
   const record = logged => write(entry(page.url(), logged));
   const message = logged => { if (logged.type() === "error") record(consoleLine(logged)); };
   const exception = error => record(exceptionLine(error));
-  const response = got => { if (got.status() < 400) write(answer(got.request())); };
+  const network = path.join(dir, NETWORK);
+  fs.appendFileSync(network, "");   // made at once: a run that loaded nothing still has a record to read
+  // Which document of this tab each request was made on: a main-frame navigation request starts the next one.
+  let documents = 0;
+  const madeOn = new WeakMap();
+  const list = request => {
+    const failure = request.existingResponse() ? null : request.failure();
+    if (failure && failure.errorText === "net::ERR_ABORTED" && (madeOn.get(request) ?? 0) < documents) return;
+    const line = networkLine(request);
+    if (line) fs.appendFileSync(network, line + "\n");
+  };
+  page.on("request", made => {
+    if (made.isNavigationRequest() && made.frame() === page.mainFrame()) documents++;
+    madeOn.set(made, documents);
+  });
+  const response = got => {
+    if (got.status() < 400) write(answer(got.request()));
+    list(got.request());
+  };
   page.on("console", message);
   page.on("pageerror", exception);
   page.on("response", response);
+  page.on("requestfailed", list);
   // What the tab logged and loaded before this ran: a tab a link opened is already loading when it gets here.
   for (const logged of await page.consoleMessages()) message(logged);
   for (const error of await page.pageErrors()) exception(error);
-  for (const request of await page.requests()) if (request.existingResponse()) response(request.existingResponse());
+  for (const request of await page.requests()) {
+    if (request.existingResponse()) response(request.existingResponse());
+    else list(request);
+  }
 };
+exports.networkLine = networkLine;
 exports.outputDir = outputDir;
 exports.recordIds = recordIds;
 exports.strip = strip;

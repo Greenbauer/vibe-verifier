@@ -2,6 +2,9 @@
 screenshots to include one of each declared width, read from the PNG header, and actions/qae-inputs
 writes the same widths, from the manifest's qae-artifacts line as the base has it, to qae-inputs/widths
 for the explorer. Driven through the gate's command line, the action script and the shipped template."""
+import argparse
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -12,6 +15,8 @@ from pathlib import Path
 from helpers import ROOT, clean_env, commit, gate, git, make_repo, png, write
 from test_qae_annotations import action_script
 from test_qae_artifacts import CLEAN_REQUESTS, session_with
+
+from _widths import width_list  # noqa: E402  (gates/, which helpers puts on the path)
 
 MANIFEST = ROOT / "harnesses" / "qae" / "manifest"
 QAE = ("acceptance-verdict --criteria qae-inputs/pr-body.md --verdict qae-inputs/verdict.md --artifacts qae-artifacts\n"
@@ -56,6 +61,58 @@ class Gate(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("qae/AC1.md: step 2's screenshot is not a PNG", result.stdout)
         self.assertIn("qae/AC1.md: no step screenshot 375 pixels wide (its widths: 1280)", result.stdout)
+
+    def harness_captured(self, shot, width, file=None, png_width=None):
+        """The browser's widths hook (actions/qae-browser/widths.js) captured `shot` at `width`."""
+        file = file or "widths/%s-%d.png" % (shot, width)
+        digest = hashlib.sha256(Path(self.root, "qae", shot + ".png").read_bytes()).hexdigest()
+        target = Path(self.root, file)
+        if target.resolve().is_relative_to(Path(self.root).resolve()):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(png(png_width or width))
+        with open(Path(self.root, "widths.jsonl"), "a") as record:
+            record.write(json.dumps({"shot": digest, "width": width, "file": file, "disturbed": False}) + "\n")
+
+    def test_the_harness_captures_of_a_step_count_for_its_criterion(self):
+        # The explorer walks at 1280 alone; the hook captured step 1 of each criterion at 375.
+        for name in ("AC1-step-2", "AC2-step-2"):
+            Path(self.root, "qae", name + ".png").write_bytes(png(1280, 2))
+        self.harness_captured("AC1-step-1", 375)
+        self.harness_captured("AC2-step-2", 375)
+        result = self.run_gate("--widths", "1280,375")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_capture_is_counted_only_as_wide_as_it_is_and_only_inside_the_evidence(self):
+        Path(self.root, "qae", "AC2-step-2.png").write_bytes(png(1280, 2))
+        self.harness_captured("AC2-step-1", 375, png_width=1280)
+        self.harness_captured("AC2-step-2", 375, file="../elsewhere-375.png")
+        Path(self.root).parent.joinpath("elsewhere-375.png").write_bytes(png(375))
+        self.addCleanup(Path(self.root).parent.joinpath("elsewhere-375.png").unlink)
+        result = self.run_gate("--widths", "1280,375")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("qae/AC2.md: no step screenshot 375 pixels wide (its widths: 1280)", result.stdout)
+
+    def test_a_split_runs_captures_count_from_each_explorers_folder(self):
+        # One explorer of several: the workflow moves its record and captures under shard-<n>/ and keeps the
+        # criterion's own step screenshots at the root.
+        for name in ("AC1-step-2", "AC2-step-2"):
+            Path(self.root, "qae", name + ".png").write_bytes(png(1280, 2))
+        self.harness_captured("AC1-step-1", 375)
+        self.harness_captured("AC2-step-2", 375)
+        shard = Path(self.root, "shard-2")
+        shard.mkdir()
+        Path(self.root, "widths.jsonl").rename(shard / "widths.jsonl")
+        Path(self.root, "widths").rename(shard / "widths")
+        result = self.run_gate("--widths", "1280,375")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_capture_of_another_screenshot_does_not_count(self):
+        Path(self.root, "qae", "AC2-step-2.png").write_bytes(png(1280, 2))
+        Path(self.root, "qae", "other.png").write_bytes(png(1280, 3))
+        self.harness_captured("other", 375)
+        result = self.run_gate("--widths", "1280,375")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("qae/AC2.md: no step screenshot 375 pixels wide", result.stdout)
 
     def test_feature_re_walk_logs_are_not_held_to_widths(self):
         write(self.root, {"qae/features/nav.md": "- step 1: opened / -> the nav\n"})
@@ -163,11 +220,36 @@ class QaeInputs(unittest.TestCase):
         self.assertEqual(output, "")
 
 
+class Captures(unittest.TestCase):
+    """The browser's width captures (actions/qae-browser/widths.js) and the gate module that counts them (gates/_widths.py)."""
+
+    def test_the_hooks_node_tests_pass(self):
+        result = subprocess.run(["node", "--test", "--test-reporter=tap", str(ROOT / "actions" / "qae-browser" / "widths.test.js")],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"(?m)^# pass [1-9]")
+
+    def test_the_declared_widths_are_whole_pixels_once_each(self):
+        self.assertEqual(width_list("1280,375,1280"), [1280, 375])
+        for value in ("1280,mobile", "0", ""):
+            with self.assertRaises(argparse.ArgumentTypeError):
+                width_list(value)
+
+
 class Template(unittest.TestCase):
+    def test_the_prompt_asks_for_no_routine_record(self):
+        # The harness saves the network and console records (actions/qae-browser/console-pages.js): the explorer is
+        # told not to, and only a retried step's records are still saved by filename.
+        prompt = (ROOT / "harnesses" / "qae" / "prompt.md").read_text()
+        self.assertIn("do not call browser_network_requests or\n   browser_console_messages to save them", prompt)
+        self.assertNotIn("On every page you visit, read the browser", prompt)
+        self.assertIn("filename qae-artifacts/qae/ACn-step-k-network.txt", prompt)
+
     def test_the_manifest_names_the_opt_in_and_the_prompt_tells_the_explorer(self):
         self.assertIn("--widths", MANIFEST.read_text())
         prompt = (ROOT / "harnesses" / "qae" / "prompt.md").read_text()
-        for phrase in ("If qae-inputs/widths exists", "check every criterion's end state at\n   each of them",
+        for phrase in ("If qae-inputs/widths exists", "do not resize it for them",
+                       "the harness captures the\n   same screen at the other widths itself",
                        "every theme as well", "reload the page",
                        "only\n   when that screen has a form or another input, try one invalid input in it",
                        "Never navigate to a URL that neither the criterion names nor the site links to"):

@@ -231,16 +231,22 @@ def withdraw(root, found, console):
     counted = [probe for probe in found if not probe.problem]
     tied = {place for probe in counted for places in probe.refusals.values() for place in places}
     everywhere, texts = console.refusals(), network_texts(root, tool_calls(root))
+    # The harness's record lists each request once, under a number of its own file (each explorer of a split run
+    # has one), and holds every request, so it alone is counted when there is one: the explorer's records number
+    # the same requests again, page by page.
+    harness = [read(path) for path in sorted(glob.glob(os.path.join(root, "network-*.log")))]
     for probe in counted:
-        why = [answer_problem(status, url, everywhere.get((status, url), set()), tied, requests(texts, status, url))
+        why = [answer_problem(status, url, everywhere.get((status, url), set()), tied,
+                              requests(harness, status, url, per_file=True) if harness else requests(texts, status, url))
                for status, url in sorted(probe.refusals)]
         probe.withdrawn = next((reason for reason in why if reason), None)
 
 
-def requests(texts, status, url):
-    """The (request number, method) pairs the network records list `url` answered `status` under."""
-    return {(m.group("n"), m.group("method")) for text in texts for m in NUMBERED.finditer(text)
-            if m.group("status") == status and exact(m.group("url")) == url}
+def requests(texts, status, url, per_file=False):
+    """The (request number, method) pairs the network records list `url` answered `status` under; with `per_file`,
+    a number counts once per text, as each text numbers its own requests."""
+    return {((i, m.group("n")) if per_file else m.group("n"), m.group("method")) for i, text in enumerate(texts)
+            for m in NUMBERED.finditer(text) if m.group("status") == status and exact(m.group("url")) == url}
 
 
 def answer_problem(status, url, lines, tied, listed):
