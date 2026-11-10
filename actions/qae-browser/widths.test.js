@@ -13,14 +13,15 @@ const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), "vv-widths-"));
 
 // A page at 1280x800 whose accessibility tree reads `trees` in turn and that shows a popup when `popup` is true;
 // `take` is its screenshot, which reports the width it was taken at.
-function page({ popup = false, trees = ["tree", "tree"] } = {}) {
+function page({ popup = false, trees = ["tree", "tree"], frames = true } = {}) {
   let size = { width: 1280, height: 800 };
   const sizes = [];
   return {
     sizes,
     viewportSize: () => size,
     setViewportSize: async given => { size = given; sizes.push(given.width); },
-    evaluate: async (fn, arg) => (arg === undefined ? undefined : popup),
+    // The frames wait (no argument) never settles on a page whose requestAnimationFrame is stubbed.
+    evaluate: (fn, arg) => (arg !== undefined ? Promise.resolve(popup) : frames ? Promise.resolve() : new Promise(() => {})),
     waitForTimeout: async () => {},
     locator: () => ({ ariaSnapshot: async () => trees.shift() }),
     take: async function () { return Buffer.from(`shot at ${size.width}`); },
@@ -67,4 +68,37 @@ test("a capture that fails puts the window back before the failure reaches the h
   const failing = async () => { throw new Error("tab closed"); };
   await assert.rejects(widths.capture(tab, failing, {}, Buffer.from("x"), { dir, wanted: [1280, 375] }), /tab closed/);
   assert.deepStrictEqual(tab.sizes, [375, 1280]);
+});
+
+test("a page that draws no frame is still captured, after a bounded wait, and put back", async () => {
+  const dir = temp(), tab = page({ frames: false });
+  const started = Date.now();
+  await widths.capture(tab, tab.take, {}, Buffer.from("x"), { dir, wanted: [1280, 375] });
+  assert.ok(Date.now() - started < 4 * widths.FRAMES_WAIT, "the frames wait is bounded");
+  assert.deepStrictEqual(tab.sizes, [375, 1280]);
+  assert.deepStrictEqual(record(dir).map(line => line.width), [375]);
+});
+
+test("a capture that outlasts its budget is given up: the window is put back, the step recorded as skipped", async () => {
+  const dir = temp(), tab = page();
+  const stalled = () => new Promise(() => {});   // a screenshot that never comes back
+  const started = Date.now();
+  await widths.capture(tab, stalled, {}, Buffer.from("x"), { dir, wanted: [1280, 375, 768], budget: 200 });
+  assert.ok(Date.now() - started < 2000, "given up after its budget");
+  assert.deepStrictEqual(tab.sizes, [375, 1280]);   // the first width, then put back; never the second
+  assert.deepStrictEqual(record(dir).map(line => line.skipped), ["the capture took longer than 200 ms a width"]);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.deepStrictEqual(tab.sizes, [375, 1280], "the abandoned capture resizes nothing more");
+});
+
+test("a screenshot that comes back after the budget leaves no capture and no further resize or measure", async () => {
+  const dir = temp(), tab = page(), measured = [];
+  const late = () => new Promise(resolve => setTimeout(() => resolve(Buffer.from("late")), 400));
+  await widths.capture(tab, late, {}, Buffer.from("x"), { dir, wanted: [1280, 375, 768], budget: 100,
+    measure: async p => measured.push(p.viewportSize().width) });
+  await new Promise(resolve => setTimeout(resolve, 700));   // the abandoned capture's screenshot has come back
+  assert.deepStrictEqual(tab.sizes, [375, 1280]);
+  assert.deepStrictEqual(measured, []);
+  assert.ok(!fs.existsSync(path.join(dir, "widths")), "no capture file");
+  assert.deepStrictEqual(record(dir).map(line => line.skipped), ["the capture took longer than 100 ms a width"]);
 });

@@ -8,9 +8,9 @@
 //
 // So the harness does it. Every time the explorer saves a screenshot of the viewport (browser_take_screenshot,
 // which calls Page.screenshot with no clip), and before that call returns, the same page is resized in place to
-// each other width the file lists, given two frames and a moment to lay out, screenshotted, measured by the layout
-// audit at that width, and put back. Each capture goes to widths/<digest>-<width>.png in the run's output
-// directory, and one line to widths.jsonl:
+// each other width the file lists, given two frames (at most a second) and a moment to lay out, screenshotted,
+// measured by the layout audit at that width, and put back. Each capture goes to widths/<digest>-<width>.png in
+// the run's output directory, and one line to widths.jsonl:
 //
 //     {"shot": "<sha256 of the explorer's screenshot>", "width": 375, "file": "widths/<...>-375.png",
 //      "disturbed": false}
@@ -34,6 +34,16 @@ const path = require("path");
 const WRAPPED = Symbol.for("vibe-verifier.widths");
 const RECORD = "widths.jsonl";
 const SETTLE = 250;   // ms after two frames: a layout that animates into place (a drawer, a reflowing grid)
+// The longest the two frames are waited for. A page that stubs requestAnimationFrame (an explorer freezing an intro
+// animation to time it, as both of a consumer's did on 2026-11-10) never draws another frame, and an unbounded wait
+// held the explorer's screenshot call until its job timed out, 30 minutes later, with nothing walked.
+const FRAMES_WAIT = 1000;
+// The longest one width's capture may take (resize, frames, screenshot, layout audit) before the whole capture is
+// given up: the page can stall the hook in ways no single wait above anticipates, and the hook must never hold the
+// explorer. A width took about 1.5 s in the live tests. Given up, the window is put back and the step is recorded
+// as skipped, as a step a popup covered is.
+const CAPTURE_WAIT = 8000;
+const TIMED_OUT = Symbol("timed out");
 // A popup the explorer's next action may be about to use, which a resize could close: a menu, listbox or tooltip that
 // shows and floats over the page (it, or a wrapper up to FLOAT_DEPTH levels above, is positioned absolute or fixed, as
 // a dropdown's or tooltip's popper is). A menu in the page's flow (navigation marked role=menu) is not one, and neither
@@ -56,8 +66,21 @@ function widths(file = process.env.VV_QAE_WIDTHS || "qae-inputs/widths") {
 
 const sha256 = data => crypto.createHash("sha256").update(data).digest("hex");
 
+// `promise`'s value, or `late` when `ms` pass first. Timed here, in the hook, not in the page: a page that stubs
+// requestAnimationFrame may stub its timers too.
+async function within(promise, ms, late) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise(resolve => { timer = setTimeout(() => resolve(late), ms); })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function settle(page) {
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const frames = page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  frames.catch(() => {});   // abandoned when the wait runs out; the tab may close under it later
+  await within(frames, FRAMES_WAIT);
   await page.waitForTimeout(SETTLE);
 }
 
@@ -76,8 +99,9 @@ async function popupOpen(page) {
 const tree = page => page.locator("body").ariaSnapshot({ timeout: 2000 }).catch(() => "");
 
 // Captures `page` at each of `wanted` other than its own width, with Playwright's screenshot `take` and the
-// explorer's `options`, after the explorer's screenshot `shot`; `measure` is the layout audit for the page.
-async function capture(page, take, options, shot, { dir, wanted, measure }) {
+// explorer's `options`, after the explorer's screenshot `shot`; `measure` is the layout audit for the page. All of it
+// within `budget` ms a width, or none of it is recorded and the window is put back.
+async function capture(page, take, options, shot, { dir, wanted, measure, budget = CAPTURE_WAIT }) {
   const size = page.viewportSize();
   const others = size ? wanted.filter(width => width !== size.width) : [];
   if (!others.length) return;
@@ -87,24 +111,45 @@ async function capture(page, take, options, shot, { dir, wanted, measure }) {
     write({ shot: digest, skipped: "a menu, listbox or tooltip was open" });
     return;
   }
+  const run = { over: false };
+  const work = captures(page, take, options, { dir, digest, others, size, measure, run });
+  work.catch(() => {});   // a failure after the budget ran out has no one left to tell
+  const done = await within(work, budget * others.length, TIMED_OUT);
+  if (done === TIMED_OUT) {
+    run.over = true;   // the abandoned capture resizes nothing more: the explorer has the page back
+    await page.setViewportSize(size).catch(() => {});
+    await settle(page).catch(() => {});   // laid out at its own width again before the explorer's next action
+    write({ shot: digest, skipped: "the capture took longer than %d ms a width".replace("%d", budget) });
+    return;
+  }
+  for (const one of done.taken) write({ shot: digest, ...one, disturbed: done.disturbed });
+}
+
+// The captures themselves, stopped between steps once `run.over` says the budget ran out.
+async function captures(page, take, options, { dir, digest, others, size, measure, run }) {
   const before = await tree(page);
   const taken = [];
   try {
     for (const width of others) {
+      if (run.over) break;
       await page.setViewportSize({ width, height: size.height });
       await settle(page);
+      if (run.over) break;
+      const image = await take.call(page, { ...options, path: undefined });
+      if (run.over) break;
       const file = `widths/${digest.slice(0, 16)}-${width}.png`;
       fs.mkdirSync(path.join(dir, "widths"), { recursive: true });
-      fs.writeFileSync(path.join(dir, file), await take.call(page, { ...options, path: undefined }));
+      fs.writeFileSync(path.join(dir, file), image);
       if (measure) await measure(page);
       taken.push({ width, file });
     }
   } finally {
-    await page.setViewportSize(size);
-    await settle(page).catch(() => {});
+    if (!run.over) {
+      await page.setViewportSize(size);
+      await settle(page).catch(() => {});
+    }
   }
-  const disturbed = (await tree(page)) !== before;
-  for (const one of taken) write({ shot: digest, ...one, disturbed });
+  return { taken, disturbed: (await tree(page)) !== before };
 }
 
 // Wraps Page.screenshot, once for the process: the class is shared by every tab. `pages` maps a tab to what its
@@ -148,3 +193,5 @@ exports.install = install;
 exports.widths = widths;
 exports.capture = capture;
 exports.RECORD = RECORD;
+exports.FRAMES_WAIT = FRAMES_WAIT;
+exports.CAPTURE_WAIT = CAPTURE_WAIT;

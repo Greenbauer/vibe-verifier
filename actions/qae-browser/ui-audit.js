@@ -78,13 +78,15 @@ function pageOf(url) {
 
 // Runs the audit on the page and hands each finding not written before to `write`.
 async function record(page, write, written) {
+  // Read before the audit runs: the window may change under it (the width capture gives up and puts it back), and a
+  // finding is labelled with the page and width it was measured at, not those after.
+  const where = pageOf(page.url()), width = (page.viewportSize() || {}).width || null;
   let found;
   try {
     found = await page.evaluate(script);
   } catch {
     return;   // the tab navigated or closed mid-measure; the next load measures again
   }
-  const where = pageOf(page.url()), width = (page.viewportSize() || {}).width || null;
   for (const finding of found) {
     const key = JSON.stringify([where, width, finding.rule, finding.at]);
     if (written.has(key)) continue;
