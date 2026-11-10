@@ -40,6 +40,7 @@ A repository's own ESLint, with its own config and plugins, is the usual case: t
 - `tests/test_descriptors.py::test_a_rule_only_blocks_a_file_where_its_count_rose`
 - `tests/test_descriptors.py::test_a_new_file_with_a_finding_blocks_and_a_moved_one_does_not`
 - `tests/test_descriptors_eslint.py::test_eslint_errors_block_and_its_warnings_advise`
+- `tests/test_descriptors_eslint.py::test_eslint_warnings_alone_pass`
 - `tests/test_descriptors_eslint.py::test_a_file_eslint_could_not_parse_blocks`
 - `tests/test_descriptors_eslint.py::test_a_message_eslint_gives_no_rule_is_named_for_what_it_is`
 
