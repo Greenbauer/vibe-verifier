@@ -439,7 +439,10 @@ qae-artifacts line of `.vibe-verifier-qae`.
   resizes the same page in place to each other width, inside the same tool call, saves a capture to
   `widths/<digest>-<width>.png`, runs the [layout audit](../../docs/features/ui-audit.md) there, and puts the
   window back. `widths.jsonl` names each capture by the digest of the explorer's screenshot. So every step is
-  seen at every width, not only a criterion's end state, and its layout is measured at each one.
+  seen at every width, not only a criterion's end state, and its layout is measured at each one. After each
+  resize it waits for two of the page's frames, at most a second: a page that stubs `requestAnimationFrame`
+  draws none, and an unbounded wait held a consumer's explorers in their first screenshot until the job
+  timed out (2026-11-10).
 - A capture is skipped while a popup floats over the page: a visible, opaque menu, listbox or tooltip at least 8
   pixels a side that is, or sits within four levels of, an element positioned absolute or fixed (a dropdown's or
   tooltip's popper), outside any header or navigation landmark. The explorer's next action may need it, and a resize

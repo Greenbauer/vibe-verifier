@@ -13,14 +13,15 @@ const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), "vv-widths-"));
 
 // A page at 1280x800 whose accessibility tree reads `trees` in turn and that shows a popup when `popup` is true;
 // `take` is its screenshot, which reports the width it was taken at.
-function page({ popup = false, trees = ["tree", "tree"] } = {}) {
+function page({ popup = false, trees = ["tree", "tree"], frames = true } = {}) {
   let size = { width: 1280, height: 800 };
   const sizes = [];
   return {
     sizes,
     viewportSize: () => size,
     setViewportSize: async given => { size = given; sizes.push(given.width); },
-    evaluate: async (fn, arg) => (arg === undefined ? undefined : popup),
+    // The frames wait (no argument) never settles on a page whose requestAnimationFrame is stubbed.
+    evaluate: (fn, arg) => (arg !== undefined ? Promise.resolve(popup) : frames ? Promise.resolve() : new Promise(() => {})),
     waitForTimeout: async () => {},
     locator: () => ({ ariaSnapshot: async () => trees.shift() }),
     take: async function () { return Buffer.from(`shot at ${size.width}`); },
@@ -67,4 +68,13 @@ test("a capture that fails puts the window back before the failure reaches the h
   const failing = async () => { throw new Error("tab closed"); };
   await assert.rejects(widths.capture(tab, failing, {}, Buffer.from("x"), { dir, wanted: [1280, 375] }), /tab closed/);
   assert.deepStrictEqual(tab.sizes, [375, 1280]);
+});
+
+test("a page that draws no frame is still captured, after a bounded wait, and put back", async () => {
+  const dir = temp(), tab = page({ frames: false });
+  const started = Date.now();
+  await widths.capture(tab, tab.take, {}, Buffer.from("x"), { dir, wanted: [1280, 375] });
+  assert.ok(Date.now() - started < 4 * widths.FRAMES_WAIT, "the frames wait is bounded");
+  assert.deepStrictEqual(tab.sizes, [375, 1280]);
+  assert.deepStrictEqual(record(dir).map(line => line.width), [375]);
 });

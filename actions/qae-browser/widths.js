@@ -8,7 +8,7 @@
 //
 // So the harness does it. Every time the explorer saves a screenshot of the viewport (browser_take_screenshot,
 // which calls Page.screenshot with no clip), and before that call returns, the same page is resized in place to
-// each other width the file lists, given two frames and a moment to lay out, screenshotted, measured by the layout
+// each other width the file lists, given two frames (at most a second) and a moment to lay out, screenshotted, measured by the layout
 // audit at that width, and put back. Each capture goes to widths/<digest>-<width>.png in the run's output
 // directory, and one line to widths.jsonl:
 //
@@ -34,6 +34,10 @@ const path = require("path");
 const WRAPPED = Symbol.for("vibe-verifier.widths");
 const RECORD = "widths.jsonl";
 const SETTLE = 250;   // ms after two frames: a layout that animates into place (a drawer, a reflowing grid)
+// The longest the two frames are waited for. A page that stubs requestAnimationFrame (an explorer freezing an intro
+// animation to time it, as both of a consumer's did on 2026-11-10) never draws another frame, and an unbounded wait
+// held the explorer's screenshot call until its job timed out, 30 minutes later, with nothing walked.
+const FRAMES_WAIT = 1000;
 // A popup the explorer's next action may be about to use, which a resize could close: a menu, listbox or tooltip that
 // shows and floats over the page (it, or a wrapper up to FLOAT_DEPTH levels above, is positioned absolute or fixed, as
 // a dropdown's or tooltip's popper is). A menu in the page's flow (navigation marked role=menu) is not one, and neither
@@ -57,7 +61,12 @@ function widths(file = process.env.VV_QAE_WIDTHS || "qae-inputs/widths") {
 const sha256 = data => crypto.createHash("sha256").update(data).digest("hex");
 
 async function settle(page) {
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  // Raced here, in the hook, not in the page: a page that stubs requestAnimationFrame may stub its timers too.
+  const frames = page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  frames.catch(() => {});   // abandoned when the wait runs out; the tab may close under it later
+  let timer;
+  await Promise.race([frames, new Promise(resolve => { timer = setTimeout(resolve, FRAMES_WAIT); })]);
+  clearTimeout(timer);
   await page.waitForTimeout(SETTLE);
 }
 
@@ -148,3 +157,4 @@ exports.install = install;
 exports.widths = widths;
 exports.capture = capture;
 exports.RECORD = RECORD;
+exports.FRAMES_WAIT = FRAMES_WAIT;

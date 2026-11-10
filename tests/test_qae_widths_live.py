@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -37,6 +38,10 @@ NARROW = ("<title>site</title><style>.row{display:flex;gap:12px;padding:24px}.ro
           "border-radius:6px;padding:8px 16px;background:#fff}@media (max-width:500px){.row{flex-direction:column;gap:0}}</style>"
           "<main><h1>Plans</h1><div class=row><button>Monthly plan</button><button>Yearly plan</button></div></main>")
 
+# A page that stops drawing frames, as an explorer's browser_evaluate did to freeze an intro animation (2026-11-10).
+FROZEN = ("<title>site</title><main><h1>Intro</h1><p>Paused</p></main>"
+          "<script>window.requestAnimationFrame = () => 0;</script>")
+
 
 @unittest.skipUnless(os.environ.get("QAE_MCP"), "needs the installed browser toolchain: QAE_MCP names playwright-mcp's entry point")
 class Captures(unittest.TestCase):
@@ -48,7 +53,7 @@ class Captures(unittest.TestCase):
         os.makedirs(os.path.join(self.root, "qae"))
         os.makedirs(os.path.join(self.work, "qae-inputs"))
         Path(self.work, "qae-inputs", "widths").write_text("1280\n375\n")
-        self.site = Server(self, {"/": DIALOG, "/narrow": NARROW,
+        self.site = Server(self, {"/": DIALOG, "/narrow": NARROW, "/frozen": FROZEN,
                                   "/bad": (ROOT / "tests" / "fixtures" / "ui-audit" / "bad.html").read_text()})
         self.explorer = Explorer(self, self.root, ("--init-page", os.environ.get("QAE_UI_AUDIT", str(UI_AUDIT))))
 
@@ -99,6 +104,20 @@ class Captures(unittest.TestCase):
         self.explorer.close()
         self.assertEqual([entry.get("skipped") for entry in self.record()], ["a menu, listbox or tooltip was open"])
         self.assertFalse(Path(self.root, "widths").exists())
+
+    def test_a_page_that_draws_no_frame_is_captured_and_the_screenshot_returns(self):
+        # The capture waited for two of the page's frames with no bound, so this screenshot never returned.
+        self.explorer.call("browser_navigate", url=self.site.url + "/frozen")
+        hung = threading.Timer(60, self.explorer.process.kill)   # a hang fails the test instead of the job
+        hung.start()
+        try:
+            self.shoot("AC1-step-1")
+        finally:
+            hung.cancel()
+        self.explorer.call("browser_close")
+        self.explorer.close()
+        self.assertEqual([entry["width"] for entry in self.record()], [375])
+        self.assertEqual(png_size(os.path.join(self.root, self.record()[0]["file"]))[0], 375)
 
     def test_without_a_second_width_nothing_is_captured(self):
         Path(self.work, "qae-inputs", "widths").write_text("1280\n")
