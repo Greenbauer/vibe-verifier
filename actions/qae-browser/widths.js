@@ -103,6 +103,43 @@ async function popupOpen(page) {
   }), [POPUP, STANDING, FLOAT_DEPTH, MIN_POPUP]);
 }
 
+// A text field holding what the explorer typed and has not sent. A page that swaps layouts at a breakpoint by
+// rendering its route again (a split screen that becomes the phone page below 768px) drops that draft on the resize,
+// and the explorer's next action then lands on an empty form it never left (a consumer's survey builder, 2026-11-10).
+// The draft is the step's state, so it is never resized. "Typed" is an `input` event the page received: a field a
+// framework keeps in sync (React copies each value it renders into defaultValue, so comparing the two never shows
+// typing) and a contenteditable editor are seen, and a value a script set is not. A field counts while it is still on
+// the page, enabled and not empty; a form's submit or reset ends its fields' drafts. Choices (a box, a slider, a file)
+// and a select's option are not drafts.
+const TRACK_TYPING = () => {
+  if (window.__vibeVerifierTyped) return;
+  const typed = (window.__vibeVerifierTyped = new Set());
+  addEventListener("input", event => {
+    const field = event.composedPath ? event.composedPath()[0] : event.target;
+    if (field && field.nodeType === 1) typed.add(field);
+  }, true);
+  const sent = event => typed.forEach(field => event.target.contains(field) && typed.delete(field));
+  addEventListener("submit", sent, true);
+  addEventListener("reset", sent, true);
+};
+const CHOICES = ["checkbox", "radio", "range", "color", "file", "hidden", "submit", "button", "image", "reset"];
+async function draftTyped(page) {
+  return page.evaluate(choices => {
+    const typed = window.__vibeVerifierTyped;
+    if (!typed) return false;
+    for (const field of [...typed]) {
+      if (!field.isConnected || field.disabled) {
+        typed.delete(field);
+        continue;
+      }
+      if (field.tagName === "SELECT" || (field.tagName === "INPUT" && choices.includes(field.type))) continue;
+      const text = field.isContentEditable ? field.textContent : "value" in field ? field.value : "";
+      if (String(text || "").trim()) return true;
+    }
+    return false;
+  }, CHOICES).catch(() => false);
+}
+
 const tree = page => page.locator("body").ariaSnapshot({ timeout: 2000 }).catch(() => "");
 
 // Captures `page` at each of `wanted` other than its own width, with Playwright's screenshot `take` and the
@@ -116,6 +153,10 @@ async function capture(page, take, options, shot, { dir, wanted, measure, budget
   const digest = sha256(shot);
   if (await popupOpen(page)) {
     write({ shot: digest, skipped: "a menu, listbox or tooltip was open" });
+    return;
+  }
+  if (await draftTyped(page)) {
+    write({ shot: digest, skipped: "a text field held unsent input" });
     return;
   }
   const run = { over: false };
@@ -194,6 +235,10 @@ function install(page, dir, measure) {
   if (wanted.length < 2) return;
   wrap(page);
   pages.set(page, { dir, wanted, measure });
+  // Typing is tracked from the page's first document on, and on the one already open.
+  // A stand-in page without these (a test's, a scripted explorer's) is captured as before, untracked.
+  if (typeof page.addInitScript === "function") page.addInitScript(TRACK_TYPING).catch(() => {});
+  if (typeof page.evaluate === "function") Promise.resolve(page.evaluate(TRACK_TYPING)).catch(() => {});
   fs.appendFileSync(path.join(dir, RECORD), "");
 }
 

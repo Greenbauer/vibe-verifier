@@ -77,7 +77,8 @@ def widths_findings(root, widths, logs):
         if missing:
             findings.append(Finding("no step screenshot %s pixels wide (its widths: %s): the browser's widths hook "
                                     "(actions/qae-browser/widths.js) captures each screenshot at the other widths in "
-                                    "qae-inputs/widths, except while a popup is open; a browser without it needs the "
+                                    "qae-inputs/widths, except while a popup is open or a text field holds unsent input; "
+                                    "a browser without it needs the "
                                     "explorer to check the criterion's end state at each" % (
                                         " or ".join(map(str, missing)), ", ".join(map(str, sorted(seen))) or "none"),
                                     relative(log, root)))

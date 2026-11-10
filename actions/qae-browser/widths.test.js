@@ -13,7 +13,7 @@ const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), "vv-widths-"));
 
 // A page at 1280x800 whose accessibility tree reads `trees` in turn and that shows a popup when `popup` is true;
 // `take` is its screenshot, which reports the width it was taken at.
-function page({ popup = false, trees = ["tree", "tree"], frames = true } = {}) {
+function page({ popup = false, typed = false, trees = ["tree", "tree"], frames = true } = {}) {
   let size = { width: 1280, height: 800 };
   const sizes = [];
   return {
@@ -21,8 +21,12 @@ function page({ popup = false, trees = ["tree", "tree"], frames = true } = {}) {
     viewportSize: () => size,
     setViewportSize: async given => { size = given; sizes.push(given.width); },
     // The frames wait (no argument) never settles on a page whose requestAnimationFrame is stubbed.
-    evaluate: (fn, arg) => (arg !== undefined ? Promise.resolve(popup) : frames ? Promise.resolve() : new Promise(() => {})),
+    // The typing check reads the page's tracker (widths.js TRACK_TYPING); the popup check takes its selectors.
+    evaluate: (fn, arg) => (String(fn).includes("__vibeVerifierTyped") ? Promise.resolve(typed)
+      : arg !== undefined ? Promise.resolve(popup) : frames ? Promise.resolve() : new Promise(() => {})),
     waitForTimeout: async () => {},
+    // install() adds the typing tracker to every document, as Playwright's Page allows.
+    addInitScript: async () => {},
     locator: () => ({ ariaSnapshot: async () => trees.shift() }),
     take: async function () { return Buffer.from(`shot at ${size.width}`); },
   };
@@ -61,6 +65,13 @@ test("an open menu, listbox or tooltip is never resized", async () => {
   await widths.capture(tab, tab.take, {}, Buffer.from("x"), { dir, wanted: [1280, 375] });
   assert.deepStrictEqual(tab.sizes, []);
   assert.deepStrictEqual(record(dir).map(line => line.skipped), ["a menu, listbox or tooltip was open"]);
+});
+
+test("a page with typed, unsent input in a text field is never resized", async () => {
+  const dir = temp(), tab = page({ typed: true });
+  await widths.capture(tab, tab.take, {}, Buffer.from("x"), { dir, wanted: [1280, 375] });
+  assert.deepStrictEqual(tab.sizes, []);
+  assert.deepStrictEqual(record(dir).map(line => line.skipped), ["a text field held unsent input"]);
 });
 
 test("a capture that fails puts the window back before the failure reaches the hook", async () => {
