@@ -38,6 +38,16 @@ NARROW = ("<title>site</title><style>.row{display:flex;gap:12px;padding:24px}.ro
           "border-radius:6px;padding:8px 16px;background:#fff}@media (max-width:500px){.row{flex-direction:column;gap:0}}</style>"
           "<main><h1>Plans</h1><div class=row><button>Monthly plan</button><button>Yearly plan</button></div></main>")
 
+# A form the explorer fills in: a field a framework keeps in sync (as React does, it copies each value into
+# defaultValue), a contenteditable editor, and a field the page fills in itself, which is not typing. Send keeps the
+# page, as a single-page app's form does.
+DRAFT = ("<title>site</title><main><h1>Survey</h1><form><input id=title aria-label=Title>"
+         "<div id=editor contenteditable aria-label=Editor></div><input id=prefilled aria-label=Prefilled>"
+         "<button id=send type=submit>Send</button></form></main>"
+         "<script>title.addEventListener('input', () => { title.defaultValue = title.value; });"
+         "prefilled.value = 'set by the page';"
+         "document.querySelector('form').addEventListener('submit', event => event.preventDefault());</script>")
+
 # A page that stops drawing frames, as an explorer's browser_evaluate did to freeze an intro animation (2026-11-10).
 FROZEN = ("<title>site</title><main><h1>Intro</h1><p>Paused</p></main>"
           "<script>window.requestAnimationFrame = () => 0;</script>")
@@ -53,7 +63,7 @@ class Captures(unittest.TestCase):
         os.makedirs(os.path.join(self.root, "qae"))
         os.makedirs(os.path.join(self.work, "qae-inputs"))
         Path(self.work, "qae-inputs", "widths").write_text("1280\n375\n")
-        self.site = Server(self, {"/": DIALOG, "/narrow": NARROW, "/frozen": FROZEN,
+        self.site = Server(self, {"/": DIALOG, "/narrow": NARROW, "/frozen": FROZEN, "/draft": DRAFT,
                                   "/bad": (ROOT / "tests" / "fixtures" / "ui-audit" / "bad.html").read_text()})
         self.explorer = Explorer(self, self.root, ("--init-page", os.environ.get("QAE_UI_AUDIT", str(UI_AUDIT))))
 
@@ -104,6 +114,25 @@ class Captures(unittest.TestCase):
         self.explorer.close()
         self.assertEqual([entry.get("skipped") for entry in self.record()], ["a menu, listbox or tooltip was open"])
         self.assertFalse(Path(self.root, "widths").exists())
+
+    def test_a_typed_unsent_draft_is_not_resized_until_the_form_is_sent(self):
+        # A resize can make a page render its route again and drop the draft (a consumer's survey builder,
+        # 2026-11-10), so a screen holding typed input is not captured; one a script filled in still is.
+        self.explorer.call("browser_navigate", url=self.site.url + "/draft")
+        self.shoot("AC1-step-1")
+        self.explorer.call("browser_type", element="Title", target="#title", text="Where to eat")
+        self.shoot("AC1-step-2")
+        # Send ends the draft: the form's fields are captured again.
+        self.explorer.call("browser_click", element="Send", target="#send")
+        self.shoot("AC1-step-3")
+        # A contenteditable editor holds a draft too.
+        self.explorer.call("browser_type", element="Editor", target="#editor", text="Bring snacks")
+        self.shoot("AC1-step-4")
+        self.explorer.call("browser_close")
+        self.explorer.close()
+        self.assertEqual([entry.get("skipped") for entry in self.record()],
+                         [None, "a text field held unsent input", None, "a text field held unsent input"])
+        self.assertEqual(png_size(os.path.join(self.root, "qae", "AC1-step-2.png"))[0], 1280)
 
     def test_a_page_that_draws_no_frame_is_captured_and_the_screenshot_returns(self):
         # The capture waited for two of the page's frames with no bound, so this screenshot never returned.

@@ -21,7 +21,9 @@ function page({ popup = false, typed = false, trees = ["tree", "tree"], frames =
     viewportSize: () => size,
     setViewportSize: async given => { size = given; sizes.push(given.width); },
     // The frames wait (no argument) never settles on a page whose requestAnimationFrame is stubbed.
-    evaluate: (fn, arg) => (typeof arg === "string" ? Promise.resolve(typed) : arg !== undefined ? Promise.resolve(popup) : frames ? Promise.resolve() : new Promise(() => {})),
+    // The typing check reads the page's tracker (widths.js TRACK_TYPING); the popup check takes its selectors.
+    evaluate: (fn, arg) => (String(fn).includes("__vibeVerifierTyped") ? Promise.resolve(typed)
+      : arg !== undefined ? Promise.resolve(popup) : frames ? Promise.resolve() : new Promise(() => {})),
     waitForTimeout: async () => {},
     locator: () => ({ ariaSnapshot: async () => trees.shift() }),
     take: async function () { return Buffer.from(`shot at ${size.width}`); },
