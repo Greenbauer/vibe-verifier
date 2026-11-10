@@ -90,3 +90,15 @@ test("a capture that outlasts its budget is given up: the window is put back, th
   await new Promise(resolve => setTimeout(resolve, 300));
   assert.deepStrictEqual(tab.sizes, [375, 1280], "the abandoned capture resizes nothing more");
 });
+
+test("a screenshot that comes back after the budget leaves no capture and no further resize or measure", async () => {
+  const dir = temp(), tab = page(), measured = [];
+  const late = () => new Promise(resolve => setTimeout(() => resolve(Buffer.from("late")), 400));
+  await widths.capture(tab, late, {}, Buffer.from("x"), { dir, wanted: [1280, 375, 768], budget: 100,
+    measure: async p => measured.push(p.viewportSize().width) });
+  await new Promise(resolve => setTimeout(resolve, 700));   // the abandoned capture's screenshot has come back
+  assert.deepStrictEqual(tab.sizes, [375, 1280]);
+  assert.deepStrictEqual(measured, []);
+  assert.ok(!fs.existsSync(path.join(dir, "widths")), "no capture file");
+  assert.deepStrictEqual(record(dir).map(line => line.skipped), ["the capture took longer than 100 ms a width"]);
+});

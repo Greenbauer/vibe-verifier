@@ -59,6 +59,15 @@ test("a finding is recorded once per page, width, rule and element, with the pag
     [["https://site.test/quotes", 375, "touching", "td > button"], ["https://site.test/quotes", 375, "edge", "td > a"]]);
 });
 
+test("a finding is labelled with the width it was measured at, though the window changes while it runs", async () => {
+  const written = [];
+  let size = { width: 375 };
+  const page = { url: () => "https://site.test/", viewportSize: () => size,
+    evaluate: async () => { size = { width: 1280 }; return [finding("touching", "td > button")]; } };
+  await hook.record(page, line => written.push(line), new Set());
+  assert.deepStrictEqual(written.map(line => line.width), [375]);
+});
+
 test("a measure the tab's navigation interrupts writes nothing and does not throw", async () => {
   const written = [];
   await hook.record({ url: () => "https://site.test/", viewportSize: () => null, evaluate: async () => { throw new Error("Execution context was destroyed"); } },

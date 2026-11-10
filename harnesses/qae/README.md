@@ -444,7 +444,8 @@ qae-artifacts line of `.vibe-verifier-qae`.
   draws none, and an unbounded wait held a consumer's explorers in their first screenshot until the job
   timed out (2026-11-10). The whole capture also has a budget, 8 seconds a width: past it the window is put
   back, the abandoned capture resizes nothing more, and `widths.jsonl` records the step as skipped, as it does
-  one a popup covers. The hook never holds the explorer.
+  one a popup covers. A layout finding the audit was measuring then keeps the width it was measured at. So the
+  hook holds the explorer no longer than its budget and the window's put-back.
 - A capture is skipped while a popup floats over the page: a visible, opaque menu, listbox or tooltip at least 8
   pixels a side that is, or sits within four levels of, an element positioned absolute or fixed (a dropdown's or
   tooltip's popper), outside any header or navigation landmark. The explorer's next action may need it, and a resize

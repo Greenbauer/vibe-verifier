@@ -118,6 +118,7 @@ async function capture(page, take, options, shot, { dir, wanted, measure, budget
   if (done === TIMED_OUT) {
     run.over = true;   // the abandoned capture resizes nothing more: the explorer has the page back
     await page.setViewportSize(size).catch(() => {});
+    await settle(page).catch(() => {});   // laid out at its own width again before the explorer's next action
     write({ shot: digest, skipped: "the capture took longer than %d ms a width".replace("%d", budget) });
     return;
   }
