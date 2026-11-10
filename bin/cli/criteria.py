@@ -65,7 +65,7 @@ def print_criteria(args, text, ticket_text):
             if values:
                 print("%s %s: %s" % (item, label, ", ".join(values)))
     if args.max_shards is not None:
-        print("\n".join(shard_plan(wanted, manifest_widths(args), args.max_shards)))
+        print("\n".join(shard_plan(wanted, args.max_shards)))
     return 0
 
 
@@ -149,7 +149,7 @@ def add_arguments(parser):
     parser.add_argument("--max-shards", metavar="N", type=int, default=None, help="also print `shards: [1,...]`, how "
                         "many explorers the criteria are split across: enough for six walks each, at most N")
     parser.add_argument("--manifest", metavar="FILE", help="the QAE manifest: run subscribed ticket-coverage before "
-                        "any browser skip; with --max-shards, its qae-artifacts --widths count toward the walks")
+                        "any browser skip")
     parser.add_argument("--carry", metavar="FILE", help="what actions/criteria/carry_facts.py read about the pull "
                         "request's last QAE walk: when its verdict still holds, prints `none:` naming it and `carried: <sha> <url>`")
     parser.add_argument("--roles", metavar="LIST", default=None, help="the roles the preview has a login for, comma "

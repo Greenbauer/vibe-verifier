@@ -20,10 +20,10 @@ class Balance(unittest.TestCase):
             numbers = [int(criterion[2:]) for criterion in share.split(", ")]
             self.assertEqual(numbers, sorted(numbers))
             seen.extend(numbers)
-            walks = sum(2 * len(roles.get(number, "editor").split(", ")) for number in numbers) + (3 if index == 0 else 0)
+            walks = sum(len(roles.get(number, "editor").split(", ")) for number in numbers) + (3 if index == 0 else 0)
             loads.append(walks)
             self.assertLessEqual(walks, 6, share)
             self.assertEqual(turns, 40 + 30 * walks)
         self.assertEqual(sorted(seen), list(range(1, 19)))
-        self.assertEqual(sum(loads), 47)
+        self.assertEqual(sum(loads), 25)
 

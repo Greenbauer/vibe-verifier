@@ -95,13 +95,13 @@ it cannot drop its ticket's requirements; an empty file links no ticket. A ticke
 proves with a `ticket-proof: TCn -- ...` line is not walked: it is left out of the count and printed as
 `TCn proven by a test, not walked` (acceptance-verdict judges the proof). With `--max-shards N` it then
 prints `shards: [1,2,...]`, the explorers the criteria are split across, for a harness to run in parallel:
-one walk is a criterion as one role it names at one width, an explorer is sized for six, and there are
-never more than N explorers nor than chains of criteria. A criterion is never split, and criteria that build
+one walk is a criterion as one role it names, an explorer is sized for six, and there are
+never more than N explorers nor than chains of criteria. The manifest's `--widths` add no walks: the harness
+captures each screenshot at the other widths itself, and the explorer walks at one. A criterion is never split, and criteria that build
 on each other are a chain one explorer walks whole: a criterion that names another of its list by number
 ("on the profile from item 2", "after AC3") is chained to it. A `walks: <n>` line says how many it counted,
 and a `chain: AC2, AC3, ...` line names each chain. Which criteria each explorer walks is `qae-inputs --shard`'s to say: it also knows the
-feature re-walk, which this command does not. The widths are the `--widths` of the qae-artifacts
-line of `--manifest FILE`, judged from the base like a run (no manifest counts one width). More walks
+feature re-walk, which this command does not. More walks
 than the explorer with the most of them is sized for prints one `::warning::` with the numbers. Exit 1, printing nothing on
 stdout and one `::error::` line per problem on stderr, when the body holds criteria no run can check: a
 heading that names acceptance criteria but is not exactly `## Acceptance criteria` (with no criteria under
@@ -118,15 +118,15 @@ to `<evidence>/references/<key>.png` (default qae-artifacts), listed with its si
 qae-inputs/references.md) for the explorer, and its sha256 written to the digests file as one JSON object,
 which the workflow declares as an output so the gate judges the image the workflow supplied and never one
 the explorer wrote. Given the manifest, the `--widths` of its qae-artifacts line (judged from the base,
-like a run) are written one per line to the widths file (default qae-inputs/widths), so the explorer
-checks each criterion at the widths the gate will require; no such option writes no file. Its
+like a run) are written one per line to the widths file (default qae-inputs/widths), so the harness
+captures each of the explorer's screenshots at the widths the gate will require; no such option writes no file. Its
 `--allow-console` and `--allow-request` patterns, from the same line, are written to the environmental file
 (`--environmental-file`, default qae-inputs/environmental), one `console: <regex>` or `request: <regex>` line
 each, so the explorer never fails a criterion on a console message or request the gate does not judge; none
 writes no file. With
 `--turns FILE` it also writes the explorer's turn cap there, sized to its walks: each criterion of the PR
 body (`--criteria`, default qae-inputs/pr-body.md) and of the ticket (`--ticket`, default
-qae-inputs/ticket.md; absent is none) once per role it names and per width, plus each feature to re-walk
+qae-inputs/ticket.md; absent is none) once per role it names, plus each feature to re-walk
 (`--features`, default qae-inputs/features), which is one walk per three states the manifest's
 acceptance-verdict line lets the explorer walk of it (`--max-states`, default 3). With `--shard K --shards N`
 the explorer is one of N that share the criteria (`criteria --max-shards` decided N). Largest walks first, each

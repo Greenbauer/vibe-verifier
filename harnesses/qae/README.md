@@ -492,27 +492,32 @@ run (2026-10-07) "try one invalid input" on a criterion with no form sent it to 
 
 On the Claude lane `claude-code-action` stops the explorer at `--max-turns`, and a run that stops there
 fails the explore job even when the site is correct. A fixed 80 did that on a consumer (2026-10-07): two
-ticket criteria at two widths took 54 turns, then more than 80 on a re-run of the same head. So the
-template's `Prepare the explorer's references and widths` step
-([`actions/qae-inputs`](../../actions/qae-inputs/action.yml)) sizes the cap to the run and declares it as
-its `max-turns` output, which the explorer step passes as `--max-turns`:
+ticket criteria at two widths took 54 turns, then more than 80 on a re-run of the same head, under the
+old prompt, which walked each criterion at every width. So the template's `Prepare the explorer's
+references and widths` step ([`actions/qae-inputs`](../../actions/qae-inputs/action.yml)) sizes the cap
+to the run and declares it as its `max-turns` output, which the explorer step passes as `--max-turns`:
 
-- One walk is one criterion (the pull request's or [its ticket's](#the-tickets-criteria)) at one width
-  of `qae-inputs/widths` as one role it names in `[as: ...]`, or up to three states of one feature in
-  `qae-inputs/features/`: one walk a feature at the default `--max-states 3`, and one more for each
-  three states above that. No run has measured the turns a state takes, so that proportion is a guess.
-  Themes are not counted: whether a site has two is prose in `qae-inputs/site.md`, not a fact the step
-  can read. Widths are still counted, though the template's explorer no longer resizes for them (the
-  harness [captures them](#viewports-themes-and-what-a-criterion-does-not-say)): a consumer copy whose prompt
-  still asks the explorer to walk them runs the same pinned action, and a smaller cap would stop it short. The
-  cap is a ceiling, so the turns no longer used cost nothing. [Splitting](#splitting-a-large-pull-request-across-explorers)
-  counts walks the same way, so a pull request at two widths may still start more explorers than its walks now
-  need, each with its own runner and sign-in. Both can count one width once every consumer runs the new prompt.
-- The cap is 40 plus 30 a walk, never below 80 and never above 240. Measured on that consumer, the runs
-  took 18 to 39 turns for two or three criteria at one width, 44 for one criterion at two widths with a
-  form, and 54 to 60 for two criteria at two widths: the cap is at least twice each, and twice the 80
-  the cut-off run stopped at. The slowest turn there took 4.5 seconds, so 240 turns still end inside the
-  explore job's 30 minutes.
+- One walk is one criterion (the pull request's or [its ticket's](#the-tickets-criteria)) as one role
+  it names in `[as: ...]`, or up to three states of one feature in `qae-inputs/features/`: one walk a
+  feature at the default `--max-states 3`, and one more for each three states above that. No run has
+  measured the turns a state takes, so that proportion is a guess. Themes are not counted: whether a
+  site has two is prose in `qae-inputs/site.md`, not a fact the step can read. Widths are not counted
+  either: the explorer walks at the browser's own width, and the harness
+  [captures the others](#viewports-themes-and-what-a-criterion-does-not-say) inside its screenshot calls.
+  A width a criterion names itself is part of that criterion's walk.
+  [Splitting](#splitting-a-large-pull-request-across-explorers) counts walks the same way. A consumer copy
+  whose prompt still asks the explorer to resize for every width gets the same smaller cap once its
+  `actions/qae-inputs` pin moves past this count, and can run out of turns: copy the template's prompt
+  before moving the pin.
+- The cap is 40 plus 30 a walk, never below 80 and never above 240. It was sized on that consumer's
+  runs under the old prompt, with each width counted as a walk: 18 to 39 turns for two or three
+  criteria at one width, 44 for one criterion at two widths with a form, and 54 to 60 for two criteria
+  at two widths, each at most half the cap it was then given, and the cut-off run's cap twice the 80 it
+  stopped at. With widths no longer counted, two and three criteria get caps of 100 and 130, still at
+  least twice the one-width runs; checking widths was 27% of the explorer's tool calls
+  ([above](#viewports-themes-and-what-a-criterion-does-not-say)), which the harness now does. No run
+  of the new prompt has measured its turns yet. The slowest turn there took 4.5 seconds, so 240 turns
+  still end inside the explore job's 30 minutes.
 - A run that reaches the cap still fails the job: the cap bounds a runaway, it does not pass one.
 - One explorer of [several](#splitting-a-large-pull-request-across-explorers) is sized to its own
   share of the criteria, plus the feature re-walk when it is the first.
@@ -524,31 +529,32 @@ The Codex lane has no such cap: the pinned Codex CLI's `exec` takes no turn limi
 ## Splitting a large pull request across explorers
 
 Opt-in. One explorer is sized for six walks: the [turn cap](#the-turn-cap) is 40 plus 30 a walk and
-stops growing at 240. A consumer's pull request listed 13 broad criteria at two widths, at least 26
-walks. Its one explorer made one shallow pass (about four steps a criterion, against about six on
-small pull requests), never signed in as two of the three roles it had logins for, stopped after 9
-of its 30 minutes and FAILed 9 criteria as not completed. A consumer with more than one QAE runner
-can give each runner a share of the criteria instead.
+stops growing at 240. A consumer's pull request listed 13 broad criteria at two widths, which the
+old prompt walked at both. Its one explorer made one shallow pass (about four steps a criterion,
+against about six on small pull requests), never signed in as two of the three roles it had logins
+for, stopped after 9 of its 30 minutes and FAILed 9 criteria as not completed. A consumer with more
+than one QAE runner can give each runner a share of the criteria instead.
 
-**When it happens.** The criteria job counts the walks: each criterion of the pull request and of
-[its ticket](#the-tickets-criteria), once per role it names in `[as: ...]` and per width on the
-manifest's qae-artifacts line. Feature re-walks are not counted: which features are re-walked is
-selected from a checkout, and this job has none. It plans one explorer for every six
+**When it happens.** The criteria job counts the walks as the [turn cap](#the-turn-cap) does: each
+criterion of the pull request and of [its ticket](#the-tickets-criteria), once per role it names in
+`[as: ...]`; the widths on the manifest's qae-artifacts line add none. Feature re-walks are not
+counted: which features are re-walked is selected from a checkout, and this job has none. It plans
+one explorer for every six
 walks, rounded up, never more than `max-shards`, and never more than there are chains of criteria,
 because a criterion is never split and neither are [criteria that build on each
 other](#criteria-that-build-on-each-other). The job's log shows the count (`shards: [1,2,3]`), the
-walks, each chain (`chain: AC2, AC3, AC4 (6 walks, one explorer)`), and one warning when the
+walks, each chain (`chain: AC2, AC3, AC4 (3 walks, one explorer)`), and one warning when the
 explorer with the most walks has more than it is sized for, so an oversized pull request is visible
 before any explorer starts. With the default `max-shards: 1` there is always one
 explorer, and those log lines are all this job adds.
 
 **How to turn it on.** In the criteria job, raise `max-shards` on the `actions/criteria` step to the
 number of QAE runners that can run at once. The template's explore job is already a matrix over the
-criteria job's `shards` output, so a workflow copied from it needs nothing else. The criteria job
-needs the widths to count walks, and it checks out nothing, so the template fetches
-`.vibe-verifier-qae` with `gh api` into `qae-inputs/manifest` (the base's copy, or the pull
-request's own where the base has none) and passes it as `manifest:`. A wrapper passes its gate list
-as `entries:` instead, as it does to `actions/gates`. Without either, one width is counted.
+criteria job's `shards` output, so a workflow copied from it needs nothing else. The walks need no
+manifest. The template still fetches `.vibe-verifier-qae` with `gh api` into `qae-inputs/manifest`
+(the base's copy, or the pull request's own where the base has none) and passes it as `manifest:`,
+for a subscribed [ticket-coverage line](#the-tickets-criteria). A wrapper passes its gate list as
+`entries:` instead, as it does to `actions/gates`.
 
 **What each explorer does.** Every explore job runs the same steps.
 

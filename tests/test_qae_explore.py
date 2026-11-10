@@ -427,7 +427,7 @@ class Review(unittest.TestCase):
 
 class TurnCap(unittest.TestCase):
     """The Claude lane's --max-turns, sized by actions/qae-inputs to what the explorer walks: each criterion
-    of the pull request and its ticket once per role it names and per width, plus each feature re-walk.
+    of the pull request and its ticket once per role it names, plus each feature re-walk.
     40 plus 30 a walk, never below 80 nor above 240 (bin/cli/qae_shards.py)."""
 
     def run_action(self, files, widths=None, verdict_line=""):
@@ -448,20 +448,20 @@ class TurnCap(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return int(re.search(r"^max-turns=([0-9]+)$", output, re.MULTILINE).group(1)), result.stdout
 
-    def test_the_run_a_fixed_80_cut_off_gets_twice_that(self):
+    def test_the_run_a_fixed_80_cut_off_is_a_walk_a_criterion(self):
         # A consumer's live run (2026-10-07): a pull request declaring None, its ticket's two criteria (one naming a
-        # design reference) at two widths. It took 54 turns, then ran out at 80 on a re-run of the same head.
+        # design reference) at two widths. The old prompt walked both: 54 turns, then out at 80 on a re-run.
         ticket = ("## Acceptance criteria\n\n- The portfolio page lists its sections\n"
                   "- At 375 pixels wide, the home page matches its mobile design reference [ref: home-mobile]\n")
         turns, stdout = self.cap({"qae-inputs/pr-body.md": "## Acceptance criteria\n\n- None: a workflow change\n",
                                   "qae-inputs/ticket.md": ticket}, "1280,375")
-        self.assertEqual(turns, 160)
-        self.assertIn("max turns: 160 (4 walks)", stdout)
+        self.assertEqual(turns, 100)
+        self.assertIn("max turns: 100 (2 walks)", stdout)
 
     def test_each_role_and_each_feature_to_re_walk_is_a_walk(self):
         turns, _ = self.cap({"qae-inputs/pr-body.md": "## Acceptance criteria\n\n- Only an admin deletes [as: admin, read-only]\n",
                              "qae-inputs/features/sign-in.md": "# Sign-in\n"}, "1280,375")
-        self.assertEqual(turns, 40 + 30 * (2 * 2 + 1))
+        self.assertEqual(turns, 40 + 30 * (2 + 1))
 
     def test_a_feature_is_one_walk_for_each_three_states_the_manifest_lets_the_explorer_walk(self):
         # One criterion and two features: three walks at the default three states a feature, as before the bound.
