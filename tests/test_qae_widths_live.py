@@ -87,6 +87,28 @@ class Captures(unittest.TestCase):
         result = gate("qae-artifacts", self.repo, "--artifacts", self.root, "--site", self.site.url + "/", "--widths", "1280,375")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_a_step_its_own_code_saves_is_captured_and_counts_for_its_criterion(self):
+        # An explorer walking in browser_run_code_unsafe saves each step with page.screenshot({path}). The hook
+        # skipped every screenshot with a path, so such a criterion had no capture at 375 and the gate refused it
+        # (a consumer, 2026-11-10). A file of the script's own that is no step's screenshot is still left alone.
+        self.explorer.call("browser_navigate", url=self.site.url + "/")
+        self.explorer.call("browser_run_code_unsafe", code=(
+            "async page => { await page.click('#open');"
+            " await page.screenshot({ path: 'qae-artifacts/qae/AC1-step-1.png', fullPage: true });"
+            " await page.click('#close');"
+            " await page.screenshot({ path: 'qae-artifacts/qae/AC1-step-2.png' });"
+            " await page.screenshot({ path: 'qae-artifacts/row.png' }); }"))
+        self.explorer.call("browser_close")
+        self.explorer.close()
+        Path(self.root, "qae", "AC1.md").write_text("- step 1: opened the quote -> the dialog\n- step 2: closed it -> the list\n")
+        captures = self.record()
+        self.assertEqual([(entry["width"], entry["disturbed"]) for entry in captures], [(375, False)] * 2)
+        for entry in captures:
+            self.assertEqual(png_size(os.path.join(self.root, entry["file"]))[0], 375)
+        self.assertEqual(png_size(os.path.join(self.root, "qae", "AC1-step-1.png"))[0], 1280)
+        result = gate("qae-artifacts", self.repo, "--artifacts", self.root, "--site", self.site.url + "/", "--widths", "1280,375")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_a_defect_only_a_phone_width_shows_is_found_though_the_explorer_never_left_1280(self):
         self.explorer.call("browser_navigate", url=self.site.url + "/narrow")
         self.shoot("AC1-step-1")

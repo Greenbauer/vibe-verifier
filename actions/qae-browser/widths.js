@@ -7,7 +7,8 @@
 // about a width were at a width the criterion itself named, which the explorer still walks.
 //
 // So the harness does it. Every time the explorer saves a screenshot of the viewport (browser_take_screenshot,
-// which calls Page.screenshot with no clip), and before that call returns, the same page is resized in place to
+// which calls Page.screenshot with no clip, or its own code's page.screenshot to a step screenshot's file), and
+// before that call returns, the same page is resized in place to
 // each other width the file lists, given two frames (at most a second) and a moment to lay out, screenshotted,
 // measured by the layout audit at that width, and put back. Each capture goes to widths/<digest>-<width>.png in
 // the run's output directory, and one line to widths.jsonl:
@@ -54,6 +55,12 @@ const TIMED_OUT = Symbol("timed out");
 // dropdown a header opens still counts when its library portals it out of the header (Radix, MUI); one rendered in
 // place there (Headless UI without an anchor) is resized like the rest of the page, and `disturbed` records it.
 const POPUP = "[role=menu], [role=listbox], [role=tooltip]";
+// A step screenshot's file, as the prompt names it (qae/ACn-step-k.png, qae/features/<id>-step-k.png) and the gate
+// reads it. An explorer that walks a criterion in browser_run_code_unsafe saves each step with page.screenshot({path}):
+// one of a consumer's explorers saved all but three of its steps that way (2026-11-10), and with every such file
+// skipped as a script's own, nine criteria had no capture and the gate refused them. Any other file a script writes is
+// still left alone.
+const STEP_FILE = /-step-[0-9]+\.png$/i;
 const STANDING = "header, nav, [role=banner], [role=navigation], [role=menubar]";
 const FLOAT_DEPTH = 4;
 const MIN_POPUP = 8;
@@ -165,7 +172,8 @@ function wrap(page) {
   owner.screenshot = async function (options = {}) {
     const shot = await original.call(this, options);
     const setup = pages.get(this);
-    if (!setup || capturing || options.clip || options.path) return shot;   // a hook's own sample, or a script's file
+    // a hook's own sample, or a file a script writes that is no step's screenshot
+    if (!setup || capturing || options.clip || (options.path && !STEP_FILE.test(String(options.path)))) return shot;
     capturing = true;
     try {
       await capture(this, original, options, shot, setup);
