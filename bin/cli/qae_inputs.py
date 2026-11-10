@@ -24,7 +24,7 @@ def qae_inputs_command(args):
     environmental = manifest_environmental(args)
     items, turns = None, None
     if args.turns:
-        items, turns, code = explorer_inputs(args, widths)
+        items, turns, code = explorer_inputs(args)
         if code is not None:
             return code
     write_lines(args.widths_file, ["%d" % width for width in widths])
@@ -45,7 +45,7 @@ def qae_inputs_command(args):
     return 0
 
 
-def explorer_inputs(args, widths):
+def explorer_inputs(args):
     """(the criteria this explorer walks, (walks, turn cap), None) after writing its turn cap, share and isolation;
     (None, None, exit code) when the criteria cannot be read or it has nothing to walk."""
     try:
@@ -61,7 +61,7 @@ def explorer_inputs(args, widths):
     states = options.max_states if options else MAX_STATES
     tag = explorer_tag(args.run, args.shard) or "qae-e%d" % args.shard
     everything = items
-    items, share = explorer_share(items, widths, args.shard, args.shards, rewalk_walks(features, states), tag)
+    items, share = explorer_share(items, args.shard, args.shards, rewalk_walks(features, states), tag)
     write_isolation(args, everything, items, tag)
     if args.shard > 1:
         # Every explorer counted the features, to share the criteria out alike. Only the first re-walks them.
@@ -73,7 +73,7 @@ def explorer_inputs(args, widths):
         # The criteria job counted more criteria than this job reads: the body was edited between them.
         return None, None, fail("explorer %d of %d has no criterion to walk: the pull request's criteria changed after "
                                 "the criteria job counted them, so run the workflow again" % (args.shard, args.shards))
-    turns = explorer_turns(items, widths, features, states)
+    turns = explorer_turns(items, features, states)
     write_share(args, turns, share, items)
     return items, turns, None
 

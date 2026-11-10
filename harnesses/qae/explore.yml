@@ -48,8 +48,8 @@ jobs:
       - name: Write the criteria inputs
         # The PR body and its changed paths. A rename lists both names: moving a page into docs/ still
         # takes it off the site. And the QAE manifest as the base has it, or as this pull request has it
-        # where the base has none (a first subscription): the widths on its qae-artifacts line count
-        # toward the walks the explorers are sized to.
+        # where the base has none (a first subscription): a ticket-coverage line on it runs before any
+        # browser skip.
         # A qae-inputs/ the checkout already has came from the pull request (Git makes no empty directory),
         # so the step stops before it puts anything there: a link could send these files anywhere on the runner.
         env:
@@ -208,11 +208,11 @@ jobs:
         # qae-inputs/references.md. Its digest goes out as the `references` output, so the verify job's gate
         # judges the image the workflow supplied, never one the explorer wrote. None supplied is none copied.
         # The --widths of the manifest's qae-artifacts line (judged from the base) go to qae-inputs/widths,
-        # the viewport widths the explorer checks each criterion at and the gate requires; none, no file.
+        # the viewport widths the harness captures each screenshot at and the gate requires; none, no file.
         # Its --allow-console and --allow-request patterns go to qae-inputs/environmental, so the explorer
         # never fails a criterion on a console message or request the gate does not judge; none, no file.
-        # Its `max-turns` output is the explorer's turn cap, sized to the criteria, roles, widths and
-        # features it walks (harnesses/qae/README.md); the Claude lane passes it as --max-turns.
+        # Its `max-turns` output is the explorer's turn cap, sized to the criteria, roles and features it
+        # walks (harnesses/qae/README.md); the Claude lane passes it as --max-turns.
         # Its `share` output is the sentence that names this explorer's share of the criteria, for the
         # prompt: empty for one explorer. For one of several the criteria are shared out here, by code,
         # the same way in every explore job, so the model never works its share out. Criteria that name

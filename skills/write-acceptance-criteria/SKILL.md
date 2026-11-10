@@ -51,7 +51,7 @@ other pull request.
   it does, so keep chains short.
 - **Stay on the site.** Never ask QAE to follow a link off the preview (GitHub, a private dashboard): it
   is signed out there. Have it read the link's label and address instead.
-- **Small lists.** About six walks per explorer (a walk is one criterion, as one role, at one width).
+- **Small lists.** About six walks per explorer (a walk is one criterion, as one role).
   Fewer, sharper criteria beat many vague ones.
 
 ## Before pushing

@@ -1,18 +1,20 @@
 """Viewport widths in the QAE harness: `qae-artifacts --widths` requires each criterion's step
 screenshots to include one of each declared width, read from the PNG header, and actions/qae-inputs
 writes the same widths, from the manifest's qae-artifacts line as the base has it, to qae-inputs/widths
-for the explorer. Driven through the gate's command line, the action script and the shipped template."""
+for the harness's captures; they add no walks to the turn cap or the shard plan. Driven through the gate's
+command line, the action script and the shipped template."""
 import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import ROOT, clean_env, commit, gate, git, make_repo, png, write
+from helpers import ROOT, clean_env, commit, gate, git, make_repo, png, runner, write
 from test_qae_annotations import action_script
 from test_qae_artifacts import CLEAN_REQUESTS, session_with
 
@@ -127,8 +129,8 @@ class Gate(unittest.TestCase):
 class QaeInputs(unittest.TestCase):
     """The explorer is told the widths the gate will require, from the same line, judged from the base."""
 
-    def run_action(self, repo, manifest=".vibe-verifier-qae", entries=""):
-        write(repo, {"qae-inputs/pr-body.md": BODY})
+    def run_action(self, repo, manifest=".vibe-verifier-qae", entries="", body=BODY):
+        write(repo, {"qae-inputs/pr-body.md": body})
         output = Path(repo, ".git", "github-output")
         output.write_text("")
         result = subprocess.run(["bash", "-e", "-c", action_script("qae-inputs")], cwd=repo, capture_output=True, text=True,
@@ -148,8 +150,25 @@ class QaeInputs(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.widths(repo), "1280\n375\n")
         self.assertIn("widths: 1280, 375", result.stdout)
-        # Two criteria at two widths are four walks: the turn cap grows with them (bin/cli/qae_shards.py TURNS_BASE).
-        self.assertEqual(output, "references={}\nmax-turns=160\nshare=\nshare-ids=[\"AC1\", \"AC2\"]\n")
+        # Two criteria are two walks at any width: the harness captures the widths (bin/cli/qae_shards.py TURNS_BASE).
+        self.assertEqual(output, "references={}\nmax-turns=100\nshare=\nshare-ids=[\"AC1\", \"AC2\"]\n")
+
+    def test_the_widths_change_neither_the_walks_nor_the_turn_cap(self):
+        # The harness captures each screenshot at the other widths (actions/qae-browser/widths.js), so four
+        # criteria are four walks, one explorer and a cap of 160 with --widths 1280,375 as without them.
+        body = BODY + "- The contact page shows its form\n- The footer links to the privacy page\n"
+        found = []
+        for manifest in (QAE, QAE.replace(" --widths 1280,375", "")):
+            repo = make_repo(self, {".vibe-verifier-qae": manifest})
+            result, output = self.run_action(repo, body=body)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            planned = runner("criteria", os.path.join(repo, "qae-inputs", "pr-body.md"), "--max-shards", "3", "--repo", repo,
+                             "--manifest", os.path.join(repo, ".vibe-verifier-qae"))
+            self.assertEqual(planned.returncode, 0, planned.stdout + planned.stderr)
+            found.append((planned.stdout, re.search(r"^max turns: .*$", result.stdout, re.MULTILINE).group(0), output))
+        self.assertEqual(found[0], found[1])
+        self.assertIn("shards: [1]\nwalks: 4\n", found[0][0])
+        self.assertEqual(found[0][1], "max turns: 160 (4 walks)")
 
     def test_no_widths_option_writes_no_file(self):
         repo = make_repo(self, {".vibe-verifier-qae": QAE.replace(" --widths 1280,375", "")})

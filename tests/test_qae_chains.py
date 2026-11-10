@@ -45,18 +45,20 @@ class Plan(unittest.TestCase):
     plan = shards.Plan.plan
 
     def test_chained_criteria_are_one_explorers_however_many_walks_they_are(self):
-        # Fourteen walks at two widths were three explorers; chained, they are one, and the plan says the chain
-        # is more than one explorer is sized for.
+        # Seven walks would be two explorers; chained, they are one, and the plan says the chain is more than one
+        # explorer is sized for.
         self.assertEqual(self.plan(SEVEN, 3, manifest=shards.QAE), [
-            "shards: [1]", "walks: 14", "chain: AC1, AC2, AC3, AC4, AC5, AC6, AC7 (14 walks, one explorer)",
-            "::warning title=vibe-verifier criteria::14 walks (each criterion once per role and width) for 1 explorer sized "
-            "for 6, and one of them walks 14: expect criteria left unfinished. List fewer criteria on one pull request, chain "
+            "shards: [1]", "walks: 7", "chain: AC1, AC2, AC3, AC4, AC5, AC6, AC7 (7 walks, one explorer)",
+            "::warning title=vibe-verifier criteria::7 walks (each criterion once per role) for 1 explorer sized "
+            "for 6, and one of them walks 7: expect criteria left unfinished. List fewer criteria on one pull request, chain "
             "fewer of them, or raise max-shards (harnesses/qae/README.md)."])
 
     def test_a_chain_counts_as_one_toward_how_many_explorers_there_are(self):
-        # Twelve walks are two explorers' worth, and four chains (three lone criteria and one of three) allow two.
-        self.assertEqual(self.plan(MIXED, 3, manifest=shards.QAE),
-                         ["shards: [1,2]", "walks: 12", "chain: AC4, AC5, AC6 (6 walks, one explorer)"])
+        # Twelve walks (three lone criteria as three roles each, and a chain of three) are two explorers' worth,
+        # and four chains allow two.
+        text = MIXED.replace("- a\n- b\n- c\n", "".join("- %s [as: admin, rep, viewer]\n" % name for name in "abc"))
+        self.assertEqual(self.plan(text, 3, manifest=shards.QAE),
+                         ["shards: [1,2]", "walks: 12", "chain: AC4, AC5, AC6 (3 walks, one explorer)"])
 
     def test_the_after_marker_is_no_annotation_the_gates_refuse(self):
         work = shards.workdir(self)
@@ -93,7 +95,7 @@ class Share(unittest.TestCase):
 
     def test_a_chain_goes_whole_to_one_explorer_which_is_told_to_walk_it_in_order(self):
         found = self.shares({"qae-inputs/pr-body.md": MIXED}, 2)
-        self.assertEqual(found, [("AC4, AC5, AC6", 220), ("AC1, AC2, AC3", 220)])
+        self.assertEqual(found, [("AC4, AC5, AC6", 130), ("AC1, AC2, AC3", 130)])
         result, declared, _ = self.run_action({"qae-inputs/pr-body.md": MIXED}, 1, 2)
         self.assertIn(" AC4, AC5, AC6 name each other by number, so they may build on each other: walk them in that order, and where a "
                       "later one works on a record an earlier one made, use that record. ", declared["share"])

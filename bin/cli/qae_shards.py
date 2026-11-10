@@ -5,21 +5,23 @@ import re
 from _acceptance import annotations
 
 # The Claude lane's turn cap (claude-code-action's --max-turns), sized to what the explorer walks: one walk is
-# one criterion at one viewport width as one role, or up to three states of one feature's re-walk (three is the
-# default --max-states; more states add walks in proportion, which is an assumption: no run has measured the
-# turns one state takes). A fixed 80 cut off a correct run on
-# a consumer (2026-10-07: two criteria at two widths took 54 turns, then more than 80 on a re-run of the same
-# head). Its other runs took 18 and 34 turns for two criteria at one width, 39 for three, 44 for one criterion
-# at two widths with a form, and 60 for two criteria at two widths. 40 plus 30 a walk is at least twice each of
-# those, and twice the 80 the cut-off run stopped at. 80 stays the floor and 240 bounds it: at the slowest turn
-# measured there (4.5 seconds) 240 turns end inside the explore job's 30 minutes.
+# one criterion as one role it names, or up to three states of one feature's re-walk (three is the default
+# --max-states; more states add walks in proportion, which is an assumption: no run has measured the turns one
+# state takes). The declared widths add none: the harness captures every screenshot at the other widths itself
+# (actions/qae-browser/widths.js), and the explorer walks at the browser's own width (a width a criterion names
+# itself is part of that criterion's walk). A fixed 80 cut off a correct run on a consumer (2026-10-07, under
+# the old prompt, which walked each criterion at every width: two criteria at two widths took 54 turns, then
+# more than 80 on a re-run of the same head). Its other runs took 18 and 34 turns for two criteria at one width,
+# 39 for three, 44 for one criterion at two widths with a form, and 60 for two criteria at two widths. 40 plus
+# 30 a walk was at least twice each of those, counting each width as a walk. 80 stays the floor and 240 bounds
+# it: at the slowest turn measured there (4.5 seconds) 240 turns end inside the explore job's 30 minutes.
 TURNS_BASE, TURNS_PER_WALK, TURNS_FLOOR, TURNS_CEILING = 40, 30, 80, 240
 STATES_PER_WALK = 3
 # The walks one explorer is sized for: what the turn cap reaches before its ceiling, six. A consumer's pull
-# request listed 13 broad criteria at two widths, at least 26 walks, for one explorer: it made one
-# shallow pass, never signed in as two of the three roles it had logins for, stopped after 9 of its 30 minutes
-# and FAILed 9 criteria as not completed. So the criteria of a pull request with more walks than this can be
-# split across explorers that run in parallel (`criteria --max-shards`), each sized for this many.
+# request listed 13 broad criteria at two widths for one explorer, under the old prompt that walked them all: it
+# made one shallow pass, never signed in as two of the three roles it had logins for, stopped after 9 of its 30
+# minutes and FAILed 9 criteria as not completed. So the criteria of a pull request with more walks than this can
+# be split across explorers that run in parallel (`criteria --max-shards`), each sized for this many.
 SHARD_WALKS = (TURNS_CEILING - TURNS_BASE) // TURNS_PER_WALK
 SHARE = ("Your share of the criteria is %s: you are explorer %d of %d. Walk only those, and write a verdict line for "
          "each of them and for no other criterion; the other criteria are walked by other explorers in parallel, "
@@ -60,9 +62,9 @@ CRITERION_NAMED = re.compile(r"\b(?:(?i:items?|criteri(?:on|a))[ \t]+(?P<numbers
                              r"|(?P<prefix>AC|TC)(?P<number>\d+))\b")
 
 
-def criterion_walks(wording, widths):
-    """How many walks one criterion is: one as each role it names, at each of `widths`."""
-    return max(1, len(annotations(wording).roles)) * max(1, len(widths))
+def criterion_walks(wording):
+    """How many walks one criterion is: one as each role it names."""
+    return max(1, len(annotations(wording).roles))
 
 
 def rewalk_walks(features, states):
@@ -70,10 +72,10 @@ def rewalk_walks(features, states):
     return features * -(-states // STATES_PER_WALK)
 
 
-def explorer_turns(items, widths, features, states):
-    """(walks, turn cap) for the criteria `items` ((id, wording) pairs) at each of `widths`, plus `features`
-    re-walks of at most `states` states each."""
-    walks = sum(criterion_walks(wording, widths) for _, wording in items) + rewalk_walks(features, states)
+def explorer_turns(items, features, states):
+    """(walks, turn cap) for the criteria `items` ((id, wording) pairs), plus `features` re-walks of at most
+    `states` states each."""
+    walks = sum(criterion_walks(wording) for _, wording in items) + rewalk_walks(features, states)
     return walks, min(TURNS_CEILING, max(TURNS_FLOOR, TURNS_BASE + TURNS_PER_WALK * walks))
 
 
@@ -109,11 +111,11 @@ def joined_groups(group, other, item):
     return {key: into if value == joined else value for key, value in group.items()}
 
 
-def chain_walks(chain, widths):
-    return sum(criterion_walks(wording, widths) for _, wording in chain)
+def chain_walks(chain):
+    return sum(criterion_walks(wording) for _, wording in chain)
 
 
-def shard_shares(items, widths, shards, rewalk=0):
+def shard_shares(items, shards, rewalk=0):
     """Each of `shards` explorers' share of the criteria `items`, in shard order. A chain of criteria that build on
     each other (criterion_chains) goes whole to one explorer, as a lone criterion does. Largest walks first, each
     goes to the explorer with the fewest walks so far, the lowest-numbered on a tie. The first starts with `rewalk`
@@ -123,45 +125,45 @@ def shard_shares(items, widths, shards, rewalk=0):
     document order, without changing criterion numbers."""
     shares, loads = [[] for _ in range(shards)], [rewalk] + [0] * (shards - 1)
     positions = {item[0]: index for index, item in enumerate(items)}
-    for chain in sorted(criterion_chains(items), key=lambda chain: chain_walks(chain, widths), reverse=True):
+    for chain in sorted(criterion_chains(items), key=chain_walks, reverse=True):
         least = loads.index(min(loads))
         shares[least].extend(chain)
-        loads[least] += chain_walks(chain, widths)
+        loads[least] += chain_walks(chain)
     for share in shares:
         share.sort(key=lambda item: positions[item[0]])
     return shares
 
 
-def shard_plan(items, widths, max_shards):
+def shard_plan(items, max_shards):
     """What `criteria --max-shards` prints after the criteria. `shards: [1,2,3]` numbers the explorers, for the
     explore job's matrix: enough for SHARD_WALKS walks each, never more than `max_shards` nor than the chains of
     criteria (a criterion, or a chain of criteria that build on each other, is never split), and at least one.
     Then the walks it counted, each chain, and a warning when the explorer with the most walks has more than it is
     sized for, so an oversized pull request shows up front. The count is of the criteria alone: which features
     are re-walked is selected in the explore job, from a checkout this job does not have."""
-    walks = sum(criterion_walks(wording, widths) for _, wording in items)
+    walks = sum(criterion_walks(wording) for _, wording in items)
     chains = criterion_chains(items)
     shards = max(1, min(max_shards, len(chains), -(-walks // SHARD_WALKS)))
     lines = ["shards: [%s]" % ",".join(str(number) for number in range(1, shards + 1)), "walks: %d" % walks]
-    lines += ["chain: %s (%d walks, one explorer)" % (", ".join(item for item, _ in chain), chain_walks(chain, widths))
+    lines += ["chain: %s (%d walks, one explorer)" % (", ".join(item for item, _ in chain), chain_walks(chain))
               for chain in chains if len(chain) > 1]
-    most = max([chain_walks(share, widths) for share in shard_shares(items, widths, shards)] or [0])
+    most = max([chain_walks(share) for share in shard_shares(items, shards)] or [0])
     if most > SHARD_WALKS:
-        lines.append("::warning title=vibe-verifier criteria::%d walks (each criterion once per role and width) for %d "
+        lines.append("::warning title=vibe-verifier criteria::%d walks (each criterion once per role) for %d "
                      "explorer%s sized for %d, and one of them walks %d: expect criteria left unfinished. List fewer "
                      "criteria on one pull request, chain fewer of them, or raise max-shards (harnesses/qae/README.md)."
                      % (walks, shards, "" if shards == 1 else "s", shards * SHARD_WALKS, most))
     return lines
 
 
-def explorer_share(items, widths, shard, shards, rewalk, tag=None):
+def explorer_share(items, shard, shards, rewalk, tag=None):
     """(the criteria explorer `shard` of `shards` walks, the sentences its prompt names them in). One explorer
     walks them all and is told nothing. One of several is told its share by code, never left to work it out, the
     criteria of it that build on each other, and its tag (`tag`, or one made of `shard` alone), which keeps it
     off the records the others create. `rewalk` is the walks of the feature re-walk, the first explorer's alone."""
     if shards == 1:
         return items, ""
-    share = shard_shares(items, widths, shards, rewalk)[shard - 1]
+    share = shard_shares(items, shards, rewalk)[shard - 1]
     tag = tag or "qae-e%d" % shard
     sentences = [SHARE % (", ".join(item for item, _ in share), shard, shards) if share else NO_SHARE % (shard, shards)]
     sentences += [CHAINED % ", ".join(item for item, _ in chain) for chain in criterion_chains(share) if len(chain) > 1]

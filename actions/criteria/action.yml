@@ -19,9 +19,9 @@ inputs:
   max-shards:
     description: >-
       The most explorers a pull request's criteria may be split across, to run in parallel (the `shards`
-      output). One walk is a criterion as one role it names at one width, an explorer is sized for six, and
-      1 (the default) never splits. A criterion is never split, nor are criteria that name each other by
-      number ("the record from item 2", "after AC3"): one explorer walks such a chain whole, in order. More needs that many QAE runners at once; with fewer the explorers queue.
+      output). One walk is a criterion as one role it names (the declared widths add none: the harness
+      captures them), an explorer is sized for six, and 1 (the default) never splits. A criterion is never
+      split, nor are criteria that name each other by number ("the record from item 2", "after AC3"): one explorer walks such a chain whole, in order. More needs that many QAE runners at once; with fewer the explorers queue.
     default: "1"
   roles:
     description: >-
@@ -31,10 +31,10 @@ inputs:
     default: ""
   manifest:
     description: >-
-      The QAE manifest, relative to the workspace, as the workflow fetched it: the --widths of its
-      qae-artifacts line count toward the walks the shards are sized to. A subscribed ticket-coverage line
-      runs before any browser skip, requiring a full-history checkout. Empty (the default) counts one width
-      and runs no traceability check.
+      The QAE manifest, relative to the workspace, as the workflow fetched it: a subscribed ticket-coverage
+      line runs before any browser skip, requiring a full-history checkout. Its qae-artifacts --widths add no
+      walks: the harness captures every screenshot at the other widths. Empty (the default) runs no
+      traceability check.
     default: ""
   entries:
     description: >-
