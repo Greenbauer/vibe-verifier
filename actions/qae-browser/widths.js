@@ -103,7 +103,7 @@ async function popupOpen(page) {
 // framework keeps in sync (React copies each value it renders into defaultValue, so comparing the two never shows
 // typing) and a contenteditable editor are seen, and a value a script set is not. A field counts while it is still on
 // the page, enabled and not empty; a form's submit or reset ends its fields' drafts. Choices (a box, a slider, a file)
-// are not drafts.
+// and a select's option are not drafts.
 const TRACK_TYPING = () => {
   if (window.__vibeVerifierTyped) return;
   const typed = (window.__vibeVerifierTyped = new Set());
@@ -125,7 +125,7 @@ async function draftTyped(page) {
         typed.delete(field);
         continue;
       }
-      if (field.tagName === "INPUT" && choices.includes(field.type)) continue;
+      if (field.tagName === "SELECT" || (field.tagName === "INPUT" && choices.includes(field.type))) continue;
       const text = field.isContentEditable ? field.textContent : "value" in field ? field.value : "";
       if (String(text || "").trim()) return true;
     }

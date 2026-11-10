@@ -459,7 +459,9 @@ qae-artifacts line of `.vibe-verifier-qae`.
   phone page) drops that draft on the resize, and the explorer's next action then lands on an empty form (a
   consumer's survey builder, 2026-11-10). Events, not values, mark typing: React copies each value it renders into
   `defaultValue`, and a value a script sets is not typing. A form's submit or reset ends its fields' drafts, so the
-  step after Send is captured again; boxes, sliders and file pickers are choices, not drafts.
+  step after Send is captured again; boxes, sliders, file pickers and a select's option are choices, not drafts. A Save
+  that is not a form submit and leaves the field filled keeps the draft until the page reloads or navigates, so that
+  page's end state is captured by the reload the explorer makes after a save, or by an earlier step of the criterion.
 - A width a criterion names itself ("at 375 by 812, ...") is still the explorer's to walk: the captures stand in
   for the generic check of every criterion at every width, not for what a criterion asks.
 - Why the harness and not the explorer: across 660 walked runs of the subscribed repositories (2026-11-09),

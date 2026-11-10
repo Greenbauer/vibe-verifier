@@ -43,6 +43,7 @@ NARROW = ("<title>site</title><style>.row{display:flex;gap:12px;padding:24px}.ro
 # page, as a single-page app's form does.
 DRAFT = ("<title>site</title><main><h1>Survey</h1><form><input id=title aria-label=Title>"
          "<div id=editor contenteditable aria-label=Editor></div><input id=prefilled aria-label=Prefilled>"
+         "<select id=size aria-label=Size><option>Small</option><option>Large</option></select>"
          "<button id=send type=submit>Send</button></form></main>"
          "<script>title.addEventListener('input', () => { title.defaultValue = title.value; });"
          "prefilled.value = 'set by the page';"
@@ -122,8 +123,9 @@ class Captures(unittest.TestCase):
         self.shoot("AC1-step-1")
         self.explorer.call("browser_type", element="Title", target="#title", text="Where to eat")
         self.shoot("AC1-step-2")
-        # Send ends the draft: the form's fields are captured again.
+        # Send ends the draft: the form's fields are captured again, and a select's option is a choice, not a draft.
         self.explorer.call("browser_click", element="Send", target="#send")
+        self.explorer.call("browser_select_option", element="Size", target="#size", values=["Large"])
         self.shoot("AC1-step-3")
         # A contenteditable editor holds a draft too.
         self.explorer.call("browser_type", element="Editor", target="#editor", text="Bring snacks")
