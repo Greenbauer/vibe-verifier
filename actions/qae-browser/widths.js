@@ -96,6 +96,18 @@ async function popupOpen(page) {
   }), [POPUP, STANDING, FLOAT_DEPTH, MIN_POPUP]);
 }
 
+// A text field holding what the explorer typed and has not sent: an input or textarea whose value is not the one the
+// page rendered. A page that swaps layouts at a breakpoint by rendering its route again (a split screen that becomes the
+// phone page below 768px) drops that draft on the resize, and the explorer's next action then lands on an empty form it
+// never left (a consumer's survey builder, 2026-11-10). The draft is the step's state, so it is never resized.
+const EDITABLE = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=file]), textarea";
+async function draftTyped(page) {
+  return page.evaluate(
+    selector => [...document.querySelectorAll(selector)].some(el => !el.disabled && el.value !== el.defaultValue),
+    EDITABLE
+  );
+}
+
 const tree = page => page.locator("body").ariaSnapshot({ timeout: 2000 }).catch(() => "");
 
 // Captures `page` at each of `wanted` other than its own width, with Playwright's screenshot `take` and the
@@ -109,6 +121,10 @@ async function capture(page, take, options, shot, { dir, wanted, measure, budget
   const digest = sha256(shot);
   if (await popupOpen(page)) {
     write({ shot: digest, skipped: "a menu, listbox or tooltip was open" });
+    return;
+  }
+  if (await draftTyped(page)) {
+    write({ shot: digest, skipped: "a text field held unsent input" });
     return;
   }
   const run = { over: false };

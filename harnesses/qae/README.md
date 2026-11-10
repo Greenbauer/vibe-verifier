@@ -453,6 +453,11 @@ qae-artifacts line of `.vibe-verifier-qae`.
   sidebar shows, and read as an open popup it stopped every capture (2026-11-09). A menu in a header or navigation,
   fixed or not, and a tooltip kept for screen readers do not stop captures either. `disturbed: true` in `widths.jsonl` says the page's accessibility tree
   read differently after the round trip than before it.
+- A capture is also skipped while a text field (an input or textarea) holds input the explorer typed and has not sent:
+  its value differs from the one the page rendered. A page that swaps layouts at a breakpoint by rendering its route
+  again (a split screen that becomes the phone page) drops that draft on the resize, and the explorer's next action then
+  lands on an empty form (a consumer's survey builder, 2026-11-10). A later step of the same criterion, after the form is
+  sent or left, still gets its captures.
 - A width a criterion names itself ("at 375 by 812, ...") is still the explorer's to walk: the captures stand in
   for the generic check of every criterion at every width, not for what a criterion asks.
 - Why the harness and not the explorer: across 660 walked runs of the subscribed repositories (2026-11-09),
