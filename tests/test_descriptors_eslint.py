@@ -1,11 +1,11 @@
 """The `eslint` parser of gates/_parsers.py, on a stand-in that prints ESLint's `--format json` report: one entry per
-file, an error on each line holding BAD, a parse error (no rule) on each holding BROKEN, a warning on every file."""
+file, an error on each line holding BAD, a parse error (no rule) on each holding BROKEN, a warning on every file.
+ESLint's count ratchet is not tested: it cannot run with a real ESLint (docs/features/tool-descriptors.md)."""
 import json
 import sys
 import unittest
 
-from helpers import commit
-from test_descriptors import StandIn
+from test_descriptors import StandIn, _parsers
 
 ESLINT = r'''#!/usr/bin/env python3
 import json, os, sys
@@ -50,13 +50,12 @@ class Eslint(StandIn):
         self.assertEqual(json.loads(result.stdout)["findings"][0],
                          {"message": "parse: Parsing error: Unexpected token", "path": "a.txt", "line": 1, "advisory": False})
 
-    def test_an_eslint_rule_counts_for_the_ratchet(self):
-        repo = self.eslint_repo({"a.txt": "BAD\n"}, {"a.txt": "BAD\nfine\n"}, ratchet="count")
-        self.assertEqual(self.run_gate(repo, "--base-ref", "HEAD~1").returncode, 0)  # still one no-bad
-        commit(repo, {"a.txt": "BAD\nBAD again\n"}, "second")
-        result = self.run_gate(repo, "--base-ref", "HEAD~2")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("(no-bad results in this file: 1 at the base, 2 now)", result.stdout)
+    def test_a_message_eslint_gives_no_rule_is_named_for_what_it_is(self):
+        report = json.dumps([{"filePath": "a.js", "messages": [
+            {"ruleId": None, "fatal": True, "severity": 2, "message": "Parsing error: Unexpected token", "line": 3},
+            {"ruleId": None, "severity": 1, "message": "Unused eslint-disable directive.", "line": 1}]}])
+        findings = _parsers.eslint(report, {"parser": "eslint"}, ".")
+        self.assertEqual([(f.rule, f.advisory) for f in findings], [("parse", False), ("eslint", True)])
 
 
 if __name__ == "__main__":
