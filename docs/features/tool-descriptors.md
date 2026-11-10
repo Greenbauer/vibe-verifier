@@ -12,6 +12,19 @@ A gate that only runs an outside tool is a JSON descriptor (command, file globs,
 
 Write `.vibe-verifier-tools/<gate>.json` in the repository and add `<gate>` to `.vibe-verifier` ([format](../GATE-CONTRACT.md#tool-descriptors)).
 
+A repository's own ESLint, with its own config and plugins, is the usual case: the `eslint` parser reads its report, and the job that runs the gates installs the repository's packages and puts `node_modules/.bin` on PATH first. Leave out `"ratchet": "count"`: the ratchet lints the merge base's copy of each file in a folder of its own, where the repository's `eslint.config.*` is not, so ESLint exits 2 and the gate cannot run. An error blocks and a warning is only reported, so a repository with no ESLint errors on its default branch needs no ratchet.
+
+```json
+{
+  "gate": "eslint",
+  "description": "Fail when a file this pull request changed has an ESLint error under the repository's own config.",
+  "tool": "eslint",
+  "args": ["--format", "json", "--no-warn-ignored", "--"],
+  "files": ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx"],
+  "output": {"parser": "eslint"}
+}
+```
+
 ## Verify
 
 - `tests/test_descriptors.py::test_a_bad_file_the_pr_changes_fails_with_the_mapped_fields`
@@ -26,6 +39,10 @@ Write `.vibe-verifier-tools/<gate>.json` in the repository and add `<gate>` to `
 - `tests/test_descriptors.py::test_an_option_spec_maps_the_flag_with_its_default_and_choices`
 - `tests/test_descriptors.py::test_a_rule_only_blocks_a_file_where_its_count_rose`
 - `tests/test_descriptors.py::test_a_new_file_with_a_finding_blocks_and_a_moved_one_does_not`
+- `tests/test_descriptors_eslint.py::test_eslint_errors_block_and_its_warnings_advise`
+- `tests/test_descriptors_eslint.py::test_eslint_warnings_alone_pass`
+- `tests/test_descriptors_eslint.py::test_a_file_eslint_could_not_parse_blocks`
+- `tests/test_descriptors_eslint.py::test_a_message_eslint_gives_no_rule_is_named_for_what_it_is`
 
 ## Gotchas
 

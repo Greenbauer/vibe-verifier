@@ -53,7 +53,7 @@ sys.exit(1 if bad or mode == "empty" else 0)
 
 
 def descriptor(gate_name="lint-text", tool="vv-standin", parser="json", args=None, files=None, options=None, **extra):
-    output = {"parser": parser} if parser in ("sarif", "zizmor") else {"parser": "json", "message": "{rule}: {msg} ({missing})", "rule": "rule",
+    output = {"parser": parser} if parser in ("sarif", "zizmor", "eslint") else {"parser": "json", "message": "{rule}: {msg} ({missing})", "rule": "rule",
                                                               "path": "file", "line": "ln"}
     found = {"gate": gate_name, "description": "Fail on BAD.", "tool": tool, "args": args or ["--check"],
              "files": files or ["**/*.txt"], "output": output}

@@ -91,4 +91,20 @@ def bandit(text, output, repo):
     return findings
 
 
-PARSERS = {"json": json_records, "sarif": sarif, "zizmor": zizmor, "bandit": bandit}
+def eslint(text, output, repo):
+    """ESLint's JSON report (`--format json`): a list of files, each with its messages. An error (severity 2) blocks and a
+    warning (1) is advisory, as ESLint itself fails only on errors. A message with no rule is ESLint's own: a file it
+    could not parse (marked fatal, an error) under the rule "parse", anything else (an unused eslint-disable comment, an
+    ignored file) under "eslint"."""
+    findings = []
+    for result in json.loads(text) if text.strip() else []:
+        for message in result["messages"]:
+            rule = message.get("ruleId") or ("parse" if message.get("fatal") else "eslint")
+            finding = Finding("%s: %s" % (rule, message["message"]), result["filePath"], _line(message.get("line")),
+                              advisory=message.get("severity") != 2)
+            finding.rule = rule
+            findings.append(finding)
+    return findings
+
+
+PARSERS = {"json": json_records, "sarif": sarif, "zizmor": zizmor, "bandit": bandit, "eslint": eslint}

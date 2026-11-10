@@ -49,7 +49,8 @@ NAME = re.compile(r"^[a-z0-9-]+$")
 TOOL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")  # a bare command name: a path would dodge the duplicate check
 KEYS = {"gate", "description", "tool", "args", "files", "output"}
 OPTIONAL = {"options", "exclude", "ratchet"}
-OUTPUTS = {"sarif": {"parser"}, "json": {"parser", "message", "path", "line"}, "zizmor": {"parser"}, "bandit": {"parser"}}
+OUTPUTS = {"sarif": {"parser"}, "json": {"parser", "message", "path", "line"}, "zizmor": {"parser"}, "bandit": {"parser"},
+           "eslint": {"parser"}}
 OUTPUT_OPTIONAL = {"json": {"rule"}}  # the record key that names each finding's rule, for the count ratchet
 RATCHETS = ("count",)
 FLAG = re.compile(r"^--[a-z][a-z0-9-]*$")
