@@ -20,7 +20,7 @@ outputs:
       The harness's layout record, for a second playwright-mcp --init-page. It measures every page the
       explorer opens (rows that do not line up, controls touching, a spinner off its button's middle,
       a badge's mark off its circle's middle, walls of text, raw values, text cut off, a short label on two lines, a table scrolling
-      beside room for it, page bands on uneven gutters, a field too small for what it asks, an icon off its button's middle, two buttons of one
+      beside room for it or by a sliver, page bands on uneven gutters, a field too small for what it asks, an icon off its button's middle, two buttons of one
       name in a dialog, a modal Escape or a backdrop click leaves open) and writes ui-audit.jsonl in the output directory, which
       the ui-audit gate reads, and every sentence and label the pages show to copy.jsonl beside it, which
       actions/copy-audit grades.

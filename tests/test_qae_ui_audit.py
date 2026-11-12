@@ -17,7 +17,8 @@ from helpers import ROOT
 HOOK = ROOT / "actions" / "qae-browser" / "ui-audit.js"
 FIXTURES = ROOT / "tests" / "fixtures" / "ui-audit"
 RULES = ["clipped-text", "clipped-value", "cramped-field", "duplicate-name", "edge", "field-stagger", "glyph-off-center",
-         "icon-off-center", "long-sentence", "raw-value", "row-height", "row-stagger", "spinner-off-center", "table-scroll", "text-wall",
+         "icon-off-center", "long-sentence", "raw-value", "row-height", "row-stagger", "spinner-off-center", "table-scroll", "table-sliver",
+         "text-wall",
          "touching", "uneven-gutter", "wrapped-label"]
 
 
@@ -40,6 +41,7 @@ const hook = require(process.env.HOOK);
     out[name + "-cramped-labels"] = found.filter(f => f.rule === "cramped-field" && f.other).map(f => f.other).sort();
     out[name + "-icon-off-center"] = icons.map(f => f.text).sort();
     out[name + "-table-scroll"] = found.filter(f => f.rule === "table-scroll").length;
+    out[name + "-table-sliver"] = found.filter(f => f.rule === "table-sliver").length;
     out[name + "-uneven-gutter"] = found.filter(f => f.rule === "uneven-gutter").length;
     out[name + "-details"] = found.filter(f => ["raw-value", "touching", "glyph-off-center", "duplicate-name", "wrapped-label", "row-stagger"].includes(f.rule)).map(f => f.rule + ": " + f.text + (f.rule === "duplicate-name" ? " / " + f.other : ""));
     await page.close();
@@ -48,9 +50,22 @@ const hook = require(process.env.HOOK);
     await phone.goto("file://" + process.env.FIXTURES + "/" + name + ".html");
     const small = await phone.evaluate(hook.script);
     out[name + "-375-table-scroll"] = small.filter(f => f.rule === "table-scroll").length;
+    out[name + "-375-table-sliver"] = small.filter(f => f.rule === "table-sliver").length;
     out[name + "-375-uneven-gutter"] = small.filter(f => f.rule === "uneven-gutter").length;
     await phone.close();
   }
+  // A table a few pixels wider than the box that scrolls it, in a main region that box fills, at 1280: the subscribed
+  // app's 992px table in a 982px box, then the same box at the bound and past it, and beside room.
+  const tables = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const table = width => `<table style="width:${width}px;border-collapse:collapse"><tr><th>Plan</th><th>Status</th></tr><tr><td>Origin inland</td><td>Blocked</td></tr></table>`;
+  const inMain = width => `<main style="width:982px"><div style="overflow-x:auto">${table(width)}</div></main>`;
+  out.sliver = {};
+  for (const [name, html] of [["992 in 982", inMain(992)], ["1006 in 982", inMain(1006)], ["1007 in 982", inMain(1007)],
+    ["992 in 982 beside room", `<div style="width:982px;overflow-x:auto">${table(992)}</div>`]]) {
+    await tables.setContent(html);
+    out.sliver[name] = (await tables.evaluate(hook.script)).filter(f => f.rule.startsWith("table-")).map(f => f.rule + ": " + f.detail);
+  }
+  await tables.close();
   // The hook in a real page: it measures after the load, and again the moment a button gains a spinner.
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   process.argv = ["node", "cli.js", "--output-dir", process.env.OUT];
@@ -173,6 +188,17 @@ class Browser(unittest.TestCase):
         # bad.html's three: in a card, behind a narrow first table in the same box, and in an app's fixed main region.
         self.assertEqual(measured["bad-table-scroll"], 3)
         self.assertEqual((measured["bad-375-table-scroll"], measured["good-375-table-scroll"]), (0, 0))
+        # bad.html's table 10px wider than the box it fills, at both widths. good.html's, wider by a whole 120px column,
+        # and its tables wider than the page, at a phone's width too, scroll by design and are not flagged.
+        self.assertEqual((measured["bad-table-sliver"], measured["bad-375-table-sliver"]), (1, 1))
+        self.assertEqual((measured["good-table-sliver"], measured["good-375-table-sliver"]), (0, 0))
+        # The subscribed app's 992px table in a 982px box that fills its main region: no room for table-scroll, and a
+        # sliver for table-sliver, which flags up to 24px hidden and no more. Beside room it is table-scroll's alone.
+        self.assertEqual(measured["sliver"], {
+            "992 in 982": ["table-sliver: it scrolls sideways to show only 10px more, too little to hide a column"],
+            "1006 in 982": ["table-sliver: it scrolls sideways to show only 24px more, too little to hide a column"],
+            "1007 in 982": [],
+            "992 in 982 beside room": ["table-scroll: it scrolls sideways to show 10px more, while the layout has 282px unused beside it"]})
         self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("wrapped-label")),
                          ["wrapped-label: 12.5%", "wrapped-label: Save draft"])
         # Walked at 1280 the wide fixture's table has no room and is clean; the hook's own 1920 window finds it, and that

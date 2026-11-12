@@ -82,6 +82,7 @@ Criteria alone no longer define coverage. The manifest also subscribes to [ticke
 - `tests/test_qae_widths.py::test_the_harness_captures_of_a_step_count_for_its_criterion`
 - `tests/test_qae_widths.py::test_a_capture_is_counted_only_as_wide_as_it_is_and_only_inside_the_evidence`
 - `tests/test_qae_widths.py::test_the_prompt_asks_for_no_routine_record`
+- `tests/test_qae_widths.py::test_a_button_pressed_after_typing_is_pressed_both_ways`
 - `tests/test_qae_planted_evidence.py::test_a_committed_evidence_file_is_never_evidence`
 - `tests/test_qae_planted_evidence.py::test_a_link_is_never_evidence`
 - `tests/test_qae_artifacts.py::test_an_error_a_third_party_page_logged_is_not_judged`

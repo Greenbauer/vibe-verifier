@@ -1,10 +1,18 @@
-// The table-scroll rule of the layout audit (ui-audit-page.js, whose header lists every rule): a table that scrolls
-// sideways while the layout around it has room for all of it. A subscribed app's quote page cut its lane table off
-// at the amount column behind a scrollbar, beside a wide empty area of the page (2026-11-06). ui-audit.js runs this
-// file beside ui-audit-page.js as one script, so `visible` comes from there.
+// The table-scroll and table-sliver rules of the layout audit (ui-audit-page.js, whose header lists every rule). A
+// table that scrolls sideways while the layout around it has room for all of it is table-scroll: a subscribed app's
+// quote page cut its lane table off at the amount column behind a scrollbar, beside a wide empty area of the page
+// (2026-11-06). A table that scrolls sideways by a sliver, with no room around it, is table-sliver: a subscribed app's
+// list page drew a 992px table in a 982px box at 1280px (2026-11-06), so a scrollbar showed for 10px of its last
+// column, and table-scroll found no room to blame. ui-audit.js runs this file beside ui-audit-page.js as one script,
+// so `visible` comes from there.
 const TABLE = "table, [role=table], [role=grid]";
 const OVERLAY = "dialog, [role=dialog], [role=alertdialog], [aria-modal=true]";
 const SLACK = 8;   // px a table may overflow its box before it scrolls in a way a person notices
+// px a table may hide past SLACK and still hide nothing whole: no column a person reads fits in it (a checkbox
+// column with its cell padding is wider), so its scrollbar shows only because the layout missed by a few pixels. A
+// table that hides more may scroll by design (a wide table on a phone, a table that hides whole columns) and is not
+// judged. A fixed bound, not "less than the last column": a phone's table cuts its last column part way by design.
+const SLIVER = 24;
 
 // The width of `el`'s content box: its box less its borders and padding.
 function contentWidth(el) {
@@ -58,6 +66,7 @@ function scrollRules(add) {
       if (!hidden) continue;
       const room = roomAround(el);
       if (room >= hidden.need) add("table-scroll", hidden.table, `it scrolls sideways to show ${Math.ceil(hidden.need)}px more, while the layout has ${Math.floor(room)}px unused beside it`);
+      else if (hidden.need <= SLIVER) add("table-sliver", hidden.table, `it scrolls sideways to show only ${Math.ceil(hidden.need)}px more, too little to hide a column`);
     } catch (e) { continue; }
   }
 }
