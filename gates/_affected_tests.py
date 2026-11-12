@@ -21,10 +21,10 @@ A test file is a JS or TS file named *.test.* or *.spec.* or under __tests__/, a
 imports node:test, or a Python test (_contract.PY_TESTS); --tests replaces that definition.
 
 With --report RESULTS the job has also run the full suite, and the tests that failed there but were not
-selected (misses) are printed, as warnings under --format github: what selection alone would have let
-through. RESULTS is a JUnit XML report (Vitest's, pytest's) or a list of failed test files, one per line
-(actions/affected-tests/failed-files.mjs writes one for node:test). Exit 0 with a selection or a report,
-2 when it cannot run.
+selected (misses) are printed, as warnings under --format github (errors with --fail-on-miss): what
+selection alone would have let through. RESULTS is a JUnit XML report (Vitest's, pytest's) or a list of
+failed test files, one per line (actions/affected-tests/failed-files.mjs writes one for node:test). Exit 0
+with a selection or a report, 1 with --fail-on-miss when the report found a miss, 2 when it cannot run.
 """
 import json
 import os
