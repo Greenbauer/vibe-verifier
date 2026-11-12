@@ -11,7 +11,7 @@
 
 ## Reach
 
-From a workflow, `uses: Greenbauer/vibe-verifier/actions/affected-tests@<sha>` after a `fetch-depth: 0` checkout, then the test step runs the `list` output, or everything when `all` is `true` ([actions/affected-tests/README.md](../../actions/affected-tests/README.md)). A repository starts in report mode: the full suite still runs, and a second step with `report:` names the misses. From a clone, `bin/vibe-verifier affected-tests --repo <project> --base-ref main`.
+From a workflow, `uses: Greenbauer/vibe-verifier/actions/affected-tests@<sha>` after a `fetch-depth: 0` checkout, then the test step runs the `list` output, or everything when `all` is `true` ([actions/affected-tests/README.md](../../actions/affected-tests/README.md)). A repository starts in report mode: the full suite still runs, and a second step with `report:` names the misses. Once the required run uses the selection, a full run kept as a safety net fails nothing itself, so its report sets `fail-on-miss: true` (`--fail-on-miss`): a miss is then an error and the step fails. From a clone, `bin/vibe-verifier affected-tests --repo <project> --base-ref main`.
 
 ## Verify
 
@@ -27,9 +27,10 @@ From a workflow, `uses: Greenbauer/vibe-verifier/actions/affected-tests@<sha>` a
 - `tests/test_affected_tests.py::test_a_scripts_only_change_in_package_json_does_not`
 - `tests/test_affected_tests.py::test_a_lockfile_change_selects_all`
 - `tests/test_affected_tests.py::test_no_base_or_an_unreadable_base_selects_all`
-- `tests/test_affected_tests.py::test_a_failure_in_a_test_the_selection_left_out_is_a_miss`
-- `tests/test_affected_tests.py::test_the_node_test_reporter_writes_the_failed_files_the_report_reads`
-- `tests/test_affected_tests.py::test_the_node_test_reporter_writes_each_failed_file_once`
+- `tests/test_affected_tests_report.py::test_a_failure_in_a_test_the_selection_left_out_is_a_miss`
+- `tests/test_affected_tests_report.py::test_fail_on_miss_fails_on_a_miss_and_passes_when_every_failure_was_selected`
+- `tests/test_affected_tests_report.py::test_the_node_test_reporter_writes_the_failed_files_the_report_reads`
+- `tests/test_affected_tests_report.py::test_the_node_test_reporter_writes_each_failed_file_once`
 - `tests/test_affected_tests.py::test_the_action_writes_the_list_and_says_whether_every_test_runs`
 
 ## Gotchas
