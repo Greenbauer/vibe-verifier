@@ -1,0 +1,21 @@
+# Throwaway probe for agent-rules bin/ci-failures (2026-11-12): one check fails early while another
+# keeps running. This PR is closed unmerged; nothing here is meant to land.
+name: Fail-early probe
+on: pull_request
+permissions: {}
+concurrency:
+  group: fail-early-probe-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  early:
+    name: "Probe: fails early"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: sleep 45 && echo "deliberate failure" && exit 1
+  slow:
+    name: "Probe: slow pass"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - run: sleep 900
