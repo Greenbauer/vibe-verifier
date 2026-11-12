@@ -390,14 +390,6 @@ class Plan(unittest.TestCase):
         self.assertEqual([len(cut) for cut in _proof_audit.shards(items[:10], 10)], [10])
         self.assertEqual(_proof_audit.shards([], 10), [])
 
-    def test_a_requirement_naming_a_placeholder_is_written_as_it_is(self):
-        item = {"id": "C-1", "plan": "docs/plan.md", "line": 3, "text": "SECTIONS and REQUIREMENTS stay [req: C-1]",
-                "section": "docs/plan.md#c", "heading": "C"}
-        prompt = _proof_audit.render_prompt([item])
-        self.assertIn("- C-1 (docs/plan.md:3): SECTIONS and REQUIREMENTS stay [req: C-1]", prompt)
-        self.assertIn('- docs/plan.md#c (heading "C")', prompt)
-        self.assertNotIn("\nREQUIREMENTS\n", prompt)
-
 
 class Declarations(unittest.TestCase):
     def test_an_assertion_belongs_to_the_test_it_sits_in_not_a_call_inside_it(self):

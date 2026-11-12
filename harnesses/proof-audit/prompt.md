@@ -17,6 +17,10 @@ only the wording above:
 
 SECTIONS
 
+Every section this pull request links, the work it implements:
+
+LINKED
+
 A requirement whose plan is `plan:<id>` comes from a plan kept in a plan store, outside this repository: its
 wording above is all there is to read of it, and it is never EXCLUDED.
 
@@ -60,8 +64,11 @@ How to grade one requirement:
    lines, quote the line that holds the value it checks, however short (`0,`, `[]`), never the line that
    only opens the call (`assert.equal(`) or only closes it (`});`). A program checks every quote against the file, and a requirement with
    one quote that is not there counts as unproven.
-4. EXCLUDED: only when the plan itself gives the item to another section of the plan, and that section
-   carries `[takes: <ID>]` for it. Give the plan file, the 1-based line number and the exact text of the
+4. EXCLUDED: only when the plan itself gives the item to another section of the plan, that section
+   carries `[takes: <ID>]` for it, and it is not one of the sections this pull request links (the list
+   above). An item the plan gives to a linked section, with `[takes: <ID>]` or in words such as "is walked
+   by that section's criterion", is this pull request's own: grade it PROVEN or UNPROVEN, never EXCLUDED.
+   Give the plan file, the 1-based line number and the exact text of the
    plan line that names the other owner, and the owner section as `<plan path>#<heading anchor>` (GitHub's
    anchor of its heading: lower case, punctuation dropped, each space a hyphen). Never exclude a
    requirement because it is hard to test, or because a browser check or a reviewer covers it.

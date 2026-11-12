@@ -17,7 +17,9 @@ tree, and grades every ID, cold:
   title and the assertion lines that would fail if that case broke, quoted verbatim with their line
   numbers.
 - **EXCLUDED**: the plan line that gives the item to another section, quoted with its line number, and
-  that section's link; the section must carry `[takes: ID]`. A stored plan's requirement is never
+  that section's link; the section must carry `[takes: ID]` and be one the body does not link. The model is
+  given every linked section and told so: an item the plan gives to one (`[takes: ID]`, or "is walked by that
+  section's criterion") is the pull request's own, and it grades it PROVEN or UNPROVEN. A stored plan's requirement is never
   EXCLUDED (the gate counts it UNPROVEN): its body's `Split off:` line gives it away instead, and the
   table lists it as **SPLIT** with its owner.
 - **UNPROVEN**: what is missing, in a sentence the author can act on.
@@ -49,7 +51,7 @@ QAE workflow so its required `Acceptance criteria` check (`qae-verify` in a copy
    linked sections at the merge base (ticket-coverage's grammar and parser), and the plans its markers
    name in a plan store when `plans-endpoint` is given, and cuts the requirement IDs into shards of at
    most `max-ids` (default 10). Outputs `count`, `shards` (the grade jobs' matrix) and `plan` (the
-   requirements, as JSON). No Ticket line and no stored plan is a count of 0.
+   requirements and the sections the body links, as JSON). No Ticket line and no stored plan is a count of 0.
 2. **grade** (`mode: grade`), one job per shard, on the runner that holds the QAE explorer's
    ChatGPT-managed Codex login (`$HOME/.codex-qae`, checked as `actions/qae-codex` checks it): runs
    `bin/vibe-verifier proof-audit --requirements <plan> --shard K`, which writes `<K>.json` (the IDs it

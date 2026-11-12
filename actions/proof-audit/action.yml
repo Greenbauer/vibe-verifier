@@ -26,7 +26,7 @@ inputs:
     description: plan and verify, the bearer token the plan store reads plans with, a secret of the consumer's. Needed with plans-endpoint.
     default: ""
   plan:
-    description: grade, the plan job's `plan` output (the requirements cut into shards, as JSON).
+    description: grade, the plan job's `plan` output (the requirements cut into shards and the linked sections, as JSON).
     default: ""
   shard:
     description: grade, which shard of the plan this job grades (`matrix.shard`).
@@ -85,7 +85,7 @@ outputs:
     description: plan, the grade jobs' matrix, a JSON array of shard numbers (`[]` when there is nothing to grade).
     value: ${{ steps.plan.outputs.shards }}
   plan:
-    description: plan, the requirements cut into shards, as one line of JSON, for the grade jobs' `plan`.
+    description: plan, the requirements cut into shards and the linked sections, as one line of JSON, for the grade jobs' `plan`.
     value: ${{ steps.plan.outputs.plan }}
 runs:
   using: composite

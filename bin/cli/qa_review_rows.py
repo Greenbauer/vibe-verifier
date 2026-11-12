@@ -5,7 +5,7 @@ import re
 
 from _acceptance import (body_criteria as read_criteria, check_lines, declares_none, said, ticket_items, ticket_proofs,
                          DASH, PROOF_TOKEN, verdict)
-from _proof_audit import cell
+from _proof_table import cell
 
 # A row's mark: the explorer's PASS or FAIL, a criterion it gave no single verdict, and a ticket criterion a test proves.
 MARKS = {"PASS": "\u2705", "FAIL": "\u274c", None: "\u26a0\ufe0f"}
