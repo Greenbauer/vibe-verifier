@@ -28,6 +28,8 @@
 // WIDE, the hook also loads the page in a window of its own at WIDE pixels, signed in as the explorer is (a new
 // context in the same browser, from the explorer's storage state, closed after), and records that rule's findings
 // at that width. The explorer's tab list never shows it. It is a second load of the same address, as a reload is.
+// A table that scrolls by a sliver with no room beside it (table-sliver) is a miss at the width it shows, so it is
+// measured at the explorer's widths and the run's, not again in that window.
 //
 // A modal a person cannot close by Escape or a backdrop click (modal-dismiss) shows only when keys are pressed, which would
 // move the explorer's walk. So when a modal is open in the explorer's tab, the hook replays it in such windows of its own

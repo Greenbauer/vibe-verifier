@@ -304,6 +304,10 @@ jobs:
                saving anything, reload the page and check that the values you entered are still there; and, only
                when that screen has a form or another input, try one invalid input in it (an empty required field,
                a malformed value) and check that the site answers with a handled error, not a crash or a blank page.
+               When you type a value into a field and then press a button that uses it (Apply, Save, Add, Search and
+               the like), press that button both ways: first straight away, with the cursor still in the field; then
+               type a new value, leave the field (press Tab) and press it again. Each must do what the criterion says.
+               Do this once for each such button, not every time you use it.
                Never navigate to a URL that neither the criterion names nor the site links to: an invented page is
                not an input, and its 404 fails the run. Prefer an input the page refuses before sending anything. Take
                the invalid input as one step, acting on the form's controls by their snapshot refs and never by a

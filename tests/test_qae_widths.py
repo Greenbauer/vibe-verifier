@@ -296,6 +296,16 @@ class Template(unittest.TestCase):
         # Who may declare an expected refusal, and what the manifest declares environmental, are rendered from the
         # gate's own data: tests/test_qae_prompt_rules.py.
 
+    def test_a_button_pressed_after_typing_is_pressed_both_ways(self):
+        # A group's Apply did nothing while the date field it read still had focus: one walk left the field first and
+        # passed, a second walk of the same code pressed it straight away and failed (2026-10-22). Each lane's copy is
+        # the rendered prompt (tests/test_qae_prompt_rules.py).
+        prompt = " ".join((ROOT / "harnesses" / "qae" / "prompt.md").read_text().split())
+        for phrase in ("press that button both ways: first straight away, with the cursor still in the field;",
+                       "then type a new value, leave the field (press Tab) and press it again. Each must do what the criterion says.",
+                       "Do this once for each such button, not every time you use it."):
+            self.assertIn(phrase, prompt)
+
     def test_the_explore_step_passes_no_manifest_input_so_the_default_is_the_qae_manifest(self):
         action = (ROOT / "actions" / "qae-inputs" / "action.yml").read_text()
         self.assertIn("  manifest:\n", action)

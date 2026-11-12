@@ -487,7 +487,12 @@ not readable from its header.
 criterion touches through to its end state (a save that is saved, not a button that is only shown),
 reloads after a save to check the entered values persisted, and, only when that screen has a form or
 another input, tries one invalid input in it, expecting a handled error rather than a crash or a blank
-page. Each is a step of that criterion, with its screenshot, and any that fails makes the criterion a
+page. When it types a value into a field and then presses a button that uses it (Apply, Save, Add, Search), it
+presses that button both ways, once for each such button: straight away with the cursor still in the field, then
+with a new value after leaving the field. A consumer's group Apply did nothing while the date field it read still
+had focus (2026-10-22): one walk left the field first, saw it work and passed the criterion, and a second walk of
+the same code pressed it straight away and failed it. The second press costs a few turns a button, not a walk, so
+the [turn cap](#the-turn-cap) is unchanged; no run has measured it yet. Each is a step of that criterion, with its screenshot, and any that fails makes the criterion a
 FAIL. They are for criteria only: a [re-walked feature](#re-walking-the-features-a-pull-request-touches)
 is checked for what its states say. No gate checks them: what counts as every control a criterion
 touches, or as a handled error, is judgment. Two structural checks still apply. A save that answered 400 or worse fails the network check,
@@ -656,7 +661,7 @@ that included the line. Two rules keep an explorer off another's records:
 The browser also measures every page the explorer opens. The [layout record](../../actions/qae-browser/ui-audit.js),
 a second `--init-page` in both lanes, runs the layout audit a second after each load and navigation, once the
 explorer stops typing, half a second after a text field appears, and at once when a button gains a spinner, and appends each finding to `ui-audit.jsonl`: rows that do not line up, controls
-touching, a spinner off its button's middle, a badge's mark off its circle's middle, walls of text, raw values, text cut off, a short label on two lines, a table scrolling beside room for it (also measured in a 1920px window of the hook's own), page bands on uneven gutters, a field too small for what it asks (measured again once the explorer stops typing), an icon or spinner whose ink sits off its button's middle (read from screenshots of the control), two buttons in one dialog or form with the same name, a modal that Escape or a click on its backdrop leaves open (replayed in windows of the hook's own, so the explorer's tab never gets the key or the click). With several explorers the
+touching, a spinner off its button's middle, a badge's mark off its circle's middle, walls of text, raw values, text cut off, a short label on two lines, a table scrolling beside room for it (also measured in a 1920px window of the hook's own) or by a sliver, page bands on uneven gutters, a field too small for what it asks (measured again once the explorer stops typing), an icon or spinner whose ink sits off its button's middle (read from screenshots of the control), two buttons in one dialog or form with the same name, a modal that Escape or a click on its backdrop leaves open (replayed in windows of the hook's own, so the explorer's tab never gets the key or the click). With several explorers the
 step above moves each one's record under `shard-<n>/`, where the [ui-audit gate](../../gates/ui_audit.py) reads it
 ([docs/features/ui-audit.md](../../docs/features/ui-audit.md)). The explorer never sees the record. The same hook
 also reads again half a second after a dialog, alert or status message appears, and writes every sentence and label

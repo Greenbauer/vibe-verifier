@@ -38,6 +38,8 @@
 //                         line (wrap-page.js); a pill's icon above its text counts, a button's does not
 //     table-scroll        a table that scrolls sideways while a box around it, within the page's main region,
 //                         has room beside it for all of it (scroll-page.js)
+//     table-sliver        a table that scrolls sideways by more than 8px and at most 24px, too little to hide a column,
+//                         with no room beside it for table-scroll to name (scroll-page.js)
 //     uneven-gutter       two page bands stacked across the same column (a header, a toolbar, a table) whose content
 //                         starts, or whose boxes end, more than 4px apart from the edge they share, both within 48px
 //                         of it (gutter-page.js); a card holds its own padding and is not a band
