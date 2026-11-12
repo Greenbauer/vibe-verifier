@@ -1,5 +1,5 @@
 // The nested-inset rule of the layout audit (ui-audit-page.js, whose header lists every rule): on a phone, a card
-// inside another card whose content starts more than 32px in from both sides of the window, so the boxes around it
+// inside another card whose content starts more than 36px in from both sides of the window, so the boxes around it
 // spend width a phone does not have. A page margin of 16px (Android's standard margin for compact windows) and one
 // card's padding of 16px are the budget; a second box's border and padding are what nesting adds. Subscribed apps
 // showed it on phones in 2026-11: a results page whose line cards (Total, Part, Date, Price) sat in a card of their own,
