@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - run: sleep 45 && echo "deliberate failure" && exit 1
+      - run: sleep 50 && echo "deliberate failure" && exit 1
   slow:
     name: "Probe: slow pass"
     runs-on: ubuntu-latest
