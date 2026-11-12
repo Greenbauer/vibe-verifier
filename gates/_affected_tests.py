@@ -287,9 +287,10 @@ def command(args):
         selection = select(args)
         if args.report:
             lines, warnings = report(args, selection)
-            print("\n".join(lines + [("::warning title=%s::%s" % (NAME, text)) if args.format == "github" else "%s: %s" % (NAME, text)
+            level = "error" if args.fail_on_miss else "warning"
+            print("\n".join(lines + [("::%s title=%s::%s" % (level, NAME, text)) if args.format == "github" else "%s: %s" % (NAME, text)
                                      for text in warnings]))
-            return 0
+            return 1 if args.fail_on_miss and warnings else 0
     except CannotRun as reason:
         print("%s could not run: %s" % (NAME, reason), file=sys.stderr)
         return 2
@@ -316,4 +317,6 @@ def add_arguments(parser):
                         "such as the repository's own test runner script (repeatable)")
     parser.add_argument("--report", action="append", metavar="RESULTS", help="the full run's results, a JUnit XML "
                         "report or a list of failed test files (repeatable): print the failures the selection missed")
+    parser.add_argument("--fail-on-miss", action="store_true", help="with --report, exit 1 when a test was missed: for "
+                        "a repository whose required run uses the selection, where the full run fails nothing")
     parser.add_argument("--format", choices=["text", "github"], default="text")
