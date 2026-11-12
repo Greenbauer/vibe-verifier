@@ -46,7 +46,8 @@ import subprocess
 from _affected_graph import JS_EXTENSIONS
 from _affected_tests import JS_TESTS, NODE_TEST
 from _contract import PY_TESTS, CannotRun, Finding, git, matches, planted, qualify, run_gate
-from _proof_audit import SCHEMA, proof_summary, table, write_table
+from _proof_audit import SCHEMA
+from _proof_table import proof_summary, table, write_table
 from _proof_requirements import merge_base, requirements, stored, unlinked, where
 from _schema_subset import schema_problem
 from _test_body import (CLOSERS_ONLY, DECLARATION, body_end, bracket_depth, declaration_above, declared_title,

@@ -8,6 +8,7 @@ A model on the Codex CLI grades, cold, whether a repository's tests prove each r
 - command: `proof-audit`
 - source: `gates/proof_audit.py`
 - source: `gates/_proof_audit.py`
+- source: `gates/_proof_table.py`
 - source: `gates/_proof_requirements.py`
 - source: `gates/_plan_store.py`
 - source: `gates/_schema_subset.py`
@@ -41,6 +42,7 @@ In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one s
 - `tests/test_proof_audit.py::test_the_local_run_exits_as_the_gate_does`
 - `tests/test_proof_audit_unlinked.py::test_the_local_run_passes_require_ticket_to_the_gate`
 - `tests/test_proof_audit.py::test_ci_plans_then_grades_each_shard_into_its_own_file`
+- `tests/test_proof_audit_linked.py::test_every_shard_is_told_the_sections_the_body_links_so_it_grades_an_item_given_to_one`
 - `tests/test_proof_audit.py::test_a_usage_limit_is_recorded_and_the_gate_cannot_run`
 - `tests/test_proof_audit.py::test_ci_runs_without_codex_sandbox_which_cannot_start_in_its_containers`
 - `tests/test_proof_audit.py::test_grades_written_inside_the_repository_are_not_the_grader_changing_it`
