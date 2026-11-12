@@ -1,5 +1,6 @@
 """The per-ID table gates/proof_audit.py writes, which actions/proof-audit posts as the pull request's proof-audit
-comment, and the one-line cell every such comment's text goes through (the copy audit and the QA review use it too)."""
+comment, and the one-line cell every such comment's text goes through (the QA review's too; the copy audit uses
+without_runner_paths)."""
 import os
 import re
 

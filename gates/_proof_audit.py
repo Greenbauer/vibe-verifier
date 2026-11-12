@@ -301,7 +301,7 @@ def add_arguments(parser):
     parser.add_argument("--plans-endpoint", default="", metavar="URL", help="a plan store answering GET <URL>/plans/<id> "
                         "(the bearer token in $VV_PLANS_TOKEN): each plan a marker names is graded whole")
     parser.add_argument("--pr", default="", metavar="N", help="this pull request's number: no `Split off:` line may name it")
-    parser.add_argument("--plan", metavar="OUT", help="write the plan (the requirements cut into shards) and stop")
+    parser.add_argument("--plan", metavar="OUT", help="write the plan (the requirements cut into shards, and the linked sections) and stop")
     parser.add_argument("--requirements", metavar="PLAN", help="with --shard, the plan --plan wrote")
     parser.add_argument("--shard", type=int, metavar="K", help="grade only shard K of --requirements")
     parser.add_argument("--grades", metavar="DIR", help="where each shard's grades are written (default: a new temporary directory)")
