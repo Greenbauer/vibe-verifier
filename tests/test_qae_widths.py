@@ -302,7 +302,7 @@ class Template(unittest.TestCase):
         # the rendered prompt (tests/test_qae_prompt_rules.py).
         prompt = " ".join((ROOT / "harnesses" / "qae" / "prompt.md").read_text().split())
         for phrase in ("press that button both ways: first straight away, with the cursor still in the field;",
-                       "then type a new value, leave the field (press Tab) and press it again. Each must do what the criterion says.",
+                       "then type a new value, leave the field (press Tab, or click outside it) and press it again. Each must do what the criterion says.",
                        "Do this once for each such button, not every time you use it."):
             self.assertIn(phrase, prompt)
 
