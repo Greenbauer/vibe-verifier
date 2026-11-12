@@ -29,8 +29,13 @@ inputs:
     description: >-
       The full run's results, one file per line, relative to the workspace: JUnit XML (Vitest's, pytest's) or a
       list of failed test files (the `reporter` output writes one for node:test). Given, the step prints each test
-      that failed there and was not selected, as a warning, instead of selecting.
+      that failed there and was not selected, as a warning (an error with `fail-on-miss`), instead of selecting.
     default: ""
+  fail-on-miss:
+    description: >-
+      With `report`: `true` fails the step (exit 1, each miss an error) when a test the full run failed was not
+      selected. Set it once the required run uses the selection, since the full run then fails nothing itself.
+    default: "false"
 outputs:
   all:
     description: "`true` when every test must run (the list is then empty), else `false`."
@@ -57,6 +62,7 @@ runs:
         VV_ALWAYS: ${{ inputs.always }}
         VV_ALL_ON: ${{ inputs.all-on }}
         VV_REPORT: ${{ inputs.report }}
+        VV_FAIL_ON_MISS: ${{ inputs.fail-on-miss }}
       run: |
         set -euo pipefail
         args=(affected-tests --format github)
@@ -74,6 +80,7 @@ runs:
         echo "reporter=$GITHUB_ACTION_PATH/failed-files.mjs" >> "$GITHUB_OUTPUT"
         if [ -n "$VV_REPORT" ]; then
           add --report "$VV_REPORT"
+          if [ "$VV_FAIL_ON_MISS" = true ]; then args+=(--fail-on-miss); fi
           python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" "${args[@]}"
           exit 0
         fi
