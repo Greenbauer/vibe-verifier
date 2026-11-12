@@ -212,6 +212,8 @@ test("the audit is self-contained: run as the page script on an empty page, it n
   assert.ok(hook.script.includes("function scrollRules("));   // and so does the table-scroll rule
   assert.strictEqual(typeof require("./gutter-page.js"), "function");
   assert.ok(hook.script.includes("function gutterRules("));   // and so does the uneven-gutter rule
+  assert.strictEqual(typeof require("./inset-page.js"), "function");
+  assert.ok(hook.script.includes("function insetRules("));   // and so does the nested-inset rule
   assert.strictEqual(typeof require("./field-page.js"), "function");
   assert.ok(hook.script.includes("function crampedRules("));   // and so does the cramped-field rule
   assert.strictEqual(JSON.stringify(vm.runInNewContext(hook.script, { document: page, getComputedStyle: () => ({}) })), "[]");
@@ -224,7 +226,7 @@ test("the audit is self-contained: run as the page script on an empty page, it n
 test("the rule files run as one script, so no two declare the same top-level name", () => {
   // A second `function lines` in gutter-page.js would have replaced wrap-page.js's, silently breaking wrapped-label.
   // modal-page.js runs beside ui-audit-page.js and name-page.js (modal-dismiss.js), and is held to every file's names.
-  const files = ["ui-audit-page.js", "row-page.js", "glyph-page.js", "name-page.js", "wrap-page.js", "scroll-page.js", "gutter-page.js", "field-page.js", "icon-page.js", "modal-page.js"];
+  const files = ["ui-audit-page.js", "row-page.js", "glyph-page.js", "name-page.js", "wrap-page.js", "scroll-page.js", "gutter-page.js", "inset-page.js", "field-page.js", "icon-page.js", "modal-page.js"];
   const seen = new Map();
   for (const file of files) {
     for (const [, name] of fs.readFileSync(path.join(__dirname, file), "utf8").matchAll(/^(?:function|const|let)\s+([A-Za-z_$][\w$]*)/gm)) {

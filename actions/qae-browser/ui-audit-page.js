@@ -43,6 +43,9 @@
 //     uneven-gutter       two page bands stacked across the same column (a header, a toolbar, a table) whose content
 //                         starts, or whose boxes end, more than 4px apart from the edge they share, both within 48px
 //                         of it (gutter-page.js); a card holds its own padding and is not a band
+//     nested-inset        on a phone (a window under 600px), a card inside another card whose content starts more than
+//                         36px in from both sides of the window (inset-page.js): a page margin and one card's padding
+//                         take 16px each and the borders 4px, so a second box's padding only costs the phone width
 //     cramped-field       a field too small for what it asks (field-page.js): one whose name, label or placeholder asks
 //                         for free text (a reason, a note, a comment) and shows fewer than 30 average characters of its
 //                         font, or a textarea under two lines; or any field a person types into whose value is wider
@@ -286,6 +289,7 @@ function audit() {
   wrapRules(add);
   scrollRules(add);
   gutterRules(add);
+  insetRules(add);
   crampedRules(add);
   return findings;
 }
