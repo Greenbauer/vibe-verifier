@@ -91,6 +91,9 @@ On the preview, as each role in the brief:
 3. Get back to the start page the same way. A typed URL or the browser's Back button means the way back
    is missing.
 4. Check each state from R7, and each role's controls from R16.
+5. At a phone's width (375px), content uses the screen: about 16px from the window's edge, and one card's padding
+   at most. A section inside a card is split off by a divider or a heading, not a card of its own; a table a
+   phone stacks into cards drops the card around it. The layout audit's `nested-inset` rule measures this.
 
 Anything that made you stop, guess or retry is a finding. Fix it in this pull request when it is on the
 screens this pull request adds or changes, and list the rest in the body.
@@ -102,6 +105,9 @@ screens this pull request adds or changes, and list the rest in the body.
 - [Nielsen's ten usability heuristics](https://www.nngroup.com/articles/ten-usability-heuristics/):
   R2, R8, R9, R12 to R14.
 - [Vercel Web Interface Guidelines](https://vercel.com/design/guidelines): R9, R11, R15.
+- Walk step 5: [Android's layout guidance](https://developer.android.com/design/ui/mobile/guides/layout-and-content/content-structure)
+  (16dp margins on a compact screen) and design systems that rule out a card in a card (Glide's card skill,
+  ServiceTitan Anvil, Appian SAIL), because on a phone the second box's border and padding take width from content.
 - R1, R3, R4, R7, R16 and R17 are this catalog's own, written from agent-built screens that confused
   people, and tested by the backtest below.
 - Backtest, 2026-11-04: R1 to R16 were graded blind, from code, against 41 past UI pull requests in two
