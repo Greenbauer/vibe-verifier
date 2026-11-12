@@ -116,9 +116,9 @@ of its own: a list of its failed test ids (`test_cart.Cart.test_total`) works, s
 dotted id's file. This repository's own [`ci.yml`](../../.github/workflows/ci.yml) reads them from the
 verbose log of `python3 -m unittest discover -s tests -v`, and fails that step when the run failed and
 no id could be read. Every miss is a
-`::warning` on the run; a failure whose report names no file the selection counts is one too. The
-step exits 0 on misses (the full run already failed the job; see `fail-on-miss` below for when it has not) and 2 when the results cannot be read or
-hold no test case.
+`::warning` on the run (an `::error` with `fail-on-miss`); a failure whose report names no file the
+selection counts is one too. The step exits 0 on misses (the full run already failed the job; with
+`fail-on-miss`, 1, see below) and 2 when the results cannot be read or hold no test case.
 
 Pass the same `tests`, `exclude`, `always` and `all-on` to both steps: the report recomputes the selection.
 

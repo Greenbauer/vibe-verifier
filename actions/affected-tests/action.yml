@@ -29,7 +29,7 @@ inputs:
     description: >-
       The full run's results, one file per line, relative to the workspace: JUnit XML (Vitest's, pytest's) or a
       list of failed test files (the `reporter` output writes one for node:test). Given, the step prints each test
-      that failed there and was not selected, as a warning, instead of selecting.
+      that failed there and was not selected, as a warning (an error with `fail-on-miss`), instead of selecting.
     default: ""
   fail-on-miss:
     description: >-
