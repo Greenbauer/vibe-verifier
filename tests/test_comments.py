@@ -13,7 +13,7 @@ from pathlib import Path
 from helpers import ROOT, clean_env
 from qa_review_fixture import HEAD, MARKER, RUN, GhFixture
 import _acceptance  # noqa: E402  (gates/, which helpers puts on the path)
-import _proof_audit  # noqa: E402
+import _proof_table  # noqa: E402
 import test_proof_audit  # its fixture only: a TestCase imported by name would run its tests here too
 import test_qae_carry
 from test_review_harness import step_script
@@ -111,16 +111,16 @@ class ProofAudit(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, runner):
             for kept in ("`tests/a.test.ts:4`", "the /api/orders route", "the /github/callback/ route",
                          "the `/private/messages/42` page", "the /home/settings/profile page"):
-                self.assertEqual(_proof_audit.cell(kept), kept)
-            self.assertEqual(_proof_audit.cell("no login at /home/runner/.codex-qae/auth.json; grades in "
+                self.assertEqual(_proof_table.cell(kept), kept)
+            self.assertEqual(_proof_table.cell("no login at /home/runner/.codex-qae/auth.json; grades in "
                                                "/home/runner/work/_temp/proof-audit-grades/1.json; see https://example.com/x"),
                              "no login at .codex-qae/auth.json; grades in proof-audit-grades/1.json; see (link in the job log)")
         # A short root (a container job's home, a self-hosted temp) drops only a path that starts with it.
         with unittest.mock.patch.dict(os.environ, {"HOME": "/root", "TMPDIR": "/tmp", "RUNNER_TEMP": "", "GITHUB_WORKSPACE": ""}):
             for kept in ("packages/root/index.ts", "the /api/root/x route", "src/tmp/helper.ts", "/var/home/runner/y",
                          "`/root2/a`"):
-                self.assertEqual(_proof_audit.cell(kept), kept)
-            self.assertEqual(_proof_audit.cell("no login at /root/.codex-qae/auth.json (`/tmp/x/1.json`)"),
+                self.assertEqual(_proof_table.cell(kept), kept)
+            self.assertEqual(_proof_table.cell("no login at /root/.codex-qae/auth.json (`/tmp/x/1.json`)"),
                              "no login at .codex-qae/auth.json (`x/1.json`)")
 
     def test_the_grade_job_drops_its_own_folders_from_the_error_it_records(self):

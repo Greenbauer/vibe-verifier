@@ -5,15 +5,16 @@ it gives against the repository.
 The requirements are gates/_proof_requirements.py's: the `[req: ID]` items of each section a `Ticket:` line of
 the body links, and, given a plan store (--plans-endpoint, $VV_PLANS_TOKEN), the whole wording of each plan a
 `[plan:<id>]` marker in --title or the body names, less what `Split off:` lines give away. The model is given
-the IDs with their wording and where the plan defines them, and the repository's tree; never the body, and
-never the body's `[proof:]` map: it finds the proving tests itself. Its prompt and output schema are
+the IDs with their wording and where the plan defines them, every section the body's Ticket lines link (the
+gate refuses an exclusion to one, so an item the plan gives to one is graded), and the repository's tree;
+never the body, and never the body's `[proof:]` map: it finds the proving tests itself. Its prompt and output schema are
 harnesses/proof-audit/prompt.md and schema.json, the one copy CI and a laptop both run. It runs on the
 Codex CLI from tools/codex's lockfile, under a ChatGPT-managed login (CODEX_HOME, default ~/.codex), with
 the user's config ignored, so a laptop grades with the settings CI uses, and a read-only sandbox (--sandbox;
 CI's Linux runners cannot start Codex's sandbox and pass danger-full-access, as the QAE explorer does).
 
     proof-audit --body FILE                       plan, grade every shard, run the gate: CI's exit code
-    proof-audit --body FILE --plan OUT            write the plan (the requirements, split into shards)
+    proof-audit --body FILE --plan OUT            write the plan (the requirements in shards, the linked sections)
     proof-audit --requirements PLAN --shard K     grade shard K of a plan into --grades DIR
 
 A shard is at most --max-ids requirements (default 10), so each model run stays well inside one QAE job's
@@ -38,6 +39,8 @@ import traceback
 
 from _contract import CannotRun
 from _proof_requirements import requirements
+from _proof_table import without_runner_paths
+from _ticket import links
 
 NAME = "proof-audit"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -47,7 +50,7 @@ SCHEMA = os.path.join(HARNESS, "schema.json")
 GATE = os.path.join(ROOT, "gates", "proof_audit.py")
 DEFAULT_MAX_IDS = 10
 DEFAULT_TIMEOUT = 3000  # seconds: inside a 55-minute job with its checkout and install
-PLACEHOLDER = re.compile(r"\b(REQUIREMENTS|SECTIONS)\b")
+PLACEHOLDER = re.compile(r"\b(REQUIREMENTS|SECTIONS|LINKED)\b")
 EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
 MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -67,9 +70,10 @@ def shards(items, max_ids):
     return cuts
 
 
-def render_prompt(items):
-    """harnesses/proof-audit/prompt.md with this shard's requirements and their sections filled in, in one
-    pass, so a requirement whose wording holds a placeholder's name is left as written."""
+def render_prompt(items, linked):
+    """harnesses/proof-audit/prompt.md with this shard's requirements, their sections and every section the body
+    links (`linked`, as path#anchor) filled in, in one pass, so a requirement whose wording holds a placeholder's
+    name is left as written."""
     with open(PROMPT, encoding="utf-8") as handle:
         template = handle.read()
     listed = "\n".join("- %s (%s:%d): %s" % (item["id"], item["plan"], item["line"], item["text"]) for item in items)
@@ -78,7 +82,8 @@ def render_prompt(items):
         line = "- %s (heading \"%s\")" % (item["section"], item["heading"])
         if line not in sections:
             sections.append(line)
-    values = {"REQUIREMENTS": listed, "SECTIONS": "\n".join(sections)}
+    values = {"REQUIREMENTS": listed, "SECTIONS": "\n".join(sections),
+              "LINKED": "\n".join("- %s" % section for section in linked) or "- none"}
     return PLACEHOLDER.sub(lambda match: values[match.group(1)], template)
 
 
@@ -179,11 +184,11 @@ def run_codex(args, prompt, work, schema=SCHEMA):
         return None, "the grader's final message is not JSON: %s" % error, seconds
 
 
-def grade(args, number, items):
+def grade(args, number, items, linked):
     """Grade one shard and write its envelope, `<grades>/<number>.json`. Returns the envelope's error."""
     work = tempfile.mkdtemp(prefix="vv-proof-audit-")
     try:
-        output, error, seconds = run_codex(args, render_prompt(items), work)
+        output, error, seconds = run_codex(args, render_prompt(items, linked), work)
     except CannotRun as reason:
         output, error, seconds = None, str(reason), None
     # The error reaches the pull request's comment, and this runner is not the one that renders it.
@@ -202,15 +207,17 @@ def grade(args, number, items):
 
 
 def read_plan(path):
+    """(shards, linked sections) of a plan --plan wrote."""
     try:
         with open(path, encoding="utf-8") as handle:
             plan = json.load(handle)
-        return [list(cut) for cut in plan["shards"]]
+        return [list(cut) for cut in plan["shards"]], list(plan["linked"])
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise CannotRun("cannot read the plan %s: %s" % (path, error))
 
 
 def plan_of(args):
+    """(shards, linked): the requirements to grade, cut into shards, and every section the body links, as path#anchor."""
     try:
         with open(args.body, encoding="utf-8") as handle:
             body = handle.read()
@@ -220,7 +227,8 @@ def plan_of(args):
                                 os.environ.get("VV_PLANS_TOKEN", ""), args.pr)
     for note in notes:
         print("%s: %s" % (NAME, note), flush=True)
-    return shards([item for item in items if "split" not in item], args.max_ids)
+    linked = list(dict.fromkeys("%s#%s" % link for link in links(body)))
+    return shards([item for item in items if "split" not in item], args.max_ids), linked
 
 
 def validate_options(args):
@@ -234,11 +242,11 @@ def validate_options(args):
 
 def audit(args):
     """Plan, grade every shard (at most --jobs at once), then run the gate on what was graded."""
-    cuts = plan_of(args)
+    cuts, linked = plan_of(args)
     args.grades = args.grades or tempfile.mkdtemp(prefix="vv-proof-grades-")
     print("%s: %d requirement(s) in %d shard(s); grades in %s" % (NAME, sum(map(len, cuts)), len(cuts), args.grades), flush=True)
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(args.jobs, len(cuts) or 1))) as pool:
-        list(pool.map(lambda pair: grade(args, *pair), enumerate(cuts, 1)))
+        list(pool.map(lambda pair: grade(args, *pair, linked), enumerate(cuts, 1)))
     table = os.path.join(args.grades, "table.md")
     command = [sys.executable, GATE, "--repo", args.repo, "--body", args.body, "--grades", args.grades,
                "--table", table, "--format", args.format, "--title=" + args.title, "--plans-endpoint=" + args.plans_endpoint,
@@ -258,19 +266,19 @@ def command(args):
     try:
         validate_options(args)
         if args.plan:
-            cuts = plan_of(args)
+            cuts, linked = plan_of(args)
             with open(args.plan, "w", encoding="utf-8") as handle:
-                json.dump({"shards": cuts}, handle)
+                json.dump({"shards": cuts, "linked": linked}, handle)
             print("requirements: %d" % sum(map(len, cuts)))
             print("shards: [%s]" % ",".join(str(number) for number in range(1, len(cuts) + 1)))
             return 0
         if args.shard is not None:
             if not args.requirements or not args.grades:
                 raise CannotRun("--shard needs --requirements (a plan) and --grades")
-            cuts = read_plan(args.requirements)
+            cuts, linked = read_plan(args.requirements)
             if not 1 <= args.shard <= len(cuts):
                 raise CannotRun("the plan has %d shard(s), not a shard %d" % (len(cuts), args.shard))
-            return 2 if grade(args, args.shard, cuts[args.shard - 1]) else 0
+            return 2 if grade(args, args.shard, cuts[args.shard - 1], linked) else 0
         if not args.body:
             raise CannotRun("give --body (the pull request's body, outside the repository)")
         return audit(args)
@@ -293,7 +301,7 @@ def add_arguments(parser):
     parser.add_argument("--plans-endpoint", default="", metavar="URL", help="a plan store answering GET <URL>/plans/<id> "
                         "(the bearer token in $VV_PLANS_TOKEN): each plan a marker names is graded whole")
     parser.add_argument("--pr", default="", metavar="N", help="this pull request's number: no `Split off:` line may name it")
-    parser.add_argument("--plan", metavar="OUT", help="write the plan (the requirements cut into shards) and stop")
+    parser.add_argument("--plan", metavar="OUT", help="write the plan (the requirements cut into shards, and the linked sections) and stop")
     parser.add_argument("--requirements", metavar="PLAN", help="with --shard, the plan --plan wrote")
     parser.add_argument("--shard", type=int, metavar="K", help="grade only shard K of --requirements")
     parser.add_argument("--grades", metavar="DIR", help="where each shard's grades are written (default: a new temporary directory)")
@@ -313,49 +321,3 @@ def add_arguments(parser):
                         help="passed to the gate: a pull request that changes a file matching GLOB (repeatable) must link "
                         "a Ticket section or say why none applies on a `No ticket: <why>` line")
     parser.add_argument("--format", choices=["text", "github"], default="text")
-
-
-# The per-ID table proof_audit.py writes, which the action posts as the pull request's proof-audit comment.
-def proof_summary(grade):
-    return "; ".join("%s: %s" % (case["case"], ", ".join(proof_cite(proof) for proof in case["proof"]))
-                     for case in grade["cases"])
-
-
-def proof_cite(proof):
-    """`file:line` (test), and the line the grader cited when the gate found the quote elsewhere in that test."""
-    moved = "; cited :%d" % proof["cited_line"] if "cited_line" in proof else ""
-    return "`%s:%d` (%s%s)" % (proof["file"], proof["line"], proof["test"].strip(), moved)
-
-
-def without_runner_paths(text):
-    """`text` with this runner's own folders (workspace, temp, home) dropped from every path that starts with one:
-    only where a path starts, so a repository path or a route that merely contains the same name stays."""
-    roots = {os.environ.get(name, "").rstrip("/") for name in ("GITHUB_WORKSPACE", "RUNNER_TEMP", "HOME", "TMPDIR")}
-    for root in sorted(filter(None, roots), key=len, reverse=True):
-        text = re.sub(r"(?<![\w./~-])" + re.escape(root) + "/", "", text)
-    return text
-
-
-def cell(text, limit=600):
-    """One line of the comment, for a person: in text the gate did not write (a CLI's error, a grade) a URL goes to
-    the job log, and the rendering runner's folders are dropped from a path (docs/comments.md)."""
-    text = re.sub(r"https?://\S+", "(link in the job log)", " ".join(str(text).split()).replace("|", "\\|"))
-    text = without_runner_paths(text)
-    return text if len(text) <= limit else text[:limit - 1] + "…"
-
-
-def table(rows, note=None):
-    proven = sum(1 for _, status, _ in rows if status in ("PROVEN", "EXCLUDED"))
-    split = sum(1 for _, status, _ in rows if status == "SPLIT")
-    note = note or "%d of %d requirements proven or excluded%s" % (proven, len(rows), ", %d split off" % split if split else "")
-    lines = ["## Proof audit: %s" % cell(note), ""]
-    if rows:
-        lines += ["| ID | Verdict | Proof, or what is missing |", "|---|---|---|"]
-        lines += ["| %s | %s | %s |" % (rid, status, cell(detail)) for rid, status, detail in rows]
-    return "\n".join(lines) + "\n"
-
-
-def write_table(path, text):
-    if path:
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(text)

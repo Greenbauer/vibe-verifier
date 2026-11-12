@@ -11,7 +11,7 @@ from _contract import CannotRun, resolve_base
 from _features import map_directory
 from _pin_bump import CannotRead, gh_json
 from _probe import probes
-from _proof_audit import cell
+from _proof_table import cell
 from _retry import retries
 from _verify_edits import verify_edits
 from cli.features import selection_options

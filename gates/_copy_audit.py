@@ -30,7 +30,8 @@ import traceback
 import types
 
 from _contract import CannotRun
-from _proof_audit import EFFORTS, MODEL, run_codex, shards, without_runner_paths
+from _proof_audit import EFFORTS, MODEL, run_codex, shards
+from _proof_table import without_runner_paths
 from qae_artifacts import declared_sites
 from ui_audit import on_site, read_lines, record_paths
 
