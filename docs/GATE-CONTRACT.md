@@ -385,8 +385,9 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
   read from the PNG header). A reference the workflow did not supply is the operator's to supply, never
   invented. A FAIL whose one anchor is such a comparison counts only when the second look's record
   `qae/ACn-reference-check.json` is missing, did not run, is about another claim or other images, or saw
-  the difference too ([the reference check](../harnesses/reference-check/README.md)); when it matches and
-  did not see it, the criterion is judged as a PASS anchored at that step. `[as: <role>, <role>]` makes a
+  the difference too ([the reference check](../harnesses/reference-check/README.md)); when it matches, did
+  not see it, and the claim says nothing the two images cannot settle, the criterion is judged as a PASS
+  anchored at that step. `[as: <role>, <role>]` makes a
   PASS need, for each role, a step line starting `as <role>:`. A bracket that starts like either and
   does not parse is a finding. `bin/vibe-verifier criteria` prints each criterion's annotations after
   its count line.

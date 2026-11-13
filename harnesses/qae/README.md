@@ -235,8 +235,8 @@ holds a mockup beside the page.
   that the comparison happened, at the reference's width, against the image the workflow supplied.
   `qae-artifacts` names a comparison step whose screenshot is missing as the comparison it is.
 - A FAIL on a comparison is put to a second look before it counts, in the Codex lane: a fresh model is
-  given only the reference, the screenshot and the claim, and the FAIL counts only when it sees the
-  difference too ([harnesses/reference-check](../reference-check/README.md)). An explorer once failed a
+  given only the reference, the screenshot and the claim, and the FAIL counts unless it does not see the
+  difference and the claim says nothing the two images cannot settle ([harnesses/reference-check](../reference-check/README.md)). An explorer once failed a
   correct modal for "a close X absent from the reference" that the reference has (a consumer's run,
   2026-11-13). So after a difference the explorer walks the rest of the criterion, and cites the
   comparison step only when nothing else failed.
