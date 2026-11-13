@@ -120,7 +120,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      pull-requests: write
+      pull-requests: read   # reads the body and changed files; the verify job posts the one comment
     # The URL under test and any further origin the site is served from, as the site step declared
     # them, and the digest of each design reference it
     # supplied, for the verify job's gates. Step outputs: the explorer runs later and cannot change them,
