@@ -2,11 +2,16 @@
 // a person can press in one dialog, or one form, whose names are the same, or one the other with words added
 // ("Create account" and "Create account now"). A subscribed app's add-someone dialog showed a "Send invite"
 // choice beside a "Send invite" submit, both blue: the person it was built for could not tell them apart, and
-// its own test told them apart by position (2026-11-04). ui-audit.js runs this file beside ui-audit-page.js as one script, so
-// `visible` comes from there.
+// its own test told them apart by position (2026-11-04). Choices are held to a narrower test: a radio, checkbox or
+// option is one value of a set, and its name is that value, so two choices of one group fail only when their names
+// are the same ("Bill" twice), not when one adds words ("Bill" and "Bill Payment" are two record types a filter
+// offers). A choice beside an action button is still judged as two buttons. ui-audit.js runs this file beside
+// ui-audit-page.js as one script, so `visible` comes from there.
 const PRESSABLE = "button, [role=button], input[type=submit], input[type=button]";
 const SCOPE = "[role=dialog], [role=alertdialog], dialog, [aria-modal=true]";
 const ROW = "li, tr, [role=row], [role=listitem]";
+const CHOICE_ROLES = new Set(["radio", "checkbox", "option", "menuitemradio", "menuitemcheckbox"]);
+const CHOICE_GROUP = "[role=radiogroup], [role=group], [role=listbox], [role=menu], fieldset";
 
 // The name assistive technology and a person read: aria-labelledby, aria-label, then what it shows.
 function buttonName(el) {
@@ -25,6 +30,14 @@ function rowOf(el, scope) {
   return row && scope.contains(row) ? row : null;
 }
 
+const isChoice = el => CHOICE_ROLES.has(el.getAttribute("role"));
+
+// The set a choice belongs to inside `scope`: two choices of different sets are not offered side by side.
+const choiceGroupOf = (el, scope) => {
+  const group = el.closest(CHOICE_GROUP);
+  return group && scope.contains(group) ? group : scope;
+};
+
 function alike(a, b) {
   const [short, long] = a.length <= b.length ? [a, b] : [b, a];
   return short && (short === long || long.startsWith(short + " "));
@@ -40,9 +53,14 @@ function nameRules(add) {
   for (const [scope, buttons] of scopes) {
     const named = buttons.map(el => [el, buttonName(el).toLowerCase()]);
     named.forEach(([a, na], i) => named.slice(i + 1).forEach(([b, nb]) => {
+      const where = scope.matches(SCOPE) ? "dialog" : "form";
+      if (isChoice(a) && isChoice(b)) {
+        if (na !== nb || choiceGroupOf(a, scope) !== choiceGroupOf(b, scope)) return;
+        add("duplicate-name", a, `"${buttonName(a)}" twice among one ${where}'s choices: a person cannot tell which choice is which`, b);
+        return;
+      }
       const ra = rowOf(a, scope), rb = rowOf(b, scope);
       if (!alike(na, nb) || (ra && rb && ra !== rb)) return;
-      const where = scope.matches(SCOPE) ? "dialog" : "form";
       add("duplicate-name", a, `"${buttonName(a)}" and "${buttonName(b)}" in one ${where}: a person cannot tell which button does what`, b);
     }));
   }
