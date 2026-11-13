@@ -154,26 +154,32 @@ def check_one(args, item, k, key, claim):
     return error
 
 
+def validate_options(args):
+    if args.model and not MODEL.match(args.model):
+        raise CannotRun("--model must be an identifier of letters, digits, dots, underscores and hyphens")
+    if args.reasoning_effort and args.reasoning_effort not in EFFORTS:
+        raise CannotRun("--reasoning-effort must be one of %s" % ", ".join(EFFORTS))
+    if not os.path.isdir(args.artifacts):
+        raise CannotRun("artifact directory not found: %s" % args.artifacts)
+
+
+def comparison_fails(artifacts):
+    """[(item, k, key, claim)] for each criterion whose one verdict line is a comparison FAIL."""
+    verdict = os.path.join(artifacts, "verdict.md")
+    text = open(verdict, encoding="utf-8", errors="replace").read() if os.path.isfile(verdict) else ""
+    found = [(item.upper(), comparison(item.upper(), lines[0])) for item, lines in check_lines(text, TOKEN).items()
+             if len(lines) == 1]
+    return [(item,) + fail for item, fail in found if fail]
+
+
 def command(args):
     try:
-        if args.model and not MODEL.match(args.model):
-            raise CannotRun("--model must be an identifier of letters, digits, dots, underscores and hyphens")
-        if args.reasoning_effort and args.reasoning_effort not in EFFORTS:
-            raise CannotRun("--reasoning-effort must be one of %s" % ", ".join(EFFORTS))
-        if not os.path.isdir(args.artifacts):
-            raise CannotRun("artifact directory not found: %s" % args.artifacts)
+        validate_options(args)
         for stale in glob.glob(record_path(args.artifacts, "*")):
             os.remove(stale)
-        verdict = os.path.join(args.artifacts, "verdict.md")
-        text = open(verdict, encoding="utf-8", errors="replace").read() if os.path.isfile(verdict) else ""
-        errors, checked = [], 0
-        for item_key, lines in check_lines(text, TOKEN).items():
-            item = item_key.upper()
-            found = comparison(item, lines[0]) if len(lines) == 1 else None
-            if found:
-                checked += 1
-                errors += [error for error in [check_one(args, item, *found)] if error]
-        print("%s: %d comparison FAIL(s) checked, %d not" % (NAME, checked - len(errors), len(errors)), flush=True)
+        fails = comparison_fails(args.artifacts)
+        errors = [error for error in (check_one(args, *fail) for fail in fails) if error]
+        print("%s: %d comparison FAIL(s) checked, %d not" % (NAME, len(fails) - len(errors), len(errors)), flush=True)
         return 2 if errors else 0
     except CannotRun as reason:
         print("%s could not run: %s" % (NAME, reason), flush=True)
