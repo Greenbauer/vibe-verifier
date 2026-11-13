@@ -35,7 +35,8 @@ if os.environ.get("FAKE_BEHAVIOUR") == "limit":
     print(json.dumps({"type": "turn.failed", "error": {"message": "You've hit your usage limit. Try again at 3:05 PM."}}), flush=True)
     sys.exit(1)
 seen = os.environ.get("FAKE_BEHAVIOUR") == "confirm"
-open(args[args.index("-o") + 1], "w").write(json.dumps({"confirmed": seen, "other": False, "reason": "Both images show a close X."}))
+other = os.environ.get("FAKE_BEHAVIOUR") == "other"
+open(args[args.index("-o") + 1], "w").write(json.dumps({"confirmed": seen, "other": other, "reason": "Both images show a close X."}))
 '''
 
 
@@ -104,6 +105,11 @@ class Grader(unittest.TestCase):
                                   "output": {"confirmed": False, "other": False, "reason": "Both images show a close X."}, "error": None})
         # Only this run's records are in the evidence: one left from before is removed.
         self.assertEqual(sorted(path.name for path in (art / "qae").glob("*-reference-check.json")), ["AC1-reference-check.json"])
+
+    def test_the_log_line_says_a_fail_stands_when_its_claim_says_more_than_a_look(self):
+        self.assertIn("AC1 step 24 against reference %s: not seen, so it does not count" % KEY, self.run_grader().stdout)
+        self.assertIn("AC1 step 24 against reference %s: not seen, but its claim also says something the two images cannot "
+                      "settle" % KEY, self.run_grader("other").stdout)
 
     def test_a_check_that_did_not_run_is_recorded_with_its_error_and_exits_2(self):
         result = self.run_grader("limit")

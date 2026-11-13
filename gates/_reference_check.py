@@ -149,7 +149,9 @@ def check_one(args, item, k, key, claim):
     with open(record_path(args.artifacts, item), "w", encoding="utf-8") as handle:
         json.dump(record, handle, indent=2, ensure_ascii=False)
         handle.write("\n")
-    seen = "not checked: %s" % error if error else "confirmed" if output.get("confirmed") else "not seen, so it does not count"
+    seen = ("not checked: %s" % error if error else "confirmed" if output.get("confirmed")
+            else "not seen, but its claim also says something the two images cannot settle"
+            if output.get("other") is not False else "not seen, so it does not count")
     print("%s: %s step %s against reference %s: %s" % (NAME, item, k, key, seen), flush=True)
     return error
 
