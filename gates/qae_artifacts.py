@@ -66,10 +66,10 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
    (`[FAILED] net::ERR_ABORTED`) was never answered by the site. The record cannot say why it was
    cancelled: a page that drops a fetch when the user moves on, and one that gives up on an endpoint
    that never answers, write the same line. So it is not judged only when the record also holds that
-   request (same method, same URL, fragment dropped) answered below 400 somewhere in the run: the
-   endpoint is shown to work, and the cancellation was the page moving on. An answer in the page
-   record counts too (gates/_page_record.py): it holds static requests, which the explorer's record
-   leaves out. Cancelled and never answered is a finding, and every other failed request always is.
+   request's route (same method, URL with any record id, fragment dropped: same_route) answered below
+   400 somewhere in the run: the endpoint works, and the page moved on. An answer in the page record
+   counts too (gates/_page_record.py): it holds static requests. Cancelled and never answered is a
+   finding, and every other failed request always is.
    This encodes the recorded false-PASS lesson: a PASS obtained while the real endpoint failed is
    refused here whatever the verdict says.
 5. A refusal is the correct outcome of some criteria (an auth gate answering 401 signed out, a
@@ -124,7 +124,7 @@ from _page_record import digest, harness_refusals, isolation_findings, page_reco
 from _probe import probe_excuses
 from _qae_rules import ENVIRONMENTAL
 from _refusals import declared_refusals, read, refusal_expected
-from _retry import REQUEST, console_excused, exact, retry_checks
+from _retry import REQUEST, console_excused, exact, retry_checks, same_route
 from _session_log import SAVED_TO, TOOL_CALL, evidence_path
 from _widths import STEP_LINE, widths_findings, width_list  # noqa: F401  (width_list: bin/cli/criteria.py)
 
@@ -316,14 +316,14 @@ def request_findings(root, sources, allowed, sites, expected):
     network record of the run. What excuses a cancelled one, beyond the allowlist, is that same
     request answered below 400 anywhere in those records, or among the page record's answers."""
     records = [(source, match) for source in sources for match in REQUEST.finditer(read(source))]
-    answered = {same_request(match) for _, match in records if not site_failed(match)}
+    answered = {same_route(match) for _, match in records if not site_failed(match)}
     recorded = page_record(root)[1]
     findings, seen = [], set()
     for source, match in records:
         url, status = match.group("url"), match.group("status")
         if not site_failed(match) or not judged(url, sites) or any(pattern.search(url) for pattern in allowed):
             continue
-        if refusal_expected(expected, status, url) or (cancelled(match) and (same_request(match) in answered
+        if refusal_expected(expected, status, url) or (cancelled(match) and (same_route(match) in answered
                                                                             or digest("%s %s" % same_request(match)) in recorded)):
             continue
         key = (match.group("method"), url, status)
@@ -339,7 +339,7 @@ def request_failure(request):
     line = "[%s] %s" % (request.group("method"), request.group("url")[:200])
     if cancelled(request):
         return ("request cancelled and never answered in this run, outside the allowlist: %s (%s is the page's own "
-                "cancellation, excused only when the record also shows this request answered below 400)" % (line, CANCELLED))
+                "cancellation, excused only when the record also shows its route answered below 400)" % (line, CANCELLED))
     return "request answered %s outside the allowlist: %s" % (request.group("status"), line)
 
 

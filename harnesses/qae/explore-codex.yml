@@ -287,7 +287,10 @@ jobs:
                  on a structural difference (a missing or extra control, a different layout, a different state),
                  never on pixel noise (anti-aliasing, font rendering, real data in place of sample data). If the
                  image is not there, FAIL the criterion and say the reference was not supplied; never compare
-                 against anything else.
+                 against anything else. When the comparison shows a difference, log it and walk the rest of the
+                 criterion: if no other step fails, the FAIL cites that comparison step, and the workflow may have a
+                 second model look at the two images (a difference it does not see is not counted); if another step
+                 fails, cite that one.
                - [as: <role>, <role>] names the roles to walk the criterion as; qae-inputs/site.md says how to sign
                  in as each. Walk it once per role, and start each of that role's step lines with "as <role>:"
                    - step k: as <role>: <what you did> -> <what you saw>
@@ -423,6 +426,18 @@ jobs:
           site: |
             ${{ steps.site.outputs.url }}
             ${{ steps.site.outputs.origins }}
+      - name: Look again at each reference FAIL
+        # A comparison with a design reference is one model's look, and a look can invent a difference. For each FAIL
+        # whose one anchor is such a comparison, a fresh model on this runner's Codex login is given only the two
+        # images and the claim, and writes qae/<ACn>-reference-check.json; the verify job's acceptance-verdict gate
+        # counts the FAIL only when that look saw the difference too (harnesses/reference-check/README.md). After
+        # the explorer, so it cannot change the record. Only this lane has the step: the Claude lane's runner holds
+        # no Codex login, and there every such FAIL counts.
+        if: ${{ !cancelled() }}
+        uses: Greenbauer/vibe-verifier/actions/reference-check@0000000000000000000000000000000000000000 # CONSUMER: pin the commit you subscribe to
+        with:
+          model: gpt-6.1-sol
+          reasoning-effort: high
       - name: Enforce the write scope
         # The prompt says "write only under qae-artifacts/", and a prompt is a suggestion. Anything
         # else that changed on the runner, tracked or untracked, fails the job here so it can never

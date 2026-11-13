@@ -383,7 +383,11 @@ acceptance-verdict --criteria .vibe-verifier-inputs/pr-body.md --verdict .vibe-v
   `references/<key>.png`, and a PASS also needs a step line naming `reference <key>`, where every such
   line is a comparison whose screenshot `qae/ACn-step-k.png` is exactly as wide as the reference (both
   read from the PNG header). A reference the workflow did not supply is the operator's to supply, never
-  invented. `[as: <role>, <role>]` makes a
+  invented. A FAIL whose one anchor is such a comparison counts only when the second look's record
+  `qae/ACn-reference-check.json` is missing, did not run, is about another claim or other images, or saw
+  the difference too ([the reference check](../harnesses/reference-check/README.md)); when it matches, did
+  not see it, and the claim says nothing the two images cannot settle, the criterion is judged as a PASS
+  anchored at that step. `[as: <role>, <role>]` makes a
   PASS need, for each role, a step line starting `as <role>:`. A bracket that starts like either and
   does not parse is a finding. `bin/vibe-verifier criteria` prints each criterion's annotations after
   its count line.
@@ -1507,7 +1511,7 @@ an uncaught exception or unhandled rejection, which playwright-mcp writes with n
 error's stack over several lines, which the allowlist is matched against whole), a missing session or network
 record, a request to the site under test that answered 400 or worse or failed (one the page
 cancelled itself, `net::ERR_ABORTED`, is not judged when the run also holds that request, same
-method and URL, answered below 400 somewhere, in a network record or among the answers in the
+method and URL or the same route with other UUID or number path segments, answered below 400 somewhere, in a network record or among the answers in the
 harness's page record, static requests included, and is a finding when it does not) outside
 `--allow-request`, and a step the explorer retried after an environment error whose retry does not count
 (`gates/_retry.py`: the very next step, the same calls with the same arguments, once, and the step's own record

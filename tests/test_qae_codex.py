@@ -62,7 +62,7 @@ class Template(unittest.TestCase):
         self.assertNotIn("gh pr comment", text)
 
     def test_every_catalog_pin_is_the_placeholder_a_consumer_replaces(self):
-        for template, count in ((CODEX, 11), (KEEPALIVE, 1)):
+        for template, count in ((CODEX, 12), (KEEPALIVE, 1)):
             pins = re.findall(r"vibe-verifier/actions/[\w-]+@(\S+)( #[^\n]*)?", template.read_text())
             self.assertEqual(len(pins), count, template.name)
             for sha, comment in pins:

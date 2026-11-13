@@ -200,6 +200,11 @@ or `node actions/qae-browser/ui-audit.js --copy DIR/copy.jsonl URL...` from a sh
 copy-grades.json beside it, then runs the copy-audit gate and exits with its code. `--grade-only` is the explore
 job's half (harnesses/copy-audit/README.md).
 
+`reference-check --artifacts DIR` has a fresh model on the same Codex CLI and login look at each FAIL in
+DIR/verdict.md whose one anchor is a comparison with a design reference: given only the two images and the claim, it
+says whether the claimed difference is there, and writes qae/<ACn>-reference-check.json, which the acceptance-verdict
+gate reads. The explore job runs it after the explorer (harnesses/reference-check/README.md).
+
 `first-use-prompt --body FILE --site URL --out FILE` writes the first-use walk's prompt (harnesses/first-use/prompt.md)
 with the task the body's `## First-use task` section states and the site filled in, for a QAE session that gets
 nothing else: it prints `task: <n> words`, or `task: none` and writes nothing (harnesses/first-use/README.md).
@@ -224,6 +229,7 @@ import _copy_audit  # noqa: E402
 import _first_use  # noqa: E402
 import _merge_grant_cli  # noqa: E402
 import _proof_audit  # noqa: E402
+import _reference_check  # noqa: E402
 from cli import apply_down, consumers, criteria, features, qa_limit, qa_review, qae_inputs, rules_doc, runner  # noqa: E402
 
 COMMANDS = {
@@ -239,6 +245,7 @@ COMMANDS = {
     "affected-tests": _affected_tests.command,
     "proof-audit": _proof_audit.command,
     "copy-audit": _copy_audit.command,
+    "reference-check": _reference_check.command,
     "first-use-prompt": _first_use.command,
     "merge-grant": _merge_grant_cli.command,
     "qa-review": qa_review.qa_review_command,
@@ -275,6 +282,9 @@ def main():
     _copy_audit.add_arguments(commands.add_parser("copy-audit", help="grade, with a model on the Codex CLI, whether each "
                                                   "sentence and label in a QAE run's copy record is plain English, then "
                                                   "run the copy-audit gate on it"))
+    _reference_check.add_arguments(commands.add_parser("reference-check", help="have a fresh model on the Codex CLI look "
+                                                       "again at each QAE FAIL that claims a difference from a design "
+                                                       "reference, given only the two images and the claim"))
     _first_use.add_arguments(commands.add_parser("first-use-prompt", help="write the first-use walk's prompt from the "
                                                  "task a pull request body's `## First-use task` section states: prints "
                                                  "`task: <n> words` or `task: none`"))

@@ -1,0 +1,1 @@
+acceptance-check: TC11 -- FAIL -- The date modal adds a close control, and the save could not be checked. (qae/TC11.md::step 24: compared with reference date-range-modal -> The modal adds a close X absent from the reference, and pressing Update timed out so the saved range could not be checked)
