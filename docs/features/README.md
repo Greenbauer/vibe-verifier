@@ -28,6 +28,7 @@ One file per feature of this catalog: its gates, its harnesses, its command-line
 | [Feature map drift](feature-map.md) | `feature-map` |
 | [Layout and copy audit](ui-audit.md) | `ui-audit` |
 | [Plain-English copy audit](copy-audit.md) | `copy-audit` (gate and command: a model grades each sentence and label the QAE pages showed, the gate checks its quotes) |
+| [Second look at a design-reference FAIL](reference-check.md) | `reference-check` (command: a fresh model checks a FAIL's claimed difference from a design reference before it counts) |
 | [First-use walk](first-use-walk.md) | `first-use-walk`, `first-use-prompt` (gate and command: a QAE session given only the task does it and comes back, the gate checks its steps against its session log) |
 | [Browser acceptance verification (QAE)](qae-harness.md) | `acceptance-verdict`, `qae-artifacts`, `criteria`, `features`, `qae-inputs`, `qa-review`, `qa-limit`, `tool` |
 | [Revision-bound AI review](review-harness.md) | `review-receipt` |

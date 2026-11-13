@@ -2,9 +2,10 @@
 
 `Grader` runs `bin/vibe-verifier reference-check` with a fake Codex CLI: which FAILs it asks about, what the model is
 given (the two images, the claim, an empty directory) and the record it writes. `Gate` holds the acceptance-verdict
-gate to those records. `Model` asks the real model about the two pairs tests/fixtures/reference-check/make.py draws:
-`close-x` is the shape of a FAIL a consumer's explorer invented (the reference has the same close X), and `no-modal` is
-a real difference. It needs a Codex login, so it runs only where REFERENCE_CHECK_CODEX_HOME names one."""
+gate to those records. `Model` asks the real model about the made-up pages in tests/fixtures/reference-check/ (drawn with Pillow, a planner
+page with a date-range modal at 1440 by 900): `close-x` is the shape of a FAIL a consumer's explorer invented (the
+reference has the same close X), `no-modal` is a real difference, and `close-x-timeout` is the invented X plus a save
+that could not be checked, which no look at two images settles. It needs a Codex login, so it runs only where REFERENCE_CHECK_CODEX_HOME names one."""
 import hashlib
 import json
 import os
@@ -14,6 +15,9 @@ import unittest
 from pathlib import Path
 
 from helpers import ROOT, gate, make_repo, runner, write
+
+import _reference_check
+import _references
 
 FIXTURES = ROOT / "tests" / "fixtures" / "reference-check"
 KEY = "date-range-modal"
@@ -31,7 +35,7 @@ if os.environ.get("FAKE_BEHAVIOUR") == "limit":
     print(json.dumps({"type": "turn.failed", "error": {"message": "You've hit your usage limit. Try again at 3:05 PM."}}), flush=True)
     sys.exit(1)
 seen = os.environ.get("FAKE_BEHAVIOUR") == "confirm"
-open(args[args.index("-o") + 1], "w").write(json.dumps({"confirmed": seen, "reason": "Both images show a close X."}))
+open(args[args.index("-o") + 1], "w").write(json.dumps({"confirmed": seen, "other": False, "reason": "Both images show a close X."}))
 '''
 
 
@@ -47,6 +51,21 @@ def evidence(root, verdict=FAIL, item="AC1"):
     shutil.copy(FIXTURES / "close-x" / "references" / (KEY + ".png"), root / "references" / (KEY + ".png"))
     shutil.copy(FIXTURES / "close-x" / "qae" / "TC11-step-24.png", root / "qae" / ("%s-step-24.png" % item))
     write(root, {"qae/%s.md" % item: "- %s\n" % STEP, "verdict.md": verdict + "\n"})
+
+
+class Comparison(unittest.TestCase):
+    def test_only_a_fail_whose_one_anchor_is_a_step_naming_one_reference_is_a_comparison(self):
+        self.assertEqual(_reference_check.comparison("AC1", FAIL), ("24", KEY, CLAIM))
+        # The reference is read from what the step did; what it saw may say "the reference" in passing.
+        for line in (FAIL.replace("FAIL", "PASS", 1), FAIL.replace("qae/AC1.md", "qae/AC2.md"),
+                     "acceptance-check: AC1 -- FAIL -- Save shows nothing. (qae/AC1.md::step 3: pressed Save -> nothing)",
+                     FAIL.replace("compared with reference %s" % KEY, "compared with reference a and reference b"),
+                     FAIL + " (qae/AC1.md::step 25: closed it -> closed)"):
+            self.assertIsNone(_reference_check.comparison("AC1", line), line)
+
+    def test_a_fail_that_is_no_comparison_counts_without_a_second_look(self):
+        line = "acceptance-check: AC1 -- FAIL -- Save shows nothing. (qae/AC1.md::step 3: pressed Save -> nothing)"
+        self.assertEqual(_references.second_look("AC1", "The modal opens [ref: %s]" % KEY, line, "/nonexistent"), (True, ""))
 
 
 class Grader(unittest.TestCase):
@@ -82,7 +101,7 @@ class Grader(unittest.TestCase):
         self.assertEqual(record, {"step": "24", "reference": KEY, "claim": CLAIM,
                                   "reference_sha256": sha(art / "references" / (KEY + ".png")),
                                   "screenshot_sha256": sha(art / "qae" / "AC1-step-24.png"),
-                                  "output": {"confirmed": False, "reason": "Both images show a close X."}, "error": None})
+                                  "output": {"confirmed": False, "other": False, "reason": "Both images show a close X."}, "error": None})
         # Only this run's records are in the evidence: one left from before is removed.
         self.assertEqual(sorted(path.name for path in (art / "qae").glob("*-reference-check.json")), ["AC1-reference-check.json"])
 
@@ -115,7 +134,7 @@ class Gate(unittest.TestCase):
     def record(self, **changes):
         record = {"step": "24", "reference": KEY, "claim": CLAIM, "reference_sha256": sha(self.art / "references" / (KEY + ".png")),
                   "screenshot_sha256": sha(self.art / "qae" / "AC1-step-24.png"),
-                  "output": {"confirmed": False, "reason": "Both images show a close X."}, "error": None}
+                  "output": {"confirmed": False, "other": False, "reason": "Both images show a close X."}, "error": None}
         record.update(changes)
         write(self.art, {"qae/AC1-reference-check.json": json.dumps(record)})
 
@@ -136,7 +155,8 @@ class Gate(unittest.TestCase):
                  "another claim": dict(claim=CLAIM + " Also the title differs."),
                  "another step": dict(step="23"),
                  "other images": dict(screenshot_sha256="0" * 64),
-                 "no answer": dict(output={"reason": "?"})}
+                 "no answer": dict(output={"reason": "?"}),
+                 "more than a look": dict(output={"confirmed": False, "other": True, "reason": "The X is in both; the timeout is not."})}
         for name, changes in cases.items():
             self.record(**changes)
             result = self.run_gate()
@@ -164,7 +184,7 @@ class Gate(unittest.TestCase):
 @unittest.skipUnless(os.environ.get("REFERENCE_CHECK_CODEX_HOME"), "asks the real model: needs REFERENCE_CHECK_CODEX_HOME, a Codex login")
 class Model(unittest.TestCase):
     def test_the_model_rejects_the_invented_close_x_and_confirms_a_missing_modal(self):
-        for name, confirmed in (("close-x", False), ("no-modal", True)):
+        for name, confirmed, other in (("close-x", False, False), ("no-modal", True, False), ("close-x-timeout", False, True)):
             folder = Path(tempfile.mkdtemp(prefix="vv-reference-model-"))
             self.addCleanup(shutil.rmtree, folder, True)
             shutil.copytree(FIXTURES / name, folder, dirs_exist_ok=True)
@@ -173,6 +193,7 @@ class Model(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             record = json.loads((folder / "qae" / "TC11-reference-check.json").read_text())
             self.assertIs(record["output"]["confirmed"], confirmed, (name, record["output"]))
+            self.assertIs(record["output"]["other"], other, (name, record["output"]))
 
 
 if __name__ == "__main__":

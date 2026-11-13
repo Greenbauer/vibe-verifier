@@ -15,7 +15,8 @@ Each check's record is qae/<ACn>-reference-check.json beside the criterion's ste
 about, the claim, the digests of both images, and the model's answer or the reason there is none (a usage limit, a
 timeout). Records left from before are removed first, so only this run's are in the evidence. The verify job's
 acceptance-verdict gate reads them (overturned, below): a FAIL counts as a PASS only when its record matches the FAIL
-and the images exactly and the model did not see the claimed difference. Any other record, or none, leaves the FAIL
+and the images exactly, the model did not see the claimed difference, and the claim says nothing the two images
+cannot settle (a step it could not check, a failed request). Any other record, or none, leaves the FAIL
 standing. Exit 0 when every check ran, 2 when one did not.
 """
 import glob
@@ -110,6 +111,8 @@ def overturned(item, line, artifacts):
         return False, "its second look gave no answer"
     if answer["confirmed"]:
         return False, "a second look confirmed it: %s" % str(answer.get("reason", ""))[:300]
+    if answer.get("other") is not False:
+        return False, "its claim also says something the two images cannot settle"
     return True, "a second look at the reference and step %s's screenshot did not see the difference: %s" % (
         k, str(answer.get("reason", ""))[:300])
 

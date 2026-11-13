@@ -16,6 +16,10 @@ says is missing, extra or different, and look for it in both images.
 - confirmed: false when both images agree on every point the claim names: what it calls missing or extra is
   in both images, or in neither, and what it calls different looks the same in both.
 
+- other: true when the claim also says something the two images cannot settle: that a step could not be done
+  or checked, that a request failed or timed out, that the page crashed, or anything else not visible in
+  them. false when every point of the claim is about how the two images look.
+
 Do not count pixel noise (anti-aliasing, font rendering, colour shades that read as the same colour),
 different real data in place of sample data (other names, dates, photos or counts), or anything the claim
 does not name. A difference the claim does not name is not your question.
