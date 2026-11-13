@@ -1,0 +1,1 @@
+acceptance-check: TC11 -- FAIL -- The date modal adds a close control and separates the date fields unlike the reference. (qae/TC11.md::step 24: compared with reference date-range-modal -> The modal adds a close X absent from the reference and leaves a gap between the date fields)

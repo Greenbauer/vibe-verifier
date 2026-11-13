@@ -1,0 +1,52 @@
+name: Vibe Verifier reference check
+description: >-
+  Have a fresh model on the Codex CLI look again at each QAE FAIL that claims a difference from a design reference,
+  given only the reference, the explorer's screenshot and the claim (harnesses/reference-check/README.md). Runs in the
+  explore job, after the explorer and before the evidence is uploaded, on the runner that holds the explorer's
+  ChatGPT-managed Codex login. It writes qae/<ACn>-reference-check.json; the verify job's acceptance-verdict gate
+  counts such a FAIL only when the second look saw the difference too.
+inputs:
+  artifacts:
+    description: The explorer's artifact directory, holding verdict.md, qae/ and references/.
+    default: qae-artifacts
+  codex-home:
+    description: The Codex home holding the runner's login, as actions/qae-codex's. Empty means $HOME/.codex-qae.
+    default: ""
+  model:
+    description: The Codex model. Empty preserves the runner's model selection.
+    default: ""
+  reasoning-effort:
+    description: low, medium, high, xhigh, max or ultra. Empty preserves the runner's selection.
+    default: ""
+  timeout:
+    description: The seconds one check may take before it is stopped and recorded as not run.
+    default: "600"
+  sandbox:
+    description: >-
+      Codex's sandbox: danger-full-access (the default, as actions/qae-codex, the proof audit and the copy audit run,
+      since a Linux runner in an unprivileged container cannot start Codex's read-only sandbox) or read-only. The
+      model is given an empty directory, the two images attached and the claim.
+    default: danger-full-access
+runs:
+  using: composite
+  steps:
+    - name: Look again at each reference FAIL
+      shell: bash
+      env:
+        VV_ARTIFACTS: ${{ inputs.artifacts }}
+        VV_CODEX_HOME: ${{ inputs.codex-home }}
+        VV_MODEL: ${{ inputs.model }}
+        VV_EFFORT: ${{ inputs.reasoning-effort }}
+        VV_TIMEOUT: ${{ inputs.timeout }}
+        VV_SANDBOX: ${{ inputs.sandbox }}
+      run: |
+        set -euo pipefail
+        code=0
+        python3 "$GITHUB_ACTION_PATH/../../bin/vibe-verifier" reference-check --artifacts "$VV_ARTIFACTS" \
+          --codex-home "${VV_CODEX_HOME:-$HOME/.codex-qae}" --model="$VV_MODEL" --reasoning-effort="$VV_EFFORT" \
+          --timeout "$VV_TIMEOUT" --sandbox "$VV_SANDBOX" || code=$?
+        # 2 is a check that did not run (a usage limit, a timeout): its record says so, and the FAIL it was about
+        # stands in the verify job. Failing here as well would turn the walk's own check red and tell actions/qa-limit
+        # the explorer failed. Anything else is this step broken.
+        if [ "$code" = 2 ]; then echo "::warning title=reference-check::a check did not run; its FAIL stands"; exit 0; fi
+        exit "$code"

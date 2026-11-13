@@ -65,6 +65,7 @@ A criterion's annotations (harnesses/qae/README.md) are held to the run's eviden
                           header (a 1x reference is as wide as the viewport it shows). A reference is
                           never invented: one that was not supplied is the operator's to supply
                           (needs-operator-reference)
+                          A FAIL on such a comparison counts only when a second look saw it too (_references.py)
     [as: <role>, ...]     a PASS needs, for each role, a step line starting `as <role>:`
     a malformed bracket   refused, so a typo never drops a requirement
 
@@ -89,16 +90,17 @@ there) is a finding, and none of the evidence is judged (gates/_contract.py, pla
 A missing input file is exit 2: nothing was graded. A criteria file with no criteria in it is a
 finding, because a repository that subscribes to this gate has decided its PRs state them.
 """
-import hashlib
 import json
 import os
 import re
 
 from _acceptance import (ANCHOR_FORMS, NO_CRITERIA, PROOF_TOKEN, anchors, anchors_in, annotations, baseline_problems,
-                         body_criteria, check_lines, declares_none, named_references, no_criteria_message, png_size,
+                         body_criteria, check_lines, declares_none, no_criteria_message, png_size,
                          resolves, said, split_ticket, ticket_items, ticket_proofs, verdict)
 from _contract import CannotRun, Finding, qualify, run_gate, tracked_files
 from _features import add_selection_arguments, describe, selection
+from _reference_check import claim_of
+from _references import STEP_LINE, comparison_findings, reference_finding, second_look
 
 GATE = "acceptance-verdict"
 REGRESSION_TOKEN = "regression-check"
@@ -106,7 +108,6 @@ SKIP_TOKEN = "regression-skip"
 KNOWN_TOKEN = "regression-known"
 line_verdict = verdict  # regression_findings' own `verdict` argument is the verdict text
 STEP = r"^[ \t]*-[ \t]+step[ \t]+[0-9]+:"
-STEP_LINE = re.compile(r"^[ \t]*-[ \t]+step[ \t]+(?P<k>[0-9]+):(?P<text>.*)$", re.IGNORECASE | re.MULTILINE)
 
 
 def read_input(path, label):
@@ -123,15 +124,21 @@ def line_finding(item, wording, carried, token, repo, tracked, artifacts):
     if len(carried) != 1:
         return "%s has %d check lines; exactly one is allowed" % (item, len(carried))
     line = carried[0]
-    if verdict(line) != "PASS":
-        return "%s is not a PASS: %s" % (item, line.strip())
     found = anchors(line)
+    if verdict(line) != "PASS":
+        counts, note = second_look(item, wording, line, artifacts)
+        if counts:
+            return "%s is not a PASS: %s%s" % (item, line.strip(), " (%s)" % note if note else "")
+        print("%s: %s's FAIL does not count: %s" % (GATE, item, note))
+        found = anchors_in(claim_of(line))
     if not found:
         return "%s has no anchor; cite %s" % (item, ANCHOR_FORMS)
     reasons = [resolves(anchor, repo, tracked, artifacts) for anchor in found]
     if all(reasons):
         return "%s: no anchor resolves at the head: %s" % (item, "; ".join(reasons))
     return None
+
+
 
 
 def proof_finding(item, carried, repo, tracked):
@@ -181,48 +188,8 @@ def declared_references(path):
     return declared
 
 
-def reference_finding(item, key, declared, artifacts):
-    """Why the reference `key` that `item` names is not the image the workflow supplied, or None."""
-    if declared is None:
-        return ("%s names reference `%s`, but this QAE manifest declares no supplied references: add "
-                "--references qae-inputs/references.json to its acceptance-verdict line" % (item, key))
-    if key not in declared:
-        return ("%s names reference `%s`, but the workflow supplied no qae-inputs/references/%s.png. Supply it from "
-                "the site step (needs-operator-reference): a reference is never invented, so %s cannot pass "
-                "without it" % (item, key, key, item))
-    image = os.path.join(artifacts, "references", key + ".png")
-    if not os.path.isfile(image):
-        return "%s: the evidence holds no references/%s.png, the copy the workflow made" % (item, key)
-    with open(image, "rb") as handle:
-        if hashlib.sha256(handle.read()).hexdigest() != declared[key]:
-            return "%s: references/%s.png in the evidence is not the image the workflow supplied" % (item, key)
-    if png_size(image) is None:
-        return "%s: references/%s.png is not a PNG, so the width it is compared at cannot be read" % (item, key)
-    return None
 
 
-def comparison_findings(item, key, text, artifacts, width):
-    """Why the step log `text` of a PASSed `item` shows no comparison with reference `key` at the reference's
-    `width` (None when the reference was not supplied, which is a finding of its own)."""
-    steps = [m.group("k") for m in STEP_LINE.finditer(text)
-             if key.casefold() in (named.casefold() for named in named_references(m.group("text")))]
-    if not steps:
-        return ["%s is a PASS, but no step line in qae/%s.md names `reference %s`" % (item, item, key)]
-    if width is None:
-        return []
-    findings = []
-    for k in steps:
-        shot = os.path.join(artifacts, "qae", "%s-step-%s.png" % (item, k))
-        size = png_size(shot) if os.path.isfile(shot) else None
-        if size is None:
-            findings.append("%s is a PASS, but step %s, its comparison with reference %s, has no PNG screenshot "
-                            "qae/%s-step-%s.png to show it was compared at the reference's %d pixels"
-                            % (item, k, key, item, k, width))
-        elif size[0] != width:
-            findings.append("%s is a PASS, but step %s compared with reference %s at %d pixels wide, and the reference "
-                            "is %d: resize the browser to the reference's width before that step's screenshot"
-                            % (item, k, key, size[0], width))
-    return findings
 
 
 def step_findings(item, notes, artifacts, widths):

@@ -54,6 +54,14 @@ def exact(url):
     return urllib.parse.urldefrag(url)[0]
 
 
+def same_route(request):
+    """A REQUEST match's method and URL with each record id path segment (RECORD_ID) as `{id}`, query kept: the
+    route a page calls for any record. qae_artifacts excuses a cancelled request answered by its route."""
+    parts = urllib.parse.urlsplit(exact(request.group("url")))
+    path = "/".join("{id}" if RECORD_ID.fullmatch(segment) else segment for segment in parts.path.split("/"))
+    return request.group("method"), urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
+
+
 def word(text):
     return re.sub(r"[^a-z0-9]", "", text.lower())
 

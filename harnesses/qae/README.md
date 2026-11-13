@@ -234,6 +234,12 @@ holds a mockup beside the page.
   two images match is the explorer's judgment, in that step line and its screenshot; the gate holds
   that the comparison happened, at the reference's width, against the image the workflow supplied.
   `qae-artifacts` names a comparison step whose screenshot is missing as the comparison it is.
+- A FAIL on a comparison is put to a second look before it counts, in the Codex lane: a fresh model is
+  given only the reference, the screenshot and the claim, and the FAIL counts only when it sees the
+  difference too ([harnesses/reference-check](../reference-check/README.md)). An explorer once failed a
+  correct modal for "a close X absent from the reference" that the reference has (a consumer's run,
+  2026-11-13). So after a difference the explorer walks the rest of the criterion, and cites the
+  comparison step only when nothing else failed.
 
 **`[as: <role>, <role>]`** walks the criterion once per role.
 
@@ -1388,7 +1394,8 @@ and refuses on structural facts:
    no request to the site under test (`--site-file`, the URL the explore job declared and any further
    origin after it, or a fixed `--site`) answered 400 or worse or failed, outside `--allow-request` patterns. A request the page cancelled
    itself, `net::ERR_ABORTED`, is not judged when the run also holds that request (same method and
-   URL) answered below 400 somewhere, in a network record or in the page record's answers, and is a
+   URL, or the same route with other record ids) answered below 400 somewhere, in a network record or
+   in the page record's answers, and is a
    finding when it does not ([below](#a-request-the-page-cancelled));
 5. with `--widths`, each criterion's step screenshots include one of each declared width
    ([above](#viewports-themes-and-what-a-criterion-does-not-say));
@@ -1546,7 +1553,11 @@ document unloads is recorded with no failure at all, and a client-side route cha
 request). So the gate cannot tell moving on from giving up, and asks the record a question it can
 answer: was this request answered at all? When the same method and URL (query included, fragment
 dropped) answered below 400 anywhere in the run, the endpoint is shown to work and the cancelled line
-is not judged. When it never was, the line is a finding: `request cancelled and
+is not judged. The same route counts as the same request: a path segment that is a UUID or a number
+stands for any record, so a reload that cancels `GET /api/projects/<one id>/folders` is excused by
+`GET /api/projects/<another id>/folders` answered 200 (a consumer's run, 2026-11-13). The
+query still has to match as written, and the page record, which holds digests, excuses only the exact
+request. When neither ever was answered, the line is a finding: `request cancelled and
 never answered in this run`. A cancelled `PUT` is not excused by a `GET` of the same URL, and no
 answer excuses any other failure (`net::ERR_CONNECTION_*`, `net::ERR_TIMED_OUT`, `net::ERR_FAILED`,
 a failure with no reason, a 5xx).

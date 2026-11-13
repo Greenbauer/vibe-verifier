@@ -1,0 +1,1 @@
+acceptance-check: TC11 -- FAIL -- The date range modal is not open where the reference shows it. (qae/TC11.md::step 24: compared with reference date-range-modal -> The Edit Your Date Range modal is missing: the screen shows the plan with no modal open)

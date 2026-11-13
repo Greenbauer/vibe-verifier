@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "reference check",
+  "description": "A second look at one claimed difference between a design reference and a screenshot. gates/_reference_check.py writes it into the criterion's record; this file is also the output schema the Codex run is held to (strict: every key required, no others).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["confirmed", "reason"],
+  "properties": {
+    "confirmed": {"type": "boolean", "description": "true when a difference the claim names is really there."},
+    "reason": {"type": "string", "description": "What the grader sees in each image at the place the claim is about."}
+  }
+}

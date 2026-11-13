@@ -39,6 +39,29 @@ class NetworkRecord(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("request answered 404 outside the allowlist: [GET] http://localhost:3000/earlier-page.js", result.stdout)
 
+    def test_a_cancelled_request_is_excused_by_its_route_answered_for_another_record(self):
+        # A consumer's run (2026-11-13): a reload cancelled one project's folders read, and that route
+        # answered 200 for other projects all run. The route works; the page moved on.
+        api, aborted = "http://localhost:3000/api/projects/%s/folders", " => [FAILED] net::ERR_ABORTED"
+        cancelled_one = api % "2a59d61e-6b0c-4498-a49c-1806f10e45ea"
+        answered = ["[GET] %s => [200] OK" % (api % "043ebd52-5c8d-4142-b4c4-a8bb980700d4"),
+                    "[GET] http://localhost:3000/api/projects/17/folders => [200] OK"]
+        for other in answered:
+            write(self.root, {"session-1/session.md": artifacts.session_with(artifacts.CLEAN_REQUESTS + [other, "[GET] " + cancelled_one + aborted])})
+            result = self.run_gate("--site", "http://localhost:3000")
+            self.assertEqual(result.returncode, 0, other + result.stdout)
+        # A route that never answered below 400 is still a finding: not when it only failed, not when only
+        # another method, another route or another query answered.
+        for other in ("[GET] %s => [503] Service Unavailable" % (api % "043ebd52-5c8d-4142-b4c4-a8bb980700d4"),
+                      "[POST] %s => [200] OK" % (api % "043ebd52-5c8d-4142-b4c4-a8bb980700d4"),
+                      "[GET] http://localhost:3000/api/projects/043ebd52-5c8d-4142-b4c4-a8bb980700d4/notes => [200] OK",
+                      "[GET] http://localhost:3000/api/projects/folders => [200] OK",
+                      "[GET] %s?view=all => [200] OK" % (api % "043ebd52-5c8d-4142-b4c4-a8bb980700d4")):
+            write(self.root, {"session-1/session.md": artifacts.session_with(artifacts.CLEAN_REQUESTS + [other, "[GET] " + cancelled_one + aborted])})
+            result = self.run_gate("--site", "http://localhost:3000")
+            self.assertEqual(result.returncode, 1, other)
+            self.assertIn("request cancelled and never answered in this run, outside the allowlist: [GET] " + cancelled_one, result.stdout, other)
+
 
 @unittest.skipUnless(os.environ.get("QAE_MCP"), "needs the installed browser toolchain: QAE_MCP names playwright-mcp's entry point")
 class LiveRecord(unittest.TestCase):
