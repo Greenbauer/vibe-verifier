@@ -166,12 +166,14 @@ class Browser(unittest.TestCase):
         self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("row-stagger")),
                          ["row-stagger: ", "row-stagger: Export file", "row-stagger: Left", "row-stagger: Reminder hours", "row-stagger: Reports"])
         # The subscribed app's dialog: a pressed "Send invite" choice and the "Send invite" submit, a form whose two buttons
-        # differ by an added word, and a filter's radio group offering "Bill" twice. good.html makes the choice a pair of
+        # differ by an added word, a filter's radio group offering "Bill" twice, and a "Ship now" radio beside the
+        # "Ship now" submit (a choice beside an action is judged as a button). good.html makes the choice a pair of
         # radios; its rows' Remove buttons, told apart by their rows, a disabled twin, a filter's radios "Bill" and
-        # "Bill Payment" (one adds a word, but each is a record type), and an "Open" checkbox in each of two groups are not flagged.
+        # "Bill Payment" (one adds a word, but each is a record type), an "Open" checkbox in each of two groups, two
+        # radios named only by a separate label (no name of their own), and each table row's "Select row" checkbox are not flagged.
         self.assertEqual(sorted(x for x in measured["bad-details"] if x.startswith("duplicate-name")),
                          ["duplicate-name: Bill / Bill", "duplicate-name: Create account / Create account now",
-                          "duplicate-name: Send invite / Send invite"])
+                          "duplicate-name: Send invite / Send invite", "duplicate-name: Ship now / Ship now"])
         # The subscribed app's margin pill, its arrow above "12.5%", and a button whose short label wraps, in a system font stack
         # that ends in "Segoe UI Symbol", as Tailwind's and Bootstrap's do (no icon font). good.html keeps the pill on
         # one line, puts an upload button's icon (an svg, then an icon font's ligature) above its label by design, has a pill of a

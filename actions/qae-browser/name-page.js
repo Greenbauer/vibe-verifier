@@ -54,13 +54,14 @@ function nameRules(add) {
     const named = buttons.map(el => [el, buttonName(el).toLowerCase()]);
     named.forEach(([a, na], i) => named.slice(i + 1).forEach(([b, nb]) => {
       const where = scope.matches(SCOPE) ? "dialog" : "form";
+      const ra = rowOf(a, scope), rb = rowOf(b, scope);
+      if (ra && rb && ra !== rb) return;
       if (isChoice(a) && isChoice(b)) {
-        if (na !== nb || choiceGroupOf(a, scope) !== choiceGroupOf(b, scope)) return;
+        if (!na || na !== nb || choiceGroupOf(a, scope) !== choiceGroupOf(b, scope)) return;
         add("duplicate-name", a, `"${buttonName(a)}" twice among one ${where}'s choices: a person cannot tell which choice is which`, b);
         return;
       }
-      const ra = rowOf(a, scope), rb = rowOf(b, scope);
-      if (!alike(na, nb) || (ra && rb && ra !== rb)) return;
+      if (!alike(na, nb)) return;
       add("duplicate-name", a, `"${buttonName(a)}" and "${buttonName(b)}" in one ${where}: a person cannot tell which button does what`, b);
     }));
   }
