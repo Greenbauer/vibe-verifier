@@ -13,7 +13,8 @@ So a FAIL whose one anchor is a comparison step is put to a second model before 
    reference (`references/<key>.png`), that step's screenshot (`qae/ACn-step-k.png`) and the FAIL's own text,
    and nothing else: no explorer context, no page, no repository, an empty directory. Its prompt
    ([`prompt.md`](prompt.md)) and output schema ([`schema.json`](schema.json)) are the only copies. It answers
-   `confirmed` (is a difference the claim names really there?) and a reason. It runs on the proof audit's Codex
+   `confirmed` (is a difference the claim names really there?), `other` (does the claim also say something the
+   two images cannot settle, such as a step it could not check or a request that failed?) and a reason. It runs on the proof audit's Codex
    runner code (tools/codex's lockfile, a ChatGPT-managed login, the user's config ignored).
 2. **Record.** Each answer goes to `qae/ACn-reference-check.json`: the step, the reference, the claim, the
    digests of both images, the answer, or the reason there is none (a usage limit, a timeout). Records left from
@@ -21,7 +22,7 @@ So a FAIL whose one anchor is a comparison step is put to a second model before 
 3. **Judge.** The verify job's [`acceptance-verdict`](../../gates/acceptance_verdict.py) gate counts such a FAIL
    as a PASS anchored at that step only when the record matches the FAIL's claim, its step and reference, and both
    images as the evidence holds them, the reference is one the criterion names (so the workflow's digest vouches
-   for it), and the model did not see the difference. It prints that it did not count the FAIL, and why. A record
+   for it), the model did not see the difference, and `other` is false. It prints that it did not count the FAIL, and why. A record
    that confirms the difference, one that did not run, a missing one, or one about another claim or other images
    leaves the FAIL standing. A FAIL on anything but a comparison is never asked about.
 
@@ -47,7 +48,8 @@ Codex login and no step, so there every comparison FAIL counts as before.
 ## Tests
 
 `tests/test_reference_check.py` runs the grader with a fake Codex CLI and the gate on the records it writes. Its
-`Model` case asks the real model about two pairs `tests/fixtures/reference-check/make.py` draws in the shape of that
-run: `close-x`, the invented close X, which it must reject, and `no-modal`, the same reference against a screen with
-the modal closed, which it must confirm. It needs a Codex login: `REFERENCE_CHECK_CODEX_HOME=~/.codex python3 -m unittest
+`Model` case asks the real model about made-up pages in `tests/fixtures/reference-check/`, in the shape of that run:
+`close-x`, the invented close X, which it must reject; `no-modal`, the same reference against a screen with the modal
+closed, which it must confirm; and `close-x-timeout`, the invented X plus a save that could not be checked, which it
+must mark `other`. It needs a Codex login: `REFERENCE_CHECK_CODEX_HOME=~/.codex python3 -m unittest
 test_reference_check` from `tests/`.
