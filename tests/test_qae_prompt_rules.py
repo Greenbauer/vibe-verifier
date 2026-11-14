@@ -170,11 +170,12 @@ class AccessFirst(unittest.TestCase):
 
     def test_the_prompt_says_to_give_access_first_and_the_gate_fails_the_refusal_it_prevents(self):
         prompt = " ".join(Path(_qae_prompt.PROMPT).read_text().split())
-        self.assertIn("Before you open, as one role, a record another role made, take every step that gives it access",
-                      prompt)
+        self.assertIn("Before you open, as one role, a record another role made, take every step that gives that role "
+                      "access", prompt)
+        self.assertIn("unless the criterion checks that the role is refused", prompt)
         self.assertIn("that refusal fails the run unless the criterion declares it", prompt)
-        write(self.root, {"network-1.log": "1. [GET] http://localhost:3000/api/journeys/77c67703-e430-46df-bc10-"
-                                           "c189f95af34d => [403] Forbidden\n"})
+        write(self.root, {"network-1.log": "1. [GET] http://localhost:3000/api/journeys/00000000-0000-4000-8000-"
+                                           "000000000001 => [403] Forbidden\n"})
         result = self.run_gate()
         self.assertEqual(result.returncode, 1)
         self.assertIn("request answered 403 outside the allowlist", result.stdout)
