@@ -22,6 +22,7 @@ import _refusals
 import _retry
 import acceptance_verdict
 import qae_artifacts
+import test_qae_artifacts
 from _acceptance import REFERENCE_NAMED, VERDICT_RE, anchors_in
 from _qae_rules import ENVIRONMENTAL
 
@@ -159,6 +160,24 @@ def forms(prompt):
         lines = [line for line in prompt.splitlines() if line.strip().startswith(start)]
         found[start] = lines[0] if len(lines) == 1 else None
     return found
+
+
+class AccessFirst(unittest.TestCase):
+    """The prompt has a role take every step that gives it access before it opens another role's record, because the
+    gate fails the site's correct refusal of a role with no access yet when no criterion declares it (a consumer's
+    walker opened a journey as a crew member before the owner confirmed the invitation, 2026-11-14)."""
+    setUp, run_gate = test_qae_artifacts.QaeArtifacts.setUp, test_qae_artifacts.QaeArtifacts.run_gate
+
+    def test_the_prompt_says_to_give_access_first_and_the_gate_fails_the_refusal_it_prevents(self):
+        prompt = " ".join(Path(_qae_prompt.PROMPT).read_text().split())
+        self.assertIn("Before you open, as one role, a record another role made, take every step that gives it access",
+                      prompt)
+        self.assertIn("that refusal fails the run unless the criterion declares it", prompt)
+        write(self.root, {"network-1.log": "1. [GET] http://localhost:3000/api/journeys/77c67703-e430-46df-bc10-"
+                                           "c189f95af34d => [403] Forbidden\n"})
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("request answered 403 outside the allowlist", result.stdout)
 
 
 class Followed(RegressionWalk):
