@@ -248,7 +248,11 @@ holds a mockup beside the page.
   name of its own (`QAE_ADMIN_PASSWORD`, `QAE_READONLY_PASSWORD`), and site.md names it.
 - The explorer starts each of a role's step lines with `as <role>:`, and as each role checks that
   what the role may do works, that what it may not do is refused, and that controls it must not use
-  are not shown.
+  are not shown. Before it opens, as one role, a record another role made, it takes every step that
+  gives that role access (an invitation sent and accepted, a share), unless the criterion checks that
+  the role is refused. A consumer's walker opened a
+  journey as a crew member before the owner had confirmed the invitation, and the site's correct 403
+  failed the run, since no criterion declared it (2026-11-14).
 - The gate refuses a PASS whose step log has no line starting `as <role>:` for some role the criterion
   names. That a refused path was really refused is the explorer's judgment, in those lines and their
   screenshots.

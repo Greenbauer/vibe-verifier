@@ -295,7 +295,10 @@ jobs:
                  in as each. Walk it once per role, and start each of that role's step lines with "as <role>:"
                    - step k: as <role>: <what you did> -> <what you saw>
                  As each role, check that what the role may do works, that what it may not do is refused, and that
-                 controls it must not use are not shown.
+                 controls it must not use are not shown. Before you open, as one role, a record another role made,
+                 take every step that gives that role access (an invitation sent and accepted, a share, a crew add),
+                 unless the criterion checks that the role is refused: the site refuses a role that has no access
+                 yet, and that refusal fails the run unless the criterion declares it.
                If qae-inputs/widths exists, it lists viewport widths in pixels, one per line. Walk at the browser's
                own width and do not resize it for them: each time you save a screenshot, the harness captures the
                same screen at the other widths itself, measures its layout there, and a gate checks the captures. A
