@@ -179,6 +179,21 @@ test("a list loses another explorer's records, which are then refused, and keeps
   assert.ok(explorer.record().filter(line => line.refused).every(line => line.refused === digest(line.request) && line.explorer === OWN));
 });
 
+test("a list item whose own nested record is another explorer's is dropped whole, never left without that record", async () => {
+  // The shape a consumer's GET /api/friend-requests answered with: the other explorer's tag is only in the
+  // request's profile. Left in the list without its profile, the request crashed the app reading profile.userId.
+  const explorer = await guarded({ tag: OWN, protected: [] });
+  const requests = { ok: true, requests: [
+    { friendRequestId: id(30), status: "pending", profile: { userId: id(31), displayName: `Crew ${OTHER}`, email: `crew-${OTHER}@example.com` } },
+    { friendRequestId: id(32), status: "pending", profile: { userId: id(33), displayName: "Seeded Partner" } }] };
+  const did = await explorer.go("GET", "https://api.example/api/friend-requests?direction=outgoing", { json: requests });
+  assert.deepStrictEqual(did.fulfilled.json, { ok: true, requests: [requests.requests[1]] });
+  // A record that holds the other explorer's one, answered alone, is refused like that record.
+  const alone = await explorer.go("GET", `https://api.example/api/friend-requests/${id(34)}`,
+    { json: { friendRequestId: id(34), profile: { userId: id(35), displayName: `Crew ${OTHER}` } } });
+  assert.ok(refusal(alone.fulfilled), JSON.stringify(alone));
+});
+
 test("a record that is itself another explorer's is refused, and so is every later request on it", async () => {
   const explorer = await guarded({ tag: OWN, protected: [] });
   const url = `https://api.example/api/journeys/${id(11)}/surveys/${id(10)}`;

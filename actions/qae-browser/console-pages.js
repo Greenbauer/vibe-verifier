@@ -157,18 +157,22 @@ function foreign(value, own) {
 
 // `value` without another explorer's objects, each dropped object's own id (`id` or `_id`) added to `hidden`;
 // never the other ids it holds, which name records it belongs to (the journey a survey is on).
-// Undefined when `value` is itself another explorer's object.
+// Undefined when `value` is itself another explorer's object, or holds one in a field of its own (a friend
+// request's profile): a list loses such a record whole, since the site reads the record with that field in it.
+// A list in a field only loses its items (a survey keeps its own answers).
 function strip(value, own, hidden) {
-  if (foreign(value, own)) {
+  const drop = () => {
     for (const field of [value.id, value._id]) if (typeof field === "string" && RECORD_ID.test(field)) hidden.add(field);
     return undefined;
-  }
+  };
+  if (foreign(value, own)) return drop();
   if (Array.isArray(value)) return value.map(item => strip(item, own, hidden)).filter(item => item !== undefined);
   if (value && typeof value === "object") {
     const kept = {};
     for (const [key, field] of Object.entries(value)) {
       const stripped = strip(field, own, hidden);
-      if (stripped !== undefined) kept[key] = stripped;
+      if (stripped === undefined && field !== undefined) return drop();
+      kept[key] = stripped;
     }
     return kept;
   }
