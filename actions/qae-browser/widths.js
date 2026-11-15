@@ -23,7 +23,7 @@
 // In place, because the state a step shows (a dialog, a filled form, a selected row) is often not at any address
 // a second window could load. The explorer's own width checks resized in place too, in 72% of the 3,665 sampled.
 // A resize can change a page's state (a menu that closes, a component a breakpoint swaps), so a capture is skipped
-// while a popup floats over the page (a menu, listbox or tooltip the next action may need), and `disturbed` says when
+// while a popup floats over the page (a menu, listbox, tooltip or map popup the next action may need), and `disturbed` says when
 // the page's accessibility tree read differently after the round trip than before it. The capture runs inside
 // the explorer's own tool call, so it never races the explorer's next action.
 //
@@ -54,7 +54,11 @@ const TIMED_OUT = Symbol("timed out");
 // smaller than MIN_POPUP pixels a side (a tooltip kept for screen readers): either would stop every capture too. A
 // dropdown a header opens still counts when its library portals it out of the header (Radix, MUI); one rendered in
 // place there (Headless UI without an anchor) is resized like the rest of the page, and `disturbed` records it.
-const POPUP = "[role=menu], [role=listbox], [role=tooltip]";
+// A map's popup counts too (Leaflet's, Mapbox GL's, MapLibre's), though it carries no role: a resize refits or pans
+// the map, the popup moves with its marker, and the map's own box clips it. A consumer's shipment map refit on the round
+// trip and carried an open group popup's Close above the map's edge, so the explorer's next click, on that Close, landed
+// on the page around it, a different popup step on each run (2026-11-15).
+const POPUP = "[role=menu], [role=listbox], [role=tooltip], .leaflet-popup, .mapboxgl-popup, .maplibregl-popup";
 // A step screenshot's file, as the prompt names it (qae/ACn-step-k.png, qae/features/<id>-step-k.png) and the gate
 // reads it. An explorer that walks a criterion in browser_run_code_unsafe saves each step with page.screenshot({path}):
 // one of a consumer's explorers saved all but three of its steps that way (2026-11-10), and with every such file
@@ -152,7 +156,7 @@ async function capture(page, take, options, shot, { dir, wanted, measure, budget
   const write = line => fs.appendFileSync(path.join(dir, RECORD), JSON.stringify(line) + "\n");
   const digest = sha256(shot);
   if (await popupOpen(page)) {
-    write({ shot: digest, skipped: "a menu, listbox or tooltip was open" });
+    write({ shot: digest, skipped: "a menu, listbox, tooltip or map popup was open" });
     return;
   }
   if (await draftTyped(page)) {

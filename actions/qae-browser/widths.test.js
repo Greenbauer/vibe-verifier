@@ -60,11 +60,11 @@ test("a page whose tree reads differently after the round trip is recorded as di
   assert.strictEqual(record(dir)[0].disturbed, true);
 });
 
-test("an open menu, listbox or tooltip is never resized", async () => {
+test("an open menu, listbox, tooltip or map popup is never resized", async () => {
   const dir = temp(), tab = page({ popup: true });
   await widths.capture(tab, tab.take, {}, Buffer.from("x"), { dir, wanted: [1280, 375] });
   assert.deepStrictEqual(tab.sizes, []);
-  assert.deepStrictEqual(record(dir).map(line => line.skipped), ["a menu, listbox or tooltip was open"]);
+  assert.deepStrictEqual(record(dir).map(line => line.skipped), ["a menu, listbox, tooltip or map popup was open"]);
 });
 
 test("a page with typed, unsent input in a text field is never resized", async () => {
