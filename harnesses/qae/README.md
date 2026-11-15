@@ -686,7 +686,9 @@ tab, reads it from the directory playwright-mcp runs in and routes each fetch an
 
 - A JSON answer reaches the page without any object whose own text carries another explorer's tag
   (`qae-...-e<n>`, of any run): a list never shows another explorer's survey, quote or order to
-  open. A record that is itself another explorer's, and every later request on its id, is answered
+  open. A record that holds another explorer's record in a field of its own (a friend request's
+  `profile`) is dropped whole too, since the page reads it with that field; a list in a field only
+  loses its items. A record that is itself another explorer's, and every later request on its id, is answered
   409 by the harness and never sent; the error starts `Vibe Verifier QAE`.
 - A DELETE of a fixture a criterion outside the share names is answered 409 the same way. Reading
   and changing a declared fixture are not stopped.
