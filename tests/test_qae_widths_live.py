@@ -53,6 +53,19 @@ DRAFT = ("<title>site</title><main><h1>Survey</h1><form><input id=title aria-lab
 FROZEN = ("<title>site</title><main><h1>Intro</h1><p>Paused</p></main>"
           "<script>window.requestAnimationFrame = () => 0;</script>")
 
+# A map whose group marker opens a popup near the map's top edge, as Leaflet draws one (`.leaflet-popup`, absolute,
+# inside the map's overflow:hidden box), and that refits itself each time the window is resized, as a consumer's
+# shipment map does: each refit moves the popup up with its marker. One width round trip carried the popup's Close
+# above the map's edge, where the map clips it, and the explorer's next click landed on the page (2026-11-15).
+MAP = ("<title>site</title><main><h1>Shipments</h1><div id=map style='position:relative;height:300px;overflow:hidden;"
+       "margin-top:40px;background:#acd'><button id=marker style='position:absolute;left:200px;top:200px'>55</button>"
+       "<div id=popup class=leaflet-popup hidden style='position:absolute;left:150px;top:10px;width:200px;"
+       "background:#fff'><a id=x role=button aria-label='Close popup' href='#close' style='display:block;"
+       "text-align:right'>x</a><p>32 containers</p></div></div></main>"
+       "<script>marker.onclick = () => { popup.hidden = false; };"
+       "x.onclick = event => { event.preventDefault(); popup.hidden = true; };"
+       "addEventListener('resize', () => { popup.style.top = (parseInt(popup.style.top) - 40) + 'px'; });</script>")
+
 
 @unittest.skipUnless(os.environ.get("QAE_MCP"), "needs the installed browser toolchain: QAE_MCP names playwright-mcp's entry point")
 class Captures(unittest.TestCase):
@@ -64,7 +77,8 @@ class Captures(unittest.TestCase):
         os.makedirs(os.path.join(self.root, "qae"))
         os.makedirs(os.path.join(self.work, "qae-inputs"))
         Path(self.work, "qae-inputs", "widths").write_text("1280\n375\n")
-        self.site = Server(self, {"/": DIALOG, "/narrow": NARROW, "/frozen": FROZEN, "/draft": DRAFT,
+        self.site = Server(self, {"/": DIALOG, "/narrow": NARROW, "/frozen": FROZEN, "/draft": DRAFT, "/map": MAP,
+                                  "/map-clipped": MAP.replace("top:10px", "top:-30px"),
                                   "/bad": (ROOT / "tests" / "fixtures" / "ui-audit" / "bad.html").read_text()})
         self.explorer = Explorer(self, self.root, ("--init-page", os.environ.get("QAE_UI_AUDIT", str(UI_AUDIT))))
 
@@ -135,8 +149,30 @@ class Captures(unittest.TestCase):
         self.shoot("AC1-step-1")
         self.explorer.call("browser_close")
         self.explorer.close()
-        self.assertEqual([entry.get("skipped") for entry in self.record()], ["a menu, listbox or tooltip was open"])
+        self.assertEqual([entry.get("skipped") for entry in self.record()], ["a menu, listbox, tooltip or map popup was open"])
         self.assertFalse(Path(self.root, "widths").exists())
+
+    def test_a_map_popup_whose_close_the_map_clips_still_cannot_be_closed(self):
+        # The skip keeps the explorer's own page as it left it; it never hides a popup whose Close the map really
+        # clips: after the step's screenshot that click still fails, at the explorer's own width.
+        self.explorer.call("browser_navigate", url=self.site.url + "/map-clipped")
+        self.explorer.call("browser_click", element="55", target="#marker")
+        self.shoot("AC1-step-1")
+        with self.assertRaisesRegex(AssertionError, "intercepts pointer events"):
+            self.explorer.call("browser_click", element="Close popup", target="#x")
+
+    def test_an_open_map_popup_is_not_resized_under_the_explorer(self):
+        # A resize refits a map, which moves its popup with the marker; the round trip left the popup's Close
+        # clipped by the map, and the explorer could not close the popup it had just opened (a consumer, 2026-11-15).
+        self.explorer.call("browser_navigate", url=self.site.url + "/map")
+        self.explorer.call("browser_click", element="55", target="#marker")
+        self.shoot("AC1-step-1")
+        self.explorer.call("browser_click", element="Close popup", target="#x")
+        hidden = self.explorer.call("browser_evaluate", function="() => document.getElementById('popup').hidden")
+        self.assertIn("true", json.dumps(hidden))
+        self.explorer.call("browser_close")
+        self.explorer.close()
+        self.assertEqual([entry.get("skipped") for entry in self.record()], ["a menu, listbox, tooltip or map popup was open"])
 
     def test_a_typed_unsent_draft_is_not_resized_until_the_form_is_sent(self):
         # A resize can make a page render its route again and drop the draft (a consumer's survey builder,

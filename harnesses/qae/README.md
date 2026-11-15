@@ -461,7 +461,10 @@ qae-artifacts line of `.vibe-verifier-qae`.
   tooltip's popper), outside any header or navigation landmark. The explorer's next action may need it, and a resize
   can close it. A trigger's `aria-expanded` is not read: a consumer's sidebar toggle says expanded for as long as the
   sidebar shows, and read as an open popup it stopped every capture (2026-11-09). A menu in a header or navigation,
-  fixed or not, and a tooltip kept for screen readers do not stop captures either. `disturbed: true` in `widths.jsonl` says the page's accessibility tree
+  fixed or not, and a tooltip kept for screen readers do not stop captures either. An open map popup (Leaflet's `.leaflet-popup`,
+  Mapbox GL's `.mapboxgl-popup`, MapLibre's `.maplibregl-popup`) stops a capture the same way, though it has no role:
+  a resize refits or pans the map, the popup moves with its marker, and the map's box clips it, so a consumer's
+  explorer could not close a group popup it had just opened (2026-11-15). `disturbed: true` in `widths.jsonl` says the page's accessibility tree
   read differently after the round trip than before it.
 - A capture is also skipped while a text field holds input the explorer typed and has not sent: a field the page
   received an `input` event for (an input, a textarea or a contenteditable editor), still on the page, enabled and
