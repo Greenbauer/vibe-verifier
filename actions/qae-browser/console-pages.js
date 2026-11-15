@@ -237,6 +237,20 @@ async function createdId(got) {
 }
 
 exports.default = async ({ page }) => {
+  try {
+    await setUp(page);
+  } catch (error) {
+    // A tab can close while it is set up: a link that opens a download in a new tab, which the browser closes as
+    // soon as the file starts saving. playwright-mcp sets each tab up inside the explorer's own call, so a setup
+    // failure here came back as that call's error ("Target page, context or browser has been closed", a consumer's
+    // Download button, 2026-11-15), though the click worked and the file was saved. A closed tab has nothing to
+    // record; any other failure is still the hook's.
+    if (!page.isClosed()) throw error;
+  }
+};
+
+// The hook's work on one tab: the isolation guard and the console, page-error and network records.
+async function setUp(page) {
   const dir = outputDir(process.argv);
   fs.mkdirSync(dir, { recursive: true });
   const write = line => { if (line) fs.appendFileSync(path.join(dir, "console-pages.jsonl"), JSON.stringify(line) + "\n"); };
@@ -286,7 +300,7 @@ exports.default = async ({ page }) => {
     if (request.existingResponse()) response(request.existingResponse());
     else list(request);
   }
-};
+}
 exports.networkLine = networkLine;
 exports.outputDir = outputDir;
 exports.recordIds = recordIds;
