@@ -1522,7 +1522,9 @@ fragment dropped) and the SHA-256 of the error's first line as the console log h
 appends one line per request a page got an answer below 400 for, `{"answered": <SHA-256 of "METHOD
 URL">}` (fragment dropped), once per request in the run: the answers a cancelled request is matched
 against ([below](#a-request-the-page-cancelled)). No text is copied, so the record is not a second
-place a credential can land.
+place a credential can land. A tab the browser closes while the hook sets it up (one a Download link opened
+for a file it saves) has nothing to record, and its setup ends without an error: playwright-mcp sets
+a tab up inside the explorer's own call, which would otherwise report the click as failed.
 
 With a site declared, the gate does not judge a console error when all three hold:
 

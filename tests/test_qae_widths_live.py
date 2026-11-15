@@ -3,6 +3,7 @@ playwright-mcp and chromium: each viewport screenshot the explorer saves is capt
 place, inside the same tool call, measured by the layout audit there, and put back, so the explorer walks at one
 width and the qae-artifacts gate still finds every criterion at every width. Needs the installed toolchain, like
 tests/test_qae_console_pages.py: QAE_MCP names playwright-mcp's entry point (the catalog's `qae-browser` CI job)."""
+import http.server
 import json
 import os
 import shutil
@@ -65,6 +66,35 @@ MAP = ("<title>site</title><main><h1>Shipments</h1><div id=map style='position:r
        "<script>marker.onclick = () => { popup.hidden = false; };"
        "x.onclick = event => { event.preventDefault(); popup.hidden = true; };"
        "addEventListener('resize', () => { popup.style.top = (parseInt(popup.style.top) - 40) + 'px'; });</script>")
+
+# A Download link that opens its file in a new tab, as a consumer's shipment files do (target=_blank to an
+# attachment): the browser saves the file and closes that tab at once, before the harness's hooks finish setting it
+# up. The hooks' setup failing on the closed tab came back as the click's own error, "Target page, context or browser
+# has been closed", though the file was saved (2026-11-15).
+FILES = ("<title>site</title><main><h1>Files</h1><a id=bl href='{0}/bl.pdf' target=_blank rel=noopener>Download</a>"
+         "<a id=cipl href='{0}/cipl.pdf' target=_blank rel=noopener>Download</a></main>")
+
+
+def file_server(test, files):
+    """The origin of a local server that answers each path in `files` with its bytes, saved as an attachment."""
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = files.get(self.path, b"")
+            self.send_response(200 if self.path in files else 404)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Disposition", "attachment; filename=" + self.path.lstrip("/"))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    test.addCleanup(server.server_close)
+    test.addCleanup(server.shutdown)
+    return "http://127.0.0.1:%d" % server.server_address[1]
 
 
 @unittest.skipUnless(os.environ.get("QAE_MCP"), "needs the installed browser toolchain: QAE_MCP names playwright-mcp's entry point")
@@ -173,6 +203,20 @@ class Captures(unittest.TestCase):
         self.explorer.call("browser_close")
         self.explorer.close()
         self.assertEqual([entry.get("skipped") for entry in self.record()], ["a menu, listbox, tooltip or map popup was open"])
+
+    def test_a_download_that_opens_and_closes_a_tab_is_a_click_that_worked(self):
+        # The first tab is set up by both hooks' usual work, where the layout hook failed; the second as one explorer
+        # of a split run (qae-inputs/isolation.json), where the page record's request guard failed first.
+        files = file_server(self, {"/bl.pdf": b"%PDF-1.4 bl", "/cipl.pdf": b"%PDF-1.4 cipl"})
+        self.site.pages["/files"] = FILES.format(files)
+        self.explorer.call("browser_navigate", url=self.site.url + "/files")
+        self.assertIn("Downloaded file bl.pdf", json.dumps(self.explorer.call("browser_click", element="Download", target="#bl")))
+        Path(self.work, "qae-inputs", "isolation.json").write_text(json.dumps({"tag": "qae-pr-1-1"}))
+        self.assertIn("Downloaded file cipl.pdf", json.dumps(self.explorer.call("browser_click", element="Download", target="#cipl")))
+        self.explorer.call("browser_close")
+        self.explorer.close()
+        self.assertEqual(Path(self.root, "bl.pdf").read_bytes(), b"%PDF-1.4 bl")
+        self.assertEqual(Path(self.root, "cipl.pdf").read_bytes(), b"%PDF-1.4 cipl")
 
     def test_a_typed_unsent_draft_is_not_resized_until_the_form_is_sent(self):
         # A resize can make a page render its route again and drop the draft (a consumer's survey builder,

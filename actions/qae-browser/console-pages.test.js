@@ -113,6 +113,7 @@ async function guarded(rules) {
     on: (event, listener) => listeners[event].push(listener),
     route: async (pattern, given) => { assert.strictEqual(pattern, "**/*"); handler = given; },
     consoleMessages: async () => [], pageErrors: async () => [], requests: async () => [],
+    isClosed: () => false,
   };
   const argv = process.argv;
   process.argv = ["node", "cli.js", "--output-dir", out];
