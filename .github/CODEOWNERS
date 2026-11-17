@@ -1,2 +1,4 @@
-# Every path is owned by the maintainer; branch rules on main require a code-owner review.
+# Every path is owned by the maintainer. Branch rules on main require a pull request, squash merging, resolved
+# review threads and the "Tests and gates" and "Code review" checks. They require no approving review, from a
+# code owner or anyone else.
 *  @Greenbauer
