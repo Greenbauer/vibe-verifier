@@ -69,8 +69,33 @@ class Stack(Outside):
                 break
             except OSError:
                 time.sleep(0.5)
-        self.assertEqual(answer, "stack-ok reached")
+        if answer != "stack-ok reached":
+            self.fail("%r\n%s" % (answer, self.diagnose(stack)))
         self.assertEqual(seal_left(), before)
+
+    def diagnose(self, stack):
+        """DIAGNOSTIC ONLY (temporary): what the stack sees after it was put back, against a fresh container."""
+        def run(*command):
+            done = subprocess.run(command, capture_output=True, text=True)
+            return "$ %s\n%s%s" % (" ".join(command), done.stdout, done.stderr)
+        probe = ('require("net").connect({host: "host.docker.internal", port: %d, timeout: 3000})'
+                 '.on("connect", function () { console.log("reached"); this.destroy(); })'
+                 '.on("error", (e) => console.log(e.code)).on("timeout", () => console.log("timeout"))') % self.published
+        return "\n".join([
+            run("docker", "exec", stack, "cat", "/etc/hosts"),
+            run("docker", "exec", stack, "cat", "/proc/net/route"),
+            run("docker", "exec", stack, "node", "-e", probe),
+            run("docker", "inspect", "--format", "{{json .NetworkSettings.Networks}} {{json .HostConfig.ExtraHosts}}", stack),
+            run("docker", "network", "inspect", "--format", "{{json .IPAM}} {{json .Options}}", stack),
+            run("docker", "run", "--rm", "--network", stack, "--add-host", "host.docker.internal:host-gateway",
+                self.image, "node", "-e", probe),
+            run("docker", "run", "--rm", "--network", stack, "--add-host", "host.docker.internal:host-gateway",
+                self.image, "cat", "/etc/hosts"),
+            run("docker", "info", "--format", "{{json .}}"),
+            run("ip", "-4", "addr"),
+            run("sudo", "iptables", "-S"), run("sudo", "iptables", "-t", "nat", "-S"),
+            run("sudo", "nft", "list", "ruleset"),
+        ])
 
     def test_the_job_s_stack_is_reachable_from_the_site_cannot_reach_out_and_is_put_back(self):
         stack, port = self.stack()
@@ -134,6 +159,8 @@ class Stack(Outside):
         stack, port = self.stack()
         left = seal_left()
         seal, deadline = _regression_sealed.Seal([stack], None), time.monotonic() + 120
+        time.sleep(2)
+        sys.stderr.write("\nDIAGNOSE BEFORE THE SEAL\n%s\n" % self.diagnose(stack))
         seal.open(deadline, 120)
         try:
             seal.enter(self.image, deadline, 120)
