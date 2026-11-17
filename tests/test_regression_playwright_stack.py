@@ -82,6 +82,10 @@ class Stack(Outside):
                  '.on("connect", function () { console.log("reached"); this.destroy(); })'
                  '.on("error", (e) => console.log(e.code)).on("timeout", () => console.log("timeout"))') % self.published
         return "\n".join([
+            run("docker", "ps", "-a", "--format", "{{.Names}} {{.Status}} {{.Ports}}"),
+            run("docker", "logs", self.outside),
+            run("docker", "inspect", "--format", "{{json .State}} {{json .HostConfig.PortBindings}}", self.outside),
+            run("ls", "-la", self.record),
             run("docker", "exec", stack, "cat", "/etc/hosts"),
             run("docker", "exec", stack, "cat", "/proc/net/route"),
             run("docker", "exec", stack, "node", "-e", probe),
