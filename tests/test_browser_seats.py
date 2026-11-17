@@ -113,7 +113,7 @@ class ActionTest(unittest.TestCase):
         """select.test.mjs, handed the `extra-seats` value this action really wrote."""
         result, outputs = self.step([seat(n) for n in range(4)])
         self.assertEqual(result.returncode, 0, result.stdout)
-        run = subprocess.run(["node", "--test", str(SELECT_TEST)], capture_output=True, text=True,
+        run = subprocess.run(["node", "--test", "--test-reporter=tap", str(SELECT_TEST)], capture_output=True, text=True,
                              env=clean_env({"EXTRA_SEATS": outputs["extra-seats"]}))
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         self.assertRegex(run.stdout, r"# pass 3\b")
