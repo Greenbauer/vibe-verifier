@@ -25,7 +25,9 @@ from test_regression_test import tree_is_head
 
 LISTENER = r"""const fs = require("fs"), net = require("net"), dgram = require("dgram");
 const log = (line) => fs.appendFileSync("/record/heard.log", line + "\n");
-net.createServer((socket) => { log("tcp " + socket.remoteAddress); socket.end("answered\n"); }).listen(8443, "0.0.0.0");
+// A client may reset its connection (a probe that gave up, or one the seal cut): that is not a reason to stop listening.
+net.createServer((socket) => { socket.on("error", () => {}); log("tcp " + socket.remoteAddress); socket.end("answered\n"); })
+  .listen(8443, "0.0.0.0");
 dgram.createSocket("udp4").on("message", (message, from) => log("udp " + from.address)).bind(3478, "0.0.0.0", () => log("ready"));
 """
 TRY = r"""const net = require("net"), dgram = require("dgram");
