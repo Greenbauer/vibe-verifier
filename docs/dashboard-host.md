@@ -158,6 +158,13 @@ checkout to the previous commit, restarts the units again, and records the commi
 Changes under `dashboard/static/` or to documentation go live without a restart. The timers run the
 new helper code on their next tick, and a change to the follower re-runs it.
 
+Everything here runs as root from that checkout, so following `main` lets anyone who can merge to
+`main` run code as root on the host. To require a second step, give the follower `--commit <40-hex
+id>` after the `--unit` pairs: it then moves the checkout to that one commit (forward or back), and
+only once the commit is on `main` and its checks passed, and never to a newer merge. A new release
+then goes live by editing that one argument. The runner lanes kit writes it from its host file's
+`engine` pin (`lanes/README.md`, "Deploy model").
+
 Unauthenticated API requests share 60 an hour per address, and GitHub counts a `304 Not Modified` as
 free only for a request that carries an `Authorization` header, so the follower keeps no ETags.
 Instead it asks at most once a minute and only while a new commit is undecided, and when GitHub reports
@@ -222,4 +229,4 @@ until the template is copied again as [Updates](#6-updates) describes. Check wit
 owner and mode, the telemetry projection, and the unit templates' sandbox lines, the web unit's cache
 directory among them.
 `tests/test_dashboard_follow.py` covers the check-run gate, the rate-limit pause, the health check,
-and the rollback. Neither runs on a systemd host; the units are verified by their text.
+the rollback and a pinned `--commit`. Neither runs on a systemd host; the units are verified by their text.

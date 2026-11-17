@@ -11,7 +11,7 @@ import re
 
 import yaml
 
-from lane_fields import _absolute_path, _exact_keys, _int_between, _matching, _npm_registry, _positive_int, _store_fs
+from lane_fields import _absolute_path, _check_ports, _engine, _exact_keys, _int_between, _matching, _npm_registry, _positive_int, _store_fs
 from lane_model import DOCKER_SIZE, Dashboard, Host, Lane
 
 
@@ -36,7 +36,8 @@ CPU_QUOTA = re.compile(r"^[1-9][0-9]*%$")
 BRIDGE_MAX = 15
 
 HOST_KEYS = {"hostname", "sysbox", "lanes"}
-HOST_OPTIONAL_KEYS = {"dashboards"}
+# engine: the catalog commit the machine runs (lane_fields._engine).
+HOST_OPTIONAL_KEYS = {"dashboards", "engine"}
 # A Vibe Verifier dashboard (bin/provision-dashboards.sh): a systemd instance whose account is
 # vibe-dashboard-<name>, which useradd caps at 32 characters (Vibe Verifier docs/dashboard-host.md).
 DASHBOARD_NAME = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -108,19 +109,6 @@ def _lane_label(label: object, field: str, block: str) -> str:
             "labels (ci-*, vps, vps-N)"
         )
     return label
-
-
-def _check_ports(value: object, block: str) -> tuple[int, ...]:
-    """The host ports the lane's smoke proves a slot cannot reach (its --check)."""
-    if (
-        not isinstance(value, list)
-        or not value
-        or any(isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535 for port in value)
-    ):
-        raise ValueError(f"{block}.check_ports must be a non-empty list of ports in 1..65535")
-    if len(set(value)) != len(value):
-        raise ValueError(f"{block}.check_ports must not contain duplicates")
-    return tuple(value)
 
 
 def _warm_max_age(raw: dict, runtime_max_sec: int, warm_pool: bool, block: str) -> int:
@@ -360,7 +348,7 @@ def load_host(path: str | Path) -> Host:
     except yaml.YAMLError as exc:
         raise ValueError(f"{path}: not YAML: {exc}") from exc
     if not isinstance(document, dict) or not HOST_KEYS <= set(document) <= HOST_KEYS | HOST_OPTIONAL_KEYS:
-        raise ValueError(f"{path} must declare exactly {', '.join(sorted(HOST_KEYS))}, and may declare dashboards")
+        raise ValueError(f"{path} must declare exactly {', '.join(sorted(HOST_KEYS))}, and may declare dashboards and engine")
     sysbox = _exact_keys(document["sysbox"], {"image", "disk_gb"}, "sysbox", "host")
     raw_lanes = document["lanes"]
     if not isinstance(raw_lanes, list) or not raw_lanes:
@@ -380,4 +368,5 @@ def load_host(path: str | Path) -> Host:
         sysbox_disk_gb=_positive_int(sysbox["disk_gb"], "sysbox.disk_gb", "host"),
         lanes=lanes,
         dashboards=dashboards,
+        engine=_engine(document.get("engine")),
     )

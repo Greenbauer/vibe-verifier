@@ -18,7 +18,7 @@ line_of() { grep -nF -- "$1" <<< "$out" | head -n 1 | cut -d: -f1; }
 before() { local a b; a="$(line_of "$1")"; b="$(line_of "$2")"; [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; }
 render() { python3 "$ROOT/lib/lanes.py" "$1" "$S/config/hosts/example.yml" "$2"; }
 FOLLOW_CMD="/usr/bin/env -i HOME=/root PYTHONNOUSERSITE=1 PATH=/usr/bin:/bin /usr/bin/python3 /opt/vibe-verifier/bin/vibe-dashboard-follow"
-MUTATIONS='^(useradd|userdel|chown|git clone|nft --file|systemctl (enable|disable|daemon-reload|start|stop|restart))'
+MUTATIONS='^(useradd|userdel|chown|git clone|git checkout|nft --file|systemctl (enable|disable|daemon-reload|start|stop|restart))'
 LEGACY_UNITS="greenbauer-dashboard.service greenbauer-dashboard-boundary.service greenbauer-dashboard-telemetry.timer greenbauer-dashboard-telemetry.service greenbauer-dashboard-token-refresh.timer greenbauer-dashboard-token-refresh.service ci-dashboard.service ci-dashboard-boundary.service ci-dashboard-telemetry.timer ci-dashboard-telemetry.service ci-dashboard-token.timer ci-dashboard-token.service"
 
 write_dashboard_stubs() {
@@ -130,12 +130,13 @@ case "$1" in
   *) exit 1 ;;
 esac
 SH
-  # git: the clone copies the stand-in checkout; rev-parse names a commit.
+  # git: the clone copies the stand-in checkout; a checkout records the commit rev-parse then names.
   cat > "$p/git" <<'SH'
 #!/bin/bash
 case "$1" in
   clone) echo "git $*" >> "$CALLLOG"; cp -r "$FX/vv" "${@: -1}"; mkdir "${@: -1}/.git" ;;
-  -C) echo 735585a ;;
+  -C) if [[ " $* " == *" checkout "* ]]; then echo "git checkout ${*: -1}" >> "$CALLLOG"; echo "${*: -1}" > "$ST/vv-head"
+      else h="$(cat "$ST/vv-head" 2>/dev/null || echo 735585a)"; [[ " $* " != *" --short=12 "* ]] || h="${h:0:12}"; echo "$h"; fi ;;
 esac
 SH
   printf '#!/bin/bash\nexit 0\n' > "$p/openssl"
@@ -481,6 +482,31 @@ open(path, "w").write(text[:text.index("dashboards:\n")])
 PY
 out="$(run_dash --apply 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && [ ! -s "$CALLLOG" ] && [ ! -e "$S/etc" ]; expect $? "a host file without dashboards installs nothing"
+
+# ---- the engine pin: the follower runs the pinned commit, and a fresh clone starts there ---------------
+PIN="0123456789abcdef0123456789abcdef01234567"
+setup
+printf 'engine: "%s"\n' "$PIN" >> "$S/config/hosts/example.yml"
+out="$(run_dash --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "git checkout $PIN" "$CALLLOG" && before "RUN: git clone --quiet" "RUN: git -C $S/opt/vibe-verifier -c advice.detachedHead=false checkout --quiet --detach $PIN" \
+  && before "detach $PIN" "RUN: systemctl daemon-reload"
+expect $? "a fresh clone checks out the pinned commit before any unit template is installed from it"
+grep -qxF "ExecStart=$FOLLOW_CMD --unit vibe-dashboard@greenbauer.service 8765 --unit vibe-dashboard@acme.service 8766 --commit $PIN" "$S/units/vibe-dashboard-follow.service.d/runners.conf"
+expect $? "the follower's drop-in names the pinned commit with --commit, after the --unit pairs"
+mkdir -p "$S/data/greenbauer/gh" "$S/data/acme/gh"
+for n in greenbauer acme; do printf 'github.com:\n' > "$S/data/$n/gh/hosts.yml"; chmod 600 "$S/data/$n/gh/hosts.yml"; "$S/pathbin/chown" "vibe-dashboard-$n:vibe-dashboard-$n" "$S/data/$n/gh/hosts.yml"; done
+out="$(run_dash --check 2>&1)"; rc=$?
+grep -qx "checkout=$S/opt/vibe-verifier at ${PIN:0:12} (pinned)" <<< "$out" && ! grep -q "not the pinned" <<< "$out"; expect $? "--check reports the dashboards' checkout at the pin as converged"
+echo 735585a > "$S/st/vv-head"
+out="$(run_dash --check 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && grep -q "checkout=$S/opt/vibe-verifier at 735585a, not the pinned ${PIN:0:12} (the follower moves it once its checks passed" <<< "$out"
+expect $? "--check fails while the dashboards' checkout is not at the pin"
+sed -i "s/^engine: .*/engine: \"$(printf 'f%.0s' {1..40})\"/" "$S/config/hosts/example.yml"
+: > "$CALLLOG"
+out="$(run_dash --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q -- "--commit ffffffffffffffffffffffffffffffffffffffff$" "$S/units/vibe-dashboard-follow.service.d/runners.conf" && grep -qx "systemctl restart vibe-dashboard-follow.service" "$CALLLOG" \
+  && ! grep -q "git checkout" "$CALLLOG"
+expect $? "a moved pin rewrites the drop-in and restarts the follower, which moves the existing checkout; the kit never resets it"
 
 # ---- a host file named outright, and the default one ----------------------------------------------
 setup

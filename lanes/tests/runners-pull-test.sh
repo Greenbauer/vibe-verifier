@@ -242,6 +242,97 @@ rm "$S/config/hosts/hand-added.yml"
 run_pull; rc=$?
 [ "$rc" -eq 0 ] && [ "$(engine_head)" = "$(origin_of engine)" ] && [ "$(config_head)" = "$(origin_of values)" ] && [ "$(applied)" = "$(record)" ]; expect $? "once the edits are gone the next tick fast-forwards both checkouts and converges"
 
+# ---- the host file pins the engine: a catalog merge alone runs nothing --------------------------------
+# set_pin <sha>: the values repository's host file pins that catalog commit (a merge there).
+set_pin() {
+  python3 -c '
+import sys, yaml
+doc = yaml.safe_load(open(sys.argv[1]))
+doc["engine"] = sys.argv[2]
+yaml.safe_dump(doc, open(sys.argv[1], "w"), sort_keys=False)
+' "$S/values-seed/hosts/example.yml" "$1"
+  git -C "$S/values-seed" add hosts/example.yml && land values "pin ${1:0:12}"
+}
+setup
+run_pull
+grep -q "pins no engine commit; following the catalog's main until it does" "$S/out"; expect $? "a host file with no pin follows the catalog's main, and says so"
+land kit "release one"; one="$(origin_of engine)"
+land kit "after release one"
+set_pin "$one"
+: > "$CALLLOG"; : > "$S/fetch.log"
+run_pull; rc=$?
+[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$one" ] && [ "$(engine_head)" != "$(origin_of engine)" ] && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ] \
+  && grep -q "engine moved to the pinned ${one:0:12}" "$S/out"
+expect $? "a pinned host file moves the engine to the pinned commit, not the catalog's newer main, and applies it"
+[ "$(sed -n 1p "$S/fetch.log" | cut -d' ' -f2)" = "$S/config" ] && [ "$(sed -n 2p "$S/fetch.log" | cut -d' ' -f2)" = "$S/engine" ]
+expect $? "the values are fetched before the engine: their host file names the engine commit"
+land kit "merged after the pin"; land catalog "and outside lanes/"
+: > "$CALLLOG"; : > "$S/fetch.log"
+run_pull; rc=$?
+[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ] && ! grep -q " $S/engine " "$S/fetch.log"
+expect $? "a later catalog merge is not picked up: the engine stays at its pin, unfetched, and nothing is applied"
+land kit "release two"; two="$(origin_of engine)"
+set_pin "$two"
+: > "$CALLLOG"
+run_pull; rc=$?
+[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$two" ] && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ]; expect $? "moving the pin in the values repository moves the engine and applies"
+set_pin "$one"
+: > "$CALLLOG"
+run_pull; rc=$?
+[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$one" ] && [ "$(calls)" = 4 ]; expect $? "a pin moved back to an earlier catalog commit checks it out and applies"
+# A commit that is not on the catalog's main: GitHub serves a fork's commit by its id.
+gitc -C "$S/engine-seed" checkout -q -b fork && printf 'evil\n' > "$S/engine-seed/lanes/EVIL" && gitc -C "$S/engine-seed" add lanes/EVIL && gitc -C "$S/engine-seed" commit -q -m fork
+fork="$(git -C "$S/engine-seed" rev-parse HEAD)"; gitc -C "$S/engine-seed" checkout -q main
+set_pin "$fork"
+: > "$CALLLOG"; before="$(applied)"
+run_pull; rc=$?
+[ "$rc" -ne 0 ] && grep -q "the pinned engine $fork is not on the catalog's main; the engine stays at ${one:0:12}" "$S/out" && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ] && [ "$(applied)" = "$before" ]
+expect $? "a pin to a commit that is not on the catalog's main is refused: the engine stays, nothing is applied"
+set_pin "0123456789abcdef0123456789abcdef01234567"
+run_pull; rc=$?
+[ "$rc" -ne 0 ] && grep -q "is not a commit of the catalog" "$S/out" && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ]; expect $? "a pin to a commit the catalog does not have is refused"
+set_pin "${one:0:12}"
+run_pull; rc=$?
+[ "$rc" -ne 0 ] && grep -q "must be a full 40-character lowercase commit id" "$S/out" && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ]; expect $? "a short pin is refused before anything is fetched"
+# The new runners-pull.sh runs on the tick that moves the pin to it.
+sed -i 's/log "engine moved to the pinned ${pin:0:12}"/log "engine moved to the pinned ${pin:0:12} by the old copy"/' "$S/engine-seed/lanes/bin/runners-pull.sh"
+gitc -C "$S/engine-seed" add lanes/bin/runners-pull.sh && gitc -C "$S/engine-seed" commit -q -m "new pull"
+set_pin "$(origin_of engine)"
+: > "$CALLLOG"
+run_pull; rc=$?
+[ "$rc" -eq 0 ] && grep -q "running the new copy" "$S/out" && [ "$(engine_head)" = "$(origin_of engine)" ] && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ]
+expect $? "a pin moved over a change to runners-pull.sh runs the new copy, which applies once"
+
+# ---- with an allowed-signers file, the pin needs a signed engine/* tag --------------------------------
+setup
+ssh-keygen -q -t ed25519 -N '' -C operator -f "$S/operator" && ssh-keygen -q -t ed25519 -N '' -C other -f "$S/other"
+printf 'operator@example.invalid %s\n' "$(cut -d' ' -f1,2 "$S/operator.pub")" > "$S/etc/engine_signers"
+sign() { gitc -C "$S/engine-seed" -c gpg.format=ssh -c user.signingkey="$S/$1" tag -s -m "$2" "$2" "$3"; }
+land kit "unsigned release"; unsigned="$(origin_of engine)"
+set_pin "$unsigned"
+run_pull_signed() { RUNNERS_ENGINE_SIGNERS="$S/etc/engine_signers" run_pull; }
+: > "$CALLLOG"
+run_pull_signed; rc=$?
+[ "$rc" -ne 0 ] && grep -q "no engine/\* tag signed by a key in $S/etc/engine_signers points at the pinned engine $unsigned" "$S/out" && [ "$(engine_head)" != "$unsigned" ] && [ ! -s "$CALLLOG" ]
+expect $? "while the signers file exists, a pin no signed engine/* tag points at is refused: the engine stays, nothing is applied"
+sign other engine/forged "$unsigned"
+run_pull_signed; rc=$?
+[ "$rc" -ne 0 ] && [ "$(engine_head)" != "$unsigned" ] && [ ! -s "$CALLLOG" ]; expect $? "a tag signed by a key the signers file does not list is refused"
+sign operator other/signed "$unsigned"
+run_pull_signed; rc=$?
+[ "$rc" -ne 0 ] && [ "$(engine_head)" != "$unsigned" ]; expect $? "a signed tag outside engine/* does not count"
+sign operator engine/one "$unsigned"
+run_pull_signed; rc=$?
+[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$unsigned" ] && [ "$(calls)" = 4 ]; expect $? "an engine/* tag signed by a listed key lets the engine move to the pin"
+land kit "next"; next="$(origin_of engine)"; sign operator engine/two "$(git -C "$S/engine-seed" rev-parse HEAD~1)"
+set_pin "$next"
+: > "$CALLLOG"
+run_pull_signed; rc=$?
+[ "$rc" -ne 0 ] && [ "$(engine_head)" = "$unsigned" ] && [ ! -s "$CALLLOG" ]; expect $? "a signed tag on another commit does not cover the pin"
+: > "$CALLLOG"
+run_pull; rc=$?
+[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$next" ]; expect $? "without the signers file the pin alone moves the engine"
+
 # ---- what it needs before it does anything --------------------------------------------------------
 setup
 rm "$S/etc/runners-host"
