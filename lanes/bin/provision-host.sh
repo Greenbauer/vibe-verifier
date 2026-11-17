@@ -7,8 +7,8 @@
 # (bin/provision-lane.sh) run every job in its
 # own Sysbox system container; this script gives them the host they need: Docker CE, Sysbox CE on
 # its own bounded filesystem, the apt holds that keep both where Sysbox supports them, and the
-# self-update that keeps the machine's two checkouts, the engine and the values, on their
-# origin/main (bin/runners-pull.sh). Design: README.md.
+# self-update that keeps the machine's engine checkout on the catalog commit its host file pins and its
+# values checkout on origin/main (bin/runners-pull.sh). Design: README.md.
 #
 # Operator-invoked and dry-run by default: --apply mutates, --check is a read-only report that exits
 # non-zero until the host is converged, --remove plans the teardown (and runs it with --apply).
@@ -36,8 +36,8 @@
 #   E   apt-mark hold on sysbox-ce, docker-ce, docker-ce-cli, containerd.io and the installed kernel
 #       meta packages, so unattended upgrades cannot outrun what Sysbox supports
 #   F   runners-pull.service and runners-pull.timer (every 5 minutes, root): the machine's
-#       self-update, the engine from its public origin/main and the values checkout from its own
-#       through the read-only deploy key /etc/runners/deploy_key
+#       self-update: the values checkout from its own origin/main through the read-only deploy key
+#       /etc/runners/deploy_key, and the engine to the catalog commit the host file's `engine` pins
 # Steps end at OPERATOR ACTION gates this script never performs: the deploy key, and the machine's
 # /etc/runners-host naming this host config.
 #
@@ -63,6 +63,8 @@ CONFIG="${RUNNERS_CONFIG:-/opt/runner-lanes-config}"
 CHECKOUT="$ENGINE/lanes"
 RUNNERS_ETC="${RUNNERS_ETC_DIR:-/etc/runners}"
 DEPLOY_KEY="$RUNNERS_ETC/deploy_key"
+# The operator's optional allowed-signers file bin/runners-pull.sh checks engine/* tags against.
+ENGINE_SIGNERS="$RUNNERS_ETC/engine_signers"
 HOST_FILE="${RUNNERS_HOST_FILE:-/etc/runners-host}"
 PULL_STATE="${RUNNERS_PULL_STATE_DIR:-/var/lib/runners}"
 PULL_SERVICE="runners-pull.service"
@@ -164,12 +166,13 @@ EOF
 render_pull_service() {
   cat <<EOF
 # Managed by the runner lanes kit (bin/provision-host.sh); do not edit on the machine.
-# Fast-forwards $ENGINE and $CONFIG to their origin/main and, when the kit (lanes/ in $ENGINE) or
+# Fast-forwards $CONFIG to its origin/main, moves $ENGINE to the catalog commit hosts/<host>.yml pins
+# and, when the kit (lanes/ in $ENGINE) or
 # the values changed or the last apply failed, converges this machine: provision-host.sh --apply,
 # provision-lane.sh --apply for every lane of hosts/<host>.yml, then provision-dashboards.sh --apply,
 # <host> being $HOST_FILE (bin/runners-pull.sh).
 [Unit]
-Description=runners: update $ENGINE and $CONFIG from origin/main and converge this machine
+Description=runners: update $CONFIG, move $ENGINE to its pinned commit and converge this machine
 Wants=network-online.target
 After=network-online.target docker.service
 
@@ -373,7 +376,7 @@ ensure_holds() {
 }
 
 ensure_self_update() {
-  log "Phase F: $PULL_TIMER updates $ENGINE and $CONFIG from origin/main every 5 minutes"
+  log "Phase F: $PULL_TIMER updates $CONFIG and moves $ENGINE to its pinned commit every 5 minutes"
   local changed=""
   ensure_dir "$RUNNERS_ETC" 0700
   changed+="$(converge_file "$UNIT_DIR/$PULL_SERVICE" "$(render_pull_service)")"
@@ -394,6 +397,13 @@ print_gates() {
     fi
     gate "Give this machine read-only access to its values repository ($values): run ssh-keygen -t ed25519 -N '' -C runners-$HOST -f $DEPLOY_KEY on the machine, then add $DEPLOY_KEY.pub to that repository as a deploy key from a login with admin on it: ssh root@$HOST_NAME cat $DEPLOY_KEY.pub > runners-$HOST.pub && gh repo deploy-key add runners-$HOST.pub --repo <owner>/<repository> --title runners-$HOST (read-only unless --allow-write is given). Until then $PULL_SERVICE cannot fetch $CONFIG."
   fi
+  # The engine runs as root, so it must sit at the commit the private host file pins.
+  head="$(git -C "$ENGINE" rev-parse HEAD 2>/dev/null || echo unknown)"
+  if [ -z "$ENGINE_COMMIT" ]; then printf 'engine=%s at %s, following the catalog main: hosts/%s.yml pins no engine commit\n' "$ENGINE" "${head:0:12}" "$HOST"; bad
+  elif [ "$head" = "$ENGINE_COMMIT" ]; then printf 'engine=%s at the pinned %s\n' "$ENGINE" "${ENGINE_COMMIT:0:12}"
+  else printf 'engine=%s at %s, not the pinned %s (a pull is pending or refused it: journalctl -u %s)\n' "$ENGINE" "${head:0:12}" "${ENGINE_COMMIT:0:12}" "$PULL_SERVICE"; bad; fi
+  if [ -e "$ENGINE_SIGNERS" ]; then printf 'engine_signers=%s present: the engine moves only to a commit a signed engine/* tag names\n' "$ENGINE_SIGNERS"
+  else printf 'engine_signers=%s absent (optional: README.md, Deploy model)\n' "$ENGINE_SIGNERS"; fi
   named="$(tr -d '[:space:]' < "$HOST_FILE" 2>/dev/null || true)"
   if [ "$named" != "$HOST" ]; then
     gate "Name this machine's host config: echo $HOST > $HOST_FILE (it reads '${named:-nothing}'). $PULL_SERVICE converges the lanes of hosts/<that name>.yml in $CONFIG."
@@ -477,7 +487,7 @@ check_storage() {
 }
 
 check_self_update() {
-  local state named applied current
+  local state named applied current head
   state="$(systemctl is-active "$PULL_TIMER" 2>/dev/null || true)"
   printf 'self_update_timer=%s %s\n' "$PULL_TIMER" "${state:-unknown}"
   [ "$state" = active ] || bad
@@ -485,6 +495,13 @@ check_self_update() {
     printf 'self_update_units=absent or DRIFTED from this checkout (re-run --apply)\n'; bad
   fi
   if [ -s "$DEPLOY_KEY" ]; then printf 'deploy_key=%s present\n' "$DEPLOY_KEY"; else printf 'deploy_key=%s absent\n' "$DEPLOY_KEY"; bad; fi
+  # The engine runs as root, so it must sit at the commit the private host file pins.
+  head="$(git -C "$ENGINE" rev-parse HEAD 2>/dev/null || echo unknown)"
+  if [ -z "$ENGINE_COMMIT" ]; then printf 'engine=%s at %s, following the catalog main: hosts/%s.yml pins no engine commit\n' "$ENGINE" "${head:0:12}" "$HOST"; bad
+  elif [ "$head" = "$ENGINE_COMMIT" ]; then printf 'engine=%s at the pinned %s\n' "$ENGINE" "${ENGINE_COMMIT:0:12}"
+  else printf 'engine=%s at %s, not the pinned %s (a pull is pending or refused it: journalctl -u %s)\n' "$ENGINE" "${head:0:12}" "${ENGINE_COMMIT:0:12}" "$PULL_SERVICE"; bad; fi
+  if [ -e "$ENGINE_SIGNERS" ]; then printf 'engine_signers=%s present: the engine moves only to a commit a signed engine/* tag names\n' "$ENGINE_SIGNERS"
+  else printf 'engine_signers=%s absent (optional: README.md, Deploy model)\n' "$ENGINE_SIGNERS"; fi
   named="$(tr -d '[:space:]' < "$HOST_FILE" 2>/dev/null || true)"
   printf 'runners_host=%s\n' "${named:-absent}"
   [ "$named" = "$HOST" ] || bad

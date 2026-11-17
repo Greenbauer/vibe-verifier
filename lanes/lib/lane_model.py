@@ -187,6 +187,8 @@ class Host:
     sysbox_disk_gb: int
     lanes: tuple[Lane, ...]
     dashboards: tuple[Dashboard, ...] = ()
+    # The catalog commit the machine runs ("" when the host file pins none).
+    engine: str = ""
 
     def lane(self, name: str) -> Lane:
         for lane in self.lanes:

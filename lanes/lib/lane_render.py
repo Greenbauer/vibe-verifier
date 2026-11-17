@@ -86,6 +86,7 @@ def host_settings(host: Host) -> dict[str, object]:
         "SYSBOX_IMAGE": host.sysbox_image,
         "SYSBOX_GB": host.sysbox_disk_gb,
         "LANES": " ".join(lane.name for lane in host.lanes),
+        "ENGINE_COMMIT": host.engine,
     }
 
 

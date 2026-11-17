@@ -9,6 +9,19 @@ import re
 # An absolute path made of plain components: no spaces, nothing a unit file or a shell line could
 # misread. A `..` component is refused separately.
 ABS_PATH = re.compile(r"^(?:/[A-Za-z0-9._-]+)+$")
+# A full commit id, lowercase, as git prints it: a short or symbolic one could name a fork's commit.
+COMMIT = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _engine(value: object) -> str:
+    """host.engine: the catalog commit the machine runs, its engine checkout and its dashboards' (README.md,
+    "Deploy model"), or "" when the file pins none, which is allowed only while machines move to the pin.
+    YAML reads an all-digit id as a number, so the id is written quoted."""
+    if value is None:
+        return ""
+    if not isinstance(value, str) or not COMMIT.fullmatch(value):
+        raise ValueError('host.engine must be a full 40-character lowercase commit id, quoted: engine: "<sha>"')
+    return value
 
 
 def _positive_int(value: object, field: str, block: str) -> int:
@@ -66,3 +79,16 @@ def _npm_registry(value: object, block: str) -> str | None:
     if not isinstance(value, str) or not NPM_REGISTRY.fullmatch(value):
         raise ValueError(f"{block}.npm_registry must be an https URL with no query, credentials or spaces")
     return value.rstrip("/")
+
+
+def _check_ports(value: object, block: str) -> tuple[int, ...]:
+    """The host ports the lane's smoke proves a slot cannot reach (its --check)."""
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535 for port in value)
+    ):
+        raise ValueError(f"{block}.check_ports must be a non-empty list of ports in 1..65535")
+    if len(set(value)) != len(value):
+        raise ValueError(f"{block}.check_ports must not contain duplicates")
+    return tuple(value)

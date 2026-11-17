@@ -253,5 +253,70 @@ class SystemdMode(Repositories):
             follow.github_repository(str(self.checkout))
 
 
+class PinnedMode(SystemdMode):
+    """--commit: the checkout runs the one commit the operator named, never the branch's tip."""
+
+    def pin(self, commit):
+        self.units.commit = commit
+
+    def test_a_pinned_commit_on_main_is_deployed_and_a_newer_merge_is_not(self):
+        self.commit("dashboard/server.py", "pinned")
+        pinned = self.head(self.author)
+        self.commit("dashboard/server.py", "newer")
+        self.listings[pinned] = self.listings[self.head(self.author)] = GREEN
+        self.pin(pinned)
+        self.assertEqual(self.units.step(), ["dashboard/server.py"])
+        self.assertEqual(self.head(self.checkout), pinned)
+        self.assertEqual(self.units.step(), [])
+        self.assertEqual(self.head(self.checkout), pinned)
+        self.assertEqual(self.read, [pinned])
+
+    def test_a_pin_may_move_back(self):
+        start = self.head(self.checkout)
+        self.commit("dashboard/server.py", "new")
+        self.listings[self.head(self.author)] = self.listings[start] = GREEN
+        self.pin(self.head(self.author))
+        self.units.step()
+        self.pin(start)
+        self.assertEqual(self.units.step(), ["dashboard/server.py"])
+        self.assertEqual(self.head(self.checkout), start)
+
+    def test_a_pinned_commit_that_is_not_on_main_is_refused(self):
+        before = self.head(self.checkout)
+        git(self.author, "checkout", "--quiet", "-b", "side")
+        (self.author / "dashboard").mkdir(parents=True, exist_ok=True)
+        (self.author / "dashboard/server.py").write_text("side")
+        git(self.author, "add", "dashboard/server.py")
+        git(self.author, "commit", "--quiet", "-m", "side")
+        git(self.author, "push", "--quiet", "origin", "side")
+        side = self.head(self.author)
+        git(self.checkout, "fetch", "--quiet", "origin", "side")
+        self.listings[side] = GREEN
+        self.pin(side)
+        self.assertEqual(self.units.step(), [])
+        self.assertEqual(self.head(self.checkout), before)
+        self.assertEqual((self.read, self.restarts), ([], []))
+
+    def test_a_pinned_commit_whose_checks_have_not_passed_is_not_deployed(self):
+        before = self.head(self.checkout)
+        self.commit("dashboard/server.py", "new")
+        self.listings[self.head(self.author)] = listing(("completed", "failure"))
+        self.pin(self.head(self.author))
+        self.assertEqual(self.units.step(), [])
+        self.assertEqual(self.head(self.checkout), before)
+
+    def test_at_its_pin_the_follower_fetches_nothing(self):
+        self.pin(self.head(self.checkout))
+        with mock.patch.object(follow, "git", wraps=follow.git) as calls:
+            self.assertEqual(self.units.step(), [])
+        self.assertNotIn("fetch", [call.args[1] for call in calls.call_args_list])
+
+    def test_commit_is_a_full_lowercase_id_and_needs_unit(self):
+        for argv in (["--unit", "u", "1", "--commit", "abc"], ["--serve", "c", "1", "--commit", "a" * 40]):
+            with self.subTest(argv), mock.patch("sys.argv", ["vibe-dashboard-follow", *argv]), \
+                    mock.patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
+                follow.main()
+
+
 if __name__ == "__main__":
     unittest.main()
