@@ -15,7 +15,7 @@
 #
 # --apply converges, in order, each step skipped when already converged:
 #   A  /opt/vibe-verifier, cloned only when absent and checked out at the pin; the follower owns it
-#      afterwards (never reset here)
+#      afterwards (never reset here, except once to the pin when its follower predates --commit)
 #   B  per dashboard: its account vibe-dashboard-<name> (system, nologin), the runbook's directories,
 #      and /etc/vibe-dashboard/<name>/: merge-policy.json (the account's, 0600, when the config declares
 #      one; the loader must accept it with the new dashboard.json first), dashboard.json (the account's,
@@ -276,7 +276,15 @@ require_tools() {
 
 ensure_checkout() {
   log "Phase A: $VV, the Vibe Verifier checkout the dashboards run"
-  if [ -d "$VV/.git" ]; then log "  present at $(git -C "$VV" rev-parse --short HEAD); its follower moves it"; return 0; fi
+  if [ -d "$VV/.git" ]; then
+    # A follower from before --commit would exit on it and restart forever, and nothing else moves the
+    # checkout: move it to the pin once (runners-pull.sh accepted the pin, so its follower knows --commit).
+    if [ -n "$PIN" ] && ! grep -qF -- '"--commit"' "$VV/bin/vibe-dashboard-follow" 2>/dev/null; then
+      run_mutation git -C "$VV" fetch --quiet origin
+      run_mutation git -C "$VV" -c advice.detachedHead=false checkout --quiet --detach "$PIN"
+    fi
+    log "  present at $(git -C "$VV" rev-parse --short HEAD); its follower moves it"; return 0
+  fi
   [ ! -e "$VV" ] || die "$VV exists but is not a git checkout; move it aside first"
   run_mutation git clone --quiet "$VV_URL" "$VV"
   # Its templates are installed below as root units, before the follower first runs: never main's tip.

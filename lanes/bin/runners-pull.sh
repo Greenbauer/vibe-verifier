@@ -18,7 +18,8 @@
 #   4. reads the pin, `engine` in hosts/<host>.yml, with PyYAML alone rather than the kit's loader,
 #      so an engine on any earlier commit can read a host file written for a later one;
 #   5. when the engine is not at the pin: fetches the catalog's origin, refuses a pin that is not on
-#      the catalog's main (a fork's commit is fetchable by id) or, while /etc/runners/engine_signers
+#      the catalog's main (a fork's commit is fetchable by id), one whose runners-pull.sh predates pins
+#      (it would follow main again) or, while /etc/runners/engine_signers
 #      exists, one no engine/* tag signed by a key listed there points at; then checks the pin out
 #      (detached, so a pin may move back as well as forward). An engine at its pin fetches nothing.
 #      A host file with no pin follows origin/main as before, with a warning, while machines move;
@@ -47,6 +48,9 @@ DEPLOY_KEY="${RUNNERS_DEPLOY_KEY:-/etc/runners/deploy_key}"
 # The operator's allowed-signers file (ssh-keygen ALLOWED SIGNERS format). While it exists, the engine
 # moves only to a commit an engine/* tag signed by one of its keys points at.
 SIGNERS="${RUNNERS_ENGINE_SIGNERS:-/etc/runners/engine_signers}"
+# Marks a runners-pull.sh that keeps the engine at its pin. A pin to a commit whose copy lacks this line
+# is refused: that copy would follow main again, and running it would undo the pin.
+PINNED_ENGINE=1
 STATE_DIR="${RUNNERS_PULL_STATE_DIR:-/var/lib/runners}"
 LOCK="${RUNNERS_PULL_LOCK:-/run/runners-pull.lock}"
 APPLIED="$STATE_DIR/applied"
@@ -82,6 +86,8 @@ move_engine() {
     || die "the pinned engine $pin is not a commit of the catalog; the engine stays at $(git -C "$ENGINE" rev-parse --short=12 HEAD) and nothing is applied"
   git -C "$ENGINE" merge-base --is-ancestor "$pin" origin/main \
     || die "the pinned engine $pin is not on the catalog's main; the engine stays at $(git -C "$ENGINE" rev-parse --short=12 HEAD) and nothing is applied"
+  git -C "$ENGINE" show "$pin:$SELF" 2>/dev/null | grep -qx "PINNED_ENGINE=$PINNED_ENGINE" \
+    || die "the pinned engine $pin predates engine pins (its $SELF would follow main again); pin a later commit. The engine stays at $(git -C "$ENGINE" rev-parse --short=12 HEAD) and nothing is applied"
   if [ -e "$SIGNERS" ] && ! signed_by_operator "$pin"; then
     die "no engine/* tag signed by a key in $SIGNERS points at the pinned engine $pin; the engine stays at $(git -C "$ENGINE" rev-parse --short=12 HEAD) and nothing is applied (README.md, Deploy model)"
   fi
@@ -118,6 +124,7 @@ main() {
     [[ "$pin" =~ ^[0-9a-f]{40}$ ]] || die "engine in $host_yml must be a full 40-character lowercase commit id, got '$pin'; nothing is applied"
     move_engine "$pin"
   else
+    [ ! -e "$SIGNERS" ] || die "$host_yml pins no engine commit and $SIGNERS exists, so main is not followed unsigned; nothing is applied"
     # The engine is public: no key is offered for it.
     log "$host_yml pins no engine commit; following the catalog's main until it does (README.md, Deploy model)"
     git -C "$ENGINE" fetch --quiet origin || die "git fetch failed in $ENGINE"

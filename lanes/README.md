@@ -413,10 +413,11 @@ non-zero exit, when either checkout has local modifications or is not a git chec
 2. reads `engine` from `hosts/<host>.yml` with PyYAML alone, not with this kit's loader, so an engine
    on an older commit can read a host file written for the newer one it pins;
 3. when the engine is already at the pin, fetches nothing from the catalog. Otherwise it fetches the
-   catalog with no credential and refuses, changing nothing, a pin that is not a commit on the
-   catalog's `main` (GitHub serves a fork's commit by its id, so "a commit of this repository" is not
-   enough), and, while `/etc/runners/engine_signers` exists, a pin that no `engine/*` tag signed by a
-   key listed there points at. Then it checks the pin out, detached, so a pin may move back as well as
+   catalog with no credential and refuses, leaving the engine where it is and applying nothing, a pin
+   that is not a commit on the catalog's `main` (GitHub serves a fork's commit by its id, so "a commit
+   of this repository" is not enough), a pin from before engine pins existed (its `runners-pull.sh`
+   would follow `main` again), and, while `/etc/runners/engine_signers` exists, a pin that no
+   `engine/*` tag signed by a key listed there points at. Then it checks the pin out, detached, so a pin may move back as well as
    forward;
 4. when that move changed `bin/runners-pull.sh` itself, runs the new copy in its place, so a change
    to what a pull applies takes effect on the tick that moved to it.
@@ -448,7 +449,7 @@ made of them, so a host file is never its to change.
 Moving an engine is one pull request per values repository: set `engine` to the full id of a commit
 on the catalog's `main` whose checks passed (the dashboards' follower waits for them, below), merge,
 and read `provision-host.sh <host> --check` after the next tick. Move one machine first when the kit
-changed. Moving it back is the same change with the earlier id.
+changed. Moving it back is the same change with the earlier id, to any commit from engine pins on.
 
 The pin does not stop a credential that can write both repositories, such as the owner's own account
 token. For that, place an allowed-signers file on each machine, by hand and as root, like the deploy
@@ -463,8 +464,9 @@ git push origin engine/<date>
 ```
 
 Then move the pin as above. A tag signed by an unlisted key, a tag outside `engine/*` or a tag on
-another commit does not count; deleting the tags only stops the engine from moving. Removing the file
-needs root on the machine, so its absence is the owner's choice. `--check` reports whether it is
+another commit does not count; deleting the tags only stops the engine from moving. While the file exists, a host
+file with no pin is refused rather than followed to `main`. Removing the file needs root on the
+machine, so its absence is the owner's choice. `--check` reports whether it is
 present.
 
 Never hand-edit a machine: change a repository and merge. Both checkouts are root-owned and the
@@ -696,8 +698,9 @@ engine's: the two are clones of the same catalog that move by different rules.
   fetches `main` and moves `/opt/vibe-verifier` to that commit alone, once it is on `main` and all
   its GitHub check runs passed, restarts the dashboards when server code changed, and rolls back a
   commit a dashboard does not come up healthy on. A host file with no pin leaves the follower on
-  `main`'s green tip. The lane kit never resets that checkout; it clones it only when absent, and
-  checks the pin out right after the clone.
+  `main`'s green tip. The lane kit never resets that checkout but once: it clones it only when absent
+  and checks the pin out right after the clone, and it moves an existing checkout to the pin when the
+  follower there predates `--commit` (which it would exit on, restarting forever).
 - **What a machine serves** (which dashboards, their ports, configs and lanes) and the dashboard
   kit's unit templates go live through the pull: `runners-pull` runs
   `provision-dashboards.sh --apply` after the lanes. A changed template reaches a machine at its

@@ -135,7 +135,8 @@ SH
 #!/bin/bash
 case "$1" in
   clone) echo "git $*" >> "$CALLLOG"; cp -r "$FX/vv" "${@: -1}"; mkdir "${@: -1}/.git" ;;
-  -C) if [[ " $* " == *" checkout "* ]]; then echo "git checkout ${*: -1}" >> "$CALLLOG"; echo "${*: -1}" > "$ST/vv-head"
+  -C) if [[ " $* " == *" fetch "* ]]; then echo "git fetch" >> "$CALLLOG"
+      elif [[ " $* " == *" checkout "* ]]; then echo "git checkout ${*: -1}" >> "$CALLLOG"; echo "${*: -1}" > "$ST/vv-head"
       else h="$(cat "$ST/vv-head" 2>/dev/null || echo 735585a)"; [[ " $* " != *" --short=12 "* ]] || h="${h:0:12}"; echo "$h"; fi ;;
 esac
 SH
@@ -154,6 +155,8 @@ setup() {
     "$ROOT/examples/hosts/example.yml" > "$S/config/hosts/example.yml"
   printf 'not a real greenbauer key\n' > "$S/keys/greenbauer-ci.pem"
   printf 'not a real acme key\n' > "$S/keys/acme-ci.pem"
+  # A follower that knows --commit, as every commit from engine pins on has.
+  mkdir -p "$S/fx/vv/bin" && printf '#!/usr/bin/env python3\nparser.add_argument("--commit")\n' > "$S/fx/vv/bin/vibe-dashboard-follow"
   # The follower's real unit template: the provisioner reads its command from this file's ExecStart.
   cp "$ROOT/../dashboard/systemd/vibe-dashboard-follow.service" "$S/fx/vv/dashboard/systemd/"
   for unit in vibe-dashboard@.service vibe-dashboard-token@.service vibe-dashboard-token@.timer vibe-dashboard-telemetry@.service vibe-dashboard-telemetry@.timer; do
@@ -507,6 +510,14 @@ out="$(run_dash --apply 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q -- "--commit ffffffffffffffffffffffffffffffffffffffff$" "$S/units/vibe-dashboard-follow.service.d/runners.conf" && grep -qx "systemctl restart vibe-dashboard-follow.service" "$CALLLOG" \
   && ! grep -q "git checkout" "$CALLLOG"
 expect $? "a moved pin rewrites the drop-in and restarts the follower, which moves the existing checkout; the kit never resets it"
+
+# An existing checkout whose follower predates --commit would crash-loop on it: the kit moves it to the pin once.
+printf '#!/usr/bin/env python3\n' > "$S/opt/vibe-verifier/bin/vibe-dashboard-follow"
+: > "$CALLLOG"
+out="$(run_dash --apply 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "git fetch" "$CALLLOG" && grep -qx "git checkout ffffffffffffffffffffffffffffffffffffffff" "$CALLLOG" \
+  && before "detach ffffffffffffffffffffffffffffffffffffffff" "RUN: systemctl enable --now vibe-dashboard-follow.service"
+expect $? "an existing checkout whose follower predates --commit is fetched and moved to the pin before the follower starts with it"
 
 # ---- a host file named outright, and the default one ----------------------------------------------
 setup

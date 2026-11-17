@@ -294,6 +294,15 @@ run_pull; rc=$?
 set_pin "${one:0:12}"
 run_pull; rc=$?
 [ "$rc" -ne 0 ] && grep -q "must be a full 40-character lowercase commit id" "$S/out" && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ]; expect $? "a short pin is refused before anything is fetched"
+# A pin to a commit from before engine pins: its runners-pull.sh would follow main again and undo the pin.
+sed -i '/^PINNED_ENGINE=1$/d' "$S/engine-seed/lanes/bin/runners-pull.sh" && gitc -C "$S/engine-seed" commit -q -am "a pull from before pins"
+old="$(origin_of engine)"
+cp "$ROOT/bin/runners-pull.sh" "$S/engine-seed/lanes/bin/runners-pull.sh" && gitc -C "$S/engine-seed" commit -q -am "pins again"
+set_pin "$old"
+: > "$CALLLOG"
+run_pull; rc=$?
+[ "$rc" -ne 0 ] && grep -q "the pinned engine $old predates engine pins" "$S/out" && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ] && ! grep -q "running the new copy" "$S/out"
+expect $? "a pin to a commit whose runners-pull.sh predates pins is refused: the engine stays, nothing runs or is applied"
 # The new runners-pull.sh runs on the tick that moves the pin to it.
 sed -i 's/log "engine moved to the pinned ${pin:0:12}"/log "engine moved to the pinned ${pin:0:12} by the old copy"/' "$S/engine-seed/lanes/bin/runners-pull.sh"
 gitc -C "$S/engine-seed" add lanes/bin/runners-pull.sh && gitc -C "$S/engine-seed" commit -q -m "new pull"
@@ -309,8 +318,12 @@ ssh-keygen -q -t ed25519 -N '' -C operator -f "$S/operator" && ssh-keygen -q -t 
 printf 'operator@example.invalid %s\n' "$(cut -d' ' -f1,2 "$S/operator.pub")" > "$S/etc/engine_signers"
 sign() { gitc -C "$S/engine-seed" -c gpg.format=ssh -c user.signingkey="$S/$1" tag -s -m "$2" "$2" "$3"; }
 land kit "unsigned release"; unsigned="$(origin_of engine)"
-set_pin "$unsigned"
 run_pull_signed() { RUNNERS_ENGINE_SIGNERS="$S/etc/engine_signers" run_pull; }
+: > "$CALLLOG"
+run_pull_signed; rc=$?
+[ "$rc" -ne 0 ] && grep -q "pins no engine commit and $S/etc/engine_signers exists, so main is not followed unsigned" "$S/out" && [ ! -s "$CALLLOG" ]
+expect $? "while the signers file exists, a host file with no pin is refused rather than followed to main"
+set_pin "$unsigned"
 : > "$CALLLOG"
 run_pull_signed; rc=$?
 [ "$rc" -ne 0 ] && grep -q "no engine/\* tag signed by a key in $S/etc/engine_signers points at the pinned engine $unsigned" "$S/out" && [ "$(engine_head)" != "$unsigned" ] && [ ! -s "$CALLLOG" ]
