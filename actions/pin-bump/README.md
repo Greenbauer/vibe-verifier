@@ -9,8 +9,12 @@ clicking.
 It never delivers a catalog commit younger than `min-age-hours` (default 24): it pins the newest commit of
 the catalog's main that is at least that old, and merges a bump only once the commit it pins is. A bad
 commit merged to the catalog can therefore be reverted before any repository runs it. The age is the
-commit time of the commit on main, which GitHub sets when it merges a pull request. To ship a fix sooner,
-run the workflow by hand and pass `min-age-hours: 0` (with `now`), or run `apply-down` with `--confirm`.
+commit time of the commit on main, which GitHub sets when it merges a pull request.
+
+To ship a fix sooner, run the workflow by hand with `min-age-hours: 0` and `now`: it opens a bump to the
+newest commit of main. Scheduled runs leave that bump open and open no older one beside it. Once its checks
+have passed, run the workflow by hand with `min-age-hours: 0` again to merge it, or merge it yourself;
+otherwise it merges once its commit is `min-age-hours` old.
 
 ## What it does on each run
 

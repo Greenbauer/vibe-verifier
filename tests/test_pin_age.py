@@ -1,23 +1,32 @@
 """apply-down --auto --min-age-hours (gates/_pin_age.py, actions/pin-bump): an automatic bump delivers only a catalog
 commit that has been on main for the minimum age, so a bad one can be reverted before it spreads."""
+import argparse
+import os
 import subprocess
+import sys
 import time
 import unittest
+from unittest import mock
 
 from helpers import ROOT, clean_env, git, make_repo, write
 from test_apply_down import stub_pinned_to
 from test_pin_bump import LANE, PinBumpHarness
 import _pin_age  # noqa: E402  (gates/ is on the path through helpers)
+import _pin_merge  # noqa: E402
+
+sys.path.insert(0, str(ROOT / "bin"))
+from cli import apply_down  # noqa: E402
 
 
 class PinAge(PinBumpHarness):
-    def aged_source(self, *hours_ago):
-        """A catalog whose first commit (gates/a.py "0") and each later one are the given hours old; their SHAs."""
+    def aged_source(self, *hours_ago, quiet=()):
+        """A catalog whose first commit (gates/a.py "0") and each later one are the given hours old; their SHAs. A
+        commit whose index is in `quiet` changes a file outside the release paths instead."""
         self.source = make_repo(self, {"gates/a.py": "0", "tools/lint/package-lock.json": "1"})
         shas = []
         for index, hours in enumerate(hours_ago):
             if index:
-                write(self.source, {"gates/a.py": str(index)})
+                write(self.source, {"docs/notes.md" if index in quiet else "gates/a.py": str(index)})
             at = "@%d +0000" % (time.time() - hours * 3600)
             git(self.source, "add", "-A")
             subprocess.run(["git", "-C", self.source, "commit", "-q", "--allow-empty", "-m", "c%d" % index]
@@ -50,6 +59,39 @@ class PinAge(PinBumpHarness):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("pins are current", result.stdout)
         self.assertEqual(self.writes(), [])
+
+    def test_a_pin_whose_only_newer_release_is_too_young_gets_no_bump(self):
+        old, _, _ = self.aged_source(72, 30, 1, quiet=(1,))  # the 30h commit changes no release path
+        self.consumer("acme/app", stub_pinned_to(old))
+        result = self.bump("--act", "--now", "--min-age-hours", "24")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("pins are current", result.stdout)
+        self.assertEqual(self.writes(), [])
+
+    def test_an_open_bump_to_a_newer_commit_is_left_and_no_older_one_opens_beside_it(self):
+        old, _, fresh = self.aged_source(72, 30, 1)  # `fresh` was bumped to by hand, for an urgent fix
+        self.consumer("acme/app", stub_pinned_to(old))
+        self.serve("acme/app", ".open-prs.json", [{"number": 7, "head": {"ref": "ci/vibe-verifier-pin-" + fresh[:10],
+                                                                          "repo": {"full_name": "acme/app"}}}])
+        result = self.bump("--act", "--now", "--min-age-hours", "24")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("left for its open bump #7 to the newer %s" % fresh[:10], result.stdout)
+        self.assertEqual([c for c in self.writes() if c["method"] in ("PUT", "PR", "CLOSE")], [])
+
+    def test_the_merge_pass_judges_main_up_to_its_tip_and_waits_on_young_commits(self):
+        _, aged, fresh = self.aged_source(72, 30, 1)
+        parser = argparse.ArgumentParser()
+        apply_down.add_arguments(parser)
+        args = parser.parse_args(["--source", self.source, "--source-ref", "main", "--repo", "acme/app", "--auto",
+                                  "--act", "--merge", "--now", "--min-age-hours", "24"])
+        seen = []
+        with mock.patch.dict(os.environ, self.env), mock.patch.object(
+                _pin_merge, "merge_pass", lambda repos, on_main, young: seen.append((on_main, young)) or 0):
+            apply_down.apply_down(args)
+        on_main, young = seen[0]
+        self.assertTrue(on_main("ci/vibe-verifier-pin-")(fresh), "a bump past the aged commit is still on main")
+        self.assertIn("1.0h old", young("ci/vibe-verifier-pin-", fresh[:10]))
+        self.assertIsNone(young("ci/vibe-verifier-pin-", aged[:10]))
 
     def test_overdue_counts_from_when_a_commit_became_old_enough(self):
         self.busy_lane()

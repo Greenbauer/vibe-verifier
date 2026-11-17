@@ -177,6 +177,9 @@ def bump_target(args, wrapper):
         if target is None:
             print("nothing to bump: no commit on %s is %gh old yet (--min-age-hours)" % (args.source_ref, args.min_age_hours))
             return None, 0
+        # Pins are judged against what may be delivered: a pin whose only newer release commits are too young
+        # is current, so it gets no bump that changes nothing.
+        args.source_ref = target
     # The comment beside the pin says when the pin was taken; a bump that leaves the old date there
     # makes the line lie about the commit next to it.
     args._target_date = source_git(args, "log", "-1", "--date=short", "--format=%cd", target).stdout.strip()
@@ -234,6 +237,10 @@ def open_bumps(args, wrapper, planned):
         branch = "ci/%s-pin-%s" % ("wrapper" if level else "vibe-verifier", to[:10])
         try:
             default_branch = gh_json("repos/%s" % repo)["default_branch"]
+            waiting = _pin_age.newer_open_bump(args.source, repo, to) if args.auto and not level else None
+            if waiting:
+                print("%-32s left for its open bump #%s to the newer %s" % (repo, waiting[0], waiting[1]))
+                continue
             existing = gh_json("repos/%s/pulls?head=%s:%s&state=open" % (repo, repo.split("/")[0], branch))
             url = existing[0]["html_url"] if existing else open_bump(repo, changes, to, branch, default_branch, level)
             print("%-32s %s" % (repo, url))

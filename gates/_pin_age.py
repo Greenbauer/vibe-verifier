@@ -7,7 +7,7 @@ direct push), so its commit time is when it landed.
 """
 import time
 
-from _pin_bump import BRANCH_PREFIXES, git, is_sha
+from _pin_bump import BRANCH_PREFIXES, git, is_sha, open_pulls
 
 
 def aged(source, tip, hours, clock=time.time):
@@ -27,6 +27,20 @@ def commit_age(source, sha, clock=time.time):
         return None
     at = git(source, "log", "-1", "--format=%ct", sha).stdout.strip()
     return clock() - int(at) if at.isdigit() else None
+
+
+def newer_open_bump(source, repo, target):
+    """(number, commit) of an open catalog bump of `repo` (its own branch) to a later commit of the catalog checkout
+    `source` than `target`, or None. Such a bump was opened on purpose (by hand, or with a lower age for an urgent
+    fix): a scheduled run neither opens an older one beside it nor closes it."""
+    prefix = BRANCH_PREFIXES[0]
+    for pull in open_pulls(repo):
+        head = pull.get("head") or {}
+        named = head.get("ref", "")[len(prefix):] if head.get("ref", "").startswith(prefix) else ""
+        if ((head.get("repo") or {}).get("full_name") == repo and is_sha(named, 7) and not target.startswith(named)
+                and git(source, "merge-base", "--is-ancestor", target, named).returncode == 0):
+            return pull["number"], named
+    return None
 
 
 def too_young(source, min_age_hours, clock=time.time):
