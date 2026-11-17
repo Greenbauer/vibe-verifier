@@ -33,6 +33,8 @@ setup() {
   # host file.
   mkdir -p "$S/engine/lanes" && printf 'the kit\n' > "$S/engine/lanes/README.md"
   git init -q "$S/engine" && gitc -C "$S/engine" add -A && gitc -C "$S/engine" commit -q -m one
+  # The host file pins the engine at that commit, as runners-pull leaves it.
+  printf 'engine: "%s"\n' "$(git -C "$S/engine" rev-parse HEAD)" >> "$S/config/hosts/box.yml"
   git init -q "$S/config" && gitc -C "$S/config" add -A && gitc -C "$S/config" commit -q -m one
   git -C "$S/config" remote add origin git@git.example.invalid:someone/lane-values.git
   printf 'docker-ce\n' > "$S/st/holds"
@@ -111,7 +113,7 @@ grep -qx "apt-mark hold sysbox-ce docker-ce-cli containerd.io linux-image-virtua
 { ! grep -q "docker-ce=" "$CALLLOG" && ! grep -q "/linux/ubuntu/gpg" "$CALLLOG"; }; expect $? "Docker CE already installed is left alone (Phase A2 installs it only where it is absent)"
 ps="$S/units/runners-pull.service"; pt="$S/units/runners-pull.timer"
 grep -qx "ExecStart=$S/engine/lanes/bin/runners-pull.sh" "$ps" && grep -qx "Type=oneshot" "$ps" && ! grep -q '^User=' "$ps" && ! grep -q '^Environment' "$ps"; expect $? "the self-update runs the kit's bin/runners-pull.sh from the machine's engine checkout, as root, oneshot, with no environment of its own"
-grep -qx "Description=runners: update $S/engine and $S/config from origin/main and converge this machine" "$ps"; expect $? "the self-update unit names both checkouts it keeps on origin/main"
+grep -qx "Description=runners: update $S/config, move $S/engine to its pinned commit and converge this machine" "$ps"; expect $? "the self-update unit names the values checkout it keeps on origin/main and the engine it keeps at its pin"
 grep -qx "OnBootSec=2min" "$pt" && grep -qx "OnUnitActiveSec=5min" "$pt" && grep -qx "WantedBy=timers.target" "$pt" && grep -qx "systemctl enable --now runners-pull.timer" "$CALLLOG"; expect $? "its timer fires every 5 minutes and is enabled"
 before '^apt-mark hold' '^systemctl enable --now runners-pull.timer'; expect $? "the self-update is enabled after the host phases"
 [ -d "$S/etc-runners" ] && [ "$(mode_of "$S/etc-runners")" = 700 ]; expect $? "the deploy key's directory exists, root-only, to take the key"
@@ -225,6 +227,21 @@ grep -q "sysbox_fs=mounted (/dev/loop9 ext4 20G)" <<< "$out" && grep -q "disk fr
 grep -qx "self_update_timer=runners-pull.timer active" <<< "$out" && grep -q "deploy_key=$S/etc-runners/deploy_key present" <<< "$out" && grep -qx "runners_host=box" <<< "$out" && grep -qx "last_applied=engine=$(git -C "$S/engine" rev-parse HEAD:lanes) config=$(git -C "$S/config" rev-parse HEAD) (engine: the tree of lanes/ in $S/engine; config: the HEAD of $S/config)" <<< "$out"
 expect $? "--check reports the self-update timer, the deploy key, the machine's host name and the pair last applied, as runners-pull records it, saying the engine part is the kit's tree"
 { ! grep -qE "$MUTATIONS" "$CALLLOG"; }; expect $? "--check mutates nothing"
+pin="$(git -C "$S/engine" rev-parse HEAD)"
+grep -qx "engine=$S/engine at the pinned ${pin:0:12}" <<< "$out" && grep -qx "engine_signers=$S/etc-runners/engine_signers absent (optional: README.md, Deploy model)" <<< "$out"
+expect $? "--check reports the engine at its pin, and whether the optional signers file is there"
+printf 'k\n' > "$S/etc-runners/engine_signers"
+out="$(run_host --check 2>&1)"; rc=$?
+rm "$S/etc-runners/engine_signers"
+[ "$rc" -eq 0 ] && grep -q "engine_signers=$S/etc-runners/engine_signers present" <<< "$out"; expect $? "--check reports a signers file as present"
+gitc -C "$S/engine" commit -q --allow-empty -m "past the pin"
+out="$(run_host --check 2>&1)"; rc=$?
+gitc -C "$S/engine" reset -q --hard HEAD~1
+[ "$rc" -ne 0 ] && grep -q "engine=$S/engine at [0-9a-f]\{12\}, not the pinned ${pin:0:12} (a pull is pending or refused it" <<< "$out"; expect $? "--check fails while the engine is not at its pin"
+sed -i '/^engine: /d' "$S/config/hosts/box.yml"
+out="$(run_host --check 2>&1)"; rc=$?
+gitc -C "$S/config" checkout -q -- hosts/box.yml
+[ "$rc" -ne 0 ] && grep -q "following the catalog main: hosts/box.yml pins no engine commit" <<< "$out"; expect $? "--check fails on a host file that pins no engine"
 echo inactive > "$S/st/state/runners-pull.timer"
 out="$(run_host --check 2>&1)"; rc=$?
 echo active > "$S/st/state/runners-pull.timer"
@@ -240,14 +257,18 @@ printf 'box\n' > "$S/runners-host"
 gitc -C "$S/config" commit -q --allow-empty -m two
 out="$(run_host --check 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q "last_applied=.* current=engine=.* config=$(git -C "$S/config" rev-parse HEAD) (engine: the tree of lanes/ in $S/engine; config: the HEAD of $S/config; an apply is pending or failing: journalctl -u runners-pull.service)" <<< "$out"; expect $? "--check says when the values checkout's HEAD has not been applied yet, without failing on it"
-# The engine's commit is not what was applied: a catalog commit outside lanes/ leaves the kit applied.
-printf 'engine=%s config=%s\n' "$(git -C "$S/engine" rev-parse HEAD:lanes)" "$(git -C "$S/config" rev-parse HEAD)" > "$S/pull-state/applied"
+# The engine's commit is not what was applied: a pin moved over a catalog commit outside lanes/ leaves
+# the kit applied (the values commit that moved the pin is applied as well here).
+repin() { sed -i "s/^engine: .*/engine: \"$(git -C "$S/engine" rev-parse HEAD)\"/" "$S/config/hosts/box.yml" && gitc -C "$S/config" commit -q -am repin; }
 mkdir -p "$S/engine/docs" && printf 'elsewhere\n' > "$S/engine/docs/note.md" && gitc -C "$S/engine" add -A && gitc -C "$S/engine" commit -q -m "outside the kit"
+repin
+printf 'engine=%s config=%s\n' "$(git -C "$S/engine" rev-parse HEAD:lanes)" "$(git -C "$S/config" rev-parse HEAD)" > "$S/pull-state/applied"
 out="$(run_host --check 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q "last_applied=engine=$(git -C "$S/engine" rev-parse HEAD:lanes) config=.* (engine: the tree of lanes/ in" <<< "$out" && ! grep -q "an apply is pending or failing" <<< "$out"
 expect $? "an engine commit that touches nothing under lanes/ leaves --check reporting the kit as applied"
 kit_before="$(git -C "$S/engine" rev-parse HEAD:lanes)"
 printf 'a kit change\n' >> "$S/engine/lanes/README.md" && gitc -C "$S/engine" add -A && gitc -C "$S/engine" commit -q -m "in the kit"
+repin
 out="$(run_host --check 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q "last_applied=engine=$kit_before config=.* current=engine=$(git -C "$S/engine" rev-parse HEAD:lanes) config=.* (engine: the tree of lanes/ in .*; an apply is pending or failing" <<< "$out"; expect $? "and when a commit under lanes/ has not"
 printf 'docker-ce\n' > "$S/st/holds.partial"; cp "$S/st/holds" "$S/st/holds.full"; cp "$S/st/holds.partial" "$S/st/holds"

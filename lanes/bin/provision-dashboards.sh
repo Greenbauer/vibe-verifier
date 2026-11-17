@@ -7,21 +7,22 @@
 # dashboard: a loopback web service
 # with a read token from one of the machine's lanes' App and telemetry from that lane, all run from
 # Vibe Verifier's Linux host kit in /opt/vibe-verifier. This automates the kit's runbook (Vibe Verifier
-# docs/dashboard-host.md) per machine; the kit's follower then keeps that checkout on Vibe Verifier's
-# green main. Design: README.md, "Dashboards". Dry-run by default; --check is read-only and exits
+# docs/dashboard-host.md) per machine; the kit's follower then keeps that checkout on the catalog
+# commit the host file's `engine` pins (or on green main while a host file pins none). Design: README.md, "Dashboards". Dry-run by default; --check is read-only and exits
 # non-zero until every dashboard is converged and healthy. runners-pull.service runs --apply after
 # the lanes. Linux-only by design: Ubuntu 24.04, bash 5, systemd, nftables, ss, curl, jq, git,
 # openssl, flock. Run it as root.
 #
 # --apply converges, in order, each step skipped when already converged:
-#   A  /opt/vibe-verifier, cloned only when absent; the follower owns it afterwards (never reset here)
+#   A  /opt/vibe-verifier, cloned only when absent and checked out at the pin; the follower owns it
+#      afterwards (never reset here, except once to the pin when its follower predates --commit)
 #   B  per dashboard: its account vibe-dashboard-<name> (system, nologin), the runbook's directories,
 #      and /etc/vibe-dashboard/<name>/: merge-policy.json (the account's, 0600, when the config declares
 #      one; the loader must accept it with the new dashboard.json first), dashboard.json (the account's,
 #      0600; the dashboard's own loader must accept a new one first), host.env (0644), app.pem (0600,
 #      the lane key's copy), collector.json
 #   C  the kit's unit templates from /opt/vibe-verifier/dashboard/systemd/; a drop-in giving the
-#      follower one --unit pair per dashboard; a drop-in making every dashboard require the guard
+#      follower one --unit pair per dashboard and the pinned --commit; a drop-in making every dashboard require the guard
 #   D  the loopback guard: table inet runners_dashboards lets only root, a dashboard's account and its
 #      bridge account connect to its port; runners-dashboard-guard.service loads it at boot
 #   E  a dashboard not yet running mints its token once (a failure stops the run before the legacy
@@ -112,6 +113,8 @@ fi
 HOST_YML="${RUNNERS_HOST_YML:-${RUNNERS_CONFIG:-/opt/runner-lanes-config}/hosts/$HOST.yml}"
 [ -r "$HOST_YML" ] || die "no host config at $HOST_YML"
 DASHBOARDS="$(python3 "$REPO_ROOT/lib/lanes.py" dashboards "$HOST_YML")" || die "invalid host config: python3 lib/lanes.py dashboards $HOST_YML"
+# The catalog commit the machine runs; the follower moves the dashboards' checkout to it alone.
+PIN="$(python3 "$REPO_ROOT/lib/lanes.py" engine "$HOST_YML")" || die "invalid host config: python3 lib/lanes.py engine $HOST_YML"
 
 # ---- helpers ---------------------------------------------------------------------------------------
 load() { read_settings dashboard-env "$HOST_YML" "$1"; }
@@ -200,8 +203,8 @@ LOGIN=$APP_LOGIN
 EOF
 }
 
-# The template's own command with one --unit pair per running dashboard; empty when the template's
-# ExecStart no longer has the shape this reads.
+# The template's own command with one --unit pair per running dashboard and the pinned --commit; empty
+# when the template's ExecStart no longer has the shape this reads.
 render_follow_dropin() {
   local command name pairs=""
   command="$(sed -n 's#^ExecStart=\(.*/bin/vibe-dashboard-follow\) --unit .*#\1#p' "$VV/dashboard/systemd/$FOLLOWER" 2>/dev/null)"
@@ -209,10 +212,10 @@ render_follow_dropin() {
   for name in "${LIVE[@]}"; do load "$name"; pairs+=" --unit $(web "$name") $PORT"; done
   cat <<EOF
 # Managed by the runner lanes kit (bin/provision-dashboards.sh); do not edit on the machine.
-# One --unit pair per dashboard of hosts/$HOST.yml; the rest is the template's own command.
+# One --unit pair per dashboard of hosts/$HOST.yml and its engine pin; the rest is the template's own command.
 [Service]
 ExecStart=
-ExecStart=$command$pairs
+ExecStart=$command$pairs${PIN:+ --commit $PIN}
 EOF
 }
 
@@ -273,9 +276,19 @@ require_tools() {
 
 ensure_checkout() {
   log "Phase A: $VV, the Vibe Verifier checkout the dashboards run"
-  if [ -d "$VV/.git" ]; then log "  present at $(git -C "$VV" rev-parse --short HEAD); its follower moves it"; return 0; fi
+  if [ -d "$VV/.git" ]; then
+    # A follower from before --commit would exit on it and restart forever, and nothing else moves the
+    # checkout: move it to the pin once (runners-pull.sh accepted the pin, so its follower knows --commit).
+    if [ -n "$PIN" ] && ! grep -qF -- '"--commit"' "$VV/bin/vibe-dashboard-follow" 2>/dev/null; then
+      run_mutation git -C "$VV" fetch --quiet origin
+      run_mutation git -C "$VV" -c advice.detachedHead=false checkout --quiet --detach "$PIN"
+    fi
+    log "  present at $(git -C "$VV" rev-parse --short HEAD); its follower moves it"; return 0
+  fi
   [ ! -e "$VV" ] || die "$VV exists but is not a git checkout; move it aside first"
   run_mutation git clone --quiet "$VV_URL" "$VV"
+  # Its templates are installed below as root units, before the follower first runs: never main's tip.
+  [ -z "$PIN" ] || run_mutation git -C "$VV" -c advice.detachedHead=false checkout --quiet --detach "$PIN"
 }
 
 declare -A CHANGED=()
@@ -493,7 +506,10 @@ check_dashboard() {  # $1: name
 
 check_host() {
   local file name
-  if [ -d "$VV/.git" ]; then printf 'checkout=%s at %s\n' "$VV" "$(git -C "$VV" rev-parse --short HEAD)"; else printf 'checkout=%s absent\n' "$VV"; bad; fi
+  if [ ! -d "$VV/.git" ]; then printf 'checkout=%s absent\n' "$VV"; bad
+  elif [ -n "$PIN" ] && [ "$(git -C "$VV" rev-parse HEAD)" != "$PIN" ]; then
+    printf 'checkout=%s at %s, not the pinned %s (the follower moves it once its checks passed: journalctl -u %s)\n' "$VV" "$(git -C "$VV" rev-parse --short=12 HEAD)" "${PIN:0:12}" "$FOLLOWER"; bad
+  else printf 'checkout=%s at %s%s\n' "$VV" "$(git -C "$VV" rev-parse --short=12 HEAD)" "${PIN:+ (pinned)}"; fi
   for file in "$VV"/dashboard/systemd/*; do
     [ -f "$file" ] || continue
     cmp -s "$file" "$UNIT_DIR/$(basename "$file")" || { printf 'unit=%s absent or DRIFTED from %s (re-run --apply)\n' "$(basename "$file")" "$VV"; bad; }

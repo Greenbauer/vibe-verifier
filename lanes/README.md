@@ -10,12 +10,12 @@ Verifier CI dashboards fed by its lanes (`bin/provision-dashboards.sh`, "Dashboa
 
 This directory is the engine: it holds no machine, organization, App or repository of anyone's.
 Those values live in a host file, `hosts/<host>.yml`, in a private repository of the machine's
-owner. A machine therefore has two checkouts, and keeps both on their `main`
-(`bin/runners-pull.sh`, "Deploy model" below):
+owner. A machine therefore has two checkouts. It keeps the values on their `main`, and the engine on
+the one catalog commit the host file pins (`bin/runners-pull.sh`, "Deploy model" below):
 
 | Checkout | Default path | What it is | Fetched |
 |---|---|---|---|
-| the engine | `/opt/runner-lanes` | a clone of this catalog; the kit is its `lanes/` directory | anonymously, over https |
+| the engine | `/opt/runner-lanes` | a clone of this catalog at the commit `engine` pins; the kit is its `lanes/` directory | anonymously, over https, only when the pin moves |
 | the values | `/opt/runner-lanes-config` | the owner's private repository, with `hosts/<host>.yml` at its root | with the machine's read-only deploy key, `/etc/runners/deploy_key` |
 
 Paths in this manual and in the scripts' comments are relative to this directory (`lanes/`) unless
@@ -38,7 +38,7 @@ they start with `/`.
 | `bin/build-runner-image.sh` | builds a lane's runner image and its preloaded inner Docker store |
 | `bin/listener-health.sh` | restarts a lane's listener once when it is down or silent |
 | `bin/provision-dashboards.sh` | installs and converges a machine's Vibe Verifier dashboards ("Dashboards" below) |
-| `bin/runners-pull.sh` | the machine's self-update: fast-forward both checkouts to `origin/main`, then converge |
+| `bin/runners-pull.sh` | the machine's self-update: fast-forward the values to `origin/main`, move the engine to its pin, then converge |
 | `listener/` | the scale-set listener (Go); its contract is `listener/README.md` |
 | `image/` | the runner image every lane builds under its own name; `image/README.md` |
 | `tests/` | hermetic tests; `tests/run-all.sh` runs them. `tests/fixtures/hosts/vps-1.yml` is a second made-up host file the tests read |
@@ -328,6 +328,7 @@ that directory holds the pull's record, and `provision-host.sh <host> --remove -
 
 ```yaml
 hostname: worker-1                     # the ssh target the gates print
+engine: "<40-hex catalog commit>"      # the catalog commit the machine runs as root ("Deploy model"); quoted
 sysbox: {image: /abs/path/sysbox.img, disk_gb: 20}   # one per machine, mounted at /var/lib/sysbox
 lanes:
   - name: ...                          # its user, units, network, state, run, etc and lib directories
@@ -366,6 +367,9 @@ dashboards:                            # optional: the Vibe Verifier dashboards 
 
 `lib/lanes.py` refuses a file that breaks any of these rules, before any script changes anything:
 
+- `engine` is a full 40-character lowercase commit id, quoted (YAML reads an all-digit id as a
+  number). A file without it still loads while machines move to the pin; the pull then follows the
+  catalog's `main` and says so, and `provision-host.sh --check` fails;
 - every key is the scope's: no unknown key, no `min_runners`, `runner_group` or `repos` on a user
   lane, no `exclude` on an org lane, no `wait` on a user lane, and `codex_store` and
   `qae_concurrency` exactly when `labels.qae` is set (and `qae_own_slots` only then, a boolean); a
@@ -396,32 +400,74 @@ dashboards:                            # optional: the Vibe Verifier dashboards 
 
 ## Deploy model
 
-A change reaches a machine by a merge, to either repository: the catalog's `main` for the kit,
-the values repository's `main` for what a machine runs. Each machine converges itself within 5
-minutes of a merge that changed the kit or its values. `runners-pull.timer` (written by
-`provision-host.sh`, every 5 minutes, root) runs `bin/runners-pull.sh` from the engine checkout,
-which takes a lock and refuses, logged and with a non-zero exit, when either checkout has local
-modifications or is not a git checkout. It then
-fetches the engine with no credential and fast-forwards `/opt/runner-lanes` to `origin/main`, and
-fetches the values checkout with the read-only deploy key `/etc/runners/deploy_key` and
-fast-forwards `/opt/runner-lanes-config` to its `origin/main`. When the kit or the values moved, or
-no successful apply is recorded for the pair, it runs `provision-host.sh <host> --apply`, then
-`provision-lane.sh <host> <lane> --apply` for every lane of `hosts/<host>.yml`, then
-`provision-dashboards.sh <host> --apply`, `<host>` being the one line of `/etc/runners-host`. A
-failed host apply skips the rest; a failed lane stops neither the other lanes nor the dashboards.
-It records the pair in `/var/lib/runners/applied` only when all of them succeeded, so a failure is
-retried at the next tick. A gate is not a failure. When the engine's fast-forward changed
-`bin/runners-pull.sh` itself, it runs the new copy in its place before it fetches the values
-checkout, so a change to what a pull applies takes effect on the tick that pulled it rather than
-one merge later.
+A change reaches a machine by a merge to its values repository: the host file says what the machine
+runs, including `engine`, the catalog commit it runs as root. A merge to the catalog's `main` reaches
+no machine on its own; it reaches one when a merge to that machine's values repository moves its pin
+to the new commit. Each machine converges itself within 5 minutes of that merge.
+`runners-pull.timer` (written by `provision-host.sh`, every 5 minutes, root) runs
+`bin/runners-pull.sh` from the engine checkout, which takes a lock and refuses, logged and with a
+non-zero exit, when either checkout has local modifications or is not a git checkout. It then:
+
+1. fetches the values checkout with the read-only deploy key `/etc/runners/deploy_key` and
+   fast-forwards `/opt/runner-lanes-config` to its `origin/main`;
+2. reads `engine` from `hosts/<host>.yml` with PyYAML alone, not with this kit's loader, so an engine
+   on an older commit can read a host file written for the newer one it pins;
+3. when the engine is already at the pin, fetches nothing from the catalog. Otherwise it fetches the
+   catalog with no credential and refuses, leaving the engine where it is and applying nothing, a pin
+   that is not a commit on the catalog's `main` (GitHub serves a fork's commit by its id, so "a commit
+   of this repository" is not enough), a pin from before engine pins existed (its `runners-pull.sh`
+   would follow `main` again), and, while `/etc/runners/engine_signers` exists, a pin that no
+   `engine/*` tag signed by a key listed there points at. Then it checks the pin out, detached, so a pin may move back as well as
+   forward;
+4. when that move changed `bin/runners-pull.sh` itself, runs the new copy in its place, so a change
+   to what a pull applies takes effect on the tick that moved to it.
+
+When the kit or the values moved, or no successful apply is recorded for the pair, it runs
+`provision-host.sh <host> --apply`, then `provision-lane.sh <host> <lane> --apply` for every lane of
+`hosts/<host>.yml`, then `provision-dashboards.sh <host> --apply`, `<host>` being the one line of
+`/etc/runners-host`. A failed host apply skips the rest; a failed lane stops neither the other lanes
+nor the dashboards. It records the pair in `/var/lib/runners/applied` only when all of them
+succeeded, so a failure is retried at the next tick. A gate is not a failure; neither is a refused
+pin to the lanes already running, which keep running on the engine they have.
 
 The kit, for this, is the tree of `lanes/` in the engine checkout
 (`git -C /opt/runner-lanes rev-parse HEAD:lanes`), not the engine's commit. The engine is a clone of
-the whole catalog, and a merge there that touches nothing under `lanes/` fast-forwards the engine,
-leaves that tree id as it was, and applies nothing. The record is
-`engine=<tree id of lanes/> config=<values commit>`, and the line the pull logs when it converges
-names the engine's commit range, so the journal leads to the merge. `provision-host.sh --check`
-prints the same pair.
+the whole catalog, and a pin moved over commits that touch nothing under `lanes/` leaves that tree id
+as it was. The record is `engine=<tree id of lanes/> config=<values commit>`, and the line the pull
+logs when it converges names the engine's commit range, so the journal leads to the merge.
+`provision-host.sh --check` prints the same pair and fails while the engine is not at its pin.
+
+### Why the engine is pinned, and moving it
+
+The pull runs the engine as root, and a machine's lanes hold its Apps' private keys. Following the
+catalog's `main` made one write credential to this public repository root on every machine, within 5
+minutes and with no second person involved. With the pin, a catalog merge runs nowhere until a second
+step, a merge to the machine's private values repository, moves the pin. No automation moves it:
+the catalog's pin bump (`actions/pin-bump`) edits only workflow `uses:` lines and merges only diffs
+made of them, so a host file is never its to change.
+
+Moving an engine is one pull request per values repository: set `engine` to the full id of a commit
+on the catalog's `main` whose checks passed (the dashboards' follower waits for them, below), merge,
+and read `provision-host.sh <host> --check` after the next tick. Move one machine first when the kit
+changed. Moving it back is the same change with the earlier id, to any commit from engine pins on.
+
+The pin does not stop a credential that can write both repositories, such as the owner's own account
+token. For that, place an allowed-signers file on each machine, by hand and as root, like the deploy
+key: `/etc/runners/engine_signers` (format: `ssh-keygen(1)`, ALLOWED SIGNERS), listing a key kept
+where no CI job and no automation can use it, such as a hardware key that needs a touch. While the
+file exists, the pull moves the engine only to a commit an annotated `engine/*` tag signed by one of
+those keys points at:
+
+```bash
+git -c gpg.format=ssh -c user.signingkey=<key> tag -s -m "engine <date>" engine/<date> <commit>
+git push origin engine/<date>
+```
+
+Then move the pin as above. A tag signed by an unlisted key, a tag outside `engine/*` or a tag on
+another commit does not count; deleting the tags only stops the engine from moving. While the file exists, a host
+file with no pin is refused rather than followed to `main`. Removing the file needs root on the
+machine, so its absence is the owner's choice. `--check` reports whether it is
+present.
 
 Never hand-edit a machine: change a repository and merge. Both checkouts are root-owned and the
 pull refuses to move while either has local edits; the units the scripts write say they are managed.
@@ -587,10 +633,11 @@ refresh token the server has already retired.
 ## Adding a machine
 
 1. Ubuntu 24.04 amd64. In your private values repository add `hosts/<host>.yml` with its
-   `hostname`, a `sysbox.image` path (for example `/var/lib/runner-lanes/sysbox.img`) and its lanes,
-   starting from `examples/hosts/example.yml`. Merge.
-2. On the machine, as root, clone the engine, which needs no credential:
-   `git clone https://github.com/Greenbauer/vibe-verifier.git /opt/runner-lanes`.
+   `hostname`, the `engine` pin (a commit on the catalog's `main`, "Deploy model"), a `sysbox.image`
+   path (for example `/var/lib/runner-lanes/sysbox.img`) and its lanes, starting from
+   `examples/hosts/example.yml`. Merge.
+2. On the machine, as root, clone the engine, which needs no credential, and check out the pin:
+   `git clone https://github.com/Greenbauer/vibe-verifier.git /opt/runner-lanes && git -C /opt/runner-lanes checkout --detach <engine>`.
 3. Make the machine's deploy key:
    `install -d -m 0700 /etc/runners && ssh-keygen -t ed25519 -N '' -C runners-<host> -f /etc/runners/deploy_key`;
    then, from a login with admin on the values repository, add it read-only:
@@ -645,11 +692,15 @@ in `dashboard/systemd/`; its runbook is [`docs/dashboard-host.md`](../docs/dashb
 `bin/provision-dashboards.sh` automates the runbook per machine. The dashboards' checkout is not the
 engine's: the two are clones of the same catalog that move by different rules.
 
-- **Dashboard code** goes live through the dashboards' own follower: the kit's
-  `vibe-dashboard-follow.service` fetches `main` every minute, fast-forwards `/opt/vibe-verifier`
-  to a commit only once all its GitHub check runs passed, restarts the dashboards when server code
-  changed, and rolls back a commit a dashboard does not come up healthy on. The lane kit never
-  resets that checkout; it clones it only when absent.
+- **Dashboard code** runs as root as well (the follower itself, the token and telemetry units, the
+  unit templates), so it follows the same pin: `provision-dashboards.sh` gives the kit's
+  `vibe-dashboard-follow.service` the host file's `engine` as `--commit`. Every minute the follower
+  fetches `main` and moves `/opt/vibe-verifier` to that commit alone, once it is on `main` and all
+  its GitHub check runs passed, restarts the dashboards when server code changed, and rolls back a
+  commit a dashboard does not come up healthy on. A host file with no pin leaves the follower on
+  `main`'s green tip. The lane kit never resets that checkout but once: it clones it only when absent
+  and checks the pin out right after the clone, and it moves an existing checkout to the pin when the
+  follower there predates `--commit` (which it would exit on, restarting forever).
 - **What a machine serves** (which dashboards, their ports, configs and lanes) and the dashboard
   kit's unit templates go live through the pull: `runners-pull` runs
   `provision-dashboards.sh --apply` after the lanes. A changed template reaches a machine at its
