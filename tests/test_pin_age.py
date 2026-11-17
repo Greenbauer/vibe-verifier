@@ -69,7 +69,7 @@ class PinAge(PinBumpHarness):
         self.assertEqual(self.writes(), [])
 
     def test_an_open_bump_to_a_newer_commit_is_left_and_no_older_one_opens_beside_it(self):
-        old, _, fresh = self.aged_source(72, 30, 1)  # `fresh` was bumped to by hand, for an urgent fix
+        old, aged, fresh = self.aged_source(72, 30, 1)  # `fresh` was bumped to by hand, for an urgent fix
         self.consumer("acme/app", stub_pinned_to(old))
         self.serve("acme/app", ".open-prs.json", [{"number": 7, "head": {"ref": "ci/vibe-verifier-pin-" + fresh[:10],
                                                                           "repo": {"full_name": "acme/app"}}}])
@@ -77,6 +77,17 @@ class PinAge(PinBumpHarness):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("left for its open bump #7 to the newer %s" % fresh[:10], result.stdout)
         self.assertEqual([c for c in self.writes() if c["method"] in ("PUT", "PR", "CLOSE")], [])
+        # A bump branch named for a commit off main (a feature branch's) does not hold the scheduled bump back.
+        git(self.source, "checkout", "-q", "-b", "feature", aged)
+        write(self.source, {"gates/a.py": "feature"})
+        git(self.source, "commit", "-qam", "feature")
+        off_main = self.head()
+        git(self.source, "checkout", "-q", "main")
+        self.serve("acme/app", ".open-prs.json", [{"number": 8, "head": {"ref": "ci/vibe-verifier-pin-" + off_main[:10],
+                                                                          "repo": {"full_name": "acme/app"}}}])
+        result = self.bump("--act", "--now", "--min-age-hours", "24")
+        self.assertNotIn("left for its open bump", result.stdout)
+        self.assertTrue([c for c in self.writes() if c["method"] == "PR"])
 
     def test_the_merge_pass_judges_main_up_to_its_tip_and_waits_on_young_commits(self):
         _, aged, fresh = self.aged_source(72, 30, 1)

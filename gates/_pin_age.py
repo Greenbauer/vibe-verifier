@@ -29,16 +29,17 @@ def commit_age(source, sha, clock=time.time):
     return clock() - int(at) if at.isdigit() else None
 
 
-def newer_open_bump(source, repo, target):
-    """(number, commit) of an open catalog bump of `repo` (its own branch) to a later commit of the catalog checkout
-    `source` than `target`, or None. Such a bump was opened on purpose (by hand, or with a lower age for an urgent
-    fix): a scheduled run neither opens an older one beside it nor closes it."""
+def newer_open_bump(source, repo, target, tip):
+    """(number, commit) of an open catalog bump of `repo` (its own branch) to a commit of the catalog checkout `source`
+    between `target` and main's `tip`, or None. Such a bump was opened on purpose (by hand, or with a lower age for an
+    urgent fix): a scheduled run neither opens an older one beside it nor closes it."""
     prefix = BRANCH_PREFIXES[0]
     for pull in open_pulls(repo):
         head = pull.get("head") or {}
         named = head.get("ref", "")[len(prefix):] if head.get("ref", "").startswith(prefix) else ""
         if ((head.get("repo") or {}).get("full_name") == repo and is_sha(named, 7) and not target.startswith(named)
-                and git(source, "merge-base", "--is-ancestor", target, named).returncode == 0):
+                and git(source, "merge-base", "--is-ancestor", target, named).returncode == 0
+                and git(source, "merge-base", "--is-ancestor", named, tip).returncode == 0):
             return pull["number"], named
     return None
 

@@ -237,7 +237,7 @@ def open_bumps(args, wrapper, planned):
         branch = "ci/%s-pin-%s" % ("wrapper" if level else "vibe-verifier", to[:10])
         try:
             default_branch = gh_json("repos/%s" % repo)["default_branch"]
-            waiting = _pin_age.newer_open_bump(args.source, repo, to) if args.auto and not level else None
+            waiting = _pin_age.newer_open_bump(args.source, repo, to, args._tip) if args.auto and not level else None
             if waiting:
                 print("%-32s left for its open bump #%s to the newer %s" % (repo, waiting[0], waiting[1]))
                 continue
