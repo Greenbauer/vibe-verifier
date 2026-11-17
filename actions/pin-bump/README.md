@@ -6,6 +6,12 @@ rules), which opens the same pin-only pull requests a person would open with `ap
 `--confirm`, and once one is ready it squash-merges it, so a release reaches every repository without anyone
 clicking.
 
+It never delivers a catalog commit younger than `min-age-hours` (default 24): it pins the newest commit of
+the catalog's main that is at least that old, and merges a bump only once the commit it pins is. A bad
+commit merged to the catalog can therefore be reverted before any repository runs it. The age is the
+commit time of the commit on main, which GitHub sets when it merges a pull request. To ship a fix sooner,
+run the workflow by hand and pass `min-age-hours: 0` (with `now`), or run `apply-down` with `--confirm`.
+
 ## What it does on each run
 
 1. **Merges** each bump already open (with `act` true, as the example below passes it on a schedule, and `merge`, true by default; `gates/_pin_merge.py`
@@ -19,7 +25,9 @@ clicking.
    - it is into the default branch;
    - the gate job (`Gates`, or `vibe-verifier-ok` in an older stub) passed on the head, and every other check
      there concluded without failing;
-   - no review asks for changes, the head is not behind its base, and GitHub says it merges cleanly.
+   - no review asks for changes, the head is not behind its base, and GitHub says it merges cleanly;
+   - for a catalog bump, the commit it pins is at least `min-age-hours` old. One that is younger (opened by
+     hand, or by an older version of this action) waits, and the run still exits 0.
 
    A bump behind its base gets the base merged in (a merge commit) and merges on a later run once its checks
    pass again. One that conflicts with its base, or has nothing left to change because its pins reached the
@@ -28,7 +36,8 @@ clicking.
    checks finished. A failed check, a line that is not a pin, a review asking for
    changes or a block GitHub names holds it for a person, and the run exits 1.
 2. Plans every stale catalog pin in the repositories listed (and, given `wrapper`, the wrapper's own),
-   exactly as `apply-down` does. A drifted stub is skipped, as there.
+   exactly as `apply-down` does, to the newest catalog commit at least `min-age-hours` old. A drifted stub
+   is skipped, as there, and a pin already past that commit is left where it is, never moved back.
 3. **Holds** a repository whose bump would cross a commit under `gates/_tools.py` or `tools/`: a tool
    version moves, and [GATE-CONTRACT.md](../../docs/GATE-CONTRACT.md#subscribing-in-ci) asks for that gate
    to be swept with `--all` on every consumer first. It opens nothing there and the run exits 1, red,
@@ -37,7 +46,8 @@ clicking.
    commit, or names an action that commit does not have: that workflow would fail from the merge on.
 4. Decides whether it is time, with the rule the first wrapper's ruleset pin mover uses for its own pins:
    - `now` is true; or
-   - the oldest release commit any bump would deliver landed `overdue-hours` ago (default 6); or
+   - the oldest release commit any bump would deliver became old enough to pin (`min-age-hours` after it
+     landed) `overdue-hours` ago (default 6); or
    - the lane is quiet: across the repositories being bumped, at most 6 runs started in the last hour
      (scheduled ones left out), then no job waiting for a runner with the `lane` label and at most 2
      running there, this run left out. With no `lane`, it never waits.
@@ -70,6 +80,7 @@ on:
     inputs:
       act: {type: boolean, default: true, description: Open the pull requests when it is time}
       now: {type: boolean, default: false, description: Do not wait for a quiet lane}
+      min-age-hours: {type: string, default: "24", description: Pin only catalog commits this old (0 for an urgent fix)}
 permissions:
   contents: read
 concurrency:
@@ -98,6 +109,7 @@ jobs:
           lane: example-ci
           act: ${{ github.event_name == 'schedule' || inputs.act }}
           now: ${{ github.event_name == 'workflow_dispatch' && inputs.now }}
+          min-age-hours: ${{ inputs.min-age-hours || '24' }}
 ```
 
 For a wrapper, check the wrapper out with its whole history (`fetch-depth: 0`) and pass `wrapper: .`

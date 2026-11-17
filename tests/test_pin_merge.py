@@ -89,11 +89,19 @@ class PinMerge(unittest.TestCase):
     def runs(self):
         return self.github.answers["repos/acme/app/commits/%s/check-runs" % HEAD]["check_runs"]
 
-    def run_pass(self):
+    def run_pass(self, young=lambda prefix, named: None):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = _pin_merge.merge_pass([REPO], lambda prefix: self.on_main.get(prefix, lambda short: False))
+            code = _pin_merge.merge_pass([REPO], lambda prefix: self.on_main.get(prefix, lambda short: False), young)
         return code, out.getvalue()
+
+    def test_a_bump_whose_commit_is_too_young_waits_and_is_not_written_to(self):
+        asked = []
+        code, out = self.run_pass(lambda prefix, named: asked.append((prefix, named)) or "it is 1.0h old")
+        self.assertEqual(code, 0, out)
+        self.assertIn("#3 waiting: it is 1.0h old", out)
+        self.assertEqual(asked, [("ci/vibe-verifier-pin-", NEW[:10])])
+        self.assertEqual(self.github.writes, [])
 
     def assert_left(self, code, text):
         result, out = self.run_pass()

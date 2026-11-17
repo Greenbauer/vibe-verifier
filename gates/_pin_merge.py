@@ -16,6 +16,8 @@ What is not ready yet is left, or moved on:
   checks pass on the new head;
 - conflicting with its base, or with nothing left to change (its pins reached the base another way): closed with
   its branch, so the plan opens a fresh one from the base while that commit is still wanted;
+- a catalog bump whose commit is younger than --min-age-hours (default 24): left until it is that old, so a bad
+  release can be reverted before it lands anywhere (a bump opened by an earlier version, or by hand);
 - checks still running, or GitHub still computing whether it can merge (or reporting it `unstable` from before
   they finished): left for a later run;
 - a failed check, no gate job, a review asking for changes, a line that is not a pin, or a block GitHub names:
@@ -39,9 +41,10 @@ PIN = re.compile(r"^(\s*(?:-\s+)?uses:\s*)([\w.-]+/[\w.-]+/[^@\s]+)@([0-9a-f]{40
 WORKFLOW = re.compile(r"\.github/workflows/[^/]+\.ya?ml")
 
 
-def merge_pass(repos, on_main):
+def merge_pass(repos, on_main, young=lambda prefix, named: None):
     """Judge every open bump of `repos`, printing one line each. `on_main(prefix)` is a test of whether a commit SHA
-    is on the main the bump branch `prefix` pins from (_pin_bump.older_than). Returns 2 when a read or write failed,
+    is on the main the bump branch `prefix` pins from (_pin_bump.older_than); `young(prefix, named)` says why a bump
+    pinning the commit `named` must wait for it to age (_pin_age.too_young), or None. Returns 2 when a read or write failed,
     1 when a bump is held for a person, else 0."""
     code = 0
     for repo in repos:
@@ -53,7 +56,7 @@ def merge_pass(repos, on_main):
             continue
         for number in pulls:
             try:
-                held, what = judge(repo, number, on_main)
+                held, what = judge(repo, number, on_main, young)
             except CannotRead as error:
                 held, what = 2, "failed: %s" % error
             print("%-32s #%d %s" % (repo, number, what))
@@ -93,7 +96,7 @@ def is_bump(repo, pull):
     return head.get("ref", "").startswith(BRANCH_PREFIXES) and (head.get("repo") or {}).get("full_name") == repo
 
 
-def judge(repo, number, on_main):
+def judge(repo, number, on_main, young=lambda prefix, named: None):
     """(exit code, what was done) for one open bump."""
     pull = _pin_bump.gh_json("repos/%s/pulls/%d" % (repo, number))
     head, branch, base = pull["head"]["sha"], pull["head"]["ref"], pull["base"]["ref"]
@@ -105,6 +108,10 @@ def judge(repo, number, on_main):
     why = not_pins(repo, compare, head, branch, on_main)
     if why:
         return 1, "held: %s" % why
+    prefix = next(p for p in BRANCH_PREFIXES if branch.startswith(p))
+    why = young(prefix, branch[len(prefix):])
+    if why:
+        return 0, "waiting: %s" % why
     if pull.get("mergeable") is None:
         return 0, "waiting: GitHub is still working out whether it merges"
     if not pull["mergeable"]:
