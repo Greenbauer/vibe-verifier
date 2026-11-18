@@ -41,6 +41,7 @@ smoke_out() {
 write_host() {
   cat > "$S/host.yml" <<'YML'
 hostname: box-1
+engine: "abababababababababababababababababababab"
 sysbox: {image: /var/lib/runners/sysbox.img, disk_gb: 20}
 lanes:
   - name: box-ci
