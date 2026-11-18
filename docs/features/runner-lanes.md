@@ -8,14 +8,16 @@ The kit in `lanes/` provisions self-hosted GitHub Actions runner lanes on a mach
 
 ## Reach
 
-On an Ubuntu 24.04 machine, clone this catalog to `/opt/runner-lanes` and your private values repository (with `hosts/<host>.yml` at its root, as `lanes/examples/hosts/example.yml` shows) to `/opt/runner-lanes-config`, then run `lanes/bin/provision-host.sh <host> --apply` and `lanes/bin/provision-lane.sh <host> <lane> --apply`. The manual is [`lanes/README.md`](../../lanes/README.md).
+On an Ubuntu 24.04 machine, clone this catalog to `/opt/runner-lanes` at the commit your host file pins (`engine`), and your private values repository (with `hosts/<host>.yml` at its root, as `lanes/examples/hosts/example.yml` shows) to `/opt/runner-lanes-config`, then run `lanes/bin/provision-host.sh <host> --apply` and `lanes/bin/provision-lane.sh <host> <lane> --apply`. The manual is [`lanes/README.md`](../../lanes/README.md).
 
 ## Verify
 
-- `lanes/tests/runners-pull-test.sh::when only the values HEAD moved it applies the machine again and records the pair`
-- `lanes/tests/runners-pull-test.sh::a catalog commit outside lanes/ is fetched and fast-forwarded to: the engine's commit moves and the kit's tree does not`
+- `lanes/tests/runners-pull-test.sh::a new values commit is fast-forwarded to and applied, and the engine stays where it was`
+- `lanes/tests/runners-pull-test.sh::a later catalog merge is not picked up: the engine stays at its pin, unfetched, and nothing is applied`
+- `lanes/tests/runners-pull-test.sh::a pin moved over commits outside lanes/ moves the engine's commit and not the kit's tree, and applies once for the values commit that moved it`
+- `lanes/tests/runners-pull-test.sh::a pin to a commit that is not on the catalog's main is refused: the engine stays, nothing is applied`
 - `lanes/tests/runners-pull-test.sh::a failed lane apply exits non-zero and records nothing`
-- `lanes/tests/runners-pull-test.sh::the engine checkout is fetched with no ssh command or key: it is public`
+- `lanes/tests/runners-pull-test.sh::the values are fetched first, their host file naming the engine commit; then the engine, with no ssh command or key: it is public`
 - `lanes/tests/provision-host-test.sh::the gate names the values repository by the origin of the machine's values checkout, and where that checkout is`
 - `lanes/tests/provision-lane-test.sh::the slot template has no restart delay and no [Install]: nothing but the listener starts it`
 - `lanes/tests/provision-lane-test.sh::adoption keeps every unit name: nothing added, nothing renamed`

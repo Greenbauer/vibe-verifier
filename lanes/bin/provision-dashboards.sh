@@ -8,7 +8,7 @@
 # with a read token from one of the machine's lanes' App and telemetry from that lane, all run from
 # Vibe Verifier's Linux host kit in /opt/vibe-verifier. This automates the kit's runbook (Vibe Verifier
 # docs/dashboard-host.md) per machine; the kit's follower then keeps that checkout on the catalog
-# commit the host file's `engine` pins (or on green main while a host file pins none). Design: README.md, "Dashboards". Dry-run by default; --check is read-only and exits
+# commit the host file's `engine` pins. Design: README.md, "Dashboards". Dry-run by default; --check is read-only and exits
 # non-zero until every dashboard is converged and healthy. runners-pull.service runs --apply after
 # the lanes. Linux-only by design: Ubuntu 24.04, bash 5, systemd, nftables, ss, curl, jq, git,
 # openssl, flock. Run it as root.
@@ -215,7 +215,7 @@ render_follow_dropin() {
 # One --unit pair per dashboard of hosts/$HOST.yml and its engine pin; the rest is the template's own command.
 [Service]
 ExecStart=
-ExecStart=$command$pairs${PIN:+ --commit $PIN}
+ExecStart=$command$pairs --commit $PIN
 EOF
 }
 
@@ -279,7 +279,7 @@ ensure_checkout() {
   if [ -d "$VV/.git" ]; then
     # A follower from before --commit would exit on it and restart forever, and nothing else moves the
     # checkout: move it to the pin once (runners-pull.sh accepted the pin, so its follower knows --commit).
-    if [ -n "$PIN" ] && ! grep -qF -- '"--commit"' "$VV/bin/vibe-dashboard-follow" 2>/dev/null; then
+    if ! grep -qF -- '"--commit"' "$VV/bin/vibe-dashboard-follow" 2>/dev/null; then
       run_mutation git -C "$VV" fetch --quiet origin
       run_mutation git -C "$VV" -c advice.detachedHead=false checkout --quiet --detach "$PIN"
     fi
@@ -288,7 +288,7 @@ ensure_checkout() {
   [ ! -e "$VV" ] || die "$VV exists but is not a git checkout; move it aside first"
   run_mutation git clone --quiet "$VV_URL" "$VV"
   # Its templates are installed below as root units, before the follower first runs: never main's tip.
-  [ -z "$PIN" ] || run_mutation git -C "$VV" -c advice.detachedHead=false checkout --quiet --detach "$PIN"
+  run_mutation git -C "$VV" -c advice.detachedHead=false checkout --quiet --detach "$PIN"
 }
 
 declare -A CHANGED=()
@@ -507,9 +507,9 @@ check_dashboard() {  # $1: name
 check_host() {
   local file name
   if [ ! -d "$VV/.git" ]; then printf 'checkout=%s absent\n' "$VV"; bad
-  elif [ -n "$PIN" ] && [ "$(git -C "$VV" rev-parse HEAD)" != "$PIN" ]; then
+  elif [ "$(git -C "$VV" rev-parse HEAD)" != "$PIN" ]; then
     printf 'checkout=%s at %s, not the pinned %s (the follower moves it once its checks passed: journalctl -u %s)\n' "$VV" "$(git -C "$VV" rev-parse --short=12 HEAD)" "${PIN:0:12}" "$FOLLOWER"; bad
-  else printf 'checkout=%s at %s%s\n' "$VV" "$(git -C "$VV" rev-parse --short=12 HEAD)" "${PIN:+ (pinned)}"; fi
+  else printf 'checkout=%s at %s (pinned)\n' "$VV" "$(git -C "$VV" rev-parse --short=12 HEAD)"; fi
   for file in "$VV"/dashboard/systemd/*; do
     [ -f "$file" ] || continue
     cmp -s "$file" "$UNIT_DIR/$(basename "$file")" || { printf 'unit=%s absent or DRIFTED from %s (re-run --apply)\n' "$(basename "$file")" "$VV"; bad; }

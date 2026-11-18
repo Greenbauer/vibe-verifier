@@ -89,7 +89,7 @@ def without(block: dict, *keys: str) -> dict:
 
 
 def host_file(*lanes: dict, top: dict | None = None) -> Path:
-    doc = {"hostname": "box-1", "sysbox": {"image": "/var/lib/runners/sysbox.img", "disk_gb": 20}, "lanes": list(lanes)}
+    doc = {"hostname": "box-1", "engine": "ab" * 20, "sysbox": {"image": "/var/lib/runners/sysbox.img", "disk_gb": 20}, "lanes": list(lanes)}
     doc.update(top or {})
     path = TMP / "host.yml"
     path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")

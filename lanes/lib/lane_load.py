@@ -35,9 +35,9 @@ CPU_QUOTA = re.compile(r"^[1-9][0-9]*%$")
 # The kernel's interface name limit; a lane's bridge is <name>0.
 BRIDGE_MAX = 15
 
-HOST_KEYS = {"hostname", "sysbox", "lanes"}
 # engine: the catalog commit the machine runs (lane_fields._engine).
-HOST_OPTIONAL_KEYS = {"dashboards", "engine"}
+HOST_KEYS = {"engine", "hostname", "sysbox", "lanes"}
+HOST_OPTIONAL_KEYS = {"dashboards"}
 # A Vibe Verifier dashboard (bin/provision-dashboards.sh): a systemd instance whose account is
 # vibe-dashboard-<name>, which useradd caps at 32 characters (Vibe Verifier docs/dashboard-host.md).
 DASHBOARD_NAME = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -348,7 +348,7 @@ def load_host(path: str | Path) -> Host:
     except yaml.YAMLError as exc:
         raise ValueError(f"{path}: not YAML: {exc}") from exc
     if not isinstance(document, dict) or not HOST_KEYS <= set(document) <= HOST_KEYS | HOST_OPTIONAL_KEYS:
-        raise ValueError(f"{path} must declare exactly {', '.join(sorted(HOST_KEYS))}, and may declare dashboards and engine")
+        raise ValueError(f"{path} must declare exactly {', '.join(sorted(HOST_KEYS))}, and may declare dashboards")
     sysbox = _exact_keys(document["sysbox"], {"image", "disk_gb"}, "sysbox", "host")
     raw_lanes = document["lanes"]
     if not isinstance(raw_lanes, list) or not raw_lanes:
@@ -368,5 +368,5 @@ def load_host(path: str | Path) -> Host:
         sysbox_disk_gb=_positive_int(sysbox["disk_gb"], "sysbox.disk_gb", "host"),
         lanes=lanes,
         dashboards=dashboards,
-        engine=_engine(document.get("engine")),
+        engine=_engine(document["engine"]),
     )
