@@ -19,6 +19,7 @@ ROOTS="$PRELOAD/alpha $PRELOAD/beta $PRELOAD/delta $PRELOAD/gamma $PRELOAD/omega
 write_host() {
   cat > "$TMP/s/host.yml" <<'YML'
 hostname: box-1
+engine: "abababababababababababababababababababab"
 sysbox: {image: /var/lib/runners/sysbox.img, disk_gb: 20}
 lanes:
   - name: box-ci

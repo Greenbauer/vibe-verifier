@@ -397,13 +397,6 @@ print_gates() {
     fi
     gate "Give this machine read-only access to its values repository ($values): run ssh-keygen -t ed25519 -N '' -C runners-$HOST -f $DEPLOY_KEY on the machine, then add $DEPLOY_KEY.pub to that repository as a deploy key from a login with admin on it: ssh root@$HOST_NAME cat $DEPLOY_KEY.pub > runners-$HOST.pub && gh repo deploy-key add runners-$HOST.pub --repo <owner>/<repository> --title runners-$HOST (read-only unless --allow-write is given). Until then $PULL_SERVICE cannot fetch $CONFIG."
   fi
-  # The engine runs as root, so it must sit at the commit the private host file pins.
-  head="$(git -C "$ENGINE" rev-parse HEAD 2>/dev/null || echo unknown)"
-  if [ -z "$ENGINE_COMMIT" ]; then printf 'engine=%s at %s, following the catalog main: hosts/%s.yml pins no engine commit\n' "$ENGINE" "${head:0:12}" "$HOST"; bad
-  elif [ "$head" = "$ENGINE_COMMIT" ]; then printf 'engine=%s at the pinned %s\n' "$ENGINE" "${ENGINE_COMMIT:0:12}"
-  else printf 'engine=%s at %s, not the pinned %s (a pull is pending or refused it: journalctl -u %s)\n' "$ENGINE" "${head:0:12}" "${ENGINE_COMMIT:0:12}" "$PULL_SERVICE"; bad; fi
-  if [ -e "$ENGINE_SIGNERS" ]; then printf 'engine_signers=%s present: the engine moves only to a commit a signed engine/* tag names\n' "$ENGINE_SIGNERS"
-  else printf 'engine_signers=%s absent (optional: README.md, Deploy model)\n' "$ENGINE_SIGNERS"; fi
   named="$(tr -d '[:space:]' < "$HOST_FILE" 2>/dev/null || true)"
   if [ "$named" != "$HOST" ]; then
     gate "Name this machine's host config: echo $HOST > $HOST_FILE (it reads '${named:-nothing}'). $PULL_SERVICE converges the lanes of hosts/<that name>.yml in $CONFIG."
@@ -497,8 +490,7 @@ check_self_update() {
   if [ -s "$DEPLOY_KEY" ]; then printf 'deploy_key=%s present\n' "$DEPLOY_KEY"; else printf 'deploy_key=%s absent\n' "$DEPLOY_KEY"; bad; fi
   # The engine runs as root, so it must sit at the commit the private host file pins.
   head="$(git -C "$ENGINE" rev-parse HEAD 2>/dev/null || echo unknown)"
-  if [ -z "$ENGINE_COMMIT" ]; then printf 'engine=%s at %s, following the catalog main: hosts/%s.yml pins no engine commit\n' "$ENGINE" "${head:0:12}" "$HOST"; bad
-  elif [ "$head" = "$ENGINE_COMMIT" ]; then printf 'engine=%s at the pinned %s\n' "$ENGINE" "${ENGINE_COMMIT:0:12}"
+  if [ "$head" = "$ENGINE_COMMIT" ]; then printf 'engine=%s at the pinned %s\n' "$ENGINE" "${ENGINE_COMMIT:0:12}"
   else printf 'engine=%s at %s, not the pinned %s (a pull is pending or refused it: journalctl -u %s)\n' "$ENGINE" "${head:0:12}" "${ENGINE_COMMIT:0:12}" "$PULL_SERVICE"; bad; fi
   if [ -e "$ENGINE_SIGNERS" ]; then printf 'engine_signers=%s present: the engine moves only to a commit a signed engine/* tag names\n' "$ENGINE_SIGNERS"
   else printf 'engine_signers=%s absent (optional: README.md, Deploy model)\n' "$ENGINE_SIGNERS"; fi

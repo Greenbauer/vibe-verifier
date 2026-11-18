@@ -3,6 +3,7 @@
 # made up. A real host file lives in the owner's private values repository, as hosts/<host>.yml at
 # its root; the schema and its rules are README.md, "Configuration".
 hostname: worker-1                       # the ssh target the gates print
+engine: "12a1a5cb4bb3e3fa2f45f6fb26dfde5c81862848"                # the catalog commit it runs as root, quoted (README.md, "Deploy model")
 # One per machine: Sysbox's per-container data, a sparse image mounted at /var/lib/sysbox. Keep it
 # outside /var/lib/runners, which provision-host.sh --remove --apply deletes.
 sysbox: {image: /var/lib/runner-lanes/sysbox.img, disk_gb: 20}

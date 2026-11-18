@@ -15,10 +15,7 @@ COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 def _engine(value: object) -> str:
     """host.engine: the catalog commit the machine runs, its engine checkout and its dashboards' (README.md,
-    "Deploy model"), or "" when the file pins none, which is allowed only while machines move to the pin.
-    YAML reads an all-digit id as a number, so the id is written quoted."""
-    if value is None:
-        return ""
+    "Deploy model"). YAML reads an all-digit id as a number, so the id is written quoted."""
     if not isinstance(value, str) or not COMMIT.fullmatch(value):
         raise ValueError('host.engine must be a full 40-character lowercase commit id, quoted: engine: "<sha>"')
     return value

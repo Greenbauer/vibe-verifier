@@ -18,6 +18,8 @@ line_of() { grep -nF -- "$1" <<< "$out" | head -n 1 | cut -d: -f1; }
 before() { local a b; a="$(line_of "$1")"; b="$(line_of "$2")"; [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; }
 render() { python3 "$ROOT/lib/lanes.py" "$1" "$S/config/hosts/example.yml" "$2"; }
 FOLLOW_CMD="/usr/bin/env -i HOME=/root PYTHONNOUSERSITE=1 PATH=/usr/bin:/bin /usr/bin/python3 /opt/vibe-verifier/bin/vibe-dashboard-follow"
+# The example host file's pin, which the follower's drop-in names.
+EXPIN="12a1a5cb4bb3e3fa2f45f6fb26dfde5c81862848"
 MUTATIONS='^(useradd|userdel|chown|git clone|git checkout|nft --file|systemctl (enable|disable|daemon-reload|start|stop|restart))'
 LEGACY_UNITS="greenbauer-dashboard.service greenbauer-dashboard-boundary.service greenbauer-dashboard-telemetry.timer greenbauer-dashboard-telemetry.service greenbauer-dashboard-token-refresh.timer greenbauer-dashboard-token-refresh.service ci-dashboard.service ci-dashboard-boundary.service ci-dashboard-telemetry.timer ci-dashboard-telemetry.service ci-dashboard-token.timer ci-dashboard-token.service"
 
@@ -247,7 +249,7 @@ cmp -s "$S/keys/acme-ci.pem" "$S/etc/acme/app.pem" && [ "$(owner_mode "$S/etc/ac
 cmp -s "$S/fx/vv/dashboard/systemd/vibe-dashboard-follow.service" "$S/units/vibe-dashboard-follow.service" && cmp -s "$S/fx/vv/dashboard/systemd/vibe-dashboard@.service" "$S/units/vibe-dashboard@.service"
 expect $? "the kit's unit templates are installed from the checkout"
 grep -qx "ExecStart=" "$S/units/vibe-dashboard-follow.service.d/runners.conf" \
-  && grep -qxF "ExecStart=$FOLLOW_CMD --unit vibe-dashboard@greenbauer.service 8765 --unit vibe-dashboard@acme.service 8766" "$S/units/vibe-dashboard-follow.service.d/runners.conf"
+  && grep -qxF "ExecStart=$FOLLOW_CMD --unit vibe-dashboard@greenbauer.service 8765 --unit vibe-dashboard@acme.service 8766 --commit $EXPIN" "$S/units/vibe-dashboard-follow.service.d/runners.conf"
 expect $? "the follower's drop-in keeps the template's command and lists one --unit pair per dashboard"
 grep -qx "Requires=runners-dashboard-guard.service" "$S/units/vibe-dashboard@.service.d/runners-guard.conf" && grep -qx "ExecStart=/usr/sbin/nft --file $S/guard.nft" "$S/units/runners-dashboard-guard.service"
 expect $? "every dashboard requires the guard unit, which loads the guard file"
@@ -387,7 +389,7 @@ out="$(run_dash --apply 2>&1)"; rc=$?
 expect $? "while one lane's key is absent and the legacy install holds the ports, nothing starts and the gate names the key"
 setup; rm "$S/keys/acme-ci.pem"
 out="$(run_dash --apply 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && grep -qxF "ExecStart=$FOLLOW_CMD --unit vibe-dashboard@greenbauer.service 8765" "$S/units/vibe-dashboard-follow.service.d/runners.conf" \
+[ "$rc" -eq 0 ] && grep -qxF "ExecStart=$FOLLOW_CMD --unit vibe-dashboard@greenbauer.service 8765 --commit $EXPIN" "$S/units/vibe-dashboard-follow.service.d/runners.conf" \
   && [ "$(cat "$S/st/state/vibe-dashboard@greenbauer.service")" = active ] && [ ! -e "$S/st/state/vibe-dashboard@acme.service" ] && [ ! -e "$S/etc/acme/app.pem" ]
 expect $? "with no legacy install, the dashboards whose keys exist start and the follower follows only them"
 
@@ -410,7 +412,7 @@ out="$(run_dash --apply 2>&1)"; rc=$?
 expect $? "an undeclared dashboard's units are disabled and its files and account removed"
 [ ! -e "$S/cache/vibe-dashboard-acme" ] && [ -f "$S/cache/vibe-dashboard-greenbauer/greenbauer/reading.json.z" ]
 expect $? "its cache directory, with the reading it kept, goes with it, and the remaining dashboard's stays"
-grep -qxF "ExecStart=$FOLLOW_CMD --unit vibe-dashboard@greenbauer.service 8765" "$S/units/vibe-dashboard-follow.service.d/runners.conf" && grep -qx "systemctl restart vibe-dashboard-follow.service" "$CALLLOG" \
+grep -qxF "ExecStart=$FOLLOW_CMD --unit vibe-dashboard@greenbauer.service 8765 --commit $EXPIN" "$S/units/vibe-dashboard-follow.service.d/runners.conf" && grep -qx "systemctl restart vibe-dashboard-follow.service" "$CALLLOG" \
   && ! grep -q "dport 8766" "$S/st/nft" && [ -d "$S/etc/greenbauer" ]
 expect $? "the follower is restarted on the remaining dashboard, the guard drops the port, and the other dashboard stays"
 
@@ -489,7 +491,7 @@ out="$(run_dash --apply 2>&1)"; rc=$?
 # ---- the engine pin: the follower runs the pinned commit, and a fresh clone starts there ---------------
 PIN="0123456789abcdef0123456789abcdef01234567"
 setup
-printf 'engine: "%s"\n' "$PIN" >> "$S/config/hosts/example.yml"
+sed -i "s/^engine: \"[0-9a-f]*\"/engine: \"$PIN\"/" "$S/config/hosts/example.yml"
 out="$(run_dash --apply 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -qx "git checkout $PIN" "$CALLLOG" && before "RUN: git clone --quiet" "RUN: git -C $S/opt/vibe-verifier -c advice.detachedHead=false checkout --quiet --detach $PIN" \
   && before "detach $PIN" "RUN: systemctl daemon-reload"

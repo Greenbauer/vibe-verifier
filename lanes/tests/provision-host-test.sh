@@ -34,7 +34,7 @@ setup() {
   mkdir -p "$S/engine/lanes" && printf 'the kit\n' > "$S/engine/lanes/README.md"
   git init -q "$S/engine" && gitc -C "$S/engine" add -A && gitc -C "$S/engine" commit -q -m one
   # The host file pins the engine at that commit, as runners-pull leaves it.
-  printf 'engine: "%s"\n' "$(git -C "$S/engine" rev-parse HEAD)" >> "$S/config/hosts/box.yml"
+  sed -i "s/^engine: .*/engine: \"$(git -C "$S/engine" rev-parse HEAD)\"/" "$S/config/hosts/box.yml"
   git init -q "$S/config" && gitc -C "$S/config" add -A && gitc -C "$S/config" commit -q -m one
   git -C "$S/config" remote add origin git@git.example.invalid:someone/lane-values.git
   printf 'docker-ce\n' > "$S/st/holds"
@@ -241,7 +241,7 @@ gitc -C "$S/engine" reset -q --hard HEAD~1
 sed -i '/^engine: /d' "$S/config/hosts/box.yml"
 out="$(run_host --check 2>&1)"; rc=$?
 gitc -C "$S/config" checkout -q -- hosts/box.yml
-[ "$rc" -ne 0 ] && grep -q "following the catalog main: hosts/box.yml pins no engine commit" <<< "$out"; expect $? "--check fails on a host file that pins no engine"
+[ "$rc" -ne 0 ] && grep -q "must declare exactly engine, hostname, lanes, sysbox" <<< "$out"; expect $? "--check refuses a host file that pins no engine"
 echo inactive > "$S/st/state/runners-pull.timer"
 out="$(run_host --check 2>&1)"; rc=$?
 echo active > "$S/st/state/runners-pull.timer"

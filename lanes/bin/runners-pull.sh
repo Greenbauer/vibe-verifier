@@ -21,8 +21,8 @@
 #      the catalog's main (a fork's commit is fetchable by id), one whose runners-pull.sh predates pins
 #      (it would follow main again) or, while /etc/runners/engine_signers
 #      exists, one no engine/* tag signed by a key listed there points at; then checks the pin out
-#      (detached, so a pin may move back as well as forward). An engine at its pin fetches nothing.
-#      A host file with no pin follows origin/main as before, with a warning, while machines move;
+#      (detached, so a pin may move back as well as forward). An engine at its pin fetches nothing,
+#      and a host file with no pin is refused;
 #   6. when that move changed this script, runs the new copy in its place, so a change to what a run
 #      applies takes effect on the tick that moved to it;
 #   7. when the kit or the values moved, or no successful apply is recorded for the pair, runs
@@ -120,16 +120,9 @@ main() {
   config_head="$(git -C "$CONFIG" rev-parse HEAD)"
   host_yml="${RUNNERS_HOST_YML:-$CONFIG/hosts/$host.yml}"
   pin="$(engine_pin "$host_yml")" || die "$host_yml is unreadable; nothing is applied"
-  if [ -n "$pin" ]; then
-    [[ "$pin" =~ ^[0-9a-f]{40}$ ]] || die "engine in $host_yml must be a full 40-character lowercase commit id, got '$pin'; nothing is applied"
-    move_engine "$pin"
-  else
-    [ ! -e "$SIGNERS" ] || die "$host_yml pins no engine commit and $SIGNERS exists, so main is not followed unsigned; nothing is applied"
-    # The engine is public: no key is offered for it.
-    log "$host_yml pins no engine commit; following the catalog's main until it does (README.md, Deploy model)"
-    git -C "$ENGINE" fetch --quiet origin || die "git fetch failed in $ENGINE"
-    git -C "$ENGINE" merge --ff-only --quiet origin/main || die "$ENGINE cannot fast-forward to origin/main"
-  fi
+  [ -n "$pin" ] || die "$host_yml pins no engine commit; nothing is applied (README.md, Deploy model)"
+  [[ "$pin" =~ ^[0-9a-f]{40}$ ]] || die "engine in $host_yml must be a full 40-character lowercase commit id, got '$pin'; nothing is applied"
+  move_engine "$pin"
   engine_head="$(git -C "$ENGINE" rev-parse HEAD)"
   if [ "$engine_head" != "$engine_before" ] && ! git -C "$ENGINE" diff --quiet "$engine_before" "$engine_head" -- "$SELF"; then
     # This run's own steps are the old copy's; the new copy sees this kit unapplied and applies it.
