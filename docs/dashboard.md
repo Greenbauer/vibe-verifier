@@ -68,6 +68,8 @@ Open the printed `http://127.0.0.1:8765` URL. The address is fixed to IPv4 loopb
 public listener, browser credential, built-in authentication, or CORS access. Without
 `proxy_origin`, forwarded headers are rejected. The server accepts `GET` only, rejects untrusted or
 duplicate routing headers, and serves a fixed path allowlist with no remote scripts, fonts, or icons.
+An answer of 1 KB or more is gzipped when the browser accepts gzip, since the JSON reading can
+run to about 2 MB and a phone on a slow path to the host would otherwise give up on it.
 
 By default nothing is kept when the process stops, so a restart shows no pull requests until the
 first GitHub sample has loaded. To keep the last reading, give it a directory of your own:
@@ -863,7 +865,8 @@ an in-flight refresh. The collector and usage-artifact test files cover the nati
 `tests/test_dashboard_host.py` covers the Linux host's token minting, telemetry publishing, and unit
 templates, and `test_dashboard_follow.py` the follower's check-run gate and rollback.
 `tests/test_dashboard_server.py` covers loopback HTTP, proxy and direct routing headers,
-read-only methods, Host/Origin/traversal, XSS-safe JSON, local assets and the tab icon route.
+read-only methods, Host/Origin/traversal, XSS-safe JSON, gzip for a client that accepts it, local
+assets and the tab icon route.
 `tests/test_dashboard_server_ui.py` covers DOM construction, filters, account usage
 math, the class on a row's age number, the push line under the meter, the current-work names,
 and the approved palette, and runs `dashboard/static/capacity.test.js` (the Capacity view's cards,

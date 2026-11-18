@@ -1,5 +1,6 @@
 """Loopback server boundaries: routing headers, read-only methods, Host/Origin/traversal and safe JSON."""
 
+import gzip
 import io
 import json
 import unittest
@@ -191,6 +192,30 @@ class ServerSecurity(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("script-src 'self'", headers["content-security-policy"])
         self.assertNotIn(b"https://", body)
+    def test_json_and_assets_are_gzipped_only_for_a_client_that_takes_gzip(self):
+        big = {"version": 1, "owner": "octocat", "github": {"repositories": [{"name": "r%d" % n} for n in range(500)]}}
+        with mock.patch.object(FakeService, "snapshot", return_value=big):
+            plain_status, plain_headers, plain = self.request("GET", "/api/dashboard")
+            status, headers, body = self.request("GET", "/api/dashboard", {"Accept-Encoding": "gzip, deflate, br"})
+            refused = self.request("GET", "/api/dashboard", {"Accept-Encoding": "gzip;q=0, identity"})
+        self.assertEqual((plain_status, status), (200, 200))
+        self.assertNotIn("content-encoding", plain_headers)
+        self.assertEqual(json.loads(plain), big)
+        self.assertEqual(headers["content-encoding"], "gzip")
+        self.assertEqual(headers["vary"], "Accept-Encoding")
+        self.assertEqual(int(headers["content-length"]), len(body))
+        self.assertLess(len(body), len(plain) // 4)
+        self.assertEqual(json.loads(gzip.decompress(body)), big)
+        self.assertNotIn("content-encoding", refused[1])
+        self.assertEqual(json.loads(refused[2]), big)
+        status, headers, body = self.request("GET", "/assets/app.js", {"Accept-Encoding": "gzip"})
+        self.assertEqual((status, headers["content-encoding"]), (200, "gzip"))
+        self.assertIn(b"/api/dashboard", gzip.decompress(body))
+    def test_a_small_answer_is_sent_as_is_even_to_a_gzip_client(self):
+        status, headers, body = self.request("GET", "/nope", {"Accept-Encoding": "gzip"})
+        self.assertEqual(status, 404)
+        self.assertNotIn("content-encoding", headers)
+        self.assertEqual(json.loads(body), {"error": "not found"})
 
 if __name__ == "__main__":
     unittest.main()
