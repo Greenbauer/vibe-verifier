@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -29,6 +30,10 @@ FILES = {
     "/assets/outcomes.js": ("outcomes.js", "text/javascript; charset=utf-8"),
     "/assets/outcome-trend.js": ("outcome-trend.js", "text/javascript; charset=utf-8"),
 }
+# One dashboard's JSON is about 2 MB and its host sits on a slow, lossy path from a phone:
+# uncompressed, a load took up to a minute and the phone gave up on it (2026-11-18). Gzip makes it ~200 KB.
+GZIP_MIN_BYTES = 1024
+GZIP_LEVEL = 5
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 
@@ -56,10 +61,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         return
 
-    def _headers(self, status: int, content_type: str, length: int) -> None:
+    def _accepts_gzip(self) -> bool:
+        for item in self.headers.get("Accept-Encoding", "").split(","):
+            name, _, params = item.partition(";")
+            if name.strip().lower() != "gzip":
+                continue
+            weight = params.replace(" ", "").lower()
+            try:
+                return not weight.startswith("q=") or float(weight[2:]) > 0
+            except ValueError:
+                return True
+        return False
+
+    def _send(self, status: int, content_type: str, body: bytes) -> None:
+        """Answers with body, gzipped when the client takes gzip and the body is worth compressing."""
+        encoded = len(body) >= GZIP_MIN_BYTES and self._accepts_gzip()
+        if encoded:
+            body = gzip.compress(body, compresslevel=GZIP_LEVEL, mtime=0)
         self.send_response(status)
         self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(length))
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Vary", "Accept-Encoding")
+        if encoded:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Security-Policy", CSP)
         self.send_header("Referrer-Policy", "no-referrer")
@@ -67,11 +91,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.end_headers()
+        self.wfile.write(body)
 
     def _deny(self, status: int, message: str) -> None:
         body = safe_json({"error": message})
-        self._headers(status, "application/json; charset=utf-8", len(body))
-        self.wfile.write(body)
+        self._send(status, "application/json; charset=utf-8", body)
 
     def _trusted_request(self) -> bool:
         port = self.server.server_port
@@ -144,13 +168,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception:
                 self._deny(503, "dashboard source unavailable")
                 return
-            self._headers(200, "application/json; charset=utf-8", len(body))
-            self.wfile.write(body)
+            self._send(200, "application/json; charset=utf-8", body)
             return
         if path == "/favicon.svg":
             body = self.server.favicon.svg()
-            self._headers(200, "image/svg+xml", len(body))
-            self.wfile.write(body)
+            self._send(200, "image/svg+xml", body)
             return
         item = FILES.get(path)
         if item is None:
@@ -162,8 +184,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except OSError:
             self._deny(503, "dashboard asset unavailable")
             return
-        self._headers(200, content_type, len(body))
-        self.wfile.write(body)
+        self._send(200, content_type, body)
 
     def _read_only(self) -> None:
         if not self._trusted_request():
