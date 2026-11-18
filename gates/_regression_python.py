@@ -37,12 +37,13 @@ class StandIn:
     (failure)."""
 
     def __init__(self, module, name, whole=False):
-        error = (ModuleNotFoundError("No module named '%s'" % module) if whole else
-                 ImportError("cannot import name '%s' from '%s' (a stand-in: it does not exist before the fix)" % (name, module)))
-        object.__setattr__(self, "error", error)
+        object.__setattr__(self, "error", missing_module(module) if whole else
+                           (ImportError, "cannot import name '%s' from '%s' (a stand-in: it does not exist before the fix)"
+                            % (name, module)))
 
     def missing(self, *_args, **_kwargs):
-        raise object.__getattribute__(self, "error")
+        kind, message = object.__getattribute__(self, "error")
+        raise kind(message)  # a new one each use: one raised again keeps every earlier use's traceback
 
     def __getattr__(self, name):
         if name.startswith("__") and name.endswith("__"):  # Python's own probes (issubclass reads __bases__)
@@ -50,7 +51,7 @@ class StandIn:
         StandIn.missing(self)
 
     def __repr__(self):
-        return "<%s>" % object.__getattribute__(self, "error")
+        return "<%s>" % object.__getattribute__(self, "error")[1]
 
 
 for _use in ("call getitem setitem delitem iter len bool contains enter exit instancecheck subclasscheck mro_entries eq "
@@ -79,10 +80,15 @@ class StandInLoader:
                 ADDED.append([self.module, name])
 
 
+def missing_module(module):
+    return ModuleNotFoundError, "No module named '%s'" % module
+
+
 class StandInModule:
     """The loader of a module that does not exist on the code before the fix (a helper the fix moves to a file of its
     own, say): a package, so a module under it can stand in too, whose every name is a StandIn that raises the
-    ModuleNotFoundError its import would have raised."""
+    ModuleNotFoundError its import would have raised. `from module import *` reads `__all__`, which raises it too:
+    a stand-in module has no names to bind, and a test that then reads one would fail on a NameError, the bug shown."""
 
     @staticmethod
     def create_module(spec):
@@ -91,6 +97,9 @@ class StandInModule:
     @staticmethod
     def exec_module(module):
         def stand_in(name):
+            if name == "__all__":
+                kind, message = missing_module(module.__name__)
+                raise kind(message)
             if name.startswith("__") and name.endswith("__"):
                 raise AttributeError(name)
             return StandIn(module.__name__, name, whole=True)
@@ -150,7 +159,8 @@ def failure(error):
     traceback holds one (issubclass and assertRaises raise TypeError on it). An ImportError keeps its own: it
     already names what is missing, and the line of a `from ... import` that failed names the stand-ins before it."""
     stand_in = None if isinstance(error, ImportError) else held(error)
-    return described(error if stand_in is None else object.__getattribute__(stand_in, "error"))
+    return described(error) if stand_in is None else "%s: %s" % (object.__getattribute__(stand_in, "error")[0].__name__,
+                                                                   object.__getattribute__(stand_in, "error")[1])
 
 
 def described(error):

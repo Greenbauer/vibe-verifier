@@ -158,18 +158,24 @@ class StandIns(unittest.TestCase):
 
     def test_a_file_whose_only_failure_there_is_a_module_the_fix_adds_still_does_not_show_the_bug(self):
         # Every use of the stand-in module, a name imported from it or one read off it, fails as the module missing.
-        changed = {"shop/price.py": PY_FIX, "shop/rounding.py": "def cents(x):\n    return round(x, 2)\n\n\nPLACES = 2\n"}
+        changed = {"shop/price.py": PY_FIX, "shop/rounding.py": "def cents(x):\n    return round(x, 2)\n\n\nPLACES = 2\n__version__ = '1'\n"}
         header = HEADER.replace("from shop.price import discount, member_price\n",
                                 "import shop.rounding\nfrom shop.price import discount\nfrom shop.rounding import cents\n")
         uses = ["    def test_cents(self):\n        self.assertEqual(cents(1.234), 1.23)\n",
                 "    def test_places(self):\n        self.assertIs(shop.rounding.PLACES, 2)\n"]
+        # A star import binds nothing from a stand-in, so it stops the file as the module missing (a test reading
+        # `cents` would otherwise fail on a NameError, the bug shown); a dunder it has none of stays the name missing.
+        star = header.replace("from shop.rounding import cents", "from shop.rounding import *")
+        dunder = header.replace("import cents", "import cents, __version__")
         for runner in ("unittest", "pytest"):
-            with self.subTest(runner=runner):
-                result = self.judge(runner, [UNCHANGED_TEST] + uses, None, changed, header=header)
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                [message] = [finding["message"] for finding in findings(result) if finding.get("path") == "tests/test_price.py"]
-                self.assertTrue(message.startswith("fails on the code before the fix only because `shop.rounding` is missing "
-                                                   "(ModuleNotFoundError: No module named 'shop.rounding', in "), message)
+            for top, missing in ((header, "`shop.rounding` is missing (ModuleNotFoundError: No module named 'shop.rounding', in "),
+                                 (star, "`shop.rounding` is missing (ModuleNotFoundError: No module named 'shop.rounding')"),
+                                 (dunder, "`__version__` is missing (ImportError: cannot import name '__version__'")):
+                with self.subTest(runner=runner, missing=missing):
+                    result = self.judge(runner, [UNCHANGED_TEST] + uses, None, changed, header=top)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    [message] = [found["message"] for found in findings(result) if found.get("path") == "tests/test_price.py"]
+                    self.assertTrue(message.startswith("fails on the code before the fix only because " + missing), message)
 
 
 if __name__ == "__main__":
