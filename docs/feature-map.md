@@ -244,7 +244,7 @@ three while its verdict passed). Now the step declares it, once, in the feature 
   read from the pull request's copy of the file (the copy the explorer was handed), outside HTML
   comments. Reach, Gotchas and test bullets declare nothing, and neither does anything the explorer
   writes. The rules are a criterion's: only 400, 401, 403, 404, 409 or 422, and the URL must match
-  exactly, query included; any other status or URL still fails the run.
+  exactly, query included (a Next.js `_rsc` parameter aside); any other status or URL still fails the run.
 - **An id the run mints.** `{id}` in the target stands for one path segment no file can know ahead
   (a record the walk just created or made private): `expected-refusal: 404 /api/public/itineraries/{id}`
   matches `/api/public/itineraries/8697e680-...`, never `/api/public/itineraries/a/b`, another route,

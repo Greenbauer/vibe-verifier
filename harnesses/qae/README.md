@@ -1442,7 +1442,7 @@ explorer's artifacts, and it excuses exactly that status at exactly that URL for
 request in the network record and Chromium's `Failed to load resource: ... status of 401` console
 line for it. Only a handled refusal can be declared: 401 or 403 (an auth gate), 400, 404, 409 or 422
 (a server refusing the invalid input the explorer is told to try). A path resolves against the site under test, and is appended to each further declared origin (so a refusal on an API with a per-preview host can be declared); an `http(s)` URL is taken as
-written; the match is exact, query included. A 5xx at the same URL, the same 401 at any other URL,
+written; the match is exact, query included, except that a Next.js `_rsc` query parameter is dropped first (an App Router navigation also fetches the page as `<path>?_rsc=<token>`, which answers the same refusal). A 5xx at the same URL, the same 401 at any other URL,
 and every other console error still fail, and a declaration of another status, or a path with no
 site, is itself a finding. Because the declaration is a criterion, the explorer must still show the
 refusal happens, and a reviewer reads the allowance as part of the spec. An HTML comment does not
