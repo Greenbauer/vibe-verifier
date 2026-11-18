@@ -7,7 +7,7 @@ none of them parses YAML or re-checks a field.
 
   lanes.py lanes <host.yml>                    the lane names, one per line
   lanes.py host-env <host.yml>                 the machine's settings, KEY=value lines
-  lanes.py engine <host.yml>                   the catalog commit the machine runs (empty when none)
+  lanes.py engine <host.yml>                   the catalog commit the machine runs
   lanes.py env <host.yml> <lane>               one lane's settings, KEY=value lines
   lanes.py listener-config <host.yml> <lane> [--key-file PATH] [--codex-store PATH]
                                                the lane's scale-set listener config (JSON)
@@ -48,7 +48,7 @@ def _settings_text(values: dict[str, object]) -> str:
 COMMANDS = {
     "lanes": lambda host, args: "".join(f"{lane.name}\n" for lane in host.lanes),
     "host-env": lambda host, args: _settings_text(host_settings(host)),
-    "engine": lambda host, args: f"{host.engine}\n" if host.engine else "",
+    "engine": lambda host, args: f"{host.engine}\n",
     "env": lambda host, args: _settings_text(lane_settings(host, host.lane(args.lane))),
     "preload": lambda host, args: host.lane(args.lane).preload_text,
     "dashboards": lambda host, args: "".join(f"{dashboard.name}\n" for dashboard in host.dashboards),

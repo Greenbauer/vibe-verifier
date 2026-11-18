@@ -367,9 +367,8 @@ dashboards:                            # optional: the Vibe Verifier dashboards 
 
 `lib/lanes.py` refuses a file that breaks any of these rules, before any script changes anything:
 
-- `engine` is a full 40-character lowercase commit id, quoted (YAML reads an all-digit id as a
-  number). A file without it still loads while machines move to the pin; the pull then follows the
-  catalog's `main` and says so, and `provision-host.sh --check` fails;
+- `engine` is required: a full 40-character lowercase commit id, quoted (YAML reads an all-digit id
+  as a number). The pull refuses a host file without it and applies nothing;
 - every key is the scope's: no unknown key, no `min_runners`, `runner_group` or `repos` on a user
   lane, no `exclude` on an org lane, no `wait` on a user lane, and `codex_store` and
   `qae_concurrency` exactly when `labels.qae` is set (and `qae_own_slots` only then, a boolean); a
@@ -449,7 +448,7 @@ made of them, so a host file is never its to change.
 Moving an engine is one pull request per values repository: set `engine` to the full id of a commit
 on the catalog's `main` whose checks passed (the dashboards' follower waits for them, below), merge,
 and read `provision-host.sh <host> --check` after the next tick. Move one machine first when the kit
-changed. Moving it back is the same change with the earlier id, to any commit from engine pins on.
+changed. Moving it back is the same change with the earlier id, to any commit from engine pins on (12a1a5cb4bb3 or later).
 
 The pin does not stop a credential that can write both repositories, such as the owner's own account
 token. For that, place an allowed-signers file on each machine, by hand and as root, like the deploy
@@ -464,8 +463,7 @@ git push origin engine/<date>
 ```
 
 Then move the pin as above. A tag signed by an unlisted key, a tag outside `engine/*` or a tag on
-another commit does not count; deleting the tags only stops the engine from moving. While the file exists, a host
-file with no pin is refused rather than followed to `main`. Removing the file needs root on the
+another commit does not count; deleting the tags only stops the engine from moving. Removing the file needs root on the
 machine, so its absence is the owner's choice. `--check` reports whether it is
 present.
 
@@ -697,8 +695,7 @@ engine's: the two are clones of the same catalog that move by different rules.
   `vibe-dashboard-follow.service` the host file's `engine` as `--commit`. Every minute the follower
   fetches `main` and moves `/opt/vibe-verifier` to that commit alone, once it is on `main` and all
   its GitHub check runs passed, restarts the dashboards when server code changed, and rolls back a
-  commit a dashboard does not come up healthy on. A host file with no pin leaves the follower on
-  `main`'s green tip. The lane kit never resets that checkout but once: it clones it only when absent
+  commit a dashboard does not come up healthy on. The lane kit never resets that checkout but once: it clones it only when absent
   and checks the pin out right after the clone, and it moves an existing checkout to the pin when the
   follower there predates `--commit` (which it would exit on, restarting forever).
 - **What a machine serves** (which dashboards, their ports, configs and lanes) and the dashboard

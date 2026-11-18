@@ -145,7 +145,7 @@ check(load_host(host_file({**USER, "preload": {"app": "supabase", "site": "apps/
       == (("app", "supabase"), ("docs", "-"), ("site", "apps/db/supabase")), "a user lane's preload map is its list, in any order")
 
 # ---- the host, and what its lanes may not share -----------------------------------------------------
-refused(host_file(ORG, top={"extra": 1}), "must declare exactly hostname, lanes, sysbox", "an unknown host key is refused")
+refused(host_file(ORG, top={"extra": 1}), "must declare exactly engine, hostname, lanes, sysbox", "an unknown host key is refused")
 refused(host_file(ORG, top={"hostname": "box 1"}), "host.hostname must match", "a host name a shell line could misread is refused")
 refused(host_file(ORG, top={"sysbox": {"image": "/var/lib/runners/sysbox.img"}}), "host.sysbox must declare exactly disk_gb, image", "the Sysbox filesystem needs its image and size")
 refused(host_file(ORG, top={"sysbox": {"image": "sysbox.img", "disk_gb": 20}}), "host.sysbox.image must match", "the Sysbox image path is absolute")

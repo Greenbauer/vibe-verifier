@@ -32,9 +32,10 @@ SH
     chmod +x "$S/engine-seed/lanes/bin/$script.sh"
   done
   printf '__pycache__/\n' > "$S/engine-seed/.gitignore"
-  for repo in engine values; do
-    gitc init -q "$S/$repo-seed" && gitc -C "$S/$repo-seed" add -A && gitc -C "$S/$repo-seed" commit -q -m one
-  done
+  gitc init -q "$S/engine-seed" && gitc -C "$S/engine-seed" add -A && gitc -C "$S/engine-seed" commit -q -m one
+  # The host file pins the engine's first commit, where the machine's engine checkout starts.
+  sed -i "s/^engine: \"[0-9a-f]*\"/engine: \"$(git -C "$S/engine-seed" rev-parse HEAD)\"/" "$S/values-seed/hosts/example.yml"
+  gitc init -q "$S/values-seed" && gitc -C "$S/values-seed" add -A && gitc -C "$S/values-seed" commit -q -m one
   # The machine's two checkouts: clones whose origin/main is each origin repository's main.
   git clone -q "$S/engine-seed" "$S/engine"
   git clone -q "$S/values-seed" "$S/config"
@@ -61,6 +62,7 @@ run_pull() {
 #   land kit <message>       the catalog changes a file under lanes/, so the kit's tree moves
 #   land catalog <message>   the catalog changes a file outside lanes/: the engine's commit moves and
 #                            the kit's tree does not
+# A catalog commit reaches the machine only when the values repository pins it (set_pin, release).
 land() {
   local file
   case "$1" in
@@ -90,6 +92,18 @@ heads() { printf '%s %s' "$(engine_head)" "$(config_head)"; }
 record() { printf 'engine=%s config=%s' "$(kit_tree)" "$(config_head)"; }
 origin_of() { git -C "$S/$1-seed" rev-parse main; }
 calls() { wc -l < "$CALLLOG" | tr -d ' '; }
+# set_pin <sha>: the values repository's host file pins that catalog commit (a merge there).
+set_pin() {
+  python3 -c '
+import sys, yaml
+doc = yaml.safe_load(open(sys.argv[1]))
+doc["engine"] = sys.argv[2]
+yaml.safe_dump(doc, open(sys.argv[1], "w"), sort_keys=False)
+' "$S/values-seed/hosts/example.yml" "$1"
+  git -C "$S/values-seed" add hosts/example.yml && land values "pin ${1:0:12}"
+}
+# release: pin the catalog's main as it is now.
+release() { set_pin "$(origin_of engine)"; }
 
 # ---- a first run: nothing recorded, so the machine converges ---------------------------------------
 setup
@@ -103,57 +117,63 @@ expect $? "with no apply recorded it runs provision-host, provision-lane for eac
   && [ "$(git -C "$S/engine" cat-file -t "$(kit_tree)")" = tree ]
 expect $? "the success is recorded under the state directory as the tree of lanes/ in the engine checkout, not the engine's commit, and the values checkout's HEAD"
 
-# ---- the engine is fetched with no credential, the values checkout with the deploy key --------------
-[ "$(grep -c "^fetch $S/engine ssh=none$" "$S/fetch.log")" = 1 ]; expect $? "the engine checkout is fetched with no ssh command or key: it is public"
-[ "$(grep -cxF "fetch $S/config ssh=ssh -i $S/etc/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new" "$S/fetch.log")" = 1 ] && [ "$(wc -l < "$S/fetch.log" | tr -d ' ')" = 2 ]
-expect $? "the values checkout is fetched with the deploy key alone (IdentitiesOnly, BatchMode), and nothing else is fetched"
+# ---- the values checkout is fetched with the deploy key; the engine only when its pin moves ---------
+[ "$(grep -cxF "fetch $S/config ssh=ssh -i $S/etc/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new" "$S/fetch.log")" = 1 ] && [ "$(wc -l < "$S/fetch.log" | tr -d ' ')" = 1 ]
+expect $? "the values checkout is fetched with the deploy key alone (IdentitiesOnly, BatchMode), and an engine at its pin is not fetched"
+land kit "release one"; one="$(origin_of engine)"
+land kit "after release one"
+set_pin "$one"
+: > "$CALLLOG"; : > "$S/fetch.log"
+run_pull; rc=$?
+[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$one" ] && [ "$(engine_head)" != "$(origin_of engine)" ] && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ] \
+  && grep -q "engine moved to the pinned ${one:0:12}" "$S/out"
+expect $? "a moved pin moves the engine to the pinned commit, not the catalog's newer main, and applies it"
+[ "$(sed -n 1p "$S/fetch.log")" = "fetch $S/config ssh=ssh -i $S/etc/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new" ] && [ "$(sed -n 2p "$S/fetch.log")" = "fetch $S/engine ssh=none" ]
+expect $? "the values are fetched first, their host file naming the engine commit; then the engine, with no ssh command or key: it is public"
 
-# ---- no change, no apply ---------------------------------------------------------------------------
+# ---- no change, no apply; a catalog merge alone reaches nothing -------------------------------------
 : > "$CALLLOG"
 run_pull; rc=$?
 [ "$rc" -eq 0 ] && [ ! -s "$CALLLOG" ]; expect $? "with no new commit in either repository and the pair applied, a tick applies nothing"
+land kit "merged after the pin"; land catalog "and outside lanes/"
+: > "$CALLLOG"; : > "$S/fetch.log"
+run_pull; rc=$?
+[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ] && ! grep -q " $S/engine " "$S/fetch.log"
+expect $? "a later catalog merge is not picked up: the engine stays at its pin, unfetched, and nothing is applied"
 
-# ---- a catalog merge that touches nothing under lanes/: fast-forward, and nothing to apply ----------
-land catalog "a gate fix"
+# ---- a pin moved over catalog commits outside lanes/: the kit's tree stays, the values commit moves ---
+setup
+run_pull
+land catalog "a gate fix"; land catalog "another"
+kit="$(kit_tree)"; before="$(engine_head)"
+release
 : > "$CALLLOG"
-before="$(engine_head)"; kit="$(kit_tree)"; record_before="$(applied)"
 run_pull; rc=$?
 after="$(engine_head)"
-[ "$rc" -eq 0 ] && [ "$after" != "$before" ] && [ "$after" = "$(origin_of engine)" ] && [ "$(kit_tree)" = "$kit" ]
-expect $? "a catalog commit outside lanes/ is fetched and fast-forwarded to: the engine's commit moves and the kit's tree does not"
-[ ! -s "$CALLLOG" ] && [ "$(applied)" = "$record_before" ] && ! grep -q "converging\|applied" "$S/out"
-expect $? "it applies nothing and leaves the record untouched"
-land catalog "another"; land catalog "and another"
-run_pull; rc=$?
-[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$(origin_of engine)" ] && [ ! -s "$CALLLOG" ] && [ "$(applied)" = "$record_before" ]; expect $? "however many such commits land, the machine stays converged"
+[ "$rc" -eq 0 ] && [ "$after" = "$(origin_of engine)" ] && [ "$after" != "$before" ] && [ "$(kit_tree)" = "$kit" ] && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ]
+expect $? "a pin moved over commits outside lanes/ moves the engine's commit and not the kit's tree, and applies once for the values commit that moved it"
 
-# ---- a merge lands under lanes/: fast-forward, then converge ---------------------------------------
+# ---- a pin moved over a kit change: converge and name the range -------------------------------------
 land kit "a kit fix"
-: > "$CALLLOG"
 before="$(engine_head)"; kit="$(kit_tree)"; values_before="$(config_head)"
-run_pull; rc=$?
-after="$(engine_head)"; now="$(kit_tree)"
-[ "$rc" -eq 0 ] && [ "$after" != "$before" ] && [ "$after" = "$(origin_of engine)" ] && [ "$now" != "$kit" ] && [ "$(config_head)" = "$values_before" ]
-expect $? "a catalog commit under lanes/ is fetched and fast-forwarded to: the kit's tree moves, and the values checkout stays where it was"
-[ "$(calls)" = 4 ] && grep -q "^provision-host example --apply engine=$(git -C "$S/engine" rev-parse --short HEAD) values=$(git -C "$S/config" rev-parse --short HEAD)$" "$CALLLOG"; expect $? "when only the kit moved it applies: host, each lane, then the dashboards, from the updated engine"
-[ "$(applied)" = "$(record)" ] && grep -qF "engine ${before:0:12} -> ${after:0:12} (kit tree ${kit:0:12} -> ${now:0:12}), values ${values_before:0:12} -> ${values_before:0:12}; converging example" "$S/out" \
-  && grep -qF "applied engine ${after:0:12} (kit tree ${now:0:12}) and values ${values_before:0:12} to example" "$S/out"
-expect $? "the new kit tree is recorded beside the values HEAD, and the journal names the engine's commit range"
-land catalog "after the kit fix"; land kit "a second kit fix"
+release
 : > "$CALLLOG"
 run_pull; rc=$?
-[ "$rc" -eq 0 ] && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ]; expect $? "commits in and outside lanes/ landing together apply once"
+after="$(engine_head)"; now="$(kit_tree)"; values_after="$(config_head)"
+[ "$rc" -eq 0 ] && [ "$after" = "$(origin_of engine)" ] && [ "$now" != "$kit" ] && [ "$(calls)" = 4 ] \
+  && grep -q "^provision-host example --apply engine=$(git -C "$S/engine" rev-parse --short HEAD) values=$(git -C "$S/config" rev-parse --short HEAD)$" "$CALLLOG"
+expect $? "a pin moved over a kit change applies host, each lane, then the dashboards, from the moved engine"
+[ "$(applied)" = "$(record)" ] && grep -qF "engine ${before:0:12} -> ${after:0:12} (kit tree ${kit:0:12} -> ${now:0:12}), values ${values_before:0:12} -> ${values_after:0:12}; converging example" "$S/out" \
+  && grep -qF "applied engine ${after:0:12} (kit tree ${now:0:12}) and values ${values_after:0:12} to example" "$S/out"
+expect $? "the new kit tree is recorded beside the values HEAD, and the journal names the engine's commit range"
 
 # ---- a merge lands in the values repository alone ---------------------------------------------------
 land values two
 : > "$CALLLOG"
 before="$(config_head)"; engine_before="$(engine_head)"
 run_pull; rc=$?
-after="$(config_head)"
-[ "$rc" -eq 0 ] && [ "$after" != "$before" ] && [ "$after" = "$(origin_of values)" ] && [ "$(engine_head)" = "$engine_before" ]; expect $? "a new commit on the values repository's origin/main is fetched and fast-forwarded to, and the engine stays where it was"
-[ "$(calls)" = 4 ] && grep -q "^provision-dashboards example --apply engine=$(git -C "$S/engine" rev-parse --short HEAD) values=$(git -C "$S/config" rev-parse --short HEAD)$" "$CALLLOG" && [ "$(applied)" = "$(record)" ]
-expect $? "when only the values HEAD moved it applies the machine again and records the pair"
-# The host file is the values checkout's: a lane dropped there is no longer applied.
+[ "$rc" -eq 0 ] && [ "$(config_head)" != "$before" ] && [ "$(config_head)" = "$(origin_of values)" ] && [ "$(engine_head)" = "$engine_before" ] && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ]
+expect $? "a new values commit is fast-forwarded to and applied, and the engine stays where it was"
 drop_acme_lane
 git -C "$S/values-seed" add hosts/example.yml && land values "drop a lane"
 : > "$CALLLOG"
@@ -161,32 +181,24 @@ run_pull; rc=$?
 [ "$rc" -eq 0 ] && [ "$(calls)" = 3 ] && grep -q "^provision-lane example greenbauer-ci --apply" "$CALLLOG" && ! grep -q "acme-ci" "$CALLLOG" && [ "$(applied)" = "$(record)" ]
 expect $? "the lanes it applies are those of the host file the values checkout now holds"
 
-# ---- the kit and the values move in one tick: one apply ---------------------------------------------
+# ---- a failed apply is not recorded, so the next tick retries ----------------------------------
 setup
 run_pull
-land kit both; land values both
-: > "$CALLLOG"
-run_pull; rc=$?
-[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$(origin_of engine)" ] && [ "$(config_head)" = "$(origin_of values)" ] && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ]
-expect $? "commits in both repositories are fast-forwarded to and applied once, together"
-
-# ---- a failed apply is not recorded, so the next tick retries ----------------------------------
-land kit three
+land kit three; release
 : > "$CALLLOG"
 FAIL_ON="provision-lane:greenbauer-ci" run_pull; rc=$?
 [ "$rc" -ne 0 ] && grep -qF -- "--apply failed for provision-lane.sh:greenbauer-ci; nothing is recorded" "$S/out" && [ "$(applied)" != "$(record)" ]
 expect $? "a failed lane apply exits non-zero and records nothing"
 grep -q "^provision-lane example acme-ci --apply" "$CALLLOG" && grep -q "^provision-dashboards example --apply" "$CALLLOG"; expect $? "a failed lane stops neither the machine's other lanes nor its dashboards"
-land catalog "while the apply is failing"
 : > "$CALLLOG"
 run_pull; rc=$?
-[ "$rc" -eq 0 ] && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ]; expect $? "the next tick retries the same kit and values, though its only new commit is outside lanes/, and records them once it succeeds"
+[ "$rc" -eq 0 ] && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ]; expect $? "the next tick retries the same kit and values, with nothing new, and records them once it succeeds"
 land values three-b
 : > "$CALLLOG"
 FAIL_ON="provision-dashboards" run_pull; rc=$?
 [ "$rc" -ne 0 ] && grep -qF -- "--apply failed for provision-dashboards.sh; nothing is recorded" "$S/out" && [ "$(applied)" != "$(record)" ] && [ "$(calls)" = 4 ]
 expect $? "a failed dashboards apply exits non-zero and records nothing, after the host and every lane were applied"
-land kit four
+land values four
 : > "$CALLLOG"
 FAIL_ON="provision-host" run_pull; rc=$?
 [ "$rc" -ne 0 ] && [ "$(calls)" = 1 ] && grep -q "the lanes were not applied and nothing is recorded" "$S/out" && [ "$(applied)" != "$(record)" ]
@@ -200,26 +212,98 @@ engine_head > "$S/state/applied"
 run_pull; rc=$?
 [ "$rc" -eq 0 ] && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ]; expect $? "a record of one HEAD alone, as an earlier single-checkout pull left it, matches nothing: one apply, then the pair is recorded"
 
-# ---- a change to runners-pull.sh itself applies on the tick that pulls it ---------------------------
+# ---- refused pins: the engine stays, nothing runs or is applied -------------------------------------
+setup
+run_pull
+land kit "release one"; one="$(origin_of engine)"; set_pin "$one"
+run_pull
+land kit "release two"; two="$(origin_of engine)"; set_pin "$two"
+run_pull
+set_pin "$one"
+: > "$CALLLOG"
+run_pull; rc=$?
+[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$one" ] && [ "$(calls)" = 4 ]; expect $? "a pin moved back to an earlier catalog commit checks it out and applies"
+# A commit that is not on the catalog's main: GitHub serves a fork's commit by its id.
+gitc -C "$S/engine-seed" checkout -q -b fork && printf 'evil\n' > "$S/engine-seed/lanes/EVIL" && gitc -C "$S/engine-seed" add lanes/EVIL && gitc -C "$S/engine-seed" commit -q -m fork
+fork="$(git -C "$S/engine-seed" rev-parse HEAD)"; gitc -C "$S/engine-seed" checkout -q main
+set_pin "$fork"
+: > "$CALLLOG"; before="$(applied)"
+run_pull; rc=$?
+[ "$rc" -ne 0 ] && grep -q "the pinned engine $fork is not on the catalog's main; the engine stays at ${one:0:12}" "$S/out" && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ] && [ "$(applied)" = "$before" ]
+expect $? "a pin to a commit that is not on the catalog's main is refused: the engine stays, nothing is applied"
+set_pin "0123456789abcdef0123456789abcdef01234567"
+run_pull; rc=$?
+[ "$rc" -ne 0 ] && grep -q "is not a commit of the catalog" "$S/out" && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ]; expect $? "a pin to a commit the catalog does not have is refused"
+set_pin "${one:0:12}"
+run_pull; rc=$?
+[ "$rc" -ne 0 ] && grep -q "must be a full 40-character lowercase commit id" "$S/out" && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ]; expect $? "a short pin is refused before anything is fetched"
+python3 -c '
+import sys, yaml
+doc = yaml.safe_load(open(sys.argv[1])); doc.pop("engine")
+yaml.safe_dump(doc, open(sys.argv[1], "w"), sort_keys=False)
+' "$S/values-seed/hosts/example.yml" && git -C "$S/values-seed" add hosts/example.yml && land values "no pin"
+run_pull; rc=$?
+[ "$rc" -ne 0 ] && grep -q "pins no engine commit; nothing is applied" "$S/out" && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ]; expect $? "a host file with no pin is refused: nothing follows the catalog's main"
+# A pin to a commit from before engine pins: its runners-pull.sh would follow main again and undo the pin.
+sed -i '/^PINNED_ENGINE=1$/d' "$S/engine-seed/lanes/bin/runners-pull.sh" && gitc -C "$S/engine-seed" commit -q -am "a pull from before pins"
+old="$(origin_of engine)"
+cp "$ROOT/bin/runners-pull.sh" "$S/engine-seed/lanes/bin/runners-pull.sh" && gitc -C "$S/engine-seed" commit -q -am "pins again"
+set_pin "$old"
+run_pull; rc=$?
+[ "$rc" -ne 0 ] && grep -q "the pinned engine $old predates engine pins" "$S/out" && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ] && ! grep -q "running the new copy" "$S/out"
+expect $? "a pin to a commit whose runners-pull.sh predates pins is refused: the engine stays, nothing runs or is applied"
+
+# ---- a change to runners-pull.sh itself applies on the tick that moves the pin to it -----------------
 setup
 run_pull
 sed -i 's/log "applied engine ${engine_head:0:12} (kit tree ${kit_tree:0:12}) and values ${config_head:0:12} to $host"/log "applied engine ${engine_head:0:12} (kit tree ${kit_tree:0:12}) and values ${config_head:0:12} to $host by the new copy"/' "$S/engine-seed/lanes/bin/runners-pull.sh"
 grep -q "by the new copy" "$S/engine-seed/lanes/bin/runners-pull.sh" && gitc -C "$S/engine-seed" add lanes/bin/runners-pull.sh && gitc -C "$S/engine-seed" commit -q -m "new pull"
-land values "beside the new pull"
+release
 : > "$CALLLOG"
 run_pull; rc=$?
 [ "$rc" -eq 0 ] && grep -q "lanes/bin/runners-pull.sh changed in .*; running the new copy" "$S/out" && grep -q "applied engine .* and values .* to example by the new copy" "$S/out" \
   && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ] && [ "$(config_head)" = "$(origin_of values)" ]
-expect $? "a pulled change to runners-pull.sh runs the new copy in its place, which fast-forwards the values checkout, applies the pair once and records it"
-land kit six
+expect $? "a pin moved over a change to runners-pull.sh runs the new copy in its place, which applies the pair once and records it"
+land kit six; release
 : > "$CALLLOG"
 run_pull; rc=$?
-[ "$rc" -eq 0 ] && ! grep -q "running the new copy" "$S/out" && [ "$(calls)" = 4 ]; expect $? "a pull that leaves runners-pull.sh as it was applies without re-running it"
+[ "$rc" -eq 0 ] && ! grep -q "running the new copy" "$S/out" && [ "$(calls)" = 4 ]; expect $? "a pin move that leaves runners-pull.sh as it was applies without re-running it"
+
+# ---- with an allowed-signers file, the pin needs a signed engine/* tag --------------------------------
+setup
+run_pull
+ssh-keygen -q -t ed25519 -N '' -C operator -f "$S/operator" && ssh-keygen -q -t ed25519 -N '' -C other -f "$S/other"
+printf 'operator@example.invalid %s\n' "$(cut -d' ' -f1,2 "$S/operator.pub")" > "$S/etc/engine_signers"
+sign() { gitc -C "$S/engine-seed" -c gpg.format=ssh -c user.signingkey="$S/$1" tag -s -m "$2" "$2" "$3"; }
+run_pull_signed() { RUNNERS_ENGINE_SIGNERS="$S/etc/engine_signers" run_pull; }
+land kit "unsigned release"; unsigned="$(origin_of engine)"; first="$(engine_head)"
+set_pin "$unsigned"
+: > "$CALLLOG"
+run_pull_signed; rc=$?
+[ "$rc" -ne 0 ] && grep -q "no engine/\* tag signed by a key in $S/etc/engine_signers points at the pinned engine $unsigned" "$S/out" && [ "$(engine_head)" = "$first" ] && [ ! -s "$CALLLOG" ]
+expect $? "while the signers file exists, a pin no signed engine/* tag points at is refused: the engine stays, nothing is applied"
+sign other engine/forged "$unsigned"
+run_pull_signed; rc=$?
+[ "$rc" -ne 0 ] && [ "$(engine_head)" = "$first" ] && [ ! -s "$CALLLOG" ]; expect $? "a tag signed by a key the signers file does not list is refused"
+sign operator other/signed "$unsigned"
+run_pull_signed; rc=$?
+[ "$rc" -ne 0 ] && [ "$(engine_head)" = "$first" ]; expect $? "a signed tag outside engine/* does not count"
+sign operator engine/one "$unsigned"
+run_pull_signed; rc=$?
+[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$unsigned" ] && [ "$(calls)" = 4 ]; expect $? "an engine/* tag signed by a listed key lets the engine move to the pin"
+land kit "next"; next="$(origin_of engine)"; sign operator engine/two "$unsigned"
+set_pin "$next"
+: > "$CALLLOG"
+run_pull_signed; rc=$?
+[ "$rc" -ne 0 ] && [ "$(engine_head)" = "$unsigned" ] && [ ! -s "$CALLLOG" ]; expect $? "a signed tag on another commit does not cover the pin"
+: > "$CALLLOG"
+run_pull; rc=$?
+[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$next" ]; expect $? "without the signers file the pin alone moves the engine"
 
 # ---- local modifications are refused, in either checkout -------------------------------------------
 setup
 run_pull
-land kit five; land values five
+land kit five; release
 printf '# edited on the machine\n' >> "$S/config/hosts/example.yml"
 : > "$CALLLOG"; : > "$S/fetch.log"; before="$(heads)"
 run_pull; rc=$?
@@ -240,111 +324,7 @@ run_pull; rc=$?
 [ "$rc" -ne 0 ] && grep -q "hand-added.yml" "$S/out" && [ ! -s "$CALLLOG" ]; expect $? "an untracked file added by hand to the values checkout is one as well"
 rm "$S/config/hosts/hand-added.yml"
 run_pull; rc=$?
-[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$(origin_of engine)" ] && [ "$(config_head)" = "$(origin_of values)" ] && [ "$(applied)" = "$(record)" ]; expect $? "once the edits are gone the next tick fast-forwards both checkouts and converges"
-
-# ---- the host file pins the engine: a catalog merge alone runs nothing --------------------------------
-# set_pin <sha>: the values repository's host file pins that catalog commit (a merge there).
-set_pin() {
-  python3 -c '
-import sys, yaml
-doc = yaml.safe_load(open(sys.argv[1]))
-doc["engine"] = sys.argv[2]
-yaml.safe_dump(doc, open(sys.argv[1], "w"), sort_keys=False)
-' "$S/values-seed/hosts/example.yml" "$1"
-  git -C "$S/values-seed" add hosts/example.yml && land values "pin ${1:0:12}"
-}
-setup
-run_pull
-grep -q "pins no engine commit; following the catalog's main until it does" "$S/out"; expect $? "a host file with no pin follows the catalog's main, and says so"
-land kit "release one"; one="$(origin_of engine)"
-land kit "after release one"
-set_pin "$one"
-: > "$CALLLOG"; : > "$S/fetch.log"
-run_pull; rc=$?
-[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$one" ] && [ "$(engine_head)" != "$(origin_of engine)" ] && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ] \
-  && grep -q "engine moved to the pinned ${one:0:12}" "$S/out"
-expect $? "a pinned host file moves the engine to the pinned commit, not the catalog's newer main, and applies it"
-[ "$(sed -n 1p "$S/fetch.log" | cut -d' ' -f2)" = "$S/config" ] && [ "$(sed -n 2p "$S/fetch.log" | cut -d' ' -f2)" = "$S/engine" ]
-expect $? "the values are fetched before the engine: their host file names the engine commit"
-land kit "merged after the pin"; land catalog "and outside lanes/"
-: > "$CALLLOG"; : > "$S/fetch.log"
-run_pull; rc=$?
-[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ] && ! grep -q " $S/engine " "$S/fetch.log"
-expect $? "a later catalog merge is not picked up: the engine stays at its pin, unfetched, and nothing is applied"
-land kit "release two"; two="$(origin_of engine)"
-set_pin "$two"
-: > "$CALLLOG"
-run_pull; rc=$?
-[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$two" ] && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ]; expect $? "moving the pin in the values repository moves the engine and applies"
-set_pin "$one"
-: > "$CALLLOG"
-run_pull; rc=$?
-[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$one" ] && [ "$(calls)" = 4 ]; expect $? "a pin moved back to an earlier catalog commit checks it out and applies"
-# A commit that is not on the catalog's main: GitHub serves a fork's commit by its id.
-gitc -C "$S/engine-seed" checkout -q -b fork && printf 'evil\n' > "$S/engine-seed/lanes/EVIL" && gitc -C "$S/engine-seed" add lanes/EVIL && gitc -C "$S/engine-seed" commit -q -m fork
-fork="$(git -C "$S/engine-seed" rev-parse HEAD)"; gitc -C "$S/engine-seed" checkout -q main
-set_pin "$fork"
-: > "$CALLLOG"; before="$(applied)"
-run_pull; rc=$?
-[ "$rc" -ne 0 ] && grep -q "the pinned engine $fork is not on the catalog's main; the engine stays at ${one:0:12}" "$S/out" && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ] && [ "$(applied)" = "$before" ]
-expect $? "a pin to a commit that is not on the catalog's main is refused: the engine stays, nothing is applied"
-set_pin "0123456789abcdef0123456789abcdef01234567"
-run_pull; rc=$?
-[ "$rc" -ne 0 ] && grep -q "is not a commit of the catalog" "$S/out" && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ]; expect $? "a pin to a commit the catalog does not have is refused"
-set_pin "${one:0:12}"
-run_pull; rc=$?
-[ "$rc" -ne 0 ] && grep -q "must be a full 40-character lowercase commit id" "$S/out" && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ]; expect $? "a short pin is refused before anything is fetched"
-# A pin to a commit from before engine pins: its runners-pull.sh would follow main again and undo the pin.
-sed -i '/^PINNED_ENGINE=1$/d' "$S/engine-seed/lanes/bin/runners-pull.sh" && gitc -C "$S/engine-seed" commit -q -am "a pull from before pins"
-old="$(origin_of engine)"
-cp "$ROOT/bin/runners-pull.sh" "$S/engine-seed/lanes/bin/runners-pull.sh" && gitc -C "$S/engine-seed" commit -q -am "pins again"
-set_pin "$old"
-: > "$CALLLOG"
-run_pull; rc=$?
-[ "$rc" -ne 0 ] && grep -q "the pinned engine $old predates engine pins" "$S/out" && [ "$(engine_head)" = "$one" ] && [ ! -s "$CALLLOG" ] && ! grep -q "running the new copy" "$S/out"
-expect $? "a pin to a commit whose runners-pull.sh predates pins is refused: the engine stays, nothing runs or is applied"
-# The new runners-pull.sh runs on the tick that moves the pin to it.
-sed -i 's/log "engine moved to the pinned ${pin:0:12}"/log "engine moved to the pinned ${pin:0:12} by the old copy"/' "$S/engine-seed/lanes/bin/runners-pull.sh"
-gitc -C "$S/engine-seed" add lanes/bin/runners-pull.sh && gitc -C "$S/engine-seed" commit -q -m "new pull"
-set_pin "$(origin_of engine)"
-: > "$CALLLOG"
-run_pull; rc=$?
-[ "$rc" -eq 0 ] && grep -q "running the new copy" "$S/out" && [ "$(engine_head)" = "$(origin_of engine)" ] && [ "$(calls)" = 4 ] && [ "$(applied)" = "$(record)" ]
-expect $? "a pin moved over a change to runners-pull.sh runs the new copy, which applies once"
-
-# ---- with an allowed-signers file, the pin needs a signed engine/* tag --------------------------------
-setup
-ssh-keygen -q -t ed25519 -N '' -C operator -f "$S/operator" && ssh-keygen -q -t ed25519 -N '' -C other -f "$S/other"
-printf 'operator@example.invalid %s\n' "$(cut -d' ' -f1,2 "$S/operator.pub")" > "$S/etc/engine_signers"
-sign() { gitc -C "$S/engine-seed" -c gpg.format=ssh -c user.signingkey="$S/$1" tag -s -m "$2" "$2" "$3"; }
-land kit "unsigned release"; unsigned="$(origin_of engine)"
-run_pull_signed() { RUNNERS_ENGINE_SIGNERS="$S/etc/engine_signers" run_pull; }
-: > "$CALLLOG"
-run_pull_signed; rc=$?
-[ "$rc" -ne 0 ] && grep -q "pins no engine commit and $S/etc/engine_signers exists, so main is not followed unsigned" "$S/out" && [ ! -s "$CALLLOG" ]
-expect $? "while the signers file exists, a host file with no pin is refused rather than followed to main"
-set_pin "$unsigned"
-: > "$CALLLOG"
-run_pull_signed; rc=$?
-[ "$rc" -ne 0 ] && grep -q "no engine/\* tag signed by a key in $S/etc/engine_signers points at the pinned engine $unsigned" "$S/out" && [ "$(engine_head)" != "$unsigned" ] && [ ! -s "$CALLLOG" ]
-expect $? "while the signers file exists, a pin no signed engine/* tag points at is refused: the engine stays, nothing is applied"
-sign other engine/forged "$unsigned"
-run_pull_signed; rc=$?
-[ "$rc" -ne 0 ] && [ "$(engine_head)" != "$unsigned" ] && [ ! -s "$CALLLOG" ]; expect $? "a tag signed by a key the signers file does not list is refused"
-sign operator other/signed "$unsigned"
-run_pull_signed; rc=$?
-[ "$rc" -ne 0 ] && [ "$(engine_head)" != "$unsigned" ]; expect $? "a signed tag outside engine/* does not count"
-sign operator engine/one "$unsigned"
-run_pull_signed; rc=$?
-[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$unsigned" ] && [ "$(calls)" = 4 ]; expect $? "an engine/* tag signed by a listed key lets the engine move to the pin"
-land kit "next"; next="$(origin_of engine)"; sign operator engine/two "$(git -C "$S/engine-seed" rev-parse HEAD~1)"
-set_pin "$next"
-: > "$CALLLOG"
-run_pull_signed; rc=$?
-[ "$rc" -ne 0 ] && [ "$(engine_head)" = "$unsigned" ] && [ ! -s "$CALLLOG" ]; expect $? "a signed tag on another commit does not cover the pin"
-: > "$CALLLOG"
-run_pull; rc=$?
-[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$next" ]; expect $? "without the signers file the pin alone moves the engine"
+[ "$rc" -eq 0 ] && [ "$(engine_head)" = "$(origin_of engine)" ] && [ "$(config_head)" = "$(origin_of values)" ] && [ "$(applied)" = "$(record)" ]; expect $? "once the edits are gone the next tick fast-forwards the values, moves the engine to its pin and converges"
 
 # ---- what it needs before it does anything --------------------------------------------------------
 setup
