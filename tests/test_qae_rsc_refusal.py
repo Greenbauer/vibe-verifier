@@ -20,7 +20,7 @@ class RscRefusal(unittest.TestCase):
         self.work = tempfile.mkdtemp(prefix="vv-rsc-refusal-")
         self.addCleanup(shutil.rmtree, self.work, True)
 
-    def artifacts_gate(self, *paths):
+    def artifacts_gate(self, *paths, declared=DECLARED):
         artifacts = os.path.join(self.work, "qae-artifacts")
         shutil.rmtree(artifacts, True)
         write(artifacts, {
@@ -28,12 +28,17 @@ class RscRefusal(unittest.TestCase):
             "console-1.log": "".join("[  9%02dms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ %s%s:0\n"
                                      % (n, SITE, path) for n, path in enumerate(paths)),
             "session-1/session.md": session_with(CLEAN_REQUESTS + ["[GET] %s%s => [404] Not Found" % (SITE, path) for path in paths])})
-        write(self.work, {"pr-body.md": DECLARED, "site-url": SITE + "\n"})
+        write(self.work, {"pr-body.md": declared, "site-url": SITE + "\n"})
         return gate("qae-artifacts", self.repo, "--artifacts", artifacts, "--criteria", os.path.join(self.work, "pr-body.md"),
                     "--site-file", os.path.join(self.work, "site-url"))
 
     def test_the_rsc_fetch_of_a_declared_page_is_expected(self):
         result = self.artifacts_gate("/customers/9", "/customers/9?_rsc=j5eJ_0D-TpGjlyyb")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_only_rsc_is_dropped_beside_a_declared_query(self):
+        declared = DECLARED.replace("/customers/{id})", "/customers/{id}?tab=a)")
+        result = self.artifacts_gate("/customers/9?tab=a&_rsc=x1", "/customers/9?_rsc=x1&tab=a", declared=declared)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_another_path_or_another_query_is_still_not_expected(self):
