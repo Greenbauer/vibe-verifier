@@ -158,11 +158,15 @@ class StandIns(unittest.TestCase):
 
     def test_a_file_whose_only_failure_there_is_a_module_the_fix_adds_still_does_not_show_the_bug(self):
         # Every use of the stand-in module, a name imported from it or one read off it, fails as the module missing.
-        changed = {"shop/price.py": PY_FIX, "shop/rounding.py": "def cents(x):\n    return round(x, 2)\n\n\nPLACES = 2\n__version__ = '1'\n"}
+        changed = {"shop/price.py": PY_FIX, "shop/rounding.py": "def cents(x):\n    return round(x, 2)\n\n\nPLACES = 2\n__version__ = '1'\n\n\nclass Thing(ValueError):\n    pass\n"}
         header = HEADER.replace("from shop.price import discount, member_price\n",
                                 "import shop.rounding\nfrom shop.price import discount\nfrom shop.rounding import cents\n")
         uses = ["    def test_cents(self):\n        self.assertEqual(cents(1.234), 1.23)\n",
-                "    def test_places(self):\n        self.assertIs(shop.rounding.PLACES, 2)\n"]
+                "    def test_places(self):\n        self.assertIs(shop.rounding.PLACES, 2)\n",
+                # A TypeError whose stand-in is only read off the module on the failing line, in no frame's locals.
+                "    def test_thing(self):\n        self.assertTrue(issubclass(shop.rounding.Thing, ValueError))\n",
+                "    def test_caught(self):\n        try:\n            raise ValueError('x')\n        except (shop.rounding.Thing, ValueError):\n"
+                "            pass\n"]
         # A star import binds nothing from a stand-in, so it stops the file as the module missing (a test reading
         # `cents` would otherwise fail on a NameError, the bug shown); a dunder it has none of stays the name missing.
         star = header.replace("from shop.rounding import cents", "from shop.rounding import *")

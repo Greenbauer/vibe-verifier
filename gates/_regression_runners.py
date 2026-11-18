@@ -214,8 +214,8 @@ def lacking_names(runs, wanted):
     for path, run in runs.items():
         name = CANNOT_IMPORT.match(run.load_error or "")
         module = NO_MODULE.fullmatch(run.load_error or "")
-        # A module stood in whole raises "cannot import name" only for a dunder (`from it import __version__`),
-        # which it has none of: that file stays as it is, the name missing.
+        # A module stood in whole raises "cannot import name" for a dunder (`from it import __version__`), which it has
+        # none of, or when it was found for real on the rerun and lacks the name: that file stays as it is, the name missing.
         if name and name.group(2) in wanted and wanted[name.group(2)] is None:
             continue
         if name and name.group(1) not in wanted.get(name.group(2), []):
