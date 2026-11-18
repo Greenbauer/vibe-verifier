@@ -1,7 +1,8 @@
 """regression-test-fails-on-base on a Python test file that imports a name the fix adds beside names that already
-exist. On the code before the fix the file does not load, so before the gate stood the new name in, none of its
-tests ran there and the gate read "fails only because `<name>` is missing" even when the file's other tests fail
-there through the old code (PR #318: `from dashboard.bot_runs import job_named, pulls_bot_jobs`)."""
+exist, or a module the fix adds. On the code before the fix the file does not load, so before the gate stood the new
+name or module in, none of its tests ran there and the gate read "fails only because `<name>` is missing" even when
+the file's other tests fail there through the old code (PR #318: `from dashboard.bot_runs import job_named,
+pulls_bot_jobs`; PR #337: helpers moved to a new `gates/_proof_table.py`, imported by a test file another one imports)."""
 import os
 import shutil
 import subprocess
@@ -134,6 +135,41 @@ class StandIns(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("on the code before the fix `member_price` is not in `shop.price` yet, so the file ran again with a "
                       "stand-in for it", result.stderr)
+
+
+    def test_a_test_through_the_old_code_beside_a_module_the_fix_adds_shows_the_bug(self):
+        # PR #337's shape: tests/test_cents.py imports the module the fix adds (a helper moved to a file of its own) and
+        # tests/test_price.py, which tests the old code, reads a constant from tests/test_cents.py as it loads.
+        changed = {"shop/price.py": PY_FIX, "shop/rounding.py": "def cents(x):\n    return round(x, 2)\n",
+                   "tests/test_cents.py": "import unittest\n\nimport shop.rounding\n\nPLACES = 2\n\n\nclass Cents(unittest.TestCase):\n"
+                                          "    def test_cents(self):\n        self.assertEqual(shop.rounding.cents(1.234), 1.23)\n"}
+        header = HEADER.replace("from shop.price import discount, member_price\n",
+                                "import test_cents\nfrom shop.price import discount\n\nPLACES = test_cents.PLACES\n")
+        for runner, test_id in (("unittest", "test_price.Price.test_members_get_ten_percent_off_over_100"),
+                                ("pytest", "tests/test_price.py::Price::test_members_get_ten_percent_off_over_100")):
+            with self.subTest(runner=runner):
+                result = self.judge(runner, [OLD_CODE_TEST], None, changed, header=header)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("tests/test_price.py: %s fails on the code before the fix: AssertionError: 200 != 180" % test_id,
+                              result.stderr)
+                for path in ("tests/test_cents.py", "tests/test_price.py"):
+                    self.assertIn("%s: on the code before the fix `shop.rounding` does not exist yet, so the file ran again "
+                                  "with a stand-in for it" % path, result.stderr)
+
+    def test_a_file_whose_only_failure_there_is_a_module_the_fix_adds_still_does_not_show_the_bug(self):
+        # Every use of the stand-in module, a name imported from it or one read off it, fails as the module missing.
+        changed = {"shop/price.py": PY_FIX, "shop/rounding.py": "def cents(x):\n    return round(x, 2)\n\n\nPLACES = 2\n"}
+        header = HEADER.replace("from shop.price import discount, member_price\n",
+                                "import shop.rounding\nfrom shop.price import discount\nfrom shop.rounding import cents\n")
+        uses = ["    def test_cents(self):\n        self.assertEqual(cents(1.234), 1.23)\n",
+                "    def test_places(self):\n        self.assertIs(shop.rounding.PLACES, 2)\n"]
+        for runner in ("unittest", "pytest"):
+            with self.subTest(runner=runner):
+                result = self.judge(runner, [UNCHANGED_TEST] + uses, None, changed, header=header)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                [message] = [finding["message"] for finding in findings(result) if finding.get("path") == "tests/test_price.py"]
+                self.assertTrue(message.startswith("fails on the code before the fix only because `shop.rounding` is missing "
+                                                   "(ModuleNotFoundError: No module named 'shop.rounding', in "), message)
 
 
 if __name__ == "__main__":
