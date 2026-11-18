@@ -17,7 +17,9 @@ import _pin_merge  # noqa: E402
 LANE = "example-ci"
 
 
-class PinBump(unittest.TestCase):
+class PinBumpHarness(unittest.TestCase):
+    """A catalog source, a fake gh and one consumer; the tests are PinBump's and test_pin_age.py's."""
+
     def setUp(self):
         self.fixtures = tempfile.mkdtemp(prefix="vv-gh-")
         self.addCleanup(shutil.rmtree, self.fixtures, True)
@@ -54,13 +56,16 @@ class PinBump(unittest.TestCase):
         return [c for c in self.calls() if c["method"] not in ("GET",)]
 
     def bump(self, *args):
+        # These commits are a moment old: test_pin_age.py tests the minimum age.
         return runner("apply-down", "--source", self.source, "--source-ref", "main", "--repo", "acme/app",
-                      "--auto", *args, env=self.env)
+                      "--auto", "--min-age-hours", "0", *args, env=self.env)
 
     def busy_lane(self):
         self.serve("acme/app", ".runs.json", {"queued": [{"id": 5, "event": "pull_request"}]})
         self.serve("acme/app", ".jobs.json", [{"status": "queued", "labels": [LANE]}])
 
+
+class PinBump(PinBumpHarness):
     def test_without_act_it_prints_the_decision_and_writes_nothing(self):
         result = self.bump("--now")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -93,7 +98,7 @@ class PinBump(unittest.TestCase):
         self.busy_lane()
         env = dict(self.env, GITHUB_REPOSITORY="acme/app", GITHUB_RUN_ID="5")
         result = runner("apply-down", "--source", self.source, "--source-ref", "main", "--repo", "acme/app",
-                        "--auto", "--lane", LANE, env=env)
+                        "--auto", "--min-age-hours", "0", "--lane", LANE, env=env)
         self.assertIn("bump now: the lane is quiet", result.stdout)
 
     def test_many_recent_runs_are_busy_but_scheduled_ones_do_not_count(self):

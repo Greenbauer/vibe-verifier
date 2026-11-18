@@ -5,7 +5,8 @@ repository has at most one open bump of each level; `--merge` merges them once t
 `--auto` is the scheduled form (actions/pin-bump): it holds a repository whose bump would move a tool
 version, and bumps the rest only when it is time, the rule a wrapper's ruleset pin mover can use for its
 own pins: on demand (`--now`), once the oldest release commit waiting has waited `--overdue-hours`, or
-when the runner lane the bumps' checks run on is quiet. It confirms its own plan's digest, so what it
+when the runner lane the bumps' checks run on is quiet. It pins only a catalog commit `--min-age-hours` old
+(_pin_age.py), so a bad release can be reverted before any repository runs it. It confirms its own plan's digest, so what it
 writes is what it printed.
 """
 import base64
@@ -58,7 +59,10 @@ def add_arguments(parser):
                         "is merge-ready, and close one that conflicts or has nothing left to change (gates/_pin_merge.py); "
                         "with --auto alone, check the token can read the checks a merge reads")
     parser.add_argument("--overdue-hours", type=float, default=6, help="with --auto: bump once the oldest release "
-                        "commit waiting is this old, quiet or not (default 6)")
+                        "commit waiting has been old enough to pin (--min-age-hours) for this long, quiet or not (default 6)")
+    parser.add_argument("--min-age-hours", type=float, default=24, help="with --auto: pin only a catalog commit that has "
+                        "been on main this long, and merge a bump only once the commit it pins has, so a bad commit can "
+                        "be reverted before it spreads (default 24; 0 pins main's newest)")
 
 
 def git(source, *args):
@@ -236,7 +240,8 @@ def when(args, planned, target, release_paths, clock=time.time):
     if args.now:
         return True, "asked to bump now"
     oldest = first_waiting(args.source, planned, target, release_paths)
-    waited = clock() - oldest if oldest is not None else 0
+    # A commit waits from the moment it is old enough to pin, so a quiet lane still matters after the minimum age.
+    waited = clock() - oldest - args.min_age_hours * 3600 if oldest is not None else 0
     if oldest is not None and waited >= args.overdue_hours * 3600:
         return True, "the oldest release commit waiting is %.1fh old (the limit is %gh)" % (waited / 3600, args.overdue_hours)
     if not args.lane:

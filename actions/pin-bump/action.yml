@@ -32,6 +32,11 @@ inputs:
   overdue-hours:
     description: Bump once the oldest release commit waiting is this old, quiet or not.
     default: "6"
+  min-age-hours:
+    description: >-
+      Pin only a catalog commit that has been on main this long, and merge a bump only once the commit it pins has, so
+      a bad release can be reverted before it spreads. overdue-hours counts from the moment a commit is this old.
+    default: "24"
 runs:
   using: composite
   steps:
@@ -46,6 +51,7 @@ runs:
         MERGE: ${{ inputs.merge }}
         LANE: ${{ inputs.lane }}
         OVERDUE_HOURS: ${{ inputs.overdue-hours }}
+        MIN_AGE_HOURS: ${{ inputs.min-age-hours }}
       run: |
         set -euo pipefail
         # Pins are judged against the catalog's main, which this action's own download has no history of. The catalog
@@ -53,7 +59,7 @@ runs:
         catalog="$RUNNER_TEMP/vibe-verifier-catalog"
         rm -rf "$catalog"
         git clone --quiet --filter=blob:none --no-checkout https://github.com/Greenbauer/vibe-verifier.git "$catalog"
-        args=(apply-down --auto --source "$catalog" --source-ref origin/main --overdue-hours "$OVERDUE_HOURS")
+        args=(apply-down --auto --source "$catalog" --source-ref origin/main --overdue-hours "$OVERDUE_HOURS" --min-age-hours "$MIN_AGE_HOURS")
         [ -n "$WRAPPER" ] && args+=(--wrapper "$WRAPPER")
         [ -n "$LANE" ] && args+=(--lane "$LANE")
         [ "$NOW" = true ] && args+=(--now)

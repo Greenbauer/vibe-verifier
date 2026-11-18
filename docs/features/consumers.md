@@ -12,6 +12,7 @@
 - source: `bin/cli/apply_down.py`
 - source: `gates/_pin_bump.py`
 - source: `gates/_pin_merge.py`
+- source: `gates/_pin_age.py`
 - source: `actions/pin-bump/action.yml`
 
 ## Reach
@@ -28,6 +29,10 @@ From a clone with an admin `gh` login: `bin/vibe-verifier consumers --owner <own
 - `tests/test_pin_bump.py::test_an_older_open_bump_is_closed_as_superseded`
 - `tests/test_pin_bump.py::test_an_input_the_action_no_longer_declares_holds_the_bump`
 - `tests/test_pin_bump.py::test_with_merge_open_bumps_are_judged_before_the_plan_and_only_when_it_acts`
+- `tests/test_pin_age.py::test_it_pins_the_newest_catalog_commit_at_least_min_age_old`
+- `tests/test_pin_age.py::test_a_pin_past_the_aged_commit_is_never_moved_back`
+- `tests/test_pin_age.py::test_a_catalog_bump_merges_only_once_its_commit_is_min_age_old`
+- `tests/test_pin_merge.py::test_a_bump_whose_commit_is_too_young_waits_and_is_not_written_to`
 - `tests/test_pin_merge.py::test_a_ready_bump_is_squash_merged_at_the_head_it_judged_and_its_branch_deleted`
 - `tests/test_pin_merge.py::test_a_line_that_is_not_a_catalog_pin_holds_the_bump`
 - `tests/test_pin_merge.py::test_a_changed_file_other_than_a_workflow_holds_the_bump`

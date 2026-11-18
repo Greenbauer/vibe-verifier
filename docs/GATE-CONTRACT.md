@@ -147,7 +147,8 @@ Pins do not wait for someone to run it: [`actions/pin-bump`](../actions/pin-bump
 `apply-down --auto` on a schedule, from a CI repository of each owner with that owner's own app token,
 on that owner's own runner lane. It bumps when the lane the bumps' checks run on is quiet (the
 rule the first wrapper's ruleset pin mover uses: at most 6 unscheduled runs started in the last hour, then no job waiting and at most 2
-running), when the oldest release commit waiting is six hours old, or when dispatched with `now`, and
+running), when the oldest release commit waiting has been old enough to pin for six hours, or when dispatched with `now`. It pins only
+a catalog commit at least `min-age-hours` old (24 by default) and merges a bump only once its commit is, and it
 confirms its own plan's digest. Before planning, it squash-merges each open bump whose diff is pin
 lines only, once the gate job and every other check on its head passed and it is not behind its base
 (merging the base in first), and closes one that conflicts or has nothing left to change.

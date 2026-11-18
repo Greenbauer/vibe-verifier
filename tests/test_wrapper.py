@@ -250,7 +250,7 @@ class Wrapper(unittest.TestCase):
         # wrapper are the wrapper's own job to move, so it neither reads nor writes them.
         self.repo("acme/ci", workflows={"vibe-verifier.yml": gate_workflow(self.old)})
         self.ruleset([(GATE, self.w1)])
-        result = self.apply_down("--auto", "--act", "--now")
+        result = self.apply_down("--auto", "--act", "--now", "--min-age-hours", "0")  # its commits are a moment old
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual([c["endpoint"] for c in self.calls() if c["method"] == "PUT"], ["repos/acme/ci/contents/" + GATE])
         self.assertEqual(len([c for c in self.calls() if c["method"] == "PR"]), 1)

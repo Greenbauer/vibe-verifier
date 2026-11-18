@@ -6,6 +6,7 @@ import hashlib
 import os
 import re
 
+import _pin_age
 import _pin_bump
 import _pin_merge
 from _pin_bump import CannotRead, gh_json, open_bump
@@ -42,7 +43,7 @@ def repo_plan(args, target, wrapper, head, repo):
     skipped = stub_skipped(args, repo, stub, state, pinned, calls)
     if skipped is None:
         return [], []  # discovery: a repository that never subscribed is not a finding
-    catalog = catalog_bumps(args, target, texts) if pinned else []
+    catalog = catalog_bumps(args, target, texts, newer=newer_than(args, target)) if pinned else []
     wrapped = wrapper_bumps(wrapper, head, calls, texts)
     planned = [(repo, None, target, catalog)] if catalog else []
     planned += [(repo, wrapper.repo, head[0], wrapped)] if wrapped else []
@@ -68,12 +69,23 @@ def stub_skipped(args, repo, stub, state, pinned, calls):
     return [] if calls else None
 
 
-def catalog_bumps(args, target, texts):
-    """[(path, [old pins], new text)] for each workflow pinning a catalog action anywhere but a current commit."""
+def newer_than(args, target):
+    """With --auto, a test of whether a pin is a later commit than `target` (an aged target, _pin_age.aged): such a
+    pin is never moved back to it. Without --auto a person chose the target, so none is."""
+    if not args.auto:
+        return lambda sha: False
+    return lambda sha: _pin_bump.is_sha(sha) and sha != target and \
+        _pin_bump.git(args.source, "merge-base", "--is-ancestor", target, sha).returncode == 0
+
+
+def catalog_bumps(args, target, texts, newer=lambda sha: False):
+    """[(path, [old pins], new text)] for each workflow pinning a catalog action anywhere but a current commit or one
+    `newer` than the target."""
     bumps = []
     for path, text in sorted(texts.items()):
         moving = sorted({m.group(2) for m in PIN_LINE.finditer(text)
-                         if m.group(2) != target and not pin_status(args, m.group(2)).startswith("current")})
+                         if m.group(2) != target and not newer(m.group(2))
+                         and not pin_status(args, m.group(2)).startswith("current")})
         if moving:
             bumps.append((path, moving, PIN_LINE.sub(
                 lambda m: "%s%s # main %s" % (m.group(1), target, args._target_date) if m.group(2) in moving else m.group(0), text)))
@@ -121,7 +133,8 @@ def apply_down(args):
     # Before the plan, so a bump merged here is on the base the plan reads, and one opened below waits for its checks.
     merged = 0
     if args.auto and args.merge:
-        merged = (_pin_merge.merge_pass(args._repos, _pin_merge.pinned_from(args.source, target, wrapper)) if args.act
+        merged = (_pin_merge.merge_pass(args._repos, _pin_merge.pinned_from(args.source, args._tip, wrapper),
+                                        _pin_age.too_young(args.source, args.min_age_hours)) if args.act
                   else _pin_merge.probe(args._repos))
     return max(merged, plan_and_open(args, target, wrapper))
 
@@ -158,7 +171,15 @@ def bump_target(args, wrapper):
     resolved = source_git(args, "rev-parse", "--verify", "--quiet", args.to or args.source_ref)
     if resolved.returncode != 0:
         return None, fail("ref %s not found in %s" % (args.to or args.source_ref, args.source))
-    target = resolved.stdout.strip()
+    target = args._tip = resolved.stdout.strip()
+    if args.auto and not args.to and args.min_age_hours > 0:
+        target = _pin_age.aged(args.source, target, args.min_age_hours)
+        if target is None:
+            print("nothing to bump: no commit on %s is %gh old yet (--min-age-hours)" % (args.source_ref, args.min_age_hours))
+            return None, 0
+        # Pins are judged against what may be delivered: a pin whose only newer release commits are too young
+        # is current, so it gets no bump that changes nothing.
+        args.source_ref = target
     # The comment beside the pin says when the pin was taken; a bump that leaves the old date there
     # makes the line lie about the commit next to it.
     args._target_date = source_git(args, "log", "-1", "--date=short", "--format=%cd", target).stdout.strip()
@@ -216,6 +237,10 @@ def open_bumps(args, wrapper, planned):
         branch = "ci/%s-pin-%s" % ("wrapper" if level else "vibe-verifier", to[:10])
         try:
             default_branch = gh_json("repos/%s" % repo)["default_branch"]
+            waiting = _pin_age.newer_open_bump(args.source, repo, to, args._tip) if args.auto and not level else None
+            if waiting:
+                print("%-32s left for its open bump #%s to the newer %s" % (repo, waiting[0], waiting[1]))
+                continue
             existing = gh_json("repos/%s/pulls?head=%s:%s&state=open" % (repo, repo.split("/")[0], branch))
             url = existing[0]["html_url"] if existing else open_bump(repo, changes, to, branch, default_branch, level)
             print("%-32s %s" % (repo, url))
