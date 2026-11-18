@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import gzip
 import json
-import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -65,7 +64,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _accepts_gzip(self) -> bool:
         for item in self.headers.get("Accept-Encoding", "").split(","):
             name, _, params = item.partition(";")
-            if name.strip().lower() == "gzip" and not re.fullmatch(r"\s*q\s*=\s*0(\.0*)?\s*", params):
+            if name.strip().lower() != "gzip":
+                continue
+            weight = params.replace(" ", "").lower()
+            try:
+                return not weight.startswith("q=") or float(weight[2:]) > 0
+            except ValueError:
                 return True
         return False
 
