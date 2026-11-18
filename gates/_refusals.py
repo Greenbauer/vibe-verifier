@@ -19,8 +19,16 @@ def refusal_pattern(target):
     return re.compile("[^/?#]+".join(re.escape(part) for part in exact(target).split("{id}")))
 
 
+def without_rsc(url):
+    """`url` without Next.js's `_rsc` query parameter: an App Router site fetches a page it navigates to again as
+    `<path>?_rsc=<token>`, the same page answering the same refusal. Other parameters are kept as written."""
+    parts = urllib.parse.urlsplit(exact(url))
+    kept = [pair for pair in parts.query.split("&") if pair.split("=", 1)[0] != "_rsc"]
+    return urllib.parse.urlunsplit(parts._replace(query="&".join(kept)))
+
+
 def refusal_expected(expected, status, url):
-    return any(status == want and pattern.fullmatch(exact(url)) for want, pattern in expected)
+    return any(status == want and pattern.fullmatch(without_rsc(url)) for want, pattern in expected)
 
 
 def expected_refusals(items, sites):
