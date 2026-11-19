@@ -181,6 +181,17 @@ class StandIns(unittest.TestCase):
                     [message] = [found["message"] for found in findings(result) if found.get("path") == "tests/test_price.py"]
                     self.assertTrue(message.startswith("fails on the code before the fix only because " + missing), message)
 
+    def test_an_old_code_assertion_beside_a_module_attribute_that_did_not_run_shows_the_bug(self):
+        # The line reads shop.rounding.PLACES only on the side of `and` the failing old discount kept from running.
+        changed = {"shop/price.py": PY_FIX, "shop/rounding.py": "PLACES = 2\n"}
+        header = HEADER.replace("from shop.price import discount, member_price\n", "import shop.rounding\nfrom shop.price import discount\n")
+        test = "    def test_both(self):\n        self.assertTrue(discount(200, True) == 180 and shop.rounding.PLACES == 2)\n"
+        for runner in ("unittest", "pytest"):
+            with self.subTest(runner=runner):
+                result = self.judge(runner, [test], None, changed, header=header)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("test_both fails on the code before the fix: AssertionError", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

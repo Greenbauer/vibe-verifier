@@ -163,14 +163,16 @@ def read_off(value, attributes):
 def held(error):
     """The first stand-in the traceback of `error` holds: a local of a frame it passes through,
     other than a module's (assertRaises's expected exception), or a global a frame's code loads on its failing line, or
-    what that line reads off it through modules (`issubclass(shop.rounding.Thing, ...)`). Read without using it.
+    what that line reads off it through modules (`issubclass(shop.rounding.Thing, ...)`), for an error other than an
+    AssertionError: a use of a stand-in never fails an assertion itself, and the line's other side of an `and` may not have
+    run. Read without using it.
     A module frame's locals are its globals, every name the file imported, so only its failing line counts there."""
-    trace = getattr(error, "__traceback__", None)
+    trace, through = getattr(error, "__traceback__", None), not isinstance(error, AssertionError)
     while trace is not None:
         frame = trace.tb_frame
         local = [] if frame.f_locals is frame.f_globals else list(frame.f_locals.values())
         named = [value for name, attributes in globals_read(frame.f_code, trace.tb_lineno)
-                 for value in read_off(frame.f_globals.get(name), attributes)]
+                 for value in read_off(frame.f_globals.get(name), attributes if through else [])]
         for value in local + named:
             if type(value) is StandIn:
                 return value
