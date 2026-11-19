@@ -19,7 +19,8 @@ assertion there before its tests run (any other error that stops it there means 
 fails when they all pass there, which does not
 reproduce the bug, and when the only failures there are a module, export, file or script the test
 needs not existing yet, which does not show the bug either (a Python file that only lacks a name it imports from
-a module that exists runs again with a stand-in for it, so its other tests are judged). Each runner's structured report decides
+a module that exists, or a module that does not exist yet, runs again with a stand-in for it, so its other tests are
+judged). Each runner's structured report decides
 (Vitest's JSON reporter, node:test's TAP reporter, pytest's reports, unittest's results, a Playwright
 reporter of the gate's), never an exit code.
 

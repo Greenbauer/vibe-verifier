@@ -6,7 +6,8 @@ path and the root is, as under `python -m pytest`. With pytest importable it run
 (the project's own configuration, a collection error not stopping the other files); without it, and
 for a file named with a hyphen or a dot (run by path), each file is loaded the way
 `python -m unittest discover -s <its directory>` would and run by unittest. VV_REGRESSION_STAND_INS
-({module: [name]}) gives a module a stand-in for each name it lacks when it loads (StandInFinder).
+({module: [name]}) gives a module a stand-in for each name it lacks when it loads, and a module mapped to null,
+which no finder finds, a stand-in module whose every name is a stand-in (StandInFinder).
 
 The report: {"files": {absolute path: {"load_error": "Type: message" or null,
 "tests": [[test id, "passed" | "failed" | "skipped", "Type: message" or ""]]}}}. An error is
@@ -14,6 +15,7 @@ the exception's class name and the first line of its message, read from the exce
 from the runner's printed output. Standard library and pytest only, Python 3.8 and later.
 """
 import dis
+import importlib.machinery
 import importlib.util
 import json
 import os
@@ -23,22 +25,26 @@ import unittest
 OUT, FILES = sys.argv[1], [os.path.realpath(path) for path in sys.argv[2:]]
 REPORT = {"files": {path: {"load_error": None, "tests": []} for path in FILES}}
 STAND_INS = json.loads(os.environ.get("VV_REGRESSION_STAND_INS") or "{}")
-ADDED = []  # [module, name] of each stand-in a module was given, for the report
+ADDED = []  # [module, name] of each stand-in a module was given, and [module, null] of each stand-in module, for the report
+READ = {}  # {reading frame: [(line, the stand-in)]} of each name a stand-in module handed out, cleared as each test starts
 
 
 class StandIn:
     """A name a test file imports that its module does not have yet on the code before the fix (the gate's
-    VV_REGRESSION_STAND_INS, {module: [name]}): the file loads and its other tests run. A call, an operator, an
-    attribute or a base class raises the ImportError the import would have raised, which the gate reads as that name
+    VV_REGRESSION_STAND_INS, {module: [name]}), or any name of a module that does not exist there yet (StandInModule):
+    the file loads and its other tests run. A call, an operator, an attribute or a base class raises the ImportError
+    the import would have raised (the ModuleNotFoundError, for a module), which the gate reads as that name or module
     missing; a use that raises another error (issubclass, assertRaises) is read through the error's traceback
     (failure)."""
 
-    def __init__(self, module, name):
-        object.__setattr__(self, "error", "cannot import name '%s' from '%s' (a stand-in: it does not exist before "
-                                          "the fix)" % (name, module))
+    def __init__(self, module, name, whole=False):
+        object.__setattr__(self, "error", missing_module(module) if whole else
+                           (ImportError, "cannot import name '%s' from '%s' (a stand-in: it does not exist before the fix)"
+                            % (name, module)))
 
     def missing(self, *_args, **_kwargs):
-        raise ImportError(object.__getattribute__(self, "error"))
+        kind, message = object.__getattribute__(self, "error")
+        raise kind(message)  # a new one each use: one raised again keeps every earlier use's traceback
 
     def __getattr__(self, name):
         if name.startswith("__") and name.endswith("__"):  # Python's own probes (issubclass reads __bases__)
@@ -46,7 +52,7 @@ class StandIn:
         StandIn.missing(self)
 
     def __repr__(self):
-        return "<%s>" % object.__getattribute__(self, "error")
+        return "<%s>" % object.__getattribute__(self, "error")[1]
 
 
 for _use in ("call getitem setitem delitem iter len bool contains enter exit instancecheck subclasscheck mro_entries eq "
@@ -75,10 +81,40 @@ class StandInLoader:
                 ADDED.append([self.module, name])
 
 
+def missing_module(module):
+    return ModuleNotFoundError, "No module named '%s'" % module
+
+
+class StandInModule:
+    """The loader of a module that does not exist on the code before the fix (a helper the fix moves to a file of its
+    own, say): a package, so a module under it can stand in too, whose every name is a StandIn that raises the
+    ModuleNotFoundError its import would have raised. `from module import *` reads `__all__`, which raises it too:
+    a stand-in module has no names to bind, and a test that then reads one would fail on a NameError, the bug shown."""
+
+    @staticmethod
+    def create_module(spec):
+        return None
+
+    @staticmethod
+    def exec_module(module):
+        def stand_in(name):
+            if name == "__all__":
+                kind, message = missing_module(module.__name__)
+                raise kind(message)
+            if name.startswith("__") and name.endswith("__"):
+                raise AttributeError(name)
+            reader = sys._getframe(1)
+            found = StandIn(module.__name__, name, whole=True)
+            READ.setdefault(reader, []).append((reader.f_lineno, found))
+            return found
+        module.__getattr__ = stand_in
+        ADDED.append([module.__name__, None])
+
+
 class StandInFinder:
     """First on sys.meta_path: a module of STAND_INS is found by the finders after it, when and where the test
     file's own import finds it (after conftest.py, pytest's pythonpath, the file's own setup), and loaded through
-    StandInLoader."""
+    StandInLoader; one mapped to null that none of them finds is a StandInModule."""
 
     @staticmethod
     def find_spec(fullname, path=None, target=None):
@@ -87,9 +123,11 @@ class StandInFinder:
         for finder in sys.meta_path:
             spec = None if finder is StandInFinder or not hasattr(finder, "find_spec") else finder.find_spec(fullname, path, target)
             if spec is not None:
-                if hasattr(spec.loader, "exec_module"):
+                if STAND_INS[fullname] is not None and hasattr(spec.loader, "exec_module"):
                     spec.loader = StandInLoader(spec.loader, fullname)
                 return spec
+        if STAND_INS[fullname] is None:
+            return importlib.machinery.ModuleSpec(fullname, StandInModule, is_package=True)
         return None
 
 
@@ -104,16 +142,32 @@ def globals_read(code, line):
     return found
 
 
+def lines_of(trace):
+    """The first and last line of the instruction a traceback entry failed on: a call wrapped over lines spans them all
+    (Python 3.11 and later); before, its line."""
+    positions = getattr(trace.tb_frame.f_code, "co_positions", None)
+    if positions is not None and trace.tb_lasti >= 0:
+        first, last = list(positions())[trace.tb_lasti // 2][:2]
+        if first is not None:
+            return first, last if last is not None else first
+    return trace.tb_lineno, trace.tb_lineno
+
+
 def held(error):
-    """The first stand-in the traceback of `error` holds: a local of a frame it passes through,
-    other than a module's (assertRaises's expected exception), or a global a frame's code loads on its failing line. Read without using it.
-    A module frame's locals are its globals, every name the file imported, so only its failing line counts there."""
+    """The first stand-in the traceback of `error` holds: a local of a frame it passes through, other than a module's
+    (assertRaises's expected exception), a global a frame's code loads on its failing line, or a name a stood-in
+    module handed out to that frame, in this test, on the lines of its failing instruction (READ: `issubclass(shop.rounding.Thing,
+    ...)`, `x is shop.rounding.y`, also wrapped over lines).
+    Read without using it. A module frame's locals are its globals, every name the file imported, so only its failing
+    line counts there."""
     trace = getattr(error, "__traceback__", None)
     while trace is not None:
         frame = trace.tb_frame
         local = [] if frame.f_locals is frame.f_globals else list(frame.f_locals.values())
         named = [frame.f_globals.get(name) for name in sorted(globals_read(frame.f_code, trace.tb_lineno))]
-        for value in local + named:
+        first, last = lines_of(trace)
+        handed = [found for line, found in READ.get(frame, ()) if first <= line <= last]
+        for value in local + named + handed:
             if type(value) is StandIn:
                 return value
         trace = trace.tb_next
@@ -125,7 +179,8 @@ def failure(error):
     traceback holds one (issubclass and assertRaises raise TypeError on it). An ImportError keeps its own: it
     already names what is missing, and the line of a `from ... import` that failed names the stand-ins before it."""
     stand_in = None if isinstance(error, ImportError) else held(error)
-    return described(error) if stand_in is None else "ImportError: " + object.__getattribute__(stand_in, "error")
+    return described(error) if stand_in is None else "%s: %s" % (object.__getattribute__(stand_in, "error")[0].__name__,
+                                                                   object.__getattribute__(stand_in, "error")[1])
 
 
 def described(error):
@@ -163,6 +218,10 @@ class Recorder:
         if report.failed and report.nodeid:
             self.broken.setdefault(report.nodeid, self.crash(report))
 
+    @staticmethod
+    def pytest_runtest_logstart(nodeid, location):
+        READ.clear()
+
     def pytest_runtest_logreport(self, report):
         outcome = self.tests.setdefault(report.nodeid, ["passed", ""])
         if report.failed and outcome[0] != "failed":
@@ -185,6 +244,10 @@ class Result(unittest.TestResult):
     def __init__(self, tests):
         super().__init__()
         self.outcomes = tests
+
+    def startTest(self, test):
+        READ.clear()
+        super().startTest(test)
 
     def addSuccess(self, test):
         self.outcomes.append([test.id(), "passed", ""])
@@ -217,6 +280,9 @@ def with_unittest(paths):
             spec.loader.exec_module(module)
             suite = unittest.defaultTestLoader.loadTestsFromModule(module)
         except BaseException as error:  # a test module that raises, or exits, while it loads did not load
+            # and, as Python's own import does, leaves no half-run module behind: a test file importing it after this
+            # one runs it again and stops on the same error, not on a name the half-run module never reached.
+            sys.modules.pop(name, None)
             found["load_error"] = failure(error)
             continue
         suite.run(Result(found["tests"]))

@@ -1,7 +1,8 @@
 """regression-test-fails-on-base on a Python test file that imports a name the fix adds beside names that already
-exist. On the code before the fix the file does not load, so before the gate stood the new name in, none of its
-tests ran there and the gate read "fails only because `<name>` is missing" even when the file's other tests fail
-there through the old code (PR #318: `from dashboard.bot_runs import job_named, pulls_bot_jobs`)."""
+exist, or a module the fix adds. On the code before the fix the file does not load, so before the gate stood the new
+name or module in, none of its tests ran there and the gate read "fails only because `<name>` is missing" even when
+the file's other tests fail there through the old code (PR #318: `from dashboard.bot_runs import job_named,
+pulls_bot_jobs`; PR #337: helpers moved to a new `gates/_proof_table.py`, imported by a test file another one imports)."""
 import os
 import shutil
 import subprocess
@@ -134,6 +135,82 @@ class StandIns(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("on the code before the fix `member_price` is not in `shop.price` yet, so the file ran again with a "
                       "stand-in for it", result.stderr)
+
+
+    def test_a_test_through_the_old_code_beside_a_module_the_fix_adds_shows_the_bug(self):
+        # PR #337's shape: tests/test_cents.py imports the module the fix adds (a helper moved to a file of its own) and
+        # tests/test_price.py, which tests the old code, reads a constant from tests/test_cents.py as it loads.
+        changed = {"shop/price.py": PY_FIX, "shop/rounding.py": "def cents(x):\n    return round(x, 2)\n",
+                   "tests/test_cents.py": "import unittest\n\nimport shop.rounding\n\nPLACES = 2\n\n\nclass Cents(unittest.TestCase):\n"
+                                          "    def test_cents(self):\n        self.assertEqual(shop.rounding.cents(1.234), 1.23)\n"}
+        header = HEADER.replace("from shop.price import discount, member_price\n",
+                                "import test_cents\nfrom shop.price import discount\n\nPLACES = test_cents.PLACES\n")
+        for runner, test_id in (("unittest", "test_price.Price.test_members_get_ten_percent_off_over_100"),
+                                ("pytest", "tests/test_price.py::Price::test_members_get_ten_percent_off_over_100")):
+            with self.subTest(runner=runner):
+                result = self.judge(runner, [OLD_CODE_TEST], None, changed, header=header)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("tests/test_price.py: %s fails on the code before the fix: AssertionError: 200 != 180" % test_id,
+                              result.stderr)
+                for path in ("tests/test_cents.py", "tests/test_price.py"):
+                    self.assertIn("%s: on the code before the fix `shop.rounding` does not exist yet, so the file ran again "
+                                  "with a stand-in for it" % path, result.stderr)
+
+    def test_a_file_whose_only_failure_there_is_a_module_the_fix_adds_still_does_not_show_the_bug(self):
+        # Every use of the stand-in module, a name imported from it or one read off it, fails as the module missing.
+        changed = {"shop/price.py": PY_FIX, "shop/rounding.py": "def cents(x):\n    return round(x, 2)\n\n\nPLACES = 2\n__version__ = '1'\n\n\nclass Thing(ValueError):\n    pass\n"}
+        header = HEADER.replace("from shop.price import discount, member_price\n",
+                                "import shop.rounding\nfrom shop.price import discount\nfrom shop.rounding import cents\n")
+        uses = ["    def test_cents(self):\n        self.assertEqual(cents(1.234), 1.23)\n",
+                "    def test_places(self):\n        self.assertIs(shop.rounding.PLACES, 2)\n",
+                # A stand-in read off the module on the failing line and held in no frame's locals: a TypeError, or an
+                # identity check, which calls nothing on it and fails the assertion.
+                "    def test_moved(self):\n        self.assertTrue(shop.rounding.cents is shop.rounding.cents)\n",
+                # Wrapped over lines: the failing call's span holds the read from Python 3.11, which has co_positions.
+                *(["    def test_wrapped(self):\n        self.assertTrue(\n            shop.rounding.cents is shop.rounding.cents\n        )\n"]
+                  if sys.version_info >= (3, 11) else []),
+                "    def test_thing(self):\n        self.assertTrue(issubclass(shop.rounding.Thing, ValueError))\n",
+                "    def test_caught(self):\n        try:\n            raise ValueError('x')\n        except (shop.rounding.Thing, ValueError):\n"
+                "            pass\n"]
+        # A star import binds nothing from a stand-in, so it stops the file as the module missing (a test reading
+        # `cents` would otherwise fail on a NameError, the bug shown); a dunder it has none of stays the name missing.
+        star = header.replace("from shop.rounding import cents", "from shop.rounding import *")
+        dunder = header.replace("import cents", "import cents, __version__")
+        for runner in ("unittest", "pytest"):
+            for top, missing in ((header, "`shop.rounding` is missing (ModuleNotFoundError: No module named 'shop.rounding', in "),
+                                 (star, "`shop.rounding` is missing (ModuleNotFoundError: No module named 'shop.rounding')"),
+                                 (dunder, "`__version__` is missing (ImportError: cannot import name '__version__'")):
+                with self.subTest(runner=runner, missing=missing):
+                    result = self.judge(runner, [UNCHANGED_TEST] + uses, None, changed, header=top)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    [message] = [found["message"] for found in findings(result) if found.get("path") == "tests/test_price.py"]
+                    self.assertTrue(message.startswith("fails on the code before the fix only because " + missing), message)
+
+    def test_an_old_code_assertion_beside_a_module_attribute_that_did_not_run_shows_the_bug(self):
+        # The line reads shop.rounding.PLACES only on the side of `and` the failing old discount kept from running.
+        changed = {"shop/price.py": PY_FIX, "shop/rounding.py": "PLACES = 2\n"}
+        header = HEADER.replace("from shop.price import discount, member_price\n", "import shop.rounding\nfrom shop.price import discount\n")
+        test = "    def test_both(self):\n        self.assertTrue(discount(200, True) == 180 and shop.rounding.PLACES == 2)\n"
+        for runner in ("unittest", "pytest"):
+            with self.subTest(runner=runner):
+                result = self.judge(runner, [test], None, changed, header=header)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("test_both fails on the code before the fix: AssertionError", result.stderr)
+
+    def test_a_line_that_read_the_module_in_an_earlier_call_still_shows_the_bug_through_the_old_code(self):
+        # One helper checks cents where the fix moves it and where it was: the call on the module the fix adds fails as
+        # it missing, and the later call on the old module fails through the old code, the bug shown.
+        base = {"shop/__init__.py": "", "shop/price.py": "def cents(x):\n    return x\n"}
+        changed = {"shop/rounding.py": "def cents(x):\n    return round(x, 2)\n", "shop/price.py": "from shop.rounding import cents\n"}
+        header = "import unittest\n\nimport shop.price\nimport shop.rounding\n\n\nclass Price(unittest.TestCase):\n"
+        tests = ["    def check(self, module):\n        self.assertEqual(module.cents(1.234), 1.23)\n",
+                 "    def test_cents_new_home(self):\n        self.check(shop.rounding)\n",
+                 "    def test_cents_old_home(self):\n        self.check(shop.price)\n"]
+        for runner in ("unittest", "pytest"):
+            with self.subTest(runner=runner):
+                result = self.judge(runner, tests, base, changed, header=header)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("test_cents_old_home fails on the code before the fix: AssertionError: 1.234 != 1.23", result.stderr)
 
 
 if __name__ == "__main__":

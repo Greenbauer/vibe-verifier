@@ -25,6 +25,8 @@ CONFIGS = ("vitest.config.", "vite.config.", "vitest.workspace.")
 ADVICE = "Raise --timeout on the base manifest, or split the pull request"
 # Python's message for `from module import name` when the module loaded and has no such name.
 CANNOT_IMPORT = re.compile(r"ImportError: cannot import name '(\w+)' from '([\w.]+)' \(")
+# Python's message for a module that no finder finds (and not "...; 'pkg' is not a package").
+NO_MODULE = re.compile(r"ModuleNotFoundError: No module named '([\w.]+)'")
 PYTHON_RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_regression_python.py")
 
 # What a failure reads like when something the test needs does not exist, one capture group naming it:
@@ -183,34 +185,49 @@ def run_python(repo, python, paths, deadline, timeout, local_names, stand_ins=Fa
     (the run on the code before the fix), a file that did not load only because a module that exists there lacks a
     name it imports (`from shop.price import discount, member_price`, the fix adding member_price) runs again with a
     stand-in for that name (gates/_regression_python.py StandInFinder), added when the module loads, so its tests
-    that do not use the name are judged, and one whose failure comes from it fails as it missing. Again for each new name such a
-    run turns up."""
+    that do not use the name are judged, and one whose failure comes from it fails as it missing. A file that did not
+    load only because a module does not exist there (`from shop.rounding import cents`, the fix moving a helper to a
+    file of its own; or a test file it imports that imports one) runs again with a stand-in module, every name of
+    which fails as the module missing. Again for each new name or module such a run turns up."""
     (runs, _), wanted = python_runs(repo, python, paths, deadline, timeout, local_names, {}), {}
     lacking = lacking_names(runs, wanted) if stand_ins else {}
     while lacking:
         for name, module in lacking.values():
-            wanted[module] = sorted(set(wanted.get(module, [])) | {name})
+            wanted[module] = None if name is None else sorted(set(wanted.get(module, [])) | {name})
         rerun, added = python_runs(repo, python, sorted(lacking), deadline, timeout, local_names, wanted)
         runs.update(rerun)
         for path, (name, module) in sorted(lacking.items()):
-            if (module, name) in added:  # a module that did not load where the import looked got none
-                print("regression-test-fails-on-base: %s: on the code before the fix `%s` is not in `%s` yet, so the file "
-                      "ran again with a stand-in for it" % (path, name, module), file=sys.stderr, flush=True)
+            if (module, name) not in added:  # a module that did not load where the import looked got none
+                continue
+            what = "`%s` does not exist yet" % module if name is None else "`%s` is not in `%s` yet" % (name, module)
+            print("regression-test-fails-on-base: %s: on the code before the fix %s, so the file ran again with a "
+                  "stand-in for it" % (path, what), file=sys.stderr, flush=True)
         lacking = lacking_names(runs, wanted)
     return runs
 
 
 def lacking_names(runs, wanted):
-    """{path: (name, module)} of each file that did not load only because a module lacks a name it imports that
-    `wanted` ({module: [name]}) does not stand in yet."""
-    found = {path: CANNOT_IMPORT.match(run.load_error or "") for path, run in runs.items()}
-    return {path: match.groups() for path, match in found.items()
-            if match and match.group(1) not in wanted.get(match.group(2), [])}
+    """{path: (name, module)} of each file that did not load only because a module lacks a name it imports, or
+    (None, module) because the module does not exist, that `wanted` ({module: [name], or None for the whole module})
+    does not stand in yet."""
+    lacking = {}
+    for path, run in runs.items():
+        name = CANNOT_IMPORT.match(run.load_error or "")
+        module = NO_MODULE.fullmatch(run.load_error or "")
+        # A module stood in whole raises "cannot import name" for a dunder (`from it import __version__`), which it has
+        # none of, or when it was found for real on the rerun and lacks the name: that file stays as it is, the name missing.
+        if name and name.group(2) in wanted and wanted[name.group(2)] is None:
+            continue
+        if name and name.group(1) not in wanted.get(name.group(2), []):
+            lacking[path] = name.groups()
+        elif module and module.group(1) not in wanted:
+            lacking[path] = (None, module.group(1))
+    return lacking
 
 
 def python_runs(repo, python, paths, deadline, timeout, local_names, wanted):
-    """(One run of the files, {(module, name)} of the stand-ins added), each module in `wanted` given a stand-in for
-    each name it lists and lacks."""
+    """(One run of the files, {(module, name)} of the stand-ins added, name None for a stand-in module), each module in
+    `wanted` given a stand-in for each name it lists and lacks, or, mapped to None, standing in whole."""
     with open(PYTHON_RUNNER, encoding="utf-8") as handle:
         source = handle.read()
     scratch, runs = tempfile.mkdtemp(prefix="vv-regression-"), {}

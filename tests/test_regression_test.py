@@ -292,6 +292,8 @@ class Discount(unittest.TestCase):
 PY_PYTEST = "from shop.price import discount\n\n\ndef test_members_get_ten_percent_off_over_100():\n    assert discount(200, True) == 180\n"
 PY_NON_MEMBER = "from shop.price import discount\n\n\ndef test_non_members_pay_full_price():\n    assert discount(200, False) == 200\n"
 PY_MASK = "from shop.mask import mask\n\n\ndef test_masks():\n    assert mask('ab') == '**'\n"
+MASK_MISSING = ("fails on the code before the fix only because `shop.mask` is missing (ModuleNotFoundError: No module named "
+                "'shop.mask', in %s), which does not show the bug")
 
 
 class Python(unittest.TestCase):
@@ -371,8 +373,7 @@ class Python(unittest.TestCase):
         result = fix(repo, {"shop/mask.py": "def mask(s):\n    return '*' * len(s)\n", "scripts/mask-test.py": script},
                      "fix: mask", "", "--python", self.pytest, "--format", "json")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertEqual(findings(result)[1]["message"], "fails on the code before the fix only because `shop.mask` is missing "
-                                                         "(ModuleNotFoundError: No module named 'shop.mask'), which does not show the bug")
+        self.assertEqual(findings(result)[1]["message"], MASK_MISSING % "vv_regression_test_0.Mask.test_masks")
         tree_is_head(self, repo)
 
     def test_pytest_a_test_that_fails_on_the_code_before_the_fix_passes(self):
@@ -391,8 +392,7 @@ class Python(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         _, *per_file = findings(result)
         self.assertEqual([(f["path"], f["message"]) for f in per_file], [
-            ("tests/test_mask.py", "fails on the code before the fix only because `shop.mask` is missing "
-                                   "(ModuleNotFoundError: No module named 'shop.mask'), which does not show the bug"),
+            ("tests/test_mask.py", MASK_MISSING % "tests/test_mask.py::test_masks"),
             ("tests/test_price.py", "its 1 test(s) all pass on the code before the fix, so it does not reproduce the bug")])
         self.assertTrue(Path(repo, "shop/mask.py").exists())
         tree_is_head(self, repo)
