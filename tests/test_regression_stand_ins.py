@@ -166,6 +166,7 @@ class StandIns(unittest.TestCase):
                 # A stand-in read off the module on the failing line and held in no frame's locals: a TypeError, or an
                 # identity check, which calls nothing on it and fails the assertion.
                 "    def test_moved(self):\n        self.assertTrue(shop.rounding.cents is shop.rounding.cents)\n",
+                "    def test_wrapped(self):\n        self.assertTrue(\n            shop.rounding.cents is shop.rounding.cents\n        )\n",
                 "    def test_thing(self):\n        self.assertTrue(issubclass(shop.rounding.Thing, ValueError))\n",
                 "    def test_caught(self):\n        try:\n            raise ValueError('x')\n        except (shop.rounding.Thing, ValueError):\n"
                 "            pass\n"]
@@ -193,6 +194,21 @@ class StandIns(unittest.TestCase):
                 result = self.judge(runner, [test], None, changed, header=header)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("test_both fails on the code before the fix: AssertionError", result.stderr)
+
+    def test_a_line_that_read_the_module_in_an_earlier_call_still_shows_the_bug_through_the_old_code(self):
+        # One helper checks cents where the fix moves it and where it was: the call on the module the fix adds fails as
+        # it missing, and the later call on the old module fails through the old code, the bug shown.
+        base = {"shop/__init__.py": "", "shop/price.py": "def cents(x):\n    return x\n"}
+        changed = {"shop/rounding.py": "def cents(x):\n    return round(x, 2)\n", "shop/price.py": "from shop.rounding import cents\n"}
+        header = "import unittest\n\nimport shop.price\nimport shop.rounding\n\n\nclass Price(unittest.TestCase):\n"
+        tests = ["    def check(self, module):\n        self.assertEqual(module.cents(1.234), 1.23)\n",
+                 "    def test_cents_new_home(self):\n        self.check(shop.rounding)\n",
+                 "    def test_cents_old_home(self):\n        self.check(shop.price)\n"]
+        for runner in ("unittest", "pytest"):
+            with self.subTest(runner=runner):
+                result = self.judge(runner, tests, base, changed, header=header)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("test_cents_old_home fails on the code before the fix: AssertionError: 1.234 != 1.23", result.stderr)
 
 
 if __name__ == "__main__":

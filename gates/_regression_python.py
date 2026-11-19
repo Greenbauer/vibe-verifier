@@ -26,7 +26,7 @@ OUT, FILES = sys.argv[1], [os.path.realpath(path) for path in sys.argv[2:]]
 REPORT = {"files": {path: {"load_error": None, "tests": []} for path in FILES}}
 STAND_INS = json.loads(os.environ.get("VV_REGRESSION_STAND_INS") or "{}")
 ADDED = []  # [module, name] of each stand-in a module was given, and [module, null] of each stand-in module, for the report
-READ = {}  # {(code, line): the stand-in} of each name a stand-in module handed out, where it was read
+READ = {}  # {reading frame: [(line, the stand-in)]} of each name a stand-in module handed out, cleared as each test starts
 
 
 class StandIn:
@@ -104,7 +104,8 @@ class StandInModule:
             if name.startswith("__") and name.endswith("__"):
                 raise AttributeError(name)
             reader = sys._getframe(1)
-            READ[(reader.f_code, reader.f_lineno)] = found = StandIn(module.__name__, name, whole=True)
+            found = StandIn(module.__name__, name, whole=True)
+            READ.setdefault(reader, []).append((reader.f_lineno, found))
             return found
         module.__getattr__ = stand_in
         ADDED.append([module.__name__, None])
@@ -141,10 +142,22 @@ def globals_read(code, line):
     return found
 
 
+def lines_of(trace):
+    """The first and last line of the instruction a traceback entry failed on: a call wrapped over lines spans them all
+    (Python 3.11 and later); before, its line."""
+    positions = getattr(trace.tb_frame.f_code, "co_positions", None)
+    if positions is not None and trace.tb_lasti >= 0:
+        first, last = list(positions())[trace.tb_lasti // 2][:2]
+        if first is not None:
+            return first, last if last is not None else first
+    return trace.tb_lineno, trace.tb_lineno
+
+
 def held(error):
     """The first stand-in the traceback of `error` holds: a local of a frame it passes through, other than a module's
     (assertRaises's expected exception), a global a frame's code loads on its failing line, or a name a stood-in
-    module handed out on that line as it ran (READ: `issubclass(shop.rounding.Thing, ...)`, `x is shop.rounding.y`).
+    module handed out to that frame, in this test, on the lines of its failing instruction (READ: `issubclass(shop.rounding.Thing,
+    ...)`, `x is shop.rounding.y`, also wrapped over lines).
     Read without using it. A module frame's locals are its globals, every name the file imported, so only its failing
     line counts there."""
     trace = getattr(error, "__traceback__", None)
@@ -152,7 +165,9 @@ def held(error):
         frame = trace.tb_frame
         local = [] if frame.f_locals is frame.f_globals else list(frame.f_locals.values())
         named = [frame.f_globals.get(name) for name in sorted(globals_read(frame.f_code, trace.tb_lineno))]
-        for value in local + named + [READ.get((frame.f_code, trace.tb_lineno))]:
+        first, last = lines_of(trace)
+        handed = [found for line, found in READ.get(frame, ()) if first <= line <= last]
+        for value in local + named + handed:
             if type(value) is StandIn:
                 return value
         trace = trace.tb_next
@@ -203,6 +218,10 @@ class Recorder:
         if report.failed and report.nodeid:
             self.broken.setdefault(report.nodeid, self.crash(report))
 
+    @staticmethod
+    def pytest_runtest_logstart(nodeid, location):
+        READ.clear()
+
     def pytest_runtest_logreport(self, report):
         outcome = self.tests.setdefault(report.nodeid, ["passed", ""])
         if report.failed and outcome[0] != "failed":
@@ -225,6 +244,10 @@ class Result(unittest.TestResult):
     def __init__(self, tests):
         super().__init__()
         self.outcomes = tests
+
+    def startTest(self, test):
+        READ.clear()
+        super().startTest(test)
 
     def addSuccess(self, test):
         self.outcomes.append([test.id(), "passed", ""])
