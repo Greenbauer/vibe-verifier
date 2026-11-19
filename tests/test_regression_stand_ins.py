@@ -166,7 +166,9 @@ class StandIns(unittest.TestCase):
                 # A stand-in read off the module on the failing line and held in no frame's locals: a TypeError, or an
                 # identity check, which calls nothing on it and fails the assertion.
                 "    def test_moved(self):\n        self.assertTrue(shop.rounding.cents is shop.rounding.cents)\n",
-                "    def test_wrapped(self):\n        self.assertTrue(\n            shop.rounding.cents is shop.rounding.cents\n        )\n",
+                # Wrapped over lines: the failing call's span holds the read from Python 3.11, which has co_positions.
+                *(["    def test_wrapped(self):\n        self.assertTrue(\n            shop.rounding.cents is shop.rounding.cents\n        )\n"]
+                  if sys.version_info >= (3, 11) else []),
                 "    def test_thing(self):\n        self.assertTrue(issubclass(shop.rounding.Thing, ValueError))\n",
                 "    def test_caught(self):\n        try:\n            raise ValueError('x')\n        except (shop.rounding.Thing, ValueError):\n"
                 "            pass\n"]
