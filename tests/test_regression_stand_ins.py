@@ -163,7 +163,9 @@ class StandIns(unittest.TestCase):
                                 "import shop.rounding\nfrom shop.price import discount\nfrom shop.rounding import cents\n")
         uses = ["    def test_cents(self):\n        self.assertEqual(cents(1.234), 1.23)\n",
                 "    def test_places(self):\n        self.assertIs(shop.rounding.PLACES, 2)\n",
-                # A TypeError whose stand-in is only read off the module on the failing line, in no frame's locals.
+                # A stand-in read off the module on the failing line and held in no frame's locals: a TypeError, or an
+                # identity check, which calls nothing on it and fails the assertion.
+                "    def test_moved(self):\n        self.assertTrue(shop.rounding.cents is shop.rounding.cents)\n",
                 "    def test_thing(self):\n        self.assertTrue(issubclass(shop.rounding.Thing, ValueError))\n",
                 "    def test_caught(self):\n        try:\n            raise ValueError('x')\n        except (shop.rounding.Thing, ValueError):\n"
                 "            pass\n"]

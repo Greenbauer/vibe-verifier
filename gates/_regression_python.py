@@ -20,13 +20,13 @@ import importlib.util
 import json
 import os
 import sys
-import types
 import unittest
 
 OUT, FILES = sys.argv[1], [os.path.realpath(path) for path in sys.argv[2:]]
 REPORT = {"files": {path: {"load_error": None, "tests": []} for path in FILES}}
 STAND_INS = json.loads(os.environ.get("VV_REGRESSION_STAND_INS") or "{}")
 ADDED = []  # [module, name] of each stand-in a module was given, and [module, null] of each stand-in module, for the report
+READ = {}  # {(code, line): the stand-in} of each name a stand-in module handed out, where it was read
 
 
 class StandIn:
@@ -103,8 +103,10 @@ class StandInModule:
                 raise kind(message)
             if name.startswith("__") and name.endswith("__"):
                 raise AttributeError(name)
-            return StandIn(module.__name__, name, whole=True)
-        module.__getattr__, module.__vv_stand_in__ = stand_in, True
+            reader = sys._getframe(1)
+            READ[(reader.f_code, reader.f_lineno)] = found = StandIn(module.__name__, name, whole=True)
+            return found
+        module.__getattr__ = stand_in
         ADDED.append([module.__name__, None])
 
 
@@ -129,51 +131,28 @@ class StandInFinder:
 
 
 def globals_read(code, line):
-    """The globals `code` loads on `line`, each with the attributes read off it in a row (`shop.rounding.Thing` is
-    ("shop", ["rounding", "Thing"])): no keyword, string, comment or local of that name."""
-    found, current, open_row = [], None, False
+    """The names `code` loads as globals on `line`: no attribute, keyword, string, comment or local of that name."""
+    found, current = set(), None
     for instruction in dis.get_instructions(code):
         position = getattr(instruction, "positions", None)  # Python 3.11 and later; before, the line's first only
         current = position.lineno if position is not None else (instruction.starts_line or current)
-        if current != line:
-            continue
-        if instruction.opname in ("LOAD_GLOBAL", "LOAD_NAME", "LOAD_FROM_DICT_OR_GLOBALS"):
-            found.append((instruction.argval, []))
-            open_row = True
-        elif open_row and instruction.opname in ("LOAD_ATTR", "LOAD_METHOD"):
-            found[-1][1].append(instruction.argval)
-        else:
-            open_row = False
+        if current == line and instruction.opname in ("LOAD_GLOBAL", "LOAD_NAME", "LOAD_FROM_DICT_OR_GLOBALS"):
+            found.add(instruction.argval)
     return found
 
 
-def read_off(value, attributes):
-    """Each value a global and the attributes read off it name, through modules only (a module's own dict, or a
-    stand-in module's stand-in), so none of the test's own code runs."""
-    yield value
-    for attribute in attributes:
-        if not isinstance(value, types.ModuleType):
-            return
-        names = vars(value)
-        stood_in = attribute not in names and names.get("__vv_stand_in__")
-        value = StandIn(names["__name__"], attribute, whole=True) if stood_in else names.get(attribute)
-        yield value
-
-
 def held(error):
-    """The first stand-in the traceback of `error` holds: a local of a frame it passes through,
-    other than a module's (assertRaises's expected exception), or a global a frame's code loads on its failing line, or
-    what that line reads off it through modules (`issubclass(shop.rounding.Thing, ...)`), for an error other than an
-    AssertionError: a use of a stand-in never fails an assertion itself, and the line's other side of an `and` may not have
-    run. Read without using it.
-    A module frame's locals are its globals, every name the file imported, so only its failing line counts there."""
-    trace, through = getattr(error, "__traceback__", None), not isinstance(error, AssertionError)
+    """The first stand-in the traceback of `error` holds: a local of a frame it passes through, other than a module's
+    (assertRaises's expected exception), a global a frame's code loads on its failing line, or a name a stood-in
+    module handed out on that line as it ran (READ: `issubclass(shop.rounding.Thing, ...)`, `x is shop.rounding.y`).
+    Read without using it. A module frame's locals are its globals, every name the file imported, so only its failing
+    line counts there."""
+    trace = getattr(error, "__traceback__", None)
     while trace is not None:
         frame = trace.tb_frame
         local = [] if frame.f_locals is frame.f_globals else list(frame.f_locals.values())
-        named = [value for name, attributes in globals_read(frame.f_code, trace.tb_lineno)
-                 for value in read_off(frame.f_globals.get(name), attributes if through else [])]
-        for value in local + named:
+        named = [frame.f_globals.get(name) for name in sorted(globals_read(frame.f_code, trace.tb_lineno))]
+        for value in local + named + [READ.get((frame.f_code, trace.tb_lineno))]:
             if type(value) is StandIn:
                 return value
         trace = trace.tb_next
