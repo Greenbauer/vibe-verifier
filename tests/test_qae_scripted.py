@@ -106,6 +106,16 @@ class PageCaused(ScriptedFixture):
         result = self.fails()
         self.assertIn("was requested by the page too: not excused", result.stdout)
 
+    def test_a_page_request_for_the_same_url_while_the_script_ran_still_fails(self):
+        # The script named the URL once; the page asked for it too while the script ran, so the call logged two lines.
+        entry = refused()[0]
+        write(self.root, {"console-1.log": entry + entry,
+                          "network-1-pages.log": network((404, SITE + GUESSED), (404, SITE + GUESSED)),
+                          "session-1/session.md": navigate() + shot("AC1", 1)
+                          + evaluate(events="- New console entries: qae-artifacts/console-1.log#L1-L2")})
+        result = self.fails()
+        self.assertIn("was requested by the page too: not excused", result.stdout)
+
     def test_more_requests_than_the_script_logged_still_fail(self):
         write(self.root, {"network-1-pages.log": network((404, SITE + GUESSED), (404, SITE + GUESSED))})
         self.fails()
@@ -120,6 +130,7 @@ class PageCaused(ScriptedFixture):
 class Names(unittest.TestCase):
     def test_a_script_names_a_url_whole_or_by_its_path_alone(self):
         url = SITE + "/api/quotes?id=1"
+        self.assertEqual(names("fetch('/api/quotes?id=1'); fetch('%s')" % url, url), 2)
         self.assertTrue(names("fetch('/api/quotes?id=1')", url))
         self.assertTrue(names('fetch("%s")' % url, url))
         self.assertFalse(names("fetch('/api/quotes?id=12')", url))

@@ -9,7 +9,8 @@ failed the run. The page never asked for it, so it is not the site's failure. A 
   is one of the console entries playwright-mcp says a script call logged (the call's `events`, `New console entries:
   <file>#La-Lb`);
 - that call's script names the request's URL as written: the whole URL, or its path (with its query, if it has one)
-  standing alone, not part of a longer path;
+  standing alone, not part of a longer path; a call counts one such line per time its script names the URL, so a page's
+  request for the same URL while the script ran is one line too many;
 - every such console line of that status and URL in the run is one a naming script call logged, and the run's network
   records list that answer under no more request numbers than there are of those lines (the harness's network-*.log
   alone when there is one, each file numbering its own requests), so a page that sent the same request too is still
@@ -18,7 +19,8 @@ failed the run. The page never asked for it, so it is not the site's failure. A 
 The excuse is by status and URL, as a declared refusal's is, and reaches both the request and its console line. A 5xx
 (the server failing whoever asked), a request that failed outright, an uncaught exception and any other console error
 are never excused: a script call's console entries are what appeared while it ran, which may be the page's own. What
-the gate cannot read: whether a page that sent the very same request while the script ran was the one answered.
+the gate cannot read: a script that names a URL without requesting it (a branch it did not take), while the page sent
+that very request as it ran.
 """
 import glob
 import json
@@ -55,14 +57,14 @@ def script_text(args):
 
 
 def names(text, url):
-    """True when the script `text` names `url` as written: the whole URL, or its path and query on their own."""
+    """How many times the script `text` names `url` as written: the whole URL, or its path and query on their own."""
     parts = urllib.parse.urlsplit(url)
     path = parts.path + ("?" + parts.query if parts.query else "")
     origin = "%s://%s" % (parts.scheme, parts.netloc)
     if not path.strip("/"):
-        return False
+        return 0
     pattern = r"(?<![%s])(?:%s)?%s(?![%s])" % (URL_CHAR, re.escape(origin), re.escape(path), URL_CHAR)
-    return re.search(pattern, text) is not None
+    return len(re.findall(pattern, text))
 
 
 def scripted(root, console):
@@ -72,12 +74,15 @@ def scripted(root, console):
         for name, args, result in session:
             if name not in SCRIPTS:
                 continue
-            text = script_text(args)
+            text, own = script_text(args), {}
             for place in console_lines(root, result):
                 refused = ENTRY.match(console.entry(place) or "")
-                if refused and names(text, exact(refused.group("url"))):
-                    found.setdefault((refused.group("status"), exact(refused.group("url"))), set()).add(place)
-    return found
+                if refused:
+                    own.setdefault((refused.group("status"), exact(refused.group("url"))), []).append(place)
+            # One request per time the script names the URL: a line beyond that arrived while it ran, from the page.
+            for (status, url), places in own.items():
+                found.setdefault((status, url), set()).update(places[:names(text, url)])
+    return {answer: places for answer, places in found.items() if places}
 
 
 def everywhere(console):

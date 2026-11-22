@@ -1770,7 +1770,8 @@ fine. The prompt tells the explorer not to do this. The `qae-artifacts` gate exc
   404`, at the request's URL) is one of the console entries playwright-mcp says a script call logged (the call's
   `events` field, `New console entries: <console log>#L<a>-L<b>`);
 - that call's script names the request's URL as written: the whole URL, or its path (with its query, if it has one)
-  standing alone, not as part of a longer path;
+  standing alone, not as part of a longer path. A call counts one such line per time its script names the URL, so a
+  page's own request for the same URL that arrived while the script ran is a line too many;
 - every such console line of that status and URL in the run is one a naming script call logged, and the run's
   network records (the harness's `network-*.log` when there is one) list that answer no more times than there are of
   those lines.
@@ -1780,4 +1781,5 @@ excused or refused to excuse. A 5xx is the server failing whoever asked, so it i
 request that failed outright, an uncaught exception, or any other console error: a script call's console entries are
 what arrived while it ran, which may be the page's own. A page that sends the same request is still judged: its own
 console line, or one more request in the record than the script logged, withdraws the excuse. What the gate cannot
-read is a page that sent the very same request while the script ran, with the script's own request never answered.
+read is a script that names a URL without requesting it (a branch it did not take) while the page sent that very
+request as the script ran.
