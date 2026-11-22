@@ -67,20 +67,24 @@ def names(text, url):
     return len(re.findall(pattern, text))
 
 
+def call_answers(root, console, result):
+    """{(status, URL): [(log, line)]} of the 4xx console lines one call's Result says it logged, in order."""
+    own = {}
+    for place in console_lines(root, result):
+        refused = ENTRY.match(console.entry(place) or "")
+        if refused:
+            own.setdefault((refused.group("status"), exact(refused.group("url"))), []).append(place)
+    return own
+
+
 def scripted(root, console):
-    """{(status, URL): {(log, line)}} of the 4xx console lines script calls logged whose script names the URL."""
+    """{(status, URL): {(log, line)}} of the 4xx console lines script calls logged whose script names the URL: one line
+    per time the script names it, since a line beyond that arrived while it ran, from the page."""
     found = {}
-    for session in session_calls(root):
-        for name, args, result in session:
-            if name not in SCRIPTS:
-                continue
-            text, own = script_text(args), {}
-            for place in console_lines(root, result):
-                refused = ENTRY.match(console.entry(place) or "")
-                if refused:
-                    own.setdefault((refused.group("status"), exact(refused.group("url"))), []).append(place)
-            # One request per time the script names the URL: a line beyond that arrived while it ran, from the page.
-            for (status, url), places in own.items():
+    for name, args, result in (call for session in session_calls(root) for call in session):
+        if name in SCRIPTS:
+            text = script_text(args)
+            for (status, url), places in call_answers(root, console, result).items():
                 found.setdefault((status, url), set()).update(places[:names(text, url)])
     return {answer: places for answer, places in found.items() if places}
 
