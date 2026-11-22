@@ -1756,3 +1756,28 @@ which `acceptance-verdict` judges. A probe the page refused before sending anyth
 outcome and needs no excuse. The step that sends the input must take its own whole-page snapshot right before
 sending it: a walk that entered the value in one step and saved in the next with no snapshot in between, as a
 consumer's walk of 2026-10-08 did, is not excused, so a consumer benefits once its copy of the prompt is refreshed.
+
+### A request the explorer's own script sent
+
+The explorer may run a script in the page (`browser_evaluate`, `browser_run_code`, `browser_run_code_unsafe`) to read
+something a step shows, and a script can `import()` or `fetch()` a path the explorer made up. On a consumer's run of
+2026-11-22 one imported `/_next/static/chunks/components/Background/skyState.js`, a module path no page of the site
+requests; the dev server answered 404, and the run failed on that 404 and its console line although the page was
+fine. The prompt tells the explorer not to do this. The `qae-artifacts` gate excuses such an answer
+([`gates/_scripted.py`](../../gates/_scripted.py)) when:
+
+- it is a 4xx, and Chromium's console line for it (`Failed to load resource: the server responded with a status of
+  404`, at the request's URL) is one of the console entries playwright-mcp says a script call logged (the call's
+  `events` field, `New console entries: <console log>#L<a>-L<b>`);
+- that call's script names the request's URL as written: the whole URL, or its path (with its query, if it has one)
+  standing alone, not as part of a longer path;
+- every such console line of that status and URL in the run is one a naming script call logged, and the run's
+  network records (the harness's `network-*.log` when there is one) list that answer no more times than there are of
+  those lines.
+
+The excuse is by status and URL and reaches both the request and its console line, and the gate prints each answer it
+excused or refused to excuse. A 5xx is the server failing whoever asked, so it is never excused, and neither is a
+request that failed outright, an uncaught exception, or any other console error: a script call's console entries are
+what arrived while it ran, which may be the page's own. A page that sends the same request is still judged: its own
+console line, or one more request in the record than the script logged, withdraws the excuse. What the gate cannot
+read is a page that sent the very same request while the script ran, with the script's own request never answered.

@@ -107,6 +107,8 @@ playwright-mcp and the explorer wrote and refuses on structural facts:
 7. Explorers of one run keep off each other's records: gates/_page_record.py, isolation_findings, says how.
 8. A retry after an environment error counts, and excuses it, only as gates/_retry.py says; else, a finding.
 9. A 400 or 422 to the explorer's invalid-input probe is excused only as gates/_probe.py says.
+10. A 4xx answered to a request the explorer's own script sent (an import() or fetch() of a path it made up) is
+    excused only as gates/_scripted.py says: the page's own requests are still judged.
 
 Exit 2 when the artifact directory is missing, or a --site-file is missing or holds anything but
 http(s) URLs: nothing was adjudicated.
@@ -117,7 +119,7 @@ import os
 import re
 import urllib.parse
 
-from _acceptance import body_criteria, declares_none, named_references, png_size, split_ticket, ticket_items
+from _acceptance import body_criteria, declares_none, png_size, split_ticket, ticket_items
 from _contract import CannotRun, Finding, run_gate
 from _features import add_selection_arguments
 from _page_record import digest, harness_refusals, isolation_findings, page_record
@@ -125,8 +127,9 @@ from _probe import probe_excuses
 from _qae_rules import ENVIRONMENTAL
 from _refusals import declared_refusals, read, refusal_expected
 from _retry import REQUEST, console_excused, exact, retry_checks, same_route
+from _scripted import scripted_excuses
 from _session_log import SAVED_TO, TOOL_CALL, evidence_path
-from _widths import STEP_LINE, widths_findings, width_list  # noqa: F401  (width_list: bin/cli/criteria.py)
+from _widths import STEP_LINE, screenshot_findings, widths_findings, width_list  # noqa: F401  (STEP_LINE, width_list: tests, bin/cli/criteria.py)
 
 GATE = "qae-artifacts"
 # A console log entry: its offset, then text that may run on over the lines after it. The offset is
@@ -162,30 +165,6 @@ def steps_have_screenshots(root):
         return [Finding("no step logs under qae/ (the explorer writes one qae/ACn.md, or qae/TCn.md for a ticket's, "
                         "per criterion)")]
     return screenshot_findings(root, logs + sorted(glob.glob(os.path.join(root, "qae", "features", "*.md"))))
-
-
-def screenshot_findings(root, logs):
-    """A finding per `- step k:` line whose `<log stem>-step-k.png` beside the log is missing or empty."""
-    findings = []
-    for log in logs:
-        stem = os.path.basename(log)[:-3]
-        for line in read(log).splitlines():
-            match = STEP_LINE.match(line)
-            if not match:
-                continue
-            shot = os.path.join(os.path.dirname(log), "%s-step-%s.png" % (stem, match.group("k")))
-            if not os.path.isfile(shot) or os.path.getsize(shot) == 0:
-                findings.append(Finding(missing_screenshot(match.group("k"), line, relative(shot, root)), relative(log, root)))
-    return findings
-
-
-def missing_screenshot(k, line, shot):
-    """The finding for step k, whose screenshot `shot` is missing; a comparison with a reference says so."""
-    named = named_references(line)
-    if not named:
-        return "step %s has no screenshot (expected %s)" % (k, shot)
-    return ("step %s, the comparison with reference %s, has no screenshot (expected %s): a comparison is a step, so "
-            "save its screenshot, at the reference's width, before writing its line" % (k, ", ".join(named), shot))
 
 
 def judged(url, sites):
@@ -387,7 +366,7 @@ def check(args):
     expected, declared = declared_refusals(args, [] if reason else body_criteria(HTML_COMMENT.sub("", body)), ticket, sites)
     expected.add(harness_refusals(root))
     retried, excused = retry_checks(root, args.changed_files)
-    expected.update(excused + probe_excuses(root))
+    expected.update(excused + probe_excuses(root) + scripted_excuses(root))
     return (declared + retried
             + steps_have_screenshots(root)
             + (widths_findings(root, args.widths, criterion_logs(root)) if args.widths else [])

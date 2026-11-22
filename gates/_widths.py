@@ -1,6 +1,7 @@
 """Viewport widths in a QAE run, as the qae-artifacts gate judges them (its rule 6): each criterion's step screenshots,
 with the captures the browser's page hook took of them at the run's other widths (actions/qae-browser/widths.js), must
-include one of each width `--widths` declares. Split from qae_artifacts.py, which reads the rest of the run's evidence."""
+include one of each width `--widths` declares; and its rule 1, that every step line has its screenshot. Split from
+qae_artifacts.py, which reads the rest of the run's evidence."""
 import argparse
 import glob
 import hashlib
@@ -8,7 +9,7 @@ import json
 import os
 import re
 
-from _acceptance import png_size
+from _acceptance import named_references, png_size
 from _contract import Finding
 from _refusals import read
 
@@ -94,3 +95,27 @@ def width_list(text):
     if not widths or any(width < 1 for width in widths):
         raise argparse.ArgumentTypeError("widths are positive whole numbers of pixels, comma-separated: %r" % text)
     return list(dict.fromkeys(widths))
+
+
+def screenshot_findings(root, logs):
+    """A finding per `- step k:` line whose `<log stem>-step-k.png` beside the log is missing or empty."""
+    findings = []
+    for log in logs:
+        stem = os.path.basename(log)[:-3]
+        for line in read(log).splitlines():
+            match = STEP_LINE.match(line)
+            if not match:
+                continue
+            shot = os.path.join(os.path.dirname(log), "%s-step-%s.png" % (stem, match.group("k")))
+            if not os.path.isfile(shot) or os.path.getsize(shot) == 0:
+                findings.append(Finding(missing_screenshot(match.group("k"), line, relative(shot, root)), relative(log, root)))
+    return findings
+
+
+def missing_screenshot(k, line, shot):
+    """The finding for step k, whose screenshot `shot` is missing; a comparison with a reference says so."""
+    named = named_references(line)
+    if not named:
+        return "step %s has no screenshot (expected %s)" % (k, shot)
+    return ("step %s, the comparison with reference %s, has no screenshot (expected %s): a comparison is a step, so "
+            "save its screenshot, at the reference's width, before writing its line" % (k, ", ".join(named), shot))
