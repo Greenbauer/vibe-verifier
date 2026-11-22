@@ -273,7 +273,10 @@ jobs:
                note what you found on the step it belongs to. The harness records every request and console
                message of every page itself, and a gate judges them, so do not call browser_network_requests or
                browser_console_messages to save them: call one only to look into something a step showed, or to
-               save a failed step's records before its retry (below).
+               save a failed step's records before its retry (below). A script you run in the page (browser_evaluate,
+               browser_run_code) reads what the page already has: never import() or fetch() a path the page does not
+               request itself, such as a guessed source module or chunk; a build serves its own file names, and a 404
+               to a path you made up is noise in the run's record.
                A criterion may carry annotations in square brackets, and a gate checks its step log for them:
                - [ref: <key>] names a design reference, qae-inputs/references/<key>.png, which this repository's
                  workflow supplied; qae-inputs/references.md lists each with its width. Open the image and reach the
