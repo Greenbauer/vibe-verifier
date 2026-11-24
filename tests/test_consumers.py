@@ -70,6 +70,29 @@ class Consumers(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("review.yml current drifts from harnesses/review/review.yml outside the pin line", result.stdout)
 
+    def test_a_review_copy_that_types_its_own_model_is_drift(self):
+        # The model is the catalog's, read at the pin (actions/review-model): a copy from before that, or one
+        # that names a model itself, reviews on a model no pin moves.
+        review = (ROOT / "harnesses" / "review" / "review.yml").read_text()
+        pinned = CATALOG_PIN.sub(r"\g<1>%s # main 2026-09-22" % self.new, review)
+        typed = pinned.replace("--model ${{ steps.model.outputs.name }}", "--model claude-example-1")
+        self.assertNotEqual(typed, pinned)
+        self.consumer("acme/app", stub=stub_pinned_to(self.new), workflows={"review.yml": typed})
+        result = self.check("--repo", "acme/app")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("review.yml current drifts from harnesses/review/review.yml outside the pin line", result.stdout)
+
+    def test_a_review_copy_whose_model_pin_is_behind_is_stale(self):
+        # The model is read at the review-model pin, so a copy behind on that pin alone may be behind on the model.
+        review = (ROOT / "harnesses" / "review" / "review.yml").read_text()
+        pinned = CATALOG_PIN.sub(r"\g<1>%s # main 2026-09-22" % self.new, review)
+        behind = pinned.replace("actions/review-model@%s" % self.new, "actions/review-model@%s" % self.old)
+        self.assertNotEqual(behind, pinned)
+        self.consumer("acme/app", stub=stub_pinned_to(self.new), workflows={"review.yml": behind})
+        result = self.check("--repo", "acme/app")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("workflows: review.yml stale (1 release commit behind)", result.stdout)
+
     def test_a_review_copy_that_differs_only_in_its_runs_on_values_is_not_drift(self):
         review = (ROOT / "harnesses" / "review" / "review.yml").read_text()
         pinned = CATALOG_PIN.sub(r"\g<1>%s # main 2026-09-22" % self.new, review)

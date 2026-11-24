@@ -153,7 +153,7 @@ class ApplyDown(unittest.TestCase):
             self.assertEqual([line for line in new_lines if "runs-on:" in line], [line for line in old_lines if "runs-on:" in line])
             self.assertEqual(len(old_lines), len(new_lines))
             differing = [b for a, b in zip(old_lines, new_lines) if a != b]
-            expected = 1 if path.endswith("vibe-verifier.yml") else 2
+            expected = 1 if path.endswith("vibe-verifier.yml") else 3
             self.assertEqual(len(differing), expected, path)
             self.assertTrue(all("@%s # main " % self.new in line for line in differing), differing)
 

@@ -167,7 +167,9 @@ Anything a composite action reads through `$GITHUB_ACTION_PATH/../..` must live 
 path (`gates/`, `bin/`, `actions/`, `consumer/`, `tools/`, `rules/`): that is what makes a change
 to it a stale pin that `apply-down` delivers. `harnesses/` is not one, so a harness copy takes a change
 only by being edited; when the review harness is next changed for real, it becomes
-`actions/review/` with its prompt inside, and the copies shrink to a pin.
+`actions/review/` with its prompt inside, and the copies shrink to a pin. Its model moved first (2026-11-24):
+`actions/review-model` names it, both review steps read it at the pin, and the template types none
+([review harness](../harnesses/review/README.md), "The model follows the pin").
 
 `bin/vibe-verifier consumers --owner OWNER` (or `--repo OWNER/NAME`, repeatable) is the read-only
 inventory and drift check. Through `gh api` it reads each repository's manifest, its stub, and every
