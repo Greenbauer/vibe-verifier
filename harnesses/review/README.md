@@ -10,7 +10,7 @@ a quota failure into a green check). Decided by the operator on 2026-09-21.
 ## The shape
 
 Two jobs on every pull request, in the consumer's own workflow. [`review.yml`](review.yml) is the
-template; the consumer owns `runs-on`, the token secret, and the two catalog pins, which
+template; the consumer owns `runs-on`, the token secret, and the three catalog pins, which
 `consumers` and `apply-down` keep current like the stub's.
 
 1. **review** (the check `Code review: model run`) checks out the head with
@@ -120,6 +120,18 @@ delta only starts further back.
   50 ran out at 51 turns on an 87-file pull request in a consumer repository (2026-09-24),
   which left no receipt, and a re-run failed identically, so a large pull request could never
   pass. Hitting the cap still means no receipt and a red gate.
+- **The model follows the pin.** The review's model is written once, in
+  [`actions/review-model`](../../actions/review-model/action.yml), and both review steps pass that
+  action's `name` output to `--model`: no line of `review.yml` names a model. A copy reads the
+  action at its pin, so choosing a new model is a one-line change to that file, and it reaches a
+  subscribed repository when its pin moves (`apply-down`, or the scheduled
+  [pin bump](../../actions/pin-bump/README.md)), with no edit to any copy. Until then the
+  repository reviews on the model its pin names, and `consumers` reports that pin as `stale`. The
+  step's log line says which model ran. Before 2026-11-24 the name was typed twice in every copy,
+  and a new model reached a repository only when a person copied the file again; a copy that still
+  types one is drift in `consumers` until it is copied again. A copy made from this file is pinned at
+  or after the commit that added the action: at an older pin the action does not exist and the
+  review job fails at setup, red.
 - **The model's tools are the read tools and the inline comment, nothing else.** No Bash. All
   pull-request content is untrusted data to it.
 - **House rules live in the consumer's CLAUDE.md**, pinned to the base. The prompt is the same in
@@ -145,5 +157,6 @@ repository variable to its bot's login (`<app>[bot]`): an update makes that bot 
 
 A change to `review.yml` reaches a copy only when the copy is edited: `apply-down` moves the pins,
 and `consumers` reports a copy that differs from this file outside the lines the consumer owns as
-drift until it is copied again. The job names a copy had before the [check names](../../docs/check-names.md)
+drift until it is copied again. The review model is not such a change: it lives in
+`actions/review-model` and moves with the pin. The job names a copy had before the [check names](../../docs/check-names.md)
 (`review`, `review-verify`) count as this file's.

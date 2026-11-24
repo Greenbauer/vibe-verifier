@@ -365,8 +365,8 @@ class ReviewHarness(unittest.TestCase):
     def test_the_verify_job_runs_the_catalog_manifest_with_placeholder_pins(self):
         text = TEMPLATE.read_text()
         self.assertIn("manifest: .vibe-verifier-review", text)
-        pins = re.findall(r"vibe-verifier/actions/\w+@(\S+)", text)
-        self.assertEqual(pins, ["0" * 40, "0" * 40])
+        pins = re.findall(r"vibe-verifier/actions/[\w-]+@(\S+)", text)
+        self.assertEqual(pins, ["0" * 40] * 3)
         manifest = (ROOT / "harnesses" / "review" / "manifest").read_text()
         self.assertIn("review-receipt --receipt review-inputs/receipt.md --head review-inputs/head.txt --threads review-inputs/threads.json", manifest)
 
