@@ -9,6 +9,7 @@ A model on the Codex CLI grades, cold, whether a repository's tests prove each r
 - source: `gates/proof_audit.py`
 - source: `gates/_proof_audit.py`
 - source: `gates/_proof_table.py`
+- source: `gates/_proof_comment.py`
 - source: `gates/_proof_requirements.py`
 - source: `gates/_plan_store.py`
 - source: `gates/_schema_subset.py`
@@ -19,7 +20,7 @@ A model on the Codex CLI grades, cold, whether a repository's tests prove each r
 
 ## Reach
 
-In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one shard per job on the runner with the Codex login, and verifies in the verify job ([harnesses/proof-audit/README.md](../../harnesses/proof-audit/README.md)); a consumer whose plans live in a plan store gives the plan and verify steps `title`, `plans-endpoint` and `plans-token`, and `soak: "true"` makes the verify step report only. Before pushing, from a clone: `bin/vibe-verifier proof-audit --repo <project> --base-ref main --body <body file outside the project>` (with `--title` and `--plans-endpoint`, the token in `$VV_PLANS_TOKEN`, for a stored plan), which exits as the CI step does.
+In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one shard per job on the runner with the Codex login, and verifies in the verify job, posting one comment per pull request that lists, under the latest table, the earlier commits it judged and what was unproven on each ([harnesses/proof-audit/README.md](../../harnesses/proof-audit/README.md)); a consumer whose plans live in a plan store gives the plan and verify steps `title`, `plans-endpoint` and `plans-token`, and `soak: "true"` makes the verify step report only. Before pushing, from a clone: `bin/vibe-verifier proof-audit --repo <project> --base-ref main --body <body file outside the project>` (with `--title` and `--plans-endpoint`, the token in `$VV_PLANS_TOKEN`, for a stored plan), which exits as the CI step does.
 
 ## Verify
 
@@ -84,6 +85,15 @@ In a QAE workflow, `actions/proof-audit` plans in the criteria job, grades one s
 - `tests/test_proof_audit_ast_truth.py::test_an_assertion_cited_a_few_lines_off_is_proof_where_it_sits`
 - `tests/test_proof_audit_ast_truth.py::test_an_assertion_in_a_helper_or_hook_after_a_test_is_never_that_tests_proof`
 - `tests/test_proof_audit_ast_truth.py::test_the_corpus_has_every_shape`
+- `tests/test_proof_audit_history.py::test_the_first_run_records_its_commit_and_lists_no_earlier_one`
+- `tests/test_proof_audit_history.py::test_a_second_commit_lists_the_first_with_what_was_unproven_there`
+- `tests/test_proof_audit_history.py::test_a_re_run_on_the_same_commit_replaces_its_entry`
+- `tests/test_proof_audit_history.py::test_the_list_keeps_the_newest_thirty_and_fits_a_github_comment`
+- `tests/test_proof_audit_history.py::test_a_comment_written_before_the_history_or_unreadable_starts_a_fresh_one`
+- `tests/test_proof_audit_history.py::test_a_run_that_graded_nothing_is_listed_as_not_graded`
+- `tests/test_proof_audit_history.py::test_unproven_on_one_commit_and_proven_on_the_next_is_read_from_the_data_alone`
+- `tests/test_proof_audit_history.py::test_each_run_edits_one_comment_and_its_history_counts_the_fix`
+- `tests/test_proof_audit_history.py::test_with_no_token_the_summary_has_the_table_and_nothing_is_posted`
 
 ## Gotchas
 

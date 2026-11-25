@@ -31,7 +31,7 @@ JSON) is exit 2, never a pass, and so are grades that do not match harnesses/pro
 Ticket line and no stored plan, or linked sections with no IDs, is a qualified pass, with two exceptions that are findings: a body
 that claims `[req: ID]` items without the Ticket line that would define them, and, with --require-ticket GLOB, a
 pull request that changes a matching file and neither links a section nor says why on a `No ticket: <why>`
-line. --table FILE gets the per-ID table.
+line. --table FILE gets the per-ID table, --verdicts FILE each graded ID's status (gates/_proof_comment.py).
 
 Grades the checkout supplied are never judged: a path the branch tracks at, under or on the way to --grades, or a
 symbolic link in it, is a finding and nothing else is read (gates/_contract.py, planted). The workflow keeps the
@@ -47,7 +47,7 @@ from _affected_graph import JS_EXTENSIONS
 from _affected_tests import JS_TESTS, NODE_TEST
 from _contract import PY_TESTS, CannotRun, Finding, git, matches, planted, qualify, run_gate
 from _proof_audit import SCHEMA
-from _proof_table import proof_summary, table, write_table
+from _proof_table import proof_summary, table, write_table, write_verdicts
 from _proof_requirements import merge_base, requirements, stored, unlinked, where
 from _schema_subset import schema_problem
 from _test_body import (CLOSERS_ONLY, DECLARATION, body_end, bracket_depth, declaration_above, declared_title,
@@ -330,6 +330,7 @@ def check(args):
         if status == "UNPROVEN":
             findings.append(Finding("%s UNPROVEN: %s. Requirement: %s" % (item["id"], detail, item["text"]), *where(item)))
     write_table(args.table, table(rows))
+    write_verdicts(args.verdicts, rows)
     return findings
 
 
@@ -337,6 +338,7 @@ def add_arguments(parser):
     parser.add_argument("--body", required=True, metavar="FILE", help="the pull request's body: its Ticket lines name the requirements")
     parser.add_argument("--grades", required=True, metavar="DIR", help="the grader's <K>.json files (bin/vibe-verifier proof-audit)")
     parser.add_argument("--table", metavar="FILE", help="write the per-ID table, in Markdown, here")
+    parser.add_argument("--verdicts", metavar="FILE", help="write {id: status} here")
     parser.add_argument("--title", default="", help="the pull request's title, read for a `[plan:<id>]` marker as the body is")
     parser.add_argument("--plans-endpoint", default="", metavar="URL", help="a plan store answering GET <URL>/plans/<id> "
                         "(the bearer token in $VV_PLANS_TOKEN): each plan a marker names is graded whole")

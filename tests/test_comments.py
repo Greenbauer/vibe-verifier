@@ -94,14 +94,14 @@ class ProofAudit(unittest.TestCase):
     script that writes the comment."""
     repo, outside, audit = test_proof_audit.ProofAudit.repo, test_proof_audit.ProofAudit.outside, test_proof_audit.ProofAudit.audit
 
-    def comment(self, table):
-        text = (ROOT / "actions" / "proof-audit" / "action.yml").read_text()
-        script = re.search(r"<<'PY'\n(.*?)\n *PY\n", text, re.S).group(1)
-        script = "\n".join(line[8:] for line in script.splitlines())
+    def comment(self, table, previous=None):
         work = self.outside()
         (work / "table.md").write_text(table)
-        result = subprocess.run(["python3", "-c", script, str(work / "table.md"), "<!-- vibe-verifier:proof-audit -->", HEAD,
-                                 "https://github.com/o/r/actions/runs/42", str(work / "out.json")],
+        if previous:
+            (work / "previous.json").write_text(json.dumps({"body": previous}))
+        result = subprocess.run(["python3", str(ROOT / "gates" / "_proof_comment.py"), "--table", str(work / "table.md"),
+                                 "--verdicts", str(work / "none.json"), "--previous", str(work / "previous.json"),
+                                 "--head", HEAD, "--run", "https://github.com/o/r/actions/runs/42", "--out", str(work / "out.json")],
                                 capture_output=True, text=True, env=clean_env())
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads((work / "out.json").read_text())["body"]
@@ -161,6 +161,13 @@ class ProofAudit(unittest.TestCase):
             self.assertIn("On [this commit](https://github.com/o/r/commit/%s). [The run and its evidence]"
                           "(https://github.com/o/r/actions/runs/42)." % HEAD, body)
             self.assertEqual(problems(body), [], (state, body))
+        # With earlier commits listed under the table (gates/_proof_comment.py).
+        earlier = '<!-- vibe-verifier:proof-audit-history {"v":1,"commits":[{"sha":"%s","at":"2026-11-23T09:10Z",' \
+                  '"run":"https://github.com/o/r/actions/runs/41","verdicts":{"C-8":"UNPROVEN","C-15":"PROVEN"}}]} -->' % ("b" * 40)
+        body = self.comment(bodies["proven"], previous="old\n" + earlier)
+        self.assertIn("### Earlier commits", body)
+        self.assertIn("| [2026-11-23 09:10](https://github.com/o/r/commit/%s) | 1 of 2 | C-8 |" % ("b" * 40), body)
+        self.assertEqual(problems(body), [], body)
 
 
 class Receipt(unittest.TestCase):

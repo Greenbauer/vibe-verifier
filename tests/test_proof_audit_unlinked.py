@@ -53,7 +53,8 @@ class Unlinked(unittest.TestCase):
 
     def verify_step(self, repo, body, require_ticket="", grades=(), **inputs):
         """The action's verify step, run as GitHub runs `shell: bash` (with -e), against a grades directory holding
-        `grades` (envelopes), with each other input empty unless `inputs` (VV_SOAK="true", say) sets it."""
+        `grades` (envelopes), with each other input empty unless `inputs` (VV_SOAK="true", say) sets it; given a
+        VV_REPO, the comment step after it too."""
         work = self.outside()
         write(work, {"body.md": body, "summary.md": ""})
         (work / "grades").mkdir()
@@ -67,6 +68,11 @@ class Unlinked(unittest.TestCase):
         result = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c",
                                  action_step("- name: Hold the grades to the repository")], cwd=repo, env=env,
                                 capture_output=True, text=True)
+        if "VV_REPO" in inputs:  # the comment step runs after the gate whatever it concluded, and never fails the job
+            posted = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c",
+                                     action_step("- name: Post the proof audit comment")], cwd=repo, env=env,
+                                    capture_output=True, text=True)
+            self.assertEqual(posted.returncode, 0, posted.stdout + posted.stderr)
         return result, (work / "summary.md").read_text()
 
     def test_the_action_passes_each_glob_and_keeps_the_table_when_the_gate_fails(self):
