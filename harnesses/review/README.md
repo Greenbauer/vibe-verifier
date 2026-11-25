@@ -91,7 +91,8 @@ delta only starts further back.
   limit") or Anthropic's `rate_limit_error` type. A completed review is never limited, so a diff
   that merely contains that wording cannot fake one. The action is pinned at v1.0.171 or later
   because older versions wrote no execution log when the SDK died on a usage limit, which left a
-  limit indistinguishable from a crash.
+  limit indistinguishable from a crash, and at v1.0.270 or later because the review model,
+  `claude-opus-5-5`, needs Claude Code 2.1.280 or later.
 - **A limited pass is visible and temporary.** Unlike the old copy that turned a quota failure
   into a quiet green check, the job warns, the receipt says `limited`, and the scope step never
   anchors on it. The verify gate accepts a `limited` receipt only for the exact head and still
