@@ -16,6 +16,8 @@ import re
 import subprocess  # nosec B404: runs gh and git, the caller's own tools, with fixed arguments
 import time
 
+import _pin_review
+
 #: A bump that moves any of these moves a tool version, and GATE-CONTRACT.md ("Subscribing in CI") asks for
 #: the gate to be swept with --all on every consumer first; --auto holds it for a person.
 TOOL_PATHS = ["gates/_tools.py", "tools"]
@@ -89,15 +91,18 @@ def moved_tools(source, sha, target):
 
 def holds(source, planned, target):
     """{repo: [why]} for each catalog-level bump in `planned` that must wait for a person: it moves a tool version
-    (tool_moves), or a workflow it rewrites passes a `with:` input the action no longer declares at `target`,
-    which would fail every run of that workflow from the merge on."""
+    (tool_moves), a workflow it rewrites passes a `with:` input the action no longer declares at `target`, which
+    would fail every run of that workflow from the merge on, or a review copy it rewrites pins a review action older
+    than the template's at `target` (_pin_review)."""
     held = {repo: ["moves %s, so sweep that gate with --all on every consumer first" % " ".join(paths)]
                    for repo, paths in tool_moves(source, planned, target).items()}
     for repo, level, _, changes in planned:
-        missing = [why for path, _, text in changes for why in undeclared_inputs(source, target, path, text)] if level is None else []
+        missing = [why for path, _, text in changes for why in undeclared_inputs(source, target, path, text)
+                   + _pin_review.stale_review_action(git, source, target, path, text)] if level is None else []
         if missing:
             held.setdefault(repo, []).extend(missing)
     return held
+
 
 
 USES = re.compile(r"^([ \t]*(?:- +)?)uses: *\S*vibe-verifier/actions/([A-Za-z0-9_-]+)@")

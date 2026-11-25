@@ -127,7 +127,10 @@ delta only starts further back.
   action at its pin, so choosing a new model is a one-line change to that file, and it reaches a
   subscribed repository when its pin moves (`apply-down`, or the scheduled
   [pin bump](../../actions/pin-bump/README.md)), with no edit to any copy. Until then the
-  repository reviews on the model its pin names, and `consumers` reports that pin as `stale`. The
+  repository reviews on the model its pin names, and `consumers` reports that pin as `stale`. A new
+  model can need a newer `anthropics/claude-code-action` (`claude-opus-5-5` needs v1.0.270 or later),
+  and that pin is in the copy, so the scheduled pin bump holds a copy whose action pin differs from
+  this template's at the new commit until the copy is copied again. The
   step's log line says which model ran. Before 2026-11-24 the name was typed twice in every copy,
   and a new model reached a repository only when a person copied the file again; a copy that still
   types one is drift in `consumers` until it is copied again. A copy made from this file is pinned at

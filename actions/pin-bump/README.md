@@ -47,7 +47,10 @@ otherwise it merges once its commit is `min-age-hours` old.
    to be swept with `--all` on every consumer first. It opens nothing there and the run exits 1, red,
    naming the files, until a person sweeps and runs `apply-down` by hand. It holds a repository the same
    way when a workflow the bump rewrites passes a `with:` input the action does not declare at the new
-   commit, or names an action that commit does not have: that workflow would fail from the merge on.
+   commit, or names an action that commit does not have: that workflow would fail from the merge on. And it
+   holds a review copy (one that uses `actions/review-model`) that pins `anthropics/claude-code-action` at a
+   commit the review template at the new commit does not: the model moves with the pin, the action only when
+   the copy is copied again, and an action too old for the model fails every review.
 4. Decides whether it is time, with the rule the first wrapper's ruleset pin mover uses for its own pins:
    - `now` is true; or
    - the oldest release commit any bump would deliver became old enough to pin (`min-age-hours` after it

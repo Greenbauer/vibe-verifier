@@ -11,6 +11,7 @@
 - source: `bin/cli/wrapper.py`
 - source: `bin/cli/apply_down.py`
 - source: `gates/_pin_bump.py`
+- source: `gates/_pin_review.py`
 - source: `gates/_pin_merge.py`
 - source: `gates/_pin_age.py`
 - source: `actions/pin-bump/action.yml`
@@ -28,6 +29,7 @@ From a clone with an admin `gh` login: `bin/vibe-verifier consumers --owner <own
 - `tests/test_pin_bump.py::test_a_bump_that_moves_a_tool_version_is_held_and_the_run_says_so`
 - `tests/test_pin_bump.py::test_an_older_open_bump_is_closed_as_superseded`
 - `tests/test_pin_bump.py::test_an_input_the_action_no_longer_declares_holds_the_bump`
+- `tests/test_pin_review.py::test_a_review_copy_pinning_an_older_review_action_than_the_template_holds_the_bump`
 - `tests/test_pin_bump.py::test_with_merge_open_bumps_are_judged_before_the_plan_and_only_when_it_acts`
 - `tests/test_pin_age.py::test_it_pins_the_newest_catalog_commit_at_least_min_age_old`
 - `tests/test_pin_age.py::test_a_pin_past_the_aged_commit_is_never_moved_back`
@@ -47,5 +49,5 @@ From a clone with an admin `gh` login: `bin/vibe-verifier consumers --owner <own
 
 - Only commits under the release paths make a pin stale; a docs-only commit does not.
 - `apply-down` never touches a repository whose stub has drifted, and merges only with `--auto --act --merge` (what actions/pin-bump runs on a schedule, where `act` is true and `merge` defaults to true): a bump whose changed lines are catalog pins alone, each pin moved to the commit its branch is named for and on the catalog's main, at a head where the gate job passed, no check failed or is running, it is not behind its base and GitHub says it merges cleanly. A failed check or a line that is not a pin holds it for a person (a red run).
-- `--auto` holds a bump that moves a tool version or leaves a workflow passing an undeclared input (a red run) and never moves a ruleset.
+- `--auto` holds a bump that moves a tool version, leaves a workflow passing an undeclared input, or leaves a review copy pinning an older `anthropics/claude-code-action` than the review template at the new commit (a red run), and never moves a ruleset.
 - A stub or review copy that still has the workflow and job names from before [check names](../check-names.md) is not drift: those name lines read as the template's new ones, so each repository renames on its own schedule.
