@@ -6,6 +6,8 @@ from pathlib import Path
 from helpers import commit
 from test_apply_down import stub_pinned_to
 from test_pin_bump import PinBumpHarness
+import _pin_bump  # noqa: E402  (gates/ is on the path through helpers)
+import _pin_review  # noqa: E402
 
 
 class PinReview(PinBumpHarness):
@@ -43,6 +45,11 @@ class PinReview(PinBumpHarness):
         result = self.bump("--act", "--now")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(len(self.calls("PR")), 1)
+
+    def test_a_target_without_the_review_template_holds_nothing(self):
+        # A catalog commit from before the template (or a source that cannot show it) is no reason to hold.
+        copy = self.review_copy("a" * 40)
+        self.assertEqual(_pin_review.stale_review_action(_pin_bump.git, self.source, self.new, "review.yml", copy), [])
 
 
 if __name__ == "__main__":
