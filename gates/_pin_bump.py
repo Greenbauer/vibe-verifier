@@ -92,7 +92,7 @@ def moved_tools(source, sha, target):
 def holds(source, planned, target):
     """{repo: [why]} for each catalog-level bump in `planned` that must wait for a person: it moves a tool version
     (tool_moves), a workflow it rewrites passes a `with:` input the action no longer declares at `target`, which
-    would fail every run of that workflow from the merge on, or a review copy it rewrites pins a review action older
+    would fail every run of that workflow from the merge on, or a review copy it rewrites pins a review action other
     than the template's at `target` (_pin_review)."""
     held = {repo: ["moves %s, so sweep that gate with --all on every consumer first" % " ".join(paths)]
                    for repo, paths in tool_moves(source, planned, target).items()}
@@ -102,7 +102,6 @@ def holds(source, planned, target):
         if missing:
             held.setdefault(repo, []).extend(missing)
     return held
-
 
 
 USES = re.compile(r"^([ \t]*(?:- +)?)uses: *\S*vibe-verifier/actions/([A-Za-z0-9_-]+)@")
