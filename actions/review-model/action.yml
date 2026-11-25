@@ -12,7 +12,7 @@ runs:
       shell: bash
       env:
         # The one place the review model is written (harnesses/review/README.md, "The model follows the pin").
-        REVIEW_MODEL: claude-opus-4-7
+        REVIEW_MODEL: claude-opus-5-5
       run: |
         echo "Code review model: ${REVIEW_MODEL}"
         echo "name=${REVIEW_MODEL}" >> "$GITHUB_OUTPUT"
