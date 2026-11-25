@@ -1,5 +1,6 @@
-"""The pin bump's hold for a review copy whose anthropics/claude-code-action is older than the review template's
-(gates/_pin_bump.py `holds`; actions/pin-bump/README.md, "What it does on each run", step 3)."""
+"""The pin bump's hold for a review copy whose anthropics/claude-code-action pin differs from the review template's
+(gates/_pin_bump.py `holds`; actions/pin-bump/README.md, "What it does on each run", step 3). Any difference holds,
+not only an older pin: commits have no order here, and the template is the one pin the catalog tested with its model."""
 import re
 
 REVIEW_MODEL = re.compile(r"uses: *\S*vibe-verifier/actions/review-model@")

@@ -9,16 +9,21 @@ from test_pin_bump import PinBumpHarness
 
 
 class PinReview(PinBumpHarness):
-    def review_copy(self, action_sha):
-        return ("jobs:\n  review:\n    runs-on: x\n    steps:\n"
-                "      - id: model\n        uses: Greenbauer/vibe-verifier/actions/review-model@%s # main x\n"
-                "      - uses: anthropics/claude-code-action@%s # vX\n" % (self.old, action_sha))
+    def review_copy(self, action_sha, model=True):
+        step = "      - id: model\n        uses: Greenbauer/vibe-verifier/actions/review-model@%s # main x\n" % self.old
+        gates = "      - uses: Greenbauer/vibe-verifier/actions/gates@%s # main x\n" % self.old
+        return ("jobs:\n  review:\n    runs-on: x\n    steps:\n%s"
+                "      - uses: anthropics/claude-code-action@%s # vX\n" % (step if model else gates, action_sha))
 
-    def test_a_review_copy_pinning_an_older_review_action_than_the_template_holds_the_bump(self):
-        # The model moves with the pin; the action that runs it moves only when the copy is copied again.
+    def template_needs(self, action_sha):
         commit(self.source, {"actions/review-model/action.yml": "name: x\nruns:\n  using: composite\n",
-                             "harnesses/review/review.yml": self.review_copy("b" * 40)}, "review model needs a newer action")
+                             "actions/gates/action.yml": "name: x\nruns:\n  using: composite\n",
+                             "harnesses/review/review.yml": self.review_copy(action_sha)}, "review model needs a newer action")
         self.consumer("acme/app", stub_pinned_to(self.head()))
+
+    def test_a_review_copy_pinning_a_different_review_action_from_the_template_holds_the_bump(self):
+        # The model moves with the pin; the action that runs it moves only when the copy is copied again.
+        self.template_needs("b" * 40)
         review = Path(self.fixtures) / "acme/app/.github/workflows/review.yml"
         review.write_text(self.review_copy("a" * 40))
         result = self.bump("--act", "--now")
@@ -29,6 +34,14 @@ class PinReview(PinBumpHarness):
         review.write_text(self.review_copy("b" * 40))
         current = self.bump("--act", "--now")
         self.assertEqual(current.returncode, 0, current.stdout + current.stderr)
+        self.assertEqual(len(self.calls("PR")), 1)
+
+    def test_a_workflow_that_does_not_read_the_review_model_is_not_held_for_its_action_pin(self):
+        # Only a copy that takes its model from actions/review-model needs the template's action.
+        self.template_needs("b" * 40)
+        (Path(self.fixtures) / "acme/app/.github/workflows/other.yml").write_text(self.review_copy("a" * 40, model=False))
+        result = self.bump("--act", "--now")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(len(self.calls("PR")), 1)
 
 

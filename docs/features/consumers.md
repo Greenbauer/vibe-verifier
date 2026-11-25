@@ -29,7 +29,7 @@ From a clone with an admin `gh` login: `bin/vibe-verifier consumers --owner <own
 - `tests/test_pin_bump.py::test_a_bump_that_moves_a_tool_version_is_held_and_the_run_says_so`
 - `tests/test_pin_bump.py::test_an_older_open_bump_is_closed_as_superseded`
 - `tests/test_pin_bump.py::test_an_input_the_action_no_longer_declares_holds_the_bump`
-- `tests/test_pin_review.py::test_a_review_copy_pinning_an_older_review_action_than_the_template_holds_the_bump`
+- `tests/test_pin_review.py::test_a_review_copy_pinning_a_different_review_action_from_the_template_holds_the_bump`
 - `tests/test_pin_bump.py::test_with_merge_open_bumps_are_judged_before_the_plan_and_only_when_it_acts`
 - `tests/test_pin_age.py::test_it_pins_the_newest_catalog_commit_at_least_min_age_old`
 - `tests/test_pin_age.py::test_a_pin_past_the_aged_commit_is_never_moved_back`
