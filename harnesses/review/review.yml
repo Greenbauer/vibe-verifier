@@ -188,9 +188,11 @@ jobs:
         # gate optional: "Require a completed review" fails the job unless an account completed a
         # review or every configured account proved a rate or usage limit, and without it the receipt
         # is never posted. v1.0.171 (from v1.0.105): the older action wrote no execution log when the
-        # SDK died on a usage limit, so a limit could not be told from a crash.
+        # SDK died on a usage limit, so a limit could not be told from a crash. v1.0.270 (from v1.0.171):
+        # its Claude Code 2.1.321 knows claude-opus-5-5 (added in 2.1.280); 2.1.207 ended the run with an
+        # error on the first request.
         continue-on-error: true
-        uses: anthropics/claude-code-action@e90deca47693f9457b72f2b53c17d7c445a87342 # v1.0.171
+        uses: anthropics/claude-code-action@9eb012b6d0900c2b9eede65ee1758cec4d2973e9 # v1.0.270
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -287,7 +289,7 @@ jobs:
         # optional) reviews when the first did not complete one. Same prompt, model and tools.
         if: env.REVIEW_MODE != 'nochange' && env.HAS_FALLBACK_ACCOUNT == 'true' && steps.first.outputs.completed != 'true'
         continue-on-error: true
-        uses: anthropics/claude-code-action@e90deca47693f9457b72f2b53c17d7c445a87342 # v1.0.171
+        uses: anthropics/claude-code-action@9eb012b6d0900c2b9eede65ee1758cec4d2973e9 # v1.0.270
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_FALLBACK }}
           github_token: ${{ secrets.GITHUB_TOKEN }}

@@ -91,7 +91,8 @@ delta only starts further back.
   limit") or Anthropic's `rate_limit_error` type. A completed review is never limited, so a diff
   that merely contains that wording cannot fake one. The action is pinned at v1.0.171 or later
   because older versions wrote no execution log when the SDK died on a usage limit, which left a
-  limit indistinguishable from a crash.
+  limit indistinguishable from a crash, and at v1.0.270 or later because the review model,
+  `claude-opus-5-5`, needs Claude Code 2.1.280 or later.
 - **A limited pass is visible and temporary.** Unlike the old copy that turned a quota failure
   into a quiet green check, the job warns, the receipt says `limited`, and the scope step never
   anchors on it. The verify gate accepts a `limited` receipt only for the exact head and still
@@ -126,7 +127,10 @@ delta only starts further back.
   action at its pin, so choosing a new model is a one-line change to that file, and it reaches a
   subscribed repository when its pin moves (`apply-down`, or the scheduled
   [pin bump](../../actions/pin-bump/README.md)), with no edit to any copy. Until then the
-  repository reviews on the model its pin names, and `consumers` reports that pin as `stale`. The
+  repository reviews on the model its pin names, and `consumers` reports that pin as `stale`. A new
+  model can need a newer `anthropics/claude-code-action` (`claude-opus-5-5` needs v1.0.270 or later),
+  and that pin is in the copy, so the scheduled pin bump holds a copy whose action pin differs from
+  this template's at the new commit until the copy is copied again. The
   step's log line says which model ran. Before 2026-11-24 the name was typed twice in every copy,
   and a new model reached a repository only when a person copied the file again; a copy that still
   types one is drift in `consumers` until it is copied again. A copy made from this file is pinned at
