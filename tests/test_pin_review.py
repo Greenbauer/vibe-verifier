@@ -1,4 +1,4 @@
-"""apply-down --auto holds a review copy whose anthropics/claude-code-action is older than the review template's
+"""apply-down --auto holds a review copy whose anthropics/claude-code-action pin differs from the review template's
 (gates/_pin_review.py), driven through the command line against the fake `gh`, as test_pin_bump.py does."""
 import unittest
 from pathlib import Path
