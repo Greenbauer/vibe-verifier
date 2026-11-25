@@ -1,6 +1,7 @@
 """The per-ID table gates/proof_audit.py writes, which actions/proof-audit posts as the pull request's proof-audit
 comment, and the one-line cell every such comment's text goes through (the QA review's too; the copy audit uses
 without_runner_paths)."""
+import json
 import os
 import re
 
@@ -48,3 +49,11 @@ def write_table(path, text):
     if path:
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(text)
+
+
+def write_verdicts(path, rows):
+    """Each graded requirement's status, {id: status} in the table's order, for the comment's history of earlier
+    commits (gates/_proof_comment.py). Written only when the gate graded something."""
+    if path:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({rid: status for rid, status, _ in rows}, handle)

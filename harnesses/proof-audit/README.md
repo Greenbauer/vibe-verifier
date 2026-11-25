@@ -65,7 +65,11 @@ QAE workflow so its required `Acceptance criteria` check (`qae-verify` in a copy
    `sandbox: read-only` is there for a runner that can start it.
 3. **verify** (`mode: verify`), in the verify job, never skipped by a `- None:` or a carried walk:
    downloads the grades, runs the gate, appends the per-ID table to the step summary and posts it as one
-   pull request comment, edited in place, so the author can fix every gap in one pass. A pull request
+   pull request comment, edited in place, so the author can fix every gap in one pass. Under the table the
+   comment lists the earlier commits the audit judged on the pull request, newest first, each with the
+   requirements unproven there, so "unproven on one commit, proven on the next" can be seen and counted
+   (see "The comment's history" below). The comment is posted by a step of its own, after the gate whatever
+   it concluded, that holds only `token`, never the plan store's. A pull request
    with nothing to audit (no `Ticket:` line or plan marker, a linked section with no requirement IDs, or a
    plan marker where no plan store is configured) gets no comment; one that had a comment has it replaced, so
    an unlinked plan leaves no stale grades. The step's exit
@@ -197,6 +201,26 @@ refusal sees only what the verify job's own checkout holds, so it catches a copy
 grades in the checkout, but not grades the grade job uploaded from there into a download outside it. A
 consumer copy made before this keeps them in the checkout (`path: proof-audit-grades/` and
 `grades: proof-audit-grades`): refresh the copy, not only its pins.
+
+## The comment's history
+
+Each run's comment ends with a hidden line, `<!-- vibe-verifier:proof-audit-history {...} -->`, that only
+[`gates/_proof_comment.py`](../../gates/_proof_comment.py) writes: one entry per commit judged, newest first,
+with the commit, the time, the run and every requirement's status there (none for a run that graded nothing).
+The next run reads that line from the previous comment, never the table or a grader's words, puts its own
+commit first (a re-run on the same commit replaces that commit's entry) and keeps the newest thirty: ten times
+the three audit rounds a pull request is meant to take, and near 30,000 characters for a thirty-requirement
+plan, half of GitHub's 65,536-character comment limit. When a long table needs the room, more of the oldest
+drop. A comment written before the history existed, or one whose line cannot be read, starts a fresh history
+and the run passes as before. Under the table a person sees "Earlier commits": each commit as a link labelled
+with when it was audited, how many requirements were proven or excluded there, and the ones unproven there.
+`caught()` in that module reads the line back as (requirement, commit unproven at, commit proven at), the count
+a backtest of the audit's catches needs.
+
+The per-run grades files are an artifact of each grade job (`proof-audit-grades-<shard>`), kept for the
+repository's artifact retention. A consumer that prunes artifacts sooner keeps them only that long (one
+deletes every artifact older than two days, nightly), and only a pull request with something to audit has
+any, so the comment is where a person, and a backtest, finds the audit's past results.
 
 ## A plan kept in a plan store
 

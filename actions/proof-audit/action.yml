@@ -75,7 +75,9 @@ inputs:
       does not fail the step (the gate's common --soak). A gate that could not run fails the step all the same.
     default: "false"
   token:
-    description: verify, a token that may comment on the pull request; the table is posted, or edited in place, as one comment. Empty posts none (the step summary still has it).
+    description: >-
+      verify, a token that may comment on the pull request; the table is posted, or edited in place, as one comment
+      that also lists the earlier commits the audit judged. Empty posts none (the step summary still has the table).
     default: ""
 outputs:
   count:
@@ -135,7 +137,6 @@ runs:
       if: inputs.mode == 'verify'
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.token }}
         VV_BODY: ${{ inputs.body }}
         VV_GRADES: ${{ inputs.grades }}
         VV_REQUIRE_TICKET: ${{ inputs.require-ticket }}
@@ -143,14 +144,12 @@ runs:
         VV_PLANS_ENDPOINT: ${{ inputs.plans-endpoint }}
         VV_PLANS_TOKEN: ${{ inputs.plans-token }}
         VV_SOAK: ${{ inputs.soak }}
-        VV_REPO: ${{ github.repository }}
         VV_PR: ${{ github.event.pull_request.number }}
-        VV_HEAD: ${{ github.event.pull_request.head.sha }}
-        VV_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         set -uo pipefail
         table="$RUNNER_TEMP/proof-audit-table.md"
-        rm -f "$table"
+        verdicts="$RUNNER_TEMP/proof-audit-verdicts.json"
+        rm -f "$table" "$verdicts"
         required=()
         while IFS= read -r glob; do
           glob="${glob#"${glob%%[![:space:]]*}"}"; glob="${glob%"${glob##*[![:space:]]}"}"
@@ -162,32 +161,48 @@ runs:
         # table reaches the step summary and the comment, which is when the author needs it.
         code=0
         python3 "$GITHUB_ACTION_PATH/../../gates/proof_audit.py" --body "$VV_BODY" --grades "$VV_GRADES" \
-          --table "$table" --format github --title="$VV_TITLE" --plans-endpoint="$VV_PLANS_ENDPOINT" --pr="$VV_PR" \
-          ${required[@]+"${required[@]}"} ${soak[@]+"${soak[@]}"} || code=$?
+          --table "$table" --verdicts "$verdicts" --format github --title="$VV_TITLE" \
+          --plans-endpoint="$VV_PLANS_ENDPOINT" --pr="$VV_PR" ${required[@]+"${required[@]}"} ${soak[@]+"${soak[@]}"} || code=$?
         [ -s "$table" ] || printf '## Proof audit: could not run (the gate wrote no table; its log says why)\n' > "$table"
         cat "$table" >> "$GITHUB_STEP_SUMMARY"
-        if [ -n "$GH_TOKEN" ] && [ -n "$VV_PR" ]; then
-          # One comment per pull request, edited in place: the table of the latest run, with the head it judged
-          # as a link (docs/comments.md).
-          marker='<!-- vibe-verifier:proof-audit -->'
-          comment="$RUNNER_TEMP/proof-audit-comment.json"
-          python3 -I - "$table" "$marker" "$VV_HEAD" "$VV_RUN" "$comment" <<'PY'
-        import json, sys
-        table, marker, head, run, out = sys.argv[1:]
-        text = open(table, encoding="utf-8").read().rstrip("\n")
-        commit = "%s/commit/%s" % (run.split("/actions/runs/")[0], head)
-        json.dump({"body": "%s\n%s\n\nOn [this commit](%s). [The run and its evidence](%s). Each PROVEN quote was checked against the file; a grade is the model's, its quotes are not." % (marker, text, commit, run)}, open(out, "w"))
-        PY
-          found=$(gh api --paginate "repos/$VV_REPO/issues/$VV_PR/comments?per_page=100" \
-            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -1) || found=""
-          if [ -n "$found" ]; then
-            gh api -X PATCH "repos/$VV_REPO/issues/comments/$found" --input "$comment" > /dev/null || echo "::warning::could not edit the proof audit comment"
-          elif head -n 1 "$table" | grep -q '^## Proof audit: nothing to audit'; then
-            # Nothing to audit (no Ticket line or plan marker, a section with no IDs, a marker and no plan store):
-            # no comment. One that had a comment has it replaced above, so no stale grades stay (docs/comments.md).
-            :
-          else
-            gh api -X POST "repos/$VV_REPO/issues/$VV_PR/comments" --input "$comment" > /dev/null || echo "::warning::could not post the proof audit comment"
-          fi
-        fi
         exit "$code"
+    - name: Post the proof audit comment
+      # A step of its own, after the gate whatever it concluded, holding only the token that comments, never the
+      # plan store's. One comment per pull request, edited in place: this run's table, then the earlier commits
+      # the audit judged, each with what was unproven there, carried from the previous comment's own data block
+      # (gates/_proof_comment.py, docs/comments.md).
+      if: ${{ !cancelled() && inputs.mode == 'verify' && inputs.token != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        VV_REPO: ${{ github.repository }}
+        VV_PR: ${{ github.event.pull_request.number }}
+        VV_HEAD: ${{ github.event.pull_request.head.sha }}
+        VV_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        set -uo pipefail
+        [ -n "$GH_TOKEN" ] && [ -n "$VV_PR" ] || exit 0
+        table="$RUNNER_TEMP/proof-audit-table.md"
+        previous="$RUNNER_TEMP/proof-audit-previous.json"
+        comment="$RUNNER_TEMP/proof-audit-comment.json"
+        rm -f "$previous" "$comment"
+        marker='<!-- vibe-verifier:proof-audit -->'
+        found=$(gh api --paginate "repos/$VV_REPO/issues/$VV_PR/comments?per_page=100" \
+          --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -1) || found=""
+        if [ -z "$found" ] && head -n 1 "$table" | grep -q '^## Proof audit: nothing to audit'; then
+          # Nothing to audit (no Ticket line or plan marker, a section with no IDs, a marker and no plan store):
+          # no comment. One that had a comment has it replaced below, so no stale grades stay (docs/comments.md).
+          exit 0
+        fi
+        # The previous comment carries the history; one that cannot be read starts a fresh one.
+        if [ -n "$found" ]; then gh api "repos/$VV_REPO/issues/comments/$found" > "$previous" || rm -f "$previous"; fi
+        if ! python3 -E -s "$GITHUB_ACTION_PATH/../../gates/_proof_comment.py" --table "$table" \
+          --verdicts "$RUNNER_TEMP/proof-audit-verdicts.json" --previous "$previous" --head "$VV_HEAD" --run "$VV_RUN" \
+          --out "$comment"; then
+          echo "::warning::could not build the proof audit comment"; exit 0
+        fi
+        if [ -n "$found" ]; then
+          gh api -X PATCH "repos/$VV_REPO/issues/comments/$found" --input "$comment" > /dev/null || echo "::warning::could not edit the proof audit comment"
+        else
+          gh api -X POST "repos/$VV_REPO/issues/$VV_PR/comments" --input "$comment" > /dev/null || echo "::warning::could not post the proof audit comment"
+        fi
